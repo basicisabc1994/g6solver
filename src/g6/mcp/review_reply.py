@@ -18,10 +18,13 @@ import json
 import os
 from typing import Any
 
+from g6.mcp.consent_controls import refused_send
+
 #: The most characters the compact reply takes besides its report.
 BUDGET = 12_000
 #: The items each list keeps and the characters each text keeps, tried in turn until the reply fits ``BUDGET``.
 SHORTENINGS = ((12, 1_000), (6, 300), (2, 120))
+INTERRUPTED = "G6_E_PATCH_REVIEW_INTERRUPTED"
 #: The envelope's fields the compact reply carries as they are.
 ENVELOPE = ("ok", "completion_state", "reliability_label", "request_id", "run_id", "artifact_digest")
 #: The fields of each evidence item it keeps.
@@ -29,6 +32,26 @@ EVIDENCE = ("source", "summary", "authority", "artifact_digest", "base_commit", 
 HOLDS = ("every field of the review: each requirement's status, assessment.completion (what was demonstrated, what is "
          "not established, each reproduction with its text, preservation, open questions, every activity), the scope "
          "with every check run, the gate, the grounding and all the evidence")
+
+
+def review(repo: str | os.PathLike, **kwargs: Any) -> dict:
+    """``review_patch`` for a job over MCP: what it lets reach an enclosing door is named here, for a job has none."""
+    from g6.core import component_process
+    from g6.core.door import blocked_reply
+    from g6.core.stop import STOPPED
+    from g6.harness.patch_review import review_patch
+
+    try:
+        return review_patch(repo, **kwargs)
+    except component_process.ExecutionInterrupted as exc:
+        if exc.stopped:
+            return refused_send(blocked_reply(f"[{STOPPED}] the patch review was stopped before it finished: {exc}"),
+                                code=STOPPED)
+        return refused_send(blocked_reply(f"[{INTERRUPTED}] the patch review's time allowance ended before "
+                                          f"it finished, so it has no outcome: {exc}"), code=INTERRUPTED)
+    except component_process.ContainmentFailure as exc:
+        return refused_send(blocked_reply(f"[{INTERRUPTED}] G6 could not confirm that the review's test "
+                                          f"processes ended, so nothing from it is used: {exc}"), code=INTERRUPTED)
 
 
 def save(reply: dict, job_id: str) -> str | None:
@@ -39,9 +62,17 @@ def save(reply: dict, job_id: str) -> str | None:
     try:
         path = state_path("reviews", f"{job_id}.json")
         path.parent.mkdir(parents=True, exist_ok=True)
-        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8",
-                       newline="\n") as out:
-            json.dump(reply, out, ensure_ascii=False, indent=1, default=str)
+        data = json.dumps(reply, ensure_ascii=False, indent=1, default=str).encode("utf-8")
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as out:
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
+        from g6.mcp import review_binding
+
+        review_binding.write(path, reply, data)
+        from g6.harness import behaviour_runner
+
+        behaviour_runner.write_probes(path, reply, data)
     except (OSError, ValueError, TypeError):
         return None
     return str(path)
@@ -114,7 +145,19 @@ def finish(reply: Any, job_id: str) -> Any:
     whole, then in its compact form."""
     if not isinstance(reply, dict) or not isinstance(reply.get("assessment"), dict):
         return reply
-    return compact(reply, job_id, save(reply, job_id))
+    from g6.core import cloud_consent as cloud
+    from g6.core.storage import g6_home
+    body, refs, _ = cloud.freeze_output(reply)
+    reply = json.loads(body)
+    # A job entered through a declared producer already carries that contract.
+    # Absence of a value receipt is distinct from an explicitly unknown origin;
+    # the latter stays in refs and cannot be replaced by the declaration.
+    refs = cloud.boundary_sources(carried=refs if refs is not None else
+                                   cloud.current_sources() or (cloud.UNKNOWN,))
+    saved = save(reply, job_id)
+    if saved:
+        refs += (cloud.Source.text(cloud.repository_source(g6_home() / 'reviews'), 'assessment-location', saved),)
+    return cloud.bind_output(compact(reply, job_id, saved), refs)
 
 
-__all__ = ["BUDGET", "compact", "finish", "save"]
+__all__ = ["BUDGET", "compact", "finish", "review", "save"]

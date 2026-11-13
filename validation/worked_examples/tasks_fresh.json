@@ -1,0 +1,224 @@
+{
+ "about": "Fresh bugs for judging the loop on bugs it has not seen: PLAN.md's rule on the window before the ten's, the two newest of each project judged to report a bug, chosen before any of their runs. Nothing here is used to tune the loop.",
+ "tasks": [
+  {
+   "id": "pydantic-13243",
+   "project": "pydantic/pydantic",
+   "full_name": "pydantic/pydantic",
+   "licence": "MIT",
+   "pr": 13243,
+   "issue": 13215,
+   "merge_commit": "5f89299ac68309cdc20e8d74bd72b55607bba280",
+   "parent": "a20c0ee267150c3bb0f82bf05e0806fa65b1e70c",
+   "merged_at": "2026-05-29T16:53:35Z",
+   "test_modules": [
+    "tests/test_generics.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python --no-sources -e \".[email]\" --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "black-5144",
+   "project": "psf/black",
+   "full_name": "psf/black",
+   "licence": "MIT",
+   "pr": 5144,
+   "issue": 4296,
+   "merge_commit": "7e8ef6bc1d2d803b01ee6cde752f7f8c5dca8260",
+   "parent": "650983f7b32b15feeb0fa30c0ed1a8b6e2a9b28f",
+   "merged_at": "2026-05-28T19:18:52Z",
+   "test_modules": [
+    "tests/test_format.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[d,jupyter]\" --group tests"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "26.10.0"
+   }
+  },
+  {
+   "id": "black-5148",
+   "project": "psf/black",
+   "full_name": "psf/black",
+   "licence": "MIT",
+   "pr": 5148,
+   "issue": 3667,
+   "merge_commit": "650983f7b32b15feeb0fa30c0ed1a8b6e2a9b28f",
+   "parent": "13e97b44997539a16a2454d9483a746b586253e0",
+   "merged_at": "2026-05-22T15:13:47Z",
+   "test_modules": [
+    "tests/test_format.py",
+    "tests/test_black.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[d,jupyter]\" --group tests"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "26.10.0"
+   }
+  },
+  {
+   "id": "click-3434",
+   "project": "pallets/click",
+   "full_name": "pallets/click",
+   "licence": "BSD-3-Clause",
+   "pr": 3434,
+   "issue": 3360,
+   "merge_commit": "3bb230dcd5d751f8605b46e9df5a541639d5fd4e",
+   "parent": "63274a79d08fdc5c19220696144489f7144a8547",
+   "merged_at": "2026-05-16T15:53:40Z",
+   "test_modules": [
+    "tests/test_formatting.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group tests"
+   ],
+   "env": {}
+  },
+  {
+   "id": "click-3404",
+   "project": "pallets/click",
+   "full_name": "pallets/click",
+   "licence": "BSD-3-Clause",
+   "pr": 3404,
+   "issue": 3403,
+   "merge_commit": "ec8226954e2657324e7a25fec6657e4fbde33bcb",
+   "parent": "3619563d9bf8763360d3f0d95eb76e43f26dea5e",
+   "merged_at": "2026-05-16T04:44:49Z",
+   "test_modules": [
+    "tests/test_options.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group tests"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pydantic-13133",
+   "project": "pydantic/pydantic",
+   "full_name": "pydantic/pydantic",
+   "licence": "MIT",
+   "pr": 13133,
+   "issue": 10565,
+   "merge_commit": "8a1a222b60131e517ed8f6c0387d296d181490c3",
+   "parent": "cc6f77860933a4f88a2a0f4c1dedd37df93299a7",
+   "merged_at": "2026-05-12T10:29:09Z",
+   "test_modules": [
+    "tests/test_forward_ref.py",
+    "tests/test_main.py",
+    "tests/test_type_adapter.py",
+    "tests/test_types_namedtuple.py",
+    "tests/test_typing.py",
+    "tests/test_validate_call.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python --no-sources -e \".[email]\" --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "starlette-3189",
+   "project": "encode/starlette",
+   "full_name": "Kludex/starlette",
+   "licence": "BSD-3-Clause",
+   "pr": 3189,
+   "issue": 3048,
+   "merge_commit": "9ee951980bae776103715b66305f807d9e8245da",
+   "parent": "a0bcc26612c9c344737cd59fb4ef847326adf37a",
+   "merged_at": "2026-03-15T11:59:16Z",
+   "test_modules": [
+    "tests/test_responses.py",
+    "tests/test_websockets.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[full]\" --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "attrs-1509",
+   "project": "python-attrs/attrs",
+   "full_name": "python-attrs/attrs",
+   "licence": "MIT",
+   "pr": 1509,
+   "issue": 1479,
+   "merge_commit": "862696afb52fb7c0d47d45e05ec4feb844c11001",
+   "parent": "f3bcc37c3d2dc3199715f825a86b748c3b3805f9",
+   "merged_at": "2026-03-07T09:22:35Z",
+   "test_modules": [
+    "tests/test_functional.py",
+    "tests/test_hooks.py",
+    "tests/test_make.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group tests"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "26.1.0"
+   }
+  },
+  {
+   "id": "starlette-3166",
+   "project": "encode/starlette",
+   "full_name": "Kludex/starlette",
+   "licence": "BSD-3-Clause",
+   "pr": 3166,
+   "issue": 2019,
+   "merge_commit": "4647e532bbed7a5f60c9972ddba3f5fb4a79e1f9",
+   "parent": "fb49d243e2082f9bb30b59fd532e6062bbd676b7",
+   "merged_at": "2026-03-01T18:21:55Z",
+   "test_modules": [
+    "tests/middleware/test_session.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[full]\" --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "fastapi-14616",
+   "project": "fastapi/fastapi",
+   "full_name": "fastapi/fastapi",
+   "licence": "MIT",
+   "pr": 14616,
+   "issue": 10997,
+   "merge_commit": "c5fd75a321496b1f8212744bde217ec8ea956154",
+   "parent": "54f8aeeb9a15e4d5a12401ec5549840966df0087",
+   "merged_at": "2026-02-05T18:41:43Z",
+   "test_modules": [
+    "tests/test_json_type.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[all]\" --group tests"
+   ],
+   "env": {}
+  },
+  {
+   "id": "fastapi-13920",
+   "project": "fastapi/fastapi",
+   "full_name": "fastapi/fastapi",
+   "licence": "MIT",
+   "pr": 13920,
+   "issue": 10719,
+   "merge_commit": "97145588f5442aa7c3830173813d5d1a2c893521",
+   "parent": "0dd42b746e17d33a74ea267a62eace9ccdccf345",
+   "merged_at": "2026-02-05T18:34:34Z",
+   "test_modules": [
+    "tests/test_dependency_pep695.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[all]\" --group tests"
+   ],
+   "env": {}
+  }
+ ],
+ "dropped": [
+  {
+   "id": "pydantic-13146",
+   "why": "validation: no test fails on the parent's code and passes with the fix, so the next qualifying bug took its place"
+  }
+ ]
+}

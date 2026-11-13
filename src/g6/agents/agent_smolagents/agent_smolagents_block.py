@@ -25,7 +25,7 @@ from g6.agents.agent_smolagents.sandbox import ALLOWED_IMPORTS, MEM_MB, REFUSED_
 from g6.agents.agent_smolagents.spec import AgentSpec
 from g6.core import confine
 from g6.core.ai_block import AIBlock
-from g6.core.llm import provider_from_env
+from g6.core.consent_callers import provider_from_env
 from g6.core.maturity import component_maturity
 from g6.core.reliability_envelope import WarningCard
 from g6.core.result import Result

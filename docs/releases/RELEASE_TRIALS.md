@@ -27,7 +27,7 @@ The installed client discovered G6 and created the synthetic workflow. No elicit
 request reached the probe on direct confirmation calls, including when the probe was
 ready to accept. G6 refused every confirmation and provided the terminal fallback.
 
-Result: **fail-closed behavior observed; interactive client consent still unverified**.
+Result: **fail-closed behavior observed; interactive client consent still not checked**.
 Automated response handling would not authenticate a human even if delivered.
 Claude's real elicitation UI remains untested; CLI registration alone establishes none
 of its consent semantics. The protocol mechanism is described in the
@@ -67,8 +67,8 @@ counting blocks alone would reward an unusable system.
 
 For each supported client, an unfamiliar user should install in a fresh project, find
 G6's tools, construct a small workflow and inspect its frozen digest. Confirm that the
-actual UI displays that digest and the execution consequences. Decline once and verify
-no confirmation; then accept and inspect the recorded consent. Exercise missing
+actual UI displays that digest and the execution consequences. Decline once and check
+there is no confirmation; then accept and inspect the recorded consent. Exercise missing
 elicitation through the documented terminal fallback. Record client/version, observed
 prompts, errors, manual fixes and time. Do not put credentials or personal names in the
 public record. An exploration-only run is not successful tuning.
@@ -79,9 +79,9 @@ final release artifacts and cross-platform CI remain separate gates.
 ## Final version and certificates
 
 The source version was frozen at 0.1.1 before issuance. A fresh independent reader
-verified that all 98 rule-function ASTs and all source/rule/case/adapter/refusal
+checked that all 98 rule-function ASTs and all source/rule/case/adapter/refusal
 bindings were unchanged, reviewed the changed shared enforcement code, and then
-verified the exact version-only delta. Original source-reading attribution and
+checked the exact version-only delta. Original source-reading attribution and
 limitations are preserved. The new attestation is a delta review, not a new reading
 of the source clauses and not authenticated domain-expert approval.
 

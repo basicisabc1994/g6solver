@@ -82,7 +82,9 @@ from typing import Annotated, Any, Callable, Literal
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from g6.core import component_process
+from g6.core.git_name import shown
 from g6.harness import verification_search as vs
+from g6.harness.behaviour_runner import example_text
 from g6.workforce import repo_tests
 
 REQUIREMENT_SATISFACTION = "requirement_satisfaction"
@@ -495,14 +497,15 @@ def multi_step(one) -> bool:
 
 class TemplateInstance(BaseModel):
     """A template instance: ``{id, template, requirement_id, intent, bindings}``, and where the bindings came from
-    (``provenance``: a request's are ``stated``; only G6's own code sets ``model_hypothesis``)."""
+    (``provenance``: a request's are ``stated``; only G6's own code sets ``model_hypothesis``, or ``person_confirmed``
+    for the one example.v1 check a person's confirmed answer compiles into, ``g6.harness.confirmed_expectation``)."""
     model_config = ConfigDict(extra="forbid")
     id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$")
     template: str = Field(min_length=1, max_length=100)
     requirement_id: str = Field(min_length=1, max_length=200)
     intent: Literal["preserve", "change"]
     bindings: dict[str, Any]
-    provenance: Literal["stated", "model_hypothesis"] = "stated"
+    provenance: Literal["stated", "model_hypothesis", "person_confirmed"] = "stated"
 
 
 # --- the tree under review, read from files only ------------------------------------------------------------------------
@@ -555,20 +558,22 @@ class Tree:
         (review C2)."""
         key = (rel, side)
         if self._texts.get(key, "") is None:
-            raise ValueError(f"{rel} is not a file of at most {MAX_MODULE_BYTES} bytes at the base commit")
+            raise ValueError(f"{shown(rel)} is not a file of at most {MAX_MODULE_BYTES} bytes at the base commit")
         if key not in self._texts:
             if side == PATCH:
-                parts = Path(rel).parts
+                path = repo_tests._disk(self.root, rel)      # the one disk rule; None: a name G6 does not open
+                if path is None:      # said as for any name with no readable file there
+                    raise ValueError(f"{shown(rel)} is not a file of at most {MAX_MODULE_BYTES} bytes")
+                parts = path.relative_to(self.root).parts
                 if any(repo_tests._linked(self.root.joinpath(*parts[:end])) for end in range(1, len(parts) + 1)):
-                    raise ValueError(f"{rel} is a link")
-                path = self.root / rel
+                    raise ValueError(f"{shown(rel)} is a link")
                 if not path.is_file() or path.stat().st_size > MAX_MODULE_BYTES:
-                    raise ValueError(f"{rel} is not a file of at most {MAX_MODULE_BYTES} bytes")
+                    raise ValueError(f"{shown(rel)} is not a file of at most {MAX_MODULE_BYTES} bytes")
                 text = path.read_text(encoding="utf-8", errors="replace")
             else:
                 text = repo_tests.read_at(self.root, self.change.base_commit, rel)
                 if text is None or len(text) > MAX_MODULE_BYTES:
-                    raise ValueError(f"{rel} is not a file of at most {MAX_MODULE_BYTES} bytes at the base commit")
+                    raise ValueError(f"{shown(rel)} is not a file of at most {MAX_MODULE_BYTES} bytes at the base commit")
             self._texts[key] = text
         return self._texts[key]
 
@@ -754,6 +759,12 @@ def _side(one: TemplateInstance) -> str:
     return PATCH if one.intent == "change" and one.template != "differential.v1" else BASE
 
 
+def _located(target: Target) -> list[str]:
+    """A name as example.v1's check loads it: its spec, and for a module's name the file of the tree it resolved to,
+    which the module the check's import returns must be (``_load``'s origin rule)."""
+    return [*target.spec(), target.file] if target.kind == "module" else target.spec()
+
+
 def _example(tree: Tree, b: ExampleBindings, side: str) -> Applied:
     target = resolve(tree, b.function, side)
     notes = _checked(b.function, target, [(case.args, case.kwargs, f"case {index}")
@@ -762,13 +773,14 @@ def _example(tree: Tree, b: ExampleBindings, side: str) -> Applied:
     for case in b.cases:
         entry = {"args": case.args, "kwargs": case.kwargs}
         if "raises" in case.model_fields_set:
-            entry.update(expect="raises", error=_error_target(tree, case.raises, side).spec())
+            entry.update(expect="raises", error=_located(_error_target(tree, case.raises, side)))
         elif "effect" in case.model_fields_set:
             entry.update(expect="effect", argument=case.effect.argument, value=case.effect.equals)
         else:
             entry.update(expect="returns", value=case.returns)
         cases.append(entry)
-    return Applied({"function": target.spec(), "cases": cases}, notes)
+    roots = {'import_roots': [*(root.rstrip('/') or '.' for root in tree.roots), '.', 'src']} if tree.roots else {}
+    return Applied({"function": _located(target), "cases": cases, **roots}, notes)
 
 
 def _relation(tree: Tree, b: RelationBindings, side: str) -> Applied:
@@ -879,115 +891,6 @@ def _state_invariant(tree: Tree, b: StateInvariantBindings, side: str) -> Applie
 
 
 # --- the fixed texts ------------------------------------------------------------------------------------------------------
-
-_HEADER = """\
-# Generated by G6 from the fixed text of a reviewed template. Everything the caller stated is in BINDINGS, one
-# Python literal; nothing else here comes from the caller. Run it with pytest from the top folder of a copy of the
-# repository: it imports the repository's code by the names BINDINGS holds.
-import builtins
-import collections.abc
-import copy
-import hashlib
-import importlib
-import json
-import re
-
-import pytest
-"""
-
-_COMMON = """
-
-def _load(spec):
-    # spec is [kind, module, attribute]: ["builtin", "", "ValueError"], or ["module", "package.module", "name"]
-    kind, module, attribute = spec
-    if kind == "builtin":
-        return getattr(builtins, attribute)
-    return getattr(importlib.import_module(module), attribute)
-
-
-def _error(spec):
-    found = _load(spec)
-    if not (isinstance(found, type) and issubclass(found, BaseException)):
-        raise TypeError(spec[2] + " is not an exception type")
-    return found
-
-
-def _name(kind):
-    module = getattr(kind, "__module__", None) or ""
-    name = getattr(kind, "__qualname__", None) or getattr(kind, "__name__", None) or "?"
-    return name if module == "builtins" else module + "." + name
-
-
-def _shown(value, limit=200):
-    try:
-        text = repr(value)
-    except Exception as exc:
-        text = "<a value whose repr raised " + _name(type(exc)) + ">"
-    return text if len(text) <= limit else text[:limit - 3] + "..."
-
-
-def _raised(exc):
-    # an exception, its type at the start of a line, so a refusal by the run's boundary reads as one
-    try:
-        said = str(exc)
-    except Exception:
-        said = ""
-    return _name(type(exc)) + ": " + _shown(said)
-
-
-def _json(value):
-    # the value as JSON writes it, keys sorted, or None when it is not JSON data
-    try:
-        return json.dumps(value, sort_keys=True, allow_nan=False)
-    except (TypeError, ValueError, RecursionError):
-        return None
-
-
-def _same(left, right):
-    # equal as JSON writes both, or, where one is not JSON data, by ==
-    one, other = _json(left), _json(right)
-    if one is not None and other is not None:
-        return one == other
-    return bool(left == right)
-
-
-def _fail(failures, raised):
-    # one line that says what failed, then each exception raised, its type first
-    if failures:
-        more = len(failures) - 5
-        summary = "; ".join(failures[:5]) + ("; and %d more" % more if more > 0 else "")
-        pytest.fail("\\n".join([summary] + raised[:5]))
-"""
-
-_EXAMPLE = """
-
-def test_example():
-    function = _load(BINDINGS["function"])
-    errors = {index: _error(case["error"]) for index, case in enumerate(BINDINGS["cases"])
-              if case["expect"] == "raises"}
-    failures, raised = [], []
-    for index, case in enumerate(BINDINGS["cases"]):
-        args, kwargs = copy.deepcopy(case["args"]), copy.deepcopy(case["kwargs"])
-        try:
-            result = function(*args, **kwargs)
-        except BaseException as exc:
-            if isinstance(exc, KeyboardInterrupt):
-                raise
-            if index in errors and isinstance(exc, errors[index]):
-                continue
-            failures.append("case %d raised %s" % (index, _name(type(exc))))
-            raised.append(_raised(exc))
-            continue
-        if index in errors:
-            failures.append("case %d returned %s where %s was expected" % (index, _shown(result),
-                                                                           _name(errors[index])))
-        elif case["expect"] == "returns" and _json(result) != _json(case["value"]):
-            failures.append("case %d returned %s, expected %s" % (index, _shown(result), _shown(case["value"])))
-        elif case["expect"] == "effect" and _json(args[case["argument"]]) != _json(case["value"]):
-            failures.append("case %d left argument %d as %s, expected %s" % (
-                index, case["argument"], _shown(args[case["argument"]]), _shown(case["value"])))
-    _fail(failures, raised)
-"""
 
 _RELATION = """
 
@@ -1285,9 +1188,89 @@ def test_replay(capsys):
 """
 
 
+_LEGACY_HEADER = """\
+# Generated by G6 from the fixed text of a reviewed template. Everything the caller stated is in BINDINGS, one
+# Python literal; nothing else here comes from the caller. Run it with pytest from the top folder of a copy of the
+# repository: it imports the repository's code by the names BINDINGS holds.
+import builtins
+import collections.abc
+import copy
+import hashlib
+import importlib
+import json
+import re
+
+import pytest
+"""
+
+_LEGACY_COMMON = """
+
+def _load(spec):
+    # spec is [kind, module, attribute]: ["builtin", "", "ValueError"], or ["module", "package.module", "name"]
+    kind, module, attribute = spec
+    if kind == "builtin":
+        return getattr(builtins, attribute)
+    return getattr(importlib.import_module(module), attribute)
+
+
+def _error(spec):
+    found = _load(spec)
+    if not (isinstance(found, type) and issubclass(found, BaseException)):
+        raise TypeError(spec[2] + " is not an exception type")
+    return found
+
+
+def _name(kind):
+    module = getattr(kind, "__module__", None) or ""
+    name = getattr(kind, "__qualname__", None) or getattr(kind, "__name__", None) or "?"
+    return name if module == "builtins" else module + "." + name
+
+
+def _shown(value, limit=200):
+    try:
+        text = repr(value)
+    except Exception as exc:
+        text = "<a value whose repr raised " + _name(type(exc)) + ">"
+    return text if len(text) <= limit else text[:limit - 3] + "..."
+
+
+def _raised(exc):
+    # an exception, its type at the start of a line, so a refusal by the run's boundary reads as one
+    try:
+        said = str(exc)
+    except Exception:
+        said = ""
+    return _name(type(exc)) + ": " + _shown(said)
+
+
+def _json(value):
+    # the value as JSON writes it, keys sorted, or None when it is not JSON data
+    try:
+        return json.dumps(value, sort_keys=True, allow_nan=False)
+    except (TypeError, ValueError, RecursionError):
+        return None
+
+
+def _same(left, right):
+    # equal as JSON writes both, or, where one is not JSON data, by ==
+    one, other = _json(left), _json(right)
+    if one is not None and other is not None:
+        return one == other
+    return bool(left == right)
+
+
+def _fail(failures, raised):
+    # one line that says what failed, then each exception raised, its type first
+    if failures:
+        more = len(failures) - 5
+        summary = "; ".join(failures[:5]) + ("; and %d more" % more if more > 0 else "")
+        pytest.fail("\\n".join([summary] + raised[:5]))
+"""
+
 def _text(ident: str, body: str) -> str:
     """A template's fixed text: the header, its id, the shared helpers, the slot for the bindings, and its body."""
-    text = f"{_HEADER}\nTEMPLATE = {ident!r}\n{_COMMON}\n\nBINDINGS = {SLOT}\n{body}"
+    header, common = _LEGACY_HEADER, _LEGACY_COMMON
+    text = f"{header}\nTEMPLATE = {ident!r}\n{common}\n\nBINDINGS = {SLOT}\n{body}"
     assert text.count(SLOT) == 1 and text.isascii()
     return text
 
@@ -1295,6 +1278,11 @@ def _text(ident: str, body: str) -> str:
 def compile_text(definition: TemplateDefinition, data: dict) -> str:
     """The check ``definition``'s fixed text gives for ``data``: the text with the bindings written, once, as one
     literal (``ascii``). A literal that does not read back as ``data`` is refused (``ValueError``)."""
+    if "scenario" in data:
+        from g6.harness.executable_scenario import Scenario
+
+        scenario = Scenario(data["scenario"].encode("ascii"))
+        return scenario.source(data["option"]) if "option" in data else scenario.program
     literal = ascii(data)
     if ast.literal_eval(literal) != data:
         raise ValueError("the bindings do not read back as the same literal")
@@ -1334,7 +1322,7 @@ TEMPLATES: dict[str, TemplateDefinition] = {definition.id: definition for defini
         (_CALLED, "a result is compared as JSON writes it (so 2 and 2.0 differ, and a tuple reads as a list); a "
                   "result JSON cannot write matches no stated result",
          "an error matches when the exception raised is an instance of the type named"),
-        _example, _text("example.v1", _EXAMPLE)),
+        _example, example_text(SLOT)),
     TemplateDefinition(
         "relation.v1", REQUIREMENT_SATISFACTION,
         "a metamorphic relation holds on the caller's inputs: round trip, idempotence, invariance under a named "
@@ -1444,6 +1432,12 @@ def _forms(template: str, bindings: Any) -> list[tuple[str, type[BaseModel]]]:
     return [steps, single] if isinstance(bindings, dict) and "steps" in bindings else [single, steps]
 
 
+#: A template binds JSON values to names at the base commit, so some checks cannot be written as one (worked examples,
+#: round 3): every refusal says where such a check can go.
+FALLBACK = ("If a template cannot express this check (its inputs are not JSON values, or what it names exists only in "
+            "the patch), write it as a proposed_checks test file instead.")
+
+
 def bindings_help(template: str, bindings: Any = None) -> str:
     """What ``template``'s bindings are, the required first, and one valid instance of it."""
     said = []
@@ -1453,7 +1447,7 @@ def bindings_help(template: str, bindings: Any = None) -> str:
         said.append(f"{how}{template} needs bindings {', '.join(required)}"
                     + (f", and also takes {', '.join(optional)}" if optional else ""))
     return (f"{'; '.join(said)}. One valid instance: {json.dumps(EXAMPLES[template])}. Correct the instance and "
-            "review again.")
+            f"review again. {FALLBACK}")
 
 
 _PLAIN_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,99}")
@@ -1540,7 +1534,7 @@ def instance_digest(one: TemplateInstance) -> str:
     """The SHA-256 that cites an instance: its template's id and version, the digest of the template's fixed text, and
     the instance's requirement, intent, bindings and their provenance, as canonical JSON; for access_rule.v1's
     multi-step form, the template it goes through and the digest of that template's fixed text too."""
-    definition = REGISTRY[one.template]
+    definition = instance_definition(one)
     body = {"template": one.template, "template_text_sha256": definition.text_sha256, "id": one.id,
             "requirement_id": one.requirement_id, "intent": one.intent, "bindings": one.bindings,
             "provenance": one.provenance}
@@ -1548,6 +1542,19 @@ def instance_digest(one: TemplateInstance) -> str:
         through = FORMAL_TEMPLATES["state_invariant.v1"]
         body["through"] = {"template": through.id, "template_text_sha256": through.text_sha256}
     return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=True).encode("utf-8")).hexdigest()
+
+
+_ORDINARY_EXAMPLE = TEMPLATES["example.v1"]
+
+
+_CONFIRMED_EXAMPLE = dataclasses.replace(TEMPLATES["example.v1"], text=_ORDINARY_EXAMPLE.text)
+TEMPLATES["example.v1"] = _ORDINARY_EXAMPLE
+
+
+def instance_definition(one: TemplateInstance) -> TemplateDefinition:
+    """Select the binding policy; confirmed examples retain their resolved repository file."""
+    return (_CONFIRMED_EXAMPLE if one.template == "example.v1" and one.provenance == "person_confirmed"
+            else REGISTRY[one.template])
 
 
 # --- preparing the instances of a review, before anything runs ------------------------------------------------------------
@@ -1586,12 +1593,19 @@ def compiled_check(root: Path, one: TemplateInstance, data: dict, notes: list[st
     (``compile_text``), as a check placed in the copies, and the origin its activity, reasons and reproduction name.
     ``ident``: the check's id when it is not the instance's (a further check of one instance); ``origin``: further
     fields of its ``Origin``."""
-    definition = definition or REGISTRY[one.template]
+    definition = definition or instance_definition(one)
     source = compile_text(definition, data)
     if len(source.encode("utf-8")) > vs.MAX_SOURCE_BYTES:
         raise Inapplicable("its compiled check would hold more than 64 kilobytes")
     check = vs.ProposedCheck(id=ident or one.id, requirement_id=one.requirement_id, intent=one.intent,
                              file=f"test_g6_{definition.id.split('.')[0]}.py", source=source)
+    from g6.harness.behaviour_runner import ExecutableSource
+
+    if type(source) is ExecutableSource:
+        check = check.model_copy(update={"source": source})
+    elif (one.template == "differential.v1" or
+          one.template == "example.v1" and one.provenance == "person_confirmed"):
+        check = check.model_copy(update={"source": ExecutableSource(source, data)})
     try:
         placed = vs.placements(root, [check])[check.id]
     except ValueError as exc:
@@ -1655,7 +1669,8 @@ def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInsta
         except (Inapplicable, ValueError, OSError, SyntaxError, repo_tests.RepoRefused) as exc:
             why = str(exc) if isinstance(exc, Inapplicable) else (
                 f"G6 could not read what it names ({type(exc).__name__})")
-            _not_applied(found, one, definition, {**_listing(one), "result": "refused", "reason": why})
+            _not_applied(found, one, definition, {**_listing(one), "result": "refused",
+                                                  "reason": f"{why} {FALLBACK}"})
         except Exception as exc:   # RecursionError, MemoryError, any other: an activity's error (the VS-3 review, I2)
             _not_applied(found, one, definition, {**_listing(one), "result": "error", "reason": vs.stopped(exc),
                                                   "stopped": f"template instance {one.id}"})
@@ -1872,10 +1887,11 @@ def _read_contracts(roots: list[str], raw: list[dict], options: dict) -> tuple[l
     return found, out
 
 
-def _package_files(tree: Tree, package: str, side: str) -> tuple[dict[str, str], str] | None:
+def _package_files(tree: Tree, package: str, side: str) -> tuple[dict[str, str], str, dict[str, str]] | None:
     """The package's Python files on ``side``, by path relative to the folder that holds it (as design_governance reads
     them), and that folder's prefix (an import root's, "" or "src/"); None when it has none there. The same rule on
-    both sides: a package that more than one of those folders holds is an ``Inapplicable``, never a silent choice."""
+    both sides: a package that more than one of those folders holds is an ``Inapplicable``, never a silent choice. Also
+    each file's name as git listed it, by that relative path, so what is said of a file names it by the one rule."""
     from g6.code.design_governance import graph
 
     stem = package.replace(".", "/")
@@ -1905,7 +1921,7 @@ def _package_files(tree: Tree, package: str, side: str) -> tuple[dict[str, str],
         size += len(text)
         if size > MAX_PACKAGE_CHARS:
             raise Inapplicable(f"{package} holds more than {MAX_PACKAGE_CHARS} characters {WHERE[side]}")
-    return files, folder
+    return files, folder, {rel[len(folder):]: rel for rel in names}
 
 
 def _matches(pattern: str, name: str) -> bool:
@@ -2103,8 +2119,8 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
                 files = _package_files(tree, contract.package, side)
                 tree.in_time()
                 graphs[contract.package, side] = (graph.build(files[0], contract.package, before_each=tree.in_time),
-                                                  files[1]) if files else (None, "")
-        (before, _), (after, folder) = graphs[contract.package, BASE], graphs[contract.package, PATCH]
+                                                  files[1], files[2]) if files else (None, "", {})
+        (before, _, _), (after, _, listed) = graphs[contract.package, BASE], graphs[contract.package, PATCH]
         if after is None or not after.modules:
             out.append(f"{contract.name}: the package {contract.package} has no module {WHERE[PATCH]}")
             continue
@@ -2121,9 +2137,9 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
             vacuous.append(f"{contract.name}: {why}")
         seen = {(item["rule"], item["from"], item["to"]) for item in old}
         for item in found:
-            located = {**item, "file": folder + item["file"], "contract": contract.name}
+            located = {**item, "file": listed[item["file"]], "contract": contract.name}   # the name git listed
             (already if (item["rule"], item["from"], item["to"]) in seen else new).append(located)
-        unparsed += [folder + entry["file"] for entry in after.unparsed]
+        unparsed += [listed[entry["file"]] for entry in after.unparsed]
         limits.append(f"{after.external} import(s) of modules outside the package {contract.package} "
                       f"{WHERE[PATCH]} were not checked")
     if not checked:
@@ -2145,15 +2161,15 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
     elif unparsed:
         verdict = "not_run"
         limits.append(f"{len(unparsed)} file(s) of the package do not parse {WHERE[PATCH]}, so their imports are "
-                      f"not seen: {', '.join(unparsed[:5])}")
+                      f"not seen: {', '.join(shown(unread) for unread in unparsed[:5])}")
     elif len(vacuous) == checked:   # no contract the patch could have broken: it does not exercise the change
         verdict = VACUOUS
     else:
         verdict = "passed" if normative else "not_refuted"
     if vacuous and verdict != VACUOUS:
         limits += [f"{item}; it does not exercise the change" for item in vacuous]
-    shown = "; ".join(f"{v['from']} imports {v['to']} ({v['file']}:{v['line']})" for v in violations[:5])
-    detail = (f"{one.id}: the patch adds {len(violations)} import(s) that {source} forbids: {shown}" if violations
+    imports = "; ".join(f"{v['from']} imports {v['to']} ({shown(v['file'])}:{v['line']})" for v in violations[:5])
+    detail = (f"{one.id}: the patch adds {len(violations)} import(s) that {source} forbids: {imports}" if violations
               else f"{one.id}: no import the patch adds breaks {source}")
     activity = {**_listing(one), "provenance": "structural", "contract_provenance": provenance,
                 "contract_source": source, "result": verdict if verdict != "not_run" else "not_established",

@@ -79,8 +79,21 @@ def test_mcp_server_exposes_only_the_discovery_surface() -> None:
     server = build_server()
     tools = asyncio.run(server.get_tools())
     # the discovery surface, plus the meta-harness tools added in its Phase 6 (META_HARNESS_PLAN.md; owner ruling Q10)
-    # and its recovery tool (DECISIONS #27)
+    # and its recovery tool (DECISIONS #27), the coding mission (``g6.mcp.mission``), the self-improvement loop's
+    # controls (``g6.mcp.improve``) and G6 0.3's behaviour question (``g6.mcp.behaviour``)
     assert set(tools) == {"g6_help", "g6_components", "g6_find", "g6_describe", "g6_invoke", "g6_compose", "g6_review_patch",
+                          "g6_review_until_clean", "g6_premortem", "g6_confirm_behaviour",
+                          "g6_mission_create", "g6_mission_clarify", "g6_mission_confirm",
+                          "g6_mission_submit", "g6_mission_status", "g6_mission_certificate",
+                          "g6_improve_start", "g6_improve_stop", "g6_improve_status", "g6_improve_enrol", "g6_improve_resume",
+                          "g6_improve_demote", "g6_allowances",
+                          "g6_cloud_grant", "g6_cloud_revoke", "g6_cloud_grants", "g6_disclosures",
+                          "g6_knowledge_add", "g6_knowledge_passage", "g6_knowledge_revoke", "g6_knowledge_search",
+                          "g6_knowledge_sources", "g6_knowledge_refresh", "g6_knowledge_delete", "g6_knowledge_context",
+                          "g6_knowledge_job", "g6_knowledge_count", "g6_knowledge_paths",   # the Context Engine (``g6.mcp.knowledge``)
+                          # the workflow record of G6 0.3's design section 17 (``g6.mcp.workflow``)
+                          "g6_workflow_export", "g6_workflow_correct", "g6_workflow_delete", "g6_suggestion_decide",
+                          "g6_feedback",
                           "metaharness_start", "metaharness_confirm", "metaharness_propose_code",
                           "metaharness_evaluate_start", "metaharness_job", "metaharness_run",
                           "metaharness_inspect", "metaharness_propose", "metaharness_evaluate", "metaharness_decide",

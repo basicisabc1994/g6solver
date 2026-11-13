@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib
 import re
 import typing
+from pathlib import Path
 
 from g6.core import discovery, skills
 from g6.core.registry import get_registry
@@ -15,8 +16,10 @@ GUIDE = skills.guide_dir()
 TEXT = (GUIDE / "SKILL.md").read_text(encoding="utf-8")
 LIFECYCLE = (GUIDE / "references" / "lifecycle.md").read_text(encoding="utf-8")
 BOTH = TEXT + "\n" + LIFECYCLE
-#: The ceiling for SKILL.md's body. The tested version is about 900 words (TESTING.md, "Limits of this test").
-MAX_WORDS = 1000
+#: The ceiling for SKILL.md's body: the cap every skill has (0.3 design, 14.1: the 1,800-word cap holds). The version
+#: tested on agents was about 900 words (TESTING.md, "Limits of this test"); the longer one is not yet measured (the
+#: routing measurement under validation/routing is built and has not been run).
+MAX_WORDS = skills.MAX_WORDS
 
 
 def _resolve(dotted: str) -> object:
@@ -88,11 +91,11 @@ def test_every_python_name_it_gives_exists() -> None:
 
 
 def test_every_tool_and_code_it_names_is_real() -> None:
-    import g6.mcp
+    from g6.mcp import registrations
 
-    source = open(g6.mcp.__file__, encoding="utf-8").read()
-    for tool in set(re.findall(r"`(g6_[a-z_]+|metaharness_[a-z_]+)`", BOTH)):
-        assert f"def {tool}(" in source, tool
+    registered = set(registrations.recorded()["g6"])   # what the server registers, wherever the tool is defined
+    named = set(re.findall(r"`(g6_[a-z_]+|metaharness_[a-z_]+)`", BOTH))
+    assert named and named <= registered, named - registered
     assert "Client-mediated consent may occur in the proposing session" in TEXT
     assert "recorded name is not authenticated" in TEXT
     assert "host-configured safety/injection evaluator" in TEXT
@@ -117,7 +120,8 @@ def test_it_names_only_templates_review_parameters_and_bindings_that_exist() -> 
     known = set(templates.TEMPLATES) | set(templates.FORMAL_TEMPLATES)
     named = set(re.findall(r"`([a-z_]+\.v\d+)`", TEXT))
     assert known <= named and named <= known, (known - named, named - known)
-    source = open(g6.mcp.__file__, encoding="utf-8").read()
+    # the tools live in more than one module of g6.mcp (the Context Engine's are in g6/mcp/knowledge.py)
+    source = "\n".join(p.read_text(encoding="utf-8") for p in sorted(Path(g6.mcp.__file__).parent.glob("*.py")))
     signature = re.search(r"def g6_review_patch\((.*?)\) -> dict", source, re.S).group(1)
     parameters = set(re.findall(r"(\w+):", signature))
     forms = [definition.bindings for definition in {**templates.TEMPLATES, **templates.FORMAL_TEMPLATES}.values()]
@@ -148,3 +152,55 @@ def test_after_a_no_in_the_form_the_agent_asks_and_offers_no_other_way() -> None
 def test_it_stays_short() -> None:
     body = TEXT.split("---", 2)[2]
     assert len(body.split()) <= MAX_WORDS
+
+
+def _guidance() -> dict[str, str]:
+    from g6.mcp import registrations
+
+    return registrations.guidance()
+
+
+def _route_section(route: str) -> str:
+    from g6.skills import routing
+
+    found = routing.section(TEXT, routing.load().routes[route].anchor)
+    assert found is not None, route
+    return " ".join(found.split())
+
+
+def test_one_question_is_the_default_and_three_is_gone() -> None:
+    """0.3 design 14.1: the guidance carries A's persistent one-question default in the commit that routes the
+    question tool, and no guidance text still tells an agent to ask three."""
+    for surface, text in _guidance().items():
+        assert not re.search(r"(at most|up to) (3|three) questions", " ".join(text.split())), surface
+    deliver = _route_section("review")
+    assert "One question per task by default, kept across calls." in deliver
+    assert "`g6_confirm_behaviour`" in deliver
+    assert "may allow one more question" in deliver and "set it to none" in deliver
+    assert "an unanswered question stays open in the report" in deliver
+    question = _route_section("question")
+    assert "one question per task by default" in question and "may allow more or set none" in question
+    assert "one question per task by default" in " ".join(LIFECYCLE.split())
+
+
+def test_the_question_has_no_fallback() -> None:
+    """A has no terminal fallback and no agent-supplied answer: its route offers no other way to an answer."""
+    question = _route_section("question")
+    for offered in ("python -P -m", "terminal", "relay the", "command"):
+        assert offered not in question, offered
+    assert "Only the person answers; you never answer for them" in question
+    deliver = _route_section("review")
+    assert "Only the person answers: no argument answers and you never answer for them." in deliver
+    step = deliver.split("**Hidden constraints.**", 1)[1].split("**Acceptance first", 1)[0]
+    assert "terminal" not in step and "relay" not in step
+
+
+def test_fallback_text_is_not_shared_across_routes() -> None:
+    """No route relays a terminal command: a person agrees only in the client's dialog, the meta-harness's route
+    included, since consent on the line took its terminal fallback away. The routes are read from the manifest, so a
+    new route that copies the text fails here."""
+    from g6.skills import routing
+
+    fallback = re.compile(r"terminal command|relay the", re.IGNORECASE)
+    relays = {route for route in routing.load().routes if fallback.search(_route_section(route))}
+    assert relays == set(), relays

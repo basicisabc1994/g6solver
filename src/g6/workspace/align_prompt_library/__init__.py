@@ -14,8 +14,10 @@ which every version is still readable by its number or digest.
     ops.render("summary", digest=stored.digest, values={"document": "the report", "audience": "a board"}).text
     ops.get(digest=stored.digest).content           # the same content, whatever happened to "summary" since
 
-Ops: ``put``, ``get``, ``history``, ``search``, ``render`` (strict: a missing or an extra value is refused), ``retire``
-and ``rollback``. Put, retire and rollback are sensitive because their changes persist into later tasks. What a caller says about a record (a
+Ops: ``put``, ``get``, ``history``, ``search``, ``render`` (strict: a missing or an extra value is refused), ``retire``,
+``rollback``, ``catalogue`` (the one prompt catalogue, ``catalogue.py``: each entry tied to a work mode and a pipeline
+step) and ``install_catalog``. Put, retire, rollback and install_catalog are sensitive because their changes persist
+into later tasks. What a caller says about a record (a
 reviewer, a test result, a safety tag) is kept under ``declared`` as their word and changes nothing. Results are
 ``qualified-draft`` at best: a stored version is G6's record, not a check that the prompt is good.
 

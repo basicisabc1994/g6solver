@@ -1,0 +1,19 @@
+{
+ "contract": 2,
+ "function": "friction",
+ "inputs": {},
+ "expected": {
+  "wall_seconds": null,
+  "provider_calls": null,
+  "tool_calls": 0,
+  "missing": [
+   "provider_retries",
+   "dialogs_outside_task_tools",
+   "no_g6_observation",
+   "provider_calls",
+   "wall_seconds",
+   "active_g6_seconds",
+   "wait_seconds"
+  ]
+ }
+}

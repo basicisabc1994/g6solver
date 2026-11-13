@@ -1,0 +1,23 @@
+{
+ "contract": 5,
+ "function": "feedback",
+ "inputs": {
+  "opt_in_env": "on",
+  "admitted": "diagnosis",
+  "operations": [
+   {
+    "op": "may_invite"
+   }
+  ]
+ },
+ "expected": {
+  "steps": [
+   [
+    false,
+    "the feedback question is not switched on: the measured steps before it have not passed"
+   ]
+  ],
+  "invitations": 0,
+  "closed": 0
+ }
+}

@@ -34,7 +34,7 @@ patch review is the first proving ground, not the limit of the product.
 - Publication, paid model studies and empirical improvement claims remain gated on
   their actual evidence. No broadening of supported Python versions in this milestone.
 
-## Verification and limitations
+## Checks and limitations
 
 Record commands and results here as each implementation slice completes. Committed
 recovery is not itself evidence that the integrated code passes.
@@ -106,14 +106,14 @@ recovery is not itself evidence that the integrated code passes.
 - Added a real FastMCP Client create/confirm/job/run journey and sensitive patch-tool refusal test; it passes.
 - Public headline now reports fixed arm D separately from post-hoc best-per-dataset selection. Exploratory winners
   carry selection and unadjusted-p-value caveats. Positioning preserves AI-for-AI as the objective, not a result.
-- V8 draft sampler verified the existing V2 parquet hash and read only three metadata columns: 8 Python dev tasks
+- V8 draft sampler checked the existing V2 parquet hash and read only three metadata columns: 8 Python dev tasks
   (2 reused OpenLibrary pilots) and 48 scored IDs; no scored text inspected, no model call. Protocol and split remain
   draft pending price/cap calibration, evaluator controls and final registration. Budget ceiling remaining $167.85.
 - v0.1.0 was not modified. Package development version becomes 0.1.1.dev0; no publication or shared-branch push.
 
 ### Independent review fix pass
 
-- Final read-only review identified three material findings, documented in CONTINUATION_REVIEW.md.
+- Final read-only review identified three material findings, documented in [CONTINUATION_REVIEW.md](CONTINUATION_REVIEW.md).
 - Fixed a reproduced sandbox parent-read escape through a child-created symlink. Output collection now refuses
   linked/special files and validates the bounded opened file. Synthetic sentinel only, no real secrets inspected.
 - Fixed overlapping evaluations spending the same held-out use: complete API operations acquire reentrant thread
@@ -154,13 +154,13 @@ recovery is not itself evidence that the integrated code passes.
   both registrations retained the exact interpreter and installed the client skill. No user settings changed.
 - Python 3.13.5 installed-wheel smoke passed; 39 selected composition/setup/workflow/MCP tests passed.
 - Codex direct app-server tool calls discover G6 and create workflows but deliver no consent prompt. G6
-  refuses confirmation and supplies the terminal fallback. Interactive human consent remains unverified.
+  refuses confirmation and supplies the terminal fallback. Interactive human consent has not been checked.
 - Frozen six-case patch trial executed under Linux bubblewrap. The selected-test baseline accepts two
   behaviorally wrong patches and one runner-policy violation; G6 blocks all six, including the correct patch.
   Ruling: report these as synthetic engineering observations, not application utility or improved correctness.
   Blocking everything and missing an unselected regression cannot substantiate the performance proposition.
 - Located original held source snapshots and private quote files outside the public checkout. A fresh
-  independent certificate reader verified every bound source hash and all 98 unchanged rule ASTs, reviewed
+  independent certificate reader checked every bound source hash and all 98 unchanged rule ASTs, reviewed
   changed shared enforcement code, and passed 109 selected tests (1 skip). Scoped delta attestations preserve
   the original source reader and findings; current bindings match all five components. Commit 185bd73.
 - Certificate numerical/seeded-defect prechecks are in progress with process-local Windows unconfined opt-in.
@@ -178,7 +178,7 @@ recovery is not itself evidence that the integrated code passes.
 - All five prechecks passed: sklearn 35, automl 36, bayesian 29, physical 24, care 26 (150 total).
   The first sklearn run was invalidated by a concurrent review-file update and discarded; its frozen rerun
   passed. Seeded-mutant SyntaxWarnings caused PowerShell stderr records, not numerical failures.
-- Final source version 0.1.1 committed at 98be89a. Independent reader verified that version-only delta and supplied
+- Final source version 0.1.1 committed at 98be89a. Independent reader checked that version-only delta and supplied
   supplemental attestations; all five bindings checked and committed at 09a6205 before issuance.
 - Normal issuance renewed all five certificates at a0f2995. All 150 receipts pass, no named gaps; all records
   remain qualified-draft. All five normal offline --check reruns then exited 0 and reproduced committed records.
@@ -221,7 +221,7 @@ recovery is not itself evidence that the integrated code passes.
 
 - Owner exercised discovery, lexical conflict handling, stop/continue composition controls, invalid mappings,
   terminal consent, proposal separation, one AppContainer evaluation and missing-safety-evidence promotion refusal.
-  These are owner observations, not unfamiliar-user or utility evidence; see releases/UAT_ROUND_1.md.
+  These are owner observations, not unfamiliar-user or utility evidence; see [releases/UAT_ROUND_1.md](releases/UAT_ROUND_1.md).
 - Reproduced Codex prompt loss: FastMCP's primitive wrapper adds a top-level schema title, rejected by Codex's
   typed schema parser, returning cancellation. Minimal SDK form schema now passes automated decline/cancel/accept
   on isolated Codex 0.164.0 and installed 0.165.0. No model turns or human UI claims. Exact-version old/new comparison
@@ -248,7 +248,7 @@ recovery is not itself evidence that the integrated code passes.
 - `ok` is false whenever the effective state is blocked-escalated; a blocked result keeps its answer in `result`, and
   `g6 invoke` exits 1 when not ok. `g6.invoke` is a checked Python door with the same label correction, door rule and
   sensitive-operation policy as MCP and the CLI; a parity test covers plain, sensitive, blocked and self-claimed
-  verified results. Drift fixes and contract wording ("declared structural obligations") are in the release notes.
+  `verified` results. Drift fixes and contract wording ("declared structural obligations") are in the release notes.
 - The patch-review utility protocol (V9) was registered and frozen before any Step 2 code; the owner approved its
   margins, agent and pool for the feasibility level only. No patch has been generated and nothing has been spent.
 - An independent reader declined to attest the contract wording twice until it was true of the code, then attested

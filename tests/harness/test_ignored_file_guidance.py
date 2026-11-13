@@ -52,7 +52,7 @@ def repo(tmp_path):
 
 
 def _recorded(monkeypatch) -> None:
-    passed = {"verdict": "passed", "said": "", "passed": 1, "failed": 0, "not_passed": 0, "total": 1,
+    passed = {"verdict": "passed", "said": "", "rootdir": "", "passed": 1, "failed": 0, "not_passed": 0, "total": 1,
               "deselected": 0, "test_outcomes": {ADD: {"setup": "passed", "call": "passed", "teardown": "passed"}},
               "collected_ids": [ADD], "omitted_ids": [], "changed": [], "output": "", "seconds": 0.25,
               "python": sys.executable, "interpreter_source": "g6", "command": "pytest",
@@ -60,7 +60,10 @@ def _recorded(monkeypatch) -> None:
               "degraded": False, "receipt": ""}
     monkeypatch.setattr(patch_review, "_execute", lambda root, ids, *, timeout_s, change=None, **kw: passed)
     monkeypatch.setattr(patch_review, "_execute_at_base",
-                        lambda change, ids, *, timeout_s, **kw: {"verdict": "not_run", "said": "not recorded"})
+                        lambda change, ids, *, timeout_s, **kw: {"verdict": "not_run", "said": "not recorded",
+                            'output': '', 'rootdir': '', 'test_outcomes': None,
+                            'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+                            'omitted_ids': []})
 
 
 def _review(repo):

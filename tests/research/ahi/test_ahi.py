@@ -20,7 +20,7 @@ from g6.research.ahi import (
     decide_promotion,
     validate_locally,
 )
-from g6.research.echa import ResearchDisabled
+from g6.research.ahi.flag import ResearchDisabled
 
 H1, H2 = "a" * 64, "b" * 64
 

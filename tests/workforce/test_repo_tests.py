@@ -13,6 +13,7 @@ path that leaves the repository are refused. Real git in temp folders; offline.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -378,3 +379,59 @@ def test_d15_a_changed_conftest_or_setup_names_no_test_by_its_stem(repo):
     (repo / "conftest.py").write_text("import pytest\n", encoding="utf-8")
     (repo / "setup.py").write_text("from setuptools import setup\nsetup()\n", encoding="utf-8")
     assert rt.derive_tests(rt.change(repo)) == ([], 0)
+
+
+# --- the diff as an identity: two files that run differently must never read the same ----------------------------------------------
+
+#: What ``str.splitlines`` cuts at, and Python's tokenizer and git do not.
+NOT_NEWLINES = ["\u2028", "\u2029", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85"]
+ORDINARY = ["", "\n", "x = 1", "x = 1\n", "x = 1\ny = 2\n", "x = 1\n\n\n", "\n\nx = 1\n", "a\r\nb\r\n", "a\rb\n",
+            "    tab\tand  spaces  \n", "caf\u00e9 \u4e2d\u6587 \U0001f600\n"]
+
+
+@pytest.mark.parametrize("mark", NOT_NEWLINES, ids=repr)
+def test_a_new_file_that_differs_only_where_its_lines_break_is_another_patch(tmp_path, mark):
+    repo = make_repo(tmp_path)
+    new = repo / "new.py"
+    new.write_bytes(f"value = 'safe'\n# comment{mark}value = 'unsafe'\n".encode("utf-8"))
+    before = rt.diff_text(rt.change(repo))
+    new.write_bytes(b"value = 'safe'\n# comment\nvalue = 'unsafe'\n")
+    assert rt.diff_text(rt.change(repo)) != before, "a comment became code and the patch read the same"
+
+
+@pytest.mark.parametrize("mark", NOT_NEWLINES, ids=repr)
+def test_a_new_files_comment_reads_as_one_comment(tmp_path, mark):
+    repo = make_repo(tmp_path)
+    (repo / "new.py").write_bytes(f"# comment{mark}value = 'unsafe'\n".encode("utf-8"))
+    text = rt.diff_text(rt.change(repo))
+    assert "@@ -0,0 +1,1 @@" in text and f"+# comment{mark}value = 'unsafe'\n" in text
+
+
+@pytest.mark.parametrize("text", ORDINARY, ids=repr)
+def test_on_ordinary_text_a_new_file_reads_to_the_byte_as_it_did(tmp_path, text):
+    repo = make_repo(tmp_path)
+    (repo / "new.py").write_bytes(text.encode("utf-8"))
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").splitlines()      # as the file is read, then as it was cut
+    shown = "".join(f"{line}\n" for line in lines)
+    named = ("" if shown == text else       # where the text is not the bytes, a line names them, so two files are two patches
+             f"\\ G6: new.py shows here only in part; its bytes have SHA-256 {hashlib.sha256(text.encode('utf-8')).hexdigest()}\n")
+    assert rt.diff_text(rt.change(repo)) == (f"--- /dev/null\n+++ b/new.py\n@@ -0,0 +1,{len(lines)} @@\n"
+                                             + "".join(f"+{line}\n" for line in lines) + named)
+
+@pytest.mark.parametrize("mark", NOT_NEWLINES, ids=repr)
+def test_a_new_file_reads_as_git_reads_a_tracked_one(tmp_path, mark):
+    """So every reader of the diff already sees what a new file now gives it."""
+    repo = make_repo(tmp_path)
+    (repo / "calc.py").write_bytes(f"# comment{mark}value = 'unsafe'\n".encode("utf-8"))
+    (repo / "new.py").write_bytes(f"# comment{mark}value = 'unsafe'\n".encode("utf-8"))
+    text = rt.diff_text(rt.change(repo))
+    assert text.count(f"\n+# comment{mark}value = 'unsafe'\n") == 2
+
+def test_a_skip_past_a_form_feed_in_a_new_test_file_is_seen_by_the_scan(tmp_path):
+    """Python runs that call, so a new file's diff must not lose it to the scan: cutting the file whole hands the scan a line
+    that its own cut must not break."""
+    from g6.coding_agent_gate import scan_diff
+
+    repo = make_repo(tmp_path)
+    (repo / "test_new.py").write_bytes(b"import pytest\n\x0cpytest.skip('later')\n")
+    assert "skip or xfail marker added" in scan_diff(rt.diff_text(rt.change(repo)))

@@ -29,6 +29,7 @@ from types import MappingProxyType
 from typing import Any
 
 from g6.core.ledger import digest
+from g6.core.reading import files_under, sha256_of
 
 ROLES = ("builder", "learner", "reviewer", "evaluator")
 ENFORCEMENT = "software_check_in_process"
@@ -65,19 +66,18 @@ def _inside(path: str, root: str) -> bool:
 
 
 def _files(roots: Sequence[Path]) -> list[tuple[int, Path, str]]:
-    """Every sealed file as (root position, file, name under the root)."""
+    """Every sealed file as (root position, file, name under the root), listed by the one reader (``files_under``): a
+    folder under a sealed root that cannot be listed raises ``Unreadable``, never reads as holding nothing."""
     found = []
     for index, root in enumerate(roots):
-        if root.is_file():
-            found.append((index, root, ""))
-        else:
-            found += [(index, p, p.relative_to(root).as_posix()) for p in sorted(root.rglob("*")) if p.is_file()]
+        found += [(index, p, "" if p == root else p.relative_to(root).as_posix()) for p in files_under(root)]
     return found
 
 
 def _manifest(roots: Sequence[Path]) -> dict[str, str]:
-    """Every sealed file's name (its root's position and its path under it) and sha256."""
-    return {f"{index}/{name}": hashlib.sha256(path.read_bytes()).hexdigest() for index, path, name in _files(roots)}
+    """Every sealed file's name (its root's position and its path under it) and sha256, each read by the one reader
+    (``sha256_of``): a file that cannot be read raises ``Unreadable``, never stands as unchanged."""
+    return {f"{index}/{name}": sha256_of(path) for index, path, name in _files(roots)}
 
 
 @dataclass(frozen=True)
@@ -112,7 +112,9 @@ class Vault:
         return any(_inside(real, root) for root in self.roots)
 
     def verify_unchanged(self, *, ledger: Any = None) -> tuple[str, ...]:
-        """What changed under the vault's roots since it was sealed; a change is recorded as an incident."""
+        """What changed under the vault's roots since it was sealed; a change is recorded as an incident. Sealed bytes or
+        a folder under a sealed root that cannot be read raise ``g6.core.reading.Unreadable``: nothing unread is said to
+        be unchanged."""
         now = _manifest([Path(r) for r in self.roots])
         problems = [f"{name} changed since sealing" for name in sorted(self.manifest)
                     if name in now and now[name] != self.manifest[name]]

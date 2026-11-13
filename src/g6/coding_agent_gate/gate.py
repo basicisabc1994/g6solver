@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from g6.coding_agent_gate.protected_paths import ProtectedPathsPolicy
 
-from g6.coding_agent_gate.detectors import acknowledges_unverified, overclaims, risk_hits, scan_diff, shortcut_hits
+from g6.coding_agent_gate.detectors import NEW_TEST_MARKER, acknowledges_unverified, overclaims, risk_hits, scan_diff, shortcut_hits
 from g6.coding_agent_gate.evidence import Evidence, VerifierResult, is_placeholder
 from g6.core.reliability_envelope import envelope_fields, warning_card
 
@@ -34,6 +34,7 @@ SEVERITY: dict[str, str] = {
     "shortcut_proposed": "block",
     "shortcut_in_answer": "block",
     "shortcut_in_diff": "block",
+    "marker_on_new_test": "block",          # this gate has no other check on such a diff; patch review, which runs the tests, reads it as evidence
     "no_task_contract": "block",            # require_task_contract=True (the default)
     "no_task_contract_advisory": "revise",  # require_task_contract=False
     "review_missing": "needs_review",
@@ -313,7 +314,10 @@ def verify_answer(task: str, answer: str, *, evidence: Iterable[Evidence] = (),
     if text_hits:
         f.append(_finding("shortcut_in_answer", "The answer describes removing a check or control (text tripwire): "
                           + ", ".join(text_hits) + "."))
-    if diff_hits:
+    if diff_hits == [NEW_TEST_MARKER]:
+        f.append(_finding("marker_on_new_test", "The diff adds a skip or xfail marker to a test that looks new. A diff cannot show that "
+                          "the test is new, so read it: it may override or replace one that already existed."))
+    elif diff_hits:
         f.append(_finding("shortcut_in_diff", "The diff removes or neutralises a check: " + ", ".join(diff_hits) + "."))
     if is_placeholder(task_contract):
         f.append(_finding("no_task_contract" if require_task_contract else "no_task_contract_advisory",

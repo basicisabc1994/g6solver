@@ -7,7 +7,7 @@ from g6.harness import Check
 from g6.metaharness import Model, Profile, Suite, SuiteCase, Workflow, adapt
 
 
-def harness(tmp_path, *, cost=4.0, missing=False, objectives=None):
+def harness(tmp_path, *, cost=4.0, missing=False, objectives=None, policy=None):
     receipt = {}
     def respond(system, user):
         improved = "CAREFUL" in system
@@ -20,6 +20,8 @@ def harness(tmp_path, *, cost=4.0, missing=False, objectives=None):
                   {"local": Model(FakeLLM(respond), usage=None if missing else lambda: dict(receipt))})
     if objectives is not None:
         wf = replace(wf, objectives=objectives)
+    if policy is not None:
+        wf = replace(wf, policy=policy)
     mh = adapt(wf, workspace=tmp_path, clock=lambda: 0.0)
     mh.confirm("Ada")
     proposal = mh.candidate(Profile(routing={"answer": "local"}, prompt="CAREFUL"), proposer="Bo")["proposal"]

@@ -72,6 +72,35 @@ def scrub(text: str) -> str:
     return text
 
 
+def secret_spans(text: str) -> list[tuple[int, int]]:
+    """Where in ``text`` each value ``scrub`` masks lies, as ``(start, end)`` in order: ``scrub``'s own rules, run as ``scrub``
+    runs them, one after another on what the rules before left, each mask traced back to the part of ``text`` it took the
+    place of. So a rule that matches only once an earlier mask joined two lines (a password around a private key) is found
+    here too, and ``text`` with ``MASK`` in place of each span is ``scrub(text)``. A caller that shows ``text`` in another
+    form, as a diff shows a file with a mark before each line, can mask the same values where they stand there."""
+    if not text:
+        return []
+    shown, origin = text, [(at, at + 1) for at in range(len(text))]
+    masked = [False] * len(text)
+    for pattern, replacement in _RULES:
+        before, _, after = replacement.partition(MASK)
+        parts, origins, flags, at = [], [], [], 0
+        for match in pattern.finditer(shown):
+            kept, tail = match.expand(before) if before else "", match.expand(after) if after else ""
+            start, end = match.start() + len(kept), match.end() - len(tail)
+            if start >= end:
+                continue
+            span = (origin[start][0], origin[end - 1][1])
+            parts += [shown[at:start], MASK]
+            origins += [*origin[at:start], *[span] * len(MASK)]
+            flags += [*masked[at:start], *[True] * len(MASK)]
+            at = end
+        if parts:
+            shown = "".join(parts) + shown[at:]
+            origin, masked = origins + origin[at:], flags + masked[at:]
+    found = sorted({span for span, flag in zip(origin, masked) if flag})
+    return [span for span in found if not any(o[0] <= span[0] and span[1] <= o[1] and o != span for o in found)]
+
 # A real top-level domain (two letters or more), or localhost, is required, so ``pkg@1.2.3``, ``@scope/pkg`` and
 # ``HEAD@{0}`` stay; ``%40`` is an at sign written into a URL.
 _EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+(?:@|%40)(?:[A-Za-z0-9.\-]+\.[A-Za-z]{2,}|localhost\b)")
@@ -152,4 +181,4 @@ def sanitize_stack_trace(text: str) -> list[dict[str, object]]:
 
 
 __all__ = ["EMAIL_MASK", "HOME_MASK", "HOST_MASK", "IP_MASK", "KEPT_TEXT_MASKS", "MASK", "MAX_FRAME_FIELD", "TEMP_MASK",
-           "mask_emails", "mask_hosts", "mask_paths", "sanitize_stack_trace", "scrub"]
+           "mask_emails", "mask_hosts", "mask_paths", "sanitize_stack_trace", "scrub", "secret_spans"]

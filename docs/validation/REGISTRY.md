@@ -589,3 +589,4 @@ nothing about how often G6 helps. They are separate from V9 and V10 and touch no
 - **Owner's decision:** 2026-10-29, to use the API credits before they expire on 4 November.
 - **State:** no project or task selected, no image built, no run, nothing spent.
 - **Changes:** none. A change is a new dated section at the end of the plan, written before the runs it affects.
+- **Round 3 (appended 2026-10-30, before its runs):** a development round, not a validation: the same ten bugs, which have been seen, with three arms (A: Claude Code alone; B: G6 as shipped; C: G6 and a prompt addendum to check each requirement with G6's formal tools), on `claude-haiku-4-5`, then `claude-sonnet-5-5`, then `claude-fable-5-1`, Sonnet's arm A twice per bug, under round 3's own hard stop of $100 and its ledger. The design is the plan's dated section "Round 3 (2026-10-30): formal methods".

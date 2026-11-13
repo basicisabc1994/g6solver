@@ -9,14 +9,12 @@ import pytest
 from g6.research.echa import (
     Ledger,
     LedgerError,
-    ResearchDisabled,
     StandardRef,
 )
 
 
 @pytest.fixture
-def custody(monkeypatch):
-    monkeypatch.setenv("G6_ECHA_RESEARCH", "1")
+def custody():
     return importlib.import_module("g6.research.echa.custody")
 
 
@@ -91,13 +89,16 @@ def test_missing_interrupted_receipt_cannot_pass(custody):
             custody.checked_evidence(raw, expected, predicate_id="value")
 
 
-def test_default_off_is_checked_at_use(custody, monkeypatch):
+def test_there_is_no_research_flag_and_the_binding_is_the_graduated_one(custody, monkeypatch):
+    # G6 0.3 removed ECHA's flag; the binding structure graduated into g6.evidence.mapping, the same class
     _, expected = binding(custody)
-    monkeypatch.delenv("G6_ECHA_RESEARCH")
-    with pytest.raises(ResearchDisabled):
-        custody.decode_artifact(b'{"value":7}')
-    with pytest.raises(ResearchDisabled):
-        custody.checked_evidence(reply(expected), expected, predicate_id="value")
+    monkeypatch.delenv("G6_ECHA_RESEARCH", raising=False)
+    assert custody.decode_artifact(b'{"value":7}') == {"value": 7}
+    assert custody.checked_evidence(reply(expected), expected, predicate_id="value").result == "pass"
+    from g6.evidence.mapping import CheckBinding
+
+    assert custody.CheckBinding is CheckBinding and custody.binding_of(
+        custody.checked_evidence(reply(expected), expected, predicate_id="value")) == expected
 
 
 def test_receipt_cannot_be_reassigned_to_another_predicate(custody):

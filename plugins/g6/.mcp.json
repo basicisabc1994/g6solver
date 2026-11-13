@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "g6": {
+      "command": "python",
+      "args": ["-P", "-c", "from g6.mcp import main; main()"]
+    }
+  }
+}

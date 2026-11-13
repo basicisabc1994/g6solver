@@ -30,12 +30,7 @@ def reg() -> CognitiveTaskRegistry:
     return CognitiveTaskRegistry({p.model_id: p for p in rows})
 
 
-class Failing:
-    def __init__(self, reason: str) -> None:
-        self.reason = reason
-
-    def complete(self, system: str, user: str, *, max_tokens: int = llm.DEFAULT_MAX_TOKENS) -> str:
-        raise LLMError(self.reason)
+Failing = llm.UnusableModel
 
 
 @pytest.fixture
@@ -76,8 +71,11 @@ def test_the_chain_is_the_route_and_never_reaches_a_provider_you_did_not_allow(r
     assert both.caller_for("summarization").names == ("ollama/big:32b", "ollama/small:7b", "openrouter/acme/paid")
 
 
-def test_the_default_builder_uses_the_core_callers_with_the_model_name_the_provider_expects(reg, posts, key_file):
+def test_the_default_builder_uses_the_core_callers_with_the_model_name_the_provider_expects(
+        reg, posts, key_file, accepted_cloud_dialog):
     key_file("OPENROUTER_API_KEY=placeholder-key\n")
+    accepted_cloud_dialog('fixture:router-input', 'openrouter:api', text='s\nu')
+    accepted_cloud_dialog('model_inputs', 'openrouter:api', text='s\nu')
     env = {"OLLAMA_BASE_URL": "http://127.0.0.1:9"}
     caller = TaskRouter(["ollama", "openrouter"], registry=reg, env=env).caller_for("summarization")
     assert caller.complete("s", "u") == "from openrouter" and caller.answered == "openrouter/acme/paid"
@@ -106,10 +104,12 @@ def test_a_key_in_a_dot_env_file_is_never_read(reg, posts, tmp_path, monkeypatch
 
 
 def test_the_key_file_is_read_when_the_caller_is_built_and_the_environment_never_written(reg, posts, monkeypatch,
-                                                                                          key_file):
+                                                                                          key_file, accepted_cloud_dialog):
     # owner ruling 2026-10-21: a key set in the environment (for another program) is not one the person gave G6
     monkeypatch.setenv("OPENROUTER_API_KEY", "placeholder-env")
     key_file("OPENROUTER_API_KEY=placeholder-file\n")
+    accepted_cloud_dialog('fixture:router-input', 'openrouter:api', text='s\nu')
+    accepted_cloud_dialog('model_inputs', 'openrouter:api', text='s\nu')
     before = dict(os.environ)
     caller = TaskRouter(["openrouter"], registry=reg).caller_for("summarization")
     assert caller.complete("s", "u") == "from openrouter"
@@ -148,3 +148,13 @@ def test_an_unknown_provider_is_refused_when_the_router_is_made():
 def test_on_the_committed_table_the_default_route_is_a_local_model():
     caller = TaskRouter(build=lambda provider, model_id: FakeLLM()).caller_for("code_generation")
     assert caller.names and all(n.startswith("ollama/") for n in caller.names)
+
+
+def test_cloud_fallback_without_a_dialog_grant_never_reaches_the_provider(reg, posts, key_file):
+    from g6.core.cloud_consent import Source, request_sources
+    key_file('OPENROUTER_API_KEY=placeholder-key\n')
+    caller = TaskRouter(['openrouter'], registry=reg).caller_for('summarization')
+    with request_sources((Source.text('fixture:router-input', 'input', 's\nu'),)):
+        with pytest.raises(LLMError, match='G6_E_CLOUD_CONSENT_REQUIRED'):
+            caller.complete('s', 'u')
+    assert posts == []

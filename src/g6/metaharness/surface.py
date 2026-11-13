@@ -25,7 +25,7 @@ from typing import Any
 from g6.metaharness.api import MetaHarness, _blocked, adapt
 from g6.metaharness.gate import GateDecision
 from g6.metaharness.propose import SearchStrategy
-from g6.metaharness.schema import APPROVAL_REQUIRED, PROTECTED, SCHEMA
+from g6.metaharness.schema import APPROVAL_REQUIRED, CONSENT_DIALOG_ONLY, PROTECTED, SCHEMA, WORKFLOW_CHANGED
 
 ENV = "G6_METAHARNESS"
 NOT_CONFIGURED = "G6_E_META_NOT_CONFIGURED"
@@ -100,11 +100,23 @@ def as_json(envelope: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def how_to_approve(workflow: str, mh: MetaHarness, decision_digest: str) -> str:
-    """Terminal fallback for a trusted host; names are recorded, never authenticated."""
-    return (f'From the same project directory: g6 workflow approve {workflow} {decision_digest} '
-            '--candidate <candidate_digest-on-card> --as "Your name". Or use metaharness_approve with '
-            'a client that presents the consent prompt, including the proposing session.')
+def in_the_dialog(tool: str) -> str:
+    """Where a person's confirmation, approval or rollback is given: the client's dialog, and nowhere else."""
+    return (f"Call {tool} from a client session that shows the dialog (MCP elicitation), including the proposing "
+            "session: the person answers there, and there is no other way.")
+
+
+def workflow_changed(when: str = "") -> dict[str, Any]:
+    """A digest the person read is not the workflow's now: its own code, and nothing applied."""
+    return _blocked(WORKFLOW_CHANGED, f"the workflow changed{when}: its digest is not the one the person read",
+                    "No consent was applied. Inspect the workflow (metaharness_inspect), then ask about the digest that "
+                    "stands.", consent_status="workflow_changed")
+
+
+def dialog_only(operation: str) -> dict[str, Any]:
+    """The command line's answer to ``g6 workflow confirm`` or ``approve``: it records nothing (frozen surface)."""
+    return _blocked(CONSENT_DIALOG_ONLY, f"g6 workflow {operation} records nothing: a person's {operation} is given only "
+                    "in an MCP client's dialog", in_the_dialog(f"metaharness_{operation}"))
 
 
 class Surface:
@@ -196,18 +208,17 @@ class Surface:
 
     @_surface_operation
     def confirm(self, workflow: str, workflow_digest: str, *, answer: str | None) -> dict[str, Any]:
+        """``workflow_digest``: the digest the person agreed to, which the harness checks again holding the workspace's
+        lock, immediately before it records, and records."""
         mh = self.harness(workflow)
         if isinstance(mh, dict):
             return mh
         if mh.workflow.digest() != workflow_digest:
-            return _blocked(APPROVAL_REQUIRED, "workflow digest does not match; inspect the current workflow",
-                            "No consent was applied. Inspect the current digest before confirming.",
-                            consent_status="workflow_changed")
+            return workflow_changed()
         if not answer or not answer.strip():
-            return _blocked(APPROVAL_REQUIRED, "client consent was not supplied",
-                            f'From the project directory: g6 workflow confirm {workflow} {mh.workflow.digest()} '
-                            '--as "Your name" after inspecting that workflow.')
-        return as_json(mh.confirm(answer.strip()))
+            return _blocked(APPROVAL_REQUIRED, "no person confirmed: a name comes only from the client's dialog",
+                            in_the_dialog("metaharness_confirm"))
+        return as_json(mh.confirm(answer.strip(), workflow_digest=workflow_digest))
 
     @_surface_operation
     def propose_code(self, workflow: str, files: dict[str, str], *, hypothesis: str, session: str) -> dict[str, Any]:
@@ -306,8 +317,8 @@ class Surface:
         if refused is not None:
             return refused
         if not answer or not answer.strip():
-            return _blocked(APPROVAL_REQUIRED, "no person approved: the client did not ask you, or you declined",
-                            how_to_approve(workflow, mh, decision_digest))
+            return _blocked(APPROVAL_REQUIRED, "no person approved: a name comes only from the client's dialog",
+                            in_the_dialog("metaharness_approve"))
         consent = {"method": "mcp-elicitation", "identity_authenticated": False,
                        "decision_digest": decision_digest, "candidate_digest": decision.candidate_digest,
                        "proposal_digest": decision.proposal_digest, "session": session,
@@ -351,7 +362,7 @@ class Surface:
         if binding is not None:
             refused, _, current = self.rollback_check(workflow, version)
             if refused is not None or current != binding:
-                return refused or _blocked(APPROVAL_REQUIRED, "workflow changed after the rollback prompt")
+                return refused or workflow_changed(" after the rollback prompt")
         return as_json(mh.rollback(version, accepted_by=answer.strip()))
 
 

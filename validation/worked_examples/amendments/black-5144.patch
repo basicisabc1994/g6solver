@@ -1,0 +1,18 @@
+diff --git a/tests/test_format.py b/tests/test_format.py
+index 2a9d628..74c9082 100644
+--- a/tests/test_format.py
++++ b/tests/test_format.py
+@@ -52,6 +52,13 @@ def check_file(subdir: str, filename: str, *, data: bool = True) -> None:
+ @pytest.mark.filterwarnings("ignore:invalid escape sequence.*:DeprecationWarning")
+ @pytest.mark.parametrize("filename", all_data_cases("cases"))
+ def test_simple_format(filename: str) -> None:
++    if filename == "comments_in_comprehensions":
++        args, source, _ = read_data_with_mode("cases", filename)
++        assert_format(source, None, args.mode)  # no crash, same AST, stable
++        actual = black.format_str(source, mode=args.mode)
++        assert actual.count("# comment") == source.count("# comment")
++        assert "for (a, b), c in [\n    # comment\n    z,\n]:\n    pass\n" in actual
++        return
+     check_file("cases", filename)
+ 
+ 

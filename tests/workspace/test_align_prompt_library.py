@@ -18,8 +18,8 @@ from g6.mcp import describe_reply, invoke_reply
 from g6.workspace import _envelope as E
 from g6.workspace.align_prompt_library import Library, ops
 
-OPS = ["put", "get", "history", "search", "render", "retire", "rollback"]
-SENSITIVE = ["put", "retire", "rollback"]
+OPS = ["put", "get", "history", "search", "render", "retire", "rollback", "catalogue", "install_catalog"]
+SENSITIVE = ["put", "retire", "rollback", "install_catalog"]
 ALLOW = frozenset(f"align_prompt_library.{op}" for op in SENSITIVE)
 SUMMARY = "Summarise {{document}} for {{audience}} in three sentences."
 

@@ -56,6 +56,8 @@ def observe(objects: Iterable[Mapping[str, Any]], *, saved: Mapping[str, str] | 
     reviews: list[dict[str, Any]] = []
     reports: list[str] = []
     shown: list[str] = []
+    called: dict[str, int] = {}
+    tool_search = 0
     for obj in objects:
         if obj.get("type") == "system" and obj.get("subtype") == "init":
             status = {s.get("name"): s.get("status") for s in obj.get("mcp_servers") or []}
@@ -73,6 +75,9 @@ def observe(objects: Iterable[Mapping[str, Any]], *, saved: Mapping[str, str] | 
             elif block.get("type") == "tool_use":
                 name = str(block.get("name") or "")
                 tools[str(block.get("id"))] = name
+                tool_search += name == "ToolSearch"
+                if name.startswith("mcp__g6__"):
+                    called[name[len("mcp__g6__"):]] = called.get(name[len("mcp__g6__"):], 0) + 1
                 if name.endswith("g6_review_patch"):
                     reviews.append({"round": len(reviews) + 1, "instances": bool((block.get("input") or {})
                                                                                 .get("template_instances")),
@@ -103,6 +108,7 @@ def observe(objects: Iterable[Mapping[str, Any]], *, saved: Mapping[str, str] | 
     refused_bindings = [r for r in reviews if r["reply"] and r["reply"]["bindings_refusal"]]
     first_refusal = min((r["round"] for r in refused_bindings), default=None)
     return {"server": server,
+            "tool_use": {"tool_search": tool_search, "g6_calls": sum(called.values()), "g6_by_tool": dict(sorted(called.items()))},
             "replies": [{k: v for k, v in r["reply"].items() if k != "bindings_refusal"} for r in reviews if r["reply"]],
             "report_shown_verbatim": [any(_norm(rep) in s for s in said) for rep in reports],
             "templates": {"rounds_with_instances": sum(r["instances"] for r in reviews),

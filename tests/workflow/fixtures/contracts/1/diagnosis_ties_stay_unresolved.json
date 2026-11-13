@@ -1,0 +1,91 @@
+{
+ "contract": 1,
+ "function": "diagnose",
+ "events": [
+  {
+   "run": "q",
+   "kind": "question_pending",
+   "native": "q1",
+   "seconds": 0,
+   "refs": [
+    [
+     "question",
+     "q1"
+    ]
+   ]
+  },
+  {
+   "run": "j1",
+   "kind": "run_started",
+   "seconds": 10,
+   "data": {
+    "origin_kind": "review_job"
+   }
+  },
+  {
+   "run": "j1",
+   "kind": "review_finished",
+   "native": "j1",
+   "seconds": 15,
+   "data": {
+    "outcome": "insufficient_evidence"
+   }
+  },
+  {
+   "run": "j2",
+   "kind": "run_started",
+   "seconds": 20,
+   "data": {
+    "origin_kind": "review_job"
+   }
+  },
+  {
+   "run": "j2",
+   "kind": "review_finished",
+   "native": "j2",
+   "seconds": 25,
+   "data": {
+    "outcome": "insufficient_evidence"
+   }
+  }
+ ],
+ "inputs": {
+  "goal": "add returns the sum",
+  "assessment": {
+   "report": "REPORT",
+   "outcome": "defect_detected",
+   "requirements": [
+    {
+     "id": "R1",
+     "status": "failed",
+     "provenance": "stated",
+     "checks": [
+      {
+       "id": "tests/test_calc.py::test_add",
+       "verdict": "failed",
+       "provenance": "stated"
+      }
+     ]
+    }
+   ],
+   "reasons": []
+  }
+ },
+ "expected": {
+  "status": "several",
+  "rules": [
+   "accepted_check_blocks",
+   "question_waits"
+  ],
+  "obstacles": [
+   "failing_accepted_check",
+   "pending_question"
+  ],
+  "overlapping": false,
+  "capacity_calculated": false,
+  "lines": [
+   "- **2 hypotheses, not findings, and none preferred:** an accepted check for the stated outcome fails on this patch, so the outcome may wait on it; a behaviour question has waited through two reviews that ended with insufficient evidence.",
+   "- **What would count against each, and the check that tells its explanations apart:** in this reply's workflow field. Nothing is ranked."
+  ]
+ }
+}

@@ -538,6 +538,167 @@ def test_selfcheck_needs_the_fix_to_pass_and_nothing_to_fail(tmp_path, monkeypat
     assert not we.selfcheck(ctx, TASK)["ok"]          # a check an empty patch passes shows nothing
 
 
+def _amendment(tmp_path, monkeypatch):
+    folder = tmp_path / "amendments"
+    folder.mkdir()
+    (folder / f"{TASK.id}.patch").write_text("a diff", encoding="utf-8")
+    monkeypatch.setattr(we, "AMENDMENTS", folder)
+    return folder
+
+
+def test_only_a_bug_with_a_diff_has_an_amendment(tmp_path, monkeypatch):
+    folder = _amendment(tmp_path, monkeypatch)
+    assert we.amendment(TASK.id) == folder / f"{TASK.id}.patch"
+    assert we.amendment("another-1") is None
+
+
+def test_the_amendment_goes_on_after_the_maintainers_tests_and_before_pytest(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+    docker = FakeDocker()
+    we._oracle_run(_ctx(tmp_path, docker), TASK, amended=True)
+    text = [" ".join(call) for call in docker.calls]
+    at = [next(i for i, t in enumerate(text) if want in t)
+          for want in ("/oracle/fixed", "we-amend.patch", "git apply --whitespace=nowarn /tmp/we-amend.patch", "-m pytest")]
+    assert at == sorted(at) and len(set(at)) == 4
+
+
+def test_the_maintainers_tests_stay_as_they_are_unless_an_amended_score_is_asked_for(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+    docker = FakeDocker()
+    we._oracle_run(_ctx(tmp_path, docker), TASK)
+    assert not any("we-amend" in " ".join(call) for call in docker.calls)
+
+
+def test_a_refused_amendment_stops_the_score(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+
+    class NoApply(FakeDocker):
+        def __call__(self, *args, input=None, timeout=None, env=None):
+            if "/tmp/we-amend.patch" in " ".join(args) and args[0] == "exec":
+                return Done(b"", 1)
+            return super().__call__(*args, input=input, timeout=timeout, env=env)
+
+    with pytest.raises(RuntimeError, match="the amendment"):
+        we._oracle_run(_ctx(tmp_path, NoApply()), TASK, amended=True)
+
+
+def _amended_oracle(on_parent, on_fix):
+    def oracle_run(ctx_, task, *, fix=False, amended=False, **_):
+        assert amended
+        return {"results": on_fix if fix else on_parent}
+    return oracle_run
+
+
+def test_amend_keeps_a_test_that_tells_the_parent_from_the_fix(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+    ctx = _ctx(tmp_path, FakeDocker())
+    monkeypatch.setattr(we, "_oracle_run", _amended_oracle({"t::a": "failed", "t::b": "passed"},
+                                                           {"t::a": "passed", "t::b": "passed"}))
+    found = we.amend(ctx, TASK)
+    assert found["ok"] and found["fail_to_pass"] == ["t::a"] and found["lost"] == [] and found["parent_failed"] == 1
+    assert found["sha256"] and we.latest(ctx.archive, "amend", TASK.id)["record"]["ok"]
+
+
+def test_amend_refuses_a_diff_that_leaves_no_test_telling_them_apart(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+    ctx = _ctx(tmp_path, FakeDocker())
+    both = {"t::a": "passed", "t::b": "passed"}
+    monkeypatch.setattr(we, "_oracle_run", _amended_oracle(both, both))
+    assert not we.amend(ctx, TASK)["ok"]
+
+
+def test_an_unreadable_parent_report_is_no_failure_on_the_parent(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+    ctx = _ctx(tmp_path, FakeDocker())
+    monkeypatch.setattr(we, "_oracle_run", _amended_oracle({}, {"t::a": "passed", "t::b": "passed"}))
+    assert not we.amend(ctx, TASK)["ok"] and we.latest(ctx.archive, "amend", TASK.id) is None
+
+
+def test_amend_needs_a_failure_it_saw_on_the_parent(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+    ctx = _ctx(tmp_path, FakeDocker())
+    monkeypatch.setattr(we, "_oracle_run", _amended_oracle({"t::b": "passed"}, {"t::a": "passed", "t::b": "passed"}))
+    assert not we.amend(ctx, TASK)["ok"]           # t::a is absent on the parent, which shows nothing about it
+
+
+def test_amend_lists_every_maintainers_test_the_fix_no_longer_passes(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+    ctx = _ctx(tmp_path, FakeDocker())
+    monkeypatch.setattr(we, "_oracle_run", _amended_oracle({"t::c": "failed"}, {"t::c": "passed"}))
+    assert we.amend(ctx, TASK)["lost"] == ["t::a", "t::b"]
+
+
+def test_amend_needs_a_diff(tmp_path, monkeypatch):
+    monkeypatch.setattr(we, "AMENDMENTS", tmp_path)
+    with pytest.raises(SystemExit):
+        we.amend(_ctx(tmp_path, FakeDocker()), TASK)
+
+
+def _amended_run(ctx, folder):
+    """A good control for the diff as it stands, and a run to score."""
+    ctx.archive.start("amend", TASK.id).finish({"fail_to_pass": ["t::z"], "pass_to_pass": [], "ok": True, "sha256":
+                                                c.sha256_file(folder / f"{TASK.id}.patch")}, "finished")
+    run = ctx.archive.start("run", TASK.id)
+    (run.path / "final.patch").write_text("a patch", encoding="utf-8")
+    (run.path / "rounds").mkdir()
+    (run.path / "rounds" / "round-1.patch").write_text("an earlier patch", encoding="utf-8")
+    return run
+
+
+def test_an_amended_check_scores_the_final_patch_on_the_amended_lists(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path, FakeDocker())
+    run = _amended_run(ctx, _amendment(tmp_path, monkeypatch))
+    seen = []
+
+    def oracle_run(ctx_, task, *, patch=None, amended=False, label="", **_):
+        seen.append((label, amended))
+        return {"results": {"t::z": "passed"}}
+
+    monkeypatch.setattr(we, "_oracle_run", oracle_run)
+    found = we.check(ctx, TASK, run.rel, amended=True)
+    assert seen == [("final", True)] and found["checks"][0]["passes"] and found["amended"]
+
+
+def test_an_amended_check_needs_the_amend_step_first(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+    ctx = _ctx(tmp_path, FakeDocker())
+    with pytest.raises(SystemExit):
+        we.check(ctx, TASK, amended=True)
+
+
+def test_a_newer_refusal_is_not_passed_over_for_an_older_good_control(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path, FakeDocker())
+    run = _amended_run(ctx, _amendment(tmp_path, monkeypatch))
+    ctx.archive.start("amend", TASK.id).finish({"fail_to_pass": [], "pass_to_pass": [], "ok": False}, "refused")
+    with pytest.raises(SystemExit):
+        we.check(ctx, TASK, run.rel, amended=True)
+
+
+def test_a_changed_diff_cannot_use_the_control_of_the_old_one(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path, FakeDocker())
+    folder = _amendment(tmp_path, monkeypatch)
+    run = _amended_run(ctx, folder)
+    (folder / f"{TASK.id}.patch").write_text("another diff", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        we.check(ctx, TASK, run.rel, amended=True)
+
+
+def test_a_check_with_no_test_report_is_not_a_failed_patch(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path, FakeDocker())
+    run = _amended_run(ctx, _amendment(tmp_path, monkeypatch))
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **k: {"results": {}, "pytest_exit": "0\n"})
+    with pytest.raises(RuntimeError, match="no test report"):
+        we.check(ctx, TASK, run.rel)
+
+
+def test_a_patch_that_hangs_the_tests_or_will_not_apply_still_fails(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path, FakeDocker())
+    run = _amended_run(ctx, _amendment(tmp_path, monkeypatch))
+    for body in ({"results": {}, "pytest_exit": "124\n"}, {"patch_applied": False, "apply_error": "no"}):
+        monkeypatch.setattr(we, "_oracle_run", lambda *a, _body=body, **k: _body)
+        assert not we.check(ctx, TASK, run.rel)["checks"][-1]["passes"]
+
+
 MINI_SEARCH = '''SEARCH_SETTINGS = {"templates": True, "test_adequacy": False}
 PROPOSER_FREE_FORM, PROPOSER_TEMPLATES_FIRST = "free_form", "templates_first"
 PROPOSER_SETTINGS = {"propose": False, "proposer": PROPOSER_TEMPLATES_FIRST, "max_model_calls": 10,
@@ -629,3 +790,398 @@ def test_the_key_check_still_looks_in_the_containers_home_folder():
     driver = we.keyprobe_driver()
     assert f'pathlib.Path("{we.HOME}/keyprobe/repo")' in driver and "@HOME@" not in driver
     assert KEY == "sk-ant-api03-" + "FAKE" * 6 and len(KEY) == 37
+
+
+# --- round 3: formal methods (PLAN.md section 9, "Round 3 (2026-10-30)") ---------------------------------------------------
+HAIKU, SONNET, FABLE = we.R3_MODELS
+
+
+def test_observe_counts_what_the_agent_called_not_what_was_on_offer():
+    from worked_examples import observe
+
+    def use(name):
+        return {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": name, "name": name, "input": {}}]}}
+
+    init = {"type": "system", "subtype": "init", "mcp_servers": [{"name": "g6", "status": "connected"}],
+            "tools": ["mcp__g6__g6_review_patch", "mcp__g6__g6_invoke", "ToolSearch"]}
+    offered = observe.observe([init, use("Bash"), use("ToolSearch")])
+    assert offered["server"]["g6_tools"] == 2
+    assert offered["tool_use"] == {"tool_search": 1, "g6_calls": 0, "g6_by_tool": {}}
+    used = observe.observe([init, use("mcp__g6__g6_review_patch"), use("mcp__g6__g6_invoke"), use("mcp__g6__g6_invoke")])
+    assert used["tool_use"] == {"tool_search": 0, "g6_calls": 3,
+                                "g6_by_tool": {"g6_invoke": 2, "g6_review_patch": 1}}
+
+
+def test_round3_tally_counts_claude_codes_reported_total_and_the_stop_uses_each_runs_own_stop():
+    t = c.Tally(count_reported=True)
+    t.feed({"type": "assistant", "message": {"id": "m1", "model": c.MODEL, "usage": {"output_tokens": 100_000}}})
+    t.feed({"type": "result", "total_cost_usd": 3.25})
+    assert t.cost_usd == pytest.approx(3.25)                 # the larger of the counts and Claude Code's own total
+    assert c.Tally(result={"total_cost_usd": 3.25}).cost_usd == 0.0   # rounds 1 and 2 are counted as they were
+    rows = [{"event": "started", "run": "run/a/1", "kind": "run", "stop_usd": 4.2}]
+    assert c.spent(rows) == pytest.approx(4.2)
+    assert "claude-fable-5-1" not in c.PRICES and c.price_of(FABLE) is c.UNKNOWN_PRICE   # no price in this repository
+
+
+def test_round3_prompts_differ_only_as_the_plan_states():
+    b = we.prompt(TASK, "T", "body", arm="B")
+    assert b == we.prompt(TASK, "T", "body")                 # arm B is round 1's prompt, unchanged
+    c_ = we.prompt(TASK, "T", "body", arm="C")
+    assert we.ADDENDUM_C in c_ and we.ADDENDUM_C not in b
+    assert c_.replace(we.ADDENDUM_C + "\n\n", "") == b      # C is B plus the addendum, nothing else
+    a = we.prompt(TASK, "T", "body", arm="A")
+    for word in ("g6", "G6", "skill", "review"):
+        assert word not in a.split("Issue #")[0]             # arm A: Claude Code alone, told nothing of G6
+    assert a.split("Issue #")[1] == b.split("Issue #")[1]    # the same issue text
+    with pytest.raises(ValueError):
+        we.prompt(TASK, "T", "body", arm="Z")
+
+
+@pytest.mark.parametrize("addendum", ["ADDENDUM_C", "ADDENDUM_D"])
+def test_round3_addendum_names_no_bug_and_no_diagnosis(addendum):
+    text = getattr(we, addendum).lower()
+    words = set()
+    for t in we.load_tasks():
+        words |= {t.id.lower(), t.full_name.lower(), t.name.lower(), str(t.issue), str(t.pr)}
+    # the diagnoses RESULTS.md gives, which must never reach an agent
+    words |= {"fmt: off", "root_path", "trailing slash", "bar.update", "nested", "_click_default_help", "help option",
+              "_black_version", "docstring", "progress", "warning", "pydantic", "black", "click", "starlette"}
+    assert not [w for w in words if w in text]
+    assert len(getattr(we, addendum).split()) <= 260         # short and factual
+
+
+def test_round3_claude_args_take_the_model_and_the_cap():
+    args = we.claude_args(HAIKU, 4.5)
+    assert args[args.index("--model") + 1] == HAIKU and args[args.index("--max-budget-usd") + 1] == "4.50"
+    assert args[-3:] == ["--disallowedTools", "WebFetch", "WebSearch"]
+    assert we.claude_args() == we.claude_args(c.MODEL, c.RUN_CAP_USD)   # round 1's, unchanged
+
+
+def test_round3_schedule_order_and_noise_control():
+    sched = we.r3_schedule(we.load_tasks())
+    models = [m for m, *_ in sched]
+    assert models == sorted(models, key=we.R3_MODELS.index)  # Haiku, then Sonnet, then Fable last
+    assert len(sched) == 10 * 3 + 10 * 4 + 10 * 3
+    assert sum(1 for m, t, a, r in sched if m == SONNET and a == "A") == 20   # Sonnet arm A twice per bug
+    assert {r for m, t, a, r in sched if m != SONNET or a != "A"} == {1}
+
+
+def test_round3_caps():
+    assert we.r3_caps(HAIKU, spent=50.0, fable_left=30) == (10.0, 10.5)
+    assert we.r3_caps(SONNET, spent=0.0, fable_left=30) == (10.0, 10.5)
+    assert we.r3_caps(FABLE, spent=0.0, fable_left=30) == (5.71, pytest.approx(5.9955))   # $180 over 30, its stop
+    assert we.r3_caps(FABLE, spent=179.0, fable_left=1)[1] <= 1.0                         # never past the $180
+    assert we.r3_caps(FABLE, spent=0.0, fable_left=1) == (10.0, 10.5)                     # at most $10
+
+
+class ArmDocker(FakeDocker):
+    """The fake, with round 3's arm check: G6's server and skill are there only after ``g6 setup`` ran."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.set_up = False
+
+    def __call__(self, *args, input=None, timeout=None, env=None):
+        if "setup" in args:
+            self.set_up = True
+        if args[0] == "exec" and "we-arm-state" in " ".join(args):
+            self.calls.append(list(args))
+            self.envs.append(env)
+            got = {"mcp_servers": ["g6"], "skills": ["using-g6"]} if self.set_up else {"mcp_servers": [], "skills": []}
+            return Done(json.dumps(got).encode())
+        return super().__call__(*args, input=input, timeout=timeout, env=env)
+
+    def popen(self, *args, env=None):
+        self.calls.append(list(args))
+        self.envs.append(env)
+        return FakeProc([{"type": "assistant", "message": {"id": "m1", "model": HAIKU, "usage": {"output_tokens": 10}}},
+                         {"type": "result", "subtype": "success", "result": "done", "num_turns": 1,
+                          "total_cost_usd": 0.25}])
+
+
+def _r3(tmp_path, arm, *, model=HAIKU, repeat=1, docker=None):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "proxy.py").write_text("# proxy", encoding="utf-8")
+    ctx = _ctx(tmp_path, docker or ArmDocker())
+    ctx.variant, ctx.arm, ctx.model, ctx.repeat = we.ROUND3, arm, model, repeat
+    ctx.tasks = [TASK]
+    return ctx
+
+
+def test_round3_arm_a_registers_no_mcp_server_and_b_and_c_do(tmp_path):
+    for arm in ("A", "B", "C"):
+        ctx = _r3(tmp_path / arm, arm)
+        rec = we.run_task(ctx, TASK)
+        assert rec["status"] == "finished", rec
+        calls = ctx.docker.calls
+        claude = next(call for call in calls if we.CLAUDE in call and "-p" in call)
+        assert claude[claude.index("--model") + 1] == HAIKU
+        assert claude[claude.index("--max-budget-usd") + 1] == "10.00"
+        if arm == "A":
+            assert not any("setup" in call for call in calls) and rec["arm_state"]["mcp_servers"] == []
+            removed = [call for call in calls if call[-3:] == ["rm", "-f", "/usr/local/bin/g6"]]
+            assert removed and calls.index(removed[0]) < calls.index(claude)   # no g6 on the agent's path
+        else:
+            assert any("setup" in call for call in calls) and rec["arm_state"]["mcp_servers"] == ["g6"]
+        prompt = (next((tmp_path / arm / "archive" / "run" / TASK.id).glob("*")) / "prompt.txt").read_text(
+            encoding="utf-8")
+        assert (we.ADDENDUM_C in prompt) == (arm == "C") and ("g6_review_patch" in prompt) == (arm != "A")
+        assert rec["arm"] == arm and rec["model"] == HAIKU and rec["cost_usd"] == pytest.approx(0.25)
+
+
+def test_round3_an_arm_whose_setup_does_not_match_starts_no_agent(tmp_path):
+    class NoServer(ArmDocker):
+        def __call__(self, *args, **kw):
+            out = super().__call__(*args, **kw)
+            self.set_up = False                    # setup ran, but no server is registered
+            return out
+
+    ctx = _r3(tmp_path, "B", docker=NoServer())
+    rec = we.run_task(ctx, TASK)
+    assert rec["status"] == "arm_mismatch"
+    assert not any(we.CLAUDE in call and "-p" in call for call in ctx.docker.calls)
+
+
+def test_round3_ledger_accumulates_and_the_budget_stop_refuses(tmp_path):
+    ctx = _r3(tmp_path, "A")
+    first = we.run_task(ctx, TASK)
+    ctx.arm = "B"
+    second = we.run_task(ctx, TASK)
+    assert first["status"] == second["status"] == "finished"
+    ledger = [json.loads(x) for x in (ctx.archive.root / "ledger.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [(r["arm"], r["cost_usd"]) for r in ledger] == [("A", 0.25), ("B", 0.25)]
+    assert [r["spent_after"] for r in ledger] == [pytest.approx(0.25), pytest.approx(0.5)]
+    # a run is refused when the round's remaining budget is below its stop
+    for _ in range(17):
+        r = ctx.archive.start("run", "other")
+        r.finish({"cost_usd": 10.0}, "finished")
+    ctx.arm = "C"
+    rec = we.run_task(ctx, TASK)
+    assert rec["status"] == "refused" and "$180" in rec["why"]
+    assert len((ctx.archive.root / "ledger.jsonl").read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_round3_refuses_a_run_twice_and_out_of_order(tmp_path):
+    ctx = _r3(tmp_path, "A")
+    assert we.run_task(ctx, TASK)["status"] == "finished"
+    again = we.run_task(ctx, TASK)
+    assert again["status"] == "refused" and "already" in again["why"]
+    ctx.arm, ctx.model = "B", FABLE                           # Haiku's B and C for this bug are not run yet
+    later = we.run_task(ctx, TASK)
+    assert later["status"] == "refused" and "order" in later["why"]
+    ctx.model = "claude-opus-5-5"
+    assert "model" in we.run_task(ctx, TASK)["why"]
+
+
+def test_round3_only_the_two_smoke_runs_go_before_haikus_runs_are_done(tmp_path):
+    # owner, 2026-10-30: Haiku's three pilot runs never called G6, so Sonnet's B and C on one bug go first
+    assert we.R3_SMOKE == {(SONNET, "black-5634", "B", 1), (SONNET, "black-5634", "C", 1),
+                           (SONNET, "attrs-1593", "C", 1), (SONNET, "click-3678", "C", 1),
+                           (SONNET, "pydantic-14052", "C", 1)}
+    ctx = _r3(tmp_path, "B", model=SONNET)
+    assert we.run_task(ctx, TASK)["status"] == "finished"
+    ctx.arm = "C"
+    assert we.run_task(ctx, TASK)["status"] == "finished"
+    ctx.arm = "A"                                             # the loop's comparison (PLAN.md, 2026-10-30)
+    assert "order" not in str(we.run_task(ctx, TASK).get("why"))
+    ctx.arm, ctx.model = "B", FABLE
+    assert "order" in we.run_task(ctx, TASK)["why"]
+
+
+def test_round3_ledger_says_whether_g6_was_used(tmp_path):
+    ctx = _r3(tmp_path, "B")
+    record = {"run": "r", "observed": {"tool_use": {"tool_search": 2, "g6_calls": 3}}}
+    assert (we.r3_ledger(ctx.archive, record)["g6_calls"], we.r3_ledger(ctx.archive, record)["tool_search"]) == (3, 2)
+    assert we.r3_ledger(ctx.archive, {"run": "r"})["g6_calls"] is None     # a run that never got that far says so
+
+
+def test_round3_arm_d_is_c_with_the_fallback_on_the_four_probe_bugs_only(tmp_path):
+    assert we.ADDENDUM_D.startswith(we.ADDENDUM_C) and "proposed_checks" in we.ADDENDUM_D
+    assert "expected value" in we.ADDENDUM_D
+    assert we.prompt(TASK, "t", "x", "D") != we.prompt(TASK, "t", "x", "C")
+    assert we.R3_PROBE == {(SONNET, t, "D", 1) for t in ("black-5634", "attrs-1593", "click-3678", "pydantic-14052")}
+    assert all(arm != "D" for _, _, arm, _ in we.r3_schedule(we.load_tasks()))    # the schedule's 100 runs are unchanged
+    ctx = _r3(tmp_path, "D", model=SONNET)
+    assert "reviewed G6" in we.run_task(ctx, TASK)["why"]         # the shipped commit lacks the refusal's new text
+    ctx.g6 = {**ctx.g6, "commit": we.R3_D_G6 + "0" * 33}
+    assert we.run_task(ctx, TASK)["status"] == "finished"
+    assert "already" in we.run_task(ctx, TASK)["why"]
+    ctx.model = HAIKU
+    assert "schedules no run" in we.run_task(ctx, TASK)["why"]
+
+
+def test_round3_loop_runs_tune_on_train_and_look_once_at_the_held_out_bugs(tmp_path, monkeypatch):
+    monkeypatch.setattr(we, "HARNESS", tmp_path)
+    (tmp_path / "G1.txt").write_text("Read the issue twice.\n", encoding="utf-8")
+    assert "Read the issue twice." in we.prompt(TASK, "t", "x", "G1")
+    assert we.prompt(TASK, "t", "x", "H1") == we.prompt(TASK, "t", "x", "G1")
+    assert we.prompt(TASK, "t", "x", "E") == we.prompt(TASK, "t", "x", "D")
+    held, train = we.R3_HELD[0], "black-5634"
+    assert train not in we.R3_HELD
+    assert we.r3_loop_key((SONNET, train, "G1", 2)) and not we.r3_loop_key((SONNET, held, "G1", 1))
+    assert we.r3_loop_key((SONNET, held, "H1", 1)) and not we.r3_loop_key((SONNET, train, "H1", 1))
+    assert we.r3_loop_key((SONNET, held, "E", 1)) and we.r3_loop_key((SONNET, held, "A", 2))
+    assert not we.r3_loop_key((SONNET, train, "G1", 3)) and not we.r3_loop_key((HAIKU, train, "G1", 1))
+    # the final comparison on the held-out bugs: both sides five times, nothing else past two
+    assert we.r3_loop_key((SONNET, held, "A", 5)) and we.r3_loop_key((SONNET, held, "H1", 5))
+    assert not we.r3_loop_key((SONNET, held, "A", 6)) and not we.r3_loop_key((SONNET, held, "E", 3))
+    assert not we.r3_loop_key((SONNET, train, "A", 3))
+
+
+def test_distillation_refuses_text_naming_a_project_a_test_or_a_file():
+    pytest.importorskip("distill")
+    import distill
+    tests, files = ["tests/x.py::test_blank_lines[1]"], ["src/module_y.py"]
+    assert distill.named("Read the issue. Check the edge cases.", tests, files) == []
+    assert distill.named("In Pydantic fix #14052", tests, files) == ["pydantic", "#14052"]
+    assert distill.named("see issue 5634 in TEST_BLANK_LINES", tests, files) == ["5634", "test_blank_lines"]
+    assert distill.named(r"read C:\\Users\\x or /home/x", tests, files)
+    assert distill.named("run test_blank_lines on module_y.py", tests, files) == ["module_y.py", "test_blank_lines"]
+
+
+def test_the_loop_reads_the_runners_output_and_stops_on_a_refusal(tmp_path, monkeypatch):
+    pytest.importorskip("distill")
+    import loop
+    assert loop.last_json('noise\n{\n "run": "r"\n}\n{\n "status": "finished"\n}\n') == {"run": "r", "status": "finished"}
+    checked = json.dumps({"checks": [{"patch": "round-1", "passes": True, "failing": []},
+                                     {"patch": "final", "passes": False, "failing": 2,
+                                      "fail_to_pass_failing": ["t::a", "t::b"]}]}, indent=1)
+    said = {"run": '{"run": "run/x/1", "status": "finished", "cost_usd": 0.2}', "check": checked}
+    monkeypatch.setattr(loop, "tool", lambda command, *a, **k: said[command])
+    row = loop.one(tmp_path, "g", "A", "x", 1)
+    assert (row["passes"], row["failing"], row["tests"]) == (False, 2, ["t::a", "t::b"])   # the final patch, not round 1
+    assert loop.one(tmp_path, "g", "A", "x", 1) == row                                     # saved once
+    said["run"] = '{"status": "refused", "why": "the stop"}'
+    with pytest.raises(SystemExit):
+        loop.one(tmp_path, "g", "A", "y", 1)
+    assert not (tmp_path / "loop" / "A-y-1.json").exists()
+    # a run made before a crash is checked, never made again
+    said["run"] = '{"status": "refused", "why": "run (x) was already made (finished); no run is made again"}'
+    (tmp_path / "ledger.jsonl").write_text(json.dumps(
+        {"task": "z", "arm": "A", "repeat": 1, "run": "run/z/1", "status": "finished", "cost_usd": 0.3}) + "\n", "utf-8")
+    again = loop.one(tmp_path, "g", "A", "z", 1)
+    assert again["run"] == "run/z/1" and again["failing"] == 2 and again["cost_usd"] == 0.3
+
+
+def test_the_loop_saves_nothing_for_a_run_with_no_verdict(tmp_path, monkeypatch):
+    pytest.importorskip("distill")
+    import loop
+    said = {"run": '{"run": "run/x/1", "status": "finished", "cost_usd": 0.2}', "check": ""}
+    monkeypatch.setattr(loop, "tool", lambda command, *a, **k: said[command])
+    with pytest.raises(SystemExit):
+        loop.one(tmp_path, "g", "A", "x", 1)
+    assert not (tmp_path / "loop" / "A-x-1.json").exists()      # a restart checks it again
+
+
+def _saved_runs(root, monkeypatch, loop):
+    (root / "loop").mkdir()
+    rows = [{"arm": "A", "task": "x-1", "repeat": 1, "run": "run/x-1/1", "status": "finished", "passes": False},
+            {"arm": "A", "task": "x-1", "repeat": 2, "run": "run/x-1/2", "status": "error", "passes": False},
+            {"arm": "A", "task": "y-1", "repeat": 1, "run": "run/y-1/1", "status": "finished", "passes": True}]
+    for row in rows:
+        name = f"{row['arm']}-{row['task']}-{row['repeat']}.json"
+        (root / "loop" / name).write_text(json.dumps(row), "utf-8")
+    (root / "loop" / "cegis.json").write_text('{"status": "inconclusive"}', "utf-8")
+    diff = root / "x-1.patch"
+    diff.write_text("a diff", encoding="utf-8")
+    monkeypatch.setattr(loop.we, "amendment", lambda task: diff if task == "x-1" else None)
+    return diff
+
+
+def _counting_tool(monkeypatch, loop, verdict=True):
+    calls = []
+
+    def tool(command, *args, **_):
+        calls.append(args)
+        return json.dumps({"checks": [{"patch": "final", "passes": verdict, "failing": []}]})
+
+    monkeypatch.setattr(loop, "tool", tool)
+    return calls
+
+
+def test_rescoring_keeps_both_verdicts_and_touches_only_amended_bugs(tmp_path, monkeypatch):
+    pytest.importorskip("distill")
+    import loop
+    _saved_runs(tmp_path, monkeypatch, loop)
+    calls = _counting_tool(monkeypatch, loop)
+    rows = loop.rescore(tmp_path, "g")
+    assert [(r["repeat"], r["passes"], r["amended_passes"]) for r in rows] == [(1, False, True), (2, False, False)]
+    assert len(calls) == 1 and "--amended" in calls[0] and "run/x-1/1" in calls[0]    # a run that made no patch has nothing to score
+    assert json.loads((tmp_path / "loop" / "A-x-1-1.json").read_text("utf-8"))["passes"] is False
+    assert (tmp_path / "loop" / "amended" / "A-x-1-1.json").is_file()
+    loop.rescore(tmp_path, "g")
+    assert len(calls) == 1                                                            # saved once
+
+
+def test_rescoring_again_after_the_diff_changes_never_mixes_two_diffs(tmp_path, monkeypatch):
+    pytest.importorskip("distill")
+    import loop
+    diff = _saved_runs(tmp_path, monkeypatch, loop)
+    calls = _counting_tool(monkeypatch, loop)
+    loop.rescore(tmp_path, "g")
+    diff.write_text("another diff", encoding="utf-8")
+    calls.clear()
+    rows = loop.rescore(tmp_path, "g")
+    assert len(calls) == 1 and {r["amendment_sha256"] for r in rows} == {loop.c.sha256_file(diff)}
+
+
+def test_rescoring_again_after_the_run_changes(tmp_path, monkeypatch):
+    pytest.importorskip("distill")
+    import loop
+    _saved_runs(tmp_path, monkeypatch, loop)
+    calls = _counting_tool(monkeypatch, loop)
+    loop.rescore(tmp_path, "g")
+    source = tmp_path / "loop" / "A-x-1-1.json"
+    source.write_text(json.dumps({**json.loads(source.read_text("utf-8")), "run": "run/x-1/other"}), "utf-8")
+    calls.clear()
+    loop.rescore(tmp_path, "g")
+    assert len(calls) == 1 and "run/x-1/other" in calls[0]
+
+
+def test_rescoring_never_reads_a_missing_verdict_as_a_failure(tmp_path, monkeypatch):
+    pytest.importorskip("distill")
+    import loop
+    _saved_runs(tmp_path, monkeypatch, loop)
+    monkeypatch.setattr(loop, "tool", lambda *a, **k: "")
+    with pytest.raises(SystemExit):
+        loop.rescore(tmp_path, "g")
+    assert not (tmp_path / "loop" / "amended" / "A-x-1-1.json").exists()
+
+
+def test_rescoring_needs_a_verdict_that_is_a_verdict(tmp_path, monkeypatch):
+    pytest.importorskip("distill")
+    import loop
+    _saved_runs(tmp_path, monkeypatch, loop)
+    _counting_tool(monkeypatch, loop, verdict=None)
+    with pytest.raises(SystemExit):
+        loop.rescore(tmp_path, "g")
+
+
+def test_distillation_reads_a_failed_run_that_left_no_report(tmp_path):
+    pytest.importorskip("distill")
+    import distill
+    (tmp_path / "run").mkdir()
+    got = distill.failures([{"task": "x", "run": "run", "tests": ["t::a"]}], tmp_path)
+    assert got[0].failed_checks == ("check-1",) and "--- the patch ---" in got[0].output
+
+
+def test_round3_fable_cap_comes_from_the_budget_left(tmp_path):
+    ctx = _r3(tmp_path, "A", model=FABLE)
+    ctx.tasks = [TASK]
+    for arm in ("A", "B", "C"):                               # Haiku's and Sonnet's runs of this bug, all ended
+        for model, reps in ((HAIKU, 1), (SONNET, 2 if arm == "A" else 1)):
+            for rep in range(1, reps + 1):
+                r = ctx.archive.start("run", TASK.id, arm=arm, model=model, repeat=rep, agent=True)
+                r.finish({"cost_usd": 150.0 / 7, "agent_started": True}, "finished")
+    rec = we.run_task(ctx, TASK)                              # $30 left for Fable's 3 runs: $10 stop, so cap 9.52
+    assert rec["status"] == "finished", rec
+    claude = next(call for call in ctx.docker.calls if we.CLAUDE in call and "-p" in call)
+    assert claude[claude.index("--max-budget-usd") + 1] == "9.52" and rec["cap_usd"] == pytest.approx(9.52)
+
+
+def test_round3_plan_states_the_addendum_and_arm_as_text_as_the_runner_has_them():
+    plan = PLAN.read_text(encoding="utf-8").split("### Round 3 (2026-10-30): formal methods", 1)[1]
+    assert "\n".join("      " + line for line in we.ADDENDUM_C.splitlines()) in plan
+    second = we.PROMPT_A.split("\n\n")[1]
+    assert " ".join(second.split()) in " ".join(plan.split())
+    assert "development" in plan.lower() and "$100" in plan

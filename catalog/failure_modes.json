@@ -7,6 +7,7 @@
     "requires_human_review": false,
     "aliases": [],
     "guarded_by": [
+      "cognitive_bridge",
       "decision_making"
     ],
     "introduced_by": [],
@@ -615,9 +616,12 @@
     "requires_human_review": false,
     "aliases": [],
     "guarded_by": [
+      "cognitive_bridge",
       "epistemic_integrity"
     ],
-    "introduced_by": [],
+    "introduced_by": [
+      "complexity"
+    ],
     "planned": [],
     "awaiting_review": []
   },
@@ -755,7 +759,9 @@
     "guarded_by": [
       "reliability_pipeline"
     ],
-    "introduced_by": [],
+    "introduced_by": [
+      "algorithm_design"
+    ],
     "planned": [],
     "awaiting_review": []
   },
@@ -1159,7 +1165,9 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "self_maintenance"
+    ],
     "introduced_by": [],
     "planned": [],
     "awaiting_review": []
@@ -1538,7 +1546,9 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "complexity"
+    ],
     "introduced_by": [
       "meta_programming"
     ],
@@ -1784,6 +1794,7 @@
     "requires_human_review": false,
     "aliases": [],
     "guarded_by": [
+      "algorithm_design",
       "ctx_library_mapper"
     ],
     "introduced_by": [],
@@ -1814,6 +1825,7 @@
     "requires_human_review": false,
     "aliases": [],
     "guarded_by": [
+      "cognitive_bridge",
       "epistemic_integrity"
     ],
     "introduced_by": [],
@@ -2442,7 +2454,9 @@
     "guarded_by": [
       "cog_arch_gps"
     ],
-    "introduced_by": [],
+    "introduced_by": [
+      "goal_engine"
+    ],
     "planned": [],
     "awaiting_review": []
   },
@@ -2455,6 +2469,7 @@
     "aliases": [],
     "guarded_by": [
       "metaharness",
+      "self_maintenance",
       "self_training"
     ],
     "introduced_by": [],
@@ -2587,7 +2602,8 @@
     "introduced_by": [
       "adapt_automl",
       "adapt_pytorch",
-      "adapt_sklearn"
+      "adapt_sklearn",
+      "cognitive_bridge"
     ],
     "planned": [
       "g6.jobs.job_framework"
@@ -2742,6 +2758,7 @@
     "requires_human_review": false,
     "aliases": [],
     "guarded_by": [
+      "complexity",
       "design_governance"
     ],
     "introduced_by": [],
@@ -2786,6 +2803,7 @@
     "requires_human_review": false,
     "aliases": [],
     "guarded_by": [
+      "algorithm_design",
       "optimisation"
     ],
     "introduced_by": [],
@@ -3365,7 +3383,8 @@
     ],
     "introduced_by": [
       "adapt_library_synthesizer",
-      "component_creator"
+      "component_creator",
+      "self_maintenance"
     ],
     "planned": [],
     "awaiting_review": []

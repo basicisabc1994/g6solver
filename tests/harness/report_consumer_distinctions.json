@@ -1,0 +1,862 @@
+{
+  "baseline": "db65ca1",
+  "consumers": {
+    "harness/patch_review.py": {
+      "_assess": [
+        "receipt",
+        "receipt_error",
+        "receipt_withheld",
+        "said",
+        "seconds",
+        "source_before",
+        "verdict"
+      ],
+      "_at_base": [
+        "said",
+        "verdict"
+      ],
+      "_confined": [
+        "isolation"
+      ],
+      "_in_repository": [
+        "rootdir"
+      ],
+      "_listing": [
+        "collected_ids",
+        "failed_ids",
+        "omitted_ids",
+        "setup_errors",
+        "test_outcomes"
+      ],
+      "_loaded_elsewhere": [
+        "verdict"
+      ],
+      "_not_loaded": [
+        "output"
+      ],
+      "_on_base": [
+        "baseline",
+        "failed_ids",
+        "output",
+        "patched",
+        "said",
+        "verdict"
+      ],
+      "_patch_imports_missing": [
+        "failure_messages",
+        "output"
+      ],
+      "_record": [
+        "failed",
+        "generated_copied",
+        "generated_left_out",
+        "links_left_out",
+        "links_materialised",
+        "loaded_complete",
+        "loaded_outside",
+        "not_passed",
+        "passed",
+        "receipt",
+        "said",
+        "seconds",
+        "submodules_not_hashed",
+        "verdict"
+      ],
+      "_reply": [
+        "env_set_by_g6",
+        "interpreter_source",
+        "isolation",
+        "python",
+        "repo_env"
+      ],
+      "_run_again": [
+        "receipt",
+        "seconds",
+        "source_before",
+        "verdict"
+      ],
+      "_untrusted": [
+        "changed",
+        "said",
+        "verdict"
+      ],
+      "_verdicts": [
+        "output",
+        "said",
+        "verdict"
+      ],
+      "infer": [
+        "command",
+        "degraded",
+        "not_passed",
+        "passed",
+        "receipt",
+        "verdict"
+      ],
+      "phases_of": [
+        "rootdir",
+        "test_outcomes"
+      ],
+      "unusable": [
+        "verdict"
+      ]
+    },
+    "harness/verification_search.py": {
+      "_failure": [
+        "output"
+      ],
+      "_messages": [
+        "failure_messages"
+      ],
+      "_refused_access": [
+        "os_errors"
+      ],
+      "_uncollected": [
+        "failure_messages",
+        "output"
+      ],
+      "measure_adequacy": [
+        "seconds",
+        "verdict"
+      ],
+      "read": [
+        "output"
+      ],
+      "reading": [
+        "changed",
+        "import_path",
+        "interpreter_source",
+        "isolation",
+        "output",
+        "own_config",
+        "probe_observations",
+        "python",
+        "said",
+        "seconds",
+        "source_before",
+        "test_outcomes",
+        "verdict"
+      ],
+      "reproduce": [
+        "import_path",
+        "interpreter_source",
+        "own_config",
+        "python"
+      ],
+      "run": [
+        "failed",
+        "not_passed",
+        "passed",
+        "verdict"
+      ]
+    },
+    "harness/completion_loop.py": {
+      "_read": [
+        "failure_messages",
+        "isolation",
+        "os_errors",
+        "said",
+        "test_outcomes",
+        "verdict"
+      ]
+    },
+    "workforce/receipt_store.py": {
+      "_body": [
+        "collected_ids",
+        "command",
+        "completed",
+        "degraded",
+        "deselected",
+        "env_set_by_g6",
+        "failed",
+        "failed_ids",
+        "isolation",
+        "not_passed",
+        "omitted_ids",
+        "passed",
+        "repo_env",
+        "total",
+        "verdict"
+      ]
+    },
+    "bundles/agent_change.py": {
+      "_as_run": [
+        "failed",
+        "not_passed",
+        "passed",
+        "verdict"
+      ],
+      "run": [
+        "changed",
+        "failed",
+        "failed_ids",
+        "isolation",
+        "not_passed",
+        "passed",
+        "said",
+        "seconds",
+        "total",
+        "verdict"
+      ]
+    },
+    "workforce/bench.py": {
+      "_in_place": [
+        "changed",
+        "failed",
+        "interpreter_source",
+        "isolation",
+        "not_passed",
+        "passed",
+        "said",
+        "seconds",
+        "total",
+        "verdict"
+      ]
+    },
+    "algorithm_design/autonomous.py": {
+      "_observed": [
+        "degraded",
+        "failed_ids",
+        "interpreter_source",
+        "isolation",
+        "output",
+        "python",
+        "receipt",
+        "source_before",
+        "verdict"
+      ]
+    },
+    "metaharness/coding.py": {
+      "oracle": [
+        "verdict"
+      ],
+      "run_mutant": [
+        "passed",
+        "verdict"
+      ]
+    },
+    "workforce/repo_tests.py": {
+      "run_before": [
+        "degraded",
+        "deselected",
+        "not_passed",
+        "said",
+        "setup_errors",
+        "test_outcomes",
+        "verdict"
+      ],
+      "shadowed": [
+        "loaded_complete",
+        "loaded_outside"
+      ]
+    }
+  },
+  "fields": {
+    "verdict": {
+      "meaning": "the run's verdict, which G6 decides outside the run from its exit code and counts (repo_tests._judge)",
+      "consumers": [
+        "harness/patch_review.py:_assess",
+        "harness/patch_review.py:_at_base",
+        "harness/patch_review.py:_loaded_elsewhere",
+        "harness/patch_review.py:_on_base",
+        "harness/patch_review.py:_record",
+        "harness/patch_review.py:_run_again",
+        "harness/patch_review.py:_untrusted",
+        "harness/patch_review.py:_verdicts",
+        "harness/patch_review.py:infer",
+        "harness/patch_review.py:unusable",
+        "harness/verification_search.py:measure_adequacy",
+        "harness/verification_search.py:reading",
+        "harness/verification_search.py:run",
+        "harness/completion_loop.py:_read",
+        "workforce/receipt_store.py:_body",
+        "bundles/agent_change.py:_as_run",
+        "bundles/agent_change.py:run",
+        "workforce/bench.py:_in_place",
+        "algorithm_design/autonomous.py:_observed",
+        "metaharness/coding.py:oracle",
+        "metaharness/coding.py:run_mutant",
+        "workforce/repo_tests.py:run_before"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "known runner verdict"
+    },
+    "said": {
+      "meaning": "G6's own words for the run's verdict, in a check's detail",
+      "consumers": [
+        "harness/patch_review.py:_assess",
+        "harness/patch_review.py:_at_base",
+        "harness/patch_review.py:_on_base",
+        "harness/patch_review.py:_record",
+        "harness/patch_review.py:_untrusted",
+        "harness/patch_review.py:_verdicts",
+        "harness/verification_search.py:reading",
+        "harness/completion_loop.py:_read",
+        "bundles/agent_change.py:run",
+        "workforce/bench.py:_in_place",
+        "workforce/repo_tests.py:run_before"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "text only"
+    },
+    "output": {
+      "meaning": "captured text retained for display; outcomes use decided annotations",
+      "consumers": [
+        "harness/patch_review.py:_not_loaded",
+        "harness/patch_review.py:_on_base",
+        "harness/patch_review.py:_patch_imports_missing",
+        "harness/patch_review.py:_verdicts",
+        "harness/verification_search.py:_failure",
+        "harness/verification_search.py:_uncollected",
+        "harness/verification_search.py:read",
+        "harness/verification_search.py:reading",
+        "algorithm_design/autonomous.py:_observed"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "text only"
+    },
+    "rootdir": {
+      "meaning": "the folder pytest named every id relative to (_in_repository); one that is not text makes all unknown",
+      "consumers": [
+        "harness/patch_review.py:_in_repository",
+        "harness/patch_review.py:phases_of"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "repository-relative text; exactly empty when pytest never supplied a root"
+    },
+    "test_outcomes": {
+      "meaning": "each test's outcome by phase (phases_of)",
+      "consumers": [
+        "harness/patch_review.py:_listing",
+        "harness/patch_review.py:phases_of",
+        "harness/verification_search.py:reading",
+        "harness/completion_loop.py:_read",
+        "workforce/repo_tests.py:run_before"
+      ],
+      "type": "({<class 'str'>: {<class 'str'>: <class 'str'>}}, <class 'NoneType'>)",
+      "constraint": "complete ordered phases; null only for a non-ran diagnostic without phase data"
+    },
+    "failed_ids": {
+      "meaning": "the tests the runner lists as failed: each is a test of the run (phases_of); replay diagnostics preserve its raw identity scope, emission order and first five entries; setup errors are separate",
+      "consumers": [
+        "harness/patch_review.py:_listing",
+        "harness/patch_review.py:_on_base",
+        "workforce/receipt_store.py:_body",
+        "bundles/agent_change.py:run",
+        "algorithm_design/autonomous.py:_observed"
+      ],
+      "type": "[<class 'str'>]",
+      "constraint": "exact failure disposition, unique"
+    },
+    "setup_errors": {
+      "meaning": "the tests whose set-up failed on a fixture pytest could not find: each is a test of the run",
+      "consumers": [
+        "harness/patch_review.py:_listing",
+        "workforce/repo_tests.py:run_before"
+      ],
+      "type": "{<class 'str'>: <class 'str'>}",
+      "constraint": "setup failed, disjoint failures"
+    },
+    "collected_ids": {
+      "meaning": "the tests collected: one of a check that started that reported no phase and was not left out never finished (_verdicts)",
+      "consumers": [
+        "harness/patch_review.py:_listing",
+        "workforce/receipt_store.py:_body"
+      ],
+      "type": "[<class 'str'>]",
+      "constraint": "equals run plus omitted, unique"
+    },
+    "omitted_ids": {
+      "meaning": "the tests collected and left out of the session (deselected): never a pass (_verdicts)",
+      "consumers": [
+        "harness/patch_review.py:_listing",
+        "workforce/receipt_store.py:_body"
+      ],
+      "type": "[<class 'str'>]",
+      "constraint": "disjoint run, unique"
+    },
+    "passed": {
+      "meaning": "a count: the run's verdict (repo_tests._judge) reads it; a count names no test",
+      "consumers": [
+        "harness/patch_review.py:_record",
+        "harness/patch_review.py:infer",
+        "harness/verification_search.py:run",
+        "workforce/receipt_store.py:_body",
+        "bundles/agent_change.py:_as_run",
+        "bundles/agent_change.py:run",
+        "workforce/bench.py:_in_place",
+        "metaharness/coding.py:run_mutant"
+      ],
+      "type": "<class 'int'>",
+      "constraint": "machine count; phase and annotation bounds, aggregate total, omitted count"
+    },
+    "failed": {
+      "meaning": "a count: the run's verdict (repo_tests._judge) reads it; a count names no test",
+      "consumers": [
+        "harness/patch_review.py:_record",
+        "harness/verification_search.py:run",
+        "workforce/receipt_store.py:_body",
+        "bundles/agent_change.py:_as_run",
+        "bundles/agent_change.py:run",
+        "workforce/bench.py:_in_place"
+      ],
+      "type": "<class 'int'>",
+      "constraint": "machine count; phase and annotation bounds, aggregate total, omitted count"
+    },
+    "not_passed": {
+      "meaning": "a count: the run's verdict (repo_tests._judge) reads it; a count names no test",
+      "consumers": [
+        "harness/patch_review.py:_record",
+        "harness/patch_review.py:infer",
+        "harness/verification_search.py:run",
+        "workforce/receipt_store.py:_body",
+        "bundles/agent_change.py:_as_run",
+        "bundles/agent_change.py:run",
+        "workforce/bench.py:_in_place",
+        "workforce/repo_tests.py:run_before"
+      ],
+      "type": "<class 'int'>",
+      "constraint": "machine count; phase and annotation bounds, aggregate total, omitted count"
+    },
+    "total": {
+      "meaning": "a count: the run's verdict (repo_tests._judge) reads it; a count names no test",
+      "consumers": [
+        "workforce/receipt_store.py:_body",
+        "bundles/agent_change.py:run",
+        "workforce/bench.py:_in_place"
+      ],
+      "type": "<class 'int'>",
+      "constraint": "machine count; phase and annotation bounds, aggregate total, omitted count"
+    },
+    "deselected": {
+      "meaning": "a count: the run's verdict (repo_tests._judge) reads it; a count names no test",
+      "consumers": [
+        "workforce/receipt_store.py:_body",
+        "workforce/repo_tests.py:run_before"
+      ],
+      "type": "<class 'int'>",
+      "constraint": "machine count; phase and annotation bounds, aggregate total, omitted count"
+    },
+    "collected": {
+      "meaning": "a count: the run's verdict (repo_tests._judge) reads it; a count names no test",
+      "consumers": [
+        "producer progress/schema; not forwarded as a downstream decision"
+      ],
+      "type": "<class 'int'>",
+      "constraint": "equals the corresponding identity or phase count"
+    },
+    "started": {
+      "meaning": "a count: the run's verdict (repo_tests._judge) reads it; a count names no test",
+      "consumers": [
+        "producer progress/schema; not forwarded as a downstream decision"
+      ],
+      "type": "<class 'int'>",
+      "constraint": "equals the corresponding identity or phase count"
+    },
+    "finished": {
+      "meaning": "a count: the run's verdict (repo_tests._judge) reads it; a count names no test",
+      "consumers": [
+        "producer progress/schema; not forwarded as a downstream decision"
+      ],
+      "type": "<class 'int'>",
+      "constraint": "equals the corresponding identity or phase count"
+    },
+    "degraded": {
+      "meaning": "a count: the run's verdict (repo_tests._judge) reads it; a count names no test (a summary of the counts)",
+      "consumers": [
+        "harness/patch_review.py:infer",
+        "workforce/receipt_store.py:_body",
+        "algorithm_design/autonomous.py:_observed",
+        "workforce/repo_tests.py:run_before"
+      ],
+      "type": "<class 'bool'>",
+      "constraint": "exact boolean"
+    },
+    "completed": {
+      "meaning": "a count: the run's verdict (repo_tests._judge) reads it; a count names no test (a summary of the counts)",
+      "consumers": [
+        "workforce/receipt_store.py:_body"
+      ],
+      "type": "<class 'bool'>",
+      "constraint": "exact boolean"
+    },
+    "own_config": {
+      "meaning": "how the run was made, never what a test did",
+      "consumers": [
+        "harness/verification_search.py:reading",
+        "harness/verification_search.py:reproduce"
+      ],
+      "type": "<class 'bool'>",
+      "constraint": "exact boolean"
+    },
+    "loaded_complete": {
+      "meaning": "what the run's copy left out or the run loaded from elsewhere: _loaded_elsewhere and _record read it",
+      "consumers": [
+        "harness/patch_review.py:_record",
+        "workforce/repo_tests.py:shadowed"
+      ],
+      "type": "<class 'bool'>",
+      "constraint": "exact boolean"
+    },
+    "seconds": {
+      "meaning": "how the run was made, never what a test did",
+      "consumers": [
+        "harness/patch_review.py:_assess",
+        "harness/patch_review.py:_record",
+        "harness/patch_review.py:_run_again",
+        "harness/verification_search.py:measure_adequacy",
+        "harness/verification_search.py:reading",
+        "bundles/agent_change.py:run",
+        "workforce/bench.py:_in_place"
+      ],
+      "type": "<class 'float'>",
+      "constraint": "finite and nonnegative"
+    },
+    "python": {
+      "meaning": "how the run was made, never what a test did",
+      "consumers": [
+        "harness/patch_review.py:_reply",
+        "harness/verification_search.py:reading",
+        "harness/verification_search.py:reproduce",
+        "algorithm_design/autonomous.py:_observed"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "text only"
+    },
+    "interpreter_source": {
+      "meaning": "how the run was made, never what a test did",
+      "consumers": [
+        "harness/patch_review.py:_reply",
+        "harness/verification_search.py:reading",
+        "harness/verification_search.py:reproduce",
+        "workforce/bench.py:_in_place",
+        "algorithm_design/autonomous.py:_observed"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "text only"
+    },
+    "command": {
+      "meaning": "how the run was made, never what a test did",
+      "consumers": [
+        "harness/patch_review.py:infer",
+        "workforce/receipt_store.py:_body"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "text only"
+    },
+    "source_before": {
+      "meaning": "the snapshot the run began on: _run_again reads it, to refuse a run of another tree",
+      "consumers": [
+        "harness/patch_review.py:_assess",
+        "harness/patch_review.py:_run_again",
+        "harness/verification_search.py:reading",
+        "algorithm_design/autonomous.py:_observed"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "text only"
+    },
+    "receipt": {
+      "meaning": "the run's test receipt, or why it has none: the coding gate reads it",
+      "consumers": [
+        "harness/patch_review.py:_assess",
+        "harness/patch_review.py:_record",
+        "harness/patch_review.py:_run_again",
+        "harness/patch_review.py:infer",
+        "algorithm_design/autonomous.py:_observed"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "text only"
+    },
+    "receipt_withheld": {
+      "meaning": "the run's test receipt, or why it has none: the coding gate reads it",
+      "consumers": [
+        "harness/patch_review.py:_assess"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "text only"
+    },
+    "receipt_error": {
+      "meaning": "the run's test receipt, or why it has none: the coding gate reads it",
+      "consumers": [
+        "harness/patch_review.py:_assess"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "text only"
+    },
+    "baseline": {
+      "meaning": "a replay's verdict at the base commit (run_before): _on_base reads it; it names no test",
+      "consumers": [
+        "harness/patch_review.py:_on_base"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "text only"
+    },
+    "patched": {
+      "meaning": "a replay's verdict on the patch when it did not match its tests (run_before): _on_base reads it",
+      "consumers": [
+        "harness/patch_review.py:_on_base"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "text only"
+    },
+    "changed": {
+      "meaning": "the tracked files the run changed: its verdict says so (changed_tracked_files, never believed)",
+      "consumers": [
+        "harness/patch_review.py:_untrusted",
+        "harness/verification_search.py:reading",
+        "bundles/agent_change.py:run",
+        "workforce/bench.py:_in_place"
+      ],
+      "type": "[<class 'str'>]",
+      "constraint": "text members; os_errors annotate recorded failures"
+    },
+    "os_errors": {
+      "meaning": "why a failure happened, by the failure's id: a test's is also in failed_ids or setup_errors (the plugin lists every failed report in one of the two), and a file's is one pytest could not collect, which the output names; read as a test it would turn a file that could not collect into a failed test",
+      "consumers": [
+        "harness/verification_search.py:_refused_access",
+        "harness/completion_loop.py:_read"
+      ],
+      "type": "[<class 'str'>]",
+      "constraint": "text members; os_errors annotate recorded failures"
+    },
+    "import_path": {
+      "meaning": "how the run was made, never what a test did",
+      "consumers": [
+        "harness/verification_search.py:reading",
+        "harness/verification_search.py:reproduce"
+      ],
+      "type": "[<class 'str'>]",
+      "constraint": "text members; os_errors annotate recorded failures"
+    },
+    "env_set_by_g6": {
+      "meaning": "how the run was made, never what a test did",
+      "consumers": [
+        "harness/patch_review.py:_reply",
+        "workforce/receipt_store.py:_body"
+      ],
+      "type": "[<class 'str'>]",
+      "constraint": "text members; os_errors annotate recorded failures"
+    },
+    "ignored_loadable": {
+      "meaning": "the run's test receipt, or why it has none: the coding gate reads it",
+      "consumers": [
+        "producer progress/schema; not forwarded as a downstream decision"
+      ],
+      "type": "[<class 'str'>]",
+      "constraint": "text members; os_errors annotate recorded failures"
+    },
+    "failure_messages": {
+      "meaning": "why a failure happened, by the failure's id: a test's is also in failed_ids or setup_errors (the plugin lists every failed report in one of the two), and a file's is one pytest could not collect, which the output names; read as a test it would turn a file that could not collect into a failed test",
+      "consumers": [
+        "harness/patch_review.py:_patch_imports_missing",
+        "harness/verification_search.py:_messages",
+        "harness/verification_search.py:_uncollected",
+        "harness/completion_loop.py:_read"
+      ],
+      "type": "{<class 'str'>: <class 'str'>}",
+      "constraint": "failed phase, or an uncollected collection failure; never omitted"
+    },
+    "messages": {
+      "meaning": "producer diagnostic messages",
+      "consumers": [
+        "producer progress/schema; not forwarded as a downstream decision"
+      ],
+      "type": "{<class 'str'>: <class 'str'>}",
+      "constraint": "failed phase, or an uncollected collection failure; never omitted"
+    },
+    "repo_env": {
+      "meaning": "how the run was made, never what a test did",
+      "consumers": [
+        "harness/patch_review.py:_reply",
+        "workforce/receipt_store.py:_body"
+      ],
+      "type": "{<class 'str'>: <class 'str'>}",
+      "constraint": "text keys and values"
+    },
+    "loaded_outside": {
+      "meaning": "what the run's copy left out or the run loaded from elsewhere: _loaded_elsewhere and _record read it",
+      "consumers": [
+        "harness/patch_review.py:_record",
+        "workforce/repo_tests.py:shadowed"
+      ],
+      "type": "{<class 'str'>: <class 'str'>}",
+      "constraint": "text keys and values"
+    },
+    "submodules_not_hashed": {
+      "meaning": "what the run's copy left out or the run loaded from elsewhere: _loaded_elsewhere and _record read it",
+      "consumers": [
+        "harness/patch_review.py:_record"
+      ],
+      "type": "{<class 'str'>: <class 'str'>}",
+      "constraint": "text keys and values"
+    },
+    "links_left_out": {
+      "meaning": "what the run's copy left out or the run loaded from elsewhere: _loaded_elsewhere and _record read it",
+      "consumers": [
+        "harness/patch_review.py:_record"
+      ],
+      "type": "{<class 'str'>: <class 'str'>}",
+      "constraint": "text keys and values"
+    },
+    "links_materialised": {
+      "meaning": "what the run's copy left out or the run loaded from elsewhere: _loaded_elsewhere and _record read it",
+      "consumers": [
+        "harness/patch_review.py:_record"
+      ],
+      "type": "{<class 'str'>: <class 'str'>}",
+      "constraint": "text keys and values"
+    },
+    "generated_copied": {
+      "meaning": "what the run's copy left out or the run loaded from elsewhere: _loaded_elsewhere and _record read it",
+      "consumers": [
+        "harness/patch_review.py:_record"
+      ],
+      "type": "{<class 'str'>: <class 'str'>}",
+      "constraint": "text keys and values"
+    },
+    "generated_left_out": {
+      "meaning": "what the run's copy left out or the run loaded from elsewhere: _loaded_elsewhere and _record read it",
+      "consumers": [
+        "harness/patch_review.py:_record"
+      ],
+      "type": "{<class 'str'>: <class 'str'>}",
+      "constraint": "text keys and values"
+    },
+    "ignored_inputs": {
+      "meaning": "the run's test receipt, or why it has none: the coding gate reads it",
+      "consumers": [
+        "producer progress/schema; not forwarded as a downstream decision"
+      ],
+      "type": "{<class 'str'>: <class 'str'>}",
+      "constraint": "text keys and values"
+    },
+    "isolation": {
+      "meaning": "the boundary the run had: _confined refuses a run none confined, before it is read",
+      "consumers": [
+        "harness/patch_review.py:_confined",
+        "harness/patch_review.py:_reply",
+        "harness/verification_search.py:reading",
+        "harness/completion_loop.py:_read",
+        "workforce/receipt_store.py:_body",
+        "bundles/agent_change.py:run",
+        "workforce/bench.py:_in_place",
+        "algorithm_design/autonomous.py:_observed"
+      ],
+      "type": "{'backend': (<class 'str'>, <class 'NoneType'>), 'why': <class 'str'>, 'network': <class 'bool'>, 'container': (<class 'str'>, <class 'NoneType'>), 'profile': (<class 'str'>, <class 'NoneType'>), 'warning': <class 'str'>, 'allowed_by': <class 'str'>, 'cleanup': <class 'str'>}",
+      "constraint": "known typed fields, backend required"
+    },
+    "not_found_ids": {
+      "meaning": "missing selections from pytest collection objects",
+      "consumers": [
+        "harness/patch_review.py:_verdicts"
+      ],
+      "type": "[<class 'str'>]",
+      "constraint": "disjoint collected, unique"
+    },
+    "missing_modules": {
+      "meaning": "module names from exception objects",
+      "consumers": [
+        "harness/patch_review.py:_patch_imports_missing"
+      ],
+      "type": "[<class 'str'>]",
+      "constraint": "exact text names"
+    },
+    "probe_observations": {
+      "meaning": "bounded producer-owned G6 payload; consumers do not parse captured output",
+      "consumers": [
+        "harness/verification_search.py:reading",
+        "harness/verification_search.py:search"
+      ],
+      "type": "(<class 'list'>, <class 'str'>, <class 'NoneType'>)",
+      "constraint": "bounded exact JSON input/output pairs, or an error or no payload"
+    },
+    "python_sources": {
+      "meaning": "Python names in the copy's pre-run snapshot; null uses the source folder's own listing",
+      "consumers": [
+        "workforce/repo_tests.py:loaded_from"
+      ],
+      "type": "([<class 'str'>], <class 'NoneType'>)",
+      "constraint": "unique relative Python paths, or null for a Git source listing"
+    },
+    "collection_stopped": {
+      "meaning": "final collection stage from the producer session; null when unrecorded",
+      "consumers": [
+        "harness/patch_review.py:_verdicts"
+      ],
+      "type": "(<class 'bool'>, <class 'NoneType'>)",
+      "constraint": "true requires a collection failure or missing selection; null when unrecorded"
+    }
+  },
+  "values": {
+    "verdict": [
+      "changed_tracked_files",
+      "collection_error",
+      "could_not_start",
+      "crashed",
+      "failed",
+      "incomplete",
+      "inconsistent_report",
+      "no_tests_collected",
+      "not_run",
+      "passed",
+      "pytest_not_found",
+      "run_inconsistent",
+      "timed_out"
+    ],
+    "test_outcomes": {
+      "phases": [
+        "setup",
+        "call",
+        "teardown"
+      ],
+      "outcomes": [
+        "passed",
+        "failed",
+        "skipped"
+      ],
+      "collection": {
+        "collection": "skipped"
+      },
+      "partial": "unknown body; preserves started identity and diagnostic verdict"
+    },
+    "loaded_outside": "absent: recorded control; empty mapping: no outside module; named module: match source tails",
+    "loaded_complete": "absent with no listing: recorded control; False with listing: unknown loading; True: complete listing",
+    "rootdir": "empty: top/no pytest root; relative prefix: test identity; partial record keys retain started vs never reached",
+    "isolation.backend": "absent: recorded control; null/empty: refusal; nonempty: boundary recorded",
+    "isolation.network": "False: isolated offline; True: network allowed",
+    "baseline/patched": "absent vs not_run vs passed vs failed/collection_error: refusal vs ran-but-unkept replay",
+    "degraded/completed": "exact booleans; incomplete run cannot supply a stored passing receipt",
+    "counts": "zero/positive; passes plus failures is total, skips excluded; JUnit groups may merge identities",
+    "output/failure_messages/os_errors": "missing id and collection error text; assertion vs access-error diagnostics; observation output",
+    "source_before/receipt": "absent vs present; exact snapshot digest and stored receipt identity",
+    "copy_annotations": "absent/empty vs entries: forward observed omissions/hashes and withheld receipt reason",
+    "ordered_raw_failed_ids": "replay detail reads only failed_ids, in emission order and without rootdir qualification; phase evidence uses qualified identities and the failure union"
+  },
+  "internal_tallies": {
+    "_judge": [
+      "failures",
+      "errors",
+      "outside",
+      "passed",
+      "expected",
+      "finished",
+      "collection",
+      "placed"
+    ],
+    "_progress": [
+      "collected",
+      "deselected",
+      "started",
+      "finished"
+    ],
+    "result": [
+      "passed",
+      "failures",
+      "errors",
+      "skipped",
+      "deselected",
+      "expected",
+      "finished"
+    ]
+  }
+}

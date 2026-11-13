@@ -469,7 +469,7 @@ def test_ge013_check_catches_the_archive_header() -> None:
 
 # --- GE-015, GE-016, GE-017: only the small core ships, with no hard-coded home paths --------------------------------
 
-_SHIPPED = {"__init__.py", "codes.py", "controls.py", "plan.py", "predicates.py", "schema.py"}
+_SHIPPED = {"__init__.py", "block.py", "codes.py", "controls.py", "decomposition.py", "plan.py", "predicates.py", "schema.py"}
 _HOME = ("C:" + "\\Users\\", "C:" + "/Users/", "/home/", "/Users/")  # built at runtime (owner-approved, R-08)
 
 

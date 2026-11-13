@@ -19,7 +19,10 @@ from g6.core import component_process, confine
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.harness import patch_review
 from g6.harness.patch_review import review_patch
+from g6.workforce import repo_tests
 from g6.invariants import check_envelope
+
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
 
 BAD = "def add(a, b):\n    return a - b\n"
 GOOD = "def add(a, b):\n    return a + b\n"
@@ -53,18 +56,21 @@ def review(repo, requirements=SUM, **kwargs):
 
 
 def result(passed=(), failed=(), skipped=(), *, verdict=None, backend="synthetic-unit-fixture", said="", output="",
-           receipt=""):
+           receipt="", messages=None, collection_stopped=None):
     """One recorded ``repo_tests.run`` result: these node ids passed, failed or were skipped."""
     outcomes = {**{node: {"setup": "passed", "call": "passed", "teardown": "passed"} for node in passed},
                 **{node: {"setup": "passed", "call": "failed", "teardown": "passed"} for node in failed},
                 **{node: {"setup": "skipped", "teardown": "passed"} for node in skipped}}
     verdict = verdict or ("failed" if failed else "passed")
-    return {"verdict": verdict, "said": said, "passed": len(passed), "failed": len(failed),
-            "not_passed": len(skipped), "total": len(passed) + len(failed), "deselected": 0,
+    messages = messages or {}
+    bad = len(failed) + len(set(messages) - set(outcomes))
+    return {"verdict": verdict, "said": said, "rootdir": "", "passed": len(passed), "failed": bad,
+            "not_passed": len(skipped), "total": len(passed) + bad, "deselected": 0,
             "test_outcomes": outcomes, "collected_ids": sorted(outcomes), "omitted_ids": [], "changed": [],
             "output": output, "seconds": 0.25, "python": sys.executable, "interpreter_source": "g6",
             "command": "pytest", "isolation": {"backend": backend, "why": ""}, "failed_ids": list(failed),
-            "setup_errors": {}, "degraded": verdict not in ("passed", "failed"), "receipt": receipt}
+            "setup_errors": {}, "degraded": verdict not in ("passed", "failed"), "receipt": receipt,
+            "failure_messages": messages, "collection_stopped": collection_stopped}
 
 
 class Recorded:
@@ -88,7 +94,10 @@ class Recorded:
 
         def execute_at_base(change, ids, *, timeout_s):
             self.at_base_calls.append(tuple(ids))
-            return at_base if at_base is not None else {"verdict": "not_run", "said": "no run was recorded"}
+            return at_base if at_base is not None else {"verdict": "not_run", "said": "no run was recorded",
+                'output': '', 'rootdir': '', 'test_outcomes': None,
+                'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+                'omitted_ids': []}
 
         monkeypatch.setattr(patch_review, "_execute", execute)
         monkeypatch.setattr(patch_review, "_execute_at_base", execute_at_base)
@@ -133,15 +142,16 @@ def test_a_correct_patch_is_supported_within_its_stated_scope(repo, monkeypatch)
 
 
 def test_a_stated_check_that_passes_at_the_base_commit_too_is_an_unknown_with_a_next_action(repo, monkeypatch):
-    """Review I8 (probe S12): a check need not exercise the change; the owner's ruling makes one that passes against
-    the base commit's code too an unknown and a next action, never another outcome (a requirement to keep behaviour
-    passes at the base by design)."""
+    """Review I8 (probe S12): a check need not exercise the change, so one that passes against the base commit's code
+    too is an unknown and a next action. Since round 3 of the worked examples it also cannot lift a requirement for new
+    behaviour; a requirement to keep behaviour passes at the base by design, and that one still can."""
     (repo / "calc.py").write_text(GOOD)
     runs = Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])},
                     at_base=result([ADD], [NEGATIVE]))   # R1's check passes on the unpatched code too
     got = review(repo)
     assessment = got["assessment"]
-    assert assessment["outcome"] == "supported_within_scope", assessment["reasons"]
+    assert [r["code"] for r in assessment["reasons"]] == ["checks_written_with_patch"]
+    assert "R1" in assessment["reasons"][0]["detail"] and "R2" not in assessment["reasons"][0]["detail"]
     assert runs.at_base_calls == [(ADD, NEGATIVE)]
     assert [u for u in assessment["unknowns"] if "base commit" in u and "may not exercise" in u] == [
         f"{ADD} passes against the base commit's code too, so it may not exercise the change"]
@@ -159,7 +169,9 @@ def test_a_stated_check_whose_test_file_cannot_load_at_the_base_commit_is_not_sa
     commit's code, so none of its checks ran there. That is no failure at the base, and whether they exercise the
     change is an unknown, never claimed."""
     (repo / "calc.py").write_text(GOOD)
-    unloaded = result(verdict="failed", output="ERROR test_calc.py - ImportError: cannot import name 'sub' from 'calc'\n")
+    unloaded = result(verdict="failed", output="ERROR test_calc.py - ImportError: cannot import name 'sub' from 'calc'\n",
+                      messages={"test_calc.py": "ImportError: cannot import name 'sub' from 'calc'"},
+                      collection_stopped=True)
     Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])},
              at_base=unloaded)
     assessment = review(repo)["assessment"]
@@ -575,7 +587,8 @@ def test_a_moved_test_file_is_compared_with_its_old_text_not_read_as_deleted(rep
     nodes = [ADD.replace("test_calc", "test_addition"), NEGATIVE.replace("test_calc", "test_addition")]
     Recorded(monkeypatch, {tuple(nodes): result(nodes), ("test_addition.py",): result(nodes)})
     got = review(repo, moved)
-    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    # worked examples, round 3: the rule works per file, so a moved test counts as touched, a stated limit of the rule
+    assert [r["code"] for r in got["assessment"]["reasons"]] == ["checks_written_with_patch"]
     assert not any("deleted" in r["detail"] for r in got["assessment"]["reasons"])
     # survival: a moved test that was also weakened is still found
     (repo / "test_addition.py").write_text(TEST.replace("assert add(2, 3) == 5", "assert True"))
@@ -647,8 +660,12 @@ def test_test_ids_are_read_against_the_root_folder_pytest_used(repo, monkeypatch
 
 def test_a_stated_check_the_environment_cannot_collect_is_not_established(repo, monkeypatch):
     (repo / "calc.py").write_text(GOOD)
-    lacking = {"verdict": "not_run", "said": "the tests could not be collected", "baseline": "collection_error"}
-    Recorded(monkeypatch, default=result(verdict="collection_error", output="ERROR test_calc.py\n"),
+    lacking = {"verdict": "not_run", "said": "the tests could not be collected", "baseline": "collection_error",
+        'output': '', 'rootdir': '', 'test_outcomes': None,
+        'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+        'omitted_ids': []}
+    Recorded(monkeypatch, default=result(verdict="collection_error", output="ERROR test_calc.py\n",
+                                        messages={"test_calc.py": "ImportError"}, collection_stopped=True),
              on_base={"test_calc.py": lacking})   # the environment lacks the dependency at the base commit too
     got = review(repo)
     assert got["assessment"]["outcome"] == "insufficient_evidence"
@@ -661,7 +678,8 @@ def test_only_the_check_whose_file_failed_to_collect_is_named(repo, monkeypatch)
     (repo / "test_more.py").write_text("import calc\n\n\ndef test_more():\n    assert calc.add(0, 0) == 0\n")
     (repo / "calc.py").write_text(GOOD)
     more = [*SUM, {"id": "R3", "text": "add sums zeros", "checks": ["test_more.py::test_more"]}]
-    Recorded(monkeypatch, default=result(verdict="failed", output="ERROR collecting test_more.py\nERROR test_more.py"))
+    Recorded(monkeypatch, default=result(verdict="failed", output="ERROR collecting test_more.py\nERROR test_more.py",
+                                        messages={"test_more.py": "ImportError"}, collection_stopped=True))
     got = review(repo, more)
     assert got["assessment"]["outcome"] == "defect_detected"
     assert _requirement(got, "R3")["checks"][0]["verdict"] == "failed"
@@ -718,7 +736,10 @@ def test_a_derived_test_failing_on_base_and_patch_is_pre_existing_not_a_defect(r
     derived = result([ADD, NEGATIVE], ["test_legacy.py::test_legacy"])
     # as repo_tests.run_before gives it: the base run happened and failed (with no baseline it never ran: launch I4)
     not_on_base = {"verdict": "not_run", "said": "old tests not run: the old-code baseline did not pass",
-                   "baseline": "failed"}
+                   "baseline": "failed",
+        'output': '', 'rootdir': '', 'test_outcomes': None,
+        'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+        'omitted_ids': []}
     runs = Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]),
                                   ("test_calc.py", "test_legacy.py"): derived},
                     on_base={"test_legacy.py": not_on_base})
@@ -744,7 +765,10 @@ def test_a_failing_derived_file_g6_could_not_run_at_the_base_commit_is_said_so_n
     (repo / "test_legacy.py").write_text("import calc\n\n\ndef test_legacy():\n    assert calc.add(1, 1) == 2\n")
     _commit(repo, "legacy")
     (repo / "calc.py").write_text(GOOD)
-    never = {"verdict": "not_run", "said": "the repository copy cap of 10000 files was exceeded"}   # no baseline
+    never = {"verdict": "not_run", "said": "the repository copy cap of 10000 files was exceeded",
+        'output': '', 'rootdir': '', 'test_outcomes': None,
+        'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+        'omitted_ids': []}   # no baseline
     Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]),
                            ("test_calc.py", "test_legacy.py"): result([ADD, NEGATIVE], ["test_legacy.py::test_legacy"])},
              on_base={"test_legacy.py": never})
@@ -764,9 +788,13 @@ def test_a_derived_file_that_fails_to_collect_on_the_patch_and_passes_at_the_bas
          "commit", "-qm", "legacy")
     (repo / "calc.py").write_text(GOOD)
     collected_at_base = {"verdict": "not_run", "said": "the tests could not be collected", "baseline": "passed",
-                         "patched": verdict}
+                         "patched": verdict,
+        'output': '', 'rootdir': '', 'test_outcomes': None,
+        'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+        'omitted_ids': []}
     runs = Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]),
-                                  ("test_calc.py", "test_legacy.py"): result(verdict=verdict, output=output)},
+                                  ("test_calc.py", "test_legacy.py"): result(verdict=verdict, output=output,
+                                      messages={"test_legacy.py": "ImportError"}, collection_stopped=True)},
                     on_base={"test_legacy.py": collected_at_base})
     got = review(repo)
     assert got["assessment"]["outcome"] == "defect_detected", got["assessment"]
@@ -775,8 +803,12 @@ def test_a_derived_file_that_fails_to_collect_on_the_patch_and_passes_at_the_bas
     assert runs.calls[-1] == ("base", ("test_legacy.py",))
     # survival: when it did not pass at the base commit either, it stays an unknown
     Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]),
-                           ("test_calc.py", "test_legacy.py"): result(verdict=verdict, output=output)},
-             on_base={"test_legacy.py": {"verdict": "not_run", "said": "no", "baseline": "failed"}})
+                           ("test_calc.py", "test_legacy.py"): result(verdict=verdict, output=output,
+                               messages={"test_legacy.py": "ImportError"}, collection_stopped=True)},
+             on_base={"test_legacy.py": {"verdict": "not_run", "said": "no", "baseline": "failed",
+                 'output': '', 'rootdir': '', 'test_outcomes': None,
+                 'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+                 'omitted_ids': []}})
     unknown = review(repo)
     assert unknown["assessment"]["outcome"] == "supported_within_scope"
     assert any("test_legacy.py" in u for u in unknown["assessment"]["unknowns"])
@@ -905,6 +937,56 @@ def test_a_shortcut_in_a_test_or_ci_file_is_still_found_by_the_diff_scan(repo, m
     assert got["assessment"]["outcome"] == "test_integrity_compromised", got["assessment"]["reasons"]
     assert any(r["code"] == "gate_shortcut" and hit in r["detail"] for r in got["assessment"]["reasons"]), \
         got["assessment"]["reasons"]
+
+
+MARKED = ("import pytest\n" + TEST + "\n\n@pytest.mark.skipif(sys.version_info < (3, 14), reason=\"needs 3.14\")\n"
+          "def test_newer_python():\n    assert add(1, 1) == 2\n")
+OVERRIDE = ("import pytest\n\n\nclass BaseTests:\n    def test_old(self):\n        assert 2 == 3\n\n\nclass TestFeature(BaseTests):\n"
+            "    pass\n" + TEST)
+
+
+@pytest.mark.parametrize("before, after", [
+    (TEST, MARKED),                                                     # attrs-1593: a correct patch's test
+    (OVERRIDE, OVERRIDE.replace("(BaseTests):\n    pass\n",             # the outside review's: an inherited failure hidden as new
+                                "(BaseTests):\n    @pytest.mark.xfail\n    def test_old(self):\n        assert 2 == 3\n")),
+])
+def test_a_marker_on_a_test_that_looks_new_stops_support_and_accuses_nobody(repo, monkeypatch, before, after):
+    """A diff cannot show a test is new, so this is never accepted, and it is no accusation either: it is evidence the person reads."""
+    (repo / "test_calc.py").write_text(before)
+    _commit(repo, "the tests before the patch")
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_calc.py").write_text(after)
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
+    assert "marker_on_new_test" in _reasons(got) and "gate_shortcut" not in _reasons(got)
+    assert not any(r["stage"] == "integrity" for r in got["assessment"]["reasons"])
+
+
+def test_a_crashed_run_with_a_failure_the_base_has_too_never_reaches_support(repo, monkeypatch):
+    """The outside review's second pass: a derived run crashed after one failure, and the failure was the base's own. Discounting it
+    must not forget that the rest of that run never ran."""
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_more.py").write_text("from calc import add\n\n\ndef test_zero():\n    assert add(0, 0) == 0\n")
+    known = "test_more.py::test_zero"
+    crashed = result([ADD, NEGATIVE], failed=[known], verdict="crashed", said="the test process crashed, so this run gave no result")
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE])}, default=crashed)
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
+    assert "run_crashed" in _reasons(got)
+
+
+def test_a_failure_on_the_record_survives_a_crash_after_it():
+    """The outside review's input: a crash later in the run must not erase a check that already failed."""
+    node = "test_x.py::test_fails"
+    ran = {"verdict": "crashed", "failed_ids": [node], "test_outcomes": {node: {"setup": "passed", "call": "failed", "teardown": "passed"}}}
+    assert patch_review._verdicts([node], ran)[node]["verdict"] == "failed"
+
+
+def test_a_check_with_no_result_on_a_crashed_run_never_passes():
+    node = "test_x.py::test_passes"
+    ran = {"verdict": "crashed", "said": "it crashed", "test_outcomes": {node: {"setup": "passed", "call": "passed", "teardown": "passed"}}}
+    assert patch_review._verdicts([node], ran)[node]["verdict"] == "crashed"
 
 
 def test_a_renamed_test_file_with_an_assert_removed_is_still_found_by_the_diff_scan(repo, monkeypatch):
@@ -1479,7 +1561,10 @@ def _during_the_review(monkeypatch, act) -> None:
 
     monkeypatch.setattr(patch_review, "_execute", execute)
     monkeypatch.setattr(patch_review, "_execute_at_base",
-                        lambda *args, **kwargs: {"verdict": "not_run", "said": "no run was recorded"})
+                        lambda *args, **kwargs: {"verdict": "not_run", "said": "no run was recorded",
+                            'output': '', 'rootdir': '', 'test_outcomes': None,
+                            'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+                            'omitted_ids': []})
 
 
 def test_bytecode_written_in_a_submodule_folder_during_the_review_is_no_accusation(repo, monkeypatch):
@@ -1565,6 +1650,28 @@ def test_confined_a_process_that_exits_with_an_error_after_a_passing_session_is_
     assert {_requirement(got, ident)["status"] for ident in ("R1", "R2")} == {"not_established"}
     assert assessment["scope"]["checks_run"][0]["verdict"] == "run_inconsistent"
     assert assessment["scope"]["environment"]["isolation"]["backend"] == confine.BUBBLEWRAP
+
+
+@pytest.mark.parametrize("tier", [1, 2])
+def test_a_run_a_crash_ended_is_insufficient_evidence_and_never_integrity(repo, monkeypatch, tier):
+    """pydantic-14065: a test unrelated to the patch segfaulted the run, and G6 told the person the tests could not be
+    trusted, on a correct patch. A crash cannot get a patch accepted, so it is evidence, by the owner's ruling's reasoning."""
+    from g6.workforce import repo_tests
+
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_more.py").write_text("from calc import add\n\n\ndef test_zero():\n    assert add(0, 0) == 0\n")
+    said = repo_tests.SAID["crashed"].format(where=" (Segmentation fault, in test_x in test_main.py)")
+    crashed = result([ADD, NEGATIVE], verdict="crashed", said=said)
+    passing = result([ADD, NEGATIVE])
+    derived = ["test_more.py::test_zero", ADD, NEGATIVE]
+    Recorded(monkeypatch, {(ADD, NEGATIVE): crashed if tier == 1 else passing},
+             default=result(derived, verdict="crashed", said=said) if tier == 2 else result(derived))
+    got = review(repo)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    assert ("evidence", "run_crashed") in [(r["stage"], r["code"]) for r in assessment["reasons"]]
+    assert not any(r["stage"] == "integrity" for r in assessment["reasons"])
+    assert any("test_x" in r["detail"] for r in assessment["reasons"] if r["code"] == "run_crashed")
 
 
 HOOK = ("import pytest\n\n\n@pytest.hookimpl(hookwrapper=True)\ndef pytest_runtest_makereport(item, call):\n"
@@ -1678,7 +1785,7 @@ def test_confined_a_stated_check_that_passes_at_the_base_commit_too_is_an_unknow
     _commit(repo, "sub")
     (repo / "calc.py").write_text(BAD + "\n\ndef sub(a, b):\n    return a - b\n# touched\n")
     got = review(repo, [{"id": "R1", "text": "add returns the sum", "checks": ["test_sub.py::test_sub"]}])
-    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]   # the ruling: an unknown only
+    assert [r["code"] for r in got["assessment"]["reasons"]] == ["checks_written_with_patch"]    # worked examples, round 3
     assert ("test_sub.py::test_sub passes against the base commit's code too, so it may not exercise the change"
             in got["assessment"]["unknowns"]), got["assessment"]["unknowns"]
     # survival: a check that fails on the base code (this patch fixes add) raises no such unknown
@@ -1721,8 +1828,110 @@ def test_confined_a_correct_patch_beside_a_submodule_imported_through_a_link_is_
     got = review(repo, [*SUM, {"id": "R3", "text": "the vendored package gives its value",
                                "checks": ["test_lib.py::test_value"]}])
     assessment = got["assessment"]
-    assert assessment["outcome"] == "supported_within_scope", assessment
+    assert [r["code"] for r in assessment["reasons"]] == ["checks_written_with_patch"], assessment    # R3 passes there too
     assert [r["receipt_status"] for r in assessment["scope"]["receipts"]] == ["matched", "matched"]
     # the copy made for the base commit's run held the link and the folder: the check passed there too
     assert ("test_lib.py::test_value passes against the base commit's code too, so it may not exercise the change"
             in assessment["unknowns"]), assessment["unknowns"]
+
+
+NEW_TEST = "from calc import add\n\n\ndef test_new():\n    assert add(1, 1) == 2\n"
+ONE = "add returns the sum"
+
+
+def _written_by_patch(repo, monkeypatch, checks, passed):
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_new.py").write_text(NEW_TEST)
+    Recorded(monkeypatch, default=result(passed))
+    return review(repo, requirements=[{"id": "R1", "text": ONE, "checks": checks}])["assessment"]
+
+
+def test_a_requirement_passing_only_on_a_test_the_patch_adds_is_not_supported(repo, monkeypatch):
+    got = _written_by_patch(repo, monkeypatch, ["test_new.py::test_new"], ["test_new.py::test_new"])
+    assert got["outcome"] == "insufficient_evidence"
+    assert [r["code"] for r in got["reasons"]] == ["checks_written_with_patch"]
+    assert got["requirements"][0]["status"] == "passed_on_stated_checks"   # its status stays what the run showed
+    assert "R1" in got["next_actions"][0] and "base commit" in got["next_actions"][0]
+
+
+def test_a_test_in_a_file_the_patch_changes_counts_as_written_with_it(repo, monkeypatch):
+    (repo / "test_calc.py").write_text(TEST + "\n\ndef test_more():\n    assert add(0, 0) == 0\n")
+    got = _written_by_patch(repo, monkeypatch, [ADD], [ADD])
+    assert got["outcome"] == "insufficient_evidence"
+
+
+def test_a_folder_holding_a_test_the_patch_adds_counts_as_written_with_it(repo, monkeypatch):
+    (repo / "sub").mkdir()
+    (repo / "sub" / "test_more.py").write_text(NEW_TEST)
+    got = _written_by_patch(repo, monkeypatch, ["sub"], ["sub/test_more.py::test_new"])
+    assert "checks_written_with_patch" in [r["code"] for r in got["reasons"]]
+
+
+def test_a_test_the_patch_does_not_touch_can_support_a_requirement(repo, monkeypatch):
+    got = _written_by_patch(repo, monkeypatch, [ADD], [ADD])
+    assert got["outcome"] == "supported_within_scope", got["reasons"]
+
+
+def test_one_untouched_check_is_enough_for_a_requirement(repo, monkeypatch):
+    got = _written_by_patch(repo, monkeypatch, [ADD, "test_new.py::test_new"], [ADD, "test_new.py::test_new"])
+    assert got["outcome"] == "supported_within_scope", got["reasons"]
+
+
+def test_every_requirement_needs_its_own_untouched_check(repo, monkeypatch):
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_new.py").write_text(NEW_TEST)
+    Recorded(monkeypatch, default=result([ADD, "test_new.py::test_new"]))
+    got = review(repo, requirements=[{"id": "R1", "text": ONE, "checks": [ADD]},
+                                     {"id": "R2", "text": ONE, "checks": ["test_new.py::test_new"]}])["assessment"]
+    assert got["outcome"] == "insufficient_evidence"
+    assert "R2" in got["reasons"][0]["detail"] and "R1" not in got["reasons"][0]["detail"]
+
+
+def test_an_old_test_that_passes_at_the_base_commit_does_not_lift_a_requirement(repo, monkeypatch):
+    # the fresh review: any unrelated old test would otherwise lift the cap, and the next action said to cite one
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, default=result([ADD]), at_base=result([ADD]))
+    got = review(repo, requirements=[{"id": "R1", "text": ONE, "checks": [ADD]}])["assessment"]
+    assert [r["code"] for r in got["reasons"]] == ["checks_written_with_patch"]
+
+
+def test_an_old_test_that_fails_at_the_base_commit_supports_a_requirement(repo, monkeypatch):
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, default=result([ADD]), at_base=result((), [ADD]))
+    got = review(repo, requirements=[{"id": "R1", "text": ONE, "checks": [ADD]}])["assessment"]
+    assert got["outcome"] == "supported_within_scope", got["reasons"]
+
+
+def test_a_requirement_to_keep_behaviour_passes_at_the_base_commit_by_design(repo, monkeypatch):
+    (repo / "calc.py").write_text(GOOD)
+    change = repo_tests.change(repo, "HEAD")
+    checks = [{"id": ADD, "provenance": "stated"}]
+    runs = [{"check": patch_review.AT_BASE, "outcomes": {ADD: "passed"}}]
+    for kind, expected in (("preserve", []), ("requirement", ["R1"])):
+        req = {"id": "R1", "status": patch_review.PASSED_ON_CHECKS, "kind": kind, "checks": checks}
+        assert patch_review._self_checked([req], change, repo, runs) == expected
+
+
+def test_a_check_in_an_ignored_file_is_not_independent(repo, monkeypatch):
+    # the fresh review: git-ignored, not named like a test, so the patch's changed files do not list it
+    (repo / ".gitignore").write_text("selfcheck.py\n")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "ignore")
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "selfcheck.py").write_text(NEW_TEST)
+    Recorded(monkeypatch, default=result(["selfcheck.py::test_new"]))
+    got = review(repo, requirements=[{"id": "R1", "text": ONE, "checks": ["selfcheck.py::test_new"]}])["assessment"]
+    assert "checks_written_with_patch" in [r["code"] for r in got["reasons"]]
+
+
+def test_a_folder_of_old_tests_stays_independent_of_a_change_to_source_alone(repo, monkeypatch):
+    # the fresh review: a folder check was capped because the source the patch changed sits in it
+    (repo / "pkg").mkdir()
+    (repo / "pkg" / "__init__.py").write_text("")
+    (repo / "pkg" / "test_old.py").write_text(NEW_TEST)
+    _git(repo, "add", ".")
+    _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "pkg")
+    (repo / "pkg" / "__init__.py").write_text("X = 1\n")
+    Recorded(monkeypatch, default=result(["pkg/test_old.py::test_new"]))
+    got = review(repo, requirements=[{"id": "R1", "text": ONE, "checks": ["pkg"]}])["assessment"]
+    assert got["outcome"] == "supported_within_scope", got["reasons"]

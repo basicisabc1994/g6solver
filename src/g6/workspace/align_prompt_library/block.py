@@ -6,7 +6,8 @@ Each op calls one function of :mod:`g6.workspace.align_prompt_library.ops` and r
 unknown ops and unknown fields (``G6_E_INPUT_VALIDATION``): there is no field for a review status, a reviewer, an
 approval or a confidence; what a caller wants to say about a record goes in ``metadata``, kept as their word.
 
-Put, retire and rollback are sensitive: a changed stored prompt can affect later tasks. Reads remain non-sensitive.
+Put, retire, rollback and install_catalog are sensitive: a changed stored prompt can affect later tasks. Reads, and the
+catalogue's listing, remain non-sensitive.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from g6.workspace import _envelope as E
 from g6.workspace.align_prompt_library import ops
 from g6.workspace.align_prompt_library.library import MAX_CONTENT
 
-SENSITIVE_OPS: tuple[str, ...] = ("put", "retire", "rollback")
+SENSITIVE_OPS: tuple[str, ...] = ("put", "retire", "rollback", "install_catalog")
 _OPS: dict[str, str] = {
     "put": "put(kind, name, content, metadata): store a new version of a prompt, spec or eval_set; returns its version "
            "and digest (the SHA-256 of the content); metadata is kept as your word",
@@ -36,6 +37,10 @@ _OPS: dict[str, str] = {
               "or an extra value is refused, and expanded text is capped at 1,000,000 characters; digests returned",
     "retire": "retire(name): a tombstone; every version stays readable by number or digest",
     "rollback": "rollback(name, to_version): a new version holding an earlier version's content; nothing is rewritten",
+    "catalogue": "catalogue(mode, step): the prompt catalogue's entries, each tied to a work mode (premortem, mission, "
+                 "venture) and a step (propose, test, approve; none decides a gate), with its template and digest",
+    "install_catalog": "install_catalog(prefix): store every catalogue entry as prefix + its name, a candidate template; "
+                       "a name holding a prompt of your own is refused, never overwritten",
 }
 _NEEDS = {"put": ("kind", "name", "content"), "history": ("name",), "render": ("name",), "retire": ("name",),
           "rollback": ("name", "to_version")}
@@ -48,7 +53,8 @@ class AlignPromptLibraryInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    op: Literal["put", "get", "history", "search", "render", "retire", "rollback", "ops", "help"] = "help"
+    op: Literal["put", "get", "history", "search", "render", "retire", "rollback", "catalogue", "install_catalog", "ops",
+                "help"] = "help"
     kind: Literal["prompt", "spec", "eval_set", ""] = ""
     name: str = Field("", max_length=100)
     content: str = Field("", max_length=MAX_CONTENT)
@@ -60,6 +66,9 @@ class AlignPromptLibraryInput(BaseModel):
     include_retired: bool = False
     to_version: int | None = Field(None, ge=1)
     limit: int = Field(50, ge=1, le=500)
+    mode: Literal["premortem", "mission", "venture", ""] = ""
+    step: Literal["propose", "test", "gate", "approve", ""] = ""
+    prefix: str = Field("", max_length=40)
     request_id: str = Field("", max_length=100)
     run_id: str = Field("", max_length=100)
 
@@ -76,6 +85,8 @@ _RUN: dict[str, Callable[[AlignPromptLibraryInput], Any]] = {
     "render": lambda d: ops.render(d.name, version=d.version, digest=d.digest, values=d.values, **_ids(d)),
     "retire": lambda d: ops.retire(d.name, **_ids(d)),
     "rollback": lambda d: ops.rollback(d.name, d.to_version or 0, **_ids(d)),
+    "catalogue": lambda d: ops.catalogue(mode=d.mode, step=d.step, **_ids(d)),
+    "install_catalog": lambda d: ops.install_catalog(d.prefix, **_ids(d)),
 }
 
 

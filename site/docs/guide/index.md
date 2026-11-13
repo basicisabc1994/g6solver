@@ -63,7 +63,7 @@ The instinctive response is to try harder. Rephrase the prompt. Add more context
 
 2. **No learning from mistakes.** If the AI generates code with a subtle bug, and you fix it, the AI does not learn from that correction. The next time it encounters the same situation, it will make the same mistake.
 
-3. **No verification instinct.** The AI does not check whether its output actually works. It generates code that looks plausible, but looking plausible and being correct are very different things.
+3. **No checking instinct.** The AI does not check whether its output actually works. It generates code that looks plausible, but looking plausible and being correct are very different things.
 
 ## The Economics Are Still Broken
 
@@ -106,7 +106,7 @@ This is the most frustrating pattern, and it has a mathematical basis. When an A
 
 This is why your app seems to get worse as you try to fix it. Each fix has a small probability of introducing a new problem, and those probabilities multiply. After enough changes, it is more likely than not that something is broken.
 
-**What this means for you:** The more you ask the AI to fix, the more likely it is to break something. This is not the AI getting worse — it is a mathematical certainty of sequential changes without verification between them.
+**What this means for you:** The more you ask the AI to fix, the more likely it is to break something. This is not the AI getting worse — it is a mathematical certainty of sequential changes without checks between them.
 
 ## Pattern 4: Security Blindness
 
@@ -130,7 +130,7 @@ In one small G6 test (an anecdote, not a study), a small model reviewed four of 
 
 This is not a limitation that will be fixed with a better prompt or a longer conversation. It is a mathematical property: if a model's internal confidence is poorly calibrated (meaning it is confident when wrong), then asking it "are you sure?" produces the same wrong confidence.
 
-**What this means for you:** Telling your AI "check your work" or "review this code" gives you a false sense of security. The AI will tell you it looks correct even when it is not. Real verification requires something outside the model — tests, tools, or human review.
+**What this means for you:** Telling your AI "check your work" or "review this code" gives you a false sense of security. The AI will tell you it looks correct even when it is not. A real check needs something outside the model — tests, tools, or human review.
 
 
 # Chapter 3: Harness Engineering 101
@@ -142,7 +142,7 @@ A harness is everything between the AI model and the final output. Think of it l
 In software terms, a harness is the system that:
 - Tells the AI what to do (the prompt and instructions)
 - Gives the AI the right information (grounding and context)
-- Checks whether the AI's output is correct (verification)
+- Checks whether the AI's output is correct (checks)
 - Remembers what worked and what did not (memory and learning)
 - Prevents dangerous actions (safety)
 - Connects the AI to useful tools (tool integration)
@@ -153,13 +153,13 @@ In software terms, a harness is the system that:
 
 A well-engineered harness has four layers. You do not need to build these yourself — G6 provides them — but understanding what they do helps you make better decisions about your AI-built apps.
 
-### Layer 1: Verification — "Does it actually work?"
+### Layer 1: Checks — "Does it actually work?"
 
-Verification is the most critical layer. It answers one question: does the output actually do what it is supposed to do?
+Checking is the most critical layer. It asks one question: does the output actually do what it is supposed to do?
 
-For code, verification means running tests. Not just "does it compile?" but "does it produce the right answer for known inputs?" For content, verification means checking facts against sources. For data processing, verification means comparing outputs against expected results.
+For code, checking means running tests. Not just "does it compile?" but "does it produce the right answer for known inputs?" For content, checking means comparing facts against sources. For data processing, checking means comparing outputs against expected results.
 
-Without verification, you are guessing. With verification, you know.
+Without checks, you are guessing. With them, you know what passed.
 
 ### Layer 2: Memory — "What failed before?"
 
@@ -191,7 +191,7 @@ This is what makes a harness fundamentally different from just "better prompting
 The improvement cycle works like this:
 
 1. The system attempts a task
-2. It checks whether the result is correct (Layer 1: Verification)
+2. It checks whether the result is correct (Layer 1: Checks)
 3. If the result is wrong, it diagnoses why
 4. It creates or updates a "theory" — a reusable strategy for avoiding that failure
 5. A person approves the theory, and next time a similar task comes up, it is applied
@@ -225,11 +225,11 @@ Fixes often fail not because of bad code, but because nobody clearly defined wha
 
 **How to apply this:** Before asking the AI to fix anything, write down — in plain language — exactly what the correct behavior should be. Include examples. Be specific. "It should work properly" is not a definition. "Given patient John Smith with allergies to penicillin, the system should flag amoxicillin as high-risk and display: 'Amoxicillin is a penicillin-type antibiotic. Not recommended due to documented penicillin allergy'" — that is a definition.
 
-## Pattern 3: Verify Before Shipping
+## Pattern 3: Check Before Shipping
 
-Every change should be verified before it goes live. Not "I looked at it and it seems fine" — actually tested with real inputs and compared against known correct outputs.
+Every change should be checked before it goes live. Not "I looked at it and it seems fine" — actually tested with real inputs and compared against known correct outputs.
 
-**The minimum verification checklist:**
+**The minimum checklist:**
 
 1. Does the change produce the correct output for a normal case?
 2. Does it handle edge cases? (Empty input, very long input, unexpected characters)
@@ -285,7 +285,7 @@ G6 takes a different approach. Instead of changing the model (fine-tuning), it c
 The self-training loop is simple in concept:
 
 1. **Try:** The system attempts a task using its current harness
-2. **Check:** It verifies whether the result is correct
+2. **Check:** It checks whether the result is correct
 3. **Diagnose:** If incorrect, it analyzes why it failed
 4. **Learn:** It proposes a strategy to prevent that failure
 5. **Approve and repeat:** A person accepts the strategy, and the next attempt uses it
@@ -731,7 +731,7 @@ Replace the `[BRACKETED]` placeholders with your specific details. These prompts
 > 2. **Communicate:** Draft a brief status message for affected users
 > 3. **Mitigate:** What is the fastest way to stop the bleeding? (Even if it is not a full fix)
 > 4. **Diagnose:** What is the root cause?
-> 5. **Fix:** Implement and verify the fix
+> 5. **Fix:** Implement and check the fix
 > 6. **Prevent:** What change would prevent this from happening again?
 
 ### Prompt 7.3: Dependency Update

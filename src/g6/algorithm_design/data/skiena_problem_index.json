@@ -1,0 +1,982 @@
+{
+  "version": "0.1.0",
+  "scope": "catalog section titles only as citations (book, section and printed page); each problem is described in G6's own words; not an extracted implementation catalog",
+  "count": 75,
+  "problems": [
+    {
+      "id": "skiena.12.1",
+      "description": "store items by key, then find, insert and delete them",
+      "section": "12.1",
+      "category": "data_structure",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "12.1",
+        "printed_page": 367
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.12.2",
+      "description": "keep a changing set of items and take the smallest or largest next",
+      "section": "12.2",
+      "category": "data_structure",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "12.2",
+        "printed_page": 373
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.12.3",
+      "description": "index every suffix of a text so substring questions are fast",
+      "section": "12.3",
+      "category": "data_structure",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "12.3",
+        "printed_page": 377
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.12.4",
+      "description": "represent a graph's vertices and edges for traversal and update",
+      "section": "12.4",
+      "category": "data_structure",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "12.4",
+        "printed_page": 381
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.12.5",
+      "description": "represent subsets of a universe, with membership, union and intersection",
+      "section": "12.5",
+      "category": "data_structure",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "12.5",
+        "printed_page": 385
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.12.6",
+      "description": "split points in several dimensions so spatial queries visit few of them",
+      "section": "12.6",
+      "category": "data_structure",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "12.6",
+        "printed_page": 389
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.1",
+      "description": "find values that satisfy a system of linear equations",
+      "section": "13.1",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.1",
+        "printed_page": 395
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.2",
+      "description": "order a matrix's rows and columns so its nonzeros sit near the diagonal",
+      "section": "13.2",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.2",
+        "printed_page": 398
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.3",
+      "description": "multiply two matrices",
+      "section": "13.3",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.3",
+        "printed_page": 401
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.4",
+      "description": "compute the determinant or the permanent of a square matrix",
+      "section": "13.4",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.4",
+        "printed_page": 404
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.5",
+      "description": "find the input that minimises or maximises a function, with or without limits on it",
+      "section": "13.5",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.5",
+        "printed_page": 407
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.6",
+      "description": "optimise a linear objective subject to linear inequalities",
+      "section": "13.6",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.6",
+        "printed_page": 411
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.7",
+      "description": "produce number sequences that behave as if random",
+      "section": "13.7",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.7",
+        "printed_page": 415
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.8",
+      "description": "decide whether an integer is prime, or split it into its factors",
+      "section": "13.8",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.8",
+        "printed_page": 420
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.9",
+      "description": "do arithmetic on numbers too large for a machine word",
+      "section": "13.9",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.9",
+        "printed_page": 423
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.10",
+      "description": "choose items of given weight and value to fill a capacity as well as possible",
+      "section": "13.10",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.10",
+        "printed_page": 427
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.11",
+      "description": "turn a sampled signal into its frequency components and back",
+      "section": "13.11",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.11",
+        "printed_page": 431
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.1",
+      "description": "put items in order",
+      "section": "14.1",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.1",
+        "printed_page": 436
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.2",
+      "description": "find whether, and where, a key occurs in a collection",
+      "section": "14.2",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.2",
+        "printed_page": 441
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.3",
+      "description": "find the item of a given rank, such as the middle one",
+      "section": "14.3",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.3",
+        "printed_page": 445
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.4",
+      "description": "list or sample the orderings of a set",
+      "section": "14.4",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.4",
+        "printed_page": 448
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.5",
+      "description": "list or sample the subsets of a set",
+      "section": "14.5",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.5",
+        "printed_page": 452
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.6",
+      "description": "list or sample the ways to split a number or a set into parts",
+      "section": "14.6",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.6",
+        "printed_page": 456
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.7",
+      "description": "list or sample graphs that have stated properties",
+      "section": "14.7",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.7",
+        "printed_page": 460
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.8",
+      "description": "convert dates between calendars and compute with them",
+      "section": "14.8",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.8",
+        "printed_page": 465
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.9",
+      "description": "order tasks on machines under precedence and time limits",
+      "section": "14.9",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.9",
+        "printed_page": 468
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.10",
+      "description": "decide whether a Boolean formula can be made true",
+      "section": "14.10",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.10",
+        "printed_page": 472
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.1",
+      "description": "group a graph's vertices into the pieces that reach one another",
+      "section": "15.1",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.1",
+        "printed_page": 477
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.2",
+      "description": "order a directed acyclic graph's vertices so every edge points forward",
+      "section": "15.2",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.2",
+        "printed_page": 481
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.3",
+      "description": "connect every vertex using the cheapest set of edges",
+      "section": "15.3",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.3",
+        "printed_page": 484
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.4",
+      "description": "find the cheapest route between vertices of a weighted graph",
+      "section": "15.4",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.4",
+        "printed_page": 489
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.5",
+      "description": "record which vertices reach which, or the fewest edges that keep the same reach",
+      "section": "15.5",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.5",
+        "printed_page": 495
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.6",
+      "description": "pair vertices along edges so that no vertex is used twice",
+      "section": "15.6",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.6",
+        "printed_page": 498
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.7",
+      "description": "walk every edge of a graph, exactly once or as cheaply as possible",
+      "section": "15.7",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.7",
+        "printed_page": 502
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.8",
+      "description": "find the fewest edges or vertices whose removal disconnects a graph",
+      "section": "15.8",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.8",
+        "printed_page": 505
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.9",
+      "description": "send as much as possible through a network of edges with capacities",
+      "section": "15.9",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.9",
+        "printed_page": 509
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.10",
+      "description": "place a graph's vertices and edges legibly in the plane",
+      "section": "15.10",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.10",
+        "printed_page": 513
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.11",
+      "description": "lay out a tree's nodes clearly in the plane",
+      "section": "15.11",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.11",
+        "printed_page": 517
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.12",
+      "description": "decide whether a graph can be drawn without crossing edges, and draw it so",
+      "section": "15.12",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.12",
+        "printed_page": 520
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.1",
+      "description": "find the largest set of vertices that are all adjacent to one another",
+      "section": "16.1",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.1",
+        "printed_page": 525
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.2",
+      "description": "find the largest set of vertices with no edge between any two of them",
+      "section": "16.2",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.2",
+        "printed_page": 528
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.3",
+      "description": "find the fewest vertices that touch every edge",
+      "section": "16.3",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.3",
+        "printed_page": 530
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.4",
+      "description": "find the cheapest tour that visits every city once",
+      "section": "16.4",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.4",
+        "printed_page": 533
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.5",
+      "description": "find a cycle that passes through every vertex exactly once",
+      "section": "16.5",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.5",
+        "printed_page": 538
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.6",
+      "description": "split a graph into parts with few edges between them",
+      "section": "16.6",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.6",
+        "printed_page": 541
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.7",
+      "description": "colour the vertices with few colours so that neighbours differ",
+      "section": "16.7",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.7",
+        "printed_page": 544
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.8",
+      "description": "colour the edges with few colours so that edges meeting at a vertex differ",
+      "section": "16.8",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.8",
+        "printed_page": 548
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.9",
+      "description": "decide whether two graphs are the same up to relabelling",
+      "section": "16.9",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.9",
+        "printed_page": 550
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.10",
+      "description": "find the cheapest tree that connects a chosen set of points",
+      "section": "16.10",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.10",
+        "printed_page": 555
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.11",
+      "description": "find the fewest edges or vertices whose removal leaves no cycle",
+      "section": "16.11",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.11",
+        "printed_page": 559
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.1",
+      "description": "compute basic geometric tests without rounding errors deciding the answer",
+      "section": "17.1",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.1",
+        "printed_page": 564
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.2",
+      "description": "find the smallest convex shape that encloses a set of points",
+      "section": "17.2",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.2",
+        "printed_page": 568
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.3",
+      "description": "divide a point set or a polygon into triangles",
+      "section": "17.3",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.3",
+        "printed_page": 572
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.4",
+      "description": "divide the plane into the regions nearest to each of a set of sites",
+      "section": "17.4",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.4",
+        "printed_page": 576
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.5",
+      "description": "find the stored point closest to a query point",
+      "section": "17.5",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.5",
+        "printed_page": 580
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.6",
+      "description": "report the points that lie inside a query region",
+      "section": "17.6",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.6",
+        "printed_page": 584
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.7",
+      "description": "find which region of a subdivision holds a query point",
+      "section": "17.7",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.7",
+        "printed_page": 587
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.8",
+      "description": "find where geometric objects overlap or cross",
+      "section": "17.8",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.8",
+        "printed_page": 591
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.9",
+      "description": "fit items into the fewest containers of a fixed size",
+      "section": "17.9",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.9",
+        "printed_page": 595
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.10",
+      "description": "find a shape's skeleton, the points as close to two or more of its edges",
+      "section": "17.10",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.10",
+        "printed_page": 598
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.11",
+      "description": "split a polygon into simpler pieces",
+      "section": "17.11",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.11",
+        "printed_page": 601
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.12",
+      "description": "approximate a polygon with fewer vertices",
+      "section": "17.12",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.12",
+        "printed_page": 604
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.13",
+      "description": "measure how alike two shapes are",
+      "section": "17.13",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.13",
+        "printed_page": 607
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.14",
+      "description": "move an object between two positions without collisions",
+      "section": "17.14",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.14",
+        "printed_page": 610
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.15",
+      "description": "track the regions a set of lines divides the plane into",
+      "section": "17.15",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.15",
+        "printed_page": 614
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.16",
+      "description": "find the shape made by adding every point of one shape to every point of another",
+      "section": "17.16",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.16",
+        "printed_page": 617
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.1",
+      "description": "find the fewest subsets whose union is the whole universe",
+      "section": "18.1",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.1",
+        "printed_page": 621
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.2",
+      "description": "find the most subsets that share no element",
+      "section": "18.2",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.2",
+        "printed_page": 625
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.3",
+      "description": "find where a pattern occurs in a text",
+      "section": "18.3",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.3",
+        "printed_page": 628
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.4",
+      "description": "find where a pattern occurs in a text, allowing a few edits",
+      "section": "18.4",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.4",
+        "printed_page": 631
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.5",
+      "description": "encode text in fewer bits and decode it exactly",
+      "section": "18.5",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.5",
+        "printed_page": 637
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.6",
+      "description": "encode messages so that only holders of a key can read them",
+      "section": "18.6",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.6",
+        "printed_page": 641
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.7",
+      "description": "find the smallest automaton that accepts the same inputs",
+      "section": "18.7",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.7",
+        "printed_page": 646
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.8",
+      "description": "find the longest string that two or more sequences share",
+      "section": "18.8",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.8",
+        "printed_page": 650
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.9",
+      "description": "find the shortest string that contains each of a set of strings",
+      "section": "18.9",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.9",
+        "printed_page": 654
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    }
+  ]
+}

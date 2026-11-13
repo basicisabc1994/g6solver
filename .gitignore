@@ -7,3 +7,6 @@ build/
 # The website's CSS build tools (oss/web/tailwind); only the compiled main.css is committed
 web/tailwind/node_modules/
 web/build/
+
+# Scratch folders the site tests make and remove (tests/site/conftest.py, the honesty check's static export)
+.build/

@@ -1,12 +1,33 @@
 # SPDX-License-Identifier: Apache-2.0
 """g6-mcp — a stdio MCP server exposing G6's progressive discovery surface.
 
-Six discovery tools: ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
-``g6_review_patch``, which assesses a Python patch against stated requirements in confined test runs, as a job; and
+56 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
+``g6_allowances`` for both providers' quota windows and advisory pacing (``g6.allowance``);
+``g6_review_patch``, which assesses a Python patch against stated requirements in confined test runs, as a job;
+``g6_review_until_clean``, one step of the completion loop for a client the plugin's hook cannot reach (``g6.mcp.review_loop``),
+as a job; ``g6_premortem`` and six ``g6_mission_*`` tools (``_create``, ``_clarify``, ``_confirm``, ``_submit``, ``_status``,
+``_certificate``) for a coding mission (``g6.mcp.mission``), where what a person allows and confirms goes through the
+client's own dialog and nowhere else, and the check step is the patch review; ``g6_confirm_behaviour``, one behaviour
+question about a task shown in the client's own dialog, whose confirmed answer each later ``g6_review_patch`` of the
+task enforces (``g6.mcp.behaviour``); six ``g6_improve_*`` tools (``_start``,
+``_stop``, ``_status``, ``_enrol``, ``_resume``, ``_demote``) for the self-improvement loop (``g6.mcp.improve``), whose
+start, enrolment, resumption and take-back ask the person the same way and whose stop asks nobody; and
 thirteen meta-harness tools (``metaharness_start``, ``_confirm``, ``_propose_code``, ``_evaluate_start``, ``_job``, ``_run``,
 ``_inspect``, ``_propose``, ``_evaluate``, ``_decide``, ``_diagnose``, ``_approve``, ``_rollback``) for the workflows
 declared in the file ``G6_METAHARNESS`` names, where confirmation, approval and rollback ask the person through the
 client, including in the proposing session, and a failed attempt carries its recovery (``g6.metaharness.surface``).
+Four sharing tools (``g6_cloud_grant``, ``g6_cloud_revoke``, ``g6_cloud_grants``, ``g6_disclosures``)
+use client-dialog grants and a source/provider disclosure ledger (``g6.mcp.cloud_consent``).
+Eleven Context Engine tools (``g6_knowledge_add``, ``g6_knowledge_sources``, ``g6_knowledge_search``,
+``g6_knowledge_context``, ``g6_knowledge_passage``, ``g6_knowledge_count``, ``g6_knowledge_refresh``,
+``g6_knowledge_job``, ``g6_knowledge_revoke``, ``g6_knowledge_delete``, ``g6_knowledge_paths``) index folders the person accepts in the client's
+dialog, on their machine, and return cited, re-read passages only from sources shared with the client's provider
+(``g6.mcp.knowledge``).
+Three workflow-record tools (``g6_workflow_export``, ``g6_workflow_correct``, ``g6_workflow_delete``) let the person look at,
+correct and delete what G6 recorded about its own review work, through files they open and the client's own dialog;
+``g6_suggestion_decide`` asks the person to adopt, dismiss or reopen one suggestion G6 showed, and takes no decision
+itself; ``g6_feedback`` keeps feedback the person volunteers and, only if they opted in, may ask them one question a
+week in the client's dialog (``g6.mcp.workflow``).
 Install
 with ``pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"`` and register with ``claude mcp add g6 -- g6-mcp`` (or, for Codex,
 ``codex mcp add g6 -- g6-mcp``). There is no account, key or network service.
@@ -23,7 +44,9 @@ component names (``lean``) or single ops (``lean.check_proof``), set where the s
 server reads it from its own environment. The meta-harness tools that run a workflow's code are sensitive too:
 ``metaharness.run``, ``metaharness.evaluate_start`` and ``metaharness.evaluate`` (``metaharness`` for all three); and
 a workflow runs only once a person confirmed it, which G6 records under its state folder, so a confirmation a
-project's files carry does not count. ``g6_describe`` says which sensitive ops this server allows. Before you list
+project's files carry does not count. The mission tools that run a repository's code ask for ``workforce.mission``
+(``workforce`` for all), and ``g6_improve_start`` for ``metaharness.improve`` (``metaharness`` covers it too).
+``g6_describe`` says which sensitive ops this server allows. Before you list
 one, know this (the refusal says it too): Where no operating-system boundary can confine it (macOS, Linux without
 bubblewrap, and Windows before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a
 generated script, a repository's tests) unless you allow it once with g6 setup. Code you allow then has your own
@@ -41,6 +64,7 @@ does. G6 re-checks artifacts with its own code; it does not defend against malic
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
@@ -49,6 +73,7 @@ from typing import Any
 # The server's own setting, the sensitive components or ops (``component.op``) the person allows: the same setting,
 # read the same way, as ``g6 invoke`` and ``g6.invoke`` (``g6.core.door``).
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive
+from g6.mcp.consent_controls import public_instructions
 from g6.core.door import is_allowed as _allowed
 
 _DENIED = "[G6_E_SENSITIVE_COMPONENT_DENIED]"
@@ -84,9 +109,21 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
     if not isinstance(params, dict):
         return blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id)
     allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
-    return invoke_checked(component, op, params, allow=allow, registry=registry, request_id=request_id,
+    from g6.core.consent_registry import GuardedRegistry
+    from g6.core.registry import ComponentRegistry, get_registry
+    target = registry if registry is not None else get_registry()
+    reply = invoke_checked(component, op, params, allow=allow, registry=GuardedRegistry(target), request_id=request_id,
                           how_to_allow=f"Only the person who runs this server can allow it, by adding {component}.{op} "
                                        f"(or {component}) to {SENSITIVE_ENV} where the server is registered.")
+    # The host's permission refusal runs no component code. Operations, including
+    # a component's own "ops" implementation, retain the component source scope.
+    if type(target) is ComponentRegistry and component in target.names():
+        module = target.get_module(component)
+        sensitive = getattr(module, '__g6_sensitive_ops__', ())
+        if op in sensitive and not _allowed(component, op, allow):
+            from g6.mcp.consent_controls import public_instructions
+            return public_instructions(reply)
+    return reply
 
 
 #: FastMCP's settings G6 gives its own server unless the person set them in the environment (worked examples, W5).
@@ -121,11 +158,32 @@ def build_server(surface: Any = None) -> Any:
     from g6.core.registry import get_registry
 
     server = FastMCP("g6")
+    from g6.mcp.cloud_consent import install, public_tool, register
+    install(server)
+    register(server, Context)
+    from g6.mcp import knowledge
+    knowledge.register(server, Context)   # the Context Engine: the person's own folders, searched locally
 
     @server.tool()
+    @public_tool
     def g6_help() -> str:
         """How to use G6 from an agent. Call this first."""
-        return discovery.HELP
+        from g6.mcp.workflow import HELP as workflow_help
+        return discovery.HELP + " " + workflow_help
+
+    @server.tool()
+    def g6_allowances(useful_parallel_work: bool = False) -> dict:
+        """Read both providers' quota windows and advisory pacing before optional fan-out.
+
+        No model call, launch admission, provider switch or disclosure grant. Codex
+        refresh is bounded and asynchronous; hooks/renderers use only cached state.
+        Unknown, stale or unbound readings never recommend increased optional use.
+        useful_parallel_work is the caller's assertion of useful independent work.
+        Claude Code support is not established until a real sanitised capture is checked.
+        """
+        from g6.allowance import report
+
+        return report(useful_parallel_work=useful_parallel_work)
 
     @server.tool()
     def g6_components() -> list[str]:
@@ -162,6 +220,8 @@ def build_server(surface: Any = None) -> Any:
         return compose_reply(payload, allow_sensitive=allowed_sensitive())
 
     _metaharness_tools(server, surface, Context)
+    from g6.mcp import workflow
+    workflow.register(server, Context)   # after the consent egress above: it stays the last thing to touch a reply
     return server
 
 
@@ -237,13 +297,18 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         assessment.outcome is one of: test_integrity_compromised (a sign of a weakened test or test helper that G6's
         static comparison finds, a changed test-runner file, a git-ignored file that could change the run, a shortcut in the diff of the tests,
         their runner or continuous integration, or a run that cannot be believed); defect_detected (a stated check or extra test failed, or a test of a changed module fails
-        on the patch and passed at the base commit, or the patch adds an import a stated contract forbids);
+        on the patch and passed at the base commit, or the patch adds an import a stated contract forbids, or a case
+        the person confirmed with g6_confirm_behaviour for this repo and task fails on the patch: G6 reads what they
+        confirmed from its own store, enforces it as its one example.v1 check and shows it in
+        assessment.confirmed_expectations);
         insufficient_evidence (no requirement, a requirement with no check, a check that did not run or ran out of
         time, a run whose tests all passed by pytest's own count but whose process then exited with an error
         (run_inconsistent; exit 0 with a failure, an error or fewer tests finished is a run that cannot be believed),
-        a shortcut only the claim reports, or a proposed or compiled check's unconfirmed_counterexample or
+        a shortcut only the claim reports, a requirement with no check independent of the patch
+        (checks_written_with_patch), or a proposed or compiled check's unconfirmed_counterexample or
         unconfirmed_failure);
-        supported_within_scope (every requirement passed its stated checks: support on those checks only, never proof
+        supported_within_scope (every requirement passed its stated checks, at least one of them not written by the
+        patch and, for new behaviour, failing at the base commit: support on those checks only, never proof
         the patch is complete; a check that also passes on the base commit's code is listed in unknowns). Each is
         qualified-draft. A refusal is blocked-escalated with no outcome. Test receipts are kept in a file owned by the
         same user as G6: they stop a caller from claiming that G6 ran a test, not a program running as that user. merge
@@ -251,30 +316,58 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         G6_MCP_SENSITIVE."""
         from g6.core.door import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):
-            return blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it")
-        from g6.core import component_process
-        from g6.core.stop import STOPPED
-        from g6.harness.patch_review import review_patch
+            return public_instructions(blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it"))
+        from g6.harness.question_store import StoreUnreadable
+        from g6.mcp import behaviour, workflow
+        from g6.mcp.review_reply import finish, review
 
-        def review() -> dict:
-            # review_patch lets these reach an enclosing door; this job has none, so it names them here
-            try:
-                return review_patch(repo, task=task, requirements=requirements or [], tests=tests or [], claim=claim,
-                                    sources=sources, base=base, expected_artifact_digest=expected_artifact_digest,
-                                    timeout_s=timeout_s, intent=intent, proposed_checks=proposed_checks,
-                                    template_instances=template_instances, search=search,
-                                    import_roots=import_roots or [])
-            except component_process.ExecutionInterrupted as exc:
-                if exc.stopped:
-                    return blocked_reply(f"[{STOPPED}] the patch review was stopped before it finished: {exc}")
-                return blocked_reply(f"[G6_E_PATCH_REVIEW_INTERRUPTED] the patch review's time allowance ended before "
-                                     f"it finished, so it has no outcome: {exc}")
-            except component_process.ContainmentFailure as exc:
-                return blocked_reply("[G6_E_PATCH_REVIEW_INTERRUPTED] G6 could not confirm that the review's test "
-                                     f"processes ended, so nothing from it is used: {exc}")
+        try:   # a store G6 cannot read refuses the review at once; what it holds is read again when the review runs
+            behaviour.enforced(repo, task)
+        except StoreUnreadable as exc:
+            return blocked_reply(str(exc))
+        # what the person confirmed for this task (g6_confirm_behaviour), read from G6's store, never an argument, and
+        # read when the review executes, so an answer given while it waits is the one enforced
+        return jobs.start(lambda: behaviour.reviewed(
+            review, repo, task, requirements=requirements or [], tests=tests or [], claim=claim, sources=sources,
+            base=base, expected_artifact_digest=expected_artifact_digest, timeout_s=timeout_s, intent=intent,
+            proposed_checks=proposed_checks, template_instances=template_instances, search=search,
+            import_roots=import_roots or []), compact=workflow.finishing(finish, repo, task, intent))
 
-        from g6.mcp.review_reply import finish
-        return jobs.start(review, compact=finish)
+    @server.tool()
+    def g6_review_until_clean(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
+        """One step of G6's completion loop, for an agent the plugin's Stop hook cannot reach: call it when you finish a
+        Python task, in repo, the repository's folder. Another model family reads your patch without your reasoning, and
+        must state a rule, reasons and a test. G6 runs that test, confined, with no network. Returns a job: poll
+        metaharness_job. Its result has action "continue" and text, the reviewer's words: a finding you may reject. Check
+        it against the task, then repair the cause and call again, or leave the code as it was and call again with reason,
+        one line saying why. Only a reason rejects a finding: a call with the code unchanged and no reason gets the same
+        finding back and spends nothing, so a retry is safe. A fresh review reads each repair, at most 3 repairs and so 4
+        reviews. Earlier reviewers' tests stay and keep running. Or action "stop" and report: show it to the person as it
+        is, with ending, one of clean, fixed, contested, open or untested. The loop stops when a review reproduces nothing,
+        when you leave the code as it was, when the repairs run out, or when a review fails. A stop
+        with no clean review, or one that tested nothing, is blocked-escalated with its code and any other is
+        qualified-draft: a review that reproduces nothing is not evidence the work is right, only that this reviewer found
+        no failure it could show. This loop has been measured on seven training bugs only. Action "wait" means this call
+        did nothing: another step of this session is running, so wait for that step's result before you call again, or your
+        reason was a question, which rejects nothing, so ask the person, then repair or give your reason.
+
+        Cloud review needs source/provider grants from the client dialog, including the repository and task
+        input. Without them the review is not sent, the run ends untested, and the reply says how to grant them.
+        g6_cloud_revoke stops later sharing. Data already sent cannot be recalled.
+
+        Use one session name for one task, and repeat that task as it was on each call: the first call fixes the session's
+        repository, task and base commit, and a call for another repository or task is refused. A later call's base is not
+        read, so a commit you make does not move it. Needs a boundary (g6 doctor says what this computer needs) and G6_LOOP_CRITIC=codex in the person's key file, which approves their Codex sign-in. The line
+        G6_LOOP_MODE=scouts, or no critic and G6_LLM_PROVIDER=claude_code, runs the scouts' loop here instead. Requires
+        host permission patch_review.review in G6_MCP_SENSITIVE."""
+        from g6.core.door import blocked_reply
+        if not _allowed("patch_review", "review", allowed_sensitive()):
+            return public_instructions(blocked_reply(f"{_DENIED} g6_review_until_clean runs repository code and tests a model wrote; the host "
+                                 "must allow it, with patch_review.review"))
+        from g6.mcp.review_loop import step
+
+        from g6.mcp import workflow
+        return jobs.start(lambda: workflow.stepped(step, repo, task, session, base, reason))
 
     def session(ctx: Any) -> str:
         return str(getattr(ctx, "session_id", None) or id(getattr(ctx, "session", ctx)))
@@ -292,28 +385,28 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json must be JSON")
 
     async def metaharness_confirm(workflow: str, workflow_digest: str, ctx: Any) -> dict:
-        """Confirm the frozen task, checks, split and baseline through client-mediated consent."""
+        """Confirm the frozen task, checks, split and baseline: the person answers in the client's dialog, bound to the
+        digest they read. No dialog, a decline, a cancel, no name or a changed digest confirms nothing, each with its own
+        code, and there is no other way to confirm: no terminal, no command and no argument."""
+        from g6.mcp.consent import question
+        from g6.metaharness.surface import workflow_changed
+
         held = mh.harness(workflow)
         if isinstance(held, dict):
             return held
         if held.workflow.digest() != workflow_digest:
-            from g6.core.door import blocked_reply
-            return {**blocked_reply("[G6_E_META_APPROVAL_REQUIRED] workflow changed; inspect it before confirming"),
-                    "consent_status": "workflow_changed"}
-        question = (f"Confirm workflow {workflow} digest {workflow_digest}? Task: {held.workflow.task}. "
-                    f"Development cases: {len(held.workflow.suite.dev)}; held-out: {len(held.workflow.suite.held_out)}. "
-                    "The baseline and generated candidates execute Python inside the configured boundary. "
-                    "Future activation requires separate consent. Type your name; identity is recorded as given.")
-        consent = await request_consent(ctx, question)
-        if consent.status in ("declined", "cancelled"):   # the person said no, or closed the form (the owner's pilot)
-            return consent_refusal(consent, next_action=(
-                "No change was made. The person declined or closed the form: ask the person whether they want to "
-                "confirm before calling metaharness_confirm again, and never offer another way to confirm."))
-        if consent.status != "accepted":   # no form, or no name with acceptance: the person can confirm in a terminal
-            return consent_refusal(consent, next_action=(
-                f'From the project directory, the user can inspect with g6 workflow inspect {workflow}, then '
-                f'personally confirm with g6 workflow confirm {workflow} {workflow_digest} --as "Your name".'))
-        return mh.confirm(workflow, workflow_digest, answer=consent.answer)
+            return workflow_changed()
+        # The binding: the digest, which covers every other field shown, and what it covers that the person reads.
+        bound = {"Workflow": workflow, "Workflow digest": workflow_digest, "Task": held.workflow.task,
+                 "Development cases": len(held.workflow.suite.dev), "Held-out cases": len(held.workflow.suite.held_out)}
+        asked = question(f"Confirm workflow {workflow}?", bound,
+                         ["The baseline and generated candidates execute Python inside the configured boundary. Future "
+                          "activation requires separate consent."], close="Type your name; identity is recorded as given.")
+        consent = await request_consent(ctx, asked)
+        if consent.status != "accepted":
+            return consent_refusal(consent)
+        # checked again holding the workspace's lock, immediately before it is recorded, and the digest recorded
+        return mh.confirm(workflow, bound["Workflow digest"], answer=consent.answer)
 
     def metaharness_propose_code(workflow: str, files_json: str, hypothesis: str, ctx: Any) -> dict:
         """Propose generated application code as {filename.py: source}, with a falsifiable hypothesis.
@@ -333,8 +426,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         if _allowed("metaharness", op, allowed_sensitive()):
             return None
         from g6.core.door import blocked_reply
-        return blocked_reply(f"{_DENIED} metaharness.{op} runs the workflow's code; the host must allow it, by adding "
-                             f"metaharness.{op} (or metaharness) to {SENSITIVE_ENV} where the server is registered")
+        return public_instructions(blocked_reply(f"{_DENIED} metaharness.{op} runs the workflow's code; the host must allow it, by adding "
+                             f"metaharness.{op} (or metaharness) to {SENSITIVE_ENV} where the server is registered"))
 
     def metaharness_evaluate_start(workflow: str, proposal_digest: str) -> dict:
         """Start a bounded evaluation job. Poll metaharness_job for its result; no approval is implied. It runs the
@@ -343,7 +436,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
 
     def metaharness_job(job_id: str, detail: str = "compact") -> dict:
         """Read a process-local job's pending/running/completed/failed status and retained result. A finished
-        g6_review_patch job replies compactly by default: assessment.report first, then the outcome, the reasons, the
+        g6_review_patch or g6_mission_submit job replies compactly by default: assessment.report first, then the outcome, the reasons, the
         next actions, the unknowns, the merge authorisation, and in full_assessment where the full assessment is (a
         file under G6's state folder); detail="full" returns the full assessment instead. Other jobs reply in full."""
         return jobs.status(job_id, detail)
@@ -405,10 +498,223 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             return consent_refusal(consent)
         return mh.rollback(workflow, version, answer=consent.answer, binding=binding)
 
+    def g6_premortem(repo: str, task: str, intent: dict | None = None) -> dict:
+        """Before the work: what done would mean and how the task can fail, with no model call and nothing run, from
+        the task, an optional intent contract ({goal, success_criteria, non_goals, failure_criteria, assumptions}) and
+        the repository's file names. It returns the intent contract; a proposed standard, each requirement with the
+        test file it names as its stated check, or marked not_established; the competing failure hypotheses, each with
+        what would test it, ranked by nothing; and the open questions it found, three at the most: one question per
+        task is the default for what you put to the person. It is a proposal: nothing is frozen or confirmed here."""
+        from g6.mcp import mission
+        return mission.premortem(repo, task, intent)
+
+    async def g6_confirm_behaviour(repo: str, task: str, ctx: Any, candidates: list[dict] | None = None,
+                                   review_job: str = "", template_instances: list[dict] | None = None) -> dict:
+        """Ask the person one behaviour question about a task, in the client's own dialog, where the task may not decide
+        the behaviour; what they confirm is enforced on each later g6_review_patch of the same repo and task, as its
+        one example.v1 check. repo: the repository's folder; task: the task's text, exactly as you pass it to
+        g6_review_patch. Candidates come from you, candidates [{requirement_id, function (a dotted name), args, kwargs,
+        outcomes {A: {returns|raises|effect}, B: {...}}, cited (a verbatim quote of the task), evidence (lines of
+        repository evidence), optional settled [{outcome, by: a quote of the task}], scope, rule (a stated rule the
+        person may confirm instead of the one case)}], taken first; and from a finished g6_review_patch job
+        (review_job) of the same repo, task and working tree, whose differential.v1 instances with intent change,
+        given again as template_instances, G6 saw the base commit and the patch disagree on. A candidate's two
+        outcomes must compete. G6 picks one by a fixed priority and says why; coverage and whether
+        the task decides the behaviour stay unknown. One question per task by default, kept across calls: a question
+        not yet answered is shown again first; with no candidate the question is held. The person may choose A or B,
+        neither, the premise is wrong, the task already says, or skip, add text, confirm the case or the rule shown,
+        and allow one more question. Only the person answers: no argument answers, you never answer for them, and there
+        is no terminal fallback; a decline, a cancel, a skip or a client without a dialog leaves it unconfirmed, and
+        the reply shows the question so they can answer later. The name they give is recorded as given and is not
+        authenticated. Runs no code."""
+        from g6.mcp import behaviour
+        return await behaviour.confirm(ctx, repo, task, candidates=candidates, review_job=review_job,
+                                       template_instances=template_instances)
+
+    async def g6_mission_create(repo: str, objective: str, ctx: Any, module: str = "", function: str = "",
+                                helpers: list[str] | None = None, risk: str = "R2", budget_cents: int = 0) -> dict:
+        """Start a coding mission on a clean git repository (repo: its full path): G6 freezes what counts as done
+        before any change exists, from the commit it stands at: the tests that must pass, the one file a patch may
+        change (module, with function; without them G6 derives them from the failing tests), the risk tier (at least
+        R2) and three attempts. The person is first asked, in the client's own dialog, to allow G6 to run this
+        revision's code; a new commit asks again. Decline, cancel or a client without a dialog creates nothing, and
+        offer no other way to agree. The name the person gives is recorded as given and is not authenticated. It runs
+        the repository's tests in a copy: requires host permission workforce.mission in G6_MCP_SENSITIVE. Returns a job:
+        poll metaharness_job. Then call g6_mission_confirm; an objective about retries or duplicates first asks a
+        question (clarification): answer it with g6_mission_clarify."""
+        from g6.mcp import mission
+        from g6.mcp.consent import refusal, request_consent
+
+        denied = mission.refused()
+        if denied is not None:
+            return denied
+        found = mission.execution(repo)
+        if "name" not in found:
+            return found
+        lines, who = found.get("lines"), ""
+        if lines is not None:
+            consent = await request_consent(ctx, found["question"])
+            if consent.status != "accepted":
+                return refusal(consent, nothing="Nothing was recorded.")
+            who = consent.answer
+        return jobs.start(lambda: mission.create(found["name"], objective, lines=lines, who=who, module=module,
+                                                 function=function, helpers=helpers, risk=risk,
+                                                 budget_cents=budget_cents))
+
+    def g6_mission_clarify(mission_id: str, replay_semantics: str) -> dict:
+        """Answer the one question a mission on retries or duplicates asks before its standard is frozen, from
+        clarification.permitted_answer. This is your answer, not the person's confirmation: they still confirm the
+        resulting standard with g6_mission_confirm. It runs the repository's tests in a copy: requires host permission
+        workforce.mission in G6_MCP_SENSITIVE. Returns a job: poll metaharness_job."""
+        from g6.mcp import mission
+
+        return mission.refused() or jobs.start(lambda: mission.clarify(mission_id, replay_semantics))
+
+    async def g6_mission_confirm(mission_id: str, ctx: Any) -> dict:
+        """Ask the person, in the client's own dialog, to confirm the frozen standard of what counts as done. Only the
+        person can: no argument confirms, you never answer for them, and there is no terminal fallback. A decline, a
+        cancel or a client without a dialog leaves the mission unconfirmed, and an unconfirmed mission takes no patch;
+        ask the person, and offer no other way to confirm. The name the person gives is recorded as given and is not
+        authenticated. Once confirmed, G6 reproduces the failure on the frozen commit and starts the mission. It runs
+        the repository's tests in a copy: requires host permission workforce.mission in G6_MCP_SENSITIVE. Returns a job:
+        poll metaharness_job."""
+        from g6.mcp import mission
+        from g6.mcp.consent import refusal, request_consent
+
+        denied = mission.refused()
+        if denied is not None:
+            return denied
+        found = mission.asked(mission_id)
+        if isinstance(found, dict):
+            return found
+        lines, sha, question = found
+        consent = await request_consent(ctx, question)
+        if consent.status != "accepted":
+            return refusal(consent, nothing="Nothing was recorded.")
+        return jobs.start(lambda: mission.confirm(mission_id, lines, sha, consent.answer))
+
+    def g6_mission_submit(mission_id: str, repo: str, claim: str = "", timeout_s: int = 300) -> dict:
+        """Check your change in repo, the repository's folder, against the frozen standard. G6 never writes code: you
+        change the one permitted file in the working tree, and G6 runs g6_review_patch's assessment there with the
+        frozen tests as the stated checks, then the mission judges the same text on its frozen copy (so a patch that
+        gets that far runs the tests twice). A change to any other file, a test above all, is refused and uses no
+        attempt. A confirmed mission only. A reproduced defect (defect_detected) or a sign the tests cannot be believed
+        (test_integrity_compromised) holds the patch back: it uses an attempt, the mission's checks never judge it, and
+        the mission cannot close on it. insufficient_evidence blocks nothing: the mission goes on, and its reply, status
+        and certificate say so in review. The mission's repair ladder decides what comes next: three attempts; a
+        repeated patch or one that does not improve moves to a focused brief, then to the person. Fix what the reply
+        shows and submit again; never rewrite a test. Returns a job: poll metaharness_job. Its reply is the review's
+        compact reply, with assessment.report to show the person as it is, and mission, the mission's state. Every
+        outcome is qualified-draft at best, or blocked-escalated. merge is always requires_separate_approval: merging is
+        the person's own decision. Requires host permission workforce.mission in G6_MCP_SENSITIVE."""
+        from g6.mcp import mission
+
+        return mission.refused() or jobs.start(
+            lambda: mission.submit(mission_id, repo, claim=claim, timeout_s=timeout_s), compact=mission.finish)
+
+    def g6_mission_status(mission_id: str, detail: str = "summary") -> dict:
+        """A mission's state, what it waits for and its result; detail="full" adds every step, check and receipt.
+        completion_state is the closed mission's, and qualified-draft while it is open. Reads only."""
+        from g6.mcp import mission
+        return mission.status(mission_id, detail)
+
+    def g6_mission_certificate(mission_id: str) -> dict:
+        """The certificate the mission's close kept, or one issued now on the latest patch: what the evidence supports,
+        test by test, with every gap named. Refused before there is a patch. Reads only."""
+        from g6.mcp import mission
+        return mission.certificate(mission_id)
+
+    async def g6_improve_start(ctx: Any, folder: str = "") -> dict:
+        """Start G6's self-improvement loop on a folder (empty: the one beside G6's state folder), as a process of its own
+        that outlives this session and runs until a stop, within the pacing rule. It adopts changes in its own workspace
+        only, pushes nothing and starts no engineer. The person is asked in the client's own dialog: you never answer for
+        them, and a decline, a cancel or a client without a dialog starts nothing; ask the person, and offer no other way
+        to agree. The name they give is recorded as given and is not authenticated. If what they read changes while the
+        dialog is open, nothing starts: call this again and they read what stands. The runner runs only the enrolment the
+        dialog showed: an enrolment made after it ends the start, and g6_improve_status shows that stop. Refused, with what
+        to do, while a runner is alive or when no person has enrolled a domain in the folder, which only a person does, in
+        the client's dialog (g6_improve_enrol). Requires host permission metaharness.improve in G6_MCP_SENSITIVE."""
+        from g6.mcp import improve
+        from g6.mcp.consent import refusal, request_consent
+
+        denied = improve.refused()
+        if denied is not None:
+            return denied
+        found = improve.asked(folder)
+        if isinstance(found, dict):
+            return found
+        root, question, shown = found
+        consent = await request_consent(ctx, question)
+        if consent.status != "accepted":
+            return refusal(consent, nothing="Nothing started.")
+        return await asyncio.to_thread(improve.start, root, consent.answer, shown)
+
+    def g6_improve_stop(folder: str = "", reason: str = "") -> dict:
+        """Stop the self-improvement loop: writes the folder's local STOP file, with no dialog and no permission. Safe to
+        repeat, and it works when the runner is already dead. It kills nothing and touches no container: the runner ends
+        itself once it sees the file, at its next model call or within a minute while it waits, so running and stopped say
+        whether it has gone yet."""
+        from g6.mcp import improve
+        return improve.stop(folder, reason)
+
+    def g6_improve_status(folder: str = "") -> dict:
+        """Where the self-improvement loop stands. Reads only: running or not, the last heartbeat, this week's use against
+        target and ceiling for each provider with estimates marked (as of that heartbeat), the current constraint, the
+        last cycle, any pause and its reason, the current generation and the recent lineage with what was measured, and
+        the path and text of the latest daily digest."""
+        from g6.mcp import improve
+        return improve.status(folder)
+
+    async def person_act(ctx: Any, act: str, folder: str, generation: int | None = None) -> dict:
+        """A person's act on the loop's folder: asked in the client's dialog, bound to what it showed, and nowhere else."""
+        from g6.mcp import improve
+        from g6.mcp.consent import refusal, request_consent
+
+        denied = improve.refused()
+        if denied is not None:
+            return denied
+        found = improve.asked_act(act, folder, generation)
+        if isinstance(found, dict):
+            return found
+        root, question, shown = found
+        consent = await request_consent(ctx, question)
+        if consent.status != "accepted":
+            return refusal(consent, nothing="Nothing was recorded.")
+        return await asyncio.to_thread(improve.act, act, root, consent.answer, shown, generation)
+
+    async def g6_improve_enrol(ctx: Any, folder: str = "") -> dict:
+        """Enrol the domain a loop's folder declares (empty: the one beside G6's state folder): freeze what judges it, its
+        judge, its cases and its held-out split, as its Python file declares them now. Only a person enrols, in the
+        client's own dialog, which names the folder and the file by digest: you never answer for them, and a decline, a
+        cancel or a client without a dialog records nothing; ask the person, and offer no other way to agree. The name they
+        give is recorded as given and is not authenticated. If what they read changes while the dialog is open, nothing is
+        recorded. The file then runs, as the person, on the Python the runner uses. It starts nothing: g6_improve_start
+        does. Requires host permission metaharness.improve in G6_MCP_SENSITIVE."""
+        return await person_act(ctx, "enrol", folder)
+
+    async def g6_improve_resume(ctx: Any, folder: str = "") -> dict:
+        """Lift the pause that holds the loop's ticks, once a person has read why: they are asked in the client's own
+        dialog, which says why it is paused, and agree there or nowhere, as for g6_improve_enrol. A stop in place stays.
+        Refused with nothing asked when nothing is paused, nothing is enrolled, or the Python file is not the one enrolled.
+        Requires host permission metaharness.improve in G6_MCP_SENSITIVE."""
+        return await person_act(ctx, "resume", folder)
+
+    async def g6_improve_demote(ctx: Any, generation: int, folder: str = "") -> dict:
+        """Take back the generation at the head of the loop's chain (as g6_improve_status shows it), so the loop goes on
+        from the version before it: a person agrees in the client's own dialog, which names the generation, what it
+        changed, and the generation and profile (by digest) it goes back to, and nowhere else, as for g6_improve_enrol. A
+        head that is not that generation, or one with nothing adopted left to take back, is refused with nothing asked, and
+        one that moves while the dialog is open is not taken back. Requires host permission metaharness.improve in
+        G6_MCP_SENSITIVE."""
+        return await person_act(ctx, "demote", folder, generation)
+
     for tool in (metaharness_inspect, metaharness_propose, metaharness_evaluate, metaharness_decide,
                  metaharness_diagnose, metaharness_approve, metaharness_rollback, metaharness_start,
                  metaharness_confirm, metaharness_propose_code, metaharness_evaluate_start, metaharness_job,
-                 metaharness_run):
+                 metaharness_run, g6_premortem, g6_confirm_behaviour, g6_mission_create, g6_mission_clarify,
+                 g6_mission_confirm,
+                 g6_mission_submit, g6_mission_status, g6_mission_certificate, g6_improve_start, g6_improve_stop,
+                 g6_improve_status, g6_improve_enrol, g6_improve_resume, g6_improve_demote):
         if "ctx" in tool.__annotations__:  # the real Context type, so the server injects it (annotations are strings)
             tool.__annotations__["ctx"] = context_type
         server.tool()(tool)

@@ -42,7 +42,7 @@ only through the `g6.core.llm` caller you inject.
 - `MeteredCaller`: wraps an `LLMCaller`; counts every attempt, failed ones and an inner caller's retries included;
   refuses once a ceiling is hit, and refuses a reply that arrives after the time limit (still charged).
 - `BudgetExhausted`: raised with `G6_E_BUDGET_EXHAUSTED` and the ceiling's name.
-- `weighted_vote`: groups equivalent answers; when any candidate is verified, unverified ones are not counted;
+- `weighted_vote`: groups equivalent answers; when any candidate is flagged `verified`, the others are not counted;
   empty answers are abstentions that count against a majority.
 - `Candidate`: an answer, a `weight` and a `verified` flag you set only when an independent check accepted it.
 - `VoteResult`: `winner` (None on a tie), `has_majority`, `abstained`, `groups`.

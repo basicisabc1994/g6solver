@@ -22,6 +22,8 @@ from fastmcp.client.elicitation import ElicitResult  # noqa: E402
 
 from g6.mcp import build_server  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
+
 _spec = importlib.util.spec_from_file_location("metaharness_rig", Path(__file__).with_name("_rig.py"))
 rig = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
 if not hasattr(rig, "build"):
@@ -32,6 +34,49 @@ TOOLS = {"metaharness_inspect", "metaharness_propose", "metaharness_evaluate", "
          "metaharness_diagnose", "metaharness_approve", "metaharness_rollback", "metaharness_start",
          "metaharness_confirm", "metaharness_propose_code", "metaharness_evaluate_start", "metaharness_job",
          "metaharness_run"}
+
+
+from tests.core import test_declared_scope_captures as scope_captures  # noqa: E402
+
+
+@pytest.mark.parametrize('scope_granted', [False])
+@pytest.mark.parametrize('granted', [False, True])
+@pytest.mark.parametrize('name', scope_captures.SOURCE_TOOLS)
+def test_source_paths_with_independent_scope_oracle(tmp_path, monkeypatch, accepted_cloud_dialog,
+                                                   scope_granted, granted, name):
+    scope_captures.test_each_declared_tool_path_captures_retained_content(
+        tmp_path, monkeypatch, accepted_cloud_dialog, name, granted)
+
+
+@pytest.mark.parametrize('sharing_scope', ['workflows'])
+@pytest.mark.parametrize('scope_granted', [False, True])
+def test_real_workflow_store_capture(tmp_path, monkeypatch, sharing_scope, scope_granted):
+    monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
+    marker = 'PLANTED_REAL_WORKFLOW_CONFIRMATION'
+    workflow, _ = rig.build(7)
+    surface = Surface({'arith': {'workflow': workflow, 'workspace': tmp_path / 'ws', 'clock': rig.Clock()}})
+    made = surface.harness('arith').confirm(marker)
+    assert made['code'] == 'G6_E_META_CONFIRMED'
+    assert marker in json.dumps(surface.inspect('arith'))
+    async def read():
+        async with Client(build_server(surface)) as client:
+            return str(await client.call_tool('metaharness_inspect', {'workflow': 'arith'}))
+    assert (marker in asyncio.run(read())) is scope_granted
+
+
+@pytest.mark.parametrize('scope_granted', [False])
+@pytest.mark.parametrize('name,args', [('g6_help', {}), ('g6_components', {}),
+    ('g6_cloud_grant', {'source': 'fixture', 'provider': 'openai:codex'}),
+    ('g6_cloud_revoke', {'source': 'fixture', 'provider': 'openai:codex'})])
+def test_operational_contracts_with_other_scopes_planted(tmp_path, monkeypatch, scope_granted, name, args):
+    scope_captures.test_request_and_operational_tools_never_read_other_scopes(tmp_path, monkeypatch, name, args)
+
+
+@pytest.mark.parametrize('scope_granted', [False])
+@pytest.mark.parametrize('granted', [False, True])
+def test_catalogue_reality_capture(tmp_path, monkeypatch, accepted_cloud_dialog, scope_granted, granted):
+    scope_captures.test_actual_catalogue_file_is_not_operational_text(
+        tmp_path, monkeypatch, accepted_cloud_dialog, granted)
 
 
 @pytest.fixture(autouse=True)
@@ -149,8 +194,9 @@ def test_over_mcp_declined_or_missing_client_consent_never_approves(tmp_path) ->
 
     out = asyncio.run(flow())
     assert out["decided"]["warning_card"]["code"] == S.RECOMMENDED
-    assert out["self"]["warning_card"]["code"] == S.APPROVAL_REQUIRED
-    assert out["declined"]["warning_card"]["code"] == S.APPROVAL_REQUIRED
+    # changed on purpose: each way the dialog ended has its own code (both were S.APPROVAL_REQUIRED)
+    assert out["self"]["warning_card"]["code"] == S.CONSENT_NO_DIALOG
+    assert out["declined"]["warning_card"]["code"] == S.CONSENT_DECLINED
     assert out["approved"]["head_version"] == 1 and out["approved"]["completion_state"] == "qualified-draft"
     assert surface.harness("arith").store.versions()[-1]["accepted_by"] == "Ada"
     for reply in out.values():

@@ -1,0 +1,307 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Adoption with no person, in shadow only: the loop's own head moves and a person's record never does."""
+from __future__ import annotations
+
+import importlib.util
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+import pytest
+
+from g6.core import stop
+from g6.core.ledger import LedgerError
+from g6.metaharness import Profile, adapt
+from g6.metaharness import monitor as drift
+from g6.metaharness.shadow import ADOPTER, FROZEN_CHANGED, SHADOW_ONLY, Held, adapt_shadow
+
+_spec = importlib.util.spec_from_file_location("metaharness_rig", Path(__file__).with_name("_rig.py"))
+rig = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
+if not hasattr(rig, "build"):
+    _spec.loader.exec_module(rig)
+
+CAREFUL = Profile(routing={"answer": "local"}, prompt="CAREFUL: add the two numbers digit by digit.")
+AGAIN = Profile(routing={"answer": "local"}, prompt="CAREFUL: add the two numbers digit by digit. Twice.")
+
+
+@dataclass
+class Collapsing(rig.Stub):
+    collapsed: bool = False
+    marker: str = "CAREFUL"
+
+    def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+        if self.collapsed and self.marker in system:
+            self.calls += 1
+            return "drifted"
+        return super().complete(system, user, max_tokens=max_tokens)
+
+
+def _shadow(tmp_path, *, seed=7, stub=None, hold=True):
+    """A harness with no loop, built with a last check of its own that holds the workflow it was given, as the loop builds
+    every harness with ``_still_frozen``; ``hold=False`` builds one with no check."""
+    wf, stub = rig.build(seed, stub=stub or Collapsing(seed, 0.5, 0.85))
+    mh = adapt_shadow(wf, workspace=tmp_path / "ws", clock=rig.Clock(),
+                      hold=(lambda: Held({"workflow": wf.digest()})) if hold else None)
+    assert mh.confirm("Ada")["completion_state"] == "qualified-draft"
+    return mh, wf, stub
+
+
+def _recommended(mh, profile=CAREFUL):
+    proposal = mh.candidate(profile, proposer="auto:test")["proposal"]
+    decision = mh.decide(mh.evaluate(proposal)["report"], proposal)["decision"]
+    assert decision.verdict == "recommend", decision.reasons
+    return decision
+
+
+def _adopt(mh, decision):
+    """An adoption as the loop asks for one: the harness's own check is the only one it stands on."""
+    return mh.adopt(decision)
+
+
+def _adopted(tmp_path, **kw):
+    mh, wf, stub = _shadow(tmp_path, **kw)
+    assert _adopt(mh, _recommended(mh))["head_version"] == 1
+    return mh, wf, stub
+
+
+def test_an_adopted_candidate_is_the_head_every_later_step_runs_on(tmp_path):
+    mh, _, _ = _adopted(tmp_path)
+    assert mh._head() == (1, CAREFUL)
+    later = mh.candidate(AGAIN, proposer="auto:test")["proposal"]
+    assert later.base_digest == CAREFUL.digest()
+    assert mh.evaluate(later)["report"].base_digest == CAREFUL.digest()
+
+
+def test_a_persons_record_never_moves(tmp_path):
+    mh, wf, _ = _adopted(tmp_path)
+    assert [v["kind"] for v in mh.store.versions()] == ["initial"]
+    assert mh.store.versions()[0]["accepted_by"] == "Ada"
+    person = adapt(wf, workspace=tmp_path / "ws", clock=rig.Clock())   # the ordinary handle on the same workspace
+    assert person.store.head()[0] == 0
+    assert person.store.head()[1].digest() != CAREFUL.digest()
+
+
+def test_the_adoption_says_whose_it_was_and_where_it_holds(tmp_path):
+    mh, _, _ = _adopted(tmp_path)
+    row = mh.adoption_rows()[-1]
+    assert row["by"] == ADOPTER and ADOPTER.startswith("auto:")
+    assert row["scope"] == "shadow" and row["decision_digest"] and row["kind"] == "adopt"
+
+
+@pytest.mark.parametrize("name", ["Ada", "", "the owner"])
+def test_no_adoption_row_can_carry_a_persons_name(tmp_path, name):
+    mh, _, _ = _adopted(tmp_path)
+    row = dict(mh.adoption_rows()[-1], version=2, by=name)
+    with pytest.raises(LedgerError, match="the loop's own"):
+        mh.adoptions.append("adopt", "2", row)
+
+
+def test_a_new_process_finds_the_adoption(tmp_path):
+    mh, wf, _ = _adopted(tmp_path)
+    again = adapt_shadow(wf, workspace=tmp_path / "ws", clock=rig.Clock())
+    assert again._head() == (1, CAREFUL)
+
+
+def test_only_a_recommendation_of_this_harness_can_be_adopted(tmp_path):
+    mh, _, _ = _shadow(tmp_path)
+    proposal = mh.candidate(Profile(routing={"answer": "local"}, prompt="Be brief."), proposer="auto:test")["proposal"]
+    refused = mh.decide(mh.evaluate(proposal)["report"], proposal)["decision"]
+    assert refused.verdict != "recommend"
+    assert _adopt(mh, refused)["completion_state"] == "blocked-escalated"
+    other, _, _ = _shadow(tmp_path / "other")
+    assert _adopt(mh, _recommended(other))["completion_state"] == "blocked-escalated"
+    assert mh._head()[0] == 0
+
+
+def test_a_decision_on_an_old_head_cannot_be_adopted(tmp_path):
+    mh, _, _ = _shadow(tmp_path)
+    first, second = _recommended(mh), _recommended(mh, AGAIN)
+    assert _adopt(mh, first)["completion_state"] == "qualified-draft"
+    assert _adopt(mh, second)["completion_state"] == "blocked-escalated"
+    assert mh._head() == (1, CAREFUL)
+
+
+def test_the_stop_refuses_an_adoption(tmp_path):
+    mh, _, _ = _shadow(tmp_path)
+    decision = _recommended(mh)
+    stop.engage("test")
+    try:
+        assert _adopt(mh, decision)["warning_card"]["code"] == stop.STOPPED
+    finally:
+        stop.release()
+    assert mh._head()[0] == 0
+
+
+@pytest.mark.parametrize("call", [lambda mh, d: mh.activate(d, accepted_by="Ada"),
+                                  lambda mh, d: mh.rollback(0, accepted_by="Ada"),
+                                  lambda mh, d: mh.run("What is 2+2?")])
+def test_a_shadow_harness_activates_rolls_back_and_runs_nothing_for_real(tmp_path, call):
+    mh, _, _ = _shadow(tmp_path)
+    got = call(mh, _recommended(mh))
+    assert got["warning_card"]["code"] == SHADOW_ONLY and got["completion_state"] == "blocked-escalated"
+    assert len(mh.store.versions()) == 1
+
+
+def test_held_out_uses_carry_across_adoptions(tmp_path):
+    mh, wf, _ = _shadow(tmp_path)
+    assert mh.held_out_left() == wf.policy.max_evaluations
+    _adopt(mh, _recommended(mh))
+    assert mh.held_out_left() == wf.policy.max_evaluations - 1
+    again = adapt_shadow(wf, workspace=tmp_path / "ws", clock=rig.Clock())
+    assert again.held_out_left() == wf.policy.max_evaluations - 1
+
+
+# The monitor --------------------------------------------------------------------------------------------------------
+
+def test_with_nothing_adopted_there_is_nothing_to_audit(tmp_path):
+    mh, wf, stub = _shadow(tmp_path)
+    before = stub.calls
+    got = mh.audit(rig.cases("m", 10, 900), count=10)
+    assert got["audited"] == 0 and not got["rolled_back"] and stub.calls == before
+
+
+def test_an_adoption_that_got_worse_is_rolled_back_with_no_one_asked(tmp_path):
+    mh, _, stub = _adopted(tmp_path)
+    stub.collapsed = True
+    got = mh.audit(rig.cases("m", 60, 900), count=60)
+    assert got["rolled_back"], got
+    assert mh._head() == (2, mh.store.head()[1])                # back on the version before it
+    assert mh.adoption_rows()[-1]["kind"] == "rollback"
+    assert mh.adoption_rows()[-1]["by"] == ADOPTER
+    assert mh.ledger.rows("ticket")[-1]["kind"] == "re-evaluate"
+
+
+def test_a_healthy_adoption_is_kept(tmp_path):
+    mh, _, _ = _adopted(tmp_path)
+    got = mh.audit(rig.cases("m", 60, 900), count=60)
+    assert got["audited"] == 60 and not got["rolled_back"] and mh._head() == (1, CAREFUL)
+
+
+def test_each_monitor_case_is_used_once_per_adoption(tmp_path):
+    mh, _, stub = _adopted(tmp_path)
+    cases = rig.cases("m", 10, 900)
+    assert mh.audit(cases, count=6)["audited"] == 6
+    assert mh.audit(cases, count=6)["audited"] == 4
+    before = stub.calls
+    assert mh.audit(cases, count=6)["audited"] == 0 and stub.calls == before
+
+
+def test_rolling_back_stops_at_the_version_before_never_further(tmp_path):
+    mh, _, stub = _adopted(tmp_path)
+    first = mh.adoption_rows()[-1]
+    mh.adoptions.append("adopt", "2", {**first, "version": 2, "base_version": 1,
+                                       "profile": AGAIN.model_dump(mode="json")})
+    stub.collapsed, stub.marker = True, "Twice"
+    assert mh.audit(rig.cases("m", 60, 900), count=60)["rolled_back"]
+    assert mh._head() == (3, CAREFUL)                           # one step back, not to the initial version
+
+
+def test_no_rollback_row_can_skip_a_version(tmp_path):
+    mh, _, _ = _adopted(tmp_path)
+    with pytest.raises(LedgerError, match="the version before"):
+        mh.adoptions.append("rollback", "2", {"kind": "rollback", "version": 2, "target_version": 5, "by": ADOPTER,
+                                              "scope": "shadow", "profile": CAREFUL.model_dump(mode="json")})
+
+
+def test_the_rollback_uses_the_monitors_own_bound(tmp_path):
+    mh, wf, stub = _adopted(tmp_path)
+    stub.collapsed = True
+    got = mh.audit(rig.cases("m", 60, 900), count=60)
+    assert got["pairs"] >= drift.MIN_PAIRS and got["mean_difference"] > got["threshold"]
+
+
+def test_while_stopped_the_audit_runs_nothing(tmp_path):
+    mh, _, stub = _adopted(tmp_path)
+    before = stub.calls
+    stop.engage("test")
+    try:
+        got = mh.audit(rig.cases("m", 10, 900), count=10)
+    finally:
+        stop.release()
+    assert got["audited"] == 0 and stub.calls == before
+
+
+# A person takes the head back ----------------------------------------------------------------------------------------------
+
+def test_a_person_takes_the_head_back_one_version_and_the_row_is_theirs(tmp_path):
+    mh, _, _ = _adopted(tmp_path)
+    before = mh.store.head()[1]
+    got = mh.demote(1, "Ada")
+    assert got["warning_card"]["code"] == "G6_E_LOOP_DEMOTED" and got["completion_state"] == "qualified-draft"
+    assert mh._head() == (2, before) and got["head_version"] == 2 and got["undoes"] == 1
+    row = mh.adoption_rows()[-1]
+    assert row["kind"] == "rollback" and row["by"] == "Ada" and row["target_version"] == 0 and row["measured"] == {}
+    assert [v["kind"] for v in mh.store.versions()] == ["initial"]      # the person's store is not what this moves
+
+
+def test_a_new_process_finds_what_a_person_took_back(tmp_path):
+    mh, wf, _ = _adopted(tmp_path)
+    mh.demote(1, "Ada")
+    assert adapt_shadow(wf, workspace=tmp_path / "ws", clock=rig.Clock())._head()[0] == 2
+
+
+def test_a_person_names_the_generation_they_read_so_a_head_that_moved_on_is_left(tmp_path):
+    mh, _, _ = _adopted(tmp_path)
+    got = mh.demote(3, "Ada")
+    assert got["warning_card"]["code"] == "G6_E_LOOP_NOT_DEMOTABLE" and "generation 1" in got["message"]
+    assert mh._head() == (1, CAREFUL) and len(mh.adoption_rows()) == 1
+
+
+def test_with_nothing_adopted_there_is_nothing_to_take_back(tmp_path):
+    mh, _, _ = _shadow(tmp_path)
+    assert mh.demote(0, "Ada")["warning_card"]["code"] == "G6_E_LOOP_NOT_DEMOTABLE" and mh.adoption_rows() == []
+
+
+def test_a_head_the_monitor_already_took_back_to_the_start_has_nothing_left_to_take_back(tmp_path):
+    mh, _, stub = _adopted(tmp_path)
+    stub.collapsed = True
+    assert mh.audit(rig.cases("m", 60, 900), count=60)["rolled_back"]
+    assert mh.demote(2, "Ada")["warning_card"]["code"] == "G6_E_LOOP_NOT_DEMOTABLE" and len(mh.adoption_rows()) == 2
+
+
+@pytest.mark.parametrize("name", ["", "   "])
+def test_a_rollback_row_names_who_asked(tmp_path, name):
+    mh, _, _ = _adopted(tmp_path)
+    with pytest.raises(LedgerError, match="who asked"):
+        mh.adoptions.append("rollback", "2", {"kind": "rollback", "version": 2, "base_version": 1, "target_version": 0, "by": name,
+                                              "scope": "shadow", "profile": CAREFUL.model_dump(mode="json")})
+
+
+def test_while_stopped_nothing_is_taken_back(tmp_path):
+    mh, _, _ = _adopted(tmp_path)
+    stop.engage("test")
+    try:
+        assert mh.demote(1, "Ada")["warning_card"]["code"] == stop.STOPPED
+    finally:
+        stop.release()
+    assert mh._head() == (1, CAREFUL)
+
+
+@pytest.mark.parametrize("given", [{}, {"frozen": {"workflow": "w"}}, {"last_check": lambda: None},
+                                   {"frozen": {}, "last_check": lambda: None}])
+def test_a_harness_built_with_no_check_of_its_own_adopts_nothing_whatever_a_caller_gives(tmp_path, given):
+    mh, _, _ = _shadow(tmp_path, hold=False)
+    got = mh.adopt(_recommended(mh), **given)
+    assert got["warning_card"]["code"] == FROZEN_CHANGED and mh.adoption_rows() == []
+
+
+@pytest.mark.parametrize("said", [{}, [], "", 0, False, {"completion_state": "blocked-escalated"},
+                                  {"completion_state": "qualified-draft"}, Held({"workflow": "w"})])
+def test_a_callers_check_can_only_refuse_and_the_row_carries_what_the_harness_held(tmp_path, said):
+    mh, wf, _ = _shadow(tmp_path)
+    decision = _recommended(mh)
+    refused = mh.adopt(decision, last_check=lambda: said)
+    assert refused["completion_state"] == "blocked-escalated" and mh.adoption_rows() == []
+    assert refused["warning_card"]["code"] == FROZEN_CHANGED
+    assert mh.adopt(decision, frozen={"workflow": "w"})["warning_card"]["code"] == FROZEN_CHANGED
+    assert mh.adopt(decision, last_check=lambda: None)["head_version"] == 1
+    assert mh.adoption_rows()[-1]["frozen"] == {"workflow": wf.digest()}
+
+
+@pytest.mark.parametrize("held", [None, {}, {"completion_state": "qualified-draft"}, True, "held"])
+def test_only_the_harness_checks_own_success_value_lets_an_adoption_through(tmp_path, held):
+    wf, _ = rig.build(7, stub=Collapsing(7, 0.5, 0.85))
+    mh = adapt_shadow(wf, workspace=tmp_path / "ws", clock=rig.Clock(), hold=lambda: held)
+    assert mh.confirm("Ada")["completion_state"] == "qualified-draft"
+    got = mh.adopt(_recommended(mh))
+    assert got["warning_card"]["code"] == FROZEN_CHANGED and mh.adoption_rows() == []

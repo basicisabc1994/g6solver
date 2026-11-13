@@ -37,11 +37,16 @@ can read that version back later, whatever happened to the name since. It is an 
   `digest`, `values`); a missing or an extra value is refused.
 - `retire`: a tombstone (`name`); every version stays readable by its number or digest.
 - `rollback`: a new version holding an earlier version's content (`name`, `to_version`); nothing is rewritten.
+- `catalogue`: the prompt catalogue G6 ships (`mode`, `step`): each entry tied to a work mode (`premortem`,
+  `mission`, `venture`) and a pipeline step (`propose`, `test`, `approve`), with its template, placeholders and digest.
+  No entry has the step `gate`: a model's output never decides a gate.
+- `install_catalog`: store every catalogue entry as `prefix` + its name, as a `candidate_template` version (`prefix`).
+  A name that holds a prompt of your own is refused (`G6_E_LIBRARY_NAME_TAKEN`) and never overwritten.
 
 ## Alone and composed
 
 Alone over MCP: `g6_invoke("align_prompt_library", "render", '{"name": "summary", "values": {"document": "..."}}')`.
-`put`, `retire` and `rollback` are sensitive: a stored prompt affects later tasks. They are refused with
+`put`, `retire`, `rollback` and `install_catalog` are sensitive: a stored prompt affects later tasks. They are refused with
 `G6_E_SENSITIVE_COMPONENT_DENIED` on a surface using `block_sensitive=True`; over MCP the server must explicitly
 allow each `align_prompt_library.<op>`. Reads remain non-sensitive. From Python:
 `from g6.workspace.align_prompt_library import Library, ops`; `Library(path)` keeps a library in a file of your own.
@@ -77,7 +82,8 @@ Composed:
 
 - An answer is `qualified-draft`. Its `warning_card.code` says what it rests on: `G6_E_LIBRARY_STORED` (with
   `version`, `digest` and `unchanged`), `G6_E_LIBRARY_READ` (with `content`, `declared` and `also`),
-  `G6_E_LIBRARY_LISTED` or `G6_E_LIBRARY_RENDERED` (with `text`, `template_digest` and `rendered_digest`).
+  `G6_E_LIBRARY_LISTED`, `G6_E_LIBRARY_RENDERED` (with `text`, `template_digest` and `rendered_digest`),
+  `G6_E_LIBRARY_CATALOGUE` (with `entries`) or `G6_E_LIBRARY_INSTALL_PARTIAL` (with `stored` and `refused`).
 - A refusal is `blocked-escalated` with a code such as `G6_E_LIBRARY_UNKNOWN_VERSION`, `G6_E_LIBRARY_RETIRED`,
   `G6_E_LIBRARY_NOT_FOUND`, `G6_E_LIBRARY_MISSING_VALUE`, `G6_E_LIBRARY_EXTRA_VALUE`, `G6_E_LIBRARY_KIND_MISMATCH`
   or `G6_E_LIBRARY_CORRUPT`. Over MCP `ok` can be true while `completion_state` is `blocked-escalated`: read the state.
@@ -119,6 +125,12 @@ Fill the template (a missing or an extra value is refused):
 
 ```g6-example op=render
 {"name": "example-summary", "values": {"document": "the quarterly report", "audience": "the board"}}
+```
+
+The catalogue's premortem prompts for the propose step (installing them is the sensitive `install_catalog`):
+
+```g6-example op=catalogue
+{"mode": "premortem", "step": "propose"}
 ```
 
 Roll back to the first version, then retire the name (both sensitive; every version stays readable):

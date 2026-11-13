@@ -100,7 +100,7 @@ Composed:
 
 - `unnoticed_drift`: named histories expose changes in G6's observed check outcomes. An exact upper bound below the
   threshold, or a significant fall from the previous window, blocks; a pass needs the exact lower bound at the
-  threshold; insufficient samples or a wide interval require review. No history result is verified.
+  threshold; insufficient samples or a wide interval require review. No history result is `verified`.
 
 ## Blind spots
 

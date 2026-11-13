@@ -7,8 +7,10 @@ description: Use when an agent loop runs a long, multi-step goal and must check 
 
 `g6.goal_engine` holds the subtasks you declare as a tree and checks them against what your executor reports. You
 declare the goal with guardrails, checkpoints, resource bounds and breakpoints, and it reads every control in force at
-one node against your executor's report for it. It executes nothing, generates no subtask and halts nothing: your
-executor calls `evaluate_controls` before each node's work and obeys the report.
+one node against your executor's report for it. It executes nothing and halts nothing: your executor calls
+`evaluate_controls` before each node's work and obeys the report. The planner itself generates no subtask; over MCP,
+`propose_goal_tree` asks the model you configured to propose some (at most 100 calls), and that tree is a proposal
+until you or a mission accept it.
 
 ## When to use it
 
@@ -21,13 +23,20 @@ executor calls `evaluate_controls` before each node's work and obeys the report.
 
 ## When not to use it
 
-- To generate the subtasks: write them, or have a model propose them and review the proposal; this package plans
-  nothing.
+- To decide the subtasks: write them, or have a model propose them with `propose_goal_tree` and review the
+  proposal; this package accepts no plan for you.
 - A plan of G6 op calls, checked before it runs: `navigator` (`check_plan`).
 - Ceilings enforced on the run itself rather than on the executor's reports: `safety_engine`.
 - One action outside the conversation (send, pay, post): `action_gating` (`evaluate`).
 - A bound on reaching an unsafe state, computed on a model of the agent: `csf`.
 - What the person actually wants, before any plan: `intent_engine`.
+
+## Ops
+
+- `propose_goal_tree`: a tree of subgoals for `objective` the configured model proposes, breadth first, within
+  `branching_factor` (at most 12), `max_depth` (8), `max_nodes` (1,000) and `max_model_calls` (12 by default, at
+  most 100), each call through the prompt catalogue's `mc-goal-decompose`; `constraints` and `success_criteria`
+  go to the model and to the root. With no model configured it refuses (`G6_E_GOAL_NO_MODEL`).
 
 ## Python API
 
@@ -69,8 +78,10 @@ A node the spec does not have is `G6_E_GOAL_NODE_UNKNOWN`. Otherwise the report 
 
 ## Alone and composed
 
-It has no block, so over MCP `g6_invoke("goal_engine", ...)` answers `G6_E_NO_BLOCK`; `g6_describe("goal_engine")`
-serves this skill. From Python: `from g6.goal_engine import GoalSpec, Observation, build_plan_tree, evaluate_controls`.
+Over MCP, `g6_invoke("goal_engine", "propose_goal_tree", ...)` proposes a tree with the model you configured; a
+reply that is not one JSON object of subgoals is that node's error, never a subgoal, and nothing a reply says sets a
+state. From Python: `from g6.goal_engine import GoalSpec, Observation, build_plan_tree, evaluate_controls`, and
+`g6.goal_engine.decomposition.propose_goal_tree` with a proposer of your own.
 
 Composed:
 
@@ -102,10 +113,13 @@ Composed:
   achieve the goal or that their order is right.
 - There are no cost limits in money: only seconds, disk bytes and tokens per period.
 - A predicate you register is your code; it should be pure, and one that raises reads `unknown`.
+- `unchecked_plan`: a proposed tree is a model's guess. Its shape is checked, its subgoals are not; follow none of
+  them without checking each step against what its actions need.
 
 ## What it needs
 
-Nothing outside G6: it is Python on pydantic, which installs with g6. It calls no model.
+Nothing outside G6: it is Python on pydantic, which installs with g6, and `align_prompt_library`'s catalogue. Only
+`propose_goal_tree` calls a model: the one you configured (`G6_LLM_PROVIDER` in your key file).
 
 ## Examples
 
@@ -138,6 +152,12 @@ assert not unreported.may_proceed and unreported.warning_card["code"] == "G6_E_G
 
 send = evaluate_controls(spec, Observation(node="root.1", action="file_write", usage={"tokens_per_hour": 1200}))
 assert not send.may_proceed and len(send.pauses) == 1 and send.completion_state == "blocked-escalated"
+```
+
+Propose a tree for an objective (with no model configured, it refuses with `G6_E_GOAL_NO_MODEL`):
+
+```g6-example op=propose_goal_tree
+{"objective": "Fix the crash in the export step", "constraints": ["keep the public API"], "max_depth": 1, "max_model_calls": 1}
 ```
 
 ## The four open problems

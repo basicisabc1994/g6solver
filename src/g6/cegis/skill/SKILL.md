@@ -48,9 +48,9 @@ says exactly which domain it rests on.
 - `CegisResult`: `status`, `control`, `program`, `counterexamples`, `boundary`, `trace`, `reason` and
   `completion_state`.
 - `CegisResult.to_envelope`: the result as the library envelope, with a `G6_E_CEGIS_*` warning card.
-- `Counterexample`: a verifier's input where the candidate breaks the spec.
-- `NoCounterexample`: a verifier's decision that no input of its encoded domain breaks the spec.
-- `Inconclusive`: a verifier with no decision, with its `degradation_reason`.
+- `Counterexample`: a checker's input where the candidate breaks the spec.
+- `NoCounterexample`: a checker's decision that no input of its encoded domain breaks the spec.
+- `Inconclusive`: a checker with no decision, with its `degradation_reason`.
 
 ## Reading the result
 
@@ -69,7 +69,7 @@ fallback, promotion or reuse store is involved.
   `verified`.
 - `blocked-escalated`: `counterexample_budget_exhausted` (`G6_E_CEGIS_BUDGET_EXHAUSTED`), `unsat` (no control of the
   sketch fits, said only after an exhaustive search, `G6_E_CEGIS_UNSAT`), `timeout` (`G6_E_CEGIS_TIMEOUT`) and
-  `inconclusive` (`G6_E_CEGIS_INCONCLUSIVE`: nothing compared, a search that was not exhaustive, or a verifier with no
+  `inconclusive` (`G6_E_CEGIS_INCONCLUSIVE`: nothing compared, a search that was not exhaustive, or a checker with no
   decision, never read as a pass), and `refused` (`G6_E_ISOLATION_UNAVAILABLE`: no candidate ran).
 
 ## Alone and composed
@@ -115,7 +115,7 @@ Rank-deficient samples refuse. Near-duplicates and repeated tuning against the s
 - `pip install "g6[optim] @ git+https://github.com/basicisabc1994/g6solver"` for numeric fitting: NumPy and SciPy (BSD-3-Clause), loaded at call time.
   Without either, fitting returns `G6_E_CEGIS_TEMPLATE_EXTRA`. The existing integer-hole loop needs neither.
 
-- `pip install "g6[formal] @ git+https://github.com/basicisabc1994/g6solver"` for Z3, used only by `Z3Verifier`; without it every verifier check is
+- `pip install "g6[formal] @ git+https://github.com/basicisabc1994/g6solver"` for Z3, used only by `Z3Verifier`; without it every optional check is
   `inconclusive` (`z3_unavailable`). The loop itself runs on Python alone.
 - No outside program: candidates run in a child Python process that G6 starts itself.
 

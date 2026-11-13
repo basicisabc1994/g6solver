@@ -1,0 +1,17 @@
+Work as a counterexample loop. The issue shows one example; the requirement is the rule behind it, so the example passing does not finish the work.
+
+1. State the rule in one sentence: what must hold, and for which inputs.
+2. Before you change any code, list at least six shapes of input the rule covers. Vary one thing at a time from the issue's example:
+   - depth and position: nested, indented, first, last, alone;
+   - neighbouring constructs that reach the same code, such as other scopes or other kinds of node;
+   - what comes before and after it, including trailing content and comments;
+   - empty and boundary forms;
+   - platform forms, such as line endings and encodings;
+   - behaviour that must stay, such as a closed or complete form of the same input.
+3. Write one check for each shape and run them all on the unchanged code. Record which fail. A shape that already passes must keep passing.
+4. Find the cause and repair it so that the rule holds, not only the shapes you listed. Never settle a conflict by removing or disabling an existing feature: both sides must keep working. Read how the nearest existing code and its tests handle the same kind of case, and follow that convention.
+5. After every repair, run every shape again, and the project's existing tests for the code you touched. A result from before the last repair does not count.
+6. You may stop only when every listed shape has run after the last repair and none fails. If a new failure shows a shape you did not list, add it and go back to step 4.
+7. If you run out of attempts, say which shapes are still failing. Never report the work as finished while one is open.
+
+Give the shapes to g6_review_patch as requirements with checks. G6 will not count a check you wrote with the patch as independent, so an insufficient_evidence result for that reason is expected: say so in your report, and do not rewrite existing tests to change it. Repair anything G6 reproduces. In your final report, list each shape and its last result.

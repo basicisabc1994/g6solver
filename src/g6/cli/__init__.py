@@ -134,12 +134,13 @@ def main(argv: list[str] | None = None) -> int:
     setup.add_arguments(sub.add_parser("setup", help="your choices for this computer, asked once (run it yourself; "
                                                      "an agent should not)"))
     sub.add_parser("home", help="print the state folder")
-    wf = sub.add_parser("workflow", help="inspect or consent to a frozen workflow from a trusted terminal")
+    wf = sub.add_parser("workflow", help="inspect a frozen workflow (a person confirms and approves it only in an MCP "
+                                         "client's dialog)")
     wf.add_argument("operation", choices=("inspect", "confirm", "approve"))
     wf.add_argument("name")
     wf.add_argument("digest", nargs="?", default="")
-    wf.add_argument("--as", dest="person", default="", help="recorded identity, not authenticated")
-    wf.add_argument("--candidate", default="", help="candidate digest displayed on the decision card")
+    wf.add_argument("--as", dest="person", default="", help="not used: a name comes only from an MCP client's dialog")
+    wf.add_argument("--candidate", default="", help="not used: approval is given in an MCP client's dialog")
     sub.add_parser("components", help="list installed components")
     f = sub.add_parser("find", help="rank components for a task description")
     f.add_argument("query")
@@ -187,16 +188,9 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     if args.cmd == "workflow":
-        from g6.metaharness.surface import Surface, as_json
-        surface = Surface()
-        if args.operation == "inspect":
-            result = surface.inspect(args.name)
-        elif args.operation == "confirm":
-            result = surface.confirm(args.name, args.digest, answer=args.person)
-        else:
-            held = surface.harness(args.name)
-            result = held if isinstance(held, dict) else as_json(held.activate(
-                args.digest, accepted_by=args.person, candidate_digest=args.candidate))
+        from g6.metaharness.surface import Surface, dialog_only
+        # a person confirms and approves in an MCP client's dialog and nowhere else: this command records neither
+        result = Surface().inspect(args.name) if args.operation == "inspect" else dialog_only(args.operation)
         _print(result)
         return 1 if result.get("completion_state") == "blocked-escalated" else 0
 
@@ -245,11 +239,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"params is not JSON: {exc}", file=sys.stderr)
         return 2
     from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
+    from g6.core.consent_registry import GuardedRegistry
 
     # The same checked call as g6_invoke and g6.invoke: a verified stands only when G6's own re-check reproduces it, a
     # sensitive op runs only when the person lists it in G6_MCP_SENSITIVE, and a blocked reply exits 1.
     name = f"{args.component}.{args.op}"
-    reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(),
+    reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(), registry=GuardedRegistry(),
                            how_to_allow=f"Only the person who runs G6 can allow it, by listing {name} (or "
                                         f"{args.component}) in {SENSITIVE_ENV} where they run g6.")
     if "result" not in reply:

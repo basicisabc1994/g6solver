@@ -31,12 +31,20 @@ def _repo(tmp_path: Path) -> Path:
     return repo
 
 
+def _run_result(tests, *, failed=False):
+    phases = {"setup": "passed", "call": "failed" if failed else "passed", "teardown": "passed"}
+    nodes = [test if "::" in test else test + "::test_case" for test in tests]
+    return {"verdict": "failed" if failed else "passed", "said": "", "output": "", "rootdir": "",
+            "test_outcomes": {node: dict(phases) for node in nodes}, "collected_ids": nodes, "omitted_ids": [],
+            "failed_ids": nodes if failed else [], "setup_errors": {}}
+
+
 def test_the_coding_oracle_passes_only_on_a_passed_verdict(tmp_path) -> None:
     seen = []
 
     def run(repo, tests, *, timeout_s, mutant=None):
         seen.append((repo, tuple(tests)))
-        return {"verdict": "passed" if "ok" in tests[0] else "failed"}
+        return _run_result(tests, failed="ok" not in tests[0])
 
     oracle = C.coding_oracle(run=run)
     assert oracle(str(tmp_path), {"tests": ["test_ok.py"]}) is True
@@ -49,10 +57,10 @@ def test_mutation_testing_runs_inside_the_oracle_and_a_surviving_mutant_fails_th
     repo = _repo(tmp_path)
 
     def killing(repo_, tests, *, timeout_s, mutant=None):
-        return {"verdict": "failed" if mutant else "passed"}     # every mutant is caught by the tests
+        return _run_result(tests, failed=bool(mutant))     # every mutant is caught by the tests
 
     def blind(repo_, tests, *, timeout_s, mutant=None):
-        return {"verdict": "passed"}                              # the tests pass whatever the code does
+        return _run_result(tests)                         # the tests pass whatever the code does
 
     assert C.coding_oracle(mutation=True, run=killing)(str(repo), {"tests": ["test_calc.py"]}) is True
     assert C.coding_oracle(mutation=True, run=blind)(str(repo), {"tests": ["test_calc.py"]}) is False

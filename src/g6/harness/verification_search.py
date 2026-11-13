@@ -111,15 +111,16 @@ from typing import Callable, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from g6.core import component_process
+from g6.core.ledger import digest
 from g6.core.errors import ISOLATION_UNAVAILABLE
+from g6.core.git_name import shown
+from g6.harness import verification_controller
 from g6.harness.patch_review import (
     NORMATIVE,
     NOT_ESTABLISHED,
     PASSED_ON_CHECKS,
     Requirement,
-    _collection_errors,
     _covers,
-    _in_repository,
     _loaded_elsewhere,
     _verdicts,
 )
@@ -212,11 +213,11 @@ MAX_SOURCE_BYTES = 64 * 1024
 RUN_S = 60
 MIN_RUN_S = 5
 MAX_QUESTIONS = 3
-MAX_OBSERVATIONS = 32
+MAX_OBSERVATIONS = repo_tests.MAX_OBSERVATIONS
 #: An observation line holds at most this many characters, and its JSON object at most this many levels of nesting
 #: (the object itself is one level, and so is a value inside it); beyond either, the probe is not read.
-MAX_OBSERVATION_CHARS = 1000
-MAX_OBSERVATION_DEPTH = 16
+MAX_OBSERVATION_CHARS = repo_tests.MAX_OBSERVATION_CHARS
+MAX_OBSERVATION_DEPTH = repo_tests.MAX_OBSERVATION_DEPTH
 #: Said with every reproduction: G6 hands back code it did not write.
 CAUTION = ("The check is code the caller wrote: G6 ran it only inside its operating-system boundary, with no network. "
            "Read it before you run it, or run it in a container.")
@@ -267,11 +268,8 @@ _PART = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
 _NOT_A_PLACE = frozenset({"__pycache__", "venv", "site-packages", "dist-packages", "node_modules"})
 _METADATA = (".egg-info", ".dist-info", ".pyc")
 _NODE = re.compile(r"[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*(?:\[[^\]\x00-\x1f\x7f]*\])?")
-_FAILED_LINE = re.compile(r"^FAILED (\S+)(?: - (.*))?$", re.MULTILINE)
 _RAISED_LINE = re.compile(r"^E\s+(\S.*)$", re.MULTILINE)
 #: ``repo_tests._output``'s mark where it cut a run's output.
-_CUT = re.compile(r"^\.\.\. \[\d+ bytes of output omitted\] \.\.\.$", re.MULTILINE)
-_OBSERVED = re.compile(rf"{OBSERVATION} (.*)$", re.MULTILINE)
 #: G6's clock for the stage's deadline (a test replaces it).
 _clock = time.monotonic
 
@@ -351,6 +349,8 @@ def proposed_checks(value, requirement_ids) -> list[ProposedCheck]:
         except ValidationError as exc:
             first = exc.errors()[0]
             raise ValueError(f"{where}: {'.'.join(str(p) for p in first['loc']) or 'check'}: {first['msg']}") from exc
+        # A proposal is always its Python text, including when a Python caller supplies a compiler-owned str subclass.
+        one = one.model_copy(update={"source": str.__str__(one.source)})
         problem = _file_problem(one.file) or _source_problem(one.source) or (
             "test must name a test inside the file as pytest does: test_x, TestX::test_x or test_x[case]"
             if one.test and not _NODE.fullmatch(one.test) else "")
@@ -428,55 +428,144 @@ def reproduce(node: str, ran: dict) -> dict:
             **{key: ran[key] for key in ("python", "interpreter_source") if key in ran}}
 
 
+#: A run on the patch that was not made on the artefact's bytes (``_run_check``'s ``artefact``): what it says, and the
+#: key its record holds, so the review reads it as the tree changing while it ran.
+NOT_THE_ARTEFACT = ("the working tree changed while G6 copied it to run the check, so the copy is not the tree under "
+                    "review (its digest is not the artifact digest): nothing was run on it")
+NOT_THE_ARTEFACT_KEY = "not_the_artefact"
+
+
+class ExecutionSnapshot(dict):
+    """The unchanged sparse snapshot plus a separately versioned full executable-byte record."""
+
+    def __init__(self, sparse: dict, files: dict[str, str]):
+        super().__init__(sparse)
+        self._execution = _canonical({"version": "execution-artifact.v1", "artifact_digest": digest(sparse),
+                                      "files": files})
+
+    @property
+    def execution(self) -> dict:
+        return json.loads(self._execution)
+
+def bind_execution(change: repo_tests.Change, sparse: dict[str, str], *, deadline: float) -> ExecutionSnapshot:
+    """Capture raw bytes before any review execution. Git-normalised blob bytes are never substituted for them."""
+    return ExecutionSnapshot(sparse, _copy_manifest(change, deadline=deadline))
+
+def _copy_manifest(change: repo_tests.Change, *, deadline: float,
+                   artefact: dict[str, str] | None = None) -> dict[str, str]:
+    if artefact is not None:
+        if not isinstance(artefact, ExecutionSnapshot) or artefact.execution["artifact_digest"] != digest(artefact):
+            raise OSError("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: no execution-artifact.v1 captured before execution")
+        return artefact.execution["files"]
+    root = change.repo
+    stage = repo_tests._git(root, "ls-files", "--stage", "-z")
+    if repo_tests._gitlinks(root, stage) or any(one.startswith("120000 ") for one in repo_tests._paths(stage)):
+        raise OSError("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: links need a materialised-byte adapter")
+    known = repo_tests._paths(repo_tests._git(root, "ls-files", "-co", "--exclude-standard", "-z"))
+    generated, _ = repo_tests._generated_files(root, base=change.base_commit, deadline=deadline)
+    found = {}
+    size = 0
+    for rel in sorted(set(known) | set(generated)):
+        parts = Path(rel).parts
+        if any(part in repo_tests._copy_ignored(str(root.joinpath(*parts[:i])), [part])
+               for i, part in enumerate(parts)):
+            continue
+        path = root / repo_tests.inside(root, rel, "file")
+        if not path.is_file():
+            continue
+        size += path.stat().st_size
+        repo_tests._copy_caps(len(found) + 1, size, deadline)
+        value = hashlib.sha256(generated[rel]).hexdigest() if rel in generated else repo_tests._digest(path)
+        if not re.fullmatch("[0-9a-f]{64}", value):
+            raise OSError("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: unreadable executable bytes")
+        found[rel] = value
+    return found
+
+def _same_copy(copied: dict[str, str], expected: dict[str, str], placed: str) -> bool:
+    """Every copied file, including unchanged dependencies; the fixed generated overlay is bound separately."""
+    return (all(re.fullmatch("[0-9a-f]{64}", value) for value in expected.values())
+            and {k: v for k, v in copied.items() if k != placed} == expected)
+
+
+def _copy_differs(copy: Path, artefact: dict[str, str], placed: str) -> bool:
+    """The historical sparse comparison, only for ordinary, unconfirmed proposed tests."""
+    return any(repo_tests._digest(copy / rel) != value for rel, value in artefact.items()
+               if not rel.startswith("\0") and rel != placed)
+
+
 def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *, at_base: bool,
-               timeout_s: int, roots: tuple[str, ...] = ()) -> dict:
-    """One run of a proposed check, confined, with no network, in a fresh scratch copy with no git metadata and only
-    that check overlaid at ``placed``: of the patched tree, or at the base commit's code (``repo_tests.run_at_base``).
-    It runs as the stated checks do: ``roots`` (the review's import roots) first on the import path, the Python
-    ``repo_tests.interpreter`` chooses (``G6_REPO_PYTHON``, else the repository's own), and the variables
-    ``G6_REPO_ENV`` gives. A run no backend confines is refused (raised), never run unconfined."""
-    overlay = {placed: source}
-    if at_base:
+               timeout_s: int, roots: tuple[str, ...] = (), artefact: dict[str, str] | None = None) -> dict:
+    """Ordinary proposed tests retain their executor; confirmed checks and probes use G6's observation runner."""
+    from contextlib import nullcontext
+    from g6.harness import behaviour_runner
+
+    generated = source.observation if type(source) is behaviour_runner.ExecutableSource else None
+    owned = generated is not None
+    overlay = {} if owned else {placed: source}
+    if at_base and not owned:
         return repo_tests.run_at_base(change, [node], roots=roots, timeout_s=timeout_s, overlay=overlay,
-                                      require_isolation=True)
+                                     require_isolation=True)
     deadline = time.monotonic() + timeout_s
+    refused = {"verdict": "not_run", "said": NOT_THE_ARTEFACT, NOT_THE_ARTEFACT_KEY: True}
     try:
         report: dict = {}
-        with repo_tests.repository_copy(change.repo, deadline=deadline, before=overlay, report=report) as copy:
-            return repo_tests._run(copy, [node], roots=roots, timeout_s=timeout_s, network=False, copied=True,
-                                   python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
-                                   deadline=deadline, require_isolation=True, links=report)
+        expected = (_copy_manifest(change, deadline=deadline, artefact=artefact)
+                    if artefact is not None and (owned or isinstance(artefact, ExecutionSnapshot)) else None)
+        if artefact is not None and repo_tests._moved(artefact, repo_tests.snapshot(change.repo)):
+            return refused
+        with repo_tests.repository_copy(change.repo, deadline=deadline, before=overlay, report=report,
+                                        base=change.base_commit) as copy:
+            copied = repo_tests._copy_snapshot(copy, deadline=deadline) if expected is not None else {}
+            if artefact is not None and (repo_tests._moved(artefact, repo_tests.snapshot(change.repo))
+                                         or (not _same_copy(copied, expected, "" if owned else placed)
+                                             if expected is not None else _copy_differs(copy, artefact, placed))):
+                return refused
+            revision = (repo_tests._base_revision(change, copy, deadline, keep=frozenset({placed}),
+                        materialised=report.get("links_materialised")) if at_base else nullcontext())
+            with revision:
+                if at_base and expected is not None:
+                    copied = repo_tests._copy_snapshot(copy, deadline=deadline)
+                if owned:
+                    ran = repo_tests._run(copy, [node], roots=(), timeout_s=timeout_s, network=False, copied=True,
+                                          deadline=deadline, require_isolation=True, observation=generated)
+                else:
+                    ran = repo_tests._run(copy, [node], roots=roots, timeout_s=timeout_s, network=False, copied=True,
+                                          python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
+                                          deadline=deadline, require_isolation=True, links=report)
+            if expected is not None and ran.get("source_before") and ran["source_before"] != digest(copied):
+                return refused
+            if expected is not None and not ran.get('source_before') and ran.get('verdict') in {'passed', 'failed'}:
+                return {'verdict': 'not_run', 'said': 'G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: '
+                        'the run did not record its starting bytes'}
+            if expected is not None:
+                ran['execution_artifact'] = {'version': 'execution-run.v1', 'artifact_digest': digest(artefact),
+                    'base_commit': change.base_commit if at_base else '', 'files': copied}
+            return ran
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
     except repo_tests.RepoRefused as exc:
         if exc.code == ISOLATION_UNAVAILABLE:
             raise
         return {"verdict": "not_run", "said": str(exc)}
-    except (OSError, repo_tests.CopyNotRun) as exc:
+    except (OSError, ValueError, repo_tests.CopyNotRun) as exc:
         return {"verdict": "not_run", "said": str(exc)}
 
 
 def _messages(ran: dict, node: str) -> list[str]:
     """The failure messages the run recorded in full (``failure_messages``) for the tests of ``node`` or its file."""
-    full, file = _in_repository(ran), node.partition("::")[0]
-    return [text for named, text in (ran.get("failure_messages") or {}).items()
-            if _covers(node, full(named)) or full(named) == file]
+    report, file = repo_tests.read_report(ran), node.partition("::")[0]
+    return [text for named, text in report.data.get("failure_messages", {}).items()
+            if _covers(node, report.full(named)) or report.full(named) == file]
 
 
 def _failure(ran: dict, node: str) -> str:
-    """How a check failed: its recorded message (a collection's: its last ``E`` line), else pytest's summary or its
-    last ``E`` line in the output ("" when none says)."""
+    """How a check failed, from its structured failure annotation (empty when absent)."""
     for text in _messages(ran, node):
         raised = _RAISED_LINE.findall(text)
         line = raised[-1] if raised else next((part for part in text.splitlines() if part.strip()), "")
         if line.strip():
             return line.strip()[:300]
-    output = ran.get("output") or ""
-    for match in _FAILED_LINE.finditer(output):
-        if match.group(2):
-            return match.group(2).strip()[:300]
-    raised = _RAISED_LINE.findall(output)
-    return raised[-1].strip()[:300] if raised else ""
+    return ""
 
 
 def _refused_access(ran: dict, node: str) -> bool:
@@ -485,63 +574,36 @@ def _refused_access(ran: dict, node: str) -> bool:
     G6 cannot tell it from a failure of the code. Read only from G6's own record of the run (``os_errors``, which its
     plugin reads from the exception objects) for the check, a test of it or its file; never from text the check or
     the code under test printed (reviewer B's B2)."""
-    full, file = _in_repository(ran), node.partition("::")[0]
-    return any(_covers(node, full(named)) or full(named) == file for named in ran.get("os_errors") or ())
+    report, file = repo_tests.read_report(ran), node.partition("::")[0]
+    return any(_covers(node, report.full(named)) or report.full(named) == file
+               for named in report.data.get("os_errors", ()))
 
 
 def _uncollected(ran: dict, node: str) -> bool:
     """Whether pytest could not collect the check's own file (a collection error named after it)."""
-    full, file = _in_repository(ran), node.partition("::")[0]
-    return file in {full(rel) for rel in _collection_errors(ran.get("output") or "")} or any(
-        full(named) == file for named in ran.get("failure_messages") or {})
-
-
-def _depth(value) -> int:
-    """Levels of nesting, counted without recursion: a value is one level, and each list or object around it adds one;
-    counting stops past ``MAX_OBSERVATION_DEPTH``."""
-    deepest, pending = 0, [(value, 1)]
-    while pending and deepest <= MAX_OBSERVATION_DEPTH:
-        item, level = pending.pop()
-        deepest = max(deepest, level)
-        children = item.values() if isinstance(item, dict) else item if isinstance(item, list) else ()
-        pending.extend((child, level + 1) for child in children)
-    return deepest
-
-
-def _observations(output: str) -> list[dict] | None | str:
-    """A probe's observations in its output (None when it recorded none), or why they cannot be read."""
-    lines = [match.group(1) for match in _OBSERVED.finditer(output)]
-    if not lines:
-        return None
-    if _CUT.search(output):
-        return "its output was longer than G6 keeps of a run, so its observations cannot be read in full"
-    if len(lines) > MAX_OBSERVATIONS:
-        return f"it recorded {len(lines)} observations; a probe records at most {MAX_OBSERVATIONS}"
-    found = []
-    for line in lines:
-        if len(line) > MAX_OBSERVATION_CHARS:
-            return f"an observation holds more than {MAX_OBSERVATION_CHARS} characters"
-        try:
-            item = json.loads(line)
-        except (ValueError, RecursionError):
-            return f"an observation is not JSON: {line[:80]!r}"
-        if not (isinstance(item, dict) and set(item) == {"input", "output"}):
-            return f"an observation is not {{\"input\": ..., \"output\": ...}}: {line[:80]!r}"
-        if _depth(item) > MAX_OBSERVATION_DEPTH:
-            return f"an observation is nested more than {MAX_OBSERVATION_DEPTH} levels deep"
-        found.append(item)
-    return found
+    report = repo_tests.read_report(ran)
+    return bool(report.collection_errors_for(node))
 
 
 def reading(ran: dict, node: str) -> dict:
     """What one run of a check says: ``result`` ``passed`` (every test of the check passed its call), ``failed`` (one
     failed its call, or the check's own file could not be collected, ``collection`` true; either way not on an
-    operating-system error or a refusal, and its messages or output say how) or ``error`` (anything else: not finished
+    operating-system error or a refusal, and its recorded messages say how) or ``error`` (anything else: not finished
     in time, its copy changed, its report not believed, nothing collected, a setup that failed or a skip, an
     operating-system error, a failure that does not say how); with the run's ``verdict``, ``detail``, ``seconds``,
     ``tree_digest`` (its copy as the run began), what it ran with (``RAN_WITH``) and, for a pass, its ``observations``
     (None when it recorded none)."""
-    verdict, output = ran.get("verdict"), ran.get("output") or ""
+    if "g6_observation" in ran:
+        reading = ran["g6_observation"]
+        return {"result": reading["result"], "detail": reading["detail"], "verdict": ran["verdict"],
+                "seconds": ran["seconds"], "tree_digest": ran["source_before"],
+                **{key: ran[key] for key in RAN_WITH if key in ran},
+                'execution_artifact': ran.get('execution_artifact'),
+                'bootstrap_sha256': ran.get('bootstrap_sha256', ''),
+                "observations": reading.get("observations"), "owned_probe": reading.get("owned_probe", False)}
+    report = repo_tests.read_report(ran)
+    ran = report.wire()
+    verdict = report.verdict
     found = {"verdict": verdict, "seconds": float(ran.get("seconds") or 0.0),
              "tree_digest": ran.get("source_before") or "", **{key: ran[key] for key in RAN_WITH if key in ran}}
 
@@ -557,13 +619,14 @@ def reading(ran: dict, node: str) -> dict:
                          f"outside its copy, the network, a name lookup), or on such a refusal: {how}")
         return {**found, "result": "failed", "detail": how, **extra}
 
+    if not report.valid:
+        return error("the runner report is unknown")
     if verdict == "timed_out":
         return error(f"it did not finish within its time limit ({ran.get('said') or 'timed out'})")
     if verdict == repo_tests.CHANGED:
         return error("it changed files in its copy, so its result is not believed: "
                      + ", ".join((ran.get("changed") or [])[:5]))
-    full = _in_repository(ran)
-    mine = {full(n): phases for n, phases in (ran.get("test_outcomes") or {}).items() if _covers(node, full(n))}
+    mine = {n: phases for n, phases in report.phases.items() if _covers(node, n)}
     if not mine and verdict in (repo_tests.FAILED, "collection_error") and _uncollected(ran, node):
         # review 5, as tier 2 reads a test file: an import the patch broke fails the check where it is collected
         how = _failure(ran, node)
@@ -572,16 +635,24 @@ def reading(ran: dict, node: str) -> dict:
         return error(f"{verdict}: {ran.get('said') or 'no result'}")
     if not mine:
         return error("pytest ran no test of the check: it could not be collected, or names no test")
+    if not report.loading_known:
+        return error("the runner cannot say which code it loaded")
+    if report.collection_errors_for(node):
+        return error("a collection of the check failed beside its reported test bodies")
     if any(phases.get("setup") != "passed" or phases.get("teardown") == "failed" for phases in mine.values()):
         return error("a test of the check could not be set up, was skipped, or failed after its call")
-    calls = {phases.get("call") for phases in mine.values()}
-    if calls == {"passed"} and verdict == repo_tests.PASSED:
-        observed = _observations(output)
+    # A pass or a failure is the report's one reading of the check (``RunReport.body_result``), never a second rule over
+    # its phases here: a test of the check pytest left out, or a report in any ``NO_AUTHORITY`` state, is no result.
+    decided = report.body_result(node)
+    if decided == repo_tests.PASSED and verdict == repo_tests.PASSED:
+        observed = ran.get("probe_observations")
         if isinstance(observed, str):
             return error(observed)
         return {**found, "result": "passed", "detail": f"{len(mine)} test(s) passed", "observations": observed}
-    if "failed" in calls and verdict == repo_tests.FAILED:
+    if decided == repo_tests.FAILED and verdict == repo_tests.FAILED:
         return failed(_failure(ran, node))
+    if any(_covers(node, left) for left in report.omitted):
+        return error("pytest left out a test of the check (deselected), so the check did not run whole")
     return error(f"its tests did not run to a pass or a fail ({verdict})")
 
 
@@ -714,10 +785,12 @@ PATCH_ONLY = "an instance whose intent is change is replayed on the patch only"
 
 
 def _activity(one: ProposedCheck, placed: str, origin: Origin = FREE_FORM) -> dict:
+    from g6.harness import behaviour_runner
+
     node = _node(one, placed)
-    return {"activity": origin.activity, "check": one.id, "requirement": one.requirement_id, "intent": one.intent,
+    return behaviour_runner.Activity({"activity": origin.activity, "check": one.id, "requirement": one.requirement_id, "intent": one.intent,
             "provenance": PROPOSED, "proposed_by": origin.proposed_by, "file": one.file, "placed": placed, "node": node,
-            "sha256": _sha(one.source), "runs": [], "seconds": 0.0, "model_calls": 0, **origin.about}
+            "sha256": _sha(one.source), "runs": [], "seconds": 0.0, "model_calls": 0, **origin.about})
 
 
 def not_run(checks: list[ProposedCheck], placed: dict[str, str], why: str,
@@ -738,20 +811,33 @@ def _bound(left: float) -> int:
 
 
 def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[str, str], *, deadline: float,
-           artifact: str, origins: dict[str, Origin] | None = None, roots: tuple[str, ...] = ()) -> Search:
+           artifact: str, origins: dict[str, Origin] | None = None, roots: tuple[str, ...] = (),
+           select: bool = False, before: dict[str, str] | None = None) -> Search:
     """Run each proposed check on the patch and at the base commit (``_run_check``, with the review's import
     ``roots``), classify it, and say what it found; the stage stops when the review's deadline would be passed.
-    ``origins``: the checks G6 compiled from template instances, by id (the others are free-form proposals)."""
+    ``origins``: the checks G6 compiled from template instances, by id (the others are free-form proposals).
+
+    ``select``: run the checks in the experiment selector's order (``verification_controller.order_checks``) instead
+    of the order given. It is off by default, ``search_config`` has no key for it and no review sets it: Gate C (V11)
+    must show the selector helps before any caller does."""
     done = Search()
     stopped = False
     rooted = {"roots": tuple(roots)} if roots else {}
+    if select:
+        checks = verification_controller.order_checks(
+            checks, patch_only=lambda ident: (origins or {}).get(ident, FREE_FORM).patch_only)
 
     def read(at_base: bool) -> dict:
         ran = _run_check(change, activity["placed"], one.source, node, at_base=at_base,
-                         timeout_s=_bound(deadline - _clock()), **rooted)
+                         timeout_s=_bound(deadline - _clock()), **rooted,
+                         **({'artefact': before} if before is not None and origin.template == 'differential.v1' else {}))
         found = _guarded(change, ran, reading(ran, node))
+        if origin.template == "differential.v1":
+            activity.owned_runs.append(found.get("owned_probe") is True and bool(ran.get('execution_artifact')))
+            if ran.get('execution_artifact'):
+                activity.execution_artifacts.append(ran['execution_artifact'])
         if origin.keep_observations and found["result"] == "failed":   # a replay says which traces broke
-            found = {**found, "observations": _observations(ran.get("output") or "")}
+            found = {**found, "observations": repo_tests.read_report(ran).wire().get("probe_observations")}
         return found
 
     for one in checks:
@@ -810,6 +896,8 @@ LOADED_ELSEWHERE = ("the run loaded changed code from outside the tree it tested
 def _guarded(change: repo_tests.Change, ran: dict, found: dict) -> dict:
     """A run's reading (``reading``), or an error when the run loaded a module the change touches from outside the
     tree it tested (an installed copy), or cannot say what it loaded: it tested code the patch did not change."""
+    if "g6_observation" in ran:
+        return found  # the G6 runner resolves the entry point in the copy, without installed repository code
     elsewhere = _loaded_elsewhere(change, ran)
     if not elsewhere:
         return found
@@ -989,7 +1077,8 @@ def _run_mutant(change: repo_tests.Change, rel: str, source: str, ids: list[str]
     deadline = time.monotonic() + timeout_s
     try:
         report: dict = {}
-        with repo_tests.repository_copy(change.repo, deadline=deadline, report=report) as copy:
+        with repo_tests.repository_copy(change.repo, deadline=deadline, report=report,
+                                        base=change.base_commit) as copy:
             return repo_tests._run(copy, ids, roots=roots, timeout_s=timeout_s, network=False, mutant=(rel, source),
                                    copied=True, python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
                                    deadline=deadline, require_isolation=True, links=report)
@@ -1035,14 +1124,14 @@ def measure_adequacy(change: repo_tests.Change, requirements, norm: dict[str, st
 
     for rel in change.outside_links:   # review M1: never read, as a copy never holds one
         if rel.endswith(".py"):
-            left_out(rel, LINK_LEFT_OUT.format(rel=rel))
+            left_out(rel, LINK_LEFT_OUT.format(rel=shown(rel)))
     files = [rel for rel in change.sources if repo_tests.changed_lines(change, rel)]
     for rel in files[ADEQUACY_FILES:]:
         left_out(rel, f"test adequacy mutates at most {ADEQUACY_FILES} changed files")
     for rel in files[:ADEQUACY_FILES]:
         text = (change.repo / rel).read_text(encoding="utf-8", errors="replace")
         if len(text) > ADEQUACY_FILE_CHARS:
-            left_out(rel, TOO_BIG.format(rel=rel, size=len(text)))
+            left_out(rel, TOO_BIG.format(rel=shown(rel), size=len(text)))
             continue
         lines = repo_tests.changed_lines(change, rel)
         try:   # the mutants are made in G6's own process, within the review's deadline (review I4)
@@ -1053,7 +1142,7 @@ def measure_adequacy(change: repo_tests.Change, requirements, norm: dict[str, st
         except Exception as exc:   # RecursionError, MemoryError, any other: an activity's error (review I2)
             why = stopped(exc)
             activities.append({"activity": "mutation run", "file": rel, "mutant": "", "result": "error",
-                               "reason": why, "stopped": f"test adequacy on {rel}", "seconds": 0.0, "model_calls": 0})
+                               "reason": why, "stopped": f"test adequacy on {shown(rel)}", "seconds": 0.0, "model_calls": 0})
             left_out(rel, f"G6 could not make its mutants: {why}")
             continue
         runs: dict[str, dict] = {}

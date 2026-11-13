@@ -42,8 +42,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from g6.core import cloud_consent as cloud
+from g6.core.consent_callers import SDKClientWrapper, guard, sdk_send
+
 from g6.core.llm import (AnthropicCaller, EmptyRetry, LLMCaller, LLMError, NoModel, UnusableModel,
                          complete_structured)
+from g6.core.git_name import shown
 from g6.harness import verification_search as vs
 from g6.harness import verification_templates as vt
 from g6.reasoning.budget import Budget, BudgetExhausted, MeteredCaller
@@ -123,6 +127,7 @@ class RepositoryContext:
     text: str
     files: tuple[str, ...]
     left_out: tuple[str, ...]
+    sources: tuple[cloud.Source, ...] = ()
 
 
 def _requirements(requirements) -> list[dict]:
@@ -162,22 +167,28 @@ def context(change: repo_tests.Change, requirements, *, max_chars: int) -> Repos
     if len(body["diff"]) < len(diff):
         left.append(f"the diff after its first {len(body['diff'])} characters (the context's room)")
     for rel in change.outside_links:
-        left.append(f"{rel}: a link to a path outside the repository, never read")
+        left.append(f"{shown(rel)}: a link to a path outside the repository, never read")
     for rel in sorted(change.sources):
         try:
             text = (change.repo / rel).read_text(encoding="utf-8", errors="replace")[:vt.MAX_MODULE_BYTES]
         except OSError:
-            left.append(f"{rel}: could not be read")
+            left.append(f"{shown(rel)}: could not be read")
             continue
-        free = max_chars - len(json.dumps(body)) - len(json.dumps(rel)) - 4
+        named = shown(rel)    # the model reads each file by the name's one rule, never by JSON's own escaping of it
+        free = max_chars - len(json.dumps(body)) - len(json.dumps(named)) - 4
         if free < 64:
-            left.append(f"{rel}: no room left")
+            left.append(f"{named}: no room left")
             continue
-        body["files"][rel] = _cut(text, free)
-        if len(body["files"][rel]) < len(text):
-            left.append(f"{rel} after its first {len(body['files'][rel])} characters (the context's room)")
+        body["files"][named] = _cut(text, free)
+        if len(body["files"][named]) < len(text):
+            left.append(f"{named} after its first {len(body['files'][named])} characters (the context's room)")
     text = json.dumps(body, ensure_ascii=False)
-    return RepositoryContext(text, tuple(body["files"]), tuple(left))
+    source = cloud.repository_source(change.repo)
+    refs = tuple(cloud.Source.text(source, rel, contents) for rel, contents in body["files"].items())
+    refs += (cloud.Source.text(source, "patch", body["diff"]),
+             cloud.Source.text(cloud.input_source(json.dumps(body["requirements"])),
+                               "requirements", json.dumps(body["requirements"])))
+    return RepositoryContext(text, tuple(body["files"]), tuple(left), cloud.boundary_sources(refs))
 
 
 def repository_context(repo: str | Path, *, requirements, base: str = "HEAD",
@@ -224,7 +235,8 @@ class _Limits:
             record.update(sent=True, error=str(exc), limit="max_wall_clock_s")
             raise
         except Exception as exc:
-            record.update(sent=True, error=f"{type(exc).__name__}: {' '.join(str(exc).split())[:200]}")
+            withheld = any(code in str(exc) for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE))
+            record.update(sent=not withheld, error=f"{type(exc).__name__}: {' '.join(str(exc).split())[:200]}")
             raise
         finally:
             record["seconds"] = round(time.monotonic() - started, 3)
@@ -274,7 +286,7 @@ class Proposals:
 
 #: How the person's model is found when the review is given none (a test sets it): only one they opted into.
 def default_caller() -> LLMCaller:
-    from g6.core.llm import provider_from_env
+    from g6.core.consent_callers import provider_from_env
 
     return provider_from_env()
 
@@ -363,7 +375,7 @@ class Proposer:
         budget = Budget(max_model_calls=settings["max_model_calls"],
                         max_output_chars=settings["max_model_calls"] * settings["max_output_tokens"] * CHARS_PER_TOKEN,
                         max_wall_clock_s=left)
-        backend = _backend(raw)
+        backend = guard(_backend(raw))
         self.limits = _Limits(MeteredCaller(backend, budget), backend, settings, self.stage)
         self.context: RepositoryContext | None = None
         self.stopped = ""   # why every later stage is skipped (the cap, the time)
@@ -392,7 +404,10 @@ class Proposer:
         user = json.dumps({"stage": stage, "task": task, **extra, "repository_context": self.context.text},
                           ensure_ascii=False)
         first, started = len(self.limits.calls), time.monotonic()
-        got = complete_structured(self.limits, _SYSTEM, user, schema, retries=RETRIES)
+        # `task` here is G6's fixed stage instruction. Personal requirements and
+        # repository context were source-bound when `context` read them.
+        with cloud.request_sources(self.context.sources):
+            got = complete_structured(self.limits, _SYSTEM, user, schema, retries=RETRIES)
         calls = self.limits.calls[first:]
         activity.update(model_calls=sum(1 for call in calls if call.get("sent")),
                         seconds=round(time.monotonic() - started, 3))
@@ -552,13 +567,15 @@ class Proposer:
 # --- the study's caller (V10): Anthropic's own address, no fallback model, each response's usage recorded -----------------
 
 class _RecordedMessages:
-    def __init__(self, messages: object, calls: list[dict], temperature: float | None) -> None:
+    def __init__(self, messages: object, calls: list[dict], temperature: float | None, owner: object) -> None:
         self._messages, self._calls, self._temperature = messages, calls, temperature
+        self._owner = owner
 
     def create(self, **kwargs: Any) -> object:
         if self._temperature is not None:
             kwargs["temperature"] = self._temperature
-        response = self._messages.create(**kwargs)
+        with sdk_send(self._owner, kwargs):
+            response = self._messages.create(**kwargs)
         usage = getattr(response, "usage", None)
         self._calls.append({"model": getattr(response, "model", None),
                             "input_tokens": getattr(usage, "input_tokens", None),
@@ -568,13 +585,14 @@ class _RecordedMessages:
         return response
 
 
-class RecordingClient:
+class RecordingClient(SDKClientWrapper):
     """An ``anthropic.Anthropic`` client's ``messages`` with each response's usage and model recorded; it has no
     ``beta`` messages, so no server-side fallback can be asked through it."""
 
     def __init__(self, client: object, *, temperature: float | None = None) -> None:
+        super().__init__(client)
         self.calls: list[dict] = []
-        self.messages = _RecordedMessages(client.messages, self.calls, temperature)
+        self.messages = _RecordedMessages(client.messages, self.calls, temperature, self)
 
 
 class StudyCaller:
@@ -600,7 +618,7 @@ class StudyCaller:
             client = anthropic.Anthropic(api_key=key, base_url=ANTHROPIC_URL)
         self.model, self.temperature = model, temperature
         self.recording = RecordingClient(client, temperature=temperature)
-        self._caller = AnthropicCaller(model, fallbacks=False, client=self.recording)
+        self._caller = guard(AnthropicCaller(model, fallbacks=False, client=self.recording, base_url=ANTHROPIC_URL))
         self.last_usage: dict | None = None
 
     def complete(self, system: str, user: str, *, max_tokens: int = 2048) -> str:

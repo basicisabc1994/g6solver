@@ -341,9 +341,13 @@ def _in_place(params: dict, venture: str | None) -> dict:
                                    timeout_s=int(params.get("timeout_s") or repo_tests.DEFAULT_TIMEOUT_S))
         except repo_tests.RepoRefused as refused:
             return _refused(f"{refused} (code {refused.code})")
-    if found["verdict"] == repo_tests.CHANGED:
+        report = repo_tests.read_report(found)
+        found = report.wire()
+        passed = (repo_tests.established(report, repo=repo).of() == repo_tests.PASSED   # the one statement of a pass
+                  and all(report.selected(test) for test in tests))
+    if report.verdict == repo_tests.CHANGED:
         return _refused(f"{found['said']}: {', '.join(found['changed'])}")
-    return {"ok": True, "result": {"passed": found["verdict"] == repo_tests.PASSED, "verdict": found["verdict"],
+    return {"ok": True, "result": {"passed": passed, "verdict": report.verdict,
                                    "counts": {key: found[key] for key in ("passed", "failed", "not_passed", "total")},
                                    "said": found["said"], "seconds": found["seconds"],
                                    "interpreter_source": found["interpreter_source"],

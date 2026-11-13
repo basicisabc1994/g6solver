@@ -1,0 +1,255 @@
+{
+ "contract": 3,
+ "function": "decisions",
+ "events": [
+  {
+   "run": "r1",
+   "kind": "run_started",
+   "seconds": 0
+  },
+  {
+   "run": "r1",
+   "kind": "loop_round",
+   "native": "1",
+   "seconds": 10,
+   "data": {
+    "round": 1
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "loop_ended",
+   "native": "end",
+   "seconds": 20,
+   "data": {
+    "ending": "clean",
+    "reviews": 1
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "report_returned",
+   "native": "end",
+   "seconds": 20,
+   "data": {
+    "run_seconds": 20.0
+   }
+  }
+ ],
+ "inputs": {
+  "operations": [
+   {
+    "op": "dismissed",
+    "kind": "run_reproduction",
+    "target": "R1",
+    "expires_days": 7
+   },
+   {
+    "op": "dismissed",
+    "kind": "rerun_at_base",
+    "target": "R1",
+    "rule": "outcome_superseded",
+    "goal": "add returns the sum"
+   },
+   {
+    "op": "show",
+    "assessment": {
+     "report": "REPORT",
+     "outcome": "defect_detected",
+     "requirements": [
+      {
+       "id": "R1",
+       "status": "failed",
+       "provenance": "stated",
+       "checks": [
+        {
+         "id": "tests/test_calc.py::test_add",
+         "verdict": "failed",
+         "provenance": "stated"
+        }
+       ]
+      }
+     ],
+     "reasons": []
+    },
+    "days": 6
+   },
+   {
+    "op": "show",
+    "assessment": {
+     "report": "REPORT",
+     "outcome": "defect_detected",
+     "requirements": [
+      {
+       "id": "R1",
+       "status": "failed",
+       "provenance": "stated",
+       "checks": [
+        {
+         "id": "tests/test_calc.py::test_add",
+         "verdict": "failed",
+         "provenance": "stated"
+        }
+       ]
+      }
+     ],
+     "reasons": []
+    },
+    "days": 8
+   },
+   {
+    "op": "show",
+    "assessment": {
+     "report": "REPORT",
+     "outcome": "defect_detected",
+     "requirements": [
+      {
+       "id": "R1",
+       "status": "failed",
+       "provenance": "stated",
+       "checks": [
+        {
+         "id": "tests/test_calc.py::test_add",
+         "verdict": "failed",
+         "provenance": "stated"
+        }
+       ]
+      }
+     ],
+     "reasons": []
+    },
+    "days": 6,
+    "goal": "add never overflows"
+   },
+   {
+    "op": "show",
+    "assessment": {
+     "report": "REPORT",
+     "outcome": "defect_detected",
+     "requirements": [
+      {
+       "id": "R1",
+       "status": "failed",
+       "provenance": "stated",
+       "checks": [
+        {
+         "id": "tests/test_calc.py::test_add",
+         "verdict": "failed",
+         "provenance": "stated"
+        }
+       ]
+      }
+     ],
+     "reasons": []
+    },
+    "days": 366
+   },
+   {
+    "op": "reopened",
+    "kind": "rerun_at_base",
+    "target": "R1",
+    "days": 9
+   },
+   {
+    "op": "show",
+    "assessment": {
+     "report": "REPORT",
+     "outcome": "defect_detected",
+     "requirements": [
+      {
+       "id": "R1",
+       "status": "failed",
+       "provenance": "stated",
+       "checks": [
+        {
+         "id": "tests/test_calc.py::test_add",
+         "verdict": "failed",
+         "provenance": "stated"
+        }
+       ]
+      }
+     ],
+     "reasons": []
+    },
+    "days": 10
+   }
+  ]
+ },
+ "expected": {
+  "shows": [
+   {
+    "shown": [],
+    "shown_again": [],
+    "findings": [
+     "failing_accepted_check"
+    ]
+   },
+   {
+    "shown": [
+     "run_reproduction"
+    ],
+    "shown_again": [
+     [
+      "run_reproduction",
+      "the expiry you chose for the dismissal has passed"
+     ]
+    ],
+    "findings": [
+     "failing_accepted_check"
+    ]
+   },
+   {
+    "shown": [
+     "rerun_at_base"
+    ],
+    "shown_again": [
+     [
+      "rerun_at_base",
+      "the task's stated outcome changed since you dismissed it"
+     ]
+    ],
+    "findings": [
+     "failing_accepted_check"
+    ]
+   },
+   {
+    "shown": [
+     "run_reproduction",
+     "rerun_at_base"
+    ],
+    "shown_again": [
+     [
+      "run_reproduction",
+      "the dismissal's record passed the storage policy's period for decisions"
+     ],
+     [
+      "rerun_at_base",
+      "the dismissal's record passed the storage policy's period for decisions"
+     ]
+    ],
+    "findings": [
+     "failing_accepted_check"
+    ]
+   },
+   {
+    "shown": [
+     "run_reproduction",
+     "rerun_at_base"
+    ],
+    "shown_again": [
+     [
+      "run_reproduction",
+      "the expiry you chose for the dismissal has passed"
+     ],
+     [
+      "rerun_at_base",
+      "you reopened it"
+     ]
+    ],
+    "findings": [
+     "failing_accepted_check"
+    ]
+   }
+  ]
+ }
+}

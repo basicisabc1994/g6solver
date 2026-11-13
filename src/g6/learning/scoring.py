@@ -12,6 +12,7 @@ instance needs a judge, an injected caller too; without one it scores 0 (``judge
 """
 from __future__ import annotations
 
+import math
 import re
 import time
 from collections.abc import Callable
@@ -78,6 +79,23 @@ def call_agent(agent: Agent, prompt: str) -> AgentReply:
     return AgentReply(str(out), AgentTrace(num_turns=1, duration_ms=_ms(start)))
 
 
+def _read_judge_score(reply: object) -> float:
+    """Read one verdict; missing, nonnumeric, nonfinite or out-of-range scores are no verdict.
+
+    Numeric strings remain accepted, but booleans are not numeric grades. Never clamp an invalid verdict into
+    the passing range. Both live scoring and paired re-derivation use this reading through ``score_instance``.
+    """
+    if not isinstance(reply, dict):
+        raise ValueError("the judge did not return a JSON object")
+    value = reply.get("score")
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError("the judge did not return a numeric score")
+    score = float(value)
+    if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+        raise ValueError("the judge score must be finite and between 0 and 1")
+    return score
+
+
 def _judge(judge: LLMCaller | Callable[[str], str], task: str, actual: str, expected: str,
            rubric: str) -> tuple[float, str]:
     if not expected.strip() and not rubric:
@@ -88,10 +106,7 @@ def _judge(judge: LLMCaller | Callable[[str], str], task: str, actual: str, expe
     try:
         text = (judge.complete(_JUDGE_SYSTEM_PROMPT, prompt, max_tokens=256) if isinstance(judge, LLMCaller)
                 else judge(f"{_JUDGE_SYSTEM_PROMPT}\n\n{prompt}"))
-        parsed = extract_json(str(text))
-        if not isinstance(parsed, dict):
-            raise ValueError("the judge did not return a JSON object")
-        return max(0.0, min(1.0, float(parsed.get("score", 0.0)))), ""
+        return _read_judge_score(extract_json(str(text))), ""
     except Exception as exc:  # noqa: BLE001 - a failed judge call scores 0, with the reason
         return 0.0, f"judge_failed: {type(exc).__name__}: {exc}"
 

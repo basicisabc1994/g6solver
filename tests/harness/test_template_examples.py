@@ -21,6 +21,14 @@ from g6.harness import verification_templates as templates
 from g6.harness.patch_review import review_patch
 
 GUIDE = skills.guide_dir()
+
+
+def test_a_binding_refusal_says_what_to_do_when_a_template_cannot_express_the_check():
+    # worked examples, round 3: a function needing an object JSON cannot write was never checked, and nothing named the
+    # free-form check that could have built it
+    assert "proposed_checks" in templates.bindings_help("differential.v1")
+
+
 SKILL = (GUIDE / "SKILL.md").read_text(encoding="utf-8")
 EXAMPLES_FILE = GUIDE / "references" / "templates.md"
 REQUIREMENTS = [{"id": "R1", "text": "the change", "checks": ["tests/test_x.py::test_x"]}]

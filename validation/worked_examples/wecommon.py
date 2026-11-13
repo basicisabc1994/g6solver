@@ -135,6 +135,9 @@ class Tally:
     result: dict | None = None
     session_id: str = ""
     lines: int = 0
+    #: Round 3 (PLAN.md section 9): Claude Code's own ``total_cost_usd`` counts too, so a model the price table does not
+    #: name (Fable 5.1) is never counted below what Claude Code itself reports.
+    count_reported: bool = False
 
     def feed(self, obj: Mapping[str, Any]) -> None:
         self.lines += 1
@@ -165,9 +168,16 @@ class Tally:
         return model_usage_cost(self.result["modelUsage"])
 
     @property
+    def reported_usd(self) -> float | None:
+        value = (self.result or {}).get("total_cost_usd")
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    @property
     def cost_usd(self) -> float:
-        """The larger of the stream's count and the result's per-model usage (PLAN.md §6)."""
-        return round(max(self.stream_usd, self.result_usd or 0.0), 6)
+        """The larger of the stream's count and the result's per-model usage (PLAN.md §6); in round 3 also Claude
+        Code's reported total."""
+        reported = (self.reported_usd or 0.0) if self.count_reported else 0.0
+        return round(max(self.stream_usd, self.result_usd or 0.0, reported), 6)
 
     @property
     def usage(self) -> dict[str, int]:
@@ -247,13 +257,14 @@ class Archive:
 
 
 def spent(rows: Iterable[Mapping[str, Any]]) -> float:
-    """Dollars spent: every ended run's cost; a run started and never ended counts the run's whole stop until it is
-    closed with its stream's cost."""
+    """Dollars spent: every ended run's cost; a run started and never ended counts the run's whole stop (its own
+    ``stop_usd`` when its start says one, as in round 3) until it is closed with its stream's cost."""
+    rows = list(rows)
     ended = {r["run"]: float(r.get("cost_usd") or 0.0) for r in rows if r.get("event") == "ended"}
     total = sum(ended.values())
     for r in rows:
         if r.get("event") == "started" and r.get("kind") == "run" and r["run"] not in ended:
-            total += RUN_STOP_USD
+            total += float(r.get("stop_usd") or RUN_STOP_USD)
     return round(total, 6)
 
 

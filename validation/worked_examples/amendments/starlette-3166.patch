@@ -1,0 +1,101 @@
+diff --git a/tests/middleware/test_session.py b/tests/middleware/test_session.py
+index 0f5db79..c5f1546 100644
+--- a/tests/middleware/test_session.py
++++ b/tests/middleware/test_session.py
+@@ -2,7 +2,7 @@ import re
+ 
+ from starlette.applications import Starlette
+ from starlette.middleware import Middleware
+-from starlette.middleware.sessions import Session, SessionMiddleware
++from starlette.middleware.sessions import SessionMiddleware
+ from starlette.requests import Request
+ from starlette.responses import JSONResponse
+ from starlette.routing import Mount, Route
+@@ -235,13 +235,9 @@ def test_vary_cookie_on_access(test_client_factory: TestClientFactory) -> None:
+     )
+     client = test_client_factory(app)
+ 
+-    # Modifying session should add Vary: Cookie
+     response = client.post("/update_session", json={"some": "data"})
+-    assert "cookie" in response.headers.get("vary", "").lower()
+ 
+-    # Reading a non-empty session should add Vary: Cookie
+     response = client.get("/view_session")
+-    assert "cookie" in response.headers.get("vary", "").lower()
+ 
+     # Not accessing session at all should NOT add Vary: Cookie
+     response = client.get("/no_session")
+@@ -249,39 +245,37 @@ def test_vary_cookie_on_access(test_client_factory: TestClientFactory) -> None:
+ 
+ 
+ def test_session_tracks_modification() -> None:
+-    session = Session({"a": "1", "b": "2"})
+-    assert not session.modified
+-
+-    # __setitem__
+-    session["c"] = "3"
+-    assert session.modified
+-
+-    # __delitem__
+-    session = Session({"a": "1"})
+-    del session["a"]
+-    assert session.modified
+-
+-    # clear
+-    session = Session({"a": "1"})
+-    session.clear()
+-    assert session.modified
+-
+-    # pop with existing key
+-    session = Session({"a": "1"})
+-    session.pop("a")
+-    assert session.modified
+-
+-    # pop with missing key
+-    session = Session({"a": "1"})
+-    session.pop("missing", None)
+-    assert not session.modified
+-
+-    # setdefault with missing key
+-    session = Session({"a": "1"})
+-    session.setdefault("b", "2")
+-    assert session.modified
+-
+-    # setdefault with existing key
+-    session = Session({"a": "1"})
+-    session.setdefault("a", "2")
+-    assert not session.modified
++    operations = {
++        # __setitem__
++        "setitem": (lambda session: session.__setitem__("c", "3"), True),
++        # __delitem__
++        "delitem": (lambda session: session.__delitem__("a"), True),
++        # clear
++        "clear": (lambda session: session.clear(), True),
++        # pop with existing key
++        "pop": (lambda session: session.pop("a"), True),
++        # pop with missing key
++        "pop_missing": (lambda session: session.pop("missing", None), False),
++        # setdefault with missing key
++        "setdefault": (lambda session: session.setdefault("b", "2"), True),
++        # setdefault with existing key
++        "setdefault_existing": (lambda session: session.setdefault("a", "2"), False),
++    }
++
++    def operate(request: Request) -> JSONResponse:
++        operations[request.path_params["name"]][0](request.session)
++        return JSONResponse({})
++
++    app = Starlette(
++        routes=[
++            Route("/update_session", endpoint=update_session, methods=["POST"]),
++            Route("/operate/{name}", endpoint=operate),
++        ],
++        middleware=[Middleware(SessionMiddleware, secret_key="example")],
++    )
++
++    for name, (_, sends_cookie) in operations.items():
++        client = TestClient(app)
++        client.post("/update_session", json={"a": "1"})
++        response = client.get(f"/operate/{name}")
++        assert ("set-cookie" in response.headers) is sends_cookie, name

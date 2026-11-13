@@ -39,6 +39,14 @@ NOT_COMPUTE_MATCHED = "G6_E_META_NOT_COMPUTE_MATCHED"
 OBJECTIVE_REGRESSED = "G6_E_META_OBJECTIVE_REGRESSED"
 BUDGET_EXCEEDED = "G6_E_META_BUDGET_EXCEEDED"
 APPROVAL_REQUIRED = "G6_E_META_APPROVAL_REQUIRED"
+#: How a client's dialog ended without a person's agreement (``g6.mcp.consent``), each with a code of its own; and a
+#: person's act asked for anywhere but that dialog, which records nothing.
+CONSENT_NO_DIALOG = "G6_E_CONSENT_NO_DIALOG"
+CONSENT_DECLINED = "G6_E_CONSENT_DECLINED"
+CONSENT_CANCELLED = "G6_E_CONSENT_CANCELLED"
+CONSENT_NO_NAME = "G6_E_CONSENT_NO_NAME"
+CONSENT_DIALOG_ONLY = "G6_E_CONSENT_DIALOG_ONLY"
+WORKFLOW_CHANGED = "G6_E_META_WORKFLOW_CHANGED"
 APPROVER_IS_PROPOSER = "G6_E_META_APPROVER_IS_PROPOSER"
 DRIFT_DEMOTED = "G6_E_META_DRIFT_DEMOTED"
 RECOMMENDED = "G6_E_META_RECOMMENDED"
@@ -115,8 +123,11 @@ class EvidencePolicy:
     # non-inferiority: the one-sided 95% upper bound on the rise in the false-accept rate may not exceed this (V6b-F5)
     false_accept_margin: float = 0.05
     staged_evaluation: bool = False
+    cost_margin: float | None = 0.05    # a share of the base's measured cost; None measures and reports it and refuses nothing for it
 
     def __post_init__(self) -> None:
+        if self.cost_margin is not None and (type(self.cost_margin) not in (int, float) or not math.isfinite(self.cost_margin) or self.cost_margin < 0):
+            raise ValueError("cost_margin must be None or a finite share of at least 0")
         if self.min_cases < 1 or self.min_discordant < 1 or self.max_evaluations < 1 or self.max_eval_model_calls < 1:
             raise ValueError("min_cases, min_discordant, max_evaluations and max_eval_model_calls must be >= 1")
         if self.staged_evaluation and self.looks != 1:
@@ -378,7 +389,7 @@ class Workflow:
         })
 
 
-_LATER_POLICY_DEFAULTS = {"looks": 1, "false_accept_margin": 0.05, "staged_evaluation": False}
+_LATER_POLICY_DEFAULTS = {"looks": 1, "false_accept_margin": 0.05, "staged_evaluation": False, "cost_margin": 0.05}
 
 
 def _policy_fields(policy: EvidencePolicy) -> dict[str, Any]:

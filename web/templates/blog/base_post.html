@@ -6,9 +6,9 @@
 {
     "@context": "https://schema.org",
     "@type": "BlogPosting",
-    "headline": "{% block post_headline %}{% endblock %}",
+    "headline": "{% filter escapejs %}{% block post_headline %}{% endblock %}{% endfilter %}",
     "datePublished": "{% block post_date %}2025-01-01{% endblock %}",
-    "description": "{% block post_description %}{% endblock %}",
+    "description": "{% filter escapejs %}{% block post_description %}{% endblock %}{% endfilter %}",
     "author": {
         "@type": "Person",
         "name": "Dr. Dan",

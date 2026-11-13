@@ -72,6 +72,7 @@ from g6.agents._runtime import (
 from g6.agents._runtime.cli import OUTPUT_LOG
 from g6.core import stop as core_stop
 from g6.core.model_calls import note_model_call
+from g6.agents._runtime.consent import consent_run, register_program
 from g6.core.outside import OutsideProgram
 from g6.core.resources import ResourceUsage
 
@@ -86,6 +87,7 @@ CLAUDE = OutsideProgram(
                                 "signed in with your account",
     install=INSTALL_CLAUDE, licence="proprietary: Anthropic's terms (never bundled)", command="claude", env=CLAUDE_ENV,
     paid=True, online=True)
+register_program(CLAUDE, 'anthropic:claude_code')
 TOOL = "claude_code"
 #: The code for a run refused because model calls are disabled (the one ``g6.core.llm`` uses).
 LLM_DISABLED = "G6_E_LLM_DISABLED"
@@ -240,7 +242,8 @@ class ClaudeCodeRuntime:
                 argv = self.argv(found.where, writes=writes, mcp_config=self.runner.plain(servers),
                                  settings=self.runner.plain(hooks))
                 detail["argv"] = argv
-                done = self.runner.run(argv, prompt=prompt, cwd=workspace, scratch=scratch, stop=stop,
+                done = consent_run(self.runner, argv, provider="anthropic:claude_code",
+                                   prompt=prompt, cwd=workspace, scratch=scratch, stop=stop,
                                        seconds=gate.limits.wall_clock_s - usage.elapsed_seconds)
             except AgentRefusal as refusal:   # ended early: keep what G6 knew, and say what a write run may have left
                 started = refusal.code != codes.START_FAILED

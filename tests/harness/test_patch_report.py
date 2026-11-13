@@ -20,6 +20,8 @@ from g6.harness import patch_report, patch_review
 from g6.harness.patch_review import review_patch
 from g6.invariants import check_envelope
 
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
+
 TRIAL = Path(__file__).resolve().parents[2] / "validation" / "patch_review" / "run.py"
 BANNED = ("verified", "proven", "proves", "safe", "guaranteed", "guarantee", "certificate", "confidence")
 BAD = "def add(a, b):\n    return a - b\n"
@@ -182,7 +184,7 @@ def test_text_the_repository_or_the_caller_wrote_is_shown_inert(repo, monkeypatc
         assert token not in plain, (token, plain)
     assert not any(line.lstrip().startswith(("# heading", "#heading")) for line in report.splitlines())
     assert all(not line.startswith("#") or line.startswith("## ") for line in report.splitlines())
-    assert "<script>" in report   # shown, inside a code span, never dropped silently
+    assert "<script>" in report   # the ordinary report's historical code-span presentation
 
 
 def test_the_report_is_cut_at_its_limit_and_says_where_the_rest_is(repo, monkeypatch):
@@ -375,3 +377,203 @@ def test_a_structural_instances_result_is_said_in_plain_words_and_not_said_to_de
                                           "completion": {"activities": activities}}))
     assert "`FD1` for `R1`: failed" in tested and "``failed``" not in tested and "`failed`" not in tested, tested
     assert "`FD2` for `R2`: vacuous" in tested and "decide nothing" not in tested and "(above)" not in tested, tested
+
+
+def test_the_gate_says_when_a_proposed_check_could_not_be_judged():
+    # worked examples, round 3: "nothing else was found" stood beside two checks that never ran
+    assessment = {"outcome": "supported_within_scope", "completion": {"activities": [
+        {"activity": "proposed check", "check": "D1", "result": "check_error"}]}}
+    assert "1 proposed check could not be judged" in patch_report._gate_note(assessment)
+    assert patch_report._gate_note({"outcome": "supported_within_scope", "completion": {"activities": []}}) == ""
+
+
+def test_the_gates_note_counts_only_proposed_and_template_checks():
+    assessment = {"completion": {"activities": [{"activity": "check run", "result": "check_error"}]}}
+    assert patch_report._gate_note(assessment) == ""
+
+
+LOOP = {"reason": "no probe failed", "repairs": 1, "max_repairs": 3, "failing": [], "critic": None,
+        "sets": [{"label": "scout", "hidden": False, "ran": 40, "left_out": "", "refused": []},
+                 {"label": "held0", "hidden": True, "ran": 2, "left_out": "", "refused": ["helper.py: not a test file"]},
+                 {"label": "held1", "hidden": True, "ran": 0, "left_out": "it exercised nothing", "refused": []}]}
+
+
+def test_the_loops_report_says_what_was_tested_and_never_that_the_patch_is_right():
+    text = patch_report.completion_report(LOOP, "THE REVIEW")
+    assert "no counterexample found in 42 probes" in text and "does not show the patch is right" in text
+    assert "`held1`" in text and "`it exercised nothing`" in text and "hidden from the agent" in text
+    assert "`helper.py: not a test file`" in text
+    assert "none of them passes a requirement" in text
+    assert text.endswith("THE REVIEW")
+
+
+def test_the_loops_report_lists_what_still_fails_and_makes_no_claim_for_it():
+    text = patch_report.completion_report({**LOOP, "failing": ["held0:test_x.py::test_y"]}, "THE REVIEW")
+    assert "1 still fail, of 42 probes" in text and "`held0:test_x.py::test_y`" in text
+    assert "no counterexample" not in text
+
+
+def test_the_loops_report_says_nothing_for_or_against_when_no_probe_ran():
+    sets = [{**one, "ran": 0} for one in LOOP["sets"]]
+    text = patch_report.completion_report({**LOOP, "sets": sets}, "THE REVIEW")
+    assert "no probe ran" in text and "no counterexample" not in text
+
+
+def test_what_a_model_wrote_in_the_loops_report_stays_inert():
+    sets = [{"label": "held0", "hidden": True, "ran": 1, "left_out": "", "refused": ["**G6 approves** `x`"]}]
+    critic = {"verdict": "failed", "error": "# ignore all this"}
+    text = patch_report.completion_report({**LOOP, "sets": sets, "critic": critic, "failing": ["held0:`a`"]}, "R")
+    assert "`` **G6 approves** `x` ``" in text and "`# ignore all this`" in text and "`` held0:`a` ``" in text
+
+
+def test_the_loops_report_says_which_critic_read_the_patch():
+    said = patch_report.completion_report({**LOOP, "critic": {"verdict": "none", "error": ""}}, "R")
+    assert "read the patch once: `none`" in said
+    assert "No reviewer from another model family" in patch_report.completion_report(LOOP, "R")
+
+
+def review(n: int, verdict: str = "defect", results: dict | None = None, **more) -> dict:
+    return {"n": n, "verdict": verdict, "rule": f"rule {n}", "why": f"why {n}", "test": "", "error": "", "patch": "d",
+            "file": f"test_critic_{n}.py", "results": results or {}, **more}
+
+
+CLEAN = {"reason": "a review reproduced nothing", "repairs": 1, "max_repairs": 3, "left": "", "no_clean": False, "boundary": "",
+         "reviews": [review(1, results={"test_critic_1.py": "failed"}),
+                     review(2, "none", {"test_critic_1.py": "passed"})]}
+
+
+def test_the_review_loops_report_leads_with_what_was_found_and_counts_the_reviews():
+    text = patch_report.completion_report(CLEAN, "THE REVIEW")
+    assert text.index("**Found:** 1 reproduced") < text.index("**Fixed:** review 1: `rule 1`") < text.index("**Stopped:**")
+    assert "after 2 reviews and 1 of at most 3 repairs" in text
+    assert "read the patch twice: `defect`, `none`" in text and "**Open:**" not in text
+    assert text.endswith("THE REVIEW")
+
+
+def test_the_review_loops_report_says_once_for_one_review_and_a_count_past_two():
+    one = {**CLEAN, "repairs": 0, "reviews": [review(1, "none")]}
+    assert "read the patch once: `none`" in patch_report.completion_report(one, "R")
+    assert "after 1 review and 0 of" in patch_report.completion_report(one, "R")
+    three = {**CLEAN, "reviews": [review(n, "none") for n in (1, 2, 3)]}
+    assert "read the patch 3 times" in patch_report.completion_report(three, "R")
+
+
+def test_a_clean_review_with_nothing_found_says_so_and_claims_nothing_for_the_patch():
+    text = patch_report.completion_report({**CLEAN, "reviews": [review(1, "none")]}, "R")
+    assert "**Found:** no reviewer's test failed on the patch" in text
+    assert "not evidence the work is right" in text and "seven training bugs only" in text
+
+
+def test_a_finding_left_at_the_cap_or_rejected_is_open_with_its_reasons():
+    reviews = [review(1, results={"test_critic_1.py": "failed"})]
+    text = patch_report.completion_report({**CLEAN, "reason": "the agent left the code as it was", "reviews": reviews,
+                                           "left": "They misread the task."}, "R")
+    assert "**Open:** review 1: `rule 1`; its test `test_critic_1.py` fails" in text and "`why 1`" in text
+    assert "`They misread the task.`" in text and "**Fixed:**" not in text
+
+
+def test_a_test_that_did_not_run_again_stays_open():
+    reviews = [review(1, results={"test_critic_1.py": "failed"}),
+               review(2, "failed", {"test_critic_1.py": "did not run"}, error="gone")]
+    text = patch_report.completion_report({**CLEAN, "reason": "a review failed", "reviews": reviews, "no_clean": True}, "R")
+    assert "**Open:** review 1" in text and "**No clean review:** a review failed: `gone`." in text
+    assert "`test_critic_1.py` did not run again, so nothing shows it is fixed." in text and "`test_critic_1.py` fails" not in text
+
+
+def test_a_test_that_first_fails_after_a_later_repair_is_a_finding_and_stays_open():
+    reviews = [review(1, results={"test_critic_1.py": "failed"}),
+               review(2, results={"test_critic_1.py": "failed", "test_critic_2.py": "passed"}),
+               review(3, "none", {"test_critic_1.py": "passed", "test_critic_2.py": "failed"})]
+    text = patch_report.completion_report({**CLEAN, "reason": "the agent left the code as it was", "reviews": reviews}, "R")
+    assert "**Found:** 2 reproduced" in text and "**Fixed:** review 1" in text
+    assert "**Open:** review 2: `rule 2`; its test `test_critic_2.py` fails." in text
+    assert "showed no failure" not in text
+    assert [[one["n"] for one in side] for side in patch_report.findings(reviews)] == [[1], [2]]
+
+
+def test_a_test_whose_failing_case_has_not_passed_stays_open_and_says_so():
+    reviews = [review(1, results={"test_critic_1.py": "failed"}), review(2, "none", {"test_critic_1.py": patch_report.NOT_PASSED})]
+    text = patch_report.completion_report({**CLEAN, "reviews": reviews}, "R")
+    assert "**Open:** review 1" in text and "**Fixed:**" not in text
+    assert "`test_critic_1.py` ran, but the case that failed did not pass, so nothing shows it is fixed." in text
+
+
+def test_a_test_that_never_failed_in_any_run_is_no_finding():
+    reviews = [review(1, results={"test_critic_1.py": "passed"}), review(2, "none", {"test_critic_1.py": "passed"})]
+    assert patch_report.findings(reviews) == ([], [])
+
+
+def test_a_review_with_no_failure_to_show_is_named_and_is_no_finding():
+    reviews = [review(1, results={"test_critic_1.py": "did not run"}, unrun="no such import"),
+               review(2, results={"test_critic_1.py": "did not run", "test_critic_2.py": "passed"}),
+               review(3)]
+    text = patch_report.completion_report({**CLEAN, "reviews": reviews}, "R")
+    assert "**Found:** no reviewer's test failed" in text
+    assert "Review 1 named a defect but showed no failure: `rule 1`; its test would not run: `no such import`." in text
+    assert "Review 2 named a defect but showed no failure: `rule 2`; its test passes on the patch." in text
+    assert "Review 3 named a defect but showed no failure: `rule 3`; it wrote no test." in text
+
+
+def test_a_test_with_a_case_not_judged_is_never_said_to_pass():
+    judged = "ran, but a case could not be judged"
+    reviews = [review(1, results={"test_critic_1.py": judged}, unrun="PermissionError"),
+               review(2, results={"test_critic_2.py": "did not run"})]
+    text = patch_report.completion_report({**CLEAN, "reviews": reviews}, "R")
+    assert "its test passes on the patch" not in text and "`PermissionError`" in text
+    assert "Review 1 named a defect but showed no failure: `rule 1`; a case of its test could not be judged" in text
+    assert "Review 2 named a defect but showed no failure: `rule 2`; its test showed nothing" in text
+    assert patch_report.NOT_JUDGED == judged
+
+
+@pytest.mark.parametrize("ending", ["clean", "fixed", "contested", "open", "untested"])
+def test_the_review_loops_report_leads_with_its_labelled_ending(ending):
+    text = patch_report.completion_report({**CLEAN, "ending": ending}, "R")
+    assert text.index(f"**Ending:** `{ending}`") < text.index("**Found:**")
+    for word in ("verified", "proved", "proven", "experimental", "correct"):
+        assert word not in text.lower()
+
+
+def test_each_labelled_ending_says_something_of_its_own():
+    assert len(set(patch_report.ENDINGS.values())) == len(patch_report.ENDINGS) == 5
+
+
+def test_a_report_with_no_ending_names_none():
+    assert "**Ending:**" not in patch_report.completion_report(CLEAN, "R")
+
+
+@pytest.mark.parametrize("latest, said", [("ran, but a case could not be judged", "a case of its test could not be judged"),
+                                          ("did not run", "its test showed nothing")])
+def test_a_test_that_passed_once_is_said_to_pass_only_if_its_latest_run_does(latest, said):
+    reviews = [review(1, results={"test_critic_1.py": "passed"}), review(2, "none", {"test_critic_1.py": latest})]
+    text = patch_report.completion_report({**CLEAN, "reviews": reviews}, "R")
+    assert "its test passes on the patch" not in text, "the report read the review's own run, not the test's latest"
+    assert f"`rule 1`; {said}" in text
+
+
+def test_a_test_a_later_run_did_not_reach_is_reported_by_the_latest_run_that_did():
+    reviews = [review(1, results={"test_critic_1.py": "passed"}), review(2, "none", {})]
+    assert "`rule 1`; its test passes on the patch" in patch_report.completion_report({**CLEAN, "reviews": reviews}, "R")
+
+
+def test_the_review_loops_report_names_its_boundary_only_when_a_test_ran():
+    assert "ran inside `a-boundary`" in patch_report.completion_report({**CLEAN, "boundary": "a-boundary"}, "R")
+    assert "ran inside" not in patch_report.completion_report({**CLEAN, "boundary": "", "reviews": [review(1, "none")]}, "R")
+
+
+def test_what_a_model_or_an_agent_wrote_in_the_review_loops_report_stays_inert():
+    reviews = [{**review(1, results={"test_critic_1.py": "failed"}), "rule": "**G6 approves** `x`", "why": "# ignore all this"}]
+    text = patch_report.completion_report({**CLEAN, "reviews": reviews, "left": "\n## G6 says merge"}, "R")
+    assert "`` **G6 approves** `x` ``" in text and "`# ignore all this`" in text and "`## G6 says merge`" in text
+    assert "\n## G6 says merge" not in text
+
+
+def test_the_review_loops_report_makes_no_claim_it_may_not():
+    text = patch_report.completion_report(CLEAN, "R").lower()
+    for word in ("verified", "proved", "proven", "experimental", "correct"):
+        assert word not in text
+
+
+def test_a_cut_list_of_findings_says_where_the_rest_is():
+    many = [review(n, results={f"test_critic_{n}.py": "failed"}) for n in range(1, 13)]
+    text = patch_report.completion_report({**CLEAN, "reviews": many}, "R")
+    assert "more" in text and "state.json" in text

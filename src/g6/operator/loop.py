@@ -28,7 +28,7 @@ from g6.core import stop
 from g6.harness import Check
 from g6.operator.queue import ActionQueue, QueueError
 from g6.operator.router import BLOCKED, Context, route
-from g6.operator.store import BudgetRefused
+from g6.operator.store import BudgetRefused, utc
 
 _GATE_CONTEXT = ("verification_contract", "coordination_context", "world_state", "hypothesis_context",
                  "factual_preconditions")
@@ -132,7 +132,7 @@ def tick(queue: ActionQueue, venture_id: str, task: Task, executor: Executor, *,
     scope = queue.scope
     vid = scope.resolve(venture_id)
     request_id, run_id = uuid.uuid4().hex[:12], uuid.uuid4().hex
-    month = (now or datetime.now(UTC)).strftime("%Y-%m")
+    month = (now or utc(datetime.now(UTC))).strftime("%Y-%m")
 
     def reply(state: str, code: str, message: str, **extra: Any) -> dict[str, Any]:
         return _envelope(state, code, message, request_id=request_id, run_id=run_id, task_id=task.task_id,

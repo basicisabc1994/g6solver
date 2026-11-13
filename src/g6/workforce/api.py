@@ -127,9 +127,14 @@ def confirm(wf: service.Workforce, mission_id: str, approver: Approver, *, reaso
     return service.summary(wf, mission_id)
 
 
-def submit_patch(wf: service.Workforce, mission_id: str, files: dict[str, str]) -> dict:
-    """Submit the full new text of the permitted source files; G6 checks it under the frozen standard at once."""
-    return service.trim(service.submit(wf, mission_id, "patch", {"files": dict(files)}))
+def submit_patch(wf: service.Workforce, mission_id: str, files: dict[str, str], *, review: dict | None = None) -> dict:
+    """Submit the full new text of the permitted source files; G6 checks it under the frozen standard at once.
+    ``review``: what a patch review found on this same text (``coding.record_review``). One it holds back uses an
+    attempt, and the mission's checks never judge it."""
+    artifact = {"files": dict(files)}
+    if review is not None:
+        coding.record_review(wf.missions, mission_id, artifact, review)
+    return service.trim(service.submit(wf, mission_id, "patch", artifact))
 
 
 def decide(wf: service.Workforce, mission_id: str, unit: str, decision: str, approver: Approver, *,

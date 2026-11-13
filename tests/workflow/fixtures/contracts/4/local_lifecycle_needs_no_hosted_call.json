@@ -1,0 +1,100 @@
+{
+ "contract": 4,
+ "function": "lifecycle",
+ "events": [
+  {
+   "run": "r1",
+   "kind": "run_started",
+   "seconds": 0
+  },
+  {
+   "run": "r1",
+   "kind": "loop_round",
+   "native": "1",
+   "seconds": 10,
+   "data": {
+    "round": 1
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "loop_ended",
+   "native": "end",
+   "seconds": 20,
+   "data": {
+    "ending": "clean",
+    "reviews": 1
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "report_returned",
+   "native": "end",
+   "seconds": 20,
+   "data": {
+    "run_seconds": 20.0
+   }
+  },
+  {
+   "run": "r2",
+   "kind": "run_started",
+   "seconds": 100
+  }
+ ],
+ "inputs": {
+  "operations": [
+   {
+    "op": "export"
+   },
+   {
+    "op": "correct",
+    "target": 1,
+    "action": "annotate",
+    "note": "a retry"
+   },
+   {
+    "op": "export"
+   },
+   {
+    "op": "delete",
+    "scope": "run",
+    "run": 2
+   },
+   {
+    "op": "expire",
+    "days": 179
+   },
+   {
+    "op": "expire",
+    "days": 181
+   }
+  ]
+ },
+ "expected": {
+  "steps": [
+   "inspection.json",
+   "applied",
+   "inspection.json",
+   "deleted",
+   "nothing",
+   "expired"
+  ],
+  "files": [
+   "corrections.json",
+   "receipts.jsonl"
+  ],
+  "receipts": [
+   [
+    "run",
+    2,
+    "deletion_requested"
+   ],
+   [
+    "project",
+    2,
+    "expired"
+   ]
+  ],
+  "written_outside_the_record": []
+ }
+}

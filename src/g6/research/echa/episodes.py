@@ -16,7 +16,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from .flag import require_research
 from .records import SCHEMA, digest, hex64_of, text_of, texts_of
 
 EVENT_KINDS = ("plan", "action", "activation_attempt", "tool_result", "evidence_received", "repair", "adjudication",
@@ -164,7 +163,6 @@ class Episode:
                  component_versions: Mapping[str, str], model_id: str, model_configuration: Mapping[str, Any],
                  cost_budget: float | None = None, seed: int | None = None,
                  independent_oracle_access: bool = False) -> None:
-        require_research()
         for name, value in (("episode_id", episode_id), ("task_id", task_id), ("task_family", task_family),
                             ("repository_or_group_id", repository_or_group_id), ("split_id", split_id),
                             ("executor_version", executor_version), ("harness_version", harness_version),

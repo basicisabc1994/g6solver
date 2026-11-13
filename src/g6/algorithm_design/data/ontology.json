@@ -1,0 +1,2561 @@
+{
+  "version": "0.1.0",
+  "problems": [
+    {
+      "id": "interval_scheduling",
+      "name": "Interval scheduling",
+      "kind": "optimization",
+      "input_representation": {
+        "intervals": "start, end"
+      },
+      "output_contract": {
+        "objective": "maximum compatible interval cardinality"
+      },
+      "features": [
+        "intervals",
+        "unit_reward",
+        "compatible_nonoverlap"
+      ],
+      "parameters": [
+        "n"
+      ],
+      "complexity_class": "P",
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "4.1",
+          "printed_page": 116,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "14.9",
+          "printed_page": 468,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "weighted_intervals",
+      "name": "Weighted interval scheduling",
+      "kind": "optimization",
+      "input_representation": {
+        "intervals": "start, end, value"
+      },
+      "output_contract": {
+        "objective": "maximum weight nonoverlap"
+      },
+      "features": [
+        "intervals",
+        "weighted",
+        "compatible_nonoverlap"
+      ],
+      "parameters": [
+        "n"
+      ],
+      "complexity_class": "P",
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "6.1",
+          "printed_page": 252,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "shortest_paths",
+      "name": "Single-source shortest paths",
+      "kind": "search",
+      "input_representation": {
+        "graph": "directed or undirected weighted graph",
+        "source": "vertex"
+      },
+      "output_contract": {
+        "distances": "minimum costs and predecessors or negative cycle status"
+      },
+      "features": [
+        "graph",
+        "edge_weights"
+      ],
+      "parameters": [
+        "V",
+        "E"
+      ],
+      "complexity_class": "P",
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "4.4",
+          "printed_page": 137,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "15.4",
+          "printed_page": 489,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "mst",
+      "name": "Minimum spanning tree",
+      "kind": "optimization",
+      "input_representation": {
+        "graph": "undirected weighted graph"
+      },
+      "output_contract": {
+        "output": "minimum-weight spanning forest"
+      },
+      "features": [
+        "graph",
+        "undirected",
+        "weighted"
+      ],
+      "parameters": [
+        "V",
+        "E"
+      ],
+      "complexity_class": "P",
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "4.5",
+          "printed_page": 142,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "15.3",
+          "printed_page": 484,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "topological_sort",
+      "name": "Topological ordering",
+      "kind": "search",
+      "input_representation": {
+        "graph": "directed graph"
+      },
+      "output_contract": {
+        "output": "order or cycle detection"
+      },
+      "features": [
+        "graph",
+        "directed",
+        "DAG"
+      ],
+      "parameters": [
+        "V",
+        "E"
+      ],
+      "complexity_class": "P",
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "3.6",
+          "printed_page": 99,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "15.2",
+          "printed_page": 481,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "matching",
+      "name": "Stable matching",
+      "kind": "search",
+      "input_representation": {
+        "parties": "two equal-sized sets with strict complete preferences"
+      },
+      "output_contract": {
+        "output": "stable perfect matching"
+      },
+      "features": [
+        "two_sided",
+        "strict_preferences"
+      ],
+      "parameters": [
+        "n"
+      ],
+      "complexity_class": "P",
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "1.1",
+          "printed_page": 1,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "maxflow",
+      "name": "Maximum network flow",
+      "kind": "optimization",
+      "input_representation": {
+        "graph": "directed graph with capacity, source, sink"
+      },
+      "output_contract": {
+        "flow": "feasible maximum flow and optional min cut"
+      },
+      "features": [
+        "graph",
+        "directed",
+        "capacity"
+      ],
+      "parameters": [
+        "V",
+        "E"
+      ],
+      "complexity_class": "P",
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "7.1",
+          "printed_page": 338,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "15.9",
+          "printed_page": 509,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "subset_sum",
+      "name": "Positive subset sum",
+      "kind": "decision",
+      "input_representation": {
+        "numbers": "nonnegative integers",
+        "target": "integer"
+      },
+      "output_contract": {
+        "decision": "YES with indices or NO"
+      },
+      "features": [
+        "integer_weights",
+        "binary_encoded"
+      ],
+      "parameters": [
+        "n",
+        "W",
+        "L"
+      ],
+      "complexity_class": "NP_complete",
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "6.4",
+          "printed_page": 266,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "13.10",
+          "printed_page": 427,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "knapsack",
+      "name": "0/1 knapsack",
+      "kind": "optimization",
+      "input_representation": {
+        "weights": "nonnegative integers",
+        "values": "nonnegative",
+        "capacity": "integer"
+      },
+      "output_contract": {
+        "objective": "maximize value subject to capacity"
+      },
+      "features": [
+        "integer_weights",
+        "values"
+      ],
+      "parameters": [
+        "n",
+        "W",
+        "L"
+      ],
+      "complexity_class": "NP_hard",
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "6.4",
+          "printed_page": 266,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "13.10",
+          "printed_page": 427,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "vertex_cover",
+      "name": "Vertex cover",
+      "kind": "optimization",
+      "input_representation": {
+        "graph": "undirected graph"
+      },
+      "output_contract": {
+        "objective": "minimum vertex cover"
+      },
+      "features": [
+        "graph",
+        "undirected"
+      ],
+      "parameters": [
+        "V",
+        "E",
+        "k"
+      ],
+      "complexity_class": "NP_hard",
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "10.1",
+          "printed_page": 554,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "16.3",
+          "printed_page": 530,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "independent_set",
+      "name": "Maximum independent set",
+      "kind": "optimization",
+      "input_representation": {
+        "graph": "undirected graph"
+      },
+      "output_contract": {
+        "objective": "maximum independent set"
+      },
+      "features": [
+        "graph",
+        "undirected"
+      ],
+      "parameters": [
+        "V",
+        "E",
+        "k"
+      ],
+      "complexity_class": "NP_hard",
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "10.2",
+          "printed_page": 558,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "16.2",
+          "printed_page": 528,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "set_cover",
+      "name": "Set cover",
+      "kind": "optimization",
+      "input_representation": {
+        "universe": "finite set",
+        "subsets": "coverage family"
+      },
+      "output_contract": {
+        "objective": "minimum number of selected subsets"
+      },
+      "features": [
+        "sets",
+        "covering"
+      ],
+      "parameters": [
+        "m",
+        "n"
+      ],
+      "complexity_class": "NP_hard",
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "11.3",
+          "printed_page": 612,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "18.1",
+          "printed_page": 621,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "sorting",
+      "name": "Sorting",
+      "kind": "search",
+      "input_representation": {
+        "items": "totally ordered comparable keys"
+      },
+      "output_contract": {
+        "output": "nondecreasing permutation"
+      },
+      "features": [
+        "ordered_keys"
+      ],
+      "parameters": [
+        "n"
+      ],
+      "complexity_class": "P",
+      "source_refs": [
+        {
+          "source_id": "skiena_2008",
+          "section": "14.1",
+          "printed_page": 436,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "TSP",
+      "name": "Traveling salesperson",
+      "kind": "optimization",
+      "input_representation": {
+        "cities": "weighted complete graph"
+      },
+      "output_contract": {
+        "objective": "minimum cost Hamiltonian tour"
+      },
+      "features": [
+        "graph",
+        "tour",
+        "weighted"
+      ],
+      "parameters": [
+        "n"
+      ],
+      "complexity_class": "NP_hard",
+      "source_refs": [
+        {
+          "source_id": "skiena_2008",
+          "section": "16.4",
+          "printed_page": 533,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "prefix_coding",
+      "name": "Optimal prefix coding",
+      "kind": "optimization",
+      "input_representation": {
+        "symbols": "frequencies or probabilities"
+      },
+      "output_contract": {
+        "output": "binary prefix code minimum expected length"
+      },
+      "features": [
+        "weights",
+        "prefix_free"
+      ],
+      "parameters": [
+        "n"
+      ],
+      "complexity_class": "P",
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "4.8",
+          "printed_page": 161,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "18.5",
+          "printed_page": 637,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "sequence_alignment",
+      "name": "Sequence alignment",
+      "kind": "optimization",
+      "input_representation": {
+        "strings": "two sequences",
+        "costs": "gap and substitution"
+      },
+      "output_contract": {
+        "output": "minimum-cost alignment"
+      },
+      "features": [
+        "strings",
+        "optimal_substructure"
+      ],
+      "parameters": [
+        "n",
+        "m"
+      ],
+      "complexity_class": "P",
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "6.6",
+          "printed_page": 278,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "18.4",
+          "printed_page": 631,
+          "source_type": "textbook"
+        }
+      ]
+    }
+  ],
+  "algorithms": [
+    {
+      "id": "interval_earliest_finish",
+      "name": "Earliest-finish greedy",
+      "problem_ids": [
+        "interval_scheduling"
+      ],
+      "design_pattern_ids": [
+        "greedy"
+      ],
+      "assumptions": [
+        "intervals have start <= finish",
+        "all intervals have equal reward"
+      ],
+      "recognition_rules": [
+        "unit_reward",
+        "intervals"
+      ],
+      "guarantee": "exact",
+      "complexity": {
+        "time": "O(n log n)",
+        "space": "O(n)",
+        "measure": "item_count",
+        "model": "comparison RAM",
+        "qualification": "sorting dominates; uses unit cardinality",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "exchange argument"
+      ],
+      "counterexample_targets": [
+        "weighted intervals"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "4.1",
+          "printed_page": 116,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "1.2",
+          "printed_page": 9,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "weighted_interval_dp",
+      "name": "Weighted interval dynamic program",
+      "problem_ids": [
+        "weighted_intervals"
+      ],
+      "design_pattern_ids": [
+        "dynamic_programming"
+      ],
+      "assumptions": [
+        "intervals have well-defined finite weights"
+      ],
+      "recognition_rules": [
+        "weighted",
+        "intervals"
+      ],
+      "guarantee": "exact",
+      "complexity": {
+        "time": "O(n log n)",
+        "space": "O(n)",
+        "measure": "item_count",
+        "model": "comparison RAM",
+        "qualification": "sort endpoints and binary search predecessors",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "optimal substructure recurrence"
+      ],
+      "counterexample_targets": [
+        "incorrect predecessor mapping"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "6.1",
+          "printed_page": 252,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "bfs",
+      "name": "Breadth-first search",
+      "problem_ids": [
+        "shortest_paths"
+      ],
+      "design_pattern_ids": [
+        "graph_reduction"
+      ],
+      "assumptions": [
+        "unweighted edges or all edges have equal cost"
+      ],
+      "recognition_rules": [
+        "graph",
+        "unit_edge_cost"
+      ],
+      "guarantee": "exact",
+      "complexity": {
+        "time": "O(V+E)",
+        "space": "O(V)",
+        "measure": "graph_size",
+        "model": "adjacency list RAM",
+        "qualification": "unweighted reachable vertices",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "queue-distance invariant"
+      ],
+      "counterexample_targets": [
+        "unequal weights"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "3.2",
+          "printed_page": 78,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "5.6",
+          "printed_page": 162,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "dijkstra",
+      "name": "Dijkstra with binary heap",
+      "problem_ids": [
+        "shortest_paths"
+      ],
+      "design_pattern_ids": [
+        "graph_reduction"
+      ],
+      "assumptions": [
+        "all edge weights are nonnegative"
+      ],
+      "recognition_rules": [
+        "graph",
+        "nonnegative_edges"
+      ],
+      "guarantee": "exact",
+      "complexity": {
+        "time": "O((V+E) log V)",
+        "space": "O(V+E)",
+        "measure": "graph_size",
+        "model": "binary heap, arithmetic operations",
+        "qualification": "nonnegative weights; cost of big-int arithmetic not reflected",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "settled distance optimality"
+      ],
+      "counterexample_targets": [
+        "negative edge weights"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "4.4",
+          "printed_page": 137,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "6.3",
+          "printed_page": 205,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "bellman_ford",
+      "name": "Bellman-Ford",
+      "problem_ids": [
+        "shortest_paths"
+      ],
+      "design_pattern_ids": [
+        "dynamic_programming"
+      ],
+      "assumptions": [
+        "finite directed graph",
+        "negative cycle reporting is required when reachable"
+      ],
+      "recognition_rules": [
+        "graph"
+      ],
+      "guarantee": "decision_with_certificate",
+      "complexity": {
+        "time": "O(VE)",
+        "space": "O(V+E)",
+        "measure": "graph_size",
+        "model": "adjacency list RAM",
+        "qualification": "reports reachable negative cycles instead of finite paths",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "walk length bound, relaxations"
+      ],
+      "counterexample_targets": [
+        "negative cycle incorrectly treated as shortest path"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "6.8",
+          "printed_page": 290,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "kruskal",
+      "name": "Kruskal minimum spanning forest",
+      "problem_ids": [
+        "mst"
+      ],
+      "design_pattern_ids": [
+        "greedy"
+      ],
+      "assumptions": [
+        "undirected graph",
+        "edge weights comparable"
+      ],
+      "recognition_rules": [
+        "undirected",
+        "weighted"
+      ],
+      "guarantee": "exact",
+      "complexity": {
+        "time": "O(E log E)",
+        "space": "O(V+E)",
+        "measure": "graph_size",
+        "model": "comparison RAM",
+        "qualification": "disconnected graph yields forest",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "cut property"
+      ],
+      "counterexample_targets": [
+        "directed graph passed in"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "4.5",
+          "printed_page": 142,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "4.6",
+          "printed_page": 151,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "6.1",
+          "printed_page": 192,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "kahn",
+      "name": "Kahn topological sort",
+      "problem_ids": [
+        "topological_sort"
+      ],
+      "design_pattern_ids": [
+        "graph_reduction"
+      ],
+      "assumptions": [
+        "directed graph"
+      ],
+      "recognition_rules": [
+        "directed",
+        "graph"
+      ],
+      "guarantee": "decision_with_certificate",
+      "complexity": {
+        "time": "O(V+E)",
+        "space": "O(V+E)",
+        "measure": "graph_size",
+        "model": "adjacency list RAM",
+        "qualification": "outputs cycle detection when no ordering exists",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "in-degree invariant"
+      ],
+      "counterexample_targets": [
+        "cycle without failure status"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "3.6",
+          "printed_page": 99,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "15.2",
+          "printed_page": 481,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "gale_shapley",
+      "name": "Gale-Shapley deferred acceptance",
+      "problem_ids": [
+        "matching"
+      ],
+      "design_pattern_ids": [
+        "greedy"
+      ],
+      "assumptions": [
+        "equal-sized partitions",
+        "complete strict preferences",
+        "one-to-one matching"
+      ],
+      "recognition_rules": [
+        "two_sided",
+        "strict_preferences"
+      ],
+      "guarantee": "exact",
+      "complexity": {
+        "time": "O(n^2)",
+        "space": "O(n^2)",
+        "measure": "item_count",
+        "model": "RAM",
+        "qualification": "proposer-optimal stable matching; not necessarily globally fair",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "termination, perfectness, no blocking pairs"
+      ],
+      "counterexample_targets": [
+        "preferences with ties need separate contract"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "1.1",
+          "printed_page": 1,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "edmonds_karp",
+      "name": "Edmonds-Karp maximum flow",
+      "problem_ids": [
+        "maxflow"
+      ],
+      "design_pattern_ids": [
+        "network_flow"
+      ],
+      "assumptions": [
+        "finite graph",
+        "nonnegative capacities"
+      ],
+      "recognition_rules": [
+        "graph",
+        "capacity"
+      ],
+      "guarantee": "decision_with_certificate",
+      "complexity": {
+        "time": "O(V E^2)",
+        "space": "O(V+E)",
+        "measure": "graph_size",
+        "model": "RAM",
+        "qualification": "algorithm output includes flow; min-cut can be independently checked",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "flow conservation and max-flow/min-cut theorem"
+      ],
+      "counterexample_targets": [
+        "negative capacities",
+        "overflow"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "7.3",
+          "printed_page": 352,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "6.5",
+          "printed_page": 217,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "subset_sum_dp",
+      "name": "Subset sum capacity DP",
+      "problem_ids": [
+        "subset_sum"
+      ],
+      "design_pattern_ids": [
+        "dynamic_programming"
+      ],
+      "assumptions": [
+        "nonnegative integer weights",
+        "nonnegative integer target W"
+      ],
+      "recognition_rules": [
+        "integer_weights",
+        "nonnegative_weights",
+        "bounded_target"
+      ],
+      "guarantee": "decision_with_certificate",
+      "complexity": {
+        "time": "O(n W)",
+        "space": "O(n W)",
+        "measure": "numeric_parameter",
+        "model": "RAM indexed by numeric W",
+        "qualification": "pseudo-polynomial; NOT polynomial in binary encoded input length",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "recurrence over first i elements and capacity w"
+      ],
+      "counterexample_targets": [
+        "W exponentially large in bit length"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "6.4",
+          "printed_page": 266,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "subset_sum_mitm",
+      "name": "Horowitz-Sahni style meet-in-the-middle",
+      "problem_ids": [
+        "subset_sum"
+      ],
+      "design_pattern_ids": [
+        "divide_conquer"
+      ],
+      "assumptions": [
+        "exact integer arithmetic",
+        "arbitrary nonnegative integer weights"
+      ],
+      "recognition_rules": [
+        "integer_weights"
+      ],
+      "guarantee": "decision_with_certificate",
+      "complexity": {
+        "time": "O(n 2^(n/2))",
+        "space": "O(2^(n/2))",
+        "measure": "item_count",
+        "model": "comparison RAM",
+        "qualification": "exponential in n but not pseudo-polynomial in W",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "partition, complement pairing exhaustiveness"
+      ],
+      "counterexample_targets": [
+        "lost indices / witness reconstruction"
+      ],
+      "source_refs": [
+        {
+          "source_id": "skiena_2008",
+          "section": "13.10",
+          "printed_page": 427,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "knapsack_dp",
+      "name": "0/1 knapsack weight-state DP",
+      "problem_ids": [
+        "knapsack"
+      ],
+      "design_pattern_ids": [
+        "dynamic_programming"
+      ],
+      "assumptions": [
+        "nonnegative integer capacity",
+        "nonnegative integer item weights",
+        "finite values"
+      ],
+      "recognition_rules": [
+        "integer_weights",
+        "values"
+      ],
+      "guarantee": "exact",
+      "complexity": {
+        "time": "O(n W)",
+        "space": "O(n W)",
+        "measure": "numeric_parameter",
+        "model": "RAM",
+        "qualification": "pseudo-polynomial, not binary-input polynomial",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "include/exclude recurrence"
+      ],
+      "counterexample_targets": [
+        "fractional item reuse"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "6.4",
+          "printed_page": 266,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "13.10",
+          "printed_page": 427,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "vertex_cover_fpt",
+      "name": "Parameter k vertex-cover branching",
+      "problem_ids": [
+        "vertex_cover"
+      ],
+      "design_pattern_ids": [
+        "parametric",
+        "branch_bound"
+      ],
+      "assumptions": [
+        "undirected graph",
+        "ask if cover of size <= k"
+      ],
+      "recognition_rules": [
+        "graph",
+        "small_k"
+      ],
+      "guarantee": "decision_with_certificate",
+      "complexity": {
+        "time": "O(2^k poly(V+E))",
+        "space": "O(k+V+E)",
+        "measure": "multi_parameter",
+        "model": "RAM",
+        "qualification": "FPT for parameter k; not uniformly polynomial for unrestricted k",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "every edge must have endpoint selected"
+      ],
+      "counterexample_targets": [
+        "incorrect branch pruning"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "10.1",
+          "printed_page": 554,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "vertex_cover_2approx",
+      "name": "Maximal-matching 2-approx vertex cover",
+      "problem_ids": [
+        "vertex_cover"
+      ],
+      "design_pattern_ids": [
+        "approximation"
+      ],
+      "assumptions": [
+        "undirected simple graph"
+      ],
+      "recognition_rules": [
+        "graph"
+      ],
+      "guarantee": "approximation",
+      "complexity": {
+        "time": "O(V+E)",
+        "space": "O(V+E)",
+        "measure": "graph_size",
+        "model": "adjacency list RAM",
+        "qualification": "at most twice optimum cover size",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "matching lower bound"
+      ],
+      "counterexample_targets": [
+        "claim of exact minimum"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "11.4",
+          "printed_page": 618,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "tree_independent_set",
+      "name": "Tree DP maximum independent set",
+      "problem_ids": [
+        "independent_set"
+      ],
+      "design_pattern_ids": [
+        "dynamic_programming",
+        "parametric"
+      ],
+      "assumptions": [
+        "input is a forest or tree",
+        "weights nonnegative if weighted version used"
+      ],
+      "recognition_rules": [
+        "tree"
+      ],
+      "guarantee": "exact",
+      "complexity": {
+        "time": "O(V+E)",
+        "space": "O(V)",
+        "measure": "graph_size",
+        "model": "adjacency list RAM",
+        "qualification": "exact only on forest input",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "include/exclude induction on rooted tree"
+      ],
+      "counterexample_targets": [
+        "cycles invalidate subtree independence"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "10.2",
+          "printed_page": 558,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "treewidth_independent_set",
+      "name": "Tree decomposition DP independent set",
+      "problem_ids": [
+        "independent_set"
+      ],
+      "design_pattern_ids": [
+        "dynamic_programming",
+        "parametric"
+      ],
+      "assumptions": [
+        "valid tree decomposition supplied",
+        "decomposition width k"
+      ],
+      "recognition_rules": [
+        "tree_decomposition"
+      ],
+      "guarantee": "exact",
+      "complexity": {
+        "time": "O(n 2^O(k) poly(k))",
+        "space": "O(n 2^O(k))",
+        "measure": "multi_parameter",
+        "model": "bag DP",
+        "qualification": "decomposition discovery cost EXCLUDED; n includes decomposition size",
+        "parameterized": true
+      },
+      "proof_obligations": [
+        "bag consistency and running intersection"
+      ],
+      "counterexample_targets": [
+        "decomposition invalid",
+        "k scales with n"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "10.4",
+          "printed_page": 572,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "set_cover_greedy",
+      "name": "Greedy set cover",
+      "problem_ids": [
+        "set_cover"
+      ],
+      "design_pattern_ids": [
+        "approximation",
+        "greedy"
+      ],
+      "assumptions": [
+        "universe coverable",
+        "finite set family",
+        "unit cost per set"
+      ],
+      "recognition_rules": [
+        "sets",
+        "covering"
+      ],
+      "guarantee": "approximation",
+      "complexity": {
+        "time": "O(poly(m,n))",
+        "space": "O(m+n)",
+        "measure": "multi_parameter",
+        "model": "RAM",
+        "qualification": "approximation factor <= H_|U|; not optimality guarantee",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "charging bound by uncovered elements"
+      ],
+      "counterexample_targets": [
+        "coverage impossible",
+        "weighted costs unaccounted"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "11.3",
+          "printed_page": 612,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "merge_sort",
+      "name": "Mergesort",
+      "problem_ids": [
+        "sorting"
+      ],
+      "design_pattern_ids": [
+        "divide_conquer"
+      ],
+      "assumptions": [
+        "total ordering comparator"
+      ],
+      "recognition_rules": [
+        "ordered_keys"
+      ],
+      "guarantee": "exact",
+      "complexity": {
+        "time": "O(n log n)",
+        "space": "O(n)",
+        "measure": "item_count",
+        "model": "comparison RAM",
+        "qualification": "stable depending on merge tie handling",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "recursive sorting and merge correctness"
+      ],
+      "counterexample_targets": [
+        "inconsistent comparator"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "5.1",
+          "printed_page": 210,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "4.5",
+          "printed_page": 120,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "randomized_quicksort",
+      "name": "Random-pivot quicksort",
+      "problem_ids": [
+        "sorting"
+      ],
+      "design_pattern_ids": [
+        "randomization",
+        "divide_conquer"
+      ],
+      "assumptions": [
+        "total ordering comparator",
+        "unbiased random pivot"
+      ],
+      "recognition_rules": [
+        "ordered_keys"
+      ],
+      "guarantee": "randomized_exact",
+      "complexity": {
+        "time": "O(n^2)",
+        "space": "O(log n) expected stack",
+        "measure": "item_count",
+        "model": "comparison RAM",
+        "qualification": "expected O(n log n), worst O(n^2); space depends implementation",
+        "parameterized": false,
+        "expected_time": "O(n log n)"
+      },
+      "proof_obligations": [
+        "partition correctness + expected recurrence"
+      ],
+      "counterexample_targets": [
+        "duplicate keys naive partition"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "13.5",
+          "printed_page": 727,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "4.6",
+          "printed_page": 123,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "held_karp_tsp",
+      "name": "Held-Karp subset DP",
+      "problem_ids": [
+        "TSP"
+      ],
+      "design_pattern_ids": [
+        "dynamic_programming"
+      ],
+      "assumptions": [
+        "complete weighted graph",
+        "finite edge costs"
+      ],
+      "recognition_rules": [
+        "graph",
+        "tour"
+      ],
+      "guarantee": "exact",
+      "complexity": {
+        "time": "O(n^2 2^n)",
+        "space": "O(n 2^n)",
+        "measure": "item_count",
+        "model": "RAM",
+        "qualification": "exponential despite dynamic programming",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "subset-state recurrence"
+      ],
+      "counterexample_targets": [
+        "subtour omission"
+      ],
+      "source_refs": [
+        {
+          "source_id": "skiena_2008",
+          "section": "8.7",
+          "printed_page": 301,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "huffman",
+      "name": "Huffman prefix coding",
+      "problem_ids": [
+        "prefix_coding"
+      ],
+      "design_pattern_ids": [
+        "greedy"
+      ],
+      "assumptions": [
+        "nonnegative symbol frequencies",
+        "binary prefix code"
+      ],
+      "recognition_rules": [
+        "weights",
+        "prefix_free"
+      ],
+      "guarantee": "exact",
+      "complexity": {
+        "time": "O(n log n)",
+        "space": "O(n)",
+        "measure": "item_count",
+        "model": "priority queue RAM",
+        "qualification": "optimal expected length among binary prefix codes",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "greedy sibling exchange"
+      ],
+      "counterexample_targets": [
+        "nonprefix coding vs prefix coding"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "4.8",
+          "printed_page": 161,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "sequence_align_dp",
+      "name": "Sequence alignment via dynamic programming",
+      "problem_ids": [
+        "sequence_alignment"
+      ],
+      "design_pattern_ids": [
+        "dynamic_programming"
+      ],
+      "assumptions": [
+        "defined gap and mismatch costs",
+        "alignment score additive"
+      ],
+      "recognition_rules": [
+        "strings"
+      ],
+      "guarantee": "exact",
+      "complexity": {
+        "time": "O(nm)",
+        "space": "O(nm)",
+        "measure": "multi_parameter",
+        "model": "RAM",
+        "qualification": "linear-space reconstruction possible with divide and conquer",
+        "parameterized": false
+      },
+      "proof_obligations": [
+        "inductive recurrence"
+      ],
+      "counterexample_targets": [
+        "nonadditive scores"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "6.6",
+          "printed_page": 278,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "6.7",
+          "printed_page": 284,
+          "source_type": "textbook"
+        }
+      ],
+      "implementation_status": "metadata_only",
+      "claim_evidence": [
+        {
+          "claim": "Textbook algorithm and stated asymptotic bound",
+          "scope": "Only under named assumptions and complexity model",
+          "status": "literature_reported",
+          "evidence_ids": []
+        }
+      ]
+    }
+  ],
+  "design_patterns": [
+    {
+      "id": "greedy",
+      "name": "Greedy choice",
+      "trigger_features": [
+        "local_choice",
+        "exchange_property"
+      ],
+      "design_action": "Select irrevocable choice, prove global optimality",
+      "proof_template": "exchange or stays-ahead",
+      "failure_modes": [
+        "Invalid exchange",
+        "local optimum not global"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "4",
+          "printed_page": 115,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "1.2",
+          "printed_page": 9,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "divide_conquer",
+      "name": "Divide and conquer",
+      "trigger_features": [
+        "decomposable",
+        "subproblems"
+      ],
+      "design_action": "Divide, solve, combine",
+      "proof_template": "induction and recurrence",
+      "failure_modes": [
+        "Duplicated work",
+        "invalid merge"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "5",
+          "printed_page": 209,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "4.10",
+          "printed_page": 135,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "dynamic_programming",
+      "name": "Dynamic programming",
+      "trigger_features": [
+        "overlapping_subproblems",
+        "optimal_substructure"
+      ],
+      "design_action": "Define state, recurrence, order, traceback",
+      "proof_template": "induction on acyclic state order",
+      "failure_modes": [
+        "Missing state parameter",
+        "pseudo-polynomial blowup"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "6",
+          "printed_page": 251,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "8",
+          "printed_page": 273,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "graph_reduction",
+      "name": "Modeling as graph / reduction",
+      "trigger_features": [
+        "relationships",
+        "constraints"
+      ],
+      "design_action": "Encode problem in standard graph primitive",
+      "proof_template": "forward/backward solution preservation",
+      "failure_modes": [
+        "Model does not preserve output objective"
+      ],
+      "source_refs": [
+        {
+          "source_id": "skiena_2008",
+          "section": "6.6",
+          "printed_page": 222,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "7",
+          "printed_page": 337,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "network_flow",
+      "name": "Network flow",
+      "trigger_features": [
+        "capacities",
+        "flow_conservation"
+      ],
+      "design_action": "Construct flow network and compute optimum",
+      "proof_template": "feasible flow + matching cut certificate",
+      "failure_modes": [
+        "Invalid capacity encoding or reduction"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "7",
+          "printed_page": 337,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "6.5",
+          "printed_page": 217,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "local_search",
+      "name": "Local search",
+      "trigger_features": [
+        "neighborhood",
+        "objective"
+      ],
+      "design_action": "Iteratively modify feasible solution",
+      "proof_template": "termination or approximation bound if available",
+      "failure_modes": [
+        "Local maxima",
+        "no global guarantee"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "12",
+          "printed_page": 661,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "7.5",
+          "printed_page": 247,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "randomization",
+      "name": "Randomized search",
+      "trigger_features": [
+        "stochasticity"
+      ],
+      "design_action": "Use random choices with explicit failure probability",
+      "proof_template": "expectation and concentration bounds",
+      "failure_modes": [
+        "Uncontrolled variance",
+        "irreproducibility"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "13",
+          "printed_page": 707,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "4.6",
+          "printed_page": 123,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "branch_bound",
+      "name": "Backtracking + pruning",
+      "trigger_features": [
+        "search_tree",
+        "prunable"
+      ],
+      "design_action": "Enumerate constrained branches and safe prune",
+      "proof_template": "branch exhaustiveness + pruning admissibility",
+      "failure_modes": [
+        "Unsound pruning hides witnesses"
+      ],
+      "source_refs": [
+        {
+          "source_id": "skiena_2008",
+          "section": "7.1",
+          "printed_page": 231,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "7.2",
+          "printed_page": 238,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "parametric",
+      "name": "Parameterized / structured tractability",
+      "trigger_features": [
+        "small_parameter",
+        "structural_restriction"
+      ],
+      "design_action": "Use kernel, bounded interface or branching",
+      "proof_template": "instance restriction proof and parameterized bound",
+      "failure_modes": [
+        "Parameter not constant; decomposition not computable cheaply"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "10",
+          "printed_page": 553,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "9.10",
+          "printed_page": 344,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "approximation",
+      "name": "Approximation algorithms",
+      "trigger_features": [
+        "NP_hard",
+        "relaxation"
+      ],
+      "design_action": "Optimize a proxy with bounded loss",
+      "proof_template": "ratio certificate / LP relaxation",
+      "failure_modes": [
+        "Guarantee applied outside assumptions"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "11",
+          "printed_page": 599,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "9",
+          "printed_page": 316,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "reduction",
+      "name": "Many-one and Turing reductions",
+      "trigger_features": [
+        "related_problems"
+      ],
+      "design_action": "Transform instance and reconstruct answer",
+      "proof_template": "preserve YES/NO and measure transformation cost",
+      "failure_modes": [
+        "Wrong direction of reduction; super-polynomial overhead"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "8.1",
+          "printed_page": 452,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "9.2",
+          "printed_page": 319,
+          "source_type": "textbook"
+        }
+      ]
+    },
+    {
+      "id": "memoization",
+      "name": "Memoize overlapping computations",
+      "trigger_features": [
+        "subproblem_overlap"
+      ],
+      "design_action": "Cache states with canonical keys",
+      "proof_template": "state invariants and cache validity",
+      "failure_modes": [
+        "Unsound canonicalization"
+      ],
+      "source_refs": [
+        {
+          "source_id": "kleinberg_tardos_2006",
+          "section": "6.2",
+          "printed_page": 258,
+          "source_type": "textbook"
+        },
+        {
+          "source_id": "skiena_2008",
+          "section": "8.1",
+          "printed_page": 274,
+          "source_type": "textbook"
+        }
+      ]
+    }
+  ],
+  "agent_operators": [
+    {
+      "id": "specify",
+      "name": "Formalize ambiguous request",
+      "role": "propose",
+      "inputs": [
+        "natural_language",
+        "repository_context"
+      ],
+      "outputs": [
+        "problem_spec",
+        "assumptions"
+      ],
+      "preconditions": [],
+      "tools": [
+        "LLM",
+        "static_analysis"
+      ],
+      "independent_checks": [
+        "human/contract review",
+        "small hand-worked cases"
+      ],
+      "failure_handling": "Escalate unresolved goals",
+      "evidence_level": "suggestion"
+    },
+    {
+      "id": "premortem",
+      "name": "Identify risks and likely failure modes",
+      "role": "propose",
+      "inputs": [
+        "problem_spec"
+      ],
+      "outputs": [
+        "risk_register"
+      ],
+      "preconditions": [],
+      "tools": [
+        "LLM",
+        "historical_incidents"
+      ],
+      "independent_checks": [
+        "independent risk reviewer"
+      ],
+      "failure_handling": "Surface implicit assumptions",
+      "evidence_level": "suggestion"
+    },
+    {
+      "id": "model",
+      "name": "Generate alternative mathematical models",
+      "role": "propose",
+      "inputs": [
+        "problem_spec"
+      ],
+      "outputs": [
+        "model_candidates"
+      ],
+      "preconditions": [],
+      "tools": [
+        "LLM",
+        "catalog_retrieval"
+      ],
+      "independent_checks": [
+        "equivalence examples",
+        "objective preservation checks"
+      ],
+      "failure_handling": "Retain candidates as hypotheses",
+      "evidence_level": "suggestion"
+    },
+    {
+      "id": "retrieve",
+      "name": "Search source-backed algorithms",
+      "role": "execute",
+      "inputs": [
+        "model_candidates",
+        "ontology"
+      ],
+      "outputs": [
+        "candidate_algorithms"
+      ],
+      "preconditions": [],
+      "tools": [
+        "symbolic_index",
+        "semantic_search"
+      ],
+      "independent_checks": [
+        "source/section citation check"
+      ],
+      "failure_handling": "Mark missing sources unverified",
+      "evidence_level": "suggestion"
+    },
+    {
+      "id": "recognize",
+      "name": "Evaluate candidate preconditions",
+      "role": "check",
+      "inputs": [
+        "problem_spec",
+        "algorithm_metadata"
+      ],
+      "outputs": [
+        "applicability_decision"
+      ],
+      "preconditions": [],
+      "tools": [
+        "rule_engine",
+        "SMT"
+      ],
+      "independent_checks": [
+        "unknown != true",
+        "counterexample probes"
+      ],
+      "failure_handling": "Reject unsupported candidates",
+      "evidence_level": "test_result"
+    },
+    {
+      "id": "reduce",
+      "name": "Find and validate problem reductions",
+      "role": "propose",
+      "inputs": [
+        "problem_spec",
+        "catalog"
+      ],
+      "outputs": [
+        "reduction_candidate",
+        "witness_maps"
+      ],
+      "preconditions": [],
+      "tools": [
+        "LLM",
+        "symbolic_algebra"
+      ],
+      "independent_checks": [
+        "bidirectional solution-preservation tests",
+        "overhead bound"
+      ],
+      "failure_handling": "Fall back to baseline when reduction fails",
+      "evidence_level": "suggestion"
+    },
+    {
+      "id": "compose",
+      "name": "Compose primitives or synthesize code",
+      "role": "propose",
+      "inputs": [
+        "candidate_algorithms",
+        "contracts"
+      ],
+      "outputs": [
+        "candidate_program",
+        "composition_graph"
+      ],
+      "preconditions": [],
+      "tools": [
+        "LLM",
+        "type_checker"
+      ],
+      "independent_checks": [
+        "interface compatibility",
+        "postcondition linkage"
+      ],
+      "failure_handling": "Return only qualified draft",
+      "evidence_level": "suggestion"
+    },
+    {
+      "id": "proof",
+      "name": "Generate proof obligations",
+      "role": "propose",
+      "inputs": [
+        "candidate_program",
+        "spec"
+      ],
+      "outputs": [
+        "proof_obligations",
+        "proof_sketch"
+      ],
+      "preconditions": [],
+      "tools": [
+        "LLM",
+        "proof_assistant"
+      ],
+      "independent_checks": [
+        "independent proof checker"
+      ],
+      "failure_handling": "Separate informal vs machine-checked proofs",
+      "evidence_level": "suggestion"
+    },
+    {
+      "id": "counterexample",
+      "name": "Search exact small-instance counterexamples",
+      "role": "check",
+      "inputs": [
+        "candidate_program",
+        "spec"
+      ],
+      "outputs": [
+        "counterexamples",
+        "test_report"
+      ],
+      "preconditions": [],
+      "tools": [
+        "brute_force_oracle",
+        "hypothesis_tests"
+      ],
+      "independent_checks": [
+        "oracle independence",
+        "witness validation"
+      ],
+      "failure_handling": "Invalidate failed claim",
+      "evidence_level": "test_result"
+    },
+    {
+      "id": "shrink",
+      "name": "Minimize failing instances",
+      "role": "check",
+      "inputs": [
+        "counterexamples"
+      ],
+      "outputs": [
+        "minimal_failures"
+      ],
+      "preconditions": [],
+      "tools": [
+        "delta_debugging"
+      ],
+      "independent_checks": [
+        "failure persists after reduction"
+      ],
+      "failure_handling": "Preserve original and minimized failure",
+      "evidence_level": "test_result"
+    },
+    {
+      "id": "fuzz",
+      "name": "Metamorphic, property, and differential testing",
+      "role": "check",
+      "inputs": [
+        "candidate_program",
+        "problem_spec"
+      ],
+      "outputs": [
+        "test_results"
+      ],
+      "preconditions": [],
+      "tools": [
+        "property_based_testing",
+        "multiple_oracles"
+      ],
+      "independent_checks": [
+        "metamorphic relation validity"
+      ],
+      "failure_handling": "No passing-tests-as-proof promotion",
+      "evidence_level": "test_result"
+    },
+    {
+      "id": "complexity",
+      "name": "Check resource complexity and model",
+      "role": "check",
+      "inputs": [
+        "candidate_program",
+        "cost_model"
+      ],
+      "outputs": [
+        "complexity_claims",
+        "empirical_scaling"
+      ],
+      "preconditions": [],
+      "tools": [
+        "static_analysis",
+        "benchmarks"
+      ],
+      "independent_checks": [
+        "binary input length",
+        "numeric parameter scope"
+      ],
+      "failure_handling": "Reject invalid uniform polynomial claims",
+      "evidence_level": "test_result"
+    },
+    {
+      "id": "prove_machine",
+      "name": "Discharge formal verification obligations",
+      "role": "check",
+      "inputs": [
+        "proof_obligations",
+        "candidate_program"
+      ],
+      "outputs": [
+        "machine_certificates"
+      ],
+      "preconditions": [],
+      "tools": [
+        "SMT",
+        "Lean",
+        "Rocq"
+      ],
+      "independent_checks": [
+        "kernel/tool exit status",
+        "model limitations"
+      ],
+      "failure_handling": "No verified flag for unchecked sketches",
+      "evidence_level": "formal_certificate"
+    },
+    {
+      "id": "evolve",
+      "name": "Evaluator-guided program evolution",
+      "role": "learn",
+      "inputs": [
+        "candidate_program",
+        "fitness_spec"
+      ],
+      "outputs": [
+        "candidate_pool",
+        "lineage"
+      ],
+      "preconditions": [],
+      "tools": [
+        "LLM_mutation",
+        "evolutionary_selection"
+      ],
+      "independent_checks": [
+        "holdout evaluation",
+        "no self-grading"
+      ],
+      "failure_handling": "Stop on budget or stagnation",
+      "evidence_level": "suggestion"
+    },
+    {
+      "id": "search_workflow",
+      "name": "Search algorithmic design workflows",
+      "role": "learn",
+      "inputs": [
+        "workflow_grammar",
+        "benchmark"
+      ],
+      "outputs": [
+        "workflow_candidates"
+      ],
+      "preconditions": [],
+      "tools": [
+        "MCTS",
+        "budgeted_search"
+      ],
+      "independent_checks": [
+        "structural validity",
+        "holdout benchmark"
+      ],
+      "failure_handling": "Keep candidate workflows isolated",
+      "evidence_level": "suggestion"
+    },
+    {
+      "id": "reflect",
+      "name": "Update strategy from identified errors",
+      "role": "learn",
+      "inputs": [
+        "failure_report",
+        "lineage"
+      ],
+      "outputs": [
+        "revised_candidate",
+        "guard_recommendation"
+      ],
+      "preconditions": [],
+      "tools": [
+        "LLM",
+        "error_taxonomy"
+      ],
+      "independent_checks": [
+        "replay failed case",
+        "shadow validation"
+      ],
+      "failure_handling": "No automatic self-promotion",
+      "evidence_level": "suggestion"
+    },
+    {
+      "id": "select",
+      "name": "Select evidence-supported viable candidate",
+      "role": "select",
+      "inputs": [
+        "candidates",
+        "verification_reports",
+        "budget"
+      ],
+      "outputs": [
+        "decision_record"
+      ],
+      "preconditions": [],
+      "tools": [
+        "policy_engine",
+        "pareto_ranking"
+      ],
+      "independent_checks": [
+        "claim and scope alignment"
+      ],
+      "failure_handling": "qualified_draft or blocked_escalated",
+      "evidence_level": "test_result"
+    },
+    {
+      "id": "publish",
+      "name": "Promote with immutable evidence manifest",
+      "role": "execute",
+      "inputs": [
+        "decision_record",
+        "artifacts"
+      ],
+      "outputs": [
+        "signed_result_manifest"
+      ],
+      "preconditions": [],
+      "tools": [
+        "hashing",
+        "artifact_store"
+      ],
+      "independent_checks": [
+        "policy gate",
+        "replay hashes"
+      ],
+      "failure_handling": "Refuse unsupported verified_ready",
+      "evidence_level": "test_result"
+    }
+  ],
+  "workflows": [
+    {
+      "id": "algorithm_design_cegis_v1",
+      "nodes": [
+        "specify",
+        "premortem",
+        "model",
+        "retrieve",
+        "recognize",
+        "reduce",
+        "compose",
+        "proof",
+        "counterexample",
+        "shrink",
+        "fuzz",
+        "complexity",
+        "prove_machine",
+        "select",
+        "publish"
+      ],
+      "edges": [
+        [
+          "specify",
+          "premortem"
+        ],
+        [
+          "premortem",
+          "model"
+        ],
+        [
+          "model",
+          "retrieve"
+        ],
+        [
+          "retrieve",
+          "recognize"
+        ],
+        [
+          "recognize",
+          "reduce"
+        ],
+        [
+          "reduce",
+          "compose"
+        ],
+        [
+          "compose",
+          "proof"
+        ],
+        [
+          "proof",
+          "counterexample"
+        ],
+        [
+          "counterexample",
+          "shrink"
+        ],
+        [
+          "shrink",
+          "fuzz"
+        ],
+        [
+          "fuzz",
+          "complexity"
+        ],
+        [
+          "complexity",
+          "prove_machine"
+        ],
+        [
+          "prove_machine",
+          "select"
+        ],
+        [
+          "select",
+          "publish"
+        ],
+        [
+          "shrink",
+          "compose"
+        ],
+        [
+          "fuzz",
+          "compose"
+        ],
+        [
+          "prove_machine",
+          "compose"
+        ]
+      ],
+      "stop_conditions": [
+        "budget_exhausted",
+        "all viable candidates refuted",
+        "sufficient verified evidence",
+        "user escalation"
+      ],
+      "promotion_contract": {
+        "verified_ready": [
+          "formal spec pinned",
+          "applicability proven",
+          "implementation tests pass",
+          "independent correctness evidence sufficient for explicitly claimed scope",
+          "resource claims qualified"
+        ],
+        "qualified_draft": [
+          "useful code or algorithm but unproved correctness/coverage",
+          "limitations and unknowns disclosed"
+        ],
+        "blocked_escalated": [
+          "contradicted mandatory assumptions",
+          "critical test failure",
+          "no viable candidate or unresolvable objective"
+        ]
+      }
+    }
+  ]
+}

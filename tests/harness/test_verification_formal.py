@@ -33,6 +33,8 @@ from g6.harness.patch_review import review_patch
 from g6.invariants import check_envelope
 from g6.workforce import repo_tests
 
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
+
 pytest.importorskip("z3")
 
 # --- a development fixture: a wallet service; the patch drops the guard on withdrawals ----------------------------------
@@ -91,12 +93,14 @@ def review(repo, requirements=RULE, **kwargs):
 
 
 def result(passed=(), failed=(), *, output="", seconds=0.25, digest=""):
+    from g6.workforce.repo_tests import probe_observations
     outcomes = {**{node: {"setup": "passed", "call": "passed", "teardown": "passed"} for node in passed},
                 **{node: {"setup": "passed", "call": "failed", "teardown": "passed"} for node in failed}}
     verdict = "failed" if failed else "passed"
     return {"verdict": verdict, "said": "", "passed": len(passed), "failed": len(failed), "not_passed": 0,
             "total": len(outcomes), "deselected": 0, "test_outcomes": outcomes, "collected_ids": sorted(outcomes),
             "omitted_ids": [], "changed": [], "output": output, "seconds": seconds, "python": sys.executable,
+            "probe_observations": probe_observations(output),
             "interpreter_source": "g6", "command": "pytest", "isolation": {"backend": "synthetic-unit-fixture"},
             "failed_ids": list(failed), "setup_errors": {}, "degraded": False, "receipt": "", "rootdir": "",
             **({"source_before": digest} if digest else {}),
@@ -256,6 +260,7 @@ def test_a_state_invariant_that_does_not_apply_or_is_over_the_limits_is_refused_
     assert got["ok"] is True and got["assessment"]["outcome"] == "supported_within_scope", got
     found = _instance(got)
     assert found["result"] == "refused" and said in found["reason"], found
+    assert "proposed_checks" in found["reason"], found             # a refusal says where the check can go instead
     assert replays.calls == [] and not _activities(got, "model check")
 
 

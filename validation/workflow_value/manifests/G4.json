@@ -1,0 +1,160 @@
+{
+ "version": "workflow-manifest.v1",
+ "gate": "G4",
+ "cases": {
+  "rule": "the first 30 eligible starts after this manifest is frozen",
+  "count": 30,
+  "population": "S17.G4.trial_population: cohort A, the owner on real work"
+ },
+ "labels": "A mark is given by the developer at the end of a reviewed task, one choice, 15 seconds; a mark not given counts as not useful. Blind labels (G3) are given by the owner and by one Codex reviewer, apart, and disagreements and unknown labels are kept.",
+ "unit": "task (one task may have several runs; a retry is not another task)",
+ "eligible_starts": "Every task started with G6's review in the window, in the order started. G6 assigns the arm. Failed, abandoned, skipped and unmarked starts stay in every denominator.",
+ "baseline": "the diagnosis level admitted at G3",
+ "comparison": "the suggestions level against diagnosis, same tasks and budget policy; the independently declared outcome is assessed, not uptake. Up to 7 working days; hold at day 12.",
+ "agent_policy": "The developer's own coding agent (Claude Code or Codex), unchanged in both arms. Nobody is asked to work without their agent or without G6's mandatory report.",
+ "information_policy": "Both arms get the same task, repository and mandatory report; the arms differ only in the optional workflow block. No trial prompt is added inside G6's replies.",
+ "budget_policy": "The same review budget, question budget (G6_QUESTIONS_PER_TASK) and time allowance in both arms.",
+ "accepted_outcome": "The outcome the developer declared for the task before it started, judged reached or not by the developer at the end, with the review's state recorded beside it and never in its place.",
+ "preservation_checks": [
+  "the mandatory report is byte-identical in both arms (the prefix test)",
+  "every deterministic contract matches (validation/workflow_value/run_contracts.py)",
+  "no review outcome, completion state or stop differs between arms for the same patch"
+ ],
+ "start_clock": "G6's first event for the task (run_started), on G6's own clock",
+ "finish_clock": "report_returned for the run in which the declared outcome was marked reached; a duration is kept only when measured on one process's monotonic clock",
+ "handling": {
+  "failed": "counted as a start; not useful; its friction is counted",
+  "abandoned": "counted as a start; not useful; wall time is unmeasured, never zero",
+  "missing": "a mark or event that is absent counts as not useful and is listed as missing",
+  "censored": "a task still open when the window closes is a start, counted as not reached"
+ },
+ "disclosures": "Data stays on the developer's machine. What leaves it is one export made by g6_workflow_export, which the developer opens first: counts, timings, arm labels, marks and decision codes. G6's own consent dialog is unchanged; a developer who grants nothing still counts, as a separate row.",
+ "costs": [
+  "local collection and storage",
+  "G6 wall time and active time",
+  "tool calls and repeats",
+  "questions, approvals and dialog time",
+  "the developer's mark (15 seconds a task)",
+  "model calls (none are added by section 17)"
+ ],
+ "rows": {
+  "suggestions": {
+   "decision": "admit raises the view to suggestions and opens S7; repair sends S6 back; hold stops S7. Uptake and dismissal rates are reported and admit nothing.",
+   "thresholds": [
+    {
+     "name": "tried_and_marked_helpful",
+     "source": "S17.G4.useful_min",
+     "value": 0.25,
+     "unit": "proportion of suggestions shown",
+     "denominator": "suggestions shown",
+     "sample_requirement": 15,
+     "uncertainty_rule": "point",
+     "role": "usefulness",
+     "direction": "at_least",
+     "measure": "tried_and_helpful"
+    },
+    {
+     "name": "tried_and_marked_helpful_floor",
+     "source": "S17.G4.uncertainty_rule",
+     "value": 0.1,
+     "unit": "lower bound of that proportion",
+     "denominator": "suggestions shown",
+     "sample_requirement": 15,
+     "uncertainty_rule": "core.binomial.lower_bound",
+     "role": "usefulness",
+     "direction": "at_least",
+     "measure": "tried_and_helpful"
+    },
+    {
+     "name": "wrong_or_irrelevant",
+     "source": "S17.G4.wrong_suggestion_max",
+     "value": 0.2,
+     "unit": "proportion of suggestions shown",
+     "denominator": "suggestions shown",
+     "sample_requirement": 15,
+     "uncertainty_rule": "core.binomial.interval",
+     "role": "error",
+     "direction": "at_most"
+    },
+    {
+     "name": "forbidden_reoffers",
+     "source": "S17.G4.wrong_suggestion_max",
+     "value": 0,
+     "unit": "reoffers",
+     "denominator": "suggestions shown",
+     "sample_requirement": 15,
+     "uncertainty_rule": "point",
+     "role": "error",
+     "direction": "at_most"
+    },
+    {
+     "name": "suppressed_mandatory_evidence",
+     "source": "S17.G4.wrong_suggestion_max",
+     "value": 0,
+     "unit": "findings",
+     "denominator": "eligible_starts",
+     "sample_requirement": 30,
+     "uncertainty_rule": "point",
+     "role": "error",
+     "direction": "at_most"
+    },
+    {
+     "name": "dialogs_per_decision",
+     "source": "S17.G4.added_interruptions_cap",
+     "value": 1,
+     "unit": "dialogs",
+     "denominator": "decisions",
+     "sample_requirement": 1,
+     "uncertainty_rule": "point",
+     "role": "burden",
+     "direction": "at_most"
+    },
+    {
+     "name": "decision_seconds_median",
+     "source": "S17.G4.added_seconds_cap",
+     "value": 30,
+     "unit": "seconds",
+     "denominator": "decisions",
+     "sample_requirement": 1,
+     "uncertainty_rule": "point",
+     "role": "burden",
+     "direction": "at_most"
+    },
+    {
+     "name": "declared_outcome_shortfall",
+     "source": "S17.G4.useful_min",
+     "value": 0.1,
+     "unit": "difference of proportions reached, baseline minus candidate",
+     "denominator": "eligible_starts",
+     "sample_requirement": 30,
+     "uncertainty_rule": "point",
+     "role": "error",
+     "direction": "at_most"
+    },
+    {
+     "name": "added_tool_calls",
+     "source": "S17.G4.added_calls_cap",
+     "value": 0,
+     "unit": "calls per task",
+     "denominator": "paired tasks",
+     "sample_requirement": 30,
+     "uncertainty_rule": "point",
+     "role": "burden",
+     "direction": "at_most"
+    },
+    {
+     "name": "contract_mismatches",
+     "source": "S17.G4.contracts",
+     "value": 0,
+     "unit": "fixture cases",
+     "denominator": "contract cases",
+     "sample_requirement": 1,
+     "uncertainty_rule": "point",
+     "role": "contract",
+     "direction": "at_most"
+    }
+   ]
+  }
+ },
+ "tuned_on": []
+}

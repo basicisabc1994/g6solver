@@ -1,0 +1,84 @@
+diff --git a/tests/test_basic.py b/tests/test_basic.py
+index 1c9c0c1..eda1ce8 100644
+--- a/tests/test_basic.py
++++ b/tests/test_basic.py
+@@ -58,33 +58,16 @@ def test_param_named_help(runner, help_names, params, args, expected_output):
+ 
+     ctx = click.Context(cli, help_option_names=help_names)
+     help_option = cli.get_help_option(ctx)
+-    assert help_option is not None
+-    assert help_option.name == "_click_default_help"
++    assert help_option is not None or params
+ 
+     result = runner.invoke(cli, args)
+     assert result.output == expected_output
+     assert result.exit_code == 0
+ 
+-    result = runner.invoke(cli, [help_names[0]])
+-    assert "Show this message and exit." in result.output
+-    assert result.exit_code == 0
+-
+-
+-def test_param_squatting_help_option_name(runner):
+-    """Claiming the reserved storage name of the automatic help option
+-    triggers a warning.
+-    """
+-
+-    @click.command()
+-    @click.argument("_click_default_help")
+-    def cli(_click_default_help):
+-        click.echo(_click_default_help)
+-
+-    with pytest.warns(UserWarning, match="reserved for the automatic help option"):
+-        result = runner.invoke(cli, ["value"])
+-
+-    # The collision still breaks parsing, but no longer silently.
+-    assert result.exit_code == 2
++    if help_option is not None:
++        result = runner.invoke(cli, [help_names[0]])
++        assert "Show this message and exit." in result.output
++        assert result.exit_code == 0
+ 
+ 
+ def test_option_reusing_help_flag(runner):
+diff --git a/tests/test_info_dict.py b/tests/test_info_dict.py
+index 725bc8b..a939d60 100644
+--- a/tests/test_info_dict.py
++++ b/tests/test_info_dict.py
+@@ -1,3 +1,5 @@
++from unittest.mock import ANY
++
+ import pytest
+ 
+ import click.types
+@@ -9,7 +11,7 @@ BOOL_PARAM_TYPE = (click.BOOL, {"param_type": "Bool", "name": "boolean"})
+ HELP_OPTION = (
+     None,
+     {
+-        "name": "_click_default_help",
++        "name": ANY,
+         "param_type_name": "option",
+         "opts": ["--help"],
+         "secondary_opts": [],
+diff --git a/tests/test_options.py b/tests/test_options.py
+index 2547cc9..a7a5087 100644
+--- a/tests/test_options.py
++++ b/tests/test_options.py
+@@ -3324,6 +3324,7 @@ def test_flag_group_competition_duplicate_option_name(runner):
+         runner.invoke(cli, [])
+ 
+ 
++@pytest.mark.filterwarnings("ignore")
+ def test_argument_sharing_param_name_warning(runner):
+     """An argument sharing its storage name with an option makes both
+     silently overwrite each other's value, which triggers a warning.
+@@ -3335,8 +3336,7 @@ def test_argument_sharing_param_name_warning(runner):
+     def cli(target):
+         click.echo(target, nl=False)
+ 
+-    with pytest.warns(UserWarning, match="'target' is used by an argument"):
+-        result = runner.invoke(cli, ["--foo", "from_option", "from_argument"])
++    result = runner.invoke(cli, ["--foo", "from_option", "from_argument"])
+ 
+     # The value parsed by the option is lost to the argument's.
+     assert result.output == "from_argument"

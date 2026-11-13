@@ -36,6 +36,8 @@ from g6.harness.patch_review import review_patch
 from g6.invariants import check_envelope
 from g6.workforce import mutation_check, repo_tests
 
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
+
 TEMPLATE_IDS = ("example.v1", "relation.v1", "access_rule.v1", "differential.v1", "forbidden_dependency.v1")
 
 # --- development fixtures: five kinds of application, each with a base commit and a patch that plants a defect --------
@@ -144,12 +146,16 @@ def review(repo, requirements, **kwargs):
 
 def result(passed=(), failed=(), *, verdict=None, output="", seconds=0.25, digest="", messages=None):
     """One recorded ``repo_tests`` run result (as ``tests/harness/test_proposed_checks.py`` records them)."""
+    from g6.workforce.repo_tests import probe_observations
+    if messages is None:
+        messages = {node: "AssertionError" for node in failed}
     outcomes = {**{node: {"setup": "passed", "call": "passed", "teardown": "passed"} for node in passed},
                 **{node: {"setup": "passed", "call": "failed", "teardown": "passed"} for node in failed}}
     verdict = verdict or ("failed" if failed else "passed")
     return {"verdict": verdict, "said": "", "passed": len(passed), "failed": len(failed), "not_passed": 0,
             "total": len(passed) + len(failed), "deselected": 0, "test_outcomes": outcomes,
             "collected_ids": sorted(outcomes), "omitted_ids": [], "changed": [], "output": output,
+            "probe_observations": probe_observations(output),
             "seconds": seconds, "python": sys.executable, "interpreter_source": "g6", "command": "pytest",
             "isolation": {"backend": "synthetic-unit-fixture", "why": ""}, "failed_ids": list(failed),
             "setup_errors": {}, "degraded": verdict not in ("passed", "failed"), "receipt": "", "rootdir": "",
@@ -559,7 +565,7 @@ def test_a_compiled_differential_probe_observes_each_call_and_the_planted_change
         for check in prepared.checks:
             ran = _plain_run(tmp_path / "base", prepared.placed[check.id], check.source)
             assert ran.returncode == 0, ran.stdout + ran.stderr
-            found = verification_search.reading({**result([prepared.placed[check.id]]), "output": ran.stdout},
+            found = verification_search.reading(result([prepared.placed[check.id]], output=ran.stdout),
                                                 prepared.placed[check.id])
             seen[side, check.id] = found["observations"]
     assert seen["base", "t-normalise"][0] == {"input": {"args": [{"name": " Ann ", "amount": 1.234}], "kwargs": {}},
@@ -610,7 +616,7 @@ def test_review_i5_the_differential_probe_observes_a_canonical_form_never_a_repr
             _patch(tmp_path / "repo", patch)
         ran = _plain_run(tmp_path / "repo", prepared.placed["keep"], check.source)
         assert ran.returncode == 0, ran.stdout + ran.stderr
-        seen.append(verification_search.reading({**result([prepared.placed["keep"]]), "output": ran.stdout},
+        seen.append(verification_search.reading(result([prepared.placed["keep"]], output=ran.stdout),
                                                 prepared.placed["keep"])["observations"])
     assert bool(verification_search._differences(*seen)) is differ, seen
     if item is KEEP_PARSE:

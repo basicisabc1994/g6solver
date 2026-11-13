@@ -19,6 +19,7 @@ from g6.code._types import CodeRefused, answer, refuse
 from g6.code.swe_diagnostics import read
 from g6.core.ai_block import AIBlock
 from g6.core.contract_decorator import block_contract
+from g6.core.git_name import shown
 from g6.core.maturity import component_maturity
 from g6.core.outside import OUTSIDE_PROGRAM_MISSING, OutsideProgram, require
 from g6.core.result import Result
@@ -175,9 +176,9 @@ def patch_check(d: SweDiagnosticsInput, roots: _roots.Roots) -> dict[str, Any]:
              "does_not_parse": broken, "tests_to_run": derived, "more_tests": more}
     said = f"{len(change.files)} file(s) changed since {d.base}"
     if broken:
-        said += f"; {len(broken)} changed Python file(s) do not parse, first {broken[0]['file']}"
+        said += f"; {len(broken)} changed Python file(s) do not parse, first {shown(broken[0]['file'])}"
     if change.runner_files:
-        said += f"; the change touches the test runner's own files ({', '.join(change.runner_files[:3])})"
+        said += f"; the change touches the test runner's own files ({', '.join(shown(rel) for rel in change.runner_files[:3])})"
     said += f"; {len(derived)} test file(s) the change touches. Nothing was run."
     return answer(COMPONENT, "patch_check", CHANGE_READ, said, action=_ACTIONS[CHANGE_READ],
                   severity="red" if broken or change.runner_files else "amber",

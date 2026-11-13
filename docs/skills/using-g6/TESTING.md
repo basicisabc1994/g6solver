@@ -59,7 +59,7 @@ come from `g6.reliability_pipeline.premortem.premortem_failure_mode_questions()`
 | Behaviour | Baseline: no skill (A ×3, B ×3) | With skill v3 (A ×3, B ×3) |
 |---|---|---|
 | Calls `g6_help` and `g6_describe` before invoking | 6/6 | 6/6 |
-| Uses placeholder or guessed op names ("the verify op") | **6/6** | 0/6 |
+| Uses placeholder or guessed op names (a "verify" op) | **6/6** | 0/6 |
 | `coding_agent_gate.preflight` before the risky payments change (A) | **0/3** | 3/3 |
 | `coding_agent_gate.verify_answer` before reporting done (A) | **0/3** | 3/3 |
 | Premortem: answers `premortem_failure_mode_questions()` and asks `relevant`'s decisions | **0/6** | 6/6 (one A run called the questions without importing them from `premortem`) |

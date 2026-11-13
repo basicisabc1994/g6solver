@@ -55,7 +55,7 @@ def _plant(repo: Path, rel: str, data: bytes = b"") -> None:
 
 
 def _recorded(monkeypatch, node: str = ADD) -> None:
-    passed = {"verdict": "passed", "said": "", "passed": 1, "failed": 0, "not_passed": 0, "total": 1,
+    passed = {"verdict": "passed", "said": "", "rootdir": "", "passed": 1, "failed": 0, "not_passed": 0, "total": 1,
               "deselected": 0, "test_outcomes": {node: {"setup": "passed", "call": "passed", "teardown": "passed"}},
               "collected_ids": [node], "omitted_ids": [], "changed": [], "output": "", "seconds": 0.25,
               "python": sys.executable, "interpreter_source": "g6", "command": "pytest",
@@ -63,7 +63,10 @@ def _recorded(monkeypatch, node: str = ADD) -> None:
               "degraded": False, "receipt": ""}
     monkeypatch.setattr(patch_review, "_execute", lambda root, ids, *, timeout_s, change=None, **kw: passed)
     monkeypatch.setattr(patch_review, "_execute_at_base",
-                        lambda change, ids, *, timeout_s, **kw: {"verdict": "not_run", "said": "not recorded"})
+                        lambda change, ids, *, timeout_s, **kw: {"verdict": "not_run", "said": "not recorded",
+                            'output': '', 'rootdir': '', 'test_outcomes': None,
+                            'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+                            'omitted_ids': []})
 
 
 def _review(repo):
@@ -164,6 +167,44 @@ def test_a_force_added_file_is_in_the_diff_the_snapshot_and_absent_at_the_base(r
     with repo_tests._base_revision(change, copy, time.monotonic() + 30):
         assert not (copy / "data" / "helper.py").exists()
     assert (copy / "data" / "helper.py").read_bytes() == b"# a comment\n"
+
+
+def _diff_as_it_was(change) -> str:
+    """``diff_text`` as it cut a new file before: at every character ``splitlines`` takes for a line's end."""
+    diffed, others = repo_tests._private(change.repo, change.base_commit,
+                                         ("diff", "--no-color", "--no-ext-diff", "--no-textconv", "--text"),
+                                         ("ls-files", "--others", "--exclude-standard", "-z"))
+    text = diffed.decode("utf-8", "replace")
+    new = set(repo_tests._paths(others)) | repo_tests._tracked_new(change.repo, change.base_commit)
+    for rel in sorted(new & set(change.files) - set(change.outside_links)):
+        lines = (change.repo / rel).read_text(encoding="utf-8", errors="replace")[:repo_tests.DIFF_FILE_CHARS].splitlines()
+        # a name git listed is put into text by its one rule (repair 3: the type raises where it is formatted as it is)
+        text += (f"--- /dev/null\n+++ {repo_tests.shown_name(rel, 'b/')}\n@@ -0,0 +1,{len(lines)} @@\n"
+                 + "".join(f"+{line}\n" for line in lines))
+    return text
+
+
+def _decided(got: dict) -> dict:
+    assessment = got["assessment"]
+    return {"outcome": assessment["outcome"], "reasons": assessment["reasons"], "requirements": assessment["requirements"],
+            "unknowns": assessment["unknowns"], "completion": assessment["completion"],
+            "changed_files": assessment["scope"]["changed_files"], "reliability": got["completion_state"]}
+
+
+@pytest.mark.parametrize("rel, text", [("pkg/helper.py", "def helper():\n    return 1\n\n\nclass Thing:\n    pass\n"),
+                                       ("test_new.py", "def test_new():\n    assert 1 + 1 == 2\n"),
+                                       ("test_skips.py", "import pytest\n\n\n@pytest.mark.skip\ndef test_s():\n    assert 0\n"),
+                                       ("docs.txt", "plain words\r\nin a text file\r\n"), ("pkg/empty.py", "")])
+def test_on_ordinary_text_a_patch_review_decides_exactly_what_it_did(repo, monkeypatch, rel, text):
+    """Each caller of ``diff_text`` reads its text and nothing else of this change, so bytes that match decide the same."""
+    (repo / rel).write_bytes(text.encode("utf-8"))
+    _recorded(monkeypatch)
+    now_text = repo_tests.diff_text(repo_tests.change(repo))     # less the line that names bytes the text leaves out
+    assert _diff_as_it_was(repo_tests.change(repo)) == "".join(
+        line for line in now_text.splitlines(keepends=True) if not line.startswith("\\ G6:"))
+    now = _review(repo)
+    monkeypatch.setattr(repo_tests, "diff_text", _diff_as_it_was)
+    assert _decided(now) == _decided(_review(repo))
 
 
 MARKER = "OUTSIDE-MARKER benign text\n"

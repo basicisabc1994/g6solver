@@ -64,6 +64,18 @@ def test_ven004_a_run_is_charged_at_least_its_reservation(scope, venture):
             scope.reserve(venture, month="2026-10", account="model", amount=bad)
 
 
+def test_the_hosts_own_count_is_the_charge_and_a_runs_report_is_not_read(scope, venture):
+    reservation = scope.reserve(venture, month="2026-10", account="model", amount=0.5)
+    assert scope.settle(venture, reservation, reported=0.75, metered=0.125) == 0.125
+    assert scope.committed(venture, "2026-10")["model"] == 0.125
+    zero = scope.reserve(venture, month="2026-10", account="model", amount=0.5)
+    assert scope.settle(venture, zero, metered=0) == 0.0
+    open_one = scope.reserve(venture, month="2026-10", account="model", amount=0.5)
+    for bad in (-1, math.inf, math.nan, True, "1"):
+        with pytest.raises(ValueError, match="metered"):
+            scope.settle(venture, open_one, metered=bad)
+
+
 def test_ven005_concurrent_tickers_never_exceed_the_cap(tmp_path):
     # Archive: the month row was checked before a tick and charged after it, so two tickers at 89% both passed.
     path = tmp_path / "operator.db"

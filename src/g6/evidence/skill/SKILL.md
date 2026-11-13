@@ -39,7 +39,7 @@ gates and obligations it records, and names every field that does not follow.
 - `Control`: a negative control: a seeded defect for one predicate, run against one version of a check's code.
 - `Receipt`: one run of a check on some bytes: `pass`, `fail` or `unknown`, at a ledger position.
 - `Certificate`: the result; `state`, `predicates`, `gaps`, `formal`, `rerun`, `verified_predicates`, what it was decided from (`checks`, `gates`, `obligations`, `artifact_seq`), and `as_dict()` with its digest.
-- `PredicateStatement`: one predicate's support, refutation and caveats, and whether it is verified.
+- `PredicateStatement`: one predicate's support, refutation and caveats, and whether it is `verified`.
 - `CertificateRefused`: the error that lists every problem with the inputs.
 - `digest_of`: the certificate's unkeyed sha256 digest.
 - `catalogue_sha`: the hash of the catalogue a mission was judged against.
@@ -63,10 +63,10 @@ A pass receipt supports predicate `p` only when its check meets the grounding ru
 
 A failing receipt refutes `p` when the check killed a G6 control for `p` and passed a known-good reference
 (`positive_seq`), both before the receipt, whoever wrote it and whatever its kind; any other failure, or an `unknown`
-result, is a caveat that keeps `p` from verified without refuting it. The state is
+result, is a caveat that keeps `p` from `verified` without refuting it. The state is
 `blocked-escalated` when the mission breaks a soundness obligation or any predicate is refuted, `verified` when every
 predicate is supported with no caveat and every gate was decided, and `qualified-draft` otherwise. `gaps` names every
-predicate that is not verified, with why (`not_grounded:<check>:self_authored`, `no_receipt` and so on), every
+predicate that is not `verified`, with why (`not_grounded:<check>:self_authored`, `no_receipt` and so on), every
 undecided gate (`human_decision_missing`) and every broken obligation.
 
 ## Alone and composed

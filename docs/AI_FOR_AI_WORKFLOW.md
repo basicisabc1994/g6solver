@@ -312,7 +312,7 @@ The repair loop, as the using-g6 skill gives it: fix what G6 reproduced; on the 
 reproduction as a stated check of its requirement (a proposed check's reproduction is a test file, added to the
 repository's tests and listed by its node id), so the person can see the fix pass the original counterexample;
 review again; and stop after 3 rounds, when a round changes nothing, or when the report says only the person can
-decide. Never call a patch verified, and never merge it on the person's behalf.
+decide. Never call a patch `verified`, and never merge it on the person's behalf.
 
 Every reply has `assessment.completion`, built from what ran: `demonstrated` (requirements passed on their
 stated checks, with the receipts), `not_established` (with what would settle each), `defects_reproduced`

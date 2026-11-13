@@ -1,0 +1,61 @@
+{
+ "schema": "workflow.decisions.v1",
+ "base_level": "narrow",
+ "note": "One entry per gate run. The view's admitted level in code must equal what these entries admit (tests/workflow/test_admitted_level.py). A simulated run can hold or send to repair; it never admits.",
+ "entries": [
+  {
+   "gate": "G2",
+   "row": "self_friction",
+   "manifest_sha256": "b3e01b18bc159870d0b99c136645864f0212b47f253269ede4151739a9e2540b",
+   "run": "simulated pre-flight, 2026-11-11",
+   "simulated": true,
+   "results": {
+    "simulated": true,
+    "starts": {
+     "eligible": 0,
+     "failed": 0,
+     "abandoned": 0,
+     "missing": 0,
+     "censored": 0
+    },
+    "rows": {
+     "self_friction": {
+      "contract_mismatches": {
+       "value": 0,
+       "n": 14
+      },
+      "added_wall_seconds_median": {
+       "value": 0.008,
+       "n": 20
+      },
+      "added_wall_seconds_worst": {
+       "value": 0.017,
+       "n": 20
+      },
+      "added_block_lines": {
+       "value": 6,
+       "n": 20
+      },
+      "added_questions": {
+       "value": 0,
+       "n": 20
+      }
+     }
+    }
+   },
+   "decision": "hold",
+   "why": [
+    "used_or_would_use: not measured",
+    "used_or_would_use_floor: not measured",
+    "added_wall_seconds_median: 0.008 against 2",
+    "added_wall_seconds_worst: 0.017 against 5",
+    "added_tool_calls: not measured",
+    "added_questions: 0 against 0",
+    "added_block_lines: 6 against 8",
+    "contract_mismatches: 0 against 0"
+   ],
+   "status": "evidence_pending",
+   "owed": "20 marked tasks of the owner's own real work with the record on, G6 assigning the arm, under a manifest frozen with its start date"
+  }
+ ]
+}

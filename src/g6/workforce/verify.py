@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from g6.core.git_env import UnsafeGitConfig, git_program, safe_git, safe_git_args
+from g6.core.git_name import shown
 from g6.safety_engine import detect_test_weakening
 
 OUTWARD_TYPES = frozenset({"email", "post", "publish_copy", "price_test", "spend", "experiment"})
@@ -102,18 +103,20 @@ def run_set(workdir: Path, changed: list[str], candidates: list[str] | None = No
     module's stem (a seed repo keeps its tests at the root; a product repo under tests/).
     ``candidates``: the files to look in, relative to the workdir, instead of walking it (a large
     repository lists them from git; plan 2026-10-05-verify-task-real-repos). A changed ``__init__``, ``conftest``
-    or ``setup`` names no test by its stem: a test file that mentions the word is not a test of it."""
+    or ``setup`` names no test by its stem: a test file that mentions the word is not a test of it. A candidate found is
+    returned as it was given (a name git listed stays that name, ``g6.core.git_name.GitName``), never respelled."""
     reader = read_file or (lambda path: path.read_text(encoding="utf-8", errors="replace"))
     tests = {rel for rel in changed if _is_test_file(rel)}
     stems = {Path(rel).stem for rel in changed
              if rel.endswith(".py") and not _is_test_file(rel) and Path(rel).stem not in ("__init__", "conftest", "setup")}
     if stems:
         pattern = re.compile(r"\b(" + "|".join(re.escape(s) for s in sorted(stems)) + r")\b")
-        files = (sorted(Path(workdir) / rel for rel in candidates if _is_test_file(rel)) if candidates is not None
-                 else sorted(p for p in Path(workdir).rglob("test_*.py") if "__pycache__" not in p.parts))
-        for tf in files:
+        files = (sorted((Path(workdir) / rel, rel) for rel in candidates if _is_test_file(rel)) if candidates is not None
+                 else sorted((p, p.relative_to(workdir).as_posix()) for p in Path(workdir).rglob("test_*.py")
+                             if "__pycache__" not in p.parts))
+        for tf, rel in files:
             if tf.is_file() and pattern.search(reader(tf)):
-                tests.add(tf.relative_to(workdir).as_posix())
+                tests.add(rel)
     return sorted(tests)
 
 
@@ -251,33 +254,34 @@ def _config_findings(original: Path, workdir: Path, covered: set[str]) -> list[s
 
 def weakened_tests(before: dict[str, str], after: dict[str, str]) -> list[str]:
     """``test_integrity``'s rules over test SOURCES (path -> text), before and after a change: what verify_task
-    has when a caller gives its test file as it was and as it is (E10a; FE §10, TS §18, §43, 2026-10-05)."""
+    has when a caller gives its test file as it was and as it is (E10a; FE §10, TS §18, §43, 2026-10-05). A path git
+    named is written by its one rule (``g6.core.git_name.shown``), a caller's as it is."""
     findings: list[str] = []
     for rel, src in before.items():
         now = after.get(rel)
         if now is None:
-            findings.append(f"{rel}: test file deleted")
+            findings.append(f"{shown(rel)}: test file deleted")
             continue
         try:
             old_tree, new_tree = ast.parse(src), ast.parse(now)
         except SyntaxError as exc:
-            findings.append(f"{rel}: unparsable ({exc.msg})")
+            findings.append(f"{shown(rel)}: unparsable ({exc.msg})")
             continue
         old_fns, new_fns = _test_functions(old_tree), _test_functions(new_tree)
         for name, fn in old_fns.items():
             new_fn = new_fns.get(name)
             if new_fn is None:
-                findings.append(f"{rel}: test removed {name}")
+                findings.append(f"{shown(rel)}: test removed {name}")
                 continue
             have = list(_asserts(new_fn))
             for a in _asserts(fn):
                 if a in have:
                     have.remove(a)
                 else:
-                    findings.append(f"{rel}: {name}: an assert was removed or changed")
+                    findings.append(f"{shown(rel)}: {name}: an assert was removed or changed")
                     break
             if _returns(new_fn) > _returns(fn):
-                findings.append(f"{rel}: {name}: early return added")
+                findings.append(f"{shown(rel)}: {name}: early return added")
         old_m, new_m = _markers(old_tree), _markers(new_tree)
         # A test that did not exist before cannot weaken one that did: its own skip or mock (a new test
         # taking the monkeypatch fixture) is not counted. One in an old test, a fixture or at module level is.
@@ -287,7 +291,7 @@ def weakened_tests(before: dict[str, str], after: dict[str, str]) -> list[str]:
                     new_m[marker] -= n
         for name, n in new_m.items():
             if n > old_m.get(name, 0):
-                findings.append(f"{rel}: added {name}")
+                findings.append(f"{shown(rel)}: added {name}")
     return findings
 
 

@@ -1,0 +1,7 @@
+{
+  "repo_tests.py": "13b1dee18c7c12b1e20f0e283384de6261f46258e7df241b3bc5db320dc9a0c1",
+  "patch_review.py": "ca702d91814690f8f8961e1d99193d8f2f435b55f017e71f9e5756465a14a368",
+  "verification_search.py": "25f313afe91089efd3d06144c2b44ed9169d9aa291c10ce1687764bb8de32da4",
+  "completion_loop.py": "4e780faf8969b366731b018c3cc037b7e205e26ae866b82a502379f90c0f8ed6",
+  "receipt_store.py": "52d6d4cfecd1e9f868bf2c7f770cec58d8378084b1153d452b66b4fd26d81db0"
+}

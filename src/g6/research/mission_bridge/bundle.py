@@ -2,7 +2,7 @@
 # Copyright (c) 2026 The G6 authors
 
 """The claim and evidence bundle (audit ENG-04): a mission's answer as claims bound to its frozen standard, each derived from
-recorded evidence by the ECHA kernel's own claim rule. Research code, default OFF (this flag and the kernel's both).
+recorded evidence by the ECHA kernel's own claim rule. Research code, default OFF (this module's flag; ECHA has none).
 
 Nothing here computes a result of its own. An ``Observation`` is what a node actually produced, typed by what kind of evidence
 it is, and is written into the kernel's ledger as one of its categories:
@@ -14,6 +14,7 @@ it is, and is written into the kernel's ledger as one of its categories:
 - ``formal`` becomes ``FORMAL_CHECK`` only with a certificate (checker, version, digest) from a formal operation the graph names
   at that node; a formal claim without one is recorded as no evidence and listed in ``rejected``. The kernel's own ``FORMAL_CHECK``
   is a self-declared tag (decision conflict 2 in the source map); this module never lets a tag stand in for a certificate.
+  Like every executable check, a formal one counts only with a negative control (G6 0.3: the issuer's rule, now ECHA's too).
 
 A person's decision at a gate is necessary, never sufficient: it completes a claim that already has supporting evidence. Any
 refuted claim makes the mission ``blocked-escalated``; everything else is ``qualified-draft`` with each gap named in ``unknowns``.
@@ -176,8 +177,7 @@ def _record(obs: Observation, standard: StandardRef) -> tuple[EvidenceRecord, st
             "fixture_version": cert["digest"], "independent": True, "independence_group": obs.group or cert["checker"],
             "independence_rationale": "a formal checker separate from the producing component; the certificate digest names "
                                       "the exact formalisation it was taken against",
-            "result": obs.result, "source_ref": f"{obs.node}:{obs.source_operation}:certificate:{cert['digest']}",
-            "negative_control_ref": ""}), ""
+            "result": obs.result, "source_ref": f"{obs.node}:{obs.source_operation}:certificate:{cert['digest']}"}), ""
     if obs.sealed_fixture:
         return EvidenceRecord(**{**common, "oracle_category": "INDEPENDENT_EXECUTABLE", "fixture_version": obs.sealed_fixture,
                                  "independent": True, "independence_group": obs.group,

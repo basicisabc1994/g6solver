@@ -47,6 +47,8 @@ SCALES: dict[str, str] = {
     "cosine": "the cosine of the query's and the passage's sentence embeddings, from -1 to 1; comparable only with "
               "other hits of the same search by the same model",
     "bm25": "g6.grounding's BM25 over the passages of one search; comparable only with other hits of that search",
+    "bm25_in_scope": "the Context Engine's BM25 from the statistics of the passages in the caller's scope only (no "
+                     "length normalisation); comparable only with other hits of the same search in the same scope",
 }
 UNAVAILABLE = "G6_E_KNOWLEDGE_INDEX_UNAVAILABLE"
 FAILED = "G6_E_KNOWLEDGE_INDEX_FAILED"
@@ -167,6 +169,19 @@ class Retrieves:
         if not found.answered:
             raise IndexUnavailable(found)
         return [hit.to_grounding() for hit in found.hits]
+
+
+BAD_TOP_K = "G6_E_KNOWLEDGE_TOP_K"
+
+
+def bad_k(backend: str, query: str, score_scale: str, top_k: Any) -> Searched | None:
+    """The one validation of ``top_k``, asked first by every index's ``find``: a whole number, 0 or more. Anything
+    else is a ``failed`` search that read nothing (a negative limit is "no limit" to SQLite and "all but the last"
+    to a slice); ``None`` when ``top_k`` is fine."""
+    if type(top_k) is int and top_k >= 0:
+        return None
+    return Searched(backend=backend, query=str(query), outcome="failed", score_scale=score_scale,
+                    reason="top_k is a whole number, 0 or more; nothing was searched", evidence={"code": BAD_TOP_K})
 
 
 def ranked(scored: Sequence[tuple[Passage, float]], scale: str, top_k: int) -> list[Hit]:
@@ -293,7 +308,8 @@ class IndexBackends:
 #: The family's registry of index backends; it finds the members that declare backends the first time it is asked.
 index_backends = IndexBackends(discover=True)
 
-__all__ = ["BACKENDS_DECLARATION", "BAD_QUERY", "FAILED", "OVER_BUDGET", "READ_ONLY", "SCALES", "TIMED_OUT",
+__all__ = ["BACKENDS_DECLARATION", "BAD_QUERY", "BAD_TOP_K", "FAILED", "OVER_BUDGET", "READ_ONLY", "SCALES", "TIMED_OUT",
            "UNAVAILABLE", "UNKNOWN_BACKEND", "Added", "Hit", "Index", "IndexBackend", "IndexBackends", "IndexRefused",
-           "IndexUnavailable", "Outcome", "Removed", "Retrieves", "Searched", "declares_backends", "index_backends",
+           "IndexUnavailable", "Outcome", "Removed", "Retrieves", "Searched", "bad_k", "declares_backends",
+           "index_backends",
            "ranked"]

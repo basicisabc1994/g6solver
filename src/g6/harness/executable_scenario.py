@@ -1,0 +1,265 @@
+# SPDX-License-Identifier: Apache-2.0
+"""An immutable executable scenario, independent of the existing question and answer record formats.
+
+The form displays this record and the digest of its exact interpreter program. The check runs that program with
+only the person's option supplied. Missing legacy records require a new dialog before product enforcement.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from pathlib import PurePosixPath
+
+from g6.core import component_process
+from g6.core.ledger import canonical
+from g6.harness.observation_contract import observable_exception
+
+SETUP = ("a fresh import of the function's module in a copy of the tree under review, with no other state set up: "
+         "the call is made once, with copies of these arguments")
+FIELDS = frozenset({"version", "setup", "entrypoint", "input", "outcomes"})
+UNAVAILABLE = "G6_E_SCENARIO_UNAVAILABLE"
+
+
+def _comparison(record: str, option: str) -> dict:
+    """The host comparison, derived from the one canonical scenario in a portable check too."""
+    scenario = json.loads(record)
+    if option not in scenario['outcomes']:
+        raise ValueError('G6_E_SCENARIO_UNAVAILABLE: an option not in the scenario')
+    return {'function': scenario['entrypoint'], 'cases': [
+        {**scenario['input'], **scenario['outcomes'][option]}],
+        'errors': [one['error'] for one in scenario['outcomes'].values() if 'error' in one]}
+
+
+def _program_parts() -> tuple[str, str]:
+    from g6.core import confine
+    from g6.harness import behaviour_runner as runner
+
+    # The input belongs to SCENARIO once. Derive the child request at runtime instead of spelling it again.
+    request = """scenario = json.loads(SCENARIO)
+data = {'function': scenario['entrypoint'], 'calls': [scenario['input']],
+        'errors': [one['error'] for one in scenario['outcomes'].values() if 'error' in one],
+        'probe': False, 'mode': 'outputs'}"""
+    return (confine.CHILD_PRELUDE + '\nSCENARIO = ',
+            '\n' + runner.BOOTSTRAP.replace('data = json.loads(raw)', request, 1))
+
+
+@dataclass(frozen=True)
+class Scenario:
+    record: bytes
+
+    def __post_init__(self):
+        value = json.loads(self.record)
+        if (set(value) != FIELDS or canonical(value).encode("ascii") != self.record
+                or value["version"] not in {"example-scenario.v1", "example-scenario.v2"}
+                or value["setup"] != SETUP):
+            raise ValueError(f"{UNAVAILABLE}: unsupported executable scenario")
+        entry = value["entrypoint"]
+        if any('error' in one and not observable_exception('.'.join(part for part in one['error'][1:3] if part))
+               for one in value['outcomes'].values()):
+            raise ValueError(f"{UNAVAILABLE}: a raised outcome must name an observable exception")
+        if (not isinstance(entry, list) or len(entry) != (5 if value['version'] == 'example-scenario.v2' else 4)
+                or entry[0] != "module"
+                or PurePosixPath(entry[3]).is_absolute() or ":" in entry[3]
+                or ".." in PurePosixPath(entry[3]).parts):
+            raise ValueError(f"{UNAVAILABLE}: unsupported repository entry point")
+        if len(entry) == 5:
+            binding = entry[4]
+            # Older v2 records retain their canonical bytes; their obsolete file digest has no authority.
+            if (not isinstance(binding, dict) or set(binding) not in ({'import_roots'}, {'import_roots', 'sha256'})
+                    or binding['import_roots'] != ['.', 'src']):
+                raise ValueError(f"{UNAVAILABLE}: unsupported referent binding")
+
+    @classmethod
+    def resolve(cls, root, question):
+        from g6.harness import verification_templates as vt
+        from g6.workforce import repo_tests
+
+        tree = vt.Tree.read(root, repo_tests.change(root), None, ())
+        outcomes = {}
+        entry = None
+        for label, outcome in question.outcomes.items():
+            bound = vt.ExampleBindings.model_validate({"function": question.function,
+                "cases": [{"args": question.args, "kwargs": question.kwargs, **outcome}]})
+            applied = vt.TEMPLATES["example.v1"].applies(tree, bound, vt.PATCH).data
+            entry = applied["function"]
+            outcomes[label] = {k: v for k, v in applied["cases"][0].items() if k not in ("args", "kwargs")}
+        entry = [*entry, {'import_roots': ['.', 'src']}]
+        return cls(canonical({"version": "example-scenario.v2", "setup": SETUP, "entrypoint": entry,
+                              "input": {"args": question.args, "kwargs": question.kwargs},
+                              "outcomes": outcomes}).encode("ascii"))
+
+    @property
+    def presentation(self) -> dict:
+        """The executable fields the form displays, read from the same record the child runs."""
+        value = json.loads(self.record)
+        outcomes = {}
+        for label, outcome in value['outcomes'].items():
+            if outcome['expect'] == 'returns':
+                outcomes[label] = {'returns': outcome['value']}
+            elif outcome['expect'] == 'effect':
+                outcomes[label] = {'effect': {'argument': outcome['argument'], 'equals': outcome['value']}}
+            else:
+                error = outcome['error']
+                outcomes[label] = {'raises': '.'.join(part for part in error[1:3] if part)}
+        return {'setup': value['setup'], 'function': '.'.join(value['entrypoint'][1:3]),
+                **value['input'], 'outcomes': outcomes}
+
+    @property
+    def program(self) -> str:
+        """Exact isolated child bytes, including G6's confinement prelude and the canonical scenario.
+
+        Both offered outcomes belong to the immutable scenario; the selected option never reaches this program.
+        The host uses the same record for its comparison after the one observation frame arrives.
+        """
+        prefix, suffix = _program_parts()
+        return prefix + ascii(self.record.decode('ascii')) + suffix
+
+    def comparison(self, option: str) -> dict:
+        """The host comparison, compiled once from the canonical record for both execution and reproduction."""
+        return _comparison(self.record.decode('ascii'), option)
+
+    def _wrapper(self, option: str) -> str:
+        """A portable reproduction wrapper; G6 itself executes program, without loading this pytest wrapper."""
+        import inspect
+        from g6.harness import behaviour_runner as runner
+
+        helpers = "\n\n".join(inspect.getsource(one) for one in (
+            _comparison,
+            runner._unique, runner._encoded, runner._fingerprint, runner._valid_encoding,
+            runner._matches_encoding, runner.read_frame, runner.finish))
+        prefix, suffix = _program_parts()
+        return ("import hashlib, json, struct, subprocess, tempfile, sys, os\n"
+                "TEMPLATE = 'example.v1'\nBINDINGS = " + ascii({"scenario": self.record.decode("ascii")})
+                + "\nBINDINGS['option'] = " + ascii(option)
+                + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = " + ascii(prefix)
+                + " + ascii(BINDINGS['scenario']) + " + ascii(suffix)
+                + "\n" + helpers + '''
+def _check_example():
+    data = _comparison(BINDINGS['scenario'], BINDINGS['option'])
+    with tempfile.TemporaryDirectory() as own:
+        channel = os.path.join(own, 'result.bin')
+        boot = os.path.join(own, 'bootstrap.py')
+        with open(boot, 'w', encoding='utf-8', newline='\\n') as handle:
+            handle.write(BOOTSTRAP)
+        with open(channel, 'xb'):
+            pass
+        ran = subprocess.run([sys.executable, '-I', '-S', '-B', boot, os.getcwd(), channel, '{}'],
+                             capture_output=True, timeout=10)
+        with open(channel, 'rb') as handle:
+            raw = handle.read(MAX_FRAME + len(MAGIC) + 5)
+    reading = finish(ran.returncode, raw, data)
+    if reading['result'] != 'passed':
+        raise AssertionError(reading['detail'])
+
+def test_example():
+    import pytest
+    try:
+        _check_example()
+    except AssertionError as exc:
+        pytest.fail(str(exc), pytrace=False)
+''')
+
+    @property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.program.encode("utf-8")).hexdigest()
+
+    def source(self, option: str) -> str:
+        import base64
+        import zlib
+        from g6.harness import behaviour_runner as runner
+
+        data = {**self.comparison(option), '_program': self.program}
+        source = self._wrapper(option)
+        # Keep a portable, self-contained check even for the largest historical bindings. The canonical input is
+        # held once; compression only stores the resulting Python text more compactly, with no new execution path.
+        if len(source.encode('utf-8')) > 48 * 1024:
+            packed = base64.b85encode(zlib.compress(source.encode('utf-8'), 9)).decode('ascii')
+            source = (runner.COMPACT + 'CODE_Z85 = ' + ascii(packed)
+                      + '\nimport base64, zlib\nexec(zlib.decompress(base64.b85decode(CODE_Z85)))\n')
+        return runner.ExecutableSource(source, data)
+
+    def admit(self, root, question) -> None:
+        """Use the enforcing compiler for every offered option, before asking or displaying anything."""
+        from g6.harness import verification_templates as vt
+        from g6.harness.confirmed_expectation import _compiled
+
+        if not self.matches(question):
+            raise ValueError(f'{UNAVAILABLE}: the scenario is not this question')
+        try:
+            for option in question.outcomes:
+                vt.compiled_check(root, _compiled(question.to_dict(), question.sha256, option),
+                                  {'scenario': self.record.decode('ascii'), 'option': option}, [])
+        except vt.Inapplicable as exc:
+            raise ValueError(f'{UNAVAILABLE}: {exc}') from exc
+
+    def matches(self, question) -> bool:
+        """Correspondence without consulting the live repository or resolving an entry point again."""
+        value = json.loads(self.record)
+        if (value["entrypoint"][1:3] != question.function.rsplit(".", 1)
+                or canonical(value["input"]) != canonical({"args": question.args, "kwargs": question.kwargs})
+                or set(value["outcomes"]) != set(question.outcomes)):
+            return False
+        for label, outcome in question.outcomes.items():
+            held = value["outcomes"][label]
+            if "returns" in outcome:
+                expected = {"expect": "returns", "value": outcome["returns"]}
+            elif "effect" in outcome:
+                expected = {"expect": "effect", "argument": outcome["effect"]["argument"],
+                            "value": outcome["effect"]["equals"]}
+            else:
+                error = held.get("error", [])
+                if len(error) < 3 or ".".join(part for part in error[1:3] if part) != outcome["raises"]:
+                    return False
+                expected = {"expect": "raises", "error": error}
+            if canonical(held) != canonical(expected):
+                return False
+        return True
+
+    def require_binding(self) -> None:
+        """Legacy scenarios remain readable reproductions, but cannot supply confirmation custody."""
+        if json.loads(self.record)['version'] != 'example-scenario.v2':
+            raise ValueError(f'{UNAVAILABLE}: confirm the import roots and resolved repository path in a new dialog')
+
+
+def save(question, scenario: Scenario) -> None:
+    from g6.cogarch._store import atomic_write
+    from g6.core.storage import state_path
+
+    scenario.require_binding()
+    if not scenario.matches(question):
+        raise ValueError(f"{UNAVAILABLE}: the scenario is not this question")
+    path = state_path("scenarios", question.sha256 + ".json")
+    record = {"version": "scenario-binding.v1", "question_sha256": question.sha256,
+              "scenario_sha256": scenario.sha256, "scenario": scenario.record.decode("ascii")}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        held = load(question)
+    except ValueError:
+        held = None   # missing, empty, partial or unparseable custody does not reserve the final name
+    if held is not None:
+        if held.record != scenario.record:
+            raise ValueError(f"{UNAVAILABLE}: this question already names another executable scenario")
+        return
+    atomic_write(path, canonical(record))
+
+
+def load(question) -> Scenario:
+    from g6.core.storage import state_path
+
+    try:
+        path = state_path("scenarios", question.sha256 + ".json")
+        if path.is_symlink():
+            raise ValueError("linked record")
+        record = json.loads(path.read_bytes())
+        scenario = Scenario(record["scenario"].encode("ascii"))
+        scenario.require_binding()
+        expected = {"version": "scenario-binding.v1", "question_sha256": question.sha256,
+                    "scenario_sha256": scenario.sha256, "scenario": scenario.record.decode("ascii")}
+        if record != expected or not scenario.matches(question):
+            raise ValueError("mismatched record")
+        return scenario
+    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+        raise
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError) as exc:
+        raise ValueError(f"{UNAVAILABLE}: the executable scenario is unavailable; ask for confirmation again") from exc

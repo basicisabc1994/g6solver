@@ -115,7 +115,7 @@ def test_a_list_cut_at_its_limit_cannot_say_and_a_recorded_run_without_one_says_
 def _result(passed=(), failed=(), **extra) -> dict:
     outcomes = {**{node: {"setup": "passed", "call": "passed", "teardown": "passed"} for node in passed},
                 **{node: {"setup": "passed", "call": "failed", "teardown": "passed"} for node in failed}}
-    return {"verdict": "failed" if failed else "passed", "said": "", "passed": len(passed), "failed": len(failed),
+    return {"verdict": "failed" if failed else "passed", "said": "", "rootdir": "", "passed": len(passed), "failed": len(failed),
             "not_passed": 0, "total": len(outcomes), "deselected": 0, "test_outcomes": outcomes,
             "collected_ids": sorted(outcomes), "omitted_ids": [], "changed": [], "output": "", "seconds": 0.1,
             "python": sys.executable, "interpreter_source": "setting", "command": "pytest",
@@ -132,7 +132,10 @@ def _recorded(monkeypatch, ran: dict) -> list:
 
     def execute_at_base(change, ids, *, timeout_s, roots=()):
         calls.append(("at_base", tuple(ids), tuple(roots)))
-        return {"verdict": "not_run", "said": "no run was recorded"}
+        return {"verdict": "not_run", "said": "no run was recorded",
+            'output': '', 'rootdir': '', 'test_outcomes': None,
+            'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+            'omitted_ids': []}
 
     monkeypatch.setattr(patch_review, "_execute", execute)
     monkeypatch.setattr(patch_review, "_execute_at_base", execute_at_base)
@@ -295,6 +298,19 @@ def test_the_runs_records_keep_what_the_run_left_out_or_could_not_see(installed,
     got = review_patch(repo, task="Repair addition.", requirements=REQUIREMENTS)
     [first, *_] = got["assessment"]["scope"]["checks_run"]
     for key in ("links_left_out", "links_materialised", "loaded_outside", "submodules_not_hashed"):
+        assert first[key] == extra[key], key
+
+
+def test_the_runs_records_say_which_generated_files_the_copy_took_or_left_out(installed, monkeypatch):
+    """The review of 286c173: a git-ignored file a copy takes is trusted code in both copies, so the reply names it,
+    with its SHA-256, and names each one it left out, with why."""
+    repo, _ = installed
+    extra = {"generated_copied": {"src/_pkg_version.py": "0" * 64},
+             "generated_left_out": {"src/_other_version.py": "it holds more than literal data"}}
+    _recorded(monkeypatch, _result([CHECK]) | extra)
+    got = review_patch(repo, task="Repair addition.", requirements=REQUIREMENTS)
+    [first, *_] = got["assessment"]["scope"]["checks_run"]
+    for key in extra:
         assert first[key] == extra[key], key
 
 
