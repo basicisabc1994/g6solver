@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import dataclasses
+import hashlib
 import importlib.util
 import json
 import os
@@ -429,8 +430,13 @@ def test_a_digest_is_written_after_a_tick_and_one_a_day(tmp_path):
     _stopped_after(time, timedelta(days=2))
     assert runner.run() == 0
     days = {p.name for p in (runner.loop.root / "digests").iterdir()}
-    # one page a day and, since the consent merge, the digest it is read back against beside it (``digest.write``)
-    assert days == {f"{(start + timedelta(days=d)).date()}{kept}" for d in range(3) for kept in (".md", ".sha256")}
+    # each page is published with its completion receipt beside it (54ddcb9: digest.write through
+    # cloud_consent.write_retained): exactly one .md and its .sha256 a day, the receipt the sha256 of the page's bytes
+    pages = [f"{(start + timedelta(days=d)).date()}" for d in range(3)]
+    assert days == {f"{day}{suffix}" for day in pages for suffix in (".md", ".sha256")}
+    for day in pages:
+        page = runner.loop.root / "digests" / f"{day}.md"
+        assert page.with_suffix(".sha256").read_text(encoding="ascii") == hashlib.sha256(page.read_bytes()).hexdigest()
     first = digest_path(runner.loop.root, start.date()).read_text(encoding="utf-8")
     assert first.count("\n") < 60 and "1 adopted" in first and "Now at generation 1." in first
     assert "wrong_answer" in first and "held-out cases" in first

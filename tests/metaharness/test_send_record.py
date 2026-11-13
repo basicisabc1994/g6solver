@@ -1510,6 +1510,10 @@ NOTES = {
     ("grounding/judges/nli.py", "LocalNLICaller.complete"): "refused",
     ("agents/agent_claude/adapter.py", "ClaudeCodeRuntime.run"): "refused",
     ("agents/agent_codex/adapter.py", "CodexRuntime.run"): "refused",
+    # 8381ba1 (consent, design section 16): the note of an Anthropic SDK resource used directly, not inside an admitted
+    # AnthropicCaller call (``consent_callers.sdk_send``, reached from ``verification_proposer.RecordingClient``). The loop
+    # sends nothing through such a client: it is no caller kind the loop knows who pays for.
+    ("core/consent_callers.py", "sdk_send"): "refused",
 }
 
 
@@ -1517,6 +1521,7 @@ def _names_pair(function) -> bool:
     return {"system", "user"} <= {arg.arg for arg in (*function.args.args, *function.args.kwonlyargs)}
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_every_way_a_send_is_known_and_every_sender_the_loop_accepts_names_what_it_sent(monkeypatch, host_folders):
     """Built from the code. What a send is known by is found in one of three ways and nowhere else: what the innermost frame
     above its note names as a system and a user (``loop._named``, read as it is noted or resent, ``_sender``, and as it fails,
@@ -1530,6 +1535,7 @@ def test_every_way_a_send_is_known_and_every_sender_the_loop_accepts_names_what_
     from g6.agents.agent_codex.adapter import CodexRuntime
     from g6.grounding.judges.nli import LocalNLICaller
     from g6.harness.completion_loop import ToolSession
+    from g6.harness.verification_proposer import RecordingClient
 
     loop_tree, usage_tree = _source_tree(loop_module), _source_tree(usage)
     assert {where for where, _ in _callers(loop_tree, {"_request_digest"})} == set()
@@ -1555,12 +1561,13 @@ def test_every_way_a_send_is_known_and_every_sender_the_loop_accepts_names_what_
                         and any(ast.unparse(call.func) == f"self.{name}" for call in _calls_in(fn, name))]
             assert reaching and all(_names_pair(fn) for fn in reaching), qualified
     kinds = {"FakeLLM.complete": [FakeLLM()], "OllamaCaller._chat": [llm.OllamaCaller()],
-             "OpenAICompatibleCaller._chat": [llm.OpenAICompatibleCaller("m", base_url="http://model.invalid", api_key=None)],
+             "OpenAICompatibleCaller._chat": [llm.OpenAICompatibleCaller("m", base_url=UNUSED, api_key=None)],
              "AnthropicCaller._create": [llm.AnthropicCaller(client=object())],
              "_HostCaller.complete": [ClaudeCodeCaller(), CodexCaller(), usage.WatchedClaude(), usage.WatchedCodex()],
              "_note_launch": [ClaudeCodeCaller(), CodexCaller(), usage.WatchedClaude(), usage.WatchedCodex()],
              "ToolSession._launch": [ToolSession()], "LocalNLICaller.complete": [LocalNLICaller("weights")],
-             "ClaudeCodeRuntime.run": [ClaudeCodeRuntime()], "CodexRuntime.run": [CodexRuntime()]}
+             "ClaudeCodeRuntime.run": [ClaudeCodeRuntime()], "CodexRuntime.run": [CodexRuntime()],
+             "sdk_send": [RecordingClient(SimpleNamespace(messages=object()))]}
     assert set(kinds) == {qualified for (_, qualified), how in NOTES.items() if how is not None}
     accepted = []
     for (_, qualified), how in NOTES.items():

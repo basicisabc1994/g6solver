@@ -72,4 +72,7 @@ def test_retained_producers_and_handoffs_are_inventoried():
                        'improve.py:_stop_before': {'read_bytes'}, 'improve.py:_stop_entry_on_record': {'read_bytes'},
                        # G6's installed program text (its servers, skills and guidance), which holds no person's data.
                        'registrations.py:server_sources': {'read_text'}, 'registrations.py:guidance': {'read_text'},
-                       'registrations.py:inputs': {'read_text'}}
+                       'registrations.py:inputs': {'read_text'},
+                       # db20c4f (section 14): the names in G6's own package .py files under each component a routed
+                       # skill file names (paths from G6's own routing table), also G6's installed program text.
+                       'registrations.py:identifiers': {'read_text'}}

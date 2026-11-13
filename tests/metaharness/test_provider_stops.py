@@ -1462,12 +1462,16 @@ def test_ref2_the_request_path_keeps_no_per_send_state_but_each_sends_record():
     assert set(calls) == set()                                               # what it let out is the record's
     # the record's own containers, and its count of refusals kept and folders stopped, which is of no one send
     record = {"_RECORD.out[]", "_RECORD.taken[]", "_RECORD.books[]", "notes", "settled", "moved"}
+    # ``meter.refusal["code"]`` (at_a_refusal's finish): the consent code of a refusal, written into the tick's own
+    # ``refusal`` latch (a TICK_STATE name) just set on the line before it. A tick latch, not per-send state. Came with
+    # 8381ba1 (consent, design section 16; there ``self.refusal['code']``), carried here by the merge 3c3bd52.
+    latches = {"meter.refusal[]"}
     requests = loop_module._Requests
     for method in (requests.admit, requests.release, requests._release_locked, requests.at_a_refusal, requests.met_a_limit, requests.provider_said,
                    requests.take, requests.begin, requests.noted, requests.settle, requests.close, requests._reset,
                    requests._full):
         _, attributes, calls, rebinding = writes(source(method))
-        assert rebinding == [] and set(attributes) <= {*requests.TICK_STATE, *record}, (method.__name__, attributes)
+        assert rebinding == [] and set(attributes) <= {*requests.TICK_STATE, *record, *latches}, (method.__name__, attributes)
         assert set(calls) <= {"meter.refused.add", "meter.unknown.add", "_RECORD.out.setdefault", "_RECORD.out.setdefault(known, []).append",
                               "book.sends.append", "_RECORD.books.pop", "_RECORD.writing.add",
                               "_RECORD.writing.discard", "unknown.add"}, (method.__name__, calls)
