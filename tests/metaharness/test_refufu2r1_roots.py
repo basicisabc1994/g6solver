@@ -477,9 +477,15 @@ def test_an_unread_reply_after_launch_never_permits_a_resend(launch, monkeypatch
     assert len(launch) == 1 and not meter.in_flight and not usage._SENT
 
 
-def test_a_host_note_without_a_launch_record_never_authorizes_a_send(launch):
-    with pytest.raises(LLMError, match="G6_E_LOOP_UNWATCHED_HOST"):
-        usage.WatchedClaude().complete("system", "user")
+def test_a_host_note_without_a_launch_record_never_authorizes_a_send(launch, consented_provider_fakes):
+    """Changed on purpose (47e7a85, merged as 11abceb): outside every loop tick an owned launch with no gate passes the
+    sharing check alone, and consent decides it (tests/self_maintenance/test_host_launch_outside_tick.py pins that half,
+    granted and not). While a tick of this process is open, a launch with no launch record and no gate in its context
+    still authorizes nothing: it is refused before its program starts, and nothing is sent. Its inputs are granted, so
+    the refusal is the loop's own and not consent's."""
+    with usage.loop_tick():
+        with pytest.raises(LLMError, match="G6_E_LOOP_UNWATCHED_HOST"):
+            usage.WatchedClaude().complete("system", "user")
     assert launch == [] and not usage._SENT
 
 

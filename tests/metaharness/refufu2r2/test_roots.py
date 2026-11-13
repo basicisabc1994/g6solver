@@ -173,8 +173,19 @@ def test_cleanup_finishes_the_captured_gate_if_forgetting_raises(fake_host, monk
 
 
 @pytest.mark.parametrize("outcome", ["answer", "refusal", "unknown"])
-def test_session_launch_uses_captured_ownership(fake_host, monkeypatch, outcome):
+def test_session_launch_uses_captured_ownership(fake_host, review_dir, monkeypatch, outcome, consented_provider_fakes,
+                                                accepted_cloud_dialog):
+    """Changed on purpose (the consent merge into the 0.3 line): a session's launch step is driven through its run
+    (``ToolSession.run``), as a session launch step outside its run is refused by design
+    (test_consent_watched_hosts.py::test_a_session_launch_step_outside_its_run_sends_nothing). The run is given the
+    grants it declares: its inputs (``consented_provider_fakes``), its folder and its environment. What it checks is
+    unchanged: the reply folder cannot be reopened once launched, so the launch is released, refused or held by what it
+    captured at launch, never by reopening it."""
     from contextlib import contextmanager
+
+    from g6.core import cloud_consent as cloud
+    from g6.core.consent_callers import CallerWrapper
+    from g6.harness.completion_loop import ToolSession
 
     original = usage._open_input
     blocked = set()
@@ -196,20 +207,21 @@ def test_session_launch_uses_captured_ownership(fake_host, monkeypatch, outcome)
 
     monkeypatch.setattr(usage, "_open_input", open_input)
     monkeypatch.setattr(host_models, "_run", run)
-    host = usage.WatchedClaude()
+    for scope in (cloud.repository_source(review_dir), "agent_environment"):    # what a session's run sends
+        accepted_cloud_dialog(scope, "anthropic:claude_code", text="synthetic session request")
 
-    class Session:
+    class Session(CallerWrapper):     # a domain's own caller, delegating through G6's published wrapper contract
         def complete(self, system, user, **kwargs):
-            with host_models._folders() as (work, files), host._invocation():
-                argv, stdin = host._command("fake", system, user, work, files)
-                host._launch(argv, stdin, work, files, {}, 1)
+            self.inner.run(user, review_dir, review_dir, 1)
             return "answer"
 
+    session = ToolSession()
+    assert isinstance(session, usage._Watched), "usage's construction hook watches the session's launch"
     meter = loop._Requests()
     answers = []
     for _ in range(2):
         try:
-            answers.append(loop._Counted(Session(), meter).complete("s", "u"))
+            answers.append(loop._Counted(Session(session), meter).complete("s", "u"))
         except BaseException:
             pass
     assert not usage._SENT and not meter.in_flight

@@ -665,7 +665,11 @@ ROOTS = ('g6.workforce.repo_tests', 'g6.harness.patch_review', 'g6.harness.compl
          'g6.harness.verification_controller', 'g6.workforce.verify', 'g6.bundles.agent_change', 'g6.mcp.review_loop',
          'g6.mcp.mission', 'g6.metaharness.coding', 'g6.code.swe_diagnostics.block', 'g6.workforce.receipt_store',
          'g6.workforce.coding', 'g6.workforce.bench', 'g6.workforce.objective', 'g6.workforce.truth',
-         'g6.algorithm_design.autonomous', 'g6.coding_agent_gate.coding_agent_gate_block')
+         'g6.algorithm_design.autonomous', 'g6.coding_agent_gate.coding_agent_gate_block',
+         # importers added on the 0.3 line: a918fd4 (behaviour), f562c31 (confirmed_checks), e15d9ad (behaviour_runner,
+         # executable_scenario), 018b67b (workflow.adapters)
+         'g6.mcp.behaviour', 'g6.harness.confirmed_checks', 'g6.harness.behaviour_runner',
+         'g6.harness.executable_scenario', 'g6.harness.workflow.adapters')
 
 
 def crossings(roots=ROOTS, allowed: dict[str, str] | None = None) -> list[str]:
@@ -885,6 +889,14 @@ ALLOWED = {
     "g6.code.design_governance.graph: Edge(name, hit, path, node.lineno, lazy, guarded)": "an import's file, as data",
     "g6.code.design_governance.graph: path": ("build's refusal of a .py path that names no module: the check gives the graph "
                                               "only paths module_of accepts, so no name git listed reaches it"),
+    # read once g6.harness.workflow.adapters became a root (it imports the reader since 018b67b, section 17 S2)
+    "g6.harness.workflow.adapters: Event(project=self.project, task=self.task, run=self.run, event_id=event_id(self.run, "
+    "kind, native), kind=kind, at=at, provenance=provenance, sources=self.sources, baseline_sha256=self.baseline, "
+    "artifact_sha256=_hex(artifact), refs=tuple(refs), missing=tuple(missing), data={k: v for k, v in (data or "
+    "{}).items() if v is not None})": ("_Run.write: the walk follows ``self.sources`` by its attribute's name, which "
+                                        "Change.sources shares; here it is the run's (workflow_source(project),), the "
+                                        "project's consent source, and the reader is imported only for checked_repo, "
+                                        "a folder, so no name git listed reaches the event"),
 }
 
 

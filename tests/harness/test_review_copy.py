@@ -823,4 +823,8 @@ def test_the_reviewer_is_shown_text_through_one_decoder_and_one_masking_rule_alo
                      ("repo_tests", "_decoded", "decode"), ("repo_tests", "_listing", "decode"),
                      ("repo_tests", "diff_read", "decode"), ("repo_tests", "diff_read", "_decoded"),
                      ("repo_tests", "found", "_decoded"), ("repo_tests", "_where", "decode"),
-                     ("repo_tests", "_named_patch", "decode"), ("repo_tests", "_on_disk", "decode")}, found
+                     ("repo_tests", "_named_patch", "decode"), ("repo_tests", "_on_disk", "decode"),
+                     # 54ddcb9 (consent): ``read_report`` decodes a finished session's report.md, checked against the
+                     # digest in its state, for the MCP reply (``mcp/review_loop.py``) alone. It is read after the
+                     # review is done and handed to the caller, never shown to the reviewer.
+                     ("completion_loop", "read_report", "decode")}, found
