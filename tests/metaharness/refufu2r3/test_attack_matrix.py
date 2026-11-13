@@ -208,7 +208,7 @@ def test_death_during_refusal_keeping_is_preserved():
     assert not meter.in_flight
 
 
-def test_inventory_and_nested_counting(monkeypatch):
+def test_inventory_and_nested_counting(monkeypatch, consented_provider_fakes):
     from tests.metaharness import test_send_record as records
     from tests.metaharness import test_send_identity as identities
     from tests.metaharness import test_send_boundaries as boundaries
@@ -235,7 +235,7 @@ def test_guard_covers_each_final_method(name):
 
 
 @pytest.mark.parametrize("stop", [None, "refusal", "limit", "capacity"])
-def test_nested_host_facts_reach_outer_meter(review_host, monkeypatch, stop):
+def test_nested_host_facts_reach_outer_meter(review_host, monkeypatch, stop, consented_provider_fakes):
     from tests.metaharness import test_send_record as records
     records.test_ref4_5_a_nested_host_caller_on_another_meter_holds_to_the_outer_tick(monkeypatch, None, stop)
 

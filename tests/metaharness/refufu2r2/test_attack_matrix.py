@@ -161,7 +161,7 @@ def test_limits_keep_the_furthest_per_tick_and_replace_on_new_tick(review_dir):
     assert log.limits()["codex"] == now + timedelta(minutes=5)
 
 
-def test_nested_meters_and_retry_after_are_not_double_charged(monkeypatch):
+def test_nested_meters_and_retry_after_are_not_double_charged(monkeypatch, consented_provider_fakes):
     from tests.metaharness import test_send_record as inventory
     inventory.test_ref4_1_a_nested_calls_retry_after_resend_takes_one_place(monkeypatch)
     inventory.test_ref4_2_a_nested_call_does_not_charge_child_totals_twice()
