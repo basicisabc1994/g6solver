@@ -1,12 +1,14 @@
 """A ToolSession's second observation must retain the launch's identity."""
-from g6.core import host_models
+from g6.core import cloud_consent as cloud, host_models
+from g6.core.consent_callers import CallerWrapper
 from g6.core.llm import LLMError
 from g6.harness.completion_loop import ToolSession
 from g6.metaharness.loop import _Counted, _Requests
 from g6.self_maintenance import usage
 
 
-def test_session_reader_interruption_bars_the_actual_launch(review_host, monkeypatch):
+def test_session_reader_interruption_bars_the_actual_launch(review_host, monkeypatch, consented_provider_fakes,
+                                                            accepted_cloud_dialog):
     root, launches = review_host
     session = ToolSession()
     usage.read_stops(session)
@@ -26,12 +28,14 @@ def test_session_reader_interruption_bars_the_actual_launch(review_host, monkeyp
 
     monkeypatch.setattr(host_models, "_result", read)
 
-    class Caller:
+    class Caller(CallerWrapper):     # a domain's own caller, delegating through G6's published wrapper contract
         def complete(self, system, user, **kwargs):
-            return session.run(user, root, root, 1)
+            return self.inner.run(user, root, root, 1)
 
+    for scope in (cloud.repository_source(root), "agent_environment"):   # what a scout session's run sends
+        accepted_cloud_dialog(scope, "anthropic:claude_code", text="synthetic scout request")
     meter = _Requests()
-    caller = _Counted(Caller(), meter)
+    caller = _Counted(Caller(session), meter)
     errors = []
     for _ in range(2):
         try:

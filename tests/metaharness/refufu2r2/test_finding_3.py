@@ -12,7 +12,7 @@ from g6.self_maintenance import usage
 
 @pytest.mark.parametrize("host", [usage.WatchedClaude, usage.WatchedCodex])
 @pytest.mark.parametrize("outcome", ["answer", "refusal"])
-def test_cleanup_open_failure_still_releases_owned_send(fake_host, monkeypatch, host, outcome):
+def test_cleanup_open_failure_still_releases_owned_send(fake_host, monkeypatch, host, outcome, consented_provider_fakes):
     original_open = usage._open_input
     failed_folder = None
     mine = []

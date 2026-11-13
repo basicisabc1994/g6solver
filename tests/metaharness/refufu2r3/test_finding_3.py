@@ -7,7 +7,7 @@ from g6.metaharness.loop import _Counted, _Requests
 from g6.self_maintenance import usage
 
 
-def test_malformed_final_status_does_not_inherit_an_earlier_success(review_host, monkeypatch):
+def test_malformed_final_status_does_not_inherit_an_earlier_success(review_host, monkeypatch, consented_provider_fakes):
     _, launches = review_host
     last = {"type": "result", "is_error": None, "result": "unrecognized final result"}
     assert usage._classify_reply("claude", 0, json.dumps(last))[0] == "unknown"

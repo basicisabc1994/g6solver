@@ -267,7 +267,8 @@ def test_the_store_reader_gives_each_row_with_what_was_said_and_marks_only_a_hol
 # Claude Code out of turns ---------------------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("code", [0, 1])
-def test_a_claude_code_result_out_of_turns_with_its_error_stated_is_a_failed_case_and_no_hold(tmp_path, monkeypatch, code):
+def test_a_claude_code_result_out_of_turns_with_its_error_stated_is_a_failed_case_and_no_hold(tmp_path, monkeypatch, code,
+                                                                                              consented_provider_fakes):
     """The shape this repository's own stand-ins give Claude Code's result when ``--max-turns`` runs out: the subtype
     ``error_max_turns`` with ``is_error`` true and no text. It is a failed case, which may be sent again, and holds nothing.
     Whether a real Claude Code states ``is_error`` there is not settled by any code here."""

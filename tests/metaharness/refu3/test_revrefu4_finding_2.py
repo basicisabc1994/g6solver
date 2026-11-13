@@ -97,7 +97,8 @@ def test_control_a_refusal_claude_code_states_is_recorded_as_one(tmp_path, monke
     assert loop.log.cycles()[-1]["classifier_stop"]["said"].startswith(usage.MODEL_REFUSED)
 
 
-def test_control_a_result_with_no_status_is_never_an_answer_and_its_inputs_are_not_sent_again(tmp_path, monkeypatch):
+def test_control_a_result_with_no_status_is_never_an_answer_and_its_inputs_are_not_sent_again(tmp_path, monkeypatch,
+                                                                                            consented_provider_fakes):
     launches = _fake_host(tmp_path, monkeypatch, {"type": "result", "result": "answer"})
     assert usage._classify_reply("claude", 0, json.dumps({"type": "result", "result": "answer"}))[0] == "unknown"
     caller, answers = _Counted(usage.WatchedClaude(), _Requests()), []
@@ -118,7 +119,7 @@ def test_a_reply_of_unknown_outcome_is_not_recorded_as_a_classifiers_refusal(tmp
         f"code={reply['warning_card']['code']} reason={row.get('reason')!r}")
 
 
-def test_inputs_held_for_an_unknown_outcome_are_not_said_to_have_been_refused(tmp_path, monkeypatch):
+def test_inputs_held_for_an_unknown_outcome_are_not_said_to_have_been_refused(tmp_path, monkeypatch, consented_provider_fakes):
     _fake_host(tmp_path, monkeypatch, {"type": "result", "result": "answer"})
     caller = _Counted(usage.WatchedClaude(), _Requests())
     with pytest.raises(LLMError, match=usage.HOST_UNKNOWN):

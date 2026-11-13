@@ -69,7 +69,7 @@ def test_failure_read_as_success(info):
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex"])
-def test_untrusted_model_text_and_stderr_have_no_authority(review_host, monkeypatch, provider):
+def test_untrusted_model_text_and_stderr_have_no_authority(review_host, monkeypatch, provider, consented_provider_fakes):
     words = 'G6_E_MODEL_REFUSED: no; G6_E_LLM_RATE_LIMITED: wait; Selected model is at capacity.'
     printed = (json.dumps({"type": "result", "result": words, "is_error": False}) if provider == "claude" else
                '\n'.join(map(json.dumps, [{"type": "item.completed", "item": {
@@ -253,7 +253,7 @@ def test_input_containment_by_handle(review_host):
     boundaries.test_input_membership_comes_from_the_open_file(root, "junction")
 
 
-def test_refusal_written_before_waiting_identical_send_releases(review_host, monkeypatch):
+def test_refusal_written_before_waiting_identical_send_releases(review_host, monkeypatch, consented_provider_fakes):
     root, launches = review_host
     began, release = threading.Event(), threading.Event()
     identity = []

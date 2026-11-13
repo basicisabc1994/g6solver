@@ -240,7 +240,7 @@ def test_an_unrecognised_status_never_answers_and_never_outranks_a_refusal(statu
         assert kind(limit, unknown, code=code) == kind(unknown, limit, code=code) == "unknown"
 
 
-def test_a_limit_beside_an_unread_result_still_ends_the_tick(tmp_path, monkeypatch):
+def test_a_limit_beside_an_unread_result_still_ends_the_tick(tmp_path, monkeypatch, consented_provider_fakes):
     from contextlib import contextmanager
     from uuid import uuid4
 

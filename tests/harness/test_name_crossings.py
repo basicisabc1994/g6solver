@@ -21,6 +21,8 @@ from pathlib import Path
 import pytest
 
 from g6.context.redact import MASK, scrub, secret_spans
+from g6.core.consent_callers import CallerWrapper
+from g6.core.llm import FakeLLM
 from g6.harness import completion_loop as loop
 from g6.harness import patch_review
 from g6.workforce import repo_tests as rt
@@ -39,13 +41,16 @@ def git_bytes(repo, *args, data=None):
                           check=True, env=_GIT_ENV).stdout
 
 
-class Reviewer:
+class Reviewer(CallerWrapper):
+    """A recorded reviewer, answering through G6's own local test caller (``FakeLLM``) by the published wrapper contract,
+    so the consent guard knows it for the local process it is: nothing goes to a cloud recipient."""
     model = 'recorded-reviewer'
 
     def __init__(self):
+        super().__init__(FakeLLM(self.answer))
         self.sent = []
 
-    def complete(self, system, user):
+    def answer(self, system, user):
         self.sent.append(user)
         token = re.search(r'review [0-9a-f]{32}', user)[0]
         return f'READ: {token}\nRULE: none\nVERDICT: none\nWHY: none\n'

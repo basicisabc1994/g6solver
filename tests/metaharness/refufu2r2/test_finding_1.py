@@ -10,7 +10,7 @@ from g6.self_maintenance import usage
 
 
 @pytest.mark.parametrize("host", [usage.WatchedClaude, usage.WatchedCodex])
-def test_unreadable_deep_reply_cannot_be_sent_again(fake_host, monkeypatch, host):
+def test_unreadable_deep_reply_cannot_be_sent_again(fake_host, monkeypatch, host, consented_provider_fakes):
     launches = []
     depth = max(sys.getrecursionlimit() + 100, 20_000)
     printed = '{"type":"item.completed","item":' + '[' * depth + '0' + ']' * depth + '}\n'

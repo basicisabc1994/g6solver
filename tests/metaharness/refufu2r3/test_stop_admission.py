@@ -8,6 +8,7 @@ import threading
 
 import pytest
 
+from g6.core.consent_callers import CallerWrapper
 from g6.core.llm import FakeLLM, LLMError
 from g6.metaharness.loop import _Counted, _Refused, _Requests
 from g6.metaharness import loop
@@ -500,7 +501,7 @@ def test_a_call_ending_after_its_live_read_invalidates_the_pending_admission():
 
     backend = FakeLLM(answer)
 
-    class CopiesContext:
+    class CopiesContext(CallerWrapper):     # hands its requests to `backend`, by G6's published wrapper contract
         def complete(self, system, user, *, max_tokens=1024):
             first = backend.complete(system, user, max_tokens=max_tokens)
             call = loop._ACTIVE.get()[-1]
@@ -530,7 +531,7 @@ def test_a_call_ending_after_its_live_read_invalidates_the_pending_admission():
             assert ready.wait(5)
             return first
 
-    caller = CopiesContext()
+    caller = CopiesContext(backend)
     try:
         assert _Counted(caller, meter).complete("system", "first request") == "answer"
         returned.set()

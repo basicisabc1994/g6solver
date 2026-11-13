@@ -14,7 +14,7 @@ from g6.self_maintenance import usage
 
 
 @pytest.mark.parametrize('base,provider', [(usage.WatchedClaude, 'claude'), (usage.WatchedCodex, 'codex')])
-def test_a_watched_subclass_cannot_rewrite_an_admitted_send(monkeypatch, base, provider):
+def test_a_watched_subclass_cannot_rewrite_an_admitted_send(monkeypatch, base, provider, consented_provider_fakes):
     root = Path(__file__).resolve().parents[2] / '.review' / 'finding-2' / uuid4().hex
     root.mkdir(parents=True)
 

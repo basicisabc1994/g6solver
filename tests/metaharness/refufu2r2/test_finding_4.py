@@ -9,7 +9,7 @@ from g6.self_maintenance import usage
 
 
 @pytest.mark.parametrize("status", [429, 529])
-def test_claude_limit_then_another_error_still_interrupts_tick(fake_host, monkeypatch, status):
+def test_claude_limit_then_another_error_still_interrupts_tick(fake_host, monkeypatch, status, consented_provider_fakes):
     events = [
         {"type": "result", "is_error": True, "api_error_status": status, "result": "provider stop"},
         {"type": "result", "is_error": True, "result": "another failure, no completed answer"},
