@@ -117,7 +117,9 @@ def instrument(patch, callback):
     # Imported aliases otherwise retain the original function objects and hide
     # their internal reads from the inventory, despite a wrapped outer call.
     for name in FUNCTIONS[e]:
-        if getattr(improve, name, None) is originals.get((e, name)):
+        # only a function the module has (``originals`` holds no other): a listed name a later merge took away
+        # (``_unreadable``, folded into the one stop reading) has no alias to move, and asking the module for it raised
+        if (e, name) in originals and getattr(improve, name, None) is originals[(e, name)]:
             patch.setattr(improve, name, getattr(e, name))
     patch.setattr(improve, 'ask_to_stop', e.ask_to_stop_receipt)
     return inventory

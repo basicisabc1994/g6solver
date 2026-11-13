@@ -89,8 +89,10 @@ def asked(path: str | os.PathLike[str], *, follow: bool = False, absent: bool = 
 
 
 def linked(info: os.stat_result) -> bool:
-    """Whether an entry, as ``asked`` found it, is a link or a junction: what it points at is no part of its folder."""
-    return stat.S_ISLNK(info.st_mode) or getattr(info, "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT
+    """Whether an entry, as ``asked`` found it, is a link or a junction: what it points at is no part of its folder.
+    A junction is Windows's: ``stat`` names its tag there and on no other platform, where no entry is one."""
+    junction = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)
+    return stat.S_ISLNK(info.st_mode) or (junction is not None and getattr(info, "st_reparse_tag", 0) == junction)
 
 
 def same(first: os.stat_result, now: os.stat_result) -> bool:

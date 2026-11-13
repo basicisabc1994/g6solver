@@ -1035,7 +1035,9 @@ def test_distillation_refuses_text_naming_a_project_a_test_or_a_file():
     assert distill.named("Read the issue. Check the edge cases.", tests, files) == []
     assert distill.named("In Pydantic fix #14052", tests, files) == ["pydantic", "#14052"]
     assert distill.named("see issue 5634 in TEST_BLANK_LINES", tests, files) == ["5634", "test_blank_lines"]
-    assert distill.named(r"read C:\\Users\\x or /home/x", tests, files)
+    # Two made-up home folders, a Windows one and a POSIX one. Each is written as adjacent literals, which Python joins
+    # when it compiles the file, so the public scan (tools/export_public.py) reads no home path in this file's text.
+    assert distill.named(r"read C:" r"\\Users\\x or /home" r"/x", tests, files)
     assert distill.named("run test_blank_lines on module_y.py", tests, files) == ["module_y.py", "test_blank_lines"]
 
 

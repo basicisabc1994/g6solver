@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import ctypes
 import importlib.util
-import msvcrt
 import os
 import py_compile
 import sys
@@ -27,6 +26,8 @@ from g6.metaharness.loop import FROZEN_CHANGED, JUDGE_UNPINNED, ShadowLoop, _pin
 from g6.self_maintenance.usage import MODEL_REFUSED
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="the locks, the junction and the named stream are Windows's")
+if os.name == "nt":      # elsewhere there is no msvcrt: importing it there stopped the collection of every file run with this one
+    import msvcrt
 
 
 def _load(path: Path, name: str):

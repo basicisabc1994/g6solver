@@ -11,7 +11,7 @@ from fastmcp.exceptions import ToolError
 from g6.mcp import build_server, improve
 from g6.metaharness import runner
 from g6.self_maintenance.envelope import (
-    CYCLE_LOG, CycleLog, stop_standing, what_stops, stops_asked,
+    CYCLE_LOG, CycleLog, what_stops, stops_asked,
 )
 
 

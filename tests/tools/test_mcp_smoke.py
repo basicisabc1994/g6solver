@@ -61,3 +61,38 @@ def test_the_same_answers_come_over_a_real_stdio_server(tmp_path, cloud_smoke_di
                            "from g6.mcp import main; main()"], capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=300, cwd=tmp_path)
     assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_the_tool_run_alone_as_ci_runs_it_gets_the_same_answers(tmp_path):
+    """CI's mcp-smoke job runs the tool with nothing around it (``.github/workflows/ci.yml``). Since design section 16
+    (8381ba1) the server tells a client nothing until the person at a client it can name accepts its sharing dialog,
+    so the tool's own client is such a one: without it every describe and every op came back withheld."""
+    done = subprocess.run([sys.executable, str(TOOLS / "mcp_smoke.py"), "--server", sys.executable, "-P", "-c",
+                           "from g6.mcp import main; main()"], capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=300, cwd=tmp_path)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "0 problem(s) across 5 components and 22 operations" in done.stdout
+
+
+def test_the_tools_own_dialog_agrees_to_the_sharing_it_asked_for_and_to_nothing_else():
+    import asyncio
+    from dataclasses import dataclass
+
+    @dataclass
+    class Form:
+        value: str
+
+    def answer(message, form=Form):
+        return asyncio.run(mcp_smoke.accept_own_sharing(message, form, None, None))
+
+    rest = " This covers files, passages and anything derived from that source."
+    assert mcp_smoke.SHARED == ("component_catalogue", "component_data")
+    for source in mcp_smoke.SHARED:
+        assert answer(f"Share data from source {source} ({source}) with {mcp_smoke.PROVIDER}?{rest}").value
+    for other in (f"Share data from source repositories (repositories) with {mcp_smoke.PROVIDER}?{rest}",
+                  f"Share data from source component_data (component_data) with anthropic:api?{rest}",
+                  f"Share data from source component_data (jobs) with {mcp_smoke.PROVIDER}?{rest}",
+                  "Run the generated code on this machine?", ""):
+        assert answer(other).action == "decline", other
+    source = mcp_smoke.SHARED[0]            # and a question with no form to answer in is no sharing dialog of G6's
+    assert answer(f"Share data from source {source} ({source}) with {mcp_smoke.PROVIDER}?{rest}", None).action == "decline"

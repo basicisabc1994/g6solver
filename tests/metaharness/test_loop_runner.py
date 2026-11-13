@@ -429,7 +429,8 @@ def test_a_digest_is_written_after_a_tick_and_one_a_day(tmp_path):
     _stopped_after(time, timedelta(days=2))
     assert runner.run() == 0
     days = {p.name for p in (runner.loop.root / "digests").iterdir()}
-    assert days == {f"{(start + timedelta(days=d)).date()}.md" for d in range(3)}
+    # one page a day and, since the consent merge, the digest it is read back against beside it (``digest.write``)
+    assert days == {f"{(start + timedelta(days=d)).date()}{kept}" for d in range(3) for kept in (".md", ".sha256")}
     first = digest_path(runner.loop.root, start.date()).read_text(encoding="utf-8")
     assert first.count("\n") < 60 and "1 adopted" in first and "Now at generation 1." in first
     assert "wrong_answer" in first and "held-out cases" in first

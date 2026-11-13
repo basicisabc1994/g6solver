@@ -560,6 +560,18 @@ def test_a_link_is_never_gone_into_and_one_to_nothing_is_unreadable(tmp_path):
     assert loop_module._listing(root)["to_nothing"] == "a link"
 
 
+def test_an_entry_that_is_no_link_is_asked_where_the_platform_names_no_junction(tmp_path, monkeypatch):
+    """``stat.IO_REPARSE_TAG_MOUNT_POINT`` is Windows's alone: on Linux and macOS ``stat`` has no such name, and asking
+    there whether a file that is no link is one raised AttributeError, in every walk (first seen as CI's conformance job
+    on Linux, D9 on metaharness). Here the name is taken away, as it is there."""
+    root = _tree(tmp_path / "tree")
+    monkeypatch.delattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", raising=False)
+    assert not reading.linked(reading.asked(root / "keep.py")) and not reading.linked(reading.asked(root / "sub"))
+    assert reading.same(reading.asked(root / "keep.py"), reading.asked(root / "keep.py"))
+    names = {path.relative_to(root).as_posix() for path in reading.files_under(root)}
+    assert {"keep.py", "sub/inner.py"} <= names
+
+
 # Class 2: what a cycle met or made is read where it is kept, on every way out -------------------------------------------
 
 def _calls(function) -> list[str]:

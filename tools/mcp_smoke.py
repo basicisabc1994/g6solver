@@ -7,6 +7,12 @@ three states whose code is not ``G6_E_NO_BLOCK``; and it requires every sensitiv
 ``G6_E_SENSITIVE_COMPONENT_DENIED``, since the server it starts allows none. No model is called (``G6_DISABLE_LLM=1``)
 and no key is read: the server runs with a fresh, empty ``G6_HOME``.
 
+The server tells a client nothing until the person at a client it can name has accepted its sharing dialog for the
+source and that client (design section 16). So the smoke test is such a client: it connects under ``CLIENT``, asks
+with ``g6_cloud_grant`` to share the two sources in ``SHARED``, and answers those two dialogs itself
+(``accept_own_sharing``); it declines every other question. What it shares is the server's own catalogue and its
+components' replies to their skills' examples, from that empty ``G6_HOME``.
+
     python tools/mcp_smoke.py                                   # the g6-mcp script next to this Python
     python tools/mcp_smoke.py --server python -P -c "from g6.mcp import main; main()"
 
@@ -36,6 +42,11 @@ EXPECTED_OPS: dict[str, list[str]] = {
 }
 STATES = ("verified", "qualified-draft", "blocked-escalated")
 DENIED = "G6_E_SENSITIVE_COMPONENT_DENIED"
+#: The sources the smoke test reads: the catalogue (``g6_describe``) and the components' replies (``g6_invoke``).
+SHARED = ("component_catalogue", "component_data")
+#: The server names a client by its protocol name (``g6.mcp.cloud_consent.client_provider``) and knows Claude Code's and
+#: Codex's; any other is an unknown recipient, which nothing can be shared with. The smoke test connects under Codex's.
+CLIENT, PROVIDER = "codex", "openai:codex"
 _EXAMPLE = re.compile(r"^```g6-example op=([a-z_][a-z0-9_]*)[ \t]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
 
 Call = Callable[[str, str, str], dict]
@@ -126,16 +137,31 @@ def _default_server() -> list[str]:
     return [found]
 
 
-def run_over_stdio(command: list[str], *, client_info=None, elicitation_handler=None, sharing_sources=()) -> list[str]:
-    """``check`` against a real MCP server started over stdio with ``command``."""
+async def accept_own_sharing(message: str, response_type: Any, params: Any, context: Any) -> Any:
+    """The smoke test's answer in its own client dialog: a name to the question that shares one of ``SHARED`` with
+    ``PROVIDER``, which is the sharing it asked for, and a refusal of every other question."""
+    from fastmcp.client.elicitation import ElicitResult
+
+    asked = any(message.startswith(f"Share data from source {source} ({source}) with {PROVIDER}?") for source in SHARED)
+    if asked and response_type is not None:
+        return response_type(value="mcp-smoke")
+    return ElicitResult(action="decline")
+
+
+def run_over_stdio(command: list[str], *, client_info=None, elicitation_handler=None,
+                   sharing_sources=SHARED) -> list[str]:
+    """``check`` against a real MCP server started over stdio with ``command``, as the client the module's docstring
+    describes unless another client's name and dialog are given."""
     from fastmcp import Client
     from fastmcp.client.transports import StdioTransport
+    from mcp.types import Implementation
 
     home = tempfile.mkdtemp(prefix="g6-mcp-smoke-")
     env = {k: v for k, v in os.environ.items() if k not in ("G6_MCP_SENSITIVE", "G6_LLM_PROVIDER", "G6_LLM_MODEL")}
     env.update({"G6_DISABLE_LLM": "1", "G6_HOME": home})
     client = Client(StdioTransport(command=command[0], args=command[1:], env=env, cwd=home),
-                    client_info=client_info, elicitation_handler=elicitation_handler)
+                    client_info=client_info or Implementation(name=CLIENT, version="mcp-smoke"),
+                    elicitation_handler=elicitation_handler or accept_own_sharing)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -143,7 +169,7 @@ def run_over_stdio(command: list[str], *, client_info=None, elicitation_handler=
         try:
             for source in sharing_sources:
                 granted = _payload(loop.run_until_complete(client.call_tool('g6_cloud_grant',
-                    {'source': source, 'provider': 'openai:codex'})))
+                    {'source': source, 'provider': PROVIDER})))
                 if not granted.get('ok'):
                     return ['The client dialog did not grant the smoke test source.']
             def call(component: str, op: str, params: str) -> dict:
