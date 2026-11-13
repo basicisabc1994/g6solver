@@ -19,7 +19,8 @@ launch = test_refufu2r1_roots.launch
 
 @pytest.mark.parametrize("base", [usage.WatchedClaude, usage.WatchedCodex])
 @pytest.mark.parametrize("printed", ["", '{"type":"thread.started"}\n', '{"type":"turn.started"}\n'])
-def test_a_whole_failed_run_without_a_refusal_can_be_sent_again(launch, monkeypatch, base, printed):
+def test_a_whole_failed_run_without_a_refusal_can_be_sent_again(launch, monkeypatch, base, printed,
+                                                                consented_provider_fakes):
     def run(argv, stdin, *args):
         launch.append(stdin)
         return 1, printed, "untrusted error text"
@@ -38,7 +39,8 @@ def test_a_whole_failed_run_without_a_refusal_can_be_sent_again(launch, monkeypa
 @pytest.mark.parametrize("printed", ["not json", '{"type":', '[]',
                                      '{"type":"turn.completed"}\n{bad',
                                      '{"type":"result","result":"answer"}\n{bad'])
-def test_an_unparseable_stream_is_unknown_even_after_a_failed_exit(launch, monkeypatch, base, code, printed):
+def test_an_unparseable_stream_is_unknown_even_after_a_failed_exit(launch, monkeypatch, base, code, printed,
+                                                                   consented_provider_fakes):
     def run(argv, stdin, cwd, files, *args):
         launch.append(stdin)
         (files / "last_message.txt").write_text("answer", encoding="utf-8")
@@ -54,7 +56,7 @@ def test_an_unparseable_stream_is_unknown_even_after_a_failed_exit(launch, monke
 
 
 @pytest.mark.parametrize("base", [usage.WatchedClaude, usage.WatchedCodex])
-def test_a_read_refusal_wins_over_a_bad_tail_and_a_failed_exit(launch, monkeypatch, base):
+def test_a_read_refusal_wins_over_a_bad_tail_and_a_failed_exit(launch, monkeypatch, base, consented_provider_fakes):
     refusal = ({"type": "result", "is_error": True, "stop_reason": "refusal"}
                if base is usage.WatchedClaude else {"type": "error", "codex_error_info": "cyber_policy"})
 
@@ -71,17 +73,18 @@ def test_a_read_refusal_wins_over_a_bad_tail_and_a_failed_exit(launch, monkeypat
     assert not meter.in_flight and not usage._SENT
 
 
-def test_the_original_sender_assertion_with_fake_launch_folders(launch, monkeypatch):
+def test_the_original_sender_assertion_with_fake_launch_folders(launch, monkeypatch, consented_provider_fakes):
     test_loop_review.test_the_sender_of_a_request_is_read_at_the_request_for_each_kind_of_caller(monkeypatch)
 
 
-def test_the_original_pending_send_assertion_with_fake_launch_folders(launch, monkeypatch):
+def test_the_original_pending_send_assertion_with_fake_launch_folders(launch, monkeypatch, consented_provider_fakes):
     test_provider_stops.test_ref2_4_no_number_of_failed_sends_evicts_a_pending_sends_record(monkeypatch)
 
 
 @pytest.mark.parametrize("words", [usage.MODEL_REFUSED + ": policy", "G6_E_LLM_RATE_LIMITED: wait",
                                   usage.AT_CAPACITY + ": wait"])
-def test_model_and_stderr_words_have_no_stop_authority_in_a_whole_reply(launch, monkeypatch, words):
+def test_model_and_stderr_words_have_no_stop_authority_in_a_whole_reply(launch, monkeypatch, words,
+                                                                        consented_provider_fakes):
     def run(argv, stdin, cwd, files, *args):
         launch.append(stdin)
         (files / "last_message.txt").write_text("answer", encoding="utf-8")

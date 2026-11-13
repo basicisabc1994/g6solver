@@ -184,7 +184,8 @@ def test_final_observation_options_are_checked_after_hooks(launch, base, option,
 @pytest.mark.parametrize("printed", ["", "policy refusal", "{malformed", '{"type":"item.completed","item":{"text":"hi"}}',
                                      '{"type":"result","is_error":"false","result":"hi"}'])
 @pytest.mark.parametrize("base", [usage.WatchedClaude, usage.WatchedCodex])
-def test_unknown_reply_never_permits_identical_bytes_again(launch, monkeypatch, base, printed):
+def test_unknown_reply_never_permits_identical_bytes_again(launch, monkeypatch, base, printed,
+                                                           consented_provider_fakes):
     def unknown(argv, stdin, cwd, files, *rest):
         launch.append(stdin)
         (files / "last_message.txt").write_text("unclassified", encoding="utf-8")
@@ -342,7 +343,7 @@ def test_reply_folder_records_share_identity_across_spellings(tmp_path):
     assert not usage._SENT
 
 
-def test_unknown_is_durable_before_a_new_meter_can_send(launch, tmp_path, monkeypatch):
+def test_unknown_is_durable_before_a_new_meter_can_send(launch, tmp_path, monkeypatch, consented_provider_fakes):
     from g6.self_maintenance.envelope import note_refusal, refused_requests
     root = tmp_path / "state"
     root.mkdir()
@@ -460,7 +461,7 @@ def test_repeated_admission_of_one_launch_is_idempotent():
 
 @pytest.mark.parametrize("failure", [TimeoutError("deadline"), LLMError("transport ended"),
                                      KeyboardInterrupt("stop"), SystemExit("end")])
-def test_an_unread_reply_after_launch_never_permits_a_resend(launch, monkeypatch, failure):
+def test_an_unread_reply_after_launch_never_permits_a_resend(launch, monkeypatch, failure, consented_provider_fakes):
     def no_reply(argv, stdin, *args):
         launch.append(stdin)
         raise failure
@@ -483,7 +484,8 @@ def test_a_host_note_without_a_launch_record_never_authorizes_a_send(launch):
 
 
 @pytest.mark.parametrize("death", [KeyboardInterrupt, SystemExit, ValueError])
-def test_unknown_is_kept_before_record_release_even_when_interrupted(launch, monkeypatch, death):
+def test_unknown_is_kept_before_record_release_even_when_interrupted(launch, monkeypatch, death,
+                                                                     consented_provider_fakes):
     meter = loop._Requests()
     original = meter.release
 

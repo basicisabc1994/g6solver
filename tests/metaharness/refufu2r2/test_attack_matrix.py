@@ -7,8 +7,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from g6.core import host_models
+from g6.core.consent_callers import CallerWrapper
 from g6.core.llm import FakeLLM, LLMError
-from g6.core.model_calls import note_model_call
 from g6.metaharness import loop
 from g6.self_maintenance import usage
 from g6.self_maintenance.envelope import CycleLog, note_refusal, refused_requests
@@ -69,7 +69,7 @@ def test_refusal_wins_completion_and_limit_only_yields_to_completion():
 
 @pytest.mark.parametrize("words", [usage.MODEL_REFUSED + ": no", usage.AT_CAPACITY + ": wait",
                                   "G6_E_LLM_RATE_LIMITED: wait"])
-def test_model_text_and_stderr_cannot_decide_a_stop(fake_host, monkeypatch, words):
+def test_model_text_and_stderr_cannot_decide_a_stop(fake_host, monkeypatch, words, consented_provider_fakes):
     def run(argv, stdin, cwd, files, *args):
         (files / "last_message.txt").write_text(words, encoding="utf-8")
         events = [{"type": "item.completed", "item": {"type": "agent_message", "text": words}},
@@ -137,9 +137,11 @@ def test_refusal_is_durable_and_store_is_reread(review_dir):
         meter.take(identity=request)
     seen = []
 
-    class Refuses:
-        def complete(self, system, user, **kwargs):
-            note_model_call()
+    class Refuses(CallerWrapper):     # hands each request to G6's local test caller, by the published wrapper contract
+        def __init__(self):
+            super().__init__(FakeLLM(self.refuse))
+
+        def refuse(self, system, user):     # FakeLLM notes the model call before it asks this
             seen.append(user)
             raise LLMError(usage.MODEL_REFUSED + ": policy")
 

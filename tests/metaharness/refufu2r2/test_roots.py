@@ -60,7 +60,8 @@ def test_json_reader_is_total_for_each_exception(monkeypatch, exception):
 @pytest.mark.parametrize("host", HOSTS)
 @pytest.mark.parametrize("exception", FAILURES)
 @pytest.mark.parametrize("reader", ["transport", "events", "facts", "answer"])
-def test_every_reply_reader_failure_holds_before_release(fake_host, monkeypatch, host, exception, reader):
+def test_every_reply_reader_failure_holds_before_release(fake_host, monkeypatch, host, exception, reader,
+                                                         consented_provider_fakes):
     provider = "claude" if host is usage.WatchedClaude else "codex"
     launches = []
 

@@ -7,7 +7,7 @@ from g6.metaharness import loop
 from g6.self_maintenance import usage
 
 
-def test_codex_without_a_codex_terminal_event_stays_unknown(fake_host, monkeypatch):
+def test_codex_without_a_codex_terminal_event_stays_unknown(fake_host, monkeypatch, consented_provider_fakes):
     launches = []
     printed = json.dumps({"type": "result", "is_error": False, "result": "foreign result envelope"})
 

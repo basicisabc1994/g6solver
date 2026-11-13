@@ -18,7 +18,9 @@ from pathlib import Path
 import pytest
 
 from g6.context.redact import MASK, scrub
+from g6.core.consent_callers import CallerWrapper
 from g6.core.ledger import digest
+from g6.core.llm import FakeLLM
 from g6.harness import completion_hook, completion_loop as loop
 from g6.harness import verification_proposer as proposer
 from g6.mcp import review_loop
@@ -36,14 +38,17 @@ def rig(source_rig):  # noqa: F811 - the fixture it builds on
     return source_rig
 
 
-class Recorded:
-    """A reviewer that finds nothing, and keeps what it was sent."""
+class Recorded(CallerWrapper):
+    """A reviewer that finds nothing, and keeps what it was sent. It answers through G6's own local test caller
+    (``FakeLLM``), handed on by the published wrapper contract, so the consent guard knows it for the local process it
+    is: nothing goes to a cloud recipient, and no grant is asked for."""
     model = "recorded-reviewer"
 
     def __init__(self):
+        super().__init__(FakeLLM(self.answer))
         self.sent = []
 
-    def complete(self, system, user):
+    def answer(self, system, user):
         self.sent.append(user)
         token = re.search(r"review [0-9a-f]{32}", user)[0]
         return f"READ: {token}\nRULE: no defect\nVERDICT: none\nWHY: no defect\n"
@@ -341,7 +346,10 @@ def test_a_base_that_cannot_be_read_asks_no_reviewer(tmp_path, monkeypatch):
     assert not reviewer.sent
 
 
-def test_a_round_is_known_by_its_read_and_its_reviewer_reads_the_copy_made_from_that_read(rig, monkeypatch):
+def test_a_round_is_known_by_its_read_and_its_reviewer_reads_the_copy_made_from_that_read(rig, monkeypatch,
+                                                                                            accepted_cloud_dialog):
+    from g6.core.cloud_consent import input_source
+    accepted_cloud_dialog(input_source("Keep value one"), "openai:api", text="Keep value one")   # this round's task
     rendering = b"diff --git a/mod.py b/mod.py\nindex 0000000..1111111 100644\n--- a/mod.py\n+++ b/mod.py\n@@ -1 +1 @@\n" \
                 b"-value = 0\n+value = 1\n"
     listed = listing({"mod.py": "value = 0\n"}, {"mod.py": "value = 1\n"}) + b"\0"

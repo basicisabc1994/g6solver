@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from g6.core import host_models
+from g6.core import cloud_consent as cloud, host_models
+from g6.core.consent_callers import CallerWrapper
 from g6.core.llm import LLMError
 from g6.harness.completion_loop import ToolSession
 from g6.metaharness import loop
@@ -78,7 +79,8 @@ def test_text_that_mentions_a_refusal_is_an_answer_only_under_a_stated_status():
     ("session", "native"),
 ])
 @pytest.mark.parametrize("death", DEATHS)
-def test_every_reply_reader_bars_the_captured_admission(review_host, monkeypatch, host, reader, death):
+def test_every_reply_reader_bars_the_captured_admission(review_host, monkeypatch, host, reader, death,
+                                                        consented_provider_fakes, accepted_cloud_dialog):
     root, launches = review_host
     provider = "claude" if host == "session" else host
     admitted = []
@@ -116,10 +118,12 @@ def test_every_reply_reader_bars_the_captured_admission(review_host, monkeypatch
         session = ToolSession()
         usage.read_stops(session)
 
-        class Caller:
+        class Caller(CallerWrapper):     # a domain's own caller, delegating through G6's published wrapper contract
             def complete(self, system, user, **kwargs):
-                return session.run(user, root, root, 1)
-        caller = Caller()
+                return self.inner.run(user, root, root, 1)
+        for scope in (cloud.repository_source(root), "agent_environment"):   # what a scout session's run sends
+            accepted_cloud_dialog(scope, "anthropic:claude_code", text="synthetic scout request")
+        caller = Caller(session)
     else:
         caller = usage.WatchedClaude() if host == "claude" else usage.WatchedCodex()
     for _ in range(2):
