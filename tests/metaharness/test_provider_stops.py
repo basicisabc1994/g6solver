@@ -1008,7 +1008,8 @@ def test_ref1_every_way_a_request_can_leave_passes_the_one_check():
     assert callers(loop_module, {"admit", "take", "sending"}) == {
         ("_Requests.take", "admit"), ("_Gate.sending", "admit"), ("_Requests.begin", "admit"),
         ("_Counted.complete.resend", "take"), ("_Counted.complete.next_request", "take"),
-        ("_Counted.complete.next_request", "admit"), ("_Resends.append", "take")}
+        ("_Counted.complete.next_request", "admit"), ("_Resends.append", "take"),
+        ("_Resends.woke", "take")}     # 0.3.0 issuance window: a resend back from its wait is checked again by the same gate
     assert callers(loop_module, {"begin"}) == {("_call_scope", "begin")}
     assert callers(usage, {"sending", "_sending"}) == {
         ("_sending", "sending"), ("_complete_host", "_sending"), ("WatchedClaude._launch", "_sending")}

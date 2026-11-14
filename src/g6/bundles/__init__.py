@@ -41,8 +41,10 @@ class BundleResult:
     def to_dict(self, *, request_id: str = "", run_id: str = "") -> dict[str, Any]:
         """The result inside the library envelope; anything short of ``verified`` carries a warning card. The bundle's
         own ``verified`` goes through the door rule (``g6.core.door``): G6 does not re-run a bundle's checks, so it is
-        held at ``qualified-draft`` with a ``G6_E_PROMOTION_LAW`` card and ``claimed_completion_state``."""
-        from g6.core.door import door_envelope, held_copy
+        held at ``qualified-draft`` with a ``G6_E_PROMOTION_LAW`` card and ``claimed_completion_state``. Rows the
+        door's copy does not read (``g6.core.door.AnswerNotRead``) are not shown: the result is then
+        ``blocked-escalated`` with the door's ``G6_E_RESOURCE_LIMIT`` card, its summary says why, and it has no rows."""
+        from g6.core.door import AnswerNotRead, blocked_reply, door_envelope, held_copy
         from g6.core.reliability_envelope import warning_card
 
         envelope = door_envelope(self.completion_state, who="this bundle", request_id=request_id, run_id=run_id)
@@ -51,8 +53,14 @@ class BundleResult:
                                  else "G6_E_QUALIFIED_DRAFT")
             envelope["warning_card"] = warning_card(code, self.summary)
         # A row's label is the bundle's own word too: G6 re-runs no row, so none reads as verified on the page.
-        rows = held_copy(self.rows, envelope["completion_state"] if envelope["completion_state"] != VERIFIED
-                         else QUALIFIED_DRAFT)
+        try:
+            rows = held_copy(self.rows, envelope["completion_state"] if envelope["completion_state"] != VERIFIED
+                             else QUALIFIED_DRAFT)
+        except AnswerNotRead as exc:
+            card = blocked_reply(str(AnswerNotRead("this bundle", exc.why)))["warning_card"]
+            envelope = door_envelope(BLOCKED_ESCALATED, who="this bundle", warning_card=card, request_id=request_id,
+                                     run_id=run_id)
+            return {**envelope, "summary": card["message"], "rows": [], "notes": self.notes}
         return {**envelope, "summary": self.summary, "rows": rows, "notes": self.notes}
 
 

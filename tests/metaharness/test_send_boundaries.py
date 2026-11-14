@@ -168,6 +168,7 @@ def test_send_path_inventory_has_no_unclassified_dispatch_or_acquisition():
         (loop.__name__, "_Requests.begin", "admit"),
         (loop.__name__, "_Gate.sending", "admit"),
         (loop.__name__, "_Resends.append", "take"),
+        (loop.__name__, "_Resends.woke", "take"),   # a resend back from its wait: checked again, on the place it took
         (loop.__name__, "_call_scope", "begin"),
         (loop.__name__, "_Counted.complete.next_request", "take"),
         (loop.__name__, "_Counted.complete.next_request", "admit"),

@@ -33,6 +33,49 @@ _NOT_COMPONENTS = frozenset({"core", "harness", "mcp", "cli", "bundles", "resear
 #: The extension families (DECISIONS #37). Each is a package under `g6` that declares `__g6_family__ = "<its name>"`.
 FAMILIES = frozenset({"media", "ml", "agents", "knowledge", "memory", "sources", "deploy", "workspace", "code",
                       "embodied", "cogarch", "provers", "domains", "jobs", "integrations"})
+#: The visit budget for the outer mapping of an op's parameters, the cognitive bridge's own (its ``snapshot.MAX_ITEMS``;
+#: a test keeps the two equal): the mapping is one visit, and each key and each value one more.
+OUTER_VISITS = 100_000
+
+
+class OuterBudgetExceeded(ValueError):
+    """An op's parameters hold more entries than the visit budget (``OUTER_VISITS``) lets the registry read."""
+
+    def __init__(self) -> None:
+        super().__init__(f"the op's parameters hold more entries than G6 reads: a key and its value are one visit "
+                         f"each, and the visit budget is {OUTER_VISITS}")
+
+
+def outer_copy(params: Any) -> dict[Any, Any]:
+    """A new ``dict`` of the entries of ``params``, the outer mapping of an op's parameters, read as ``{**params}``
+    and ``dict(params)`` read one, within the visit budget (review-pr8fu3r4, finding 2).
+
+    A ``dict``, or a subclass that keeps ``dict``'s own iteration, is read from its own storage: its length is read
+    first, and past the budget nothing is copied. Any other mapping is read by ``keys()`` and a lookup for each key,
+    as unpacking reads it, but its keys are streamed and counted, never listed first: the read stops at the first key
+    past the budget, before that key's value is looked up (``OuterBudgetExceeded``). What is not a mapping is a
+    ``TypeError``, as unpacking it is."""
+    kind = type(params)
+    bases = type.__dict__["__mro__"].__get__(kind)
+    # read from each class's own namespace, as the bridge's boundary reads it: no attribute lookup a class can answer
+    iteration = next((member for base in bases for name, member in type.__dict__["__dict__"].__get__(base).items()
+                      if type(name) is str and name == "__iter__"), None)
+    if any(base is dict for base in bases) and iteration is dict.__iter__:
+        if 1 + 2 * dict.__len__(params) > OUTER_VISITS:
+            raise OuterBudgetExceeded
+        return {**params}
+    try:
+        keys = params.keys
+    except AttributeError:
+        raise TypeError(f"'{kind.__name__}' object is not a mapping") from None
+    copied: dict[Any, Any] = {}
+    visits = 1
+    for key in keys():
+        visits += 2
+        if visits > OUTER_VISITS:
+            raise OuterBudgetExceeded
+        copied[key] = params[key]
+    return copied
 
 
 @dataclass(frozen=True)
@@ -156,6 +199,10 @@ class ComponentRegistry:
         on to typed validation exactly as without the hook; a ``Result`` ends the call, mapped as ``infer``'s result
         is. The hook never feeds ``infer``: raw input still reaches it only through typed validation. A hook that
         raises, or answers with anything but a ``Result`` or ``None``, refuses the call (``G6_E_SCREEN_RAW_FAILED``).
+
+        The outer mapping of ``params`` is read within the visit budget (:func:`outer_copy`), each time it is read:
+        parameters with more entries than the budget are refused (``G6_E_INPUT_VALIDATION``) before the hook or
+        typed validation sees any of them.
         """
         from returns.result import Failure, Success
 
@@ -176,7 +223,9 @@ class ComponentRegistry:
         screen = getattr(block, "screen_raw", None)
         if callable(screen):
             try:
-                early = screen({**(params or {}), "op": op})
+                early = screen({**outer_copy(params or {}), "op": op})
+            except OuterBudgetExceeded as exc:
+                return Failure(f"[G6_E_INPUT_VALIDATION] {code} {op}: {exc}")
             except Exception as exc:  # noqa: BLE001 - a raw screen that breaks refuses the call; it never falls through
                 return Failure(f"[{SCREEN_RAW_FAILED}] {name}.{op}: its raw screen raised {type(exc).__name__}; "
                                "the call is refused")
@@ -185,7 +234,11 @@ class ComponentRegistry:
                     return Failure(f"[{SCREEN_RAW_FAILED}] {name}.{op}: its raw screen answered "
                                    f"{type(early).__name__}, not a Result; the call is refused")
                 return Failure(str(early.error)) if early.is_fail() else Success(early.value)
-        data, err = build_typed_input(block, {**(params or {}), "op": op}, code=code, op=op)
+        try:
+            raw = {**outer_copy(params or {}), "op": op}
+        except OuterBudgetExceeded as exc:
+            return Failure(f"[G6_E_INPUT_VALIDATION] {code} {op}: {exc}")
+        data, err = build_typed_input(block, raw, code=code, op=op)
         if err is not None:
             # the stable code first, so every surface reads the same G6_E_* (CAG-010); the component's own code follows
             return Failure(f"[G6_E_INPUT_VALIDATION] {err}")

@@ -499,8 +499,10 @@ def test_every_place_a_request_can_leave_reaches_the_one_admission():
     assert {(qualified, name) for qualified, name in _callers(loop_tree, {"admit"})} == {
         ("_Requests.take", "admit"), ("_Requests.begin", "admit"), ("_Gate.sending", "admit"),
         ("_Counted.complete.next_request", "admit")}
+    # ``_Resends.woke``: since the 0.3.0 issuance window ``g6.core.llm`` tells the record again once a wait is over, and the
+    # same gate (``resend``) checks the resend again on the place it took before the wait
     assert {qualified for qualified, _ in _callers(loop_tree, {"take"})} == {
-        "_Counted.complete.next_request", "_Counted.complete.resend", "_Resends.append"}
+        "_Counted.complete.next_request", "_Counted.complete.resend", "_Resends.append", "_Resends.woke"}
 
 
 def _nodes(tree):

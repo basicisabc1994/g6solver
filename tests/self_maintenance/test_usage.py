@@ -142,12 +142,13 @@ def test_a_claude_failure_ahead_of_a_codex_failure_lends_its_prefix_to_nothing_t
     assert limit_ends(f"every caller failed: first: {claude}; second: {_codex(prose)}", NOW) is None
 
 
-def test_a_claude_code_limit_printed_early_is_lost_with_the_text_the_caller_cuts_and_reads_as_a_failure():
-    """The limit of this: the caller keeps the last 300 characters, and its file is bound. A later Claude Code that prints
-    the error ahead of a long usage record reads as failed cases."""
+def test_a_claude_code_limit_printed_early_is_read_though_the_caller_cuts_the_text_it_was_printed_in():
+    """This was the limit of the reader until the 0.3.0 issuance window (review l4b finding 3): the caller keeps the last
+    300 characters, so a Claude Code that prints the error ahead of a long usage record read as failed cases. The caller
+    now says an error result's own status fields whole, ahead of those characters, so the limit is read."""
     printed = json.dumps({"type": "result", "is_error": True, "api_error_status": 429, "result": "You've hit your limit",
                           "usage": {f"counter_{i}": 0 for i in range(40)}, "uuid": "1" * 36})
-    assert limit_ends(_claude(printed), NOW) is None
+    assert limit_ends(_claude(printed), NOW) is not None
 
 
 @pytest.mark.parametrize("errors", ["ERROR: You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro).",
