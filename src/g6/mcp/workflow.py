@@ -53,11 +53,17 @@ SCOPE_WORDS = {"run": "one run of a task", "task": "everything recorded for one 
 
 # -- observing G6's own calls -----------------------------------------------------------------------------------
 def _noted(reply: Any, note: str) -> Any:
-    """``reply`` with one ``workflow`` note when the record could not be written; its sources kept as they were."""
+    """``reply`` with one ``workflow`` note when the record could not be written; its sources kept as they were. The
+    reply is serialised once, that serialisation is what its receipt is matched against, and the note goes on a detached
+    copy of it: a live reply's receipt is never checked. A reply that cannot be serialised goes on as it was, unnoted."""
     if not note or not isinstance(reply, dict):
         return reply
-    refs, metadata = cloud.output_sources(reply), cloud.output_metadata(reply)
-    noted = {**reply, "workflow": {**(reply.get("workflow") or {}), "note": note}}
+    try:
+        body, refs, metadata = cloud.freeze_output(reply)
+    except (TypeError, ValueError):
+        return reply
+    noted = json.loads(body)
+    noted["workflow"] = {**(noted.get("workflow") or {}), "note": note}
     return cloud.bind_output(noted, refs, metadata=metadata) if refs is not None else noted
 
 
@@ -70,15 +76,15 @@ def _provider() -> str | None:
 def attach(reply: Any, built: Any, where: tuple[str, ...], project: str) -> Any:
     """``reply`` with the view: the block after the report at ``where``, and the ``workflow`` field. The report's own
     text is untouched and comes first. The reply keeps its sources; when the view holds workflow data, the project's
-    workflow source is added, so a later return to a provider without that grant is withheld."""
+    workflow source is added, so a later return to a provider without that grant is withheld. As in ``_noted``, the view
+    goes on a detached copy of the one serialisation the reply's receipt was matched against."""
     if not built or not isinstance(reply, dict):
         return reply
-    refs, metadata = cloud.output_sources(reply), cloud.output_metadata(reply)
-    shown = holder = dict(reply)
+    body, refs, metadata = cloud.freeze_output(reply)
+    shown = holder = json.loads(body)
     for key in where[:-1]:
         if not isinstance(holder.get(key), dict):
             return reply
-        holder[key] = dict(holder[key])
         holder = holder[key]
     if not isinstance(holder.get(where[-1]), str):
         return reply

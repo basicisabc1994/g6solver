@@ -121,6 +121,22 @@ def test_a_refused_review_gets_no_view_and_stays_as_it_was(repo):
         assert tools.finishing(lambda reply, job_id: reply, str(repo), TASK_TEXT)(refusal, "job-1") is refusal
 
 
+def test_the_note_and_the_view_go_on_a_detached_copy_of_the_reply_that_was_checked(repo):
+    """Section 16, root A: a reply's receipt is matched against one serialisation of it, and what the workflow adds goes
+    on a detached copy of that serialisation, so nothing the live reply becomes afterwards goes out under its sources."""
+    with cloud.collect_sources():
+        reply = cloud.bind_output({"assessment": {"report": REPORT}, "evidence": [{"id": "E1"}], "job_id": "j"},
+                                  (cloud.Source.text("fixture:review", "x", "y"),), metadata={"k": 1})
+        noted = tools._noted(reply, "a note")
+        shown = tools.attach(reply, {"level": "narrow", "withheld": True}, ("assessment", "report"), "p" * 64)
+        reply["assessment"]["report"] = reply["evidence"][0]["id"] = "CHANGED AFTER THE CHECK"
+        assert noted["assessment"]["report"] == REPORT and noted["workflow"] == {"note": "a note"}
+        assert shown["assessment"]["report"] == REPORT + "\n\n" + view.WITHHELD
+        assert "CHANGED" not in json.dumps([noted, shown])
+        assert _sources(noted) == _sources(shown) == {"fixture:review"}
+        assert cloud.output_metadata(noted) == cloud.output_metadata(shown) == {"k": 1}
+
+
 def test_a_loop_step_that_stops_shows_its_report_then_the_block(repo):
     _grant(repo, "openai:codex")
     folder = completion_hook.folder("mcp:session-1")
