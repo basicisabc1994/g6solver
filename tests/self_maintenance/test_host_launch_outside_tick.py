@@ -12,6 +12,7 @@ refused, and a stop or a refusal latch the loop reads still keeps a launch in. T
 """
 from __future__ import annotations
 
+import contextvars
 import importlib.util
 import json
 import sys
@@ -130,7 +131,9 @@ def _escape(said: list) -> None:
             said.append(None)
 
     worker = threading.Thread(target=send)
-    worker.start()
+    # started from an empty context: since the 0.3.0 issuance window a thread started in a metered call's own context is
+    # carried into it (``model_calls.counting``), and so has the tick's gate
+    contextvars.Context().run(worker.start)
     worker.join(60)
 
 

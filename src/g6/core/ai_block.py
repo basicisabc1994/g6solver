@@ -211,14 +211,24 @@ class PipelineBlock(AIBlock[Input, Output, None]):
             _door_state(self._left, left_result, caller),
             _door_state(self._right, right_result, caller),
         )
-        from g6.core.door import corrected_result, door_envelope
+        from g6.core.door import AnswerNotRead, blocked_reply, corrected_result, door_envelope
 
         if claimed == "verified" and completion_state != "verified":
             warning = door_envelope("verified", who=f"the pipeline {self.name}")["warning_card"]
             setattr(right_result, "claimed_completion_state", claimed)
         if isinstance(right_result.value, dict):
             # The value dict says what the result attribute says (CORE_LABELS-01): no stage's own word outranks it.
-            right_result._value = corrected_result(right_result.value, completion_state)
+            try:
+                right_result._value = corrected_result(right_result.value, completion_state)
+            except AnswerNotRead as exc:
+                # An answer the door's copy does not read is not handed on: the pipeline refuses it, as a door does.
+                error = str(AnswerNotRead(f"the pipeline {self.name}", exc.why))
+                return _annotate_result(
+                    Result.fail(error),
+                    evidence=evidence,
+                    warning_card=blocked_reply(error)["warning_card"],
+                    completion_state="blocked-escalated",
+                )
         return _annotate_result(
             right_result,
             evidence=evidence,
