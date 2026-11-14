@@ -19,9 +19,9 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.usefixtures('declared_mcp_grants')   # replies go to an identified, granted client
-
 from g6.invariants import check_envelope
+
+pytestmark = pytest.mark.usefixtures('declared_mcp_grants')   # replies go to an identified, granted client
 
 fastmcp = pytest.importorskip("fastmcp")
 from fastmcp import Client  # noqa: E402

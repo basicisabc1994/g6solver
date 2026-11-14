@@ -44,7 +44,7 @@ from g6.metaharness import api, runner
 from g6.metaharness.api import _envelope
 from g6.metaharness.loop import envelope_sha256
 from g6.self_maintenance import envelope as envelope_module
-from g6.self_maintenance.envelope import CYCLE_LOG, CycleLog, file_digest, heartbeat, stop_standing, what_stops, stops_asked
+from g6.self_maintenance.envelope import CYCLE_LOG, CycleLog, file_digest, heartbeat, what_stops, stops_asked
 
 _spec = importlib.util.spec_from_file_location("followup_binding_helpers", Path(__file__).with_name("test_consent_binding.py"))
 binding = importlib.util.module_from_spec(_spec)
@@ -141,11 +141,16 @@ CHILDREN = {
     ("mcp/mission.py", "register", "subprocess.run"): PROGRAM,                       # git, in G6's copy
     ("mcp/mission.py", "register", "g6.core.git_env.safe_git"): PROGRAM,             # git's own checks
     ("mcp/__init__.py", "describe_reply", "g6.core.discovery.describe"): PROGRAM,    # outside programs' version probes
+    # g6_invoke builds the person's configured model for a component that takes one, which may be their own claude or
+    # codex (door.person_model, through llm.provider_from_env and host_models.CALLERS): found since the inventory
+    # follows a name bound to a table of callers
+    ("mcp/__init__.py", "invoke_reply", "g6.core.door.invoke_checked"): PROGRAM,
     # codex app-server: read_limits runs it through _ran, the one place its result is read (the refusals follow-up)
     ("self_maintenance/usage.py", "_ran", "g6.core.component_process.run_process"): PROGRAM,
-    ("self_maintenance/usage.py", "WatchedClaude", "g6.core.host_models.ClaudeCodeCaller"): PROGRAM,  # claude
-    # from the refusals follow-up: the watched hosts the loop sends through, each started by G6's own launch
-    ("self_maintenance/usage.py", "WatchedCodex", "g6.core.host_models.CodexCaller"): PROGRAM,       # codex
+    # the watched hosts the loop sends through, each built on the consent line's caller for its host (ConsentClaude and
+    # ConsentCodex, whose bases are host_models' callers taken from its table), and started by G6's own launch
+    ("self_maintenance/usage.py", "WatchedClaude", "g6.core.consent_callers.ConsentClaude"): PROGRAM,  # claude
+    ("self_maintenance/usage.py", "WatchedCodex", "g6.core.consent_callers.ConsentCodex"): PROGRAM,   # codex
     ("self_maintenance/usage.py", "_complete_host", "g6.core.host_models._run"): PROGRAM,   # claude or codex, one request
     ("self_maintenance/usage.py", "_launch", "g6.core.host_models._run"): PROGRAM,          # a session's own claude
 }
@@ -205,7 +210,10 @@ def _starts(dotted: str | None) -> bool:
 
 
 def _core_starters() -> set[str]:
-    """Each function and class of ``g6.core`` that starts a process, directly or through another, read from the code."""
+    """Each function and class of ``g6.core`` that starts a process, directly or through another, read from the code,
+    and each name a module of it binds to one or to a table of them (``host_models.CALLERS``, and
+    ``consent_callers._CLAUDE = host_models.CALLERS[...]``, the base of ``ConsentClaude``): what such a name holds is
+    reached through it, so a class built on one, or a call made through one, is not lost to the inventory."""
     defs = {}
     for path in (SRC / "core").rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -213,14 +221,21 @@ def _core_starters() -> set[str]:
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 defs[f"{module}.{node.name}"] = (node, names, module)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                if len(targets) == 1 and isinstance(targets[0], ast.Name):
+                    defs[f"{module}.{targets[0].id}"] = (node, names, module)
     starters: set[str] = set()
     grew = True
     while grew:
         grew = False
         for dotted, (node, names, module) in defs.items():
             local = {**{d.rpartition(".")[2]: d for d in defs if d.rpartition(".")[0] == module}, **names}
+            reached = ((n for n in ast.walk(node.value) if isinstance(n, (ast.Attribute, ast.Name)))
+                       if isinstance(node, (ast.Assign, ast.AnnAssign)) else
+                       (n for inner in ast.walk(node) for n in _callables(inner)))
             if dotted not in starters and any(_starts(r) or r in starters for r in (
-                    _reference(n, local) for inner in ast.walk(node) for n in _callables(inner))):
+                    _reference(n, local) for n in reached)):
                 starters.add(dotted)
                 grew = True
     return starters
@@ -1969,6 +1984,15 @@ PATH_PLACES = {
     ("harness/behaviour_runner.py", "<module>"): (RUN_FOLDER, 2, "a confined behaviour scenario imports the repository "
                                                                  "copy it runs in (its root and src); its bootstrap says "
                                                                  "no PYTHONPATH is read"),
+    # brought by the consent, section 12 and section 17 merges: each reads whether a folder a person or a host names is
+    # a full path, and none builds a child's import path or names its interpreter
+    ("core/cloud_consent.py", "repository_source"): (NOT_IMPORT, 1, "the repository a sharing grant names, resolved to "
+                                                                    "the identifier it is granted by"),
+    ("_context_engine/_scope.py", "_plain_folder"): (NOT_IMPORT, 1, "the folder a server starts in, or a root its "
+                                                                    "configuration lists: a full path, or it is no root"),
+    ("_context_engine/_scope.py", "inside"): (NOT_IMPORT, 1, "a path a caller asks to index, held inside a listed root"),
+    ("mcp/workflow.py", "_project"): (NOT_IMPORT, 1, "the repository a workflow's project is named by: a full path to a "
+                                                     "folder, or there is no project"),
 }
 #: Each place that builds a G6 child's import path or names its interpreter, which decides by the rule.
 RULED = (("mcp/improve.py", "_import_path"), ("mcp/improve.py", "_pinned_python"),

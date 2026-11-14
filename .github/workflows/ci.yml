@@ -113,9 +113,12 @@ jobs:
   site:
     runs-on: ubuntu-latest
     steps:
+      # The whole history: the copy check's control tests (tests/site/copyfur1, copyfur2) read the check as it was at
+      # an earlier commit (git show <commit>:tests/site/test_honesty.py), which a one-commit checkout does not hold.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"

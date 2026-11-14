@@ -13,3 +13,12 @@ src/g6/skills/vendor/superpowers/subagent-driven-development/scripts/sdd-workspa
 # that personal() detects one. It is written plainly, never disguised: any value personal()
 # detects, this scan rightly detects too, and a disguised literal would defeat the guard the file exists to provide.
 tests/test_no_local_paths.py f6b9b486f2f79a1f67fadbc49209436f6687d82fb6cbaa3a5e57d5f86f1cea06 windows-user-path
+#
+# No address in either file below: each match is an added diff line that opens with a pytest decorator (a plus sign,
+# then the decorator's at sign and its dotted name), which the e-mail rule reads as a mailbox named "+" at a host.
+# The gate's tests for a skip or xfail marker on a new test: the diffs are the inputs the detector is given, written
+# plainly so that each case reads as the diff it is.
+tests/coding_agent_gate/test_new_test_markers.py b75b4b1492815f09c939364f3738e849753d481887ac2fbaa1930243812b8382 personal-email
+# A scoring amendment to click's own tests (pallets/click, BSD-3-Clause), kept byte for byte as a record of the worked
+# examples' round 3 (validation/worked_examples/amendments/click-3678.md); line 71 adds a filterwarnings decorator.
+validation/worked_examples/amendments/click-3678.patch efdaeb6b07a43d6268542270c3303d17ec2438063af04e47796fbc3d865e84db personal-email

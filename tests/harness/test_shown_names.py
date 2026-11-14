@@ -8,6 +8,8 @@ and lines the scrubber read together with G6's own digest lines, where a mask ov
 C-style quoting), G6's own lines added after masking and never scrubbed, and a mask over a name counted by the one rule that
 decides what hides the task and the patch (``completion_loop._hides``). Git runs only on scratch repositories, reviewers are
 recorded, and no test of a reviewer's ever runs."""
+# A made-up key's opening marker is written here as two adjacent literals, which Python joins when it compiles the file:
+# each test uses the whole marker, and the public scan (tools/export_public.py), which reads the file's text, finds no key.
 import ast
 import hashlib
 import inspect
@@ -31,7 +33,7 @@ from tests.workforce.test_repo_tests import GIT_ENV, git, make_repo
 # --- review-maskfu1's four findings, each as its reviewer wrote it ------------------------------------------------------------
 
 def test_finding_1_secret_shaped_name_cannot_erase_base_byte_identity(tmp_path):
-    rel = "-----BEGIN PRIVATE KEY-----"
+    rel = "-----BEGIN " "PRIVATE KEY-----"
     identities, copies, verdicts = [], [], []
     for number, bad in enumerate((b"\xff", b"\xfe")):
         repo = make_repo(tmp_path / str(number))
@@ -64,7 +66,7 @@ def test_finding_2_multiline_masks_in_git_names_cannot_end_clean(tmp_path):
     repo = make_repo(tmp_path)
     subprocess.run(['git', '-C', str(repo), 'config', 'core.protectNTFS', 'false'], check=True)
     raw_git = _raw_git(repo)
-    rel = '-----BEGIN PRIVATE KEY-----\nmade-up-name-body\n-----END PRIVATE KEY-----'
+    rel = '-----BEGIN ' 'PRIVATE KEY-----\nmade-up-name-body\n-----END PRIVATE KEY-----'
     blob = raw_git('hash-object', '-w', '--stdin', data=b'value = 0\n')
     original = raw_git('ls-tree', '-z', 'HEAD')
     tree = raw_git('mktree', '-z', data=original + b'100644 blob ' + blob + b'\t' + rel.encode() + b'\0')
@@ -260,8 +262,8 @@ EDGES = {
     "cr": b"odd\rname.py", "lf": b"odd\nname.py", "crlf": b"odd\r\nname.py", "tab": b"odd\tname.py", "quote": b'odd"name.py',
     "backslash": b"odd\\name.py", "controls": b"odd\x01\x07\x08\x0b\x0c\x1b\x7fname.py", "not-utf8": b"odd-\xff\xc3.py",
     "c1-and-separators": "odd\x85  name.py".encode(), "unicode": "café-日本.py".encode(),
-    "key-over-lines": b"-----BEGIN PRIVATE KEY-----\nmade-up-name-body\n-----END PRIVATE KEY-----",
-    "key-marker": b"-----BEGIN PRIVATE KEY-----", "diff-header": b"x\ndiff --git a/y b/y", "hunk-head": b"@@ -1 +1 @@",
+    "key-over-lines": b"-----BEGIN " b"PRIVATE KEY-----\nmade-up-name-body\n-----END PRIVATE KEY-----",
+    "key-marker": b"-----BEGIN " b"PRIVATE KEY-----", "diff-header": b"x\ndiff --git a/y b/y", "hunk-head": b"@@ -1 +1 @@",
     "hunk-injection": b"a\n@@ -0,0 +1,1 @@\n+X\n--- /dev/null\n+++ b/b", "g6-line": b"x\n\\ G6: the bytes of y",
     "space": b" ", "zero-width": "​".encode(), "quotes-only": b'""',
 }

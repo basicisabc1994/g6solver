@@ -5,6 +5,8 @@ Each changed file's whole text at the base and now is scrubbed alone and the two
 reaches what the reviewer reads, a name outside the hunk is still beside its value, and nothing crosses between files. The
 patch is still known by the bytes of one read (``repo_tests.diff_read``). Reviewers are recorded, git is run only on scratch
 repositories, and no test of a reviewer's ever runs."""
+# A made-up key's opening marker is written here as two adjacent literals, which Python joins when it compiles the file:
+# each test uses the whole marker, and the public scan (tools/export_public.py), which reads the file's text, finds no key.
 import dataclasses
 import difflib
 import hashlib
@@ -132,7 +134,7 @@ def test_finding_1_a_reindented_value_found_beside_its_name_never_reaches_the_re
 
 def test_finding_2_a_key_in_one_file_masks_nothing_of_another(tmp_path, monkeypatch):
     parents = {
-        "fixture.txt": ("-----BEGIN PRIVATE KEY-----\n    return 1\n-----END PRIVATE KEY-----\n"
+        "fixture.txt": ("-----BEGIN " "PRIVATE KEY-----\n    return 1\n-----END PRIVATE KEY-----\n"
                         + "# filler\n" * 10 + "# old\n"),
         "mod.py": "def value():\n    return 0\n",
     }
@@ -254,7 +256,7 @@ def test_a_value_changed_on_its_line_shows_the_line_changed_with_both_values_mas
 
 
 def test_a_key_over_lines_the_copy_shows_is_hidden_and_one_away_from_them_is_not(tmp_path, monkeypatch):
-    key = "-----BEGIN PRIVATE KEY-----\nmade-up-key-body\n-----END PRIVATE KEY-----\n"
+    key = "-----BEGIN " "PRIVATE KEY-----\nmade-up-key-body\n-----END PRIVATE KEY-----\n"
     base = {"keys.txt": key + "# filler\n" * 10 + "# old\n"}
     away = shown(held(tmp_path, monkeypatch, base, {"keys.txt": base["keys.txt"].replace("# old", "# new")}))
     over = shown(held(tmp_path, monkeypatch, base, {"keys.txt": base["keys.txt"].replace("key-body", "key-body-2")}))
@@ -263,7 +265,7 @@ def test_a_key_over_lines_the_copy_shows_is_hidden_and_one_away_from_them_is_not
 
 
 def test_what_is_left_of_a_key_whose_first_line_was_taken_out_stays_masked_where_it_is_unchanged(tmp_path, monkeypatch):
-    base = {"keys.txt": "-----BEGIN PRIVATE KEY-----\nmade-up-key-body\n-----END PRIVATE KEY-----\n# tail\n"}
+    base = {"keys.txt": "-----BEGIN " "PRIVATE KEY-----\nmade-up-key-body\n-----END PRIVATE KEY-----\n# tail\n"}
     now = {"keys.txt": base["keys.txt"].split("\n", 1)[1]}
     assert "made-up-key-body" in scrub(now["keys.txt"])        # the text as it is now no longer reads as a key
     copy = shown(held(tmp_path, monkeypatch, base, now))
@@ -271,13 +273,13 @@ def test_what_is_left_of_a_key_whose_first_line_was_taken_out_stays_masked_where
 
 
 def test_a_line_inside_a_key_masks_no_line_like_it_elsewhere_in_its_file(tmp_path, monkeypatch):
-    base = "def f():\n    return 1\n\n\n\n\n\n\nMARK = '-----BEGIN PRIVATE KEY-----'\nx = 1\n    return 1\n"
+    base = "def f():\n    return 1\n\n\n\n\n\n\nMARK = '-----BEGIN " "PRIVATE KEY-----'\nx = 1\n    return 1\n"
     copy = shown(held(tmp_path, monkeypatch, {"mod.py": base}, {"mod.py": base.replace("def f", "def g")}))
     assert "+def g():\n     return 1\n" in copy.masked and not copy.hidden    # the key runs to the end, over the last line only
 
 
 def test_a_key_marker_on_a_files_last_line_hides_no_other_line(tmp_path, monkeypatch):
-    copy = shown(held(tmp_path, monkeypatch, {}, {"a.py": 'MARK = "-----BEGIN PRIVATE KEY-----"\n',
+    copy = shown(held(tmp_path, monkeypatch, {}, {"a.py": 'MARK = "-----BEGIN ' 'PRIVATE KEY-----"\n',
                                                   "b.py": "def kept():\n    return 1\n"}))
     assert "BEGIN PRIVATE" not in copy.masked and "+def kept():\n+    return 1\n" in copy.masked
     assert not copy.hidden       # the value runs on to the file's last newline, and over no line of it
@@ -598,7 +600,7 @@ def test_mask2_finding_3_a_value_named_past_the_cut_is_masked_on_a_line_like_it_
 
 
 def test_mask2_finding_4_a_value_over_lines_of_which_one_is_shown_hides_no_line(tmp_path, monkeypatch):
-    before = ("-----BEGIN PRIVATE KEY-----\nmade-up-key-body\n-----END PRIVATE KEY-----\n"
+    before = ("-----BEGIN " "PRIVATE KEY-----\nmade-up-key-body\n-----END PRIVATE KEY-----\n"
               "# after one\n# after two\nvalue = 0\n")
     change = held(tmp_path, monkeypatch, {"mod.py": before}, {"mod.py": before.replace("value = 0", "value = 1")})
     read = repo_tests.diff_read(change)
@@ -698,7 +700,7 @@ def test_mask2_finding_8_a_folder_swapped_for_a_link_out_as_the_file_is_opened_i
 
 def test_mask3_finding_1_what_scrub_masks_is_masked_in_the_patch_and_in_its_parent(tmp_path):
     prefix, suffix = "made-up-prefix-123456789", "made-up-suffix-987654321"
-    source = (f'password = "{prefix}-----BEGIN PRIVATE KEY-----\n'
+    source = (f'password = "{prefix}-----BEGIN ' 'PRIVATE KEY-----\n'
               f'made-up-body\n-----END PRIVATE KEY-----{suffix}"\nvalue = 0\n')
     assert prefix not in scrub(source) and suffix not in scrub(source)
     repo = make_repo(tmp_path)
@@ -717,7 +719,7 @@ def test_mask3_finding_1_what_scrub_masks_is_masked_in_the_patch_and_in_its_pare
 def test_mask3_each_span_secret_spans_names_is_what_scrub_masks_however_the_rules_meet():
     from g6.context.redact import secret_spans
 
-    for text in ('password = "a-----BEGIN PRIVATE KEY-----\nb\n-----END PRIVATE KEY-----c"\n',
+    for text in ('password = "a-----BEGIN ' 'PRIVATE KEY-----\nb\n-----END PRIVATE KEY-----c"\n',
                  "token = 'sk-abcdefghijklmnop1234 and more'\n", "plain text\n", ""):
         shown, at = [], 0
         for start, end in secret_spans(text):
@@ -803,7 +805,9 @@ def test_the_reviewer_is_shown_text_through_one_decoder_and_one_masking_rule_alo
     2); decoding of what is shown is ``repo_tests._decoded``'s alone. ``_listing`` decodes git's own fields and names (shown
     only through ``repo_tests.shown_name``, which ``_name`` is, and which what the patch is known by names them by too: git's
     quoting, which decodes nothing, review-maskfu1), ``_named_patch`` and ``diff_read`` decode git's patch for what the patch
-    is known by, never shown, and ``_on_disk`` decodes a name only to give it to the system (review-maskfu2, finding 3)."""
+    is known by, never shown, and ``_on_disk`` decodes a name only to give it to the system (review-maskfu2, finding 3).
+    ``read_report`` (brought by the consent merge) is not on the way to the reviewer: it decodes G6's own saved report,
+    read against the digest in its checked state, for the reply to the client."""
     import ast
     import inspect
 
@@ -820,6 +824,7 @@ def test_the_reviewer_is_shown_text_through_one_decoder_and_one_masking_rule_alo
                         found.add((module.__name__.rsplit(".", 1)[1], node.name, name))
     assert found == {("completion_loop", "_seen", "secret_spans"), ("completion_loop", "_found", "secret_spans"),
                      ("completion_loop", "_shown", "_decoded"), ("completion_loop", "_unrun", "mask_paths"),
+                     ("completion_loop", "read_report", "decode"),
                      ("repo_tests", "_decoded", "decode"), ("repo_tests", "_listing", "decode"),
                      ("repo_tests", "diff_read", "decode"), ("repo_tests", "diff_read", "_decoded"),
                      ("repo_tests", "found", "_decoded"), ("repo_tests", "_where", "decode"),

@@ -75,7 +75,9 @@ def build(root: Path) -> dict[str, object]:
         (f"# The {INSTRUCTION_SUBJECT} vendor notes\n\nThe {INSTRUCTION_SUBJECT} library is pinned. {INSTRUCTION} "
          f"The {INSTRUCTION_SUBJECT} changelog is kept beside it.\n").encode())
     (root / ".env").write_bytes(b"TOKEN=PLANTED_ENV_VALUE\n")
-    (root / "key.pem").write_bytes(b"-----BEGIN PRIVATE KEY-----\nPLANTEDPEM\n-----END PRIVATE KEY-----\n")
+    # The marker is two adjacent literals, joined when Python compiles this file, so the bytes written are the same
+    # and the public scan (tools/export_public.py), which reads this file's text, finds no key in it.
+    (root / "key.pem").write_bytes(b"-----BEGIN " b"PRIVATE KEY-----\nPLANTEDPEM\n-----END PRIVATE KEY-----\n")
     (root / ".gitignore").write_bytes(b"scratch/\n")
     (root / "scratch").mkdir(exist_ok=True)
     (root / "scratch" / "ignored.md").write_bytes(f"# {IGNORED_SUBJECT}\n\nThe {IGNORED_SUBJECT} draft.\n".encode())

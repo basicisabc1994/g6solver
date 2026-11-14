@@ -57,4 +57,7 @@ def test_every_literal_completion_file_producer_is_in_the_inventory():
     assert found == {'harness/completion_hook.py': {'task.json'},
                      'harness/completion_loop.py': {'state.json', 'report.md'},
                      'mcp/review_loop.py': {'task.json'},
-                     'integrations/hat_orchestrator/state.py': {'state.json'}}
+                     'integrations/hat_orchestrator/state.py': {'state.json'},
+                     # 018b67b (section 17 S2): ``_report_ref`` writes nothing and reads report.md only to put its
+                     # sha256 in a workflow record reference; none of the report's text leaves it.
+                     'harness/workflow/adapters.py': {'report.md'}}

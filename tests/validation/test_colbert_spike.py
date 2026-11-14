@@ -3,16 +3,23 @@
 fails its candidate, and a candidate with no weights is reported unavailable, never as zero. No weights are loaded."""
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "validation" / "context_engine" / "colbert_spike"))
+SPIKE = ROOT / "validation" / "context_engine" / "colbert_spike"
+sys.path.insert(0, str(SPIKE))
 
 import candidates  # noqa: E402
 import report  # noqa: E402
-import run as spike_run  # noqa: E402
+
+# The spike's ``run.py`` under a name of its own, never as ``run``: the worked examples' tests import their own ``run``
+# by that name in the same process, and whichever was imported first would be the one they all got.
+_spec = importlib.util.spec_from_file_location("colbert_spike_run", SPIKE / "run.py")
+spike_run = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(spike_run)
 
 
 PINS = {name: f"pinned-{name}" for name in candidates.REQUIRED_PINS}
