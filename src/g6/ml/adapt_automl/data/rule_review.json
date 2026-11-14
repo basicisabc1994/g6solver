@@ -193,26 +193,26 @@
     }
   ],
   "reviewed": {
-    "artifact_sha256": "d4581b2a204b4a00fc9d7d900011847db1a2945cd826b57ac85d653057612c2b",
+    "adapter_sha256": "266121d6767e551c90d34fa65b6eb092a2d95815849c3de290d2919af9955ed8",
+    "artifact_sha256": "353f354957edfa9cb71356d661cda12c5e8387772736f31ede64b5b1dc089194",
+    "cases_sha256": "1a51d74097080e121fbb154649e437e224beb00407b1dcdc0c44b9e046db197e",
+    "refusals": [
+      "MLError"
+    ],
     "rules_sha256": "cb215efd7b9e62ee3a000815c4e1ed130c2a1d063cc6c4426f34974bec97009f",
     "sources_sha256": {
       "sklearn-1.9-cv-3.1": "d4c2c30941f324fab1b9ed2c4aefca169ff0b5c0d04e89b5f995de7aa792476a",
       "sklearn-1.9-cv-3.1.2.2": "3389c24d47437448581e82f54de97e8d8ad5a54cc4427517d9a6354a0601ead2",
       "sklearn-1.9-cv-3.1.2.4": "e167928c0cc973a7162aa22760e70fb7394b8194782163f887c4bac7812035f7",
-      "sklearn-1.9-pitfalls-12.2": "508e0300a88426f0b3f3cc4fd5b0000beaa755ba74bf634f4e9bee9ab5d1ce62",
-      "sklearn-1.9-pitfalls-12.3.3.1": "042f4807af2a1bb38b5240f615399bcaa59ad7b71a1668bbe17470e752474a98",
       "sklearn-1.9-metrics-3.4.4.2": "80ba637181c0657a89c5ad9910b30e0417221b3579daac314a63f38455b5883c",
       "sklearn-1.9-metrics-3.4.4.4": "f6551a5f445ec23e71cb8e68a65f013481285aef4aec2ea80da487bf8b61859b",
       "sklearn-1.9-metrics-3.4.6.1": "afbc658db3bae63ac677929be082f77c91d56771ed6ec1986b60ccaa241a1665",
       "sklearn-1.9-metrics-3.4.6.2": "69f1d814cc5a6ce88e8c4a46b3f079c8df56f3bffd3afa03da24001ce70b3795",
       "sklearn-1.9-metrics-3.4.6.3": "2ad65ce63291a608d9fee22f226813cd38d7776d6585ff4915d38cd840fb6349",
-      "sklearn-1.9-metrics-3.4.8": "e0c420f21cd04cc11e5b6ae89bf8a01aefedbacb68070177b7600edc887e5dbd"
-    },
-    "cases_sha256": "1a51d74097080e121fbb154649e437e224beb00407b1dcdc0c44b9e046db197e",
-    "adapter_sha256": "266121d6767e551c90d34fa65b6eb092a2d95815849c3de290d2919af9955ed8",
-    "refusals": [
-      "MLError"
-    ]
+      "sklearn-1.9-metrics-3.4.8": "e0c420f21cd04cc11e5b6ae89bf8a01aefedbacb68070177b7600edc887e5dbd",
+      "sklearn-1.9-pitfalls-12.2": "508e0300a88426f0b3f3cc4fd5b0000beaa755ba74bf634f4e9bee9ab5d1ce62",
+      "sklearn-1.9-pitfalls-12.3.3.1": "042f4807af2a1bb38b5240f615399bcaa59ad7b71a1668bbe17470e752474a98"
+    }
   },
   "delta_reviews": [
     {
@@ -903,6 +903,74 @@
         "independently_run": "At b75327a, each file alone with G6_CLAUDE and G6_CODEX set to a missing program: tests/ml/test_sklearn.py, tests/ml/test_automl.py, tests/ml/test_bayesian.py, tests/embodied/test_adapt_physical_ai.py, tests/embodied/test_motion_grasp.py, tests/embodied/test_embodied_merges.py, tests/jobs/test_care_guards.py, tests/jobs/test_duty_of_care_block.py; then the same files at 10c7457",
         "result": "At b75327a: 29 passed, 11 skipped, 1 failed; 25 passed, 5 skipped, 1 failed; 45 passed, 1 failed; 23 passed; 26 passed; 11 passed; 33 passed; 119 passed, 1 skipped. The failures: test_sklearn's g5 test refused G6_E_ISOLATION_UNAVAILABLE (the Windows AppContainer cannot read this worktree), and test_automl's d6 test and test_bayesian's vetting-state test read built, awaiting review because the certificates are not yet reissued. At 10c7457 the same files gave the same counts, except that those two vetting-state tests passed (26 passed, 5 skipped; 46 passed) and the g5 test failed the same way. No other test failed.",
         "limits": "Static delta review, differential checks of the changed functions and focused local tests on Windows only. scikit-learn, FLAML and PyMC are not installed (the skips) and no operating-system sandbox was available, so no confined fit ran; this reader did not rerun the certificates' cases, second routes or falsifiers, and ran nothing on Linux or macOS. The job comparison covers the inputs listed, not every input. The reader is a fresh Claude session, not a different model from the window's author. Full held-source and quote issuance gates remain required."
+      }
+    },
+    {
+      "kind": "independent-post-issuance-pr12-delta-review",
+      "reviewer": "Claude Opus 5.5 independent certificate-renewal reader (fresh session; wrote none of the reviewed commits 36db2e0..b14dc13. PR #11's and PR #12's commits were written by other sessions)",
+      "date": "2026-11-14",
+      "base_commit": "36db2e0a9c3f2eb209a865828137c2fb6bf8d53e",
+      "reviewed_commit": "b14dc132e598f87579d48b145a924c050c9d64d7",
+      "prior_review_sha256": "ab7d93f0bae7b640e3da87af6d73b593251d91a82c7fa33121cce8e83c8ffdc8",
+      "prior_reviewed": {
+        "artifact_sha256": "d4581b2a204b4a00fc9d7d900011847db1a2945cd826b57ac85d653057612c2b",
+        "rules_sha256": "cb215efd7b9e62ee3a000815c4e1ed130c2a1d063cc6c4426f34974bec97009f",
+        "sources_sha256": {
+          "sklearn-1.9-cv-3.1": "d4c2c30941f324fab1b9ed2c4aefca169ff0b5c0d04e89b5f995de7aa792476a",
+          "sklearn-1.9-cv-3.1.2.2": "3389c24d47437448581e82f54de97e8d8ad5a54cc4427517d9a6354a0601ead2",
+          "sklearn-1.9-cv-3.1.2.4": "e167928c0cc973a7162aa22760e70fb7394b8194782163f887c4bac7812035f7",
+          "sklearn-1.9-pitfalls-12.2": "508e0300a88426f0b3f3cc4fd5b0000beaa755ba74bf634f4e9bee9ab5d1ce62",
+          "sklearn-1.9-pitfalls-12.3.3.1": "042f4807af2a1bb38b5240f615399bcaa59ad7b71a1668bbe17470e752474a98",
+          "sklearn-1.9-metrics-3.4.4.2": "80ba637181c0657a89c5ad9910b30e0417221b3579daac314a63f38455b5883c",
+          "sklearn-1.9-metrics-3.4.4.4": "f6551a5f445ec23e71cb8e68a65f013481285aef4aec2ea80da487bf8b61859b",
+          "sklearn-1.9-metrics-3.4.6.1": "afbc658db3bae63ac677929be082f77c91d56771ed6ec1986b60ccaa241a1665",
+          "sklearn-1.9-metrics-3.4.6.2": "69f1d814cc5a6ce88e8c4a46b3f079c8df56f3bffd3afa03da24001ce70b3795",
+          "sklearn-1.9-metrics-3.4.6.3": "2ad65ce63291a608d9fee22f226813cd38d7776d6585ff4915d38cd840fb6349",
+          "sklearn-1.9-metrics-3.4.8": "e0c420f21cd04cc11e5b6ae89bf8a01aefedbacb68070177b7600edc887e5dbd"
+        },
+        "cases_sha256": "1a51d74097080e121fbb154649e437e224beb00407b1dcdc0c44b9e046db197e",
+        "adapter_sha256": "266121d6767e551c90d34fa65b6eb092a2d95815849c3de290d2919af9955ed8",
+        "refusals": [
+          "MLError"
+        ]
+      },
+      "reviewed": {
+        "adapter_sha256": "266121d6767e551c90d34fa65b6eb092a2d95815849c3de290d2919af9955ed8",
+        "artifact_sha256": "353f354957edfa9cb71356d661cda12c5e8387772736f31ede64b5b1dc089194",
+        "cases_sha256": "1a51d74097080e121fbb154649e437e224beb00407b1dcdc0c44b9e046db197e",
+        "refusals": [
+          "MLError"
+        ],
+        "rules_sha256": "cb215efd7b9e62ee3a000815c4e1ed130c2a1d063cc6c4426f34974bec97009f",
+        "sources_sha256": {
+          "sklearn-1.9-cv-3.1": "d4c2c30941f324fab1b9ed2c4aefca169ff0b5c0d04e89b5f995de7aa792476a",
+          "sklearn-1.9-cv-3.1.2.2": "3389c24d47437448581e82f54de97e8d8ad5a54cc4427517d9a6354a0601ead2",
+          "sklearn-1.9-cv-3.1.2.4": "e167928c0cc973a7162aa22760e70fb7394b8194782163f887c4bac7812035f7",
+          "sklearn-1.9-metrics-3.4.4.2": "80ba637181c0657a89c5ad9910b30e0417221b3579daac314a63f38455b5883c",
+          "sklearn-1.9-metrics-3.4.4.4": "f6551a5f445ec23e71cb8e68a65f013481285aef4aec2ea80da487bf8b61859b",
+          "sklearn-1.9-metrics-3.4.6.1": "afbc658db3bae63ac677929be082f77c91d56771ed6ec1986b60ccaa241a1665",
+          "sklearn-1.9-metrics-3.4.6.2": "69f1d814cc5a6ce88e8c4a46b3f079c8df56f3bffd3afa03da24001ce70b3795",
+          "sklearn-1.9-metrics-3.4.6.3": "2ad65ce63291a608d9fee22f226813cd38d7776d6585ff4915d38cd840fb6349",
+          "sklearn-1.9-metrics-3.4.8": "e0c420f21cd04cc11e5b6ae89bf8a01aefedbacb68070177b7600edc887e5dbd",
+          "sklearn-1.9-pitfalls-12.2": "508e0300a88426f0b3f3cc4fd5b0000beaa755ba74bf634f4e9bee9ab5d1ce62",
+          "sklearn-1.9-pitfalls-12.3.3.1": "042f4807af2a1bb38b5240f615399bcaa59ad7b71a1668bbe17470e752474a98"
+        }
+      },
+      "scope": "Supplement to prior independent delta attestations: the changes merged into main after the 0.3.0 certificate issuance window, PR #11 (aeabdbf) and PR #12 (b14dc13), 36db2e0..b14dc13, in bound shared code. Original source-reader attribution, rule findings and earlier delta attestations are retained. No original source clauses, held source bytes or withheld quotes were read; no new medical, legal, safety or domain endorsement, qualified-person approval, authenticated identity or cryptographic signature is asserted.",
+      "method": "Extracted src and tools at 36db2e0 and b14dc13 (git archive) and computed tools/issue_certificate.py --reviewed and the full input manifest (input_files without this review, imported_code, harness_files and the input bases) in each. The record's top-level reviewed equals reviewed() at 36db2e0; reviewed() at b14dc13 equals --reviewed in the candidate worktree, which is b14dc13 with no other change. Intersected git diff --name-only 36db2e0 b14dc13 with the manifest, certificate.json's imported_code list, the harness_sha256 files and every file under the component's input folders: of the four source files changed in the range (core/consent_callers.py, core/reading.py, harness/verification_search.py, mcp/workflow.py) only core/consent_callers.py is bound; the manifest keeps the same 66 files, imported_code and the harness are unchanged. Read git diff 36db2e0 b14dc13 for core/consent_callers.py and searched every bound Python file for guard(, _Consent, ConsentClaude, ConsentCodex, consent_callers, consent_registry, GuardedRegistry, complete( and complete_with_images, and the registry's model keyword (__g6_model__) for this component at b14dc13.",
+      "finding": "Only artifact_sha256 differs; rules, canonical source entries, cases, adapter and refusal hashes are unchanged. Changed bound input: core/consent_callers.py (PR #12, 90d378b). guard() no longer reassigns a native backend's __class__: it returns a separate object of an additive subclass with _guards set to the backend and the backend's own __dict__, and _Consent.complete and complete_with_images take the destination and SDK client of that backend (of the object itself where _guards is None, as for ConsentClaude and ConsentCodex) and send through it. destination, backend_supported and guard's watched-host, wrapper, process and unknown branches are unchanged. In bound code guard is called only by consent_registry.GuardedRegistry.invoke, on a model handed as llm, and by consent_callers.provider_from_env, which nothing bound calls; GuardedRegistry is reached only from g6.invoke (g6/__init__.py, a function-level import). On that path door.invoke_checked hands the person's configured model, if any, as llm and GuardedRegistry guards it, but registry.invoke builds this component's block with no argument because the component declares no __g6_model__ (None at b14dc13), so the guarded caller never reaches the block and no _Consent method is called. No covered implementing function, the adapter, the cases, the rules file, the sources or the refusal set changed, and none calls guard or a _Consent method. The change cannot reach this component's results. Every prior scoped finding still holds, including the issuance-window finding that g6.invoke puts a model it is given through the consent guard. Review raises no label.",
+      "input_changes": [
+        {
+          "path": "g6/core/consent_callers.py",
+          "previous_sha256": "1dfc96f0fcabb01ab8887813922a05da7424b2e00df1a4d4c13670f8a541423e",
+          "current_sha256": "5a4c5dd7c339c6ed140473e0caa4b8a81f586b6b4cee1ab75be7c73b205f7353",
+          "binding_change": "modified"
+        }
+      ],
+      "validation": {
+        "independently_run": "At b14dc13, each file alone with G6_CLAUDE and G6_CODEX set to a missing program: tests/ml/test_sklearn.py, tests/ml/test_automl.py, tests/ml/test_bayesian.py, tests/embodied/test_adapt_physical_ai.py, tests/embodied/test_motion_grasp.py, tests/embodied/test_embodied_merges.py, tests/jobs/test_care_guards.py, tests/jobs/test_duty_of_care_block.py, tests/core/test_consent_followup.py",
+        "result": "29 passed, 11 skipped, 1 failed; 25 passed, 5 skipped, 1 failed; 45 passed, 1 failed; 23 passed; 26 passed; 11 passed; 33 passed; 119 passed, 1 skipped; 191 passed. The failures: test_sklearn's g5 test refused G6_E_ISOLATION_UNAVAILABLE (the Windows AppContainer cannot read this worktree), and test_automl's d6 test and test_bayesian's vetting-state test read built, awaiting review because the certificates are not yet reissued: the same counts and failures the issuance-window review recorded at b75327a. No other test failed.",
+        "limits": "Static delta review and focused local tests on Windows only. scikit-learn, FLAML and PyMC are not installed (the skips) and no operating-system sandbox was available, so no confined fit ran; this reader did not rerun the certificates' cases, second routes or falsifiers, and ran nothing on Linux or macOS. The reader is a fresh Claude session, not a different model from the authors of the reviewed commits. Full held-source and quote issuance gates remain required."
       }
     }
   ]
