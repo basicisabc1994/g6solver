@@ -62,8 +62,8 @@ _KEY_PATH_ENV = "G6_PROMOTION_EVALUATOR_KEY_PATH"
 # Comma-separated importable modules the child imports so they register their
 # oracle replays (e.g. lean_prover's promotion_replay). Optional.
 _ORACLE_MODULES_ENV = "G6_PROMOTION_ORACLE_MODULES"
-# os.pathsep-joined extra PYTHONPATH entries for oracle modules that live outside
-# the components root. Optional.
+# os.pathsep-joined extra import roots for oracle modules that live outside
+# the components root (the person's own path list). Optional.
 _EXTRA_PATH_ENV = "G6_PROMOTION_EVALUATOR_EXTRA_PATH"
 # Set inside the child so promotion_evaluator's custody wrappers resolve to the
 # IN-PROCESS crypto there instead of spawning another child (recursion guard).
@@ -102,25 +102,55 @@ def _components_root() -> str:
     )
 
 
+# The child's bootstrap: the one transport every G6 child takes its import roots by (the loop children's own text,
+# ``g6.mcp.improve``; a test keeps the two equal). The child has finished isolated startup before it reads the roots,
+# and they are a JSON list argument, never a path-list string: a separator in a folder's name stays inside its one
+# entry, and neither the folder the server stands in nor a startup setting of the parent adds a root (review-cfu3,
+# finding 1). They go after the standard library and before installed packages.
+_BOOTSTRAP = (
+    "import sys, json, runpy, site; "
+    "roots = json.loads(sys.argv.pop(1)); "
+    "at = next((i for i, p in enumerate(sys.path) if p in site.getsitepackages()), len(sys.path)); "
+    "sys.path[at:at] = roots; "
+    "mode = sys.argv.pop(1); target = sys.argv.pop(1); sys.argv[0] = target; "
+    "runpy.run_module(target, run_name='__main__', alter_sys=True) if mode == '-m' "
+    "else exec(compile(target, '<g6 child>', 'exec'))"
+)
+
+
+def _import_roots() -> list[str]:
+    """The child's import roots, each one whole before the child sees it: the person's extra roots (their own path
+    list, each entry read against the folder this process stands in, as a relative entry always was), then the
+    folder this G6 was loaded from, then its ``vendor`` folder when there is one."""
+    components = _components_root()
+    vendor = os.path.join(os.path.dirname(components), "vendor")
+    roots = [components] + ([vendor] if os.path.isdir(vendor) else [])
+    extra = (os.environ.get(_EXTRA_PATH_ENV) or "").strip()
+    if extra:
+        roots = [os.path.abspath(p) for p in extra.split(os.pathsep) if p] + roots
+    return roots
+
+
+def _command(request_path: str) -> list[str]:
+    """The child's start: this interpreter, isolated (``-I``: no Python setting of the environment, no user site, and
+    the folder it is started in is not on its path), UTF-8 for what it reads and writes, then the bootstrap, the roots
+    as one argument, and the service as the module it runs."""
+    return [sys.executable, "-I", "-X", "utf8", "-c", _BOOTSTRAP, json.dumps(_import_roots()),
+            "-m", _SERVICE_MODULE, request_path]
+
+
 def _service_env() -> dict[str, str]:
     """A scrubbed environment for the child (mirrors science_harness).
 
-    The child starts CLEAN — interpreter needs + import path + the custody config
-    vars — and NOTABLY does not carry ``G6_PROMOTION_EVALUATOR_KEY``: no key the
+    The child starts CLEAN — interpreter needs + the custody config vars — and
+    NOTABLY does not carry ``G6_PROMOTION_EVALUATOR_KEY``: no key the
     generator's environment holds may reach the child, which loads the key
     from the FILE at ``_KEY_PATH_ENV``. The sentinel makes the child's custody
-    wrappers resolve in-process (no re-spawn).
+    wrappers resolve in-process (no re-spawn). It names no import path and no
+    Python setting: the child starts isolated and is handed its roots as an
+    argument (``_command``).
     """
-    components = _components_root()
-    vendor = os.path.join(os.path.dirname(components), "vendor")
-    path_entries = [components] + ([vendor] if os.path.isdir(vendor) else [])
-    extra = (os.environ.get(_EXTRA_PATH_ENV) or "").strip()
-    if extra:
-        path_entries = [p for p in extra.split(os.pathsep) if p] + path_entries
     env: dict[str, str] = {
-        "PYTHONIOENCODING": "utf-8",
-        "PYTHONHASHSEED": "0",
-        "PYTHONPATH": os.pathsep.join(path_entries),
         _INPROC_SENTINEL_ENV: "1",
     }
     for name in (_KEY_PATH_ENV, _ORACLE_MODULES_ENV):
@@ -171,7 +201,7 @@ def _call_service(
             with open(request_path, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(request)
             proc = subprocess.run(
-                [sys.executable, "-m", _SERVICE_MODULE, request_path],
+                _command(request_path),
                 env=_service_env(),
                 capture_output=True,
                 text=True,

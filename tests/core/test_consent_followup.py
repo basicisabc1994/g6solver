@@ -1921,10 +1921,11 @@ PATH_PLACES = {
     # relative (``python_sources``), which is no import path
     ("workforce/repo_tests.py", "<module>"): (MADE_WHOLE, 4, "a repository's tests (-I) put the resolved repository's "
                                                              "folders first, after dropping '' and their own folder"),
-    ("core/promotion_custody.py", "<module>"): (BOUND, 1, "what the evaluator child's extra PYTHONPATH is"),
-    ("core/promotion_custody.py", "_service_env"): (BOUND, 1, "the evaluator child's PYTHONPATH keeps every non-empty "
-                                                              "extra entry, relative ones too, and the child starts with "
-                                                              "-m, in the server's folder; a certificate binds this file"),
+    # since the certificate issuance window before 0.3.0 (review-cfu3, finding 1): no longer BOUND. The three are in
+    # the bootstrap, the loop children's own text; its environment names no import path
+    ("core/promotion_custody.py", "<module>"): (MADE_WHOLE, 3, "the evaluator child (-I) inserts the roots of its list "
+                                                               "argument: the folder of the server's g6 and each extra "
+                                                               "root the person names, made whole in the parent"),
     ("metaharness/executor.py", "<module>"): (RUN_FOLDER, 1, "a workflow's code imports main from its sandbox's folder"),
     ("metaharness/steps.py", "<module>"): (RUN_FOLDER, 1, "a step's code imports from its sandbox's folder"),
     ("code/meta_programming/runner.py", "<module>"): (RUN_FOLDER, 1, "your tests import your code from the sandbox's "
@@ -2004,6 +2005,10 @@ MADE = {
                                          ("workforce/truth.py", "run_suite", "Path(repo).resolve()")],
     ("workforce/repo_tests.py", "<module>"): [("workforce/repo_tests.py", "checked_repo", "given.resolve()"),
                                               ("workforce/repo_tests.py", "run", "checked_repo(repo)")],
+    ("core/promotion_custody.py", "<module>"): [
+        ("core/promotion_custody.py", "_components_root", "os.path.abspath(__file__)"),
+        ("core/promotion_custody.py", "_import_roots", "os.path.abspath(p)"),
+        ("core/promotion_custody.py", "_command", "json.dumps(_import_roots())")],
 }
 #: What names a path's standing for a child, as the brief searches for it: no word boundary, so ``\nsys.path`` in a
 #: script held in a string is found too.
@@ -2078,13 +2083,15 @@ def test_a_childs_import_path_made_whole_is_made_whole_in_the_parent_and_stands_
 
 
 def test_a_childs_import_path_that_does_not_decide_by_the_rule_is_in_a_file_a_certificate_binds():
-    """The one child's import path left to a later window, ``promotion_custody``, is listed as bound: if no certificate
-    binds its file any longer, the rule applies to it and this fails."""
+    """A child's import path left to a later window is listed as bound: if no certificate binds its file any longer,
+    the rule applies to it and this fails. The one that was, ``promotion_custody``, took the one transport at the
+    certificate issuance window before 0.3.0 and is listed as bound no longer."""
     certificates = [path.read_text(encoding="utf-8") for path in SRC.rglob("certificate.json")
                     if path.parent.name == "certificate"]
     for (rel, _), (kind, _, _) in PATH_PLACES.items():
         if kind == BOUND:
             assert any(f'"g6/{rel}"' in text for text in certificates), f"no certificate binds {rel}: apply the rule"
+    assert not [key for key, (kind, _, _) in PATH_PLACES.items() if kind == BOUND and key[0] == "core/promotion_custody.py"]
 
 
 def test_stop_receipt_tuple_contains_only_reads_or_explicit_unknowns():

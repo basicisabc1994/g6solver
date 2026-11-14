@@ -25,14 +25,20 @@ def invoke(component: str, op: str, params: Any = None, *, allow: Iterable[str] 
     name it, or its component, in ``allow`` (``"lean"`` or ``("lean.check_proof",)``), or list it in
     ``G6_MCP_SENSITIVE`` where you start G6. ``allow`` grants that one call and nothing after it.
 
+    A component that takes the model you configured is handed it through the same consent check as on those two
+    surfaces (``g6.core.consent_registry.GuardedRegistry``): nothing is sent to a model outside this machine without
+    a live grant for the source and the provider, and the call is refused ``G6_E_CLOUD_CONSENT_REQUIRED``.
+
     ``g6.core.registry.get_registry().invoke`` is the raw call underneath: it returns a component's own answer,
     unchecked.
     """
+    from g6.core.consent_registry import GuardedRegistry
     from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
 
     names = [allow] if isinstance(allow, str) else list(allow)
     granted = frozenset(part.strip() for name in names for part in str(name).split(",") if part.strip())
     return invoke_checked(component, op, {} if params is None else params, allow=allowed_sensitive() | granted,
+                          registry=GuardedRegistry(),
                           how_to_allow=f"Allow it in your own code with g6.invoke(..., allow=('{component}.{op}',)), "
                                        f"or list {component}.{op} (or {component}) in {SENSITIVE_ENV} where you start "
                                        "G6.")

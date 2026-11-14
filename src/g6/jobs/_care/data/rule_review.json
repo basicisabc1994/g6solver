@@ -2,7 +2,7 @@
   "reviewer": "Claude Sonnet 5.5 (fresh independent reader after the cited-only change, 2026-10-25)",
   "rebound": "2026-10-26: artifact_sha256 re-bound by the lead after the copyright header change (DECISIONS #23). Every changed code file differs from the one the reader read in its first two lines only, with an identical syntax tree; the reader's findings are unchanged.",
   "reviewed": {
-    "artifact_sha256": "3104364c3c3c98df44ff1ebc99170acdc454afd6a5380454bc6b29911ca77313",
+    "artifact_sha256": "bce77cc7a3b8d5bbc12458845140d44b71e6fbf37236f12ab5a36189d7455fdc",
     "rules_sha256": "861b91dea890224dfa436ff1794ec335f2ac7e826847de33dd1d6ea5f955a541",
     "sources_sha256": {
       "healthdirect-mental-health-helplines": "931a250c409839dff16342bb507958445ef178e544eef83bb0419df7962d5509",
@@ -719,6 +719,152 @@
         "current_sha256": "fc9da36b4210db4eeb58a2a8e912e190174292e070094fffcbe22b6240c29cee"
       },
       "validation": "Bound-input intersection, byte-exact version delta, unchanged reviewed fields and prior artifact reconstruction passed for all five components. Static check on Windows only: no test, case, second route or falsifier was run. Final issuance remains responsible for its normal held-source/quote checks and gates."
+    },
+    {
+      "kind": "independent-issuance-0.3-delta-review",
+      "reviewer": "Claude Opus 5.5 independent certificate-renewal reader (fresh session; did not write the issuance window's commits 19110b7..b75327a. As the lead reports, the window's lead, the same model in another session, made one edit to ml/_fit.py, in 1703d85 (40b2e7c also changed job there), and its builders were Claude Fable sessions)",
+      "date": "2026-11-14",
+      "base_commit": "10c7457d0037fc621eb034600a1fd5b7b87c02df",
+      "reviewed_commit": "b75327ab306e53ee551a2b9ff69acbc8b3849a1d",
+      "prior_review_sha256": "2b50255b0f21c2711bc9e644e0456ef686407a732e990adcd1c9121ae91ce8af",
+      "prior_reviewed": {
+        "artifact_sha256": "3104364c3c3c98df44ff1ebc99170acdc454afd6a5380454bc6b29911ca77313",
+        "rules_sha256": "861b91dea890224dfa436ff1794ec335f2ac7e826847de33dd1d6ea5f955a541",
+        "sources_sha256": {
+          "healthdirect-mental-health-helplines": "931a250c409839dff16342bb507958445ef178e544eef83bb0419df7962d5509",
+          "lifeline-get-help": "2b257a314bf956fe860731428db54da84da26eac63cfe80abda471cc98272c2e",
+          "988-lifeline": "6af41b5030ebd292f7683d82c4bbbd7a2a18b41a16948d6e815096e928bce286",
+          "samaritans-contact": "fe82b8d51f7bcc7117dc67b4828ac72629e9e847c8af7dbf24bd14fd9b8c36bd",
+          "phq9-form": "09032b52d642a62ba64eb8c40a05f0210ca16e87a3574765a2d5efdaab12f3ec",
+          "gad7-form": "4a24d3a98b132df0e4e139fbe1550ee7e8443ca478b6d20cf0d7caff2849c8f5",
+          "who-media-2023": "1f0230855bdc4408c4b00112c175fc29724d9d9e1fcefee9821fd944b48fc860",
+          "mindframe-guidelines": "11cdc76b506488a5c8de6311f632afa96a98dd4ff02a768b47c77efa96a5017e",
+          "nhs-when-to-call-999": "ac188f8803598c1c57b9627300a6f8efd7203caa1a93b22bab1aedce0f193f07",
+          "us-code-47-251": "1be1b3a562a506fdd4ed340622b32f361ad17d28f40a82069d3d93065b2d0e39",
+          "mindframe-language": "42cf243374dd224fcf4443b8ddf21165ba3d2876a68ace8afad2afbb402cb928",
+          "mindframe-method-location": "17cc3181179b0ffd1ed36961840f6fd9033f27a2845368e700b85a4472c93add",
+          "mindframe-help-seeking": "bfaf250b1d0534cfeca3e41f1f8abce35bc7275dea8d408a2d823b085c0d8310"
+        },
+        "cases_sha256": "a8173f9852684ae7a754365c142bdb34fb9ec374a58611e535f105f9ce08b1fe",
+        "adapter_sha256": "14b147785f7d2ee5d444b3e0a59b7f1a0f6b10815afe14197987f284bd838b74",
+        "refusals": []
+      },
+      "reviewed": {
+        "artifact_sha256": "bce77cc7a3b8d5bbc12458845140d44b71e6fbf37236f12ab5a36189d7455fdc",
+        "rules_sha256": "861b91dea890224dfa436ff1794ec335f2ac7e826847de33dd1d6ea5f955a541",
+        "sources_sha256": {
+          "healthdirect-mental-health-helplines": "931a250c409839dff16342bb507958445ef178e544eef83bb0419df7962d5509",
+          "lifeline-get-help": "2b257a314bf956fe860731428db54da84da26eac63cfe80abda471cc98272c2e",
+          "988-lifeline": "6af41b5030ebd292f7683d82c4bbbd7a2a18b41a16948d6e815096e928bce286",
+          "samaritans-contact": "fe82b8d51f7bcc7117dc67b4828ac72629e9e847c8af7dbf24bd14fd9b8c36bd",
+          "phq9-form": "09032b52d642a62ba64eb8c40a05f0210ca16e87a3574765a2d5efdaab12f3ec",
+          "gad7-form": "4a24d3a98b132df0e4e139fbe1550ee7e8443ca478b6d20cf0d7caff2849c8f5",
+          "who-media-2023": "1f0230855bdc4408c4b00112c175fc29724d9d9e1fcefee9821fd944b48fc860",
+          "mindframe-guidelines": "11cdc76b506488a5c8de6311f632afa96a98dd4ff02a768b47c77efa96a5017e",
+          "nhs-when-to-call-999": "ac188f8803598c1c57b9627300a6f8efd7203caa1a93b22bab1aedce0f193f07",
+          "us-code-47-251": "1be1b3a562a506fdd4ed340622b32f361ad17d28f40a82069d3d93065b2d0e39",
+          "mindframe-language": "42cf243374dd224fcf4443b8ddf21165ba3d2876a68ace8afad2afbb402cb928",
+          "mindframe-method-location": "17cc3181179b0ffd1ed36961840f6fd9033f27a2845368e700b85a4472c93add",
+          "mindframe-help-seeking": "bfaf250b1d0534cfeca3e41f1f8abce35bc7275dea8d408a2d823b085c0d8310"
+        },
+        "cases_sha256": "a8173f9852684ae7a754365c142bdb34fb9ec374a58611e535f105f9ce08b1fe",
+        "adapter_sha256": "14b147785f7d2ee5d444b3e0a59b7f1a0f6b10815afe14197987f284bd838b74",
+        "refusals": []
+      },
+      "scope": "Supplement to prior independent delta attestations: the 0.3.0 certificate issuance window (10c7457..b75327a, frozen scope docs/releases/v0.3.0-issuance.md) in bound shared code, and the unchanged modules it newly binds. Original source-reader attribution, rule findings and earlier delta attestations are retained. No original source clauses, held source bytes or withheld quotes were read; no new medical, legal, safety or domain endorsement, qualified-person approval, authenticated identity or cryptographic signature is asserted.",
+      "method": "Extracted src at 0a905ae, 10c7457 and b75327a (git archive) and computed reviewed() and the full input manifest (input_files without this review) in each. The record's top-level reviewed equals reviewed() at both 0a905ae and 10c7457: main changed no input this certificate binds between them, so the delta runs from 10c7457. reviewed() at b75327a equals tools/issue_certificate.py --reviewed in the candidate worktree, whose bound inputs equal b75327a's bytes. Intersected git diff --name-only 10c7457 b75327a with the manifest, certificate.json's imported_code list, the four harness_sha256 files and every file under the component's input folders: the harness is unchanged, and the manifest adds only the modules listed below. Read git diff 10c7457..b75327a for every changed bound file (g6/__init__.py, core/ai_block.py, core/door.py, core/registry.py, core/llm.py, core/model_calls.py, core/host_models.py, core/promotion_custody.py) and the unbound changes the frozen scope names (core/compose.py, bundles/__init__.py, agents/_runtime/tools.py, evidence/mapping.py), and searched the component's own folder, its register's folder, the family's shared code and its adapter for every changed name (held_copy, corrected_result, door_reply, invoke_checked, outer_copy, GuardedRegistry, AnswerNotRead, note_model_call, counting, the llm and host_models callers, promotion_custody, _fit.job) and for any block that takes a model: none is called there, and no block takes a model. Differential checks in the b75327a tree with the 10c7457 module loaded beside it: held_copy and corrected_result on 5,000 generated answers (nested mappings, lists and tuples, one object held twice, a read-only mapping view) in all three states gave identical output, as did a 40-deep nesting and a 20,000-row flat answer; outer_copy equals dict() for dicts and mapping views; one answer past the budget is refused G6_E_RESOURCE_LIMIT.",
+      "finding": "Only artifact_sha256 differs; rules, canonical source entries, cases, adapter and refusal hashes are unchanged. Changed bound inputs: g6/__init__.py (g6.invoke hands invoke_checked a GuardedRegistry, which puts a model it is given through the consent guard and passes every other call through unchanged); core/registry.py (outer_copy reads an op's outer parameters as before, a new dict, and refuses G6_E_INPUT_VALIDATION past 100,000 visits); core/door.py (held_copy and corrected_result read through one shared reader, _read, and give the same copy as before; before copying, the answer is counted and one past ANSWER_VISITS repeated or ANSWER_TOTAL values is refused, AnswerNotRead, G6_E_RESOURCE_LIMIT, and door_reply then replies blocked-escalated with nothing of the answer; invoke_checked copies parameters with outer_copy); core/ai_block.py (PipelineBlock answers that refusal with its own blocked-escalated result); core/llm.py (a wait record with a woke method is told after the Retry-After sleep, before the resend; the note names its send boundary); core/model_calls.py (with an observer scope open, threads and ThreadPoolExecutor tasks run in a copy of the starting context, and each note keeps a frame record; with none open, behaviour is as before, and only g6.metaharness opens one); core/host_models.py (a Claude Code error result's api_error_status and api_error are said whole in the failure text); core/promotion_custody.py (the custody child starts isolated and takes its import roots as one JSON argument). Newly bound, byte-identical to 10c7457, through g6/__init__.py's function-level import of consent_registry and what that imports, and door.py's import of resources: core/cloud_consent.py, core/consent_callers.py, core/consent_declarations.py, core/consent_registry.py, core/ledger.py, core/resources.py. No covered implementing function, the adapter, the cases or the refusal set calls any changed function; the component's results reach the door and ai_block only as answers, whose copy is unchanged under the budgets. The step 1 door review's word that corrected_result was unchanged held for that delta; here it gains a refusal past the budget, which can only give blocked-escalated, never raise a label. Every prior scoped finding still holds. Review raises no label.",
+      "input_changes": [
+        {
+          "path": "g6/__init__.py",
+          "previous_sha256": "fc9da36b4210db4eeb58a2a8e912e190174292e070094fffcbe22b6240c29cee",
+          "current_sha256": "a0ae343f3f84468adafc9f56057054a1e2559d3fdab3ebed839540b7e209dc9f",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/ai_block.py",
+          "previous_sha256": "1aec33e4a21b870ca395645397351df7876a25614541f23a6a2b87fde4385d4e",
+          "current_sha256": "923997cea762b6b8e54d96354fc8c43f994750ae9b531914c972651d05776a69",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/cloud_consent.py",
+          "previous_sha256": null,
+          "current_sha256": "e4f49413baa1dcd76044f8201e70a6170121ff9a93416fc54df929d8df9d1ee4",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/consent_callers.py",
+          "previous_sha256": null,
+          "current_sha256": "1dfc96f0fcabb01ab8887813922a05da7424b2e00df1a4d4c13670f8a541423e",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/consent_declarations.py",
+          "previous_sha256": null,
+          "current_sha256": "6a64867c7bafaa781d5f3a8c4c1e79134ec19110e21e45ebf7fb2e6a8493af99",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/consent_registry.py",
+          "previous_sha256": null,
+          "current_sha256": "8493d8bf52089b608939bdfd0496c6c17c8465a565d9f1cf4299091711f05dfe",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/door.py",
+          "previous_sha256": "966d6a03976e66d0c883226067f998c2f40faa5d3f5002dca62454523762a9b0",
+          "current_sha256": "1d4f4d271fe21a15ea468f7818398da0abc820316586e74a8bd41b04aa1d324e",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/host_models.py",
+          "previous_sha256": "acf17194c35bd9839e2a94ffd7113053f35edeb289c68d154a1ecc75ee323512",
+          "current_sha256": "e0bfa65ead42e32fccf84ec9e14efa329f59bb9bfd88225e84d0ed76f5d4e7b5",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/ledger.py",
+          "previous_sha256": null,
+          "current_sha256": "61b0788d71ead06a72a4e56d3d74b7f9e7c3eb8aa4b6d2ff7979e9303cc4be79",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/llm.py",
+          "previous_sha256": "f7e091e8dd34707dd68a8d8a1c9a99dad01286e539a5ddd79bd8cecd57976d12",
+          "current_sha256": "5127c50c96daac6ec7bd872390f9cccbe0a88285692aadeddca321324633e68b",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/model_calls.py",
+          "previous_sha256": "a03dfea18dd92a0d8fde59b2f836f47e8986c8845eae96717267578b26523a47",
+          "current_sha256": "d9ac98bc11ce6abe1a26fc98f0881eb9db201c4e5d0cef777643b52d01b9fff7",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/promotion_custody.py",
+          "previous_sha256": "3bbe0b5d366a6d7ac07e62b46090dba08ba095b6669cefc865c650cdcb72d11d",
+          "current_sha256": "e4b3fcc39cc49020540bf1131513bc9bcdaccd89ea7b435186b4a18aebc5196b",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/registry.py",
+          "previous_sha256": "ff2cec51b0f2c7c06b09780094b784f5674582ee3cfbd3b009d690b6a418cf5c",
+          "current_sha256": "d9bc7072dbc5348c79e5556749eaa14698f1bb2937fbe489a305d8ae2906a352",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/resources.py",
+          "previous_sha256": null,
+          "current_sha256": "a3f754b719122c86703d7fcfbe2d559e507b44664976796bae56b2f7a7db8e5d",
+          "binding_change": "added"
+        }
+      ],
+      "validation": {
+        "independently_run": "At b75327a, each file alone with G6_CLAUDE and G6_CODEX set to a missing program: tests/ml/test_sklearn.py, tests/ml/test_automl.py, tests/ml/test_bayesian.py, tests/embodied/test_adapt_physical_ai.py, tests/embodied/test_motion_grasp.py, tests/embodied/test_embodied_merges.py, tests/jobs/test_care_guards.py, tests/jobs/test_duty_of_care_block.py; then the same files at 10c7457",
+        "result": "At b75327a: 29 passed, 11 skipped, 1 failed; 25 passed, 5 skipped, 1 failed; 45 passed, 1 failed; 23 passed; 26 passed; 11 passed; 33 passed; 119 passed, 1 skipped. The failures: test_sklearn's g5 test refused G6_E_ISOLATION_UNAVAILABLE (the Windows AppContainer cannot read this worktree), and test_automl's d6 test and test_bayesian's vetting-state test read built, awaiting review because the certificates are not yet reissued. At 10c7457 the same files gave the same counts, except that those two vetting-state tests passed (26 passed, 5 skipped; 46 passed) and the g5 test failed the same way. No other test failed.",
+        "limits": "Static delta review, differential checks of the changed functions and focused local tests on Windows only. scikit-learn, FLAML and PyMC are not installed (the skips) and no operating-system sandbox was available, so no confined fit ran; this reader did not rerun the certificates' cases, second routes or falsifiers, and ran nothing on Linux or macOS. The job comparison covers the inputs listed, not every input. The reader is a fresh Claude session, not a different model from the window's author. Full held-source and quote issuance gates remain required."
+      }
     }
   ]
 }

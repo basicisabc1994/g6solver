@@ -19,7 +19,7 @@ from g6.core.ai_block import AIBlock
 from g6.core.block_contract import contract_to_dict
 from g6.core.door import blocked_reply, corrected_result, door_envelope, said_state
 from g6.core.ledger import digest
-from g6.core.registry import build_typed_input, get_registry
+from g6.core.registry import OuterBudgetExceeded, build_typed_input, get_registry, outer_copy
 from g6.core.result import Result
 
 
@@ -68,8 +68,12 @@ class ComposedBlock(AIBlock):
                 raise _error("NO_CONTRACT", index, block.name)
             required = contract.inputs_required_per_op.get(stage.op, contract.inputs_required)
             outputs = contract.outputs_per_op.get(stage.op, contract.outputs)
-            links = dict(stage.inputs or ({key: f"caller.{key}" for key in caller_inputs} if index == 0 else {}))
-            params = deepcopy(dict(stage.params))
+            try:   # a stage's links and constants are read within the registry's visit budget, as an op's parameters
+                links = outer_copy(stage.inputs or ({key: f"caller.{key}" for key in caller_inputs}
+                                                    if index == 0 else {}))
+                params = deepcopy(outer_copy(stage.params))
+            except OuterBudgetExceeded as exc:
+                raise CompositionError(f"[G6_E_INPUT_VALIDATION] stage {index}: {exc}") from None
             if "op" in params or "op" in links or set(params) & set(links):
                 raise _error("INVALID_MAPPING", index, "op is fixed and inputs cannot overlap constants")
             for key in required:

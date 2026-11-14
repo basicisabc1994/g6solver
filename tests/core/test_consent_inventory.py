@@ -14,9 +14,12 @@ GUARDED_REGISTRY = 'g6.core.consent_registry.GuardedRegistry'
 def door_inventory(root=ROOT, extra=()):
     """Discover door calls, including import aliases and local factory aliases.
 
-    Only the two exact certificate-bound call sites await the issuance window.
-    Every unbound site must hand the door the shared guarded registry directly;
-    a new person_model call cannot take a registry and is therefore a gap.
+    Every call of the door, the Python API ``g6.invoke`` in certificate-bound
+    ``g6/__init__.py`` included since the certificate issuance window before
+    0.3.0, must hand it the shared guarded registry directly. The one exact
+    site left is the door's own read of the person's model, which takes no
+    registry: it is covered only while every door call passes the guard.
+    A new person_model call cannot take a registry and is therefore a gap.
     """
     rows = []
     for path in [*(root / 'src').rglob('*.py'), *extra]:
@@ -68,7 +71,6 @@ def door_inventory(root=ROOT, extra=()):
                 owner = parents[owner]
             owner_name = getattr(owner, 'name', '')
             issuance = (relative, owner_name, name) in {
-                ('src/g6/__init__.py', 'invoke', 'invoke_checked'),
                 ('src/g6/core/door.py', 'invoke_checked', 'person_model'),
             }
             registry = next((kw.value for kw in call.keywords if kw.arg == 'registry'), None)
@@ -82,8 +84,10 @@ def test_every_unbound_door_call_passes_the_guarded_registry():
     rows = door_inventory()
     assert rows
     assert not [r[:3] for r in rows if not r[3] and not r[4]], rows
-    assert sorted((r[0], r[2].rpartition('.')[2]) for r in rows if r[4]) == [
-        ('src/g6/__init__.py', 'invoke_checked'), ('src/g6/core/door.py', 'person_model')]
+    assert sorted((r[0], r[2].rpartition('.')[2]) for r in rows if r[4]) == [('src/g6/core/door.py', 'person_model')]
+    python_api = [r for r in rows if r[0] == 'src/g6/__init__.py']
+    assert len(python_api) == 1 and python_api[0][3] and not python_api[0][4], (
+        'g6.invoke hands the door the guarded registry; it is no exception', python_api)
 
 
 def test_new_door_calls_and_aliases_cannot_bypass_registry_rule(tmp_path):

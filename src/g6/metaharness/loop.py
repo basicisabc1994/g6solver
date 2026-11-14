@@ -52,7 +52,7 @@ from g6.core import stop
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import LedgerError, canonical, digest
 from g6.core.llm import _WAITS, DEFAULT_MAX_TOKENS, LLMError
-from g6.core.model_calls import counting
+from g6.core.model_calls import counting, noting, outcome_of
 from g6.core.reading import Unreadable, asked, exact, files_under, linked, said, same, sha256_of, walk
 from g6.integrity import build_manifest, in_cache, manifest_sha256
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
@@ -629,11 +629,11 @@ class _Requests:
         return any(held.thread != thread and not any(held is mine for mine in around)
                    and (held.watched or held.owner is not owner) for held in _RECORD.out.get(identity, ()))
 
-    def _full(self, places: int, ended: bool) -> bool:
+    def _full(self, places: int, ended: bool, held: bool = False) -> bool:
         """Whether this tick has no room for ``places`` more, or its week ends before the send could leave (``ended``, as
-        admission compared it outside the lock with the end still held); ``stopped`` then says which. Called under the
-        lock."""
-        if self.unseen or self.sent + places > self.limit or (places == 0 and self.sent >= self.limit):
+        admission compared it outside the lock with the end still held); ``stopped`` then says which. ``held``: the send
+        has its place already (a resend back from its wait), so only the week is asked. Called under the lock."""
+        if not held and (self.unseen or self.sent + places > self.limit or (places == 0 and self.sent >= self.limit)):
             self.stopped = f"this tick has sent {self.sent} of the {self.limit:g} it reserved"
             return True
         if ended:
@@ -644,12 +644,17 @@ class _Requests:
     def admit(self, wait: float = 0.0, *, places: int = 0, generation: int | None = None,
               live: Callable[[], bool] = lambda: True, identity: str | Request | None = None, owner: object = None,
               identify: Callable[[], str | Request] | None = None, watched: bool = False, sender: Any = None,
-              record: Send | None = None) -> Send | None:
+              record: Send | None = None, woke: bool = False, note: Any = None) -> Send | None:
         """Read callbacks without the admission lock, then decide and register under it. A refusal published during any
         reader is checked before charging or sending. Pending persistence excludes admission, and every condition wait
         restarts all external reads, as does a refusal kept or a folder stopped by this process since they began (``moved``).
         ``identify`` supplies the immutable snapshot this send carries; no callback can block a refusal from being
-        published while it reads. Tick generations and latches are checked in the protected step."""
+        published while it reads. Tick generations and latches are checked in the protected step. ``woke``: this is a
+        resend let in before its wait, and the wait is now over. Its record is the last one ``owner``'s call let out on this
+        thread, which is all that holds it: where that record is of the request named here, it is checked again as it was
+        before the wait, takes no further place, and leaves only if the week it reserved in has not ended by the clock as
+        it is now; where it is not, what is named here is let in as a send of its own. ``note``: the note's record of the
+        send's boundary (``model_calls.noting``), kept on the send's record."""
         here = threading.get_ident()
         with self._lock:
             calls = _ACTIVE.get()
@@ -711,14 +716,26 @@ class _Requests:
                     barred = external.copy()
                     for meter in meters:
                         barred |= meter.refused | meter.unknown
+                    if woke:                      # the resend that waited: this call's last send on this thread, if it
+                        book = _RECORD.books.get(owner)                      # is of what is named here
+                        record = next((held for held in (book.sends[::-1] if book is not None else ())
+                                       if held.thread == here), None)
+                        if record is not None and record.identity != known:
+                            record = None
                     if record is not None:
-                        if (request is not record.request or known != record.identity
+                        if ((request is not record.request and not woke) or known != record.identity
                                 or not any(held is record for held in _RECORD.out.get(known, ()))
                                 or any(not any(charged is meter and generation == meter.generation
                                                for charged, generation in record.charged) for meter in meters)):
                             raise LLMError("G6_E_LOOP_UNNAMED_REQUEST: note does not name its admitted launch")
                         if known in barred:
                             raise _not_sent(known, barred, meters)
+                        if woke:                  # the wait is over: the week is compared again, by the clock as it is now
+                            if any(meter.ends is not end for meter, end in ends):
+                                continue
+                            full = next((meter for meter, over in zip(meters, ended) if meter._full(0, over, True)), None)
+                            if full is not None:
+                                break
                         return record
                     if known is not None and self._out_elsewhere(known, owner, here):
                         self._settled.wait(1.0)
@@ -736,7 +753,7 @@ class _Requests:
                         return None
                     record = Send(known, watched, owner, self.generation, here, sender, places,
                                   tuple((meter, meter.generation) for meter in meters),
-                                  request if isinstance(request, Request) else None)
+                                  request if isinstance(request, Request) else None, note)
                     registering = record
                     try:
                         _RECORD.out.setdefault(known, []).append(record)
@@ -757,11 +774,11 @@ class _Requests:
 
     def take(self, wait: float = 0.0, *, generation: int | None = None, live: Callable[[], bool] = lambda: True,
              identity: str | Request | None = None, owner: object = None, identify: Callable[[], str | Request] | None = None,
-             watched: bool = False, sender: Any = None) -> Send | None:
+             watched: bool = False, sender: Any = None, note: Any = None, woke: bool = False) -> Send | None:
         """A send about to go out, which takes one place on each meter around it: it keeps them whatever becomes of it, as a
-        failed one may have reached the model."""
+        failed one may have reached the model. ``woke``: a resend back from its wait, which has its place (``admit``)."""
         return self.admit(wait, places=1, generation=generation, live=live, identity=identity, owner=owner,
-                          identify=identify, watched=watched, sender=sender)
+                          identify=identify, watched=watched, sender=sender, note=note, woke=woke)
 
     def begin(self, call: _Call) -> None:
         """A metered call begins: what stops or latches a meter around it, or has ended a call around it, refuses it here, with
@@ -975,9 +992,12 @@ class _Resends(list):
     """The resends of one call. ``g6.core.llm`` adds each to the open records of ``waits`` just before it waits and sends
     again, which is the only boundary a resend has, so adding to this record is the gate on it, as ``counting``'s observer
     is on a request. What ``take`` raises stops the resend, and leaves the caller as a failed request's ``LLMError``. That
-    boundary comes before the wait and nothing marks its end, so a wakeup that runs late is not seen."""
+    boundary comes before the wait, so a wait that would reach the week's end is not taken. ``g6.core.llm`` tells the
+    record again once the wait is over, however long it really took (``woke``): there the resend is checked again on the
+    place it took, and if the week ended, its tick closed or its request was refused while it waited, it does not leave
+    (``_Requests.admit``, ``woke``)."""
 
-    def __init__(self, take: Callable[[float], None], limited: Callable[[dict[str, Any]], None] = lambda wait: None) -> None:
+    def __init__(self, take: Callable[..., None], limited: Callable[[dict[str, Any]], None] = lambda wait: None) -> None:
         super().__init__()
         self.take, self.limited = take, limited
 
@@ -987,9 +1007,12 @@ class _Resends(list):
         self.take(wait["retry_after_s"])
         super().append(wait)
 
+    def woke(self, wait: dict[str, Any]) -> None:
+        self.take(0.0, True)               # the wait is over: the same gate looks at the resend again, by the clock now
+
 
 @contextmanager
-def _gating_resends(take: Callable[[float], None], limited: Callable[[dict[str, Any]], None] = lambda wait: None) -> Iterator[None]:
+def _gating_resends(take: Callable[..., None], limited: Callable[[dict[str, Any]], None] = lambda wait: None) -> Iterator[None]:
     """As ``g6.core.llm.waits``, whose record is a plain list, with a record that is the gate above."""
     token = _WAITS.set((*_WAITS.get(), _Resends(take, limited)))
     try:
@@ -1019,14 +1042,23 @@ class _Gate:
 
 
 def _raised_by(failed: BaseException, sends: Sequence[Send]) -> Send | None:
-    """Compatibility fallback for multi-send callers outside G6's wrappers. This cannot bind an error after its sender
-    changes traceback locals. Removing it without losing existing external callers needs the bound note API to carry
-    requests and errors. Owned host errors and single-send metered errors carry their record instead.
+    """Compatibility fallback for multi-send callers outside G6's wrappers. Read from a frame's names, it cannot bind an
+    error after its sender changes them, which is why each note's own record is read first (below). Owned host errors and
+    single-send metered errors carry their record instead.
 
     The send whose failure ``failed`` is, read from its own frames, innermost first, on its way out or on the way out of
     what it was raised from: a frame of a watched caller this call let a send out for, or a frame, a function's or a method's,
     that names what an unwatched send let out in this call sent, as ``_sender`` reads it (``_named``). A send that came back
-    has no frame there. With none found, it is this call's one send, or not known."""
+    has no frame there. With none found, it is this call's one send, or not known.
+
+    Where no send of the call is a watched caller's, each note's own record is read first (``model_calls.outcome_of``): the
+    frame at each send's boundary, which the failure left through or did not, whatever that frame's names hold by now. So
+    an error a sender re-raises after other sends is still its own send's. Where it left through no boundary, or through
+    one that several sends were noted at, the frames' names are read as before."""
+    if not any(record.watched for record in sends):   # a watched caller's own frame decides for it, below
+        noted = outcome_of(failed, [record.note for record in sends if record.note is not None])
+        if noted is not None:
+            return next(record for record in sends if record.note is noted)
     seen: set[int] = set()
     error: BaseException | None = failed
     while error is not None and id(error) not in seen:
@@ -1069,24 +1101,24 @@ class _Counted:
     """A model caller the host meters. Every call of a tick passes through one, and what it counts is what reached a
     backend, not how often it was called: ``g6.core.model_calls`` notes each request as it goes out, so a retry inside a
     caller of a domain's own is charged attempt by attempt, and a ``Retry-After`` resend takes its place from
-    ``g6.core.llm.waits``. Nothing a run reports about itself enters the count.
+    ``g6.core.llm.waits`` before its wait and is checked again there once the wait is over. Nothing a run reports about
+    itself enters the count.
 
     Each send is let in once, before it goes out, by the innermost metered call open where it is made, which admits it for
     every meter around it (``_Requests.admit``): as it is noted, or for a watched host caller where its program starts, and a
     resend where it is resent. The calls around it see the same note and the same resend, and let the innermost decide, so a
-    nested call charges nothing twice and passes no meter around it. ``counting`` asks its observers not to raise, because an
-    observer is normally a bystander at someone else's request. This one is the gate on that request: it raises before
-    anything is sent or counted, and what it raises is the ``LLMError`` a failed request raises, which every caller here
-    passes on. That file is bound, so its sentence stays until an issuance window. What a call's children imported, which
+    nested call charges nothing twice and passes no meter around it. ``counting``'s observer here is the gate on the
+    request: it raises before anything is sent or counted, as ``counting`` says an observer may, and what it raises is the
+    ``LLMError`` a failed request raises, which every caller here passes on. What a call's children imported, which
     passes no boundary, is settled once as the call ends (``_Requests.settle``).
 
     Each send's record (``usage.Send``) is all that is known of it: no flag or variable here holds a send's state. What was
     refused is known by what was sent: for a host caller, an immutable snapshot handed to its launcher (``_Gate``);
     for any other, the system text and request the innermost frame below its sender, or the sender's own, names, a function's
     or a method's, read as it is noted (``_sender``), and a request no such frame names is not sent. What a call raised is
-    carried by ``ProviderStop`` with its send's record for owned host errors and single-send metered errors. Only external
-    multi-send errors use the traceback fallback (``_raised_by``), which cannot bind a mutated traceback: the bound note API
-    must hand over the request and error to close that gap. A watched host
+    carried by ``ProviderStop`` with its send's record for owned host errors and single-send metered errors. External
+    multi-send errors are read back to their send by the frame at each note's boundary, which ``model_calls`` records as the
+    request is noted (``_raised_by``); only where that cannot say do a frame's names decide. A watched host
     caller's own reading of its structured output is all that decides for it, and the text reader is for any other. Whichever
     way the call comes back, what its tick latched decides last (``recheck``), so a wrapper that catches the limit or the
     refusal cannot turn it into an answer.
@@ -1094,10 +1126,11 @@ class _Counted:
     A caller that answers with no request noted is refused, because nothing could say how often it asked. The limit of
     this: a caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own
     retries. Only a usage record from the provider can show those, which is the relay of design section 3. A wrapper that
-    sends from a thread of its own is seen only when it answers, as a caller that noted nothing, because ``counting`` holds its
-    observers in a context that thread does not have: the tick adopts nothing and the loop pauses, but what it sent has gone.
-    Closing that takes a change to that bound file, which waits for an issuance window. One that copied the context has those
-    observers, and a request it sends once the call has returned is refused: the call's place is gone, and its tick may be."""
+    sends from a thread it starts inside the call is held as the call is: ``counting`` starts that thread in a copy of the
+    call's context, so each request it notes passes this gate before it goes. A thread that was running before the call has
+    no such context: what it sends is seen only when the call answers, as a caller that noted nothing, and the tick adopts
+    nothing and the loop pauses, but what it sent has gone. A thread that has the call's context, started inside it or
+    handed a copy, and sends once the call has returned is refused: the call's place is gone, and its tick may be."""
 
     def __init__(self, inner: Any, requests: _Requests) -> None:
         self.inner, self.requests = inner, requests
@@ -1129,15 +1162,16 @@ class _Counted:
             read_stops(sender)
             if not identity:
                 self.requests.unnamed()           # nothing names what it sends, so it does not go
-            self.requests.take(identity=identity, owner=call.owner, sender=sender)
+            self.requests.take(identity=identity, owner=call.owner, sender=sender, note=noting())
             self.requests.noted(calls)
 
-        def resend(wait: float = 0.0) -> None:
+        def resend(wait: float = 0.0, woke: bool = False) -> None:
             if innermost() is not None:           # a resend is a send: what it sends again is checked again
                 sender, identity = _sender(self)
                 if not identity:
                     self.requests.unnamed()
-                self.requests.take(wait, identity=identity, owner=call.owner, sender=sender)
+                # before its wait it takes its place; once the wait is over (``woke``) it is checked again on that place
+                self.requests.take(wait, identity=identity, owner=call.owner, sender=sender, woke=woke)
 
         def limited(wait: dict[str, Any]) -> None:
             if innermost() is not None:

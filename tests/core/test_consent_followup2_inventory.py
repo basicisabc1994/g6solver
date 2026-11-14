@@ -32,7 +32,8 @@ PLACES = {
     "core/git_env.py": ("ask safe_git safe_git_env", "outside Git"),
     "core/host_models.py": ("_environment _run locate", "outside host model CLI"),
     "core/outside.py": ("OutsideProgram _run clean_environment", "outside program discovery and transport"),
-    "core/promotion_custody.py": ("_call_service _service_env", "BOUND: evaluator Python child, offered for issuance"),
+    "core/promotion_custody.py": ("_call_service _service_env", "evaluator Python child: isolated, its roots by the "
+                                                                "loop children's one transport since the issuance window"),
     "core/process_tree.py": ("__init__", "generic process transport, takes caller environment"),
     "core/sandbox.py": ("run_script", "isolated candidate scripts, deliberately imports sandbox code"),
     "csf/rollback.py": ("_git", "outside Git"),
