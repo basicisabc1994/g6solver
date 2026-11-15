@@ -342,10 +342,13 @@ def _tree(root: Path) -> Path:
 
 
 def _as_globbed(root: Path, pattern: str) -> set[str]:
-    """What the manifest chose before: ``Path.glob``'s paths that the whole listing holds, caches left out."""
-    listed = set(reading.files_under(root))
-    return {p.relative_to(root).as_posix() for p in root.glob(pattern)
-            if p in listed and not integrity.in_cache(p.relative_to(root))}
+    """What the manifest chose before: ``Path.glob``'s paths that the whole listing holds, caches left out, each spelled
+    as the listing spells it. On Windows Python 3.13's ``Path.glob`` keeps a part with no wildcard as the pattern spells
+    it (``A/*.PY`` gives ``A/x.py`` where the folder is ``a``) and 3.12's as the disk does; a Windows path equals its
+    other-case spelling, so the listing's own path is found by the globbed one."""
+    listed = {p: p for p in reading.files_under(root)}
+    return {listed[p].relative_to(root).as_posix() for p in root.glob(pattern)
+            if p in listed and not integrity.in_cache(listed[p].relative_to(root))}
 
 
 @pytest.mark.parametrize("pattern", GLOBS)
