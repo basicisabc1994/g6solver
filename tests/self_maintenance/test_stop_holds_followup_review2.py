@@ -337,6 +337,10 @@ def test_an_ending_after_the_lock_is_let_go_writes_nothing_over_the_one_made_whi
     assert reached and terminal.get("code") == runner.SETTINGS_CHANGED, terminal
 
 
+@pytest.mark.xfail(strict=True, raises=AttributeError, reason=(
+    'Superseded by ruling in the merge of the consent and stop lines (3dc7ce7): "No terminal path to consent (consent '
+    'side). Cost: the stop side\'s test that drives runner._person fails." The terminal acts this test drives '
+    '(runner._at_a_terminal) are gone; the heartbeat rule is read in runner.act, by the inventory beside it.'))
 def test_a_persons_command_writes_no_heartbeat_over_a_live_runners(looped, monkeypatch):
     real_open, opened = runner.open_loop, []
 
@@ -656,6 +660,9 @@ def test_whether_a_runner_is_alive_is_never_read_from_a_lock_that_cannot_be_trie
     assert reached and alive is not True and alive is not False, alive
 
 
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
+    'Superseded by ruling in the merge of the consent and stop lines (3dc7ce7): "Unknown runner liveness reports '
+    'stopped as null (the consent side\'s own ruling), not false." This test expects false there.'))
 def test_status_start_and_stop_say_a_runner_lock_cannot_be_tried_and_never_read_it_as_alive(active, monkeypatch):
     with runner_lock(active.root):
         pass

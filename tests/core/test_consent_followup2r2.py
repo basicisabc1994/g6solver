@@ -374,7 +374,18 @@ def test_ledger_identity_receipt_reads_back_the_same_stored_id(tmp_path, kind, i
     assert reopened.record(name, ident) is not None
 
 
-@pytest.mark.parametrize('fallback', ['complete', 'partial'])
+#: The merge of the consent and the stop lines (3dc7ce7) kept the stop side's rule where the two could not both hold:
+#: "stops_asked raises on a journal it cannot read ... A journal line cut short is a stop a person may lift in the
+#: dialog (stop side), not an uncertain count that refuses the dialog (consent side). Cost: three consent-side
+#: expectations of -1 ... fail", and "a start that records stops=-1 is refused. Cost: one consent-side test that writes
+#: such a start fails." Its record counts two tests of this file among the seven that fail on purpose.
+STOP_SIDE_RULING = ('Superseded by ruling in the merge of the consent and stop lines (3dc7ce7): the stop side\'s reading '
+                    'of the stop count stands, so the consent side\'s expectation of an uncertain count of -1 fails on '
+                    'purpose.')
+
+
+@pytest.mark.parametrize('fallback', ['complete', pytest.param('partial', marks=pytest.mark.xfail(
+    strict=True, raises=AssertionError, reason=STOP_SIDE_RULING))])
 def test_selective_creation_failures_use_an_existing_count_gate_after_restart(tmp_path, monkeypatch, fallback):
     prepared(tmp_path)
     (tmp_path / 'STOP').write_bytes(b'an earlier stop\n')
@@ -504,6 +515,8 @@ def test_reason_waits_for_this_records_exact_bytes_and_observation(tmp_path, mon
     assert runner._gate(tmp_path, runner.read_settings(tmp_path))[1]
 
 
+@pytest.mark.xfail(strict=True, raises=ValueError, reason=STOP_SIDE_RULING + ' Here the start that records '
+                   'stops=-1 is refused when it is written (LedgerError, a ValueError).')
 def test_an_uncertain_count_cannot_equal_an_approved_count_or_allow_a_start(tmp_path):
     prepared(tmp_path)
     (tmp_path / e.STOPS_FILE).write_bytes(b'G6_E_LOOP_STOP_CANONICAL_FAILED partial')
