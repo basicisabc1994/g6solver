@@ -6,6 +6,7 @@ decoder, and named by its bytes where they are not UTF-8 (boundary_case); and th
 the base this read read and the patch is known by (check_then_act_race). Git runs only on scratch repositories, reviewers
 are recorded, and no test of a reviewer's ever runs."""
 import ast
+import errno
 import hashlib
 import inspect
 import os
@@ -384,7 +385,12 @@ def _named_change(where: Path, monkeypatch, base: dict, now: dict, mode: str = "
     where.mkdir(parents=True, exist_ok=True)
     for rel, raw in now.items():
         if raw is not None and not rel.startswith("linked/"):
-            (where / rel).write_bytes(raw)
+            try:
+                (where / rel).write_bytes(raw)
+            except OSError as exc:
+                if exc.errno != errno.EILSEQ:
+                    raise
+                pytest.skip(f"this file system refuses a name that is not UTF-8 ({exc}), so no such file can exist here")
 
     def oid(rel: str) -> str:
         return hashlib.sha1(_raw(rel)).hexdigest()
