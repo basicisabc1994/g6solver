@@ -1,6 +1,10 @@
 import pytest
 
 
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
+    'Superseded by the block rule (02e25ab): the essay rule\'s unit is the block and no sentence end is looked for, '
+    'so two independent sentences in one block that names G6 are refused together. 07c4a96 had made these nine pass '
+    'with the table of sentence ends that 02e25ab deleted.'))
 @pytest.mark.parametrize('first,second', [
     ('G6 is OK!', 'Other tools verify programs.'),
     ('Does G6 check C?', 'Other tools verify programs.'),

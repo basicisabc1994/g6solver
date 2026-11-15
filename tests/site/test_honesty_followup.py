@@ -17,6 +17,10 @@ def test_reverification_is_still_a_claim_that_g6_verified_work(honesty):
     assert honesty.claims(copy), "The claim 'G6 reverifies every patch after a change.' passed."
 
 
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
+    'Kept as a documented false refusal by ruling (9e2bca1: "the owner retained this limit and its test"; release '
+    'ledger review-copy4#2): an unquoted square-bracket label that holds only the state is refused, and authors '
+    'quote it.'))
 def test_a_state_only_mermaid_node_does_not_require_quoted_square_brackets(honesty):
     source = '```mermaid\nflowchart TD\n  start --> ok[verified]\n```\n'
     copy = honesty._markdown_copy(source)
