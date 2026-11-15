@@ -846,6 +846,10 @@ def _output_place(path: Path, root: str) -> str:
             if parent == path:
                 raise LLMError("G6_E_LOOP_INPUT_CHANGED: host output has no resolvable parent") from None
             path = parent
+        except OSError:
+            # off Windows a parent that is a link is refused by the open itself (ELOOP), where Windows opens the
+            # link and the reparse-tag check refuses it: the same refusal, as ``_output_identity`` gives
+            raise LLMError("G6_E_LOOP_INPUT_CHANGED: host output parent cannot be opened safely") from None
     resolved = os.path.normpath(os.path.join(resolved, *reversed(missing)))
     if not _inside(resolved, root):
         raise LLMError("G6_E_LOOP_INPUT_CHANGED: host output is outside its admitted folder")
