@@ -176,6 +176,11 @@ CHILD_READS = {
     ("mcp/improve.py", "_run_act", "Popen"): "starts a person's act",
     ("mcp/improve.py", "_run_act", "communicate"): "the act's output, read only by _read_act",
     ("mcp/improve.py", "_run_act", "returncode"): "the act's exit status, read only by _read_act",
+    # The scan takes every call named wait. These three, from the refusals line (99c6126, 4fc4577), read no child: each
+    # is a thread waiting on the loop's own condition (loop._SETTLED, a threading.Condition) for another send to settle.
+    **dict.fromkeys((("metaharness/loop.py", "_await_writes", "wait"), ("metaharness/loop.py", "admit", "wait"),
+                     ("metaharness/loop.py", "settle", "wait")),
+                    "no child process: a thread waits on the meter's condition for another send to settle"),
 }
 #: The modules a person's act and the runner's start pass through.
 ACT_PATH = ("mcp/__init__.py", "mcp/improve.py", "mcp/consent.py", "metaharness/runner.py", "metaharness/loop.py",

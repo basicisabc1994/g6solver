@@ -94,11 +94,14 @@ def test_inventory_pruning_is_derived_from_the_actual_listing(tmp_path):
 
 
 def test_shared_rules_remain_byte_identical_to_the_base():
+    # The slice is 84ce46f..51ae4c2 (bb0ebc8 and 51ae4c2), merged by 7c57bf5. The control read the working tree, which
+    # since that merge also holds other lines' changes to these two files (the freeze line's 60ae316 and 484d187 in
+    # integrity, for one): not the slice's.
+    # It now reads the slice's last commit, so it still says what it said: the slice left the shared rules as they were.
+    folder = Path(__import__('g6').__file__).parents[2]
     for rel in ('src/g6/integrity/__init__.py', 'src/g6/metaharness/loop.py'):
-        root = __import__('g6').__file__
-        path = Path(root).parents[2] / rel
-        expected = subprocess.check_output(['git', 'show', '84ce46f:' + rel])
-        assert path.read_bytes() == expected
+        expected = subprocess.check_output(['git', 'show', '84ce46f:' + rel], cwd=folder)
+        assert subprocess.check_output(['git', 'show', '51ae4c2:' + rel], cwd=folder) == expected
 
 
 @pytest.mark.parametrize('kind', ['is_symlink', 'is_junction'])

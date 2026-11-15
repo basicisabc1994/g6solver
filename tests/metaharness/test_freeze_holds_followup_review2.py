@@ -362,8 +362,11 @@ def test_a_pattern_that_chooses_folders_chooses_no_file(tmp_path, pattern):
 
 @pytest.mark.parametrize("pattern, refused", [("", ValueError), ("a**b/*.py", ValueError), ("/abs/*.py", NotImplementedError)])
 def test_a_pattern_path_glob_refuses_is_refused_listed_or_not(tmp_path, pattern, refused):
-    with pytest.raises(refused):
-        list(tmp_path.glob(pattern))
+    # Python 3.13's Path.glob takes "**" inside a part, where 3.12's refuses it. G6's selection is its own code and
+    # keeps the 3.12 rule on every version (integrity._selects), so only the control on Path.glob is by version.
+    if not (pattern == "a**b/*.py" and sys.version_info >= (3, 13)):
+        with pytest.raises(refused):
+            list(tmp_path.glob(pattern))
     with pytest.raises(refused):
         integrity.build_manifest(tmp_path / "nowhere", patterns=(pattern,))
 

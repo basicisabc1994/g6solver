@@ -83,13 +83,16 @@ def _tick(root, monkeypatch, result):
     return loop, reply, launches, answers
 
 
-def test_control_a_stated_answer_ends_the_tick_as_no_refusal(tmp_path, monkeypatch):
+# The three tests that send through a hand-built tick take the grant their send needs (consented_provider_fakes, which
+# 8a6ca18 gave their two neighbours below): an owned host launch takes the sharing check itself (c3a0981), so without a
+# grant the tick ended on G6_E_CLOUD_CONSENT_REQUIRED before anything was launched, and none of them reached its subject.
+def test_control_a_stated_answer_ends_the_tick_as_no_refusal(tmp_path, monkeypatch, consented_provider_fakes):
     loop, reply, launches, answers = _tick(tmp_path, monkeypatch, {"type": "result", "is_error": False, "result": "answer"})
     assert answers == ["answer"] and len(launches) == 1
     assert reply["warning_card"]["code"] != CLASSIFIER_STOP and loop.requests.closed.refusal is None
 
 
-def test_control_a_refusal_claude_code_states_is_recorded_as_one(tmp_path, monkeypatch):
+def test_control_a_refusal_claude_code_states_is_recorded_as_one(tmp_path, monkeypatch, consented_provider_fakes):
     loop, reply, launches, answers = _tick(tmp_path, monkeypatch,
                                            {"type": "result", "is_error": True, "stop_reason": "refusal"})
     assert answers == [] and len(launches) == 1
@@ -110,7 +113,8 @@ def test_control_a_result_with_no_status_is_never_an_answer_and_its_inputs_are_n
     assert answers == [] and len(launches) == 1
 
 
-def test_a_reply_of_unknown_outcome_is_not_recorded_as_a_classifiers_refusal(tmp_path, monkeypatch):
+def test_a_reply_of_unknown_outcome_is_not_recorded_as_a_classifiers_refusal(tmp_path, monkeypatch,
+                                                                             consented_provider_fakes):
     loop, reply, launches, answers = _tick(tmp_path, monkeypatch, {"type": "result", "result": "answer"})
     assert answers == [] and len(launches) == 1               # held, as the commit rules: never an answer
     row = loop.log.cycles()[-1]

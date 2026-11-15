@@ -826,6 +826,10 @@ def test_a_folder_that_cannot_be_found_is_a_stop_that_says_it_failed_and_nothing
     assert _code(reply) == improve.STOP_FAILED and not (active.root / STOP_FILE).exists()
 
 
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
+    'Superseded by ruling in the merge of the consent and stop lines (3dc7ce7): "A stop whose canonical record stands '
+    'is a stop that stands: its reply is G6_E_LOOP_STOP_ASKED naming what is missing ... Cost: the stop side\'s test '
+    'that expects G6_E_LOOP_STOP_FAILED there fails."'))
 def test_a_stop_that_cannot_be_written_says_so_and_nothing_escapes(active):
     (active.root / STOP_FILE).mkdir()
     reply = improve.stop(str(active.root), "stop")

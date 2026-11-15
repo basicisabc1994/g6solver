@@ -9,6 +9,7 @@ from uuid import uuid4
 from g6.harness import verification_search as vs
 from g6.harness import verification_templates as vt
 from g6.mcp import behaviour, review_reply
+from g6.workforce import repo_tests
 from .helpers import Dialog, REQUIREMENTS, TASK, namespace, repo, result, stated
 
 
@@ -37,7 +38,9 @@ def test_candidate_from_saved_review_rejects_output_the_probe_did_not_observe(tm
                              text=True, timeout=20)
         assert run.returncode == 0, run.stdout + run.stderr
         outputs[at_base] = run.stdout
-        observations = vs._observations(run.stdout)
+        # the reader of a probe's payload is the producer's since 219621d (repo_tests.probe_observations); it was
+        # verification_search._observations when this test was written
+        observations = repo_tests.probe_observations(run.stdout)
         assert any(item["input"]["args"] == [2, 3] and item["output"] == {"returned": 5}
                    for item in observations)
     stated(monkeypatch)

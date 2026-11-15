@@ -55,8 +55,8 @@ def repo(tmp_path, monkeypatch):
 def result(passed=(), failed=()):
     outcomes = {**{n: {"setup": "passed", "call": "passed", "teardown": "passed"} for n in passed},
                 **{n: {"setup": "passed", "call": "failed", "teardown": "passed"} for n in failed}}
-    return {"verdict": "failed" if failed else "passed", "said": "", "passed": len(passed), "failed": len(failed),
-            "not_passed": 0, "total": len(outcomes), "deselected": 0, "test_outcomes": outcomes,
+    return {"verdict": "failed" if failed else "passed", "said": "", "rootdir": "", "passed": len(passed),
+            "failed": len(failed), "not_passed": 0, "total": len(outcomes), "deselected": 0, "test_outcomes": outcomes,
             "collected_ids": sorted(outcomes), "omitted_ids": [], "changed": [], "output": "", "seconds": 0.25,
             "python": sys.executable, "interpreter_source": "g6",
             "isolation": {"backend": "synthetic-unit-fixture", "why": ""}, "failed_ids": list(failed),

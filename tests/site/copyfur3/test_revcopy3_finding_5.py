@@ -22,11 +22,19 @@ ENDS = {
 }
 
 
+#: 02e25ab's own record: "Not fixed: ... Finding 5 ... Superseded by the block rule"; its tests left failing, unchanged.
+SUPERSEDED = ('Superseded by the block rule (02e25ab): the abbreviation list (ABBREVIATIONS) and the table of '
+              'sentence ends were deleted, the essay rule\'s unit is the block, and a claim word about something else '
+              'in a block that names G6 is refused, which is the ruling\'s stated cost.')
+
+
+@pytest.mark.xfail(strict=True, raises=AttributeError, reason=SUPERSEDED)
 def test_every_case_ends_in_a_listed_word(honesty):
     for word, first in ENDS.items():
         assert first.endswith(f' {word}.') and word.casefold() in honesty.ABBREVIATIONS, word
 
 
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=SUPERSEDED)
 @pytest.mark.parametrize('word', sorted(ENDS))
 def test_a_sentence_that_ends_in_an_ordinary_word_of_the_list_ends(honesty, word):
     first, second = ENDS[word], 'Formal methods verify programs against a specification.'

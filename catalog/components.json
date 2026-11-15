@@ -1729,6 +1729,7 @@
       "harness",
       "integrity",
       "intent_engine",
+      "invariants",
       "learning",
       "llm_router",
       "navigator",
@@ -1873,7 +1874,8 @@
       "agent_codex",
       "agents",
       "operator",
-      "safety_engine"
+      "safety_engine",
+      "workspace"
     ],
     "sensitive_ops": [],
     "vetting": null
@@ -1951,6 +1953,8 @@
     "requires": [
       "evidence",
       "formal",
+      "harness",
+      "integrity",
       "intent_engine",
       "learning",
       "reliability_pipeline",

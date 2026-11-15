@@ -213,7 +213,7 @@ def test_confirmed_reproduction_command_also_excludes_repository_pytest_hooks(tm
     # synthetic process. Product owner-only folders are not altered.
     directory_fixture = '''import tempfile, pathlib, os, uuid
 def fixture_directory(suffix=None, prefix=None, dir=None):
-    path = pathlib.Path(dir or os.environ['TMP']) / ((prefix or 'tmp') + uuid.uuid4().hex + (suffix or ''))
+    path = pathlib.Path(dir or (os.environ.get('TMP') or tempfile.gettempdir())) / ((prefix or 'tmp') + uuid.uuid4().hex + (suffix or ''))
     path.mkdir(parents=True)
     return str(path)
 tempfile.mkdtemp = fixture_directory

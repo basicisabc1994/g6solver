@@ -1,3 +1,9 @@
+import pytest
+
+
+@pytest.mark.xfail(strict=True, raises=AttributeError, reason=(
+    'Superseded by the block rule (02e25ab): the sentence reader this test calls (sentences) was deleted with the '
+    'table of sentence ends, and two independent sentences in one block that names G6 are refused together.'))
 def test_an_exempt_code_name_does_not_hide_a_sentence_boundary(honesty):
     page = '<p>G6 calls <code>check</code>. Other tools verify programs.</p>'
     assert len(honesty.sentences(honesty._page_copy(page))) == 2, 'Control: ordinary copy sees two sentences.'

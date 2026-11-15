@@ -689,7 +689,9 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
     tests = report.phases
     omitted = report.omitted
     unfinished = [node for node in report.nodes if node not in tests and node not in omitted]
-    missing = {check for check in ids if _not_found(check, report)}
+    # A test pytest cannot find because its own file could not be collected is that collection failure, not a wrong
+    # id: a real run records both (the selection as not found, the file as failed), and the failure is the cause.
+    missing = {check for check in ids if _not_found(check, report) and not report.collection_errors_for(check)}
     broken = _collection_errors(report)
     found: dict[str, dict] = {}
     for check in ids:

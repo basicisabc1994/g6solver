@@ -99,7 +99,10 @@ def test_copy_names_exemptions_and_bound_input_membership(honesty):
                     and any(isinstance(target, ast.Name) and target.id == 'LEFT' for target in node.targets))
     assert ast.literal_eval(old_left) == honesty.LEFT
     assert acknowledges_unverified('The result is not independently checked beyond the run below.')
-    changed = set(subprocess.run(['git', 'diff', '--name-only', 'd45e79f', 'HEAD'], cwd=honesty.OSS,
+    # The copy change is d45e79f..02e25ab (its four commits, the last being repair 3). The control read up to HEAD,
+    # which has since moved past it: merges of other lines changed bound inputs, each with its certificates issued
+    # again (7e585af), and those are not the copy change's.
+    changed = set(subprocess.run(['git', 'diff', '--name-only', 'd45e79f', '02e25ab'], cwd=honesty.OSS,
                                  capture_output=True, text=True, encoding='utf-8', check=True).stdout.splitlines())
     root = honesty.OSS / 'src'
     records = sorted(root.glob('g6/*/*/certificate/certificate.json'))

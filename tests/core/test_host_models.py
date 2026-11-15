@@ -75,6 +75,21 @@ FORBIDDEN = {"ANTHROPIC_API_KEY": "canary-anthropic", "ANTHROPIC_AUTH_TOKEN": "c
              "CLAUDE_CODE_OAUTH_TOKEN": "canary-oauth"}
 
 
+@pytest.fixture(autouse=True)
+def the_callers_as_this_module_makes_them(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are of ``g6.core.host_models`` alone. Importing ``g6.self_maintenance.usage`` gives every host
+    caller made afterwards a constructor of its own (``host_models._HostCaller.__new__``), whose completion takes the
+    sharing check and reads the reply for a provider's stop first; that path has its own tests
+    (``tests/metaharness/test_consent_watched_hosts.py``, ``tests/self_maintenance``). Whether that module was imported
+    depends on which test files ran earlier in the same process, so without this the tests here passed alone and
+    failed after one of those. For the length of a test the callers are made as this module makes them: by
+    ``object.__new__``. Where the constructor was never replaced, nothing is touched (setting one and taking it away
+    again would leave the class refusing its own arguments)."""
+    if "__new__" in vars(host_models._HostCaller):
+        monkeypatch.setattr(host_models._HostCaller, "__new__",
+                            staticmethod(lambda cls, *args, **kwargs: object.__new__(cls)))
+
+
 class StandIn:
     """A stand-in for claude and codex: what it was told to do, and what it saw when it was started."""
 

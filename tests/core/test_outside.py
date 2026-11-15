@@ -135,9 +135,14 @@ def test_programs_are_found_only_through_this_module() -> None:
     # shutil.which, and a bare program name given to subprocess, both look in the current folder first on Windows
     root = Path(outside.__file__).parent.parent
     bare = re.compile(r"""shutil\.which\(|\[\s*["'](?:git|python3?|java|lean|sage|dot|ffmpeg|swipl)["']\s*,""")
+    # One more finder, by the allowance change's ruling (f12561f): the status line's own lookup, beside this module so
+    # that its wrapper stays light. It gives shutil.which a name joined to an absolute folder of PATH, so the current
+    # folder is never searched. That one line, as written, is the whole exception; any other line there is a hit.
+    ruled = {"_allowance/programs.py": "if absolute(folder) and (found := shutil.which(os.path.join(folder, command))):"}
     hits = [f"{path.relative_to(root).as_posix()}:{number}" for path in sorted(root.rglob("*.py"))
             if path != Path(outside.__file__)
-            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1) if bare.search(line)]
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+            if bare.search(line) and ruled.get(path.relative_to(root).as_posix()) != line.strip()]
     assert hits == []
 
 

@@ -3,6 +3,13 @@ sentence"). The table of sentence ends takes only quotation marks and brackets a
 with a citation never ends, and the sentence after it is read with its subject: independent copy is refused."""
 import re
 
+import pytest
+
+#: 02e25ab's own record: "Not fixed: Finding 4 ... Superseded by the block rule"; both tests left failing, unchanged.
+SUPERSEDED = ('Superseded by the block rule (02e25ab): the essay rule\'s unit is the block, the sentence reader '
+              '(sentences) was deleted with the table of sentence ends, and a claim word about something else in a '
+              'block that names G6 is refused, which is the ruling\'s stated cost.')
+
 CITED_END = re.compile(r'[.!?]["\'”’)]*(?:\[\d+\])+(?=\s+["“(\[]?[A-Z])')
 
 
@@ -14,6 +21,7 @@ def sentence_ends(honesty, text):
     return ends
 
 
+@pytest.mark.xfail(strict=True, raises=AttributeError, reason=SUPERSEDED)
 def test_the_sentence_reader_ends_a_sentence_at_a_citation_in_the_real_essays(honesty, site):
     cited = joined = 0
     example = ''
@@ -33,6 +41,7 @@ def test_the_sentence_reader_ends_a_sentence_at_a_citation_in_the_real_essays(ho
                          f'to the sentence after them, e.g. "...{example}..."')
 
 
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=SUPERSEDED)
 def test_a_sentence_after_a_cited_sentence_keeps_its_own_subject(honesty):
     marker = '<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup>'
     # controls: without the citation the two sentences are apart, and a claim in the cited sentence itself is found

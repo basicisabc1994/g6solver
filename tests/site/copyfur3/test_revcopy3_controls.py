@@ -4,6 +4,8 @@ import html
 import json
 import re
 
+import pytest
+
 
 def ld(data):
     return '<script type="application/ld+json">' + json.dumps(data) + '</script>'
@@ -16,8 +18,15 @@ def cc(honesty, page):
 def test_the_instrument_finds_a_claim_and_passes_plain_copy(honesty):
     assert honesty.claims('G6 verifies every patch.') and honesty.g6_claims('<p>G6 verifies every patch.</p>')
     assert honesty.claims('G6 checks every patch.') == [] and honesty.g6_claims('<p>G6 checks every patch.</p>') == []
-    assert honesty.g6_claims('<p>G6 checks every patch. Formal methods verify programs.</p>') == []
     assert honesty.g6_claims('<p>G6 asks Dr. Smith to verify every patch.</p>')
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
+    'Superseded by the block rule (02e25ab), which names this line ("this review\'s instrument control\'s '
+    'two-sentence line"): two independent sentences in one block that names G6 are refused together.'))
+def test_the_instrument_passes_two_independent_sentences_in_one_block(honesty):
+    # the instrument control's third line, moved here unchanged so the control's other three lines are held again
+    assert honesty.g6_claims('<p>G6 checks every patch. Formal methods verify programs.</p>') == []
 
 
 def test_the_real_pages_used_by_the_findings_pass(honesty, site):

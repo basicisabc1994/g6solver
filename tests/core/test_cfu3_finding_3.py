@@ -5,12 +5,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
 from g6.mcp import improve
 from g6.metaharness import runner
 from g6.metaharness.api import _envelope
 from g6.self_maintenance import envelope
 
 
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
+    'Superseded by the owner\'s ruling of 2026-11-09, recorded in the merge of the consent and stop lines (3dc7ce7): '
+    '"review-cfu3 finding 3\'s start-in-force expectation is superseded by the stop safeguard; its copies fail on '
+    'purpose." A stop that cannot be written now leaves a stop on record, so the rows are not as before.'))
 def test_old_note_at_repeated_time_cannot_claim_a_failed_stop(monkeypatch):
     checkout = Path(__file__).resolve().parents[2]
     folder = checkout / ".review" / "tmp" / f"finding3-{uuid4().hex}"

@@ -65,7 +65,8 @@ def standard():
 
 def result(node, status="passed"):
     outcomes = {node: {"setup": "passed", "call": status, "teardown": "passed"}}
-    return {"verdict": status, "said": "", "passed": int(status == "passed"),
+    # "rootdir": a run report's required field since 5daf0a8; without it every recorded run read as unreadable
+    return {"verdict": status, "said": "", "rootdir": "", "passed": int(status == "passed"),
             "failed": int(status == "failed"), "not_passed": 0, "total": 1, "deselected": 0,
             "test_outcomes": outcomes, "collected_ids": [node], "omitted_ids": [], "changed": [],
             "output": "", "seconds": 0.01, "python": sys.executable, "interpreter_source": "g6",

@@ -8,7 +8,7 @@ import pytest
 
 @pytest.fixture
 def tmp_path():
-    path = Path(os.environ["TMP"]) / ("case_" + uuid4().hex)
+    path = Path((os.environ.get("TMP") or tempfile.gettempdir())) / ("case_" + uuid4().hex)
     path.mkdir(parents=True)
     return path
 
@@ -20,7 +20,7 @@ def review_home(tmp_path, monkeypatch):
     # mode=0o700 temporary directories are inaccessible to child processes in this
     # managed Windows session; ordinary workspace directories work.
     def ordinary_mkdtemp(suffix=None, prefix=None, dir=None):
-        parent = Path(dir) if dir is not None else Path(os.environ["TMP"])
+        parent = Path(dir) if dir is not None else Path((os.environ.get("TMP") or tempfile.gettempdir()))
         path = parent / ((prefix or "tmp") + uuid4().hex + (suffix or ""))
         path.mkdir(parents=True)
         return str(path)

@@ -112,7 +112,8 @@ def standard(*, root=None) -> ExpectationStandard:
 
 def run_result(node: str, status: str = "passed") -> dict:
     tests = {} if status == "collection_error" else {node: {"setup": "passed", "call": status, "teardown": "passed"}}
-    return {"verdict": status, "said": "", "passed": int(status == "passed"), "failed": int(status == "failed"),
+    return {"verdict": status, "said": "", "rootdir": "", "passed": int(status == "passed"),
+            "failed": int(status == "failed"),
             "not_passed": 0, "total": len(tests), "deselected": 0, "test_outcomes": tests,
             "collected_ids": list(tests), "omitted_ids": [], "changed": [], "output": "", "seconds": 0.01,
             "python": sys.executable, "interpreter_source": "g6", "isolation": {"backend": "fixture", "why": ""},
@@ -137,8 +138,11 @@ def _saved_review(monkeypatch, source: Path, task: str, *, queued: bool = True) 
     fake_stated(monkeypatch)
 
     def observed(change, placed, text, node, *, at_base, **kwargs):
-        return {**run_result(node + "::test_differential"), "output": "G6-OBSERVATION " + json.dumps({
-            "input": {"args": [2, 3], "kwargs": {}}, "output": {"returned": -1 if at_base else 5}})}
+        output = "G6-OBSERVATION " + json.dumps({
+            "input": {"args": [2, 3], "kwargs": {}}, "output": {"returned": -1 if at_base else 5}})
+        # the producer reads its probe payload into the report (219621d); a consumer never reads it out of the output
+        return {**run_result(node + "::test_differential"), "output": output,
+                "probe_observations": repo_tests.probe_observations(output)}
 
     monkeypatch.setattr(vs, "_run_check", observed)
     if queued:

@@ -198,6 +198,11 @@ def test_terminal_page_survives_a_ledger_accepted_bad_cycle_time(active, monkeyp
     assert "owner stopped this run" in page.read_text(encoding="utf-8"), "terminal heartbeat preceded a stale page"
 
 
+@pytest.mark.xfail(strict=True, raises=ValueError, reason=(
+    'Superseded by ruling in the merge of the consent and stop lines (3dc7ce7): "A stop still being written refuses '
+    'the dialog and every admission (consent side\'s latch). Cost: the stop side\'s test of a dialog asked in the '
+    'middle of a stop cannot reach its start." The dialog asked here is refused, so the test cannot unpack what it '
+    'shows.'))
 def test_start_does_not_commit_a_lift_before_journal_fsync(active, monkeypatch):
     """Finding 6."""
     journal = active.root / envelope.STOPS_FILE

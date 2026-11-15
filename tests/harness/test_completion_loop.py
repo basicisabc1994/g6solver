@@ -484,7 +484,10 @@ def test_a_scout_session_has_no_shell_no_hooks_no_servers_and_keeps_nothing(monk
     def run(argv, stdin, cwd, files, env, timeout, name):
         seen.update(argv=argv, stdin=stdin, cwd=cwd, env=env, timeout=timeout,
                     settings=json.loads((files / "g6_settings.json").read_text(encoding="utf-8")))
-        return 0, json.dumps({"type": "result", "result": "finished"}), ""
+        # a result as Claude Code writes one, with its status: where an earlier test file of the same process has
+        # imported g6.self_maintenance.usage, the session's reply is read for a provider's stop, and a result with no
+        # status is an unknown one there (G6_E_LOOP_HOST_UNKNOWN), so this test passed alone and failed after such a file
+        return 0, json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": "finished"}), ""
 
     program = tmp_path / "claude.exe"
     program.write_text("", encoding="utf-8")

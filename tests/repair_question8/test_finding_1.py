@@ -1,5 +1,8 @@
 """A copy can acquire executable NTFS stream bytes without changing either manifest."""
+import os
 import subprocess
+
+import pytest
 
 from g6.core import confine
 from g6.harness import behaviour_question as bq, behaviour_runner as runner
@@ -8,6 +11,9 @@ from g6.workforce import repo_tests as rt
 from tests.repair_question2.helpers import TASK, candidate, repo
 
 
+@pytest.mark.skipif(os.name != 'nt', reason=(
+    'NTFS alternate data streams: "carrier.dat:helper.py" is a stream of carrier.dat only on NTFS; on other file '
+    'systems it is one more listed file, which test_tree_inventory.py covers as the unlisted-file way'))
 def test_an_added_ntfs_stream_cannot_supply_positive_confirmed_evidence(tmp_path, monkeypatch):
     root = repo(tmp_path, extra={'carrier.dat': 'unchanged ordinary bytes\n'})
     (root / 'calc.py').write_text(

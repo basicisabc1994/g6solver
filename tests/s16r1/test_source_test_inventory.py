@@ -8,10 +8,15 @@ schema inventory. New cases cannot silently inherit a business-test exemption.
 import ast
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 from g6.core.consent_declarations import TOOL_ARGUMENTS
 
+#: A fingerprint holds ``ast.dump`` of each helper, and the manifest's were made on Python 3.12. From 3.13 the dump
+#: leaves out empty fields unless asked to show them; asked, it is 3.12's text, character for character (checked over
+#: every definition of every test file on 3.13.5). Without this every fingerprint with a helper differed on 3.13.
+_DUMP = {'show_empty': True} if sys.version_info >= (3, 13) else {}
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = Path(__file__).with_name('source_test_inventory.json')
 MODEL_CALLS = {'run_critic', 'repository_context', 'review_patch', 'advance', 'prepare',
@@ -95,7 +100,7 @@ def scan(files=None):
                             calls.add('model:' + called)
             if calls:
                 rel = path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT / 'tests') else path.name
-                reviewed_code = source + '\n'.join(ast.dump(n) for helper in sorted(visited & functions.keys())
+                reviewed_code = source + '\n'.join(ast.dump(n, **_DUMP) for helper in sorted(visited & functions.keys())
                                                     for n in functions[helper])
                 if fixtures:
                     reviewed_code += (ROOT / 'tests/conftest.py').read_text(encoding='utf-8')

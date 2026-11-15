@@ -119,7 +119,12 @@ def _tick(root, monkeypatch, results):
     return loop, loop._run(), launches
 
 
-def test_a_tick_that_met_an_unknown_outcome_is_recorded_as_that_and_still_pauses_the_loop(tmp_path, monkeypatch):
+# The two tests that send through a hand-built tick take the grant their send needs (consented_provider_fakes, which
+# 8a6ca18 gave this folder's other sending tests): an owned host launch takes the sharing check itself (c3a0981), so
+# without a grant the tick ended on G6_E_CLOUD_CONSENT_REQUIRED before anything was launched, and neither reached
+# its subject.
+def test_a_tick_that_met_an_unknown_outcome_is_recorded_as_that_and_still_pauses_the_loop(tmp_path, monkeypatch,
+                                                                                          consented_provider_fakes):
     loop, reply, launches = _tick(tmp_path, monkeypatch, [{"type": "result", "result": "answer"}])
     row = loop.log.cycles()[-1]
     assert len(launches) == 1 and reply["completion_state"] == "blocked-escalated"
@@ -134,7 +139,8 @@ def test_a_tick_that_met_an_unknown_outcome_is_recorded_as_that_and_still_pauses
     assert reflex._POINTS_AT[HOST_UNKNOWN] == reflex.STOP == reflex._POINTS_AT[CLASSIFIER_STOP]
 
 
-def test_a_tick_that_met_both_is_a_classifiers_stop_and_keeps_the_hold_beside_it(tmp_path, monkeypatch):
+def test_a_tick_that_met_both_is_a_classifiers_stop_and_keeps_the_hold_beside_it(tmp_path, monkeypatch,
+                                                                                 consented_provider_fakes):
     loop, reply, launches = _tick(tmp_path, monkeypatch, [
         {"type": "result", "result": "answer"}, {"type": "result", "is_error": True, "stop_reason": "refusal"}])
     row = loop.log.cycles()[-1]
