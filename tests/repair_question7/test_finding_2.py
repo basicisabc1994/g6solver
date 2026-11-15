@@ -12,7 +12,11 @@ class Stopped(BaseException):
 def test_restart_after_creating_scenario_file_can_ask_again(tmp_path, monkeypatch):
     control_parent = tmp_path / 'control'
     control_parent.mkdir()
-    assert ask(repo(control_parent)).get('status') == 'confirmed'
+    # The control repository holds one file more, so its base commit is never the other repository's. Two
+    # fixture repositories of the same files committed within one second have the same commit id, and then the same
+    # question, and the control's saved scenario stands in the way of the write this test interrupts: on a fast
+    # system the fault below was never reached (DID NOT RAISE), on a slower one the ids differed by their time.
+    assert ask(repo(control_parent, extra={'CONTROL.txt': 'the control repository\n'})).get('status') == 'confirmed'
     root = repo(tmp_path)
     canonical = es.canonical
 
