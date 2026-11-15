@@ -23122,70 +23122,6 @@
       "complexity": "simple"
     },
     {
-      "id": "file:src/g6/research/echa/flag.py",
-      "type": "file",
-      "name": "flag.py",
-      "filePath": "src/g6/research/echa/flag.py",
-      "summary": "The ECHA research flag: research_enabled reads G6_ECHA_RESEARCH and accepts only a plain yes, and require_research raises ResearchDisabled otherwise, so every kernel entry point refuses while the flag is off.",
-      "tags": [
-        "feature-flag",
-        "configuration",
-        "research",
-        "guard"
-      ],
-      "complexity": "simple"
-    },
-    {
-      "id": "class:src/g6/research/echa/flag.py:ResearchDisabled",
-      "type": "class",
-      "name": "ResearchDisabled",
-      "filePath": "src/g6/research/echa/flag.py",
-      "lineRange": [
-        18,
-        19
-      ],
-      "summary": "RuntimeError raised when the ECHA research flag is off, meaning nothing was created, written or read.",
-      "tags": [
-        "error",
-        "feature-flag"
-      ],
-      "complexity": "simple"
-    },
-    {
-      "id": "function:src/g6/research/echa/flag.py:research_enabled",
-      "type": "function",
-      "name": "research_enabled",
-      "filePath": "src/g6/research/echa/flag.py",
-      "lineRange": [
-        22,
-        25
-      ],
-      "summary": "Returns true only when G6_ECHA_RESEARCH (from the environment or a given mapping) is 1, true, yes or on; never raises.",
-      "tags": [
-        "feature-flag",
-        "configuration",
-        "utility"
-      ],
-      "complexity": "simple"
-    },
-    {
-      "id": "function:src/g6/research/echa/flag.py:require_research",
-      "type": "function",
-      "name": "require_research",
-      "filePath": "src/g6/research/echa/flag.py",
-      "lineRange": [
-        28,
-        30
-      ],
-      "summary": "Raises ResearchDisabled with setup guidance unless the research flag is on; called at the start of every kernel entry point.",
-      "tags": [
-        "feature-flag",
-        "guard",
-        "utility"
-      ],
-      "complexity": "simple"
-    },
-    {
       "id": "file:src/g6/research/echa/ledger.py",
       "type": "file",
       "name": "ledger.py",
@@ -65415,48 +65351,6 @@
       "weight": 0.8
     },
     {
-      "source": "file:src/g6/research/echa/flag.py",
-      "target": "class:src/g6/research/echa/flag.py:ResearchDisabled",
-      "type": "contains",
-      "direction": "forward",
-      "weight": 1
-    },
-    {
-      "source": "file:src/g6/research/echa/flag.py",
-      "target": "class:src/g6/research/echa/flag.py:ResearchDisabled",
-      "type": "exports",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "file:src/g6/research/echa/flag.py",
-      "target": "function:src/g6/research/echa/flag.py:research_enabled",
-      "type": "contains",
-      "direction": "forward",
-      "weight": 1
-    },
-    {
-      "source": "file:src/g6/research/echa/flag.py",
-      "target": "function:src/g6/research/echa/flag.py:research_enabled",
-      "type": "exports",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "file:src/g6/research/echa/flag.py",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
-      "type": "contains",
-      "direction": "forward",
-      "weight": 1
-    },
-    {
-      "source": "file:src/g6/research/echa/flag.py",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
-      "type": "exports",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
       "source": "file:src/g6/research/echa/ledger.py",
       "target": "function:src/g6/research/echa/ledger.py:_semantic",
       "type": "contains",
@@ -66101,13 +65995,6 @@
       "weight": 0.7
     },
     {
-      "source": "file:src/g6/research/ahi/lifecycle.py",
-      "target": "file:src/g6/research/echa/flag.py",
-      "type": "imports",
-      "direction": "forward",
-      "weight": 0.7
-    },
-    {
       "source": "file:src/g6/research/echa/__init__.py",
       "target": "file:src/g6/research/echa/access.py",
       "type": "imports",
@@ -66124,13 +66011,6 @@
     {
       "source": "file:src/g6/research/echa/__init__.py",
       "target": "file:src/g6/research/echa/episodes.py",
-      "type": "imports",
-      "direction": "forward",
-      "weight": 0.7
-    },
-    {
-      "source": "file:src/g6/research/echa/__init__.py",
-      "target": "file:src/g6/research/echa/flag.py",
       "type": "imports",
       "direction": "forward",
       "weight": 0.7
@@ -66164,22 +66044,8 @@
       "weight": 0.7
     },
     {
-      "source": "file:src/g6/research/echa/access.py",
-      "target": "file:src/g6/research/echa/flag.py",
-      "type": "imports",
-      "direction": "forward",
-      "weight": 0.7
-    },
-    {
       "source": "file:src/g6/research/echa/adapters.py",
       "target": "file:src/g6/research/echa/records.py",
-      "type": "imports",
-      "direction": "forward",
-      "weight": 0.7
-    },
-    {
-      "source": "file:src/g6/research/echa/claims.py",
-      "target": "file:src/g6/research/echa/flag.py",
       "type": "imports",
       "direction": "forward",
       "weight": 0.7
@@ -66200,13 +66066,6 @@
     },
     {
       "source": "file:src/g6/research/echa/competence.py",
-      "target": "file:src/g6/research/echa/flag.py",
-      "type": "imports",
-      "direction": "forward",
-      "weight": 0.7
-    },
-    {
-      "source": "file:src/g6/research/echa/competence.py",
       "target": "file:src/g6/research/echa/records.py",
       "type": "imports",
       "direction": "forward",
@@ -66214,21 +66073,7 @@
     },
     {
       "source": "file:src/g6/research/echa/custody.py",
-      "target": "file:src/g6/research/echa/flag.py",
-      "type": "imports",
-      "direction": "forward",
-      "weight": 0.7
-    },
-    {
-      "source": "file:src/g6/research/echa/custody.py",
       "target": "file:src/g6/research/echa/records.py",
-      "type": "imports",
-      "direction": "forward",
-      "weight": 0.7
-    },
-    {
-      "source": "file:src/g6/research/echa/episodes.py",
-      "target": "file:src/g6/research/echa/flag.py",
       "type": "imports",
       "direction": "forward",
       "weight": 0.7
@@ -66257,13 +66102,6 @@
     {
       "source": "file:src/g6/research/echa/example.py",
       "target": "file:src/g6/research/echa/episodes.py",
-      "type": "imports",
-      "direction": "forward",
-      "weight": 0.7
-    },
-    {
-      "source": "file:src/g6/research/echa/example.py",
-      "target": "file:src/g6/research/echa/flag.py",
       "type": "imports",
       "direction": "forward",
       "weight": 0.7
@@ -66305,13 +66143,6 @@
     },
     {
       "source": "file:src/g6/research/echa/ledger.py",
-      "target": "file:src/g6/research/echa/flag.py",
-      "type": "imports",
-      "direction": "forward",
-      "weight": 0.7
-    },
-    {
-      "source": "file:src/g6/research/echa/ledger.py",
       "target": "file:src/g6/research/echa/records.py",
       "type": "imports",
       "direction": "forward",
@@ -66320,13 +66151,6 @@
     {
       "source": "file:src/g6/research/echa/trace.py",
       "target": "file:src/g6/research/echa/claims.py",
-      "type": "imports",
-      "direction": "forward",
-      "weight": 0.7
-    },
-    {
-      "source": "file:src/g6/research/echa/trace.py",
-      "target": "file:src/g6/research/echa/flag.py",
       "type": "imports",
       "direction": "forward",
       "weight": 0.7
@@ -66501,20 +66325,6 @@
     },
     {
       "source": "function:src/g6/research/ahi/lifecycle.py:validate_locally",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:src/g6/research/ahi/lifecycle.py:decide_promotion",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:src/g6/research/ahi/lifecycle.py:validate_locally",
       "target": "function:src/g6/core/adaptation_gate.py:validate_locally",
       "type": "calls",
       "direction": "forward",
@@ -66563,20 +66373,6 @@
       "weight": 0.8
     },
     {
-      "source": "class:src/g6/research/echa/access.py:Vault",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:src/g6/research/echa/access.py:guarded_read",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
       "source": "function:src/g6/research/echa/access.py:guarded_read",
       "target": "function:src/g6/core/vault.py:guarded_read",
       "type": "calls",
@@ -66599,13 +66395,6 @@
     },
     {
       "source": "function:src/g6/research/echa/claims.py:evaluate_claim",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:src/g6/research/echa/claims.py:evaluate_claim",
       "target": "class:src/g6/research/echa/records.py:ClaimRecord",
       "type": "calls",
       "direction": "forward",
@@ -66614,34 +66403,6 @@
     {
       "source": "function:src/g6/research/echa/claims.py:evaluate_claim",
       "target": "class:src/g6/research/echa/records.py:EvidenceRecord",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:src/g6/research/echa/competence.py:competence",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:src/g6/research/echa/competence.py:autonomy_advice",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:src/g6/research/echa/competence.py:success_claim_consistent",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:src/g6/research/echa/competence.py:similar_episodes",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
       "type": "calls",
       "direction": "forward",
       "weight": 0.8
@@ -66663,13 +66424,6 @@
     {
       "source": "class:src/g6/research/echa/competence.py:CompetencePolicy",
       "target": "function:src/g6/research/echa/records.py:digest",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:src/g6/research/echa/custody.py:_decode",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
       "type": "calls",
       "direction": "forward",
       "weight": 0.8
@@ -66705,13 +66459,6 @@
     {
       "source": "function:src/g6/research/echa/episodes.py:verify_episode_body",
       "target": "function:src/g6/research/echa/records.py:digest",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "class:src/g6/research/echa/episodes.py:Episode",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
       "type": "calls",
       "direction": "forward",
       "weight": 0.8
@@ -66774,13 +66521,6 @@
     },
     {
       "source": "function:src/g6/research/echa/example.py:main",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:src/g6/research/echa/example.py:main",
       "target": "function:src/g6/research/echa/claims.py:evaluate_claim",
       "type": "calls",
       "direction": "forward",
@@ -66808,22 +66548,8 @@
       "weight": 0.8
     },
     {
-      "source": "class:src/g6/research/echa/ledger.py:Ledger",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
       "source": "function:src/g6/research/echa/trace.py:trace_claim",
       "target": "function:src/g6/research/echa/claims.py:evaluate_claim",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:src/g6/research/echa/trace.py:trace_claim",
-      "target": "function:src/g6/research/echa/flag.py:require_research",
       "type": "calls",
       "direction": "forward",
       "weight": 0.8
@@ -83866,7 +83592,6 @@
         "file:src/g6/research/echa/custody.py",
         "file:src/g6/research/echa/episodes.py",
         "file:src/g6/research/echa/example.py",
-        "file:src/g6/research/echa/flag.py",
         "file:src/g6/research/echa/ledger.py",
         "file:src/g6/research/echa/records.py",
         "file:src/g6/research/echa/trace.py",
