@@ -6,3 +6,6 @@ src/g6/skills/vendor/** -text
 
 # Measurement protocols pin each label file by the sha256 of its bytes (validation/context_engine/frozen.py).
 tests/knowledge/labels/** text eol=lf
+
+# The frozen report readers are pinned by the sha256 of their bytes (tests/harness/test_report_consumer_parity.py).
+tests/harness/frozen_db65ca1/** text eol=lf
