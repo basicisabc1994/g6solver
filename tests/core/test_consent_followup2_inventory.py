@@ -29,6 +29,12 @@ PLACES = {
     "core/executor_contracts.py": ("AgentCapabilities", "capability model, no child"),
     "core/env.py": ("is_production_env", "host-mode predicate, no child"),
     "core/llm.py": ("provider_from_env", "provider configuration, no child"),
+    # three places later lines added, each matched by a name alone (a function named ..._env, a local named env) and
+    # none starting a child: the consent guard around that same provider configuration (8381ba1), one setting read into
+    # a local in the feedback question's opt-in (137036f), and a map of module bindings in the server scan (5340f69)
+    "core/consent_callers.py": ("provider_from_env", "provider configuration behind the consent guard, no child"),
+    "harness/workflow/feedback.py": ("opted_in", "one setting's value held in a local named env, no child"),
+    "mcp/registrations.py": ("server_sources", "a map of module bindings held in a local named env, no child"),
     "core/git_env.py": ("ask safe_git safe_git_env", "outside Git"),
     "core/host_models.py": ("_environment _run locate", "outside host model CLI"),
     "core/outside.py": ("OutsideProgram _run clean_environment", "outside program discovery and transport"),
