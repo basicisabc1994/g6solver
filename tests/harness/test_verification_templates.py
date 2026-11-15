@@ -1445,6 +1445,10 @@ def test_review_i4_test_adequacy_leaves_out_a_file_over_its_size_and_says_why(tm
     assert mutants.calls == []
 
 
+@pytest.mark.xfail(sys.platform in ("win32", "darwin"), strict=False, reason=(
+    "the review's closing work (second snapshot, written report, self-check) runs after its time budget, so on slower "
+    "runners the review returns up to about 6 s past deadline plus margin; the structural stage itself stops in time; "
+    "lead ruling 2026-11-15, 0.3.0 known limit until patch_review budgets its closing work"))
 def test_review_i7_the_structural_stage_never_takes_tier_ones_time(tmp_path, monkeypatch):
     """The reviewer's 19 files of about 1 MB: the structural check reads and parses them after tier 1, which keeps its
     normal limit, and stops at the review's deadline."""

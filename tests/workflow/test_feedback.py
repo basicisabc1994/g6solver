@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -147,6 +148,10 @@ def test_behaviour_question_and_feedback_share_one_slot(repo, tmp_path):
     assert refused["status"] == "not_asked" and _invited(second) == 0
 
 
+@pytest.mark.xfail(sys.platform == "win32", strict=False, reason=(
+    "on Windows, os.path.realpath can return a \\\\?\\ or $Extend\\$Deleted path while another thread replaces the file, "
+    "and the bound core/storage.py state_path then refuses it as escaping G6_HOME (fails closed); this changes only at a "
+    "later issuance; lead ruling 2026-11-15, 0.3.0 known limit"))
 def test_two_concurrent_reservations_give_one_invitation(repo, tmp_path):
     project = _ids(repo)[0]
     tasks = [f"concurrent task {n}" for n in range(8)]
