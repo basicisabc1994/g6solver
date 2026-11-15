@@ -49,7 +49,9 @@
    Or a proposed check, or a check G6 compiled from a template instance, finding a counterexample or a failure of the
    change, neither confirmed (``unconfirmed_counterexample``, ``unconfirmed_failure``);
    Or a requirement with no independent check (``checks_written_with_patch``): each check is new with the patch, or
-   passes at the base commit too, so the author's own tests are all that speak for the change;
+   passes at the base commit too, so the author's own tests are all that speak for the change. Or the time limit
+   running out before the final snapshot of the tree finished (``integrity_snapshot_not_finished``: the checks stop
+   early enough for it, ``CLOSING_SNAPSHOTS``, and the review still ends by its limit when it does not finish);
 4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks, at least one of them independent
    of the patch (it exists at the base commit in an unchanged file and, for new behaviour, fails there), and integrity
    is intact. That is support on the checks named, never a claim that the patch does everything the task needs.
@@ -189,6 +191,23 @@ ERROR = "error"
 #: stop or a spent allowance, and process cleanup that could not be confirmed. Both are ``OSError``s, so every handler
 #: in the review that catches ``OSError`` or ``Exception`` lets this list through first (an inventory test lists them).
 LETS_THROUGH = (component_process.ExecutionInterrupted, component_process.ContainmentFailure)
+#: The review's closing steps, after its checks (``_closing``): git reads of each stated check's authorship and, last,
+#: the final snapshot of the working tree, which repeats the opening snapshot's reading of the same tree; then the reply,
+#: which reads nothing. Their time is kept back from the checks': this many times the opening snapshot's measured
+#: seconds (on a loaded Windows machine a second snapshot of the same tree took up to 1.55 times the first, in 12
+#: pairs, and the git reads before it a tenth of a snapshot or less), ``STEP_S`` for a stage that stops between steps
+#: of its work ending up to one step past the checks' deadline (``verification_search``: one step takes well under a
+#: second), and ``REPLY_S`` for the reply (measured at 0.06 to 0.15 s after the final snapshot of a 19 MB tree). So a
+#: review returns within its ``timeout_s``.
+CLOSING_SNAPSHOTS = 3
+STEP_S = 1.0
+REPLY_S = 0.5
+#: The closing steps did not finish by the review's limit, so nothing says the tree stayed as it was while the checks
+#: ran: insufficient evidence, never an accusation.
+CLOSING_NOT_FINISHED = "integrity_snapshot_not_finished"
+CLOSING_NOT_FINISHED_DETAIL = ("the review's time limit ran out before G6 finished the final snapshot of the working "
+                               "tree, its check that the tree did not change while the checks ran, so their results "
+                               "are not confirmed; give the review a longer time limit")
 #: Files that configure, or could stand in for, the runner: ``repo_tests``'s list, every configuration file pytest
 #: looks for by name among them (``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini`` and the project
 #: files below; review C1).
@@ -948,7 +967,12 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
             task, claim, tests, sources, timeout_s, requirements, intent, proposed_checks, template_instances, search)
         root = repo_tests.checked_repo(repo)
         roots = _import_roots(root, import_roots)
+        opened = time.monotonic()
         before = repo_tests.snapshot(root)
+        # the closing steps' time, kept back from the checks' (CLOSING_SNAPSHOTS): measured on this snapshot, whose
+        # reading of the tree the final one repeats
+        limit = started + timeout_s
+        deadline = limit - CLOSING_SNAPSHOTS * (time.monotonic() - opened) - STEP_S - REPLY_S
         artifact = digest(before)
         if expected_artifact_digest and artifact != expected_artifact_digest:
             return blocked_reply("[G6_E_PATCH_STALE] working tree differs from the supplied artifact digest")
@@ -957,7 +981,7 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
                 one.template == 'differential.v1' for one in instances):
             from g6.harness import verification_search
 
-            before = verification_search.bind_execution(change, before, deadline=started + timeout_s)
+            before = verification_search.bind_execution(change, before, deadline=deadline)
         placed = {}
         if proposed:
             from g6.harness import verification_search
@@ -973,7 +997,7 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         stated_ids = list(dict.fromkeys(norm[raw] for req in stated for raw in req.checks))
         ids = list(dict.fromkeys([*stated_ids, *(norm[raw] for raw in tests)]))
         return _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources,
-                       deadline=started + timeout_s, started=started, listed=listed, assumed=assumed,
+                       deadline=deadline, limit=limit, started=started, listed=listed, assumed=assumed,
                        unmapped=unmapped, proposed=proposed, placed=placed, instances=instances, config=config,
                        roots=roots, llm=llm, confirmed=confirmed if confirmed is not None and confirmed.expectations
                        else None)
@@ -1017,9 +1041,11 @@ def _stage(stopped: list[dict], what: str, run, *args, **kwargs):
         return None
 
 
-def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, *, deadline,
+def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, *, deadline, limit,
             started, listed=(), assumed=(), unmapped=(), proposed=(), placed=None, instances=(),
             config=None, roots=(), llm=None, confirmed=None) -> dict:
+    """``deadline``: when the checks stop; ``limit``: when the review ends, the closing steps (``_closing``) and the
+    reply coming between the two."""
     reasons: list[dict] = []
     unknowns: list[str] = list(unmapped)   # what an intent held that is not a check of this patch
     runs: list[dict] = []
@@ -1097,6 +1123,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     # G6 0.3: each stated check's identity, the bytes its runs will execute, read before any of them; the final integrity
     # snapshot comes after the last read of the tree, so a change in between is the review's integrity problem
     check_sha = _check_shas(Path(root), stated_ids)
+    scanned = _test_diff(repo_tests.diff_text(change), related)   # what the coding gate scans, of this tree too
     # Tier 1: the stated checks and the extra tests, in one confined run.
     present = [i for i in ids if (root / i.partition("::")[0]).exists()]
     verdicts = {i: {"verdict": "missing", "detail": "no such file on the patched tree"} for i in ids
@@ -1296,11 +1323,21 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     # G6 0.3: after the run at the base commit (each check's control), the checks it killed run again on the patch, so
     # the issuer has a receipt its control came before; last, so it takes no time from anything that decides a field
     again = _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, roots)
-    written = {check: _authored(check, change, Path(root)) for check in stated_ids}   # read before the final snapshot
-    final = repo_tests.snapshot(root)
-    if repo_tests._moved(before, final):   # review I2: a folder G6 did not hash on one side is not a change
+    normative = [found for found in structural if found["normative"]]
+    evaluated = [_requirement(req, verdicts, norm, [_structural_check(found) for found in normative
+                                                    if found["requirement"] == req.id and found["verdict"] == FAILED],
+                              missing=missing)
+                 for req in stated]
+    if search is not None:
+        verification_search.annotate(evaluated, search)
+    if formal is not None:
+        verification_formal.annotate(evaluated, formal)
+    written, self_checked, final = _closing(root, change, stated_ids, evaluated, runs, until=limit - REPLY_S)
+    if final is None:
+        reason("evidence", CLOSING_NOT_FINISHED, CLOSING_NOT_FINISHED_DETAIL)
+    elif repo_tests._moved(before, final):   # review I2: a folder G6 did not hash on one side is not a change
         reason("integrity", "repository_changed_during_review", "the working tree changed while G6 reviewed it")
-    for rel, why in repo_tests.submodules_not_hashed(final).items():
+    for rel, why in repo_tests.submodules_not_hashed(final or {}).items():
         if rel not in repo_tests.submodules_not_hashed(before):
             reason("evidence", "submodule_not_hashed", SUBMODULE_NOT_HASHED.format(path=shown(rel), why=why))
     in_place = [(tier, ran) for tier, ran in ((1, first), (2, second)) if ran]
@@ -1308,8 +1345,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         if ran.get("source_before") and ran["source_before"] != artifact:
             reason("integrity", "repository_changed_during_review", f"the tier {tier} run began on a working tree "
                    "other than the one under review (its digest is not the artifact digest)")
-    gate = _gate(task, claim, [ran for _, ran in in_place], artifact,
-                 _test_diff(repo_tests.diff_text(change), related))
+    gate = _gate(task, claim, [ran for _, ran in in_place], artifact, scanned)
     statuses = [found.get("receipt_status", "unknown") for found in gate["receipts"]]
     receipts = [{"tier": tier, "receipt": ran.get("receipt", ""),
                  "receipt_status": statuses[index] if index < len(statuses) else "unknown"}
@@ -1332,15 +1368,6 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         else:
             merge_reasons.append(finding.get("message", ""))
 
-    normative = [found for found in structural if found["normative"]]
-    evaluated = [_requirement(req, verdicts, norm, [_structural_check(found) for found in normative
-                                                    if found["requirement"] == req.id and found["verdict"] == FAILED],
-                              missing=missing)
-                 for req in stated]
-    if search is not None:
-        verification_search.annotate(evaluated, search)
-    if formal is not None:
-        verification_formal.annotate(evaluated, formal)
     if not stated:
         reason("evidence", "no_requirement_stated", "no requirement was stated, so none can be supported")
     for req in evaluated:
@@ -1356,7 +1383,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                             "file, so the contract was not checked (why is in assessment.completion.activities)")
     if not any(run.get("passed", 0) + run.get("failed", 0) for run in runs):
         reason("evidence", "no_test_ran", "no test ran to a result")
-    self_checked = ", ".join(_self_checked(evaluated, change, Path(root), runs))
+    self_checked = ", ".join(self_checked)
     if self_checked:
         reason("evidence", SELF_CHECKED, SELF_CHECKED_DETAIL.format(ids=self_checked))
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
@@ -1381,6 +1408,18 @@ def _authored(check: str, change, root: Path) -> bool:
         raise
     except (repo_tests.RepoRefused, OSError):
         return True
+
+
+def _closing(root, change, stated_ids, evaluated, runs, *, until: float) -> tuple[dict, list[str], dict | None]:
+    """The review's closing reads, each git read of them by ``until`` (``repo_tests.within``): whether the patch wrote
+    each stated check (``_authored``), the requirements with no independent check (``_self_checked``), and last the final
+    snapshot of the working tree. ``final`` is None, and nothing else is read as found, when the time ran out first; an
+    operator stop, unconfirmed process cleanup or an enclosing allowance that ran out reaches the door."""
+    def read():
+        written = {check: _authored(check, change, Path(root)) for check in stated_ids}   # before the final snapshot
+        return written, _self_checked(evaluated, change, Path(root), runs), repo_tests.snapshot(root)
+
+    return repo_tests.within(until - time.monotonic(), read) or ({}, [], None)
 
 
 def _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, roots=()) -> dict:

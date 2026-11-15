@@ -31,6 +31,7 @@ from pathlib import Path
 
 import pytest
 
+from g6.core import component_process
 from g6.harness import patch_review, verification_search, verification_templates
 from g6.harness.patch_review import review_patch
 from g6.invariants import check_envelope
@@ -1445,10 +1446,6 @@ def test_review_i4_test_adequacy_leaves_out_a_file_over_its_size_and_says_why(tm
     assert mutants.calls == []
 
 
-@pytest.mark.xfail(sys.platform in ("win32", "darwin"), strict=False, reason=(
-    "the review's closing work (second snapshot, written report, self-check) runs after its time budget, so on slower "
-    "runners the review returns up to about 6 s past deadline plus margin; the structural stage itself stops in time; "
-    "lead ruling 2026-11-15, 0.3.0 known limit until patch_review budgets its closing work"))
 def test_review_i7_the_structural_stage_never_takes_tier_ones_time(tmp_path, monkeypatch):
     """The reviewer's 19 files of about 1 MB: the structural check reads and parses them after tier 1, which keeps its
     normal limit, and stops at the review's deadline."""
@@ -1477,6 +1474,65 @@ def test_review_i7_the_structural_stage_never_takes_tier_ones_time(tmp_path, mon
     assert limits and limits[0] >= normal - 1, (normal, limits)
     assert took < 20 + MARGIN_S, took
     assert _activity(got, "dep")["result"] in ("refused", "passed", "vacuous", "failed"), _activity(got, "dep")
+
+
+# --- the closing steps (the final snapshot of the tree, the reply) keep within the review's time limit ------------------
+
+def _slow_snapshots(monkeypatch, seconds, *, first=True):
+    """Each snapshot of the working tree takes ``seconds`` longer (with ``first`` false, only the later ones): a slow
+    git, as on a slow machine, which is a child process G6 waits for under its allowance, so the wait here is one too."""
+    real, taken = repo_tests.snapshot, []
+
+    def slow(root, *args, **kwargs):
+        taken.append(root)
+        if first or len(taken) > 1:
+            with component_process.window(seconds + 30):
+                component_process.run_process([sys.executable, "-c", f"import time; time.sleep({seconds})"],
+                                              env=dict(os.environ))
+        return real(root, *args, **kwargs)
+
+    monkeypatch.setattr(repo_tests, "snapshot", slow)
+    return taken
+
+
+def test_a_review_whose_checks_use_their_whole_time_still_returns_within_its_limit(tmp_path, monkeypatch):
+    """A slow machine: each snapshot takes 1.5 s more, and the stated checks' run takes all the time it is given. The
+    review keeps back what its closing steps take, so it returns within its limit and decides what it would decide."""
+    root = _patch(_repo(tmp_path, RATES), {"rates.py": "def rate(x):\n    return x + x\n"})
+    taken = _slow_snapshots(monkeypatch, 1.5)
+    given: list[int] = []
+
+    def execute(root, ids, *, timeout_s, change=None, **_):
+        given.append(timeout_s)
+        time.sleep(timeout_s)
+        return result(list(ids))
+
+    monkeypatch.setattr(patch_review, "_execute", execute)
+    monkeypatch.setattr(patch_review, "_execute_at_base",
+                        lambda change, ids, *, timeout_s, **_: {"verdict": "not_run", "said": "not recorded"})
+    started = time.monotonic()
+    got = review(root, RATES_RULE, timeout_s=30)
+    took = time.monotonic() - started
+    assert took < 30, (took, given)
+    assert len(taken) == 2, taken   # the opening snapshot and the final one, which finished
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+
+
+def test_a_final_snapshot_that_cannot_finish_by_the_limit_ends_the_review_by_it_unsupported(tmp_path, monkeypatch):
+    """The final snapshot of the tree, the review's check that nothing changed while it ran, takes far longer than the
+    first: the review still returns by its limit, says the snapshot did not finish, and is not supported."""
+    root = _patch(_repo(tmp_path, RATES), {"rates.py": "def rate(x):\n    return x + x\n"})
+    _slow_snapshots(monkeypatch, 40, first=False)
+    Tiers(monkeypatch)
+    started = time.monotonic()
+    got = review(root, RATES_RULE, timeout_s=20)
+    took = time.monotonic() - started
+    assert took < 20, took
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    found = [r for r in assessment["reasons"] if r["code"] == patch_review.CLOSING_NOT_FINISHED]
+    assert found and found[0]["stage"] == "evidence" and "snapshot" in found[0]["detail"], assessment["reasons"]
+    assert check_envelope(got) == []
 
 
 # --- M1: a link whose target is outside the repository is never read in G6's own process -------------------------------

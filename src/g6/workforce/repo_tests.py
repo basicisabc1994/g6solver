@@ -889,6 +889,20 @@ def _git(repo: Path, *args: str | bytes, ok: tuple[int, ...] = (0,), timeout_s: 
         raise RepoRefused("G6_E_GIT_COMMAND_FAILED", f"git {args[0]} failed ({type(exc).__name__})") from exc
 
 
+def within(seconds: float, read: Callable[[], object]) -> object | None:
+    """``read()``, each git command it runs (``_git``) within ``seconds`` from now, or None when they ran out first:
+    ``_git``'s rule for its own window, for several reads. An operator stop, unconfirmed process cleanup and an
+    enclosing allowance that ran out are raised as ever."""
+    try:
+        with component_process.window(seconds):
+            return read()
+    except component_process.ExecutionInterrupted as exc:
+        if exc.stopped:
+            raise
+        component_process.checkpoint()  # an enclosing allowance must reach the Door
+        return None
+
+
 def _private(repo: Path, commit: str, *commands: tuple[str, ...]) -> list[bytes]:
     """Each of ``commands`` run with a private index G6 builds from ``commit``'s tree in a scratch folder (the review of
     VS-4, finding 1): the repository's own index, its stat cache, its assume-unchanged and skip-worktree flags and any
