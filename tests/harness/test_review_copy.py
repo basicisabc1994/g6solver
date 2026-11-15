@@ -760,6 +760,10 @@ def test_mask3_finding_3_bytes_the_identity_tells_apart_the_copy_tells_apart_rem
 
 
 def test_mask3_finding_4_a_file_the_copy_names_unread_is_named_in_what_the_patch_is_known_by(tmp_path):
+    if os.name != "nt":
+        pytest.skip("NTFS junctions: git for Windows lists the files below a junction as files of the tree "
+                    "(linked/first.txt), which is the case here; a symbolic link to a folder is listed everywhere as "
+                    "the link itself, never as the files below it, so there is no such file to name")
     repo, outside = make_repo(tmp_path), tmp_path / "outside-repo"
     outside.mkdir()
     (outside / "first.txt").write_bytes(b"fixture that must stay unread\n")
