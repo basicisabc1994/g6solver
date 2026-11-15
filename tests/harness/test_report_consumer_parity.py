@@ -227,14 +227,6 @@ def test_receipt_report_fields_keep_their_released_meaning(process, monkeypatch)
     assert old_receipts.counts_as_pass(before) == receipt_store.counts_as_pass(after)
 
 
-#: The observation record's own keys (e15d9ad), not fields of the pytest runner's report: behaviour_runner returns
-#: ``g6_observation`` with its ``bootstrap_sha256``, and verification_search._run_check and confirmed_checks add
-#: ``execution_artifact`` to the run they made. They are read beside report fields in the same functions, so this scan
-#: sets them apart by name in every consumer; the observation runner's inventories (tests/repair_question4, 5) cover
-#: them. Whether they join REPORT_FIELDS is open (lead's note, 2026-11-15, for the 0.3.0 follow-up list).
-OBSERVATION_KEYS = frozenset({"g6_observation", "bootstrap_sha256", "execution_artifact"})
-
-
 def test_every_scalar_and_phase_consumer_distinction_is_in_the_schema():
     inventory = json.loads(Path(__file__).with_name("report_consumer_distinctions.json").read_text(encoding="utf-8"))
     assert set(inventory["fields"]) == set(rt.REPORT_FIELDS)
@@ -244,7 +236,6 @@ def test_every_scalar_and_phase_consumer_distinction_is_in_the_schema():
         found = consumer_fields((root / relative).read_text(encoding="utf-8"), relative)
         baseline = inventory["consumers"][relative]
         for name, fields in found.items():
-            fields = set(fields) - OBSERVATION_KEYS
             assert name in baseline, (relative, name)
             assert set(fields) <= set(baseline[name]), (relative, name, set(fields) - set(baseline[name]))
             assert set(fields) <= set(rt.REPORT_FIELDS), (relative, name)
@@ -258,6 +249,9 @@ def test_all_declared_annotations_survive_projection_with_their_released_values(
     raw = rt._run(repo, [NODE], roots=(), timeout_s=10, network=False, copied=True,
                   python=sys.executable, scratch_dir=scratch)
     for name, field in rt.REPORT_FIELDS.items():
+        if name in rt.OBSERVATION_ONLY:   # an observation record's own field: a runner's report holding one is unknown
+            assert not rt.read_report({**raw, name: deepcopy(field.example)}).valid, name
+            continue
         populated = {**raw, name: raw.get(name, deepcopy(field.example))}
         assert rt.read_report(populated).valid, name
         assert_parity(populated)

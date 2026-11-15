@@ -408,6 +408,34 @@ REPORT_FIELDS["isolation"] = ReportField(_ISOLATION, {"backend": "recorded"}, "e
 for _name in ("failure_messages", "messages"):
     REPORT_FIELDS[_name] = ReportField({str: str}, {}, "failure annotations by identity",
                                       "failed phase, or an uncollected collection failure; never omitted")
+#: An observation's result, and the verdict its record gives it (``behaviour_runner.run``).
+OBSERVED_VERDICTS = {"passed": "passed", "failed": "failed", "error": "not_run"}
+REPORT_FIELDS["g6_observation"] = ReportField(
+    {"result": str, "detail": str, "observed": dict, "owned_probe": bool, "observations": list},
+    {"result": "passed", "detail": "G6 observed the calls in its isolated runner"},
+    "G6's own observation of a confirmed check or probe", "a known result and its detail; observations are "
+    "input/output pairs", required_members=("result", "detail"),
+    predicate=lambda value: value["result"] in OBSERVED_VERDICTS and all(
+        type(pair) is dict and set(pair) == {"input", "output"} for pair in value.get("observations", ())))
+REPORT_FIELDS["bootstrap_sha256"] = ReportField(str, "0" * 64, "the observation runner's bootstrap program",
+                                                "a SHA-256 hex digest",
+                                                predicate=lambda value: re.fullmatch("[0-9a-f]{64}", value) is not None)
+REPORT_FIELDS["execution_artifact"] = ReportField(
+    {"version": str, "artifact_digest": str, "base_commit": str, "files": {str: str}},
+    {"version": "execution-run.v1", "artifact_digest": "0" * 64, "base_commit": "", "files": {}},
+    "the copy a bound observation ran on", "execution-run.v1, every member present",
+    required_members=("version", "artifact_digest", "base_commit", "files"),
+    predicate=lambda value: value["version"] == "execution-run.v1")
+REPORT_FIELDS["execution_limit"] = ReportField(str, "", "what the observation runner cannot rule out", "text only")
+#: G6's observation record: what ``behaviour_runner.run`` returns for a confirmed check or a probe (``_run``'s
+#: ``observation``), with the ``execution_artifact`` ``verification_search._run_check`` adds to a bound run. Each field,
+#: True where the record must hold it, is read by its ``REPORT_FIELDS`` entry (``read_observation``). A runner's report
+#: holds none of ``OBSERVATION_ONLY``: one that does is not read (``read_report``).
+OBSERVATION_FIELDS = {"verdict": True, "said": True, "g6_observation": True, "source_before": True, "seconds": True,
+                      "output": False, "isolation": False, "execution_limit": False, "python": False,
+                      "interpreter_source": False, "import_path": False, "own_config": False, "command": False,
+                      "bootstrap_sha256": False, "execution_artifact": False}
+OBSERVATION_ONLY = frozenset({"g6_observation", "bootstrap_sha256", "execution_artifact", "execution_limit"})
 
 REPORT_LISTINGS = {"test_outcomes": dict, "failed_ids": list, "setup_errors": dict,
                    "omitted_ids": list, "collected_ids": list, "not_found_ids": list}
@@ -578,7 +606,8 @@ def read_report(raw: object) -> RunReport:
         return raw
     original = raw.copy() if type(raw) is dict else {}
     value = {key: item for key, item in original.items() if type(key) is str}
-    typed = (type(raw) is dict and len(value) == len(original) and all(key in REPORT_FIELDS for key in value)
+    typed = (type(raw) is dict and len(value) == len(original)
+             and all(key in REPORT_FIELDS and key not in OBSERVATION_ONLY for key in value)
              and all(not field.required or name in value for name, field in REPORT_FIELDS.items())
              and all(REPORT_FIELDS[name].accepts(item) for name, item in value.items()
                      if type(name) is str and name in REPORT_FIELDS))
@@ -718,8 +747,8 @@ def read_report(raw: object) -> RunReport:
         if type(item) is list:
             return tuple(freeze(member) for member in item)
         return item
-    data = {key: freeze(item) for key, item in value.items()
-            if type(key) is str and key in REPORT_FIELDS and REPORT_FIELDS[key].accepts(item)}
+    data = {key: freeze(item) for key, item in value.items() if type(key) is str and key in REPORT_FIELDS
+            and key not in OBSERVATION_ONLY and REPORT_FIELDS[key].accepts(item)}
     # Positive body facts are decided here, including execution completeness.
     # Diagnostics retain their released verdict separately from this evidence.
     loading_fields = {"loaded_complete", "loaded_outside"} & value.keys()
@@ -747,6 +776,22 @@ def read_report(raw: object) -> RunReport:
                      frozenset(full(node) for node in omitted), frozenset(full(node) for node in collection_failures),
                      root, text("verdict", "not_run"),
                      text("said"), text("output"), MappingProxyType(data), outcome, loading_known, withheld)
+
+
+def read_observation(raw: object) -> dict | None:
+    """The only reader of an observation record (``OBSERVATION_FIELDS``), by the schema ``read_report`` reads a runner's
+    report by: every field one of the record's and of its declared type (``REPORT_FIELDS``), each required one present,
+    and the verdict the one its observation's result gives. A detached copy, or None when any of that fails: the record
+    then says nothing."""
+    if type(raw) is not dict:
+        return None
+    found = raw.copy()
+    if not (all(type(key) is str and key in OBSERVATION_FIELDS and REPORT_FIELDS[key].accepts(item)
+                for key, item in found.items())
+            and all(name in found for name, required in OBSERVATION_FIELDS.items() if required)
+            and found["verdict"] == OBSERVED_VERDICTS[found["g6_observation"]["result"]]):
+        return None
+    return json.loads(json.dumps(found, allow_nan=False))
 
 
 class RepoRefused(ValueError):

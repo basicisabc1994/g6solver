@@ -598,7 +598,9 @@ def reading(ran: dict, node: str) -> dict:
     operating-system error, a failure that does not say how); with the run's ``verdict``, ``detail``, ``seconds``,
     ``tree_digest`` (its copy as the run began), what it ran with (``RAN_WITH``) and, for a pass, its ``observations``
     (None when it recorded none)."""
-    if "g6_observation" in ran:
+    observed = repo_tests.read_observation(ran) if "g6_observation" in ran else None
+    if observed is not None:   # G6's own runner's record, read by its schema; any other is unknown (below)
+        ran = observed
         reading = ran["g6_observation"]
         return {"result": reading["result"], "detail": reading["detail"], "verdict": ran["verdict"],
                 "seconds": ran["seconds"], "tree_digest": ran["source_before"],
@@ -837,10 +839,10 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
                          timeout_s=_bound(deadline - _clock()), **rooted,
                          **({'artefact': before} if before is not None and origin.template == 'differential.v1' else {}))
         found = _guarded(change, ran, reading(ran, node))
-        if origin.template == "differential.v1":
-            activity.owned_runs.append(found.get("owned_probe") is True and bool(ran.get('execution_artifact')))
-            if ran.get('execution_artifact'):
-                activity.execution_artifacts.append(ran['execution_artifact'])
+        if origin.template == "differential.v1":   # the binding as the run's reading read it from its record
+            activity.owned_runs.append(found.get("owned_probe") is True and bool(found.get('execution_artifact')))
+            if found.get('execution_artifact'):
+                activity.execution_artifacts.append(found['execution_artifact'])
         if origin.keep_observations and found["result"] == "failed":   # a replay says which traces broke
             found = {**found, "observations": repo_tests.read_report(ran).wire().get("probe_observations")}
         return found
