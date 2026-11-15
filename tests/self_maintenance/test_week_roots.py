@@ -1039,11 +1039,14 @@ def test_every_sum_of_amounts_is_the_one_sum():
                       ("g6.operator.store", "settle_open", "total"), ("g6.operator.store", "_month", "total"),
                       ("g6.self_maintenance.pacing", "_used", "total")}, adders
     # The rest join text, bytes or a set of names, never an amount: the store's SQL and a provider's words, and from the
-    # refusals follow-up a framed byte string, a path's name and the set of a host class's methods.
+    # refusals follow-up a framed byte string, a path's name and the set of a host class's methods. And one count that
+    # is no amount: how many loop ticks of this process are open (usage.loop_tick's _TICKS, one up on entry and one
+    # down on leaving, an integer; 47e7a85).
     assert running == {("g6.operator.store", "evidence", "sql"), ("g6.self_maintenance.usage", "refresh", "self.said[provider]"),
                        ("g6.self_maintenance.usage", "_text_bytes", "framed"),
                        ("g6.self_maintenance.usage", "_final_path", "name"),
-                       ("g6.self_maintenance.usage", "_check_seam", "methods")}, running
+                       ("g6.self_maintenance.usage", "_check_seam", "methods"),
+                       ("g6.self_maintenance.usage", "loop_tick", "_TICKS")}, running
     assert gates.total([0.1, 0.2, 0.3]) == 0.6 and gates.total([]) == 0.0 and gates.total(iter([2.0 ** 60, 1.0] + [1.0] * 299)) \
         == 2.0 ** 60 + 256
     assert gates.total([1e308, 1e308]) == math.inf and gates.total([1e308, 1e308, -1e308]) == math.inf
