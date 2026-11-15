@@ -96,7 +96,7 @@
 
 - Added contextual metacognitive method selection across representation × G6 engine/operation, with outside-evaluator admission of historical trials, duplicate-case filtering, conservative risk-based exploration, and a budget-feasible mandatory-method portfolio.
 - Extended G6 method routing with safe allowlisted operation variants: formal `check_propositional`, predictive `rank`, graph `query` and optimisation `solve_mip`, alongside the v0.1 defaults. The existing mixed-method executor still re-derives the canonical route to reject tampering.
-- Added LLM metacognitive critical reasoning proposals with explicitly falsifiable assumptions and evidence requirements, never a verifier.
+- Added LLM metacognitive critical reasoning proposals with explicitly falsifiable assumptions and evidence requirements, never used as a `verifier`.
 - Added scope/standard/edition/jurisdiction/pinned artifact model; positive/negative control replay; strictly scoped candidate assurance dossiers; risk-based external reviewer authentication hooks; no automatic promotion.
 - Added cross-method epistemic contradiction detection, external assertion admission, and source-dependence collapse.
 - Added compositional failure modes and a statistical held-out adaptation gate with protected evaluator paths, no critical regressions, and a recommendation limited to isolated shadow trials.
