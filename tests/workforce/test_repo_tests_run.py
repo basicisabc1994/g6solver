@@ -403,9 +403,11 @@ def test_a_crash_with_no_dump_still_says_what_happened():
 
 
 def test_a_test_that_kills_the_interpreter_is_a_crash_and_never_a_pass(repo):
-    """pydantic-14065: one recursion test segfaulted under G6's run, and the review called a correct patch tampering."""
+    """pydantic-14065: one recursion test segfaulted under G6's run, and the review called a correct patch tampering.
+    The test reads address zero, a real fault on every platform; ``faulthandler._sigsegv`` only raises the signal, and
+    on Windows the C runtime ends a process on a raised SIGSEGV with exit code 3, pytest's own internal-error code."""
     _write(repo, "calc.py", FIXED)
-    _write(repo, "tests/test_crash.py", "import faulthandler\n\n\ndef test_dies():\n    faulthandler._sigsegv()\n")
+    _write(repo, "tests/test_crash.py", "import faulthandler\n\n\ndef test_dies():\n    faulthandler._read_null()\n")
     found = rt.run(repo, ["tests/test_crash.py"])
     assert found["verdict"] == "crashed", (found["verdict"], found["output"][-500:])
     assert found["passed"] == 0 and "test_dies" in found["said"]
