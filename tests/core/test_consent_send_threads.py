@@ -5,9 +5,11 @@ Only such a context counts as inside the send, and only while the send is out. N
 sharing check (``cloud_consent.admission``) of literal inputs its caller supplied, with a body of the test's own."""
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import json
 import threading
+import time
 from contextlib import nullcontext
 
 import pytest
@@ -152,7 +154,7 @@ def test_a_context_copy_alive_after_its_send_ends_no_longer_counts_as_inside_it(
 
 
 def test_a_joined_send_still_out_when_its_send_ends_holds_the_lock_until_it_ends():
-    """Revocation waits for every admitted send that is out, a joined one too."""
+    """The send that ends does not wait for a send joined to it that is still out; revocation waits for both."""
     out, release, order = threading.Event(), threading.Event(), []
 
     def inner():
@@ -164,15 +166,85 @@ def test_a_joined_send_still_out_when_its_send_ends_holds_the_lock_until_it_ends
 
     enclosing, _ = started(lambda: (send(P, A, body=body), order.append('enclosing send ended')))
     assert out.wait(5)
-    revoking, _ = started(lambda: (c.revoke(A.source_id, P), order.append('revoked')))
-    enclosing.join(SETTLE)
-    revoking.join(SETTLE)
-    assert enclosing.is_alive() and revoking.is_alive() and order == []
-    release.set()
     enclosing.join(5)
+    assert not enclosing.is_alive(), 'the send waited at its end for a send joined to it'
+    revoking, _ = started(lambda: (c.revoke(A.source_id, P), order.append('revoked')))
+    revoking.join(SETTLE)
+    assert revoking.is_alive() and order == ['enclosing send ended'], 'a revoke returned while a send was out'
+    release.set()
     revoking.join(5)
-    assert order[0] == 'joined send ended' and sorted(order[1:]) == ['enclosing send ended', 'revoked']
+    assert order == ['enclosing send ended', 'joined send ended', 'revoked']
     assert kinds() == ['disclosure', 'revoke']
+
+
+def test_a_send_ends_although_a_send_joined_to_it_waits_for_what_its_caller_does_next():
+    went_on, out = threading.Event(), threading.Event()
+
+    def body():
+        started(lambda: send(P, A, body=lambda: (out.set(), went_on.wait(5))), context=contextvars.copy_context())
+        assert out.wait(5)
+
+    caller, _ = started(lambda: (send(P, A, body=body), went_on.set()))
+    caller.join(5)
+    stuck = caller.is_alive()
+    went_on.set()                                # frees the cycle if there is one, so nothing is left held
+    caller.join(5)
+    assert not stuck, 'the send and the send joined to it wait for each other'
+    reading, got = started(c.grants)
+    reading.join(5)
+    assert got == [[]], 'the lock was not let go when the last send under it ended'
+
+
+def _on_a_loop(main):
+    thread, results = started(lambda: asyncio.run(main()))
+    thread.join(10)
+    assert not thread.is_alive(), 'the event loop is stuck'
+    return results
+
+
+def test_an_asyncio_task_made_inside_a_send_and_out_when_it_ends_does_not_stall_the_loop():
+    async def main():
+        out, release = asyncio.Event(), asyncio.Event()
+
+        async def inner():
+            with c.admission(P, [A], c.sha256('inner'), supplied=[A.source_id]):
+                out.set()
+                await release.wait()
+
+        with c.admission(P, [A], c.sha256('outer'), supplied=[A.source_id]):
+            task = asyncio.create_task(inner())
+            await out.wait()
+        release.set()
+        await task
+        return len(c.disclosures())
+
+    assert _on_a_loop(main) == [1], 'the task inside the send is its own step: disclosed once'
+
+
+def test_an_asyncio_task_made_before_a_send_on_the_same_loop_is_a_send_of_its_own_decided_at_once():
+    """It cannot wait for a send of its own thread (the loop would stop); it is decided under that send's lock, as a send
+    of its own: checked, and disclosed."""
+    seen = []
+
+    async def main():
+        go = asyncio.Event()
+
+        async def earlier():
+            await go.wait()
+            began = time.monotonic()
+            seen.extend((c.admitted(P), outcome(lambda: send(P, B)), outcome(lambda: send(P, UNSHARED)),
+                         time.monotonic() - began))
+
+        task = asyncio.create_task(earlier())
+        await asyncio.sleep(0)
+        with c.admission(P, [A], c.sha256('outer'), supplied=[A.source_id]):
+            go.set()
+            await asyncio.sleep(0.05)
+        await task
+
+    _on_a_loop(main)
+    assert seen[:3] == [False, 'sent', 'refused'] and seen[3] < SETTLE
+    assert len(c.disclosures()) == 2
 
 
 def test_threads_inside_one_send_read_decide_and_append_one_at_a_time(monkeypatch):

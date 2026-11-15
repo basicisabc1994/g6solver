@@ -33,8 +33,9 @@ WITHHELD = ('Results were withheld from a source not shared with this provider. 
             'only acceptance in the client dialog grants sharing.')
 _ID = re.compile(r'[A-Za-z0-9_.:-]{1,200}\Z')
 _HASH = re.compile(r'[0-9a-f]{64}\Z')
-_LOCK = threading.RLock()
-#: The short lock on the ledger's bytes: each append holds it (inside ``_LOCK``) while it writes, and the read ahead of
+#: Guards which taking of the lock is in force (``_CURRENT``) and who uses it; a thread waits on it for the lock.
+_TAKEN = threading.Condition()
+#: The short lock on the ledger's bytes: each append holds it (inside the lock) while it writes, and the read ahead of
 #: a send (``refuse_unshared``) holds it alone, so that read never waits for a send that is out.
 _WRITE = threading.RLock()
 _SOURCES: contextvars.ContextVar[tuple[Source, ...]] = contextvars.ContextVar('g6_request_sources', default=())
@@ -50,11 +51,19 @@ _HELD: contextvars.ContextVar[_Hold | None] = contextvars.ContextVar('g6_consent
 
 
 class _Lock:
-    """One taking of the lock: the sharing state read under it, the guard every decision made under it holds while it
-    reads, decides and appends (so threads inside one send take turns), and how many admitted sends under it are out."""
+    """One taking of the lock (one at a time in the process, and across processes by the file mutex it holds): the
+    sharing state read under it; the guard every read, decision and append under it holds, so threads take turns; and,
+    per thread, how many sends (or reads) under it are out. It is let go when the last of them ends, by whichever
+    thread ends it: a send that ends never waits for the sends admitted under it, and revocation waits for them all."""
 
-    def __init__(self, ledger: ChainLedger) -> None:
-        self.ledger, self.guard, self.out = ledger, threading.Condition(threading.RLock()), 0
+    def __init__(self) -> None:
+        self.ledger: ChainLedger | None = None
+        self.guard = threading.RLock()
+        self.users: dict[int, int] = {}
+        self.held = ExitStack()
+
+
+_CURRENT: _Lock | None = None
 
 
 @dataclass(eq=False)
@@ -474,42 +483,73 @@ def _open(folder: Path) -> ChainLedger:
     return ChainLedger(path, expect_head=expected, validate=_validate)
 
 
+def _use(lock: _Lock) -> None:
+    """Count one more use of ``lock`` by this thread; the caller holds ``_TAKEN``."""
+    ident = threading.get_ident()
+    lock.users[ident] = lock.users.get(ident, 0) + 1
+
+
 def _joined() -> _Hold | None:
-    """The admitted send this context is inside of, with its lock's guard taken, while that send is out; else None,
-    nothing taken. The guard is released by the caller."""
+    """The admitted send this context is inside of, while that send is out, with this thread counted as a user of its
+    lock (``_leave`` ends the use); else None, nothing counted."""
     hold = _HELD.get()
     if hold is None:
         return None
-    hold.lock.guard.acquire()
-    if hold.live:
-        return hold
-    hold.lock.guard.release()
-    return None
+    with _TAKEN:
+        if not hold.live:
+            return None
+        _use(hold.lock)
+    return hold
 
 
-@contextmanager
-def _taken() -> Iterator[_Lock]:
-    """The lock, taken: held until every admitted send under it has ended."""
-    token = _POLICY.set(True)
-    yielded = False
+def _take() -> _Lock:
+    """The lock, with this thread counted as a user of it. A thread that already uses the lock in force decides under
+    it (a thread never waits on a lock it holds itself, as an asyncio task of a loop whose other task's send is out);
+    any other thread waits until that lock is let go, then takes the lock and reads the sharing state."""
+    global _CURRENT
+    with _TAKEN:
+        while _CURRENT is not None and threading.get_ident() not in _CURRENT.users:
+            _TAKEN.wait()
+        lock = _CURRENT
+        if lock is not None:
+            _use(lock)
+            return lock
+        lock = _CURRENT = _Lock()
+        _use(lock)
     try:
-        with _LOCK:
-            folder = _folder()
-            with _mutex(folder, 'mutex'):
-                lock = _Lock(_open(folder))
-                yielded = True
-                try:
-                    yield lock
-                finally:
-                    with lock.guard:          # a send joined to this one and still out is part of it: it ends first
-                        while lock.out:
-                            lock.guard.wait()
-    except (OSError, ValueError) as exc:
-        if yielded:
-            raise
-        raise _refusal(LLMError(f'{STATE_UNAVAILABLE}: sharing state could not be read or written; nothing was sent')) from exc
+        folder = _folder()
+        lock.held.enter_context(_mutex(folder, 'mutex'))
+        lock.ledger = _open(folder)
+    except BaseException as exc:
+        _leave(lock)
+        if isinstance(exc, (OSError, ValueError)):
+            raise _refusal(LLMError(f'{STATE_UNAVAILABLE}: sharing state could not be read or written; '
+                                    'nothing was sent')) from exc
+        raise
+    return lock
+
+
+def _leave(lock: _Lock, ending: _Hold | None = None) -> None:
+    """End one use of ``lock`` by this thread (and, with ``ending``, that send: a context copied inside it no longer
+    counts as inside it). The last use lets the lock go, whichever thread ends it; nothing here waits for another."""
+    global _CURRENT
+    ident = threading.get_ident()
+    with _TAKEN:
+        if ending is not None:
+            ending.live = False
+        left = lock.users[ident] - 1
+        if left:
+            lock.users[ident] = left
+        else:
+            del lock.users[ident]
+        if lock.users:
+            return
+    try:
+        lock.held.close()
     finally:
-        _POLICY.reset(token)
+        with _TAKEN:
+            _CURRENT = None
+            _TAKEN.notify_all()
 
 
 @contextmanager
@@ -517,14 +557,14 @@ def _locked() -> Iterator[ChainLedger]:
     """The sharing state, read, decided on and appended to by one thread at a time: inside an admitted send that is
     out, under that send's hold (it never waits on the lock that send holds); anywhere else under the lock, taken."""
     hold = _joined()
-    if hold is not None:
-        try:
-            yield hold.lock.ledger
-        finally:
-            hold.lock.guard.release()
-        return
-    with _taken() as lock, lock.guard:
-        yield lock.ledger
+    lock = hold.lock if hold is not None else _take()
+    token = _POLICY.set(True)
+    try:
+        with lock.guard:
+            yield lock.ledger
+    finally:
+        _POLICY.reset(token)
+        _leave(lock)
 
 
 def _written() -> dict:
@@ -534,9 +574,10 @@ def _written() -> dict:
     hold = _joined()
     if hold is not None:
         try:
-            return _decisions(hold.lock.ledger)
+            with hold.lock.guard:
+                return _decisions(hold.lock.ledger)
         finally:
-            hold.lock.guard.release()
+            _leave(hold.lock)
     token = _POLICY.set(True)
     try:
         with _WRITE:
@@ -664,12 +705,11 @@ def admission(provider: str, sources: Sequence[Source], payload_sha256: str, *, 
     if local:
         yield
         return
-    with ExitStack() as stack:
-        joined = _joined()
-        lock = joined.lock if joined is not None else stack.enter_context(_taken())
-        if joined is None:
-            lock.guard.acquire()
-        try:
+    joined = _joined()
+    lock = joined.lock if joined is not None else _take()
+    policy = _POLICY.set(True)
+    try:
+        with lock.guard:
             decisions = _decisions(lock.ledger)
             _refuse_unshared(decisions, provider, refs, supplied)
             # A check inside an admitted send of this context to the same recipient, of no source that send did not
@@ -684,15 +724,14 @@ def admission(provider: str, sources: Sequence[Source], payload_sha256: str, *, 
                                  'basis': 'client-supplied' if s.source_id in supplied and
                                      (s.source_id, provider) not in decisions else 'grant'} for s in refs]})
             hold = _Hold(lock, (provider, frozenset(refs), disclose or repeated))
-            lock.out += 1
-        finally:
-            lock.guard.release()
-        token = _HELD.set(hold)
-        try:
-            yield
-        finally:
-            _HELD.reset(token)
-            with lock.guard:
-                hold.live = False
-                lock.out -= 1
-                lock.guard.notify_all()
+    except BaseException:
+        _POLICY.reset(policy)
+        _leave(lock)
+        raise
+    token = _HELD.set(hold)
+    try:
+        yield
+    finally:
+        _HELD.reset(token)
+        _POLICY.reset(policy)
+        _leave(lock, hold)        # the lock is let go when the last send under it ends, whichever that is
