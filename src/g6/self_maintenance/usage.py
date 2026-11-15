@@ -770,7 +770,13 @@ def _final_path(stream: _InputHandle) -> str:
             name = name[4:]
     else:
         try:
-            name = os.readlink(f"/proc/self/fd/{stream.fileno()}")
+            if sys.platform == "darwin":          # no /proc: the kernel's own name for the descriptor (F_GETPATH)
+                import fcntl
+
+                found = fcntl.fcntl(stream.fileno(), getattr(fcntl, "F_GETPATH", 50), bytes(1024))
+                name = os.fsdecode(found.split(b"\0", 1)[0])
+            else:
+                name = os.readlink(f"/proc/self/fd/{stream.fileno()}")
         except OSError:
             raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input's final path cannot be resolved") from None
         if name.endswith(" (deleted)"):

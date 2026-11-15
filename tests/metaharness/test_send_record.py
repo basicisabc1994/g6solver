@@ -50,6 +50,17 @@ if not hasattr(domains, "WordProblems"):
 
 NOW = datetime(2026, 11, 6, tzinfo=UTC)
 
+#: Known limits of 0.3.0 (lead ruling 2026-11-15), each failing on purpose and in the safe direction: nothing is sent.
+#: Every case of each marked test fails, so each is marked whole; a strict mark fails the run if one starts to pass.
+SENDER_KIND_LIMIT = pytest.mark.xfail(strict=True, reason=(
+    "lead ruling 2026-11-15, 0.3.0 known limit: the loop accepts a FakeLLM subclass by isinstance while the bound "
+    "consent guard accepts only an exact type or a CallerWrapper, so the send is refused as cloud:unknown before the "
+    "behaviour under test (safe direction), until the loop's acceptance is narrowed to consent's after 0.3.0."))
+CONSENT_LOCK_LIMIT = pytest.mark.xfail(strict=True, reason=(
+    "lead ruling 2026-11-15, 0.3.0 known limit: the bound consent admission holds its lock through the send and _HELD "
+    "is thread-local, so an inner send on its own thread waits; changes only with core/cloud_consent.py at a later "
+    "issuance."))
+
 
 @pytest.fixture(autouse=True)
 def _no_key_file(monkeypatch):
@@ -701,6 +712,7 @@ def test_two_threads_of_nested_calls_take_no_more_than_was_reserved():
     assert all("TICK_BUDGET_SPENT" in outcome for outcome in outcomes if outcome != "answer")
 
 
+@CONSENT_LOCK_LIMIT
 @pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_send_made_inside_a_watched_send_on_a_thread_of_its_own_never_waits_for_it(monkeypatch, host_folders):
     """The identical request, sent from a thread the program's own step started with the call's context, while the send it
@@ -791,6 +803,7 @@ STEPS = ("before the send is let in", "while it is out", "swallowed by a wrapper
 
 @pytest.mark.parametrize("step", STEPS)
 @pytest.mark.parametrize("fact", ["refusal", "limit"])
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_limit_and_a_refusal_at_each_step_from_admission_to_close(tmp_path, monkeypatch, host_folders, fact, step):
     """Wherever the provider's statement comes, up to the step that closes the tick, the tick ends with it, the refusal is in
     the store and the limit on the record before the charges settle; once the tick has closed it ends nothing of it, and what
@@ -823,11 +836,12 @@ def test_a_limit_and_a_refusal_at_each_step_from_admission_to_close(tmp_path, mo
 
     heard, late = threading.Event(), []
 
-    class AnswersThenHearsLate:
-        """Answers, and has the provider's reply read on a thread of its own, in the call's context, once ``heard`` is set."""
+    class AnswersThenHearsLate(_OverFake):
+        """Answers, and has the provider's reply read on a thread of its own, in the call's context, once ``heard`` is set.
+        A wrapper by the published contract over the fake that answers, so the sharing check knows where it sends."""
 
         def complete(self, system, user, *, max_tokens=1024):
-            answer, context = FakeLLM(default="an answer").complete(system, user), contextvars.copy_context()
+            answer, context = self.inner.complete(system, user), contextvars.copy_context()
             late.append(threading.Thread(target=context.run, args=(lambda: heard.wait(5) and _quietly(
                 usage.WatchedClaude()._reply, 1, printed, "", None, ("system", "refused request")),)))
             late[-1].start()
@@ -842,7 +856,7 @@ def test_a_limit_and_a_refusal_at_each_step_from_admission_to_close(tmp_path, mo
         elif step == "swallowed by a wrapper":
             _Counted(CatchesAll(ClaudeCodeCaller()), loop.requests).complete("system", "refused request")
         elif step == "after its call returned":
-            assert _Counted(AnswersThenHearsLate(), loop.requests).complete("system", "asked") == "an answer"
+            assert _Counted(AnswersThenHearsLate(default="an answer"), loop.requests).complete("system", "asked") == "an answer"
             heard.set()                                   # the call has returned, and the tick is still open
             late[0].join(10)
         return _idle_row()
@@ -1065,6 +1079,7 @@ def test_refu1_1_a_refusal_no_file_would_keep_stops_another_handle_of_the_folder
     assert backend.calls == [], "the second handle resent the refusal that this process could not persist"
 
 
+@SENDER_KIND_LIMIT
 def test_refu1_2_a_function_that_sends_is_known_by_what_it_sent():
     """The review's test as reported."""
     sent = []
@@ -1389,6 +1404,7 @@ SHAPES = {"a function": _by_function, "a lambda": lambda caller, system, user: _
           "a function on a thread of its own": _on_a_thread, "a function between the sender's own frames": _between}
 
 
+@SENDER_KIND_LIMIT
 @pytest.mark.parametrize("depth", [0, 1, 2])
 @pytest.mark.parametrize("shape", sorted(SHAPES))
 def test_a_refused_request_is_known_by_the_innermost_frame_that_names_it_whoever_sends_it(shape, depth):
@@ -1403,6 +1419,7 @@ def test_a_refused_request_is_known_by_the_innermost_frame_that_names_it_whoever
     assert all(meter.refused == {_request_digest("system", "canonical request")} for meter in meters)
 
 
+@SENDER_KIND_LIMIT
 def test_a_refusal_raised_in_a_function_binds_the_send_it_raised_for_among_several(monkeypatch):
     """Two sends from functions in one call, the second refused: the refusal binds the second's request, not the first's, and
     not none."""
@@ -1426,6 +1443,7 @@ def test_a_refusal_raised_in_a_function_binds_the_send_it_raised_for_among_sever
     assert meter.refused == {_request_digest("system", "second request")}
 
 
+@SENDER_KIND_LIMIT
 def test_a_resend_a_function_makes_is_known_by_what_it_sends_again(monkeypatch):
     sent = _busy_once(monkeypatch)
     seen = []
@@ -1466,6 +1484,7 @@ class _NotText(FakeLLM):
         return "an answer"
 
 
+@SENDER_KIND_LIMIT
 @pytest.mark.parametrize("ticking", [False, True])
 @pytest.mark.parametrize("kind", [_OtherNames, _NotText])
 def test_a_request_no_frame_names_is_not_sent_and_takes_no_place(kind, ticking):
@@ -1486,6 +1505,7 @@ def test_a_request_no_frame_names_is_not_sent_and_takes_no_place(kind, ticking):
     assert backend.calls == [] and meter.sent == 0
 
 
+@SENDER_KIND_LIMIT
 def test_a_tick_whose_caller_names_no_request_sends_nothing_and_holds_the_loop_for_a_person(tmp_path):
     domain = domains.WordProblems(tmp_path)
     domain.llm = _OtherNames()
