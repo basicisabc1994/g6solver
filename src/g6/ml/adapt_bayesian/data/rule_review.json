@@ -158,26 +158,26 @@
     }
   ],
   "reviewed": {
-    "artifact_sha256": "81f85145734c0de8da8a1b718a02cba0e1d021ddcf9f5b7a4a3f7172656c59e1",
-    "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
-    "sources_sha256": {
-      "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
-      "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
-      "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
-      "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
-      "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
-      "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
-      "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
-      "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
-      "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
-      "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
-    },
-    "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
     "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+    "artifact_sha256": "e1346717aece5039f6986bd1ad0bb2a67238eb94f403fb8a2243b5fbcc2a5e57",
+    "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
     "refusals": [
       "MLError",
       "NotConverged"
-    ]
+    ],
+    "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+    "sources_sha256": {
+      "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+      "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+      "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+      "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+      "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+      "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+      "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+      "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+      "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7",
+      "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597"
+    }
   },
   "delta_reviews": [
     {
@@ -844,6 +844,74 @@
         "independently_run": "At b75327a, each file alone with G6_CLAUDE and G6_CODEX set to a missing program: tests/ml/test_sklearn.py, tests/ml/test_automl.py, tests/ml/test_bayesian.py, tests/embodied/test_adapt_physical_ai.py, tests/embodied/test_motion_grasp.py, tests/embodied/test_embodied_merges.py, tests/jobs/test_care_guards.py, tests/jobs/test_duty_of_care_block.py; then the same files at 10c7457",
         "result": "At b75327a: 29 passed, 11 skipped, 1 failed; 25 passed, 5 skipped, 1 failed; 45 passed, 1 failed; 23 passed; 26 passed; 11 passed; 33 passed; 119 passed, 1 skipped. The failures: test_sklearn's g5 test refused G6_E_ISOLATION_UNAVAILABLE (the Windows AppContainer cannot read this worktree), and test_automl's d6 test and test_bayesian's vetting-state test read built, awaiting review because the certificates are not yet reissued. At 10c7457 the same files gave the same counts, except that those two vetting-state tests passed (26 passed, 5 skipped; 46 passed) and the g5 test failed the same way. No other test failed.",
         "limits": "Static delta review, differential checks of the changed functions and focused local tests on Windows only. scikit-learn, FLAML and PyMC are not installed (the skips) and no operating-system sandbox was available, so no confined fit ran; this reader did not rerun the certificates' cases, second routes or falsifiers, and ran nothing on Linux or macOS. The job comparison covers the inputs listed, not every input. The reader is a fresh Claude session, not a different model from the window's author. Full held-source and quote issuance gates remain required."
+      }
+    },
+    {
+      "kind": "independent-post-issuance-pr12-delta-review",
+      "reviewer": "Claude Opus 5.5 independent certificate-renewal reader (fresh session; wrote none of the reviewed commits 36db2e0..b14dc13. PR #11's and PR #12's commits were written by other sessions)",
+      "date": "2026-11-14",
+      "base_commit": "36db2e0a9c3f2eb209a865828137c2fb6bf8d53e",
+      "reviewed_commit": "b14dc132e598f87579d48b145a924c050c9d64d7",
+      "prior_review_sha256": "31bc0aac31c69a146a0ddf6b1b6c3afd35b49179aff6e5734c0a997d0a0332e8",
+      "prior_reviewed": {
+        "artifact_sha256": "81f85145734c0de8da8a1b718a02cba0e1d021ddcf9f5b7a4a3f7172656c59e1",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "reviewed": {
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "artifact_sha256": "e1346717aece5039f6986bd1ad0bb2a67238eb94f403fb8a2243b5fbcc2a5e57",
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ],
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597"
+        }
+      },
+      "scope": "Supplement to prior independent delta attestations: the changes merged into main after the 0.3.0 certificate issuance window, PR #11 (aeabdbf) and PR #12 (b14dc13), 36db2e0..b14dc13, in bound shared code. Original source-reader attribution, rule findings and earlier delta attestations are retained. No original source clauses, held source bytes or withheld quotes were read; no new medical, legal, safety or domain endorsement, qualified-person approval, authenticated identity or cryptographic signature is asserted.",
+      "method": "Extracted src and tools at 36db2e0 and b14dc13 (git archive) and computed tools/issue_certificate.py --reviewed and the full input manifest (input_files without this review, imported_code, harness_files and the input bases) in each. The record's top-level reviewed equals reviewed() at 36db2e0; reviewed() at b14dc13 equals --reviewed in the candidate worktree, which is b14dc13 with no other change. Intersected git diff --name-only 36db2e0 b14dc13 with the manifest, certificate.json's imported_code list, the harness_sha256 files and every file under the component's input folders: of the four source files changed in the range (core/consent_callers.py, core/reading.py, harness/verification_search.py, mcp/workflow.py) only core/consent_callers.py is bound; the manifest keeps the same 112 files, imported_code and the harness are unchanged. Read git diff 36db2e0 b14dc13 for core/consent_callers.py and searched every bound Python file for guard(, _Consent, ConsentClaude, ConsentCodex, consent_callers, consent_registry, GuardedRegistry, complete( and complete_with_images, and the registry's model keyword (__g6_model__) for this component at b14dc13.",
+      "finding": "Only artifact_sha256 differs; rules, canonical source entries, cases, adapter and refusal hashes are unchanged. Changed bound input: core/consent_callers.py (PR #12, 90d378b). guard() no longer reassigns a native backend's __class__: it returns a separate object of an additive subclass with _guards set to the backend and the backend's own __dict__, and _Consent.complete and complete_with_images take the destination and SDK client of that backend (of the object itself where _guards is None, as for ConsentClaude and ConsentCodex) and send through it. destination, backend_supported and guard's watched-host, wrapper, process and unknown branches are unchanged. In bound code guard is called only by consent_registry.GuardedRegistry.invoke, on a model handed as llm, and by consent_callers.provider_from_env, which nothing bound calls; GuardedRegistry is reached only from g6.invoke (g6/__init__.py, a function-level import). On that path door.invoke_checked hands the person's configured model, if any, as llm and GuardedRegistry guards it, but registry.invoke builds this component's block with no argument because the component declares no __g6_model__ (None at b14dc13), so the guarded caller never reaches the block and no _Consent method is called. No covered implementing function, the adapter, the cases, the rules file, the sources or the refusal set changed, and none calls guard or a _Consent method. The other model call in this certificate's bound code, action_gating/decision_engine.py's harm_judge.complete, is unchanged, does not import consent_callers, and is not reached here: pymc_child calls evaluate_action with no harm_judge. The change cannot reach this component's results. Every prior scoped finding still holds, including the issuance-window finding that g6.invoke puts a model it is given through the consent guard. Review raises no label.",
+      "input_changes": [
+        {
+          "path": "g6/core/consent_callers.py",
+          "previous_sha256": "1dfc96f0fcabb01ab8887813922a05da7424b2e00df1a4d4c13670f8a541423e",
+          "current_sha256": "5a4c5dd7c339c6ed140473e0caa4b8a81f586b6b4cee1ab75be7c73b205f7353",
+          "binding_change": "modified"
+        }
+      ],
+      "validation": {
+        "independently_run": "At b14dc13, each file alone with G6_CLAUDE and G6_CODEX set to a missing program: tests/ml/test_sklearn.py, tests/ml/test_automl.py, tests/ml/test_bayesian.py, tests/embodied/test_adapt_physical_ai.py, tests/embodied/test_motion_grasp.py, tests/embodied/test_embodied_merges.py, tests/jobs/test_care_guards.py, tests/jobs/test_duty_of_care_block.py, tests/core/test_consent_followup.py",
+        "result": "29 passed, 11 skipped, 1 failed; 25 passed, 5 skipped, 1 failed; 45 passed, 1 failed; 23 passed; 26 passed; 11 passed; 33 passed; 119 passed, 1 skipped; 191 passed. The failures: test_sklearn's g5 test refused G6_E_ISOLATION_UNAVAILABLE (the Windows AppContainer cannot read this worktree), and test_automl's d6 test and test_bayesian's vetting-state test read built, awaiting review because the certificates are not yet reissued: the same counts and failures the issuance-window review recorded at b75327a. No other test failed.",
+        "limits": "Static delta review and focused local tests on Windows only. scikit-learn, FLAML and PyMC are not installed (the skips) and no operating-system sandbox was available, so no confined fit ran; this reader did not rerun the certificates' cases, second routes or falsifiers, and ran nothing on Linux or macOS. The reader is a fresh Claude session, not a different model from the authors of the reviewed commits. Full held-source and quote issuance gates remain required."
       }
     }
   ]

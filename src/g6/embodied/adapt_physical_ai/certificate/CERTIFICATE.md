@@ -127,7 +127,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
       "rule": "friction"
     }
   ],
-  "digest": "c87e952d5a32339031b8f29f793c4d3007ed5b4e9e3fe061eaaa36b1c83cd655",
+  "digest": "ab7a97e888f70fc7f83b0fad12758d69b78dfbf4797983973bff126bfc852533",
   "falsification": {
     "a_star": {
       "bounds": "2D/3D coordinates and lengths up to 1e6; stationary and tangent segments, small obstacles and support endpoints; 1..12 links, straight/folded chains; non-increasing times; finite Euler and constant acceleration; bounded grids and seeded RRT obstacles, direct paths and iteration/seed endpoints. Near-tangent point segments up to 1e6 m long; arm segments that sweep through an obstacle or keep clear by the source's sufficient condition, 1..12 links.",
@@ -3727,7 +3727,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
     ],
     "reviewed": {
       "adapter_sha256": "7e9374d9c694fc2274715677cdf591d523416e0b4f10ae23c3419e82564bf0e8",
-      "artifact_sha256": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+      "artifact_sha256": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
       "cases_sha256": "07c70d49dd79a15d607aa2757295140e275347dbba9ebb4e70299a75691cfba7",
       "refusals": [],
       "rules_sha256": "62270a64c5c491ec3fdf2fd5abfb26fb223be84667caff49b72fd071ec1c0472",
@@ -3744,10 +3744,10 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
       }
     },
     "reviewer": "Claude Sonnet 5.5, an independent reader (certificate v2a, pass after withheld quotes), not the code's author or the case author",
-    "sha256": "4c3a5df5f0501cb3c9dbaa157abdc019e57ebbfd28c757d35ee9166c386deb12"
+    "sha256": "26a5c0139b35aab3c564bd2e173092da27ac8d09be435f586ee8516477660959"
   },
   "inherits": null,
-  "inputs_sha256": "75f6bc1a2e2d0b6f7a7d17c52f4d393a9e5b09ef21b66f48a5d7e9a45e03ecc2",
+  "inputs_sha256": "0b5df43f8d0561740f4f30ef44aca7bb7c2345d43bc3bae35f9f73ee1a250057",
   "isolation": {
     "backend": "bubblewrap",
     "network": false,
@@ -3755,7 +3755,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
   },
   "issuer": {
     "artifact_seq": 1,
-    "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+    "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
     "catalogue_sha": "",
     "checks": [
       {
@@ -6217,7 +6217,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
     ],
     "cost_cents": null,
     "decisions": [],
-    "digest": "66e3312a63def5bfd0dde42795a0cb1b2b9a4271cc71b4bf581719e2ed6da9bb",
+    "digest": "a9d2e71070dacd5f5e217585512881d955af44c410f531dfa4c138abdfbf0756",
     "formal": [],
     "gaps": [
       [
@@ -6403,7 +6403,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
     "producer": "the embodied family build (Codex)",
     "receipts": [
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "a_star:known",
         "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
         "receipt_id": "a_star:known:receipt",
@@ -6411,7 +6411,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 4
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "a_star:second_route",
         "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
         "receipt_id": "a_star:second_route:receipt",
@@ -6419,7 +6419,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 4
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "average_speed:known",
         "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
         "receipt_id": "average_speed:known:receipt",
@@ -6427,7 +6427,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 7
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "average_speed:second_route",
         "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
         "receipt_id": "average_speed:second_route:receipt",
@@ -6435,7 +6435,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 7
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "bounds:known",
         "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
         "receipt_id": "bounds:known:receipt",
@@ -6443,7 +6443,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 10
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "chain:known",
         "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
         "receipt_id": "chain:known:receipt",
@@ -6451,7 +6451,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 13
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "chain:second_route",
         "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
         "receipt_id": "chain:second_route:receipt",
@@ -6459,7 +6459,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 13
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "closed_form:known",
         "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
         "receipt_id": "closed_form:known:receipt",
@@ -6467,7 +6467,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 16
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "closed_form:second_route",
         "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
         "receipt_id": "closed_form:second_route:receipt",
@@ -6475,7 +6475,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 16
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "distance:known",
         "check_sha": "1aca0ff797d2cb3b83c98575c03a9ce337caeb95ddf714f11c86867e0cc9855e",
         "receipt_id": "distance:known:receipt",
@@ -6483,7 +6483,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 19
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "distance:second_route",
         "check_sha": "b954b9b451ad90422c8ff9c97f8daa7e8ed6d13437968dcff48e88061fbb346e",
         "receipt_id": "distance:second_route:receipt",
@@ -6491,7 +6491,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 19
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "euler:known",
         "check_sha": "79d408fd2fc104649be790227e2317563747c46fc76979e6c2310b748473bb5d",
         "receipt_id": "euler:known:receipt",
@@ -6499,7 +6499,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 22
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "euler:second_route",
         "check_sha": "ef5a63674c49546e3852858ae7337f23864296bf5c219507ca44cf011552c3ee",
         "receipt_id": "euler:second_route:receipt",
@@ -6507,7 +6507,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 22
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "force_tolerance:known",
         "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
         "receipt_id": "force_tolerance:known:receipt",
@@ -6515,7 +6515,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 25
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "friction:known",
         "check_sha": "bcfd682adeeae5235404c658715c804e527148bba00d3495e9543e27d310421b",
         "receipt_id": "friction:known:receipt",
@@ -6523,7 +6523,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 28
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "friction:second_route",
         "check_sha": "482dbf7773a51d6ecc913a6b82bef1e18cc6b546c3537d39efd4a2120da8720c",
         "receipt_id": "friction:second_route:receipt",
@@ -6531,7 +6531,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 28
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "rrt:known",
         "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
         "receipt_id": "rrt:known:receipt",
@@ -6539,7 +6539,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 31
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "rrt:second_route",
         "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
         "receipt_id": "rrt:second_route:receipt",
@@ -6547,7 +6547,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 31
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "swept_arm:known",
         "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
         "receipt_id": "swept_arm:known:receipt",
@@ -6555,7 +6555,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 34
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "swept_arm:second_route",
         "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
         "receipt_id": "swept_arm:second_route:receipt",
@@ -6563,7 +6563,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 34
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "swept_point:known",
         "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
         "receipt_id": "swept_point:known:receipt",
@@ -6571,7 +6571,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 37
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "swept_point:second_route",
         "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
         "receipt_id": "swept_point:second_route:receipt",
@@ -6579,7 +6579,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 37
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "tolerance:known",
         "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
         "receipt_id": "tolerance:known:receipt",
@@ -6587,7 +6587,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "seq": 40
       },
       {
-        "artifact_sha": "4f6576e342a84d137cac8a5910adfe9ae1d6ea1ffa8028dab51c1ba692c662e1",
+        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
         "check_id": "work_bound:known",
         "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
         "receipt_id": "work_bound:known:receipt",
