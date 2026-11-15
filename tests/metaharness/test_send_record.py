@@ -56,10 +56,6 @@ SENDER_KIND_LIMIT = pytest.mark.xfail(strict=True, reason=(
     "lead ruling 2026-11-15, 0.3.0 known limit: the loop accepts a FakeLLM subclass by isinstance while the bound "
     "consent guard accepts only an exact type or a CallerWrapper, so the send is refused as cloud:unknown before the "
     "behaviour under test (safe direction), until the loop's acceptance is narrowed to consent's after 0.3.0."))
-CONSENT_LOCK_LIMIT = pytest.mark.xfail(strict=True, reason=(
-    "lead ruling 2026-11-15, 0.3.0 known limit: the bound consent admission holds its lock through the send and _HELD "
-    "is thread-local, so an inner send on its own thread waits; changes only with core/cloud_consent.py at a later "
-    "issuance."))
 
 
 @pytest.fixture(autouse=True)
@@ -712,7 +708,6 @@ def test_two_threads_of_nested_calls_take_no_more_than_was_reserved():
     assert all("TICK_BUDGET_SPENT" in outcome for outcome in outcomes if outcome != "answer")
 
 
-@CONSENT_LOCK_LIMIT
 @pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_send_made_inside_a_watched_send_on_a_thread_of_its_own_never_waits_for_it(monkeypatch, host_folders):
     """The identical request, sent from a thread the program's own step started with the call's context, while the send it
