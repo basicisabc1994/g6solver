@@ -16,6 +16,14 @@ match = 'exec(compile(src, "<candidate>", "exec"), namespace)'
 reason = "Candidate code runs only here, in the child the runner starts with python -I through g6.core.component_process: kept-keys environment, a deadline, a memory cap, restricted builtins, source pre-checked."
 finding = "permanent: the one place CEGIS runs a candidate, out of G6's process"
 
+[[waiver]]
+component = "metaharness"
+gate = "G2"
+file = "src/g6/metaharness/runner.py"
+match = 'exec(compile(source, str(path), "exec", dont_inherit=True), module.__dict__)'
+reason = "Runs only the domain file a person enrolled for the loop, and only when its SHA-256 equals the enrolled pin (DomainChanged otherwise): the person's own code, run as an import of it would be, never a model's or a candidate's."
+finding = "permanent: owner ruling 2026-11-15, the enrolled domain file is the person's own code (a child-process loader stays possible later)"
+
 # --- G6 ---------------------------------------------------------------------------------------------------------------
 
 [[waiver]]

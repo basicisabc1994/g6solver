@@ -12,6 +12,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.12", "3.13"]
+        # The suite in four jobs per OS and Python: as one job it ran 5 h on Linux and passed the hosted runner's 6 h
+        # limit on Windows, which cancelled it. Each job runs every group but only its shard's test files (the split
+        # script's -Shard and the tests/g6_shard.py plugin), so each file runs in exactly one job.
+        shard: [1, 2, 3, 4]
     runs-on: ${{ matrix.os }}
     steps:
       # The whole history: tests/conformance checks each certificate against the commits that first held its inputs.
@@ -50,7 +54,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y swi-prolog-nox
       # The suite runs in groups, never as one process (tools/suite_split.ps1; pwsh is on every hosted runner).
       - name: Test suite, in groups
-        run: pwsh -NoProfile -File tools/suite_split.ps1 -Python python -Log suite-split.log
+        run: pwsh -NoProfile -File tools/suite_split.ps1 -Python python -Log suite-split.log -Shard "${{ matrix.shard }}/4"
       - name: Group summaries
         if: always()
         shell: pwsh
@@ -60,11 +64,13 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: suite-${{ matrix.os }}-${{ matrix.python }}
+          name: suite-${{ matrix.os }}-${{ matrix.python }}-${{ matrix.shard }}
           path: suite-split.log*
           retention-days: 14
-      - run: ruff check src tests
-      - run: lint-imports
+      - if: matrix.shard == 1
+        run: ruff check src tests
+      - if: matrix.shard == 1
+        run: lint-imports
       - run: g6 doctor
   conformance:
     runs-on: ubuntu-latest
