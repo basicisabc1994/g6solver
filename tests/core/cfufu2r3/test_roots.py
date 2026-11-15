@@ -414,7 +414,15 @@ def test_latch_precedes_folder_resolution_and_preflight_in_the_code():
         body = tree.body[0].body
         statements = [node for node in body if not isinstance(node, ast.Expr)
                       or not isinstance(node.value, ast.Constant)]
-        assert '_begin_stop' in ast.unparse(statements[0]), function.__name__
+        # The latch is the first statement that can fail. 3dc7ce7 put improve.stop's body inside the stop side's one
+        # handler, so there the latch is the handler's first statement, after an assignment that only binds names to
+        # names and constants for a reply (no call, no attribute, no item); nothing else may stand before the latch.
+        inert = (ast.Assign, ast.Tuple, ast.Name, ast.Constant, ast.expr_context)
+        while (isinstance(statements[0], ast.Assign)
+               and all(isinstance(node, inert) for node in ast.walk(statements[0]))):
+            statements = statements[1:]
+        first = statements[0].body[0] if isinstance(statements[0], ast.Try) else statements[0]
+        assert '_begin_stop' in ast.unparse(first), function.__name__
 
 
 def test_denial_insertion_calls_no_fallible_helper():
