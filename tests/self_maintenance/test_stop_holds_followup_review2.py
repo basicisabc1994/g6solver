@@ -180,6 +180,12 @@ LOCK_ERRORS = {
     "a Windows error never seen": lambda: OSError(errno.EINVAL, "an error never seen", None, 0x5EED),
     "an exception never seen": lambda: Unseen("an error of a kind never seen"),
 }
+#: Windows' "access denied" (its code 5) is no holder there; on POSIX the same error is plain EACCES, which flock built on
+#: fcntl gives for a lock another holds (``_coordination.HELD_POSIX``), so the case exists only on Windows.
+LOCK_ERROR_CASES = [pytest.param(name, marks=pytest.mark.skipif(
+    not WINDOWS and name == "access denied, not a sharing violation",
+    reason="on POSIX EACCES from a lock try is another holder (HELD_POSIX); Windows' access denied has no POSIX twin"))
+    for name in LOCK_ERRORS]
 
 
 # The reviewer's five findings, as reproduced ---------------------------------------------------------------------------
@@ -615,7 +621,7 @@ def test_only_the_named_errors_of_a_held_lock_are_another_holder(windows, error,
     assert _coordination.another_holds(error, windows=windows) is held
 
 
-@pytest.mark.parametrize("error", list(LOCK_ERRORS))
+@pytest.mark.parametrize("error", LOCK_ERROR_CASES)
 def test_a_lock_that_cannot_be_taken_is_this_runners_own_ending_with_page_and_heartbeat(active, monkeypatch, error):
     monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0)
     reached = _lock_fails(monkeypatch, LOCK_ERRORS[error]())
@@ -626,7 +632,7 @@ def test_a_lock_that_cannot_be_taken_is_this_runners_own_ending_with_page_and_he
     assert daily.digest_path(active.root, NOW.date()).is_file()
 
 
-@pytest.mark.parametrize("error", list(LOCK_ERRORS))
+@pytest.mark.parametrize("error", LOCK_ERROR_CASES)
 def test_the_mutex_raises_what_kept_it_from_the_lock_and_never_says_busy(tmp_path, monkeypatch, error):
     monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0)
     reached, entered, raised = _lock_fails(monkeypatch, LOCK_ERRORS[error]()), [], None
@@ -648,7 +654,7 @@ def test_a_workspace_op_whose_lock_fails_is_the_machines_failure_not_busy(monkey
     assert reached and result.code == OP_FAILED, result
 
 
-@pytest.mark.parametrize("error", list(LOCK_ERRORS))
+@pytest.mark.parametrize("error", LOCK_ERROR_CASES)
 def test_whether_a_runner_is_alive_is_never_read_from_a_lock_that_cannot_be_tried(active, monkeypatch, error):
     with runner_lock(active.root):
         pass                                                     # the lock's folder and file, made
