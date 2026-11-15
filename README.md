@@ -131,9 +131,8 @@ with `g6 setup --allow` (the loop's: `metaharness.improve`). [AGENT_GUIDE.md](AG
 
 **Consent.** No user data reaches a cloud model unless the person granted it, per source and per provider, in the
 client's own dialog (`g6_cloud_grant`); without a grant the work stays local or the result is withheld. One check
-covers G6's own model calls, `g6_invoke` and `g6 invoke`, the cognitive bridge and the loop's Claude Code and Codex
-sessions. One path, the Python API `g6.invoke`, lives in a certificate-bound file and is put through the check at the
-certificate issuance window, before the tag.
+covers G6's own model calls, `g6_invoke` and `g6 invoke`, the Python API `g6.invoke`, the cognitive bridge and the
+loop's Claude Code and Codex sessions.
 
 Most checks need no model. The few steps that do use the model you set in your key file, `~/.g6/.env`, whose values
 are local preferences under a trusted host: for example the line `G6_LLM_PROVIDER=claude_code` (your own Claude Code
