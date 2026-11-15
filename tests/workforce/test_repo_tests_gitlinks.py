@@ -402,7 +402,11 @@ def test_a_patch_that_changes_a_tracked_link_leaves_the_base_run_not_run(tmp_pat
     os.unlink(repo / "lib")
     os.symlink("vendor/lib", repo / "lib", target_is_directory=True)
     found = rt.run_at_base(rt.change(repo), ["tests/test_calc.py"])
-    assert found == {"verdict": "not_run", "said": rt.OLD_BASELINE_NOT_RUN}
+    # a run that was not made is written with every required field of a report, each one empty (5daf0a8:
+    # ``_not_run_report``); before that it was the verdict and what was said alone
+    assert found == {"verdict": "not_run", "said": rt.OLD_BASELINE_NOT_RUN, "output": "", "rootdir": "",
+                     "test_outcomes": None, "failed_ids": [], "setup_errors": {}, "collected_ids": [],
+                     "omitted_ids": []}
 
 
 # --- confined (Linux bubblewrap; Docker on Windows) ------------------------------------------------------------------
