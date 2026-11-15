@@ -40,6 +40,11 @@ jobs:
       - if: runner.os != 'Linux'
         shell: bash
         run: echo "G6_ALLOW_UNCONFINED=1" >> "$GITHUB_ENV"
+      # macOS's temporary folder is under /var, a link to /private/var, and G6 refuses a state or input path with a
+      # linked part, by design. The tests get its real path, so tmp_path and each G6_HOME made under it hold no link.
+      - if: runner.os == 'macOS'
+        shell: bash
+        run: echo "TMPDIR=$(cd "${TMPDIR:-/tmp}" && pwd -P)/" >> "$GITHUB_ENV"
       # SWI-Prolog on one job, so tests/prolog runs its swipl tests instead of skipping them (swipl is then on PATH).
       - if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
         run: sudo apt-get update && sudo apt-get install -y swi-prolog-nox
