@@ -9,6 +9,7 @@ model, no network.
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 import queue
@@ -178,6 +179,23 @@ def _bare(flags: str) -> bool:
     return not any(SAFE.fullmatch(flag) for flag in flags.split())
 
 
+#: Starts whose flags a helper on other lines supplies (``[*_interpreter(settings), "-m", ...]``, since fc80f8e), by
+#: file and helper. The scan reads one line, so the helper itself is read here: each start is cleared only while every
+#: list the helper returns names -I or -P, and a helper that stops doing so fails the scan again.
+FLAG_HELPERS = {Path("src") / "g6" / "mcp" / "improve.py": "_interpreter"}
+
+
+def _isolates(path: Path, helper: str) -> bool:
+    """Every list ``helper`` returns in ``path`` holds -I or -P, and it returns at least one."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    function = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == helper)
+    returned = [node.value for node in ast.walk(function) if isinstance(node, ast.Return)]
+    return bool(returned) and all(
+        isinstance(value, ast.List) and any(isinstance(item, ast.Constant) and item.value in ("-I", "-P")
+                                            for item in value.elts)
+        for value in returned)
+
+
 def _documented() -> list[Path]:
     found = []
     for folder, folders, files in os.walk(OSS):
@@ -196,9 +214,22 @@ def test_no_documented_registration_starts_python_with_the_folder_on_its_import_
         text = path.read_text(encoding="utf-8", errors="replace")
         if "g6.mcp" not in text and "mcp add" not in text and "-m g6." not in text:
             continue
+        helper = FLAG_HELPERS.get(path.relative_to(OSS))
+        cleared = helper is not None and _isolates(path, helper)
         for number, line in enumerate(text.splitlines(), 1):
+            if cleared and f"*{helper}(" in line:
+                continue
             bare += [f"{path.relative_to(OSS)}:{number}" for flags in _starts(line) if _bare(flags)]
     assert not bare, bare
+
+
+def test_a_start_cleared_by_its_helper_fails_once_the_helper_drops_the_flag(tmp_path):
+    # survival control for FLAG_HELPERS: the real helper clears, the same helper without -I does not
+    real = OSS / "src" / "g6" / "mcp" / "improve.py"
+    assert _isolates(real, "_interpreter")
+    stripped = tmp_path / "improve.py"
+    stripped.write_text(real.read_text(encoding="utf-8").replace('"-I", "-B"', '"-B"'), encoding="utf-8")
+    assert not _isolates(stripped, "_interpreter")
 
 
 @pytest.mark.parametrize("line", [
