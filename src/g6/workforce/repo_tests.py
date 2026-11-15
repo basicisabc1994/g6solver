@@ -598,7 +598,14 @@ def read_report(raw: object) -> RunReport:
     failed, setup = set(listings["failed_ids"]), set(listings["setup_errors"])
     omitted, collected = set(listings["omitted_ids"]), set(listings["collected_ids"])
     phase_failures = {node for node, record in phases.items() if "failed" in record.values()}
-    consistent = (collected == set(phases) | omitted and not (set(phases) & omitted)
+    # A session that stopped while collecting started no test: what pytest had collected by then has no phases and was
+    # not left out either. That is the producer's own shape for it (``_Counted``: collection_finish lists the items,
+    # sessionfinish marks the stop), the one in which a collected test is neither run nor omitted. It establishes
+    # nothing (``incomplete`` below); read as a report, it says which file could not be collected.
+    stopped_collecting = (value.get("collection_stopped") is True
+                          and not any("setup" in record for record in phases.values())
+                          and set(phases) | omitted <= collected)
+    consistent = ((collected == set(phases) | omitted or stopped_collecting) and not (set(phases) & omitted)
                   and not (set(listings["not_found_ids"]) & collected)
                   and not (failed & setup) and failed | setup == phase_failures
                   and all(phases[node].get("setup") == "failed" for node in setup if node in phases)
