@@ -18,6 +18,11 @@ from tests.cognitive_bridge import test_followup4_repair1_edges as edges
 from tests.cognitive_bridge import test_followup4_repair1_admission as admission
 
 MANIFEST = Path(__file__).with_name('followup4_repair1_bounds.json')
+#: The one bound left offered (the manifest's two snapshot.generated rows): a 0.3.0 known limit, listed in
+#: docs/releases/v0.3.0-known-limits.md and v0.3.0-ledger.tsv. Strict, so the day it is admitted these fail as passes.
+OFFERED_LIMIT = pytest.mark.xfail(strict=True, reason=(
+    'pr8fu4r1-offered#1: an opaque maker with no size contract runs once before its generated output\'s size is '
+    'refused; lead ruling 2026-11-15, 0.3.0 known limit'))
 
 
 def discover(sources=None):
@@ -62,6 +67,7 @@ def test_census_exactly_matches_current_code_and_rejects_a_new_bound():
     assert discover(changed) != [row['source'] for row in expected]
 
 
+@OFFERED_LIMIT
 def test_every_bound_has_an_instrumented_one_over_case():
     rows = json.loads(MANIFEST.read_text(encoding='utf-8'))
     pending = [row['source'] for row in rows if row['disposition'] == 'offered']
@@ -181,7 +187,8 @@ def walk_depth(monkeypatch):
 CASES = runtime_cases()
 
 
-@pytest.mark.parametrize('name', list(CASES))
+@pytest.mark.parametrize('name', [pytest.param(name, marks=OFFERED_LIMIT) if name == 'generated:output-size' else name
+                                  for name in CASES])
 def test_inventory_runtime_one_over(name, monkeypatch):
     CASES[name](monkeypatch)
 
