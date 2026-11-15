@@ -15,6 +15,7 @@ import pytest
 
 import g6
 from g6.core import stop
+from g6.core.consent_callers import CallerWrapper
 from g6.core.ledger import LedgerError
 from g6.core.llm import FakeLLM, LLMError
 from g6.core.vault import AccessDenied
@@ -915,15 +916,21 @@ def test_no_tick_spends_past_what_it_reserved_when_all_it_may_do_is_done(tmp_pat
 
 def test_a_caller_that_retries_past_the_estimate_still_stops_at_what_was_reserved(tmp_path):
     domain = _one_call(tmp_path)
-    class RetriesBlanks(FakeLLM):
+    class RetriesBlanks(CallerWrapper):
+        """A wrapper by the published contract over a local fake, which the loop and the sharing check accept."""
+
+        @property
+        def calls(self):
+            return self.inner.calls
+
         def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
             for _ in range(4):
-                text = super().complete(system, user, max_tokens=max_tokens)
+                text = self.inner.complete(system, user, max_tokens=max_tokens)
                 if text.strip():
                     return text
             raise LLMError("empty completion on 4 attempts")
 
-    backend = RetriesBlanks(default="")
+    backend = RetriesBlanks(FakeLLM(default=""))
     run = domain.execution()
     domain.execution = lambda: dataclasses.replace(run, models={"local": Model(backend, max_calls_per_run=1)})
     proposer = FakeLLM(lambda system, user: json.dumps({"prompt": f"{domains.WORKING} Try {len(proposer.calls)}."}))

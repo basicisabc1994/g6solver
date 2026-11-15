@@ -50,13 +50,6 @@ if not hasattr(domains, "WordProblems"):
 
 NOW = datetime(2026, 11, 6, tzinfo=UTC)
 
-#: Known limits of 0.3.0 (lead ruling 2026-11-15), each failing on purpose and in the safe direction: nothing is sent.
-#: Every case of each marked test fails, so each is marked whole; a strict mark fails the run if one starts to pass.
-SENDER_KIND_LIMIT = pytest.mark.xfail(strict=True, reason=(
-    "lead ruling 2026-11-15, 0.3.0 known limit: the loop accepts a FakeLLM subclass by isinstance while the bound "
-    "consent guard accepts only an exact type or a CallerWrapper, so the send is refused as cloud:unknown before the "
-    "behaviour under test (safe direction), until the loop's acceptance is narrowed to consent's after 0.3.0."))
-
 
 @pytest.fixture(autouse=True)
 def _no_key_file(monkeypatch):
@@ -1074,9 +1067,8 @@ def test_refu1_1_a_refusal_no_file_would_keep_stops_another_handle_of_the_folder
     assert backend.calls == [], "the second handle resent the refusal that this process could not persist"
 
 
-@SENDER_KIND_LIMIT
 def test_refu1_2_a_function_that_sends_is_known_by_what_it_sent():
-    """The review's test as reported."""
+    """The review's test as reported, its caller a wrapper by the published contract, as the sharing check accepts one."""
     sent = []
 
     def transport(system, user):
@@ -1084,7 +1076,7 @@ def test_refu1_2_a_function_that_sends_is_known_by_what_it_sent():
         sent.append((system, user))
         raise LLMError(f"{MODEL_REFUSED}: policy")
 
-    class CanonicalCaller(FakeLLM):
+    class CanonicalCaller(_OverFake):
         def complete(self, system, user, *, max_tokens=1024):
             return transport(system, "canonical request")
 
@@ -1349,8 +1341,9 @@ def test_every_fact_a_handle_holds_is_the_processs_the_folders_files_or_its_own(
 
 # Finding 2's class (guard_covers_less_than_it_guards): a send is known by what it sent, whoever sends it -------------------
 
-class _Fixed(FakeLLM):
-    """A caller the loop accepts that sends one fixed request whatever it is asked, through ``send``, as finding 2's does."""
+class _Fixed(_OverFake):
+    """A caller the loop and the sharing check accept that sends one fixed request whatever it is asked, through ``send``,
+    as finding 2's does."""
 
     def __init__(self, send, sent):
         super().__init__()
@@ -1399,7 +1392,6 @@ SHAPES = {"a function": _by_function, "a lambda": lambda caller, system, user: _
           "a function on a thread of its own": _on_a_thread, "a function between the sender's own frames": _between}
 
 
-@SENDER_KIND_LIMIT
 @pytest.mark.parametrize("depth", [0, 1, 2])
 @pytest.mark.parametrize("shape", sorted(SHAPES))
 def test_a_refused_request_is_known_by_the_innermost_frame_that_names_it_whoever_sends_it(shape, depth):
@@ -1414,7 +1406,6 @@ def test_a_refused_request_is_known_by_the_innermost_frame_that_names_it_whoever
     assert all(meter.refused == {_request_digest("system", "canonical request")} for meter in meters)
 
 
-@SENDER_KIND_LIMIT
 def test_a_refusal_raised_in_a_function_binds_the_send_it_raised_for_among_several(monkeypatch):
     """Two sends from functions in one call, the second refused: the refusal binds the second's request, not the first's, and
     not none."""
@@ -1426,7 +1417,7 @@ def test_a_refusal_raised_in_a_function_binds_the_send_it_raised_for_among_sever
         note_model_call()
         raise LLMError(f"{MODEL_REFUSED}: policy")
 
-    class TwoSends(FakeLLM):
+    class TwoSends(_OverFake):
         def complete(self, system, user, *, max_tokens=1024):
             answered("system", "first request")
             return refused("system", "second request")
@@ -1438,7 +1429,6 @@ def test_a_refusal_raised_in_a_function_binds_the_send_it_raised_for_among_sever
     assert meter.refused == {_request_digest("system", "second request")}
 
 
-@SENDER_KIND_LIMIT
 def test_a_resend_a_function_makes_is_known_by_what_it_sends_again(monkeypatch):
     sent = _busy_once(monkeypatch)
     seen = []
@@ -1454,12 +1444,14 @@ def test_a_resend_a_function_makes_is_known_by_what_it_sends_again(monkeypatch):
         llm._start_model_call()
         return str(llm._post_json("https://model.invalid/v1/chat/completions", {"messages": [system, user]}, {}, 5))
 
-    _Counted(_Fixed(by_http, []), Admits()).complete("system", "first wrapper input")
-    assert len(sent) == 2 and seen == [_request_digest("system", "canonical request")] * 2
+    meter = Admits()
+    _Counted(_Fixed(by_http, []), meter).complete("system", "first wrapper input")
+    # the send, its resend as it waits, and that resend checked again as it wakes (b558177), which takes no new place
+    assert len(sent) == 2 and seen == [_request_digest("system", "canonical request")] * 3 and meter.sent == 2
 
 
-class _OtherNames(FakeLLM):
-    """A caller the loop accepts whose frames name what it sends by other names."""
+class _OtherNames(_OverFake):
+    """A caller the loop and the sharing check accept whose frames name what it sends by other names."""
 
     def complete(self, instructions, prompt, *, max_tokens=1024):
         note_model_call()
@@ -1467,7 +1459,7 @@ class _OtherNames(FakeLLM):
         return "an answer"
 
 
-class _NotText(FakeLLM):
+class _NotText(_OverFake):
     """One whose innermost frame that names a system and a user names a user that is not text."""
 
     def complete(self, system, user, *, max_tokens=1024):
@@ -1479,7 +1471,6 @@ class _NotText(FakeLLM):
         return "an answer"
 
 
-@SENDER_KIND_LIMIT
 @pytest.mark.parametrize("ticking", [False, True])
 @pytest.mark.parametrize("kind", [_OtherNames, _NotText])
 def test_a_request_no_frame_names_is_not_sent_and_takes_no_place(kind, ticking):
@@ -1500,7 +1491,6 @@ def test_a_request_no_frame_names_is_not_sent_and_takes_no_place(kind, ticking):
     assert backend.calls == [] and meter.sent == 0
 
 
-@SENDER_KIND_LIMIT
 def test_a_tick_whose_caller_names_no_request_sends_nothing_and_holds_the_loop_for_a_person(tmp_path):
     domain = domains.WordProblems(tmp_path)
     domain.llm = _OtherNames()

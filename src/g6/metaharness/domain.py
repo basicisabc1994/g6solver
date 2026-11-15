@@ -68,6 +68,9 @@ BARRED = (PAID_MODEL, UNKNOWN_CALLER, PROVIDER_MISMATCH)
 INDEPENDENT = "independent"
 #: Who pays for a caller's requests, where it is no provider's subscription.
 PAID, LOCAL = "paid", "local"
+#: The recipient the sharing check gives a caller it cannot place, which it refuses whatever is granted
+#: (``cloud_consent._refuse_unshared``).
+UNPLACED = "cloud:unknown"
 #: Causes no profile can change: only a person can (recovery says who acts on each).
 PERSON_ONLY = (INTAKE_BLOCKED, ORACLE_SILENT)
 #: Shares of the development pool, in the order the seeded hash walks them.
@@ -476,11 +479,19 @@ def who_pays(caller: Any) -> str:
     ``""`` for a type nothing here knows. The Anthropic SDK finds a key of its own, so it is paid with none given. An HTTP
     caller with no key has nothing to bill. A type can be several of these, and one that may carry a key is paid whatever else
     it inherits, so that is read first; a host's constructor gives it no ``api_key`` at all. This reads the type: it cannot see
-    what a caller of a known type does inside."""
-    from g6.core.host_models import ClaudeCodeCaller, CodexCaller   # only when asked: it brings in the process-running code
+    what a caller of a known type does inside.
+
+    Past a key, a caller is known here only as the sharing check knows it (``consent_callers.destination``), so the loop never
+    takes a sender that check would refuse whatever is granted (its recipient ``cloud:unknown``): a subclass of a local model
+    is no kind it knows, and is ``""`` here too."""
+    # only when asked: they bring in the process-running code
+    from g6.core.consent_callers import destination
+    from g6.core.host_models import ClaudeCodeCaller, CodexCaller
 
     if isinstance(caller, AnthropicCaller) or isinstance(caller, OpenAICompatibleCaller) and getattr(caller, "api_key", None):
         return PAID
+    if destination(caller).provider == UNPLACED:
+        return ""
     if isinstance(caller, ClaudeCodeCaller):
         return "claude"
     if isinstance(caller, CodexCaller):
@@ -518,8 +529,16 @@ def provider_problems(callers: Mapping[str, Any], provider: str) -> list[tuple[s
 
 def sender_problems(sender: Any, provider: str) -> list[tuple[str, str]]:
     """Why ``sender``, the caller really sending a request, may not send it. It is judged as itself, with nothing unwrapped,
-    since nothing stands between it and the request, and whatever it holds is not what is going out."""
-    who, named = who_pays(sender), type(sender).__name__
+    since nothing stands between it and the request, and whatever it holds is not what is going out. The one exception is
+    the sharing check's own: a ``CallerWrapper`` is read as that check reads it, by its published contract, as the caller it
+    holds as ``inner`` (``consent_callers.destination``), so a sender that check accepts is accepted here too."""
+    from g6.core.consent_callers import CallerWrapper
+
+    named, seen = type(sender).__name__, set()
+    while isinstance(sender, CallerWrapper) and id(sender) not in seen:
+        seen.add(id(sender))
+        sender = sender.inner
+    who = who_pays(sender)
     if who == PAID:
         return [(PAID_MODEL, f"the loop never spends API credits, and {named} sends with an API key")]
     if not who:
