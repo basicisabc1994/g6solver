@@ -1705,6 +1705,13 @@ def _in(rel: str) -> str:
     return _on_disk(rel)[0] if isinstance(rel, GitName) else rel
 
 
+def _recorded(rel: str) -> str:
+    """A name git listed, as a run's report holds it: git's text, a plain ``str`` of the same value, as every persisted
+    field is kept. The report's reader takes exact text only (``_report_type``), so a ``GitName`` left in a report made
+    the whole report unreadable, and a receipt for it unwritable."""
+    return str.__str__(rel)
+
+
 def _raw(rel: str) -> bytes:
     """The bytes git is given for a name: a ``GitName``'s own (``GitName.raw``), or a path held as text (a caller's, or a
     name a test made) as the listing's reader would have read it from those bytes."""
@@ -2819,10 +2826,12 @@ class Established:
 
     def of(self, check: str | None = None) -> str:
         """``PASSED``, ``FAILED`` or "unknown": for the tests ``check`` names (``RunReport.body_result``) or, with
-        none, for the run as a whole (``RunReport.outcome``). Unknown in any ``NO_AUTHORITY`` state."""
+        none, for the run as a whole (``RunReport.outcome``). Unknown in any ``NO_AUTHORITY`` state. A test file git
+        listed (a ``GitName``, as ``derive_tests`` gives it) is read by the id pytest was given for it (``_in``, the
+        rule ``_test_id`` runs it by): the report's reader takes a scope as plain text only."""
         if self.withheld:
             return "unknown"
-        return self.report.outcome if check is None else self.report.body_result(check)
+        return self.report.outcome if check is None else self.report.body_result(_in(check))
 
 
 def established(ran: dict | RunReport, *, repo: Path | None = None,
@@ -3098,7 +3107,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
              and progress["expected"] == progress.get("finished")}
     if verdict == FAILED and isolation.get("backend") and "PermissionError" in output:
         found["said"] = SAID["confined_write"]   # the operating system refused a test something an owner's run allows
-    unhashed = {**submodules_not_hashed(before), **submodules_not_hashed(after)}
+    unhashed = {_recorded(rel): why
+                for rel, why in {**submodules_not_hashed(before), **submodules_not_hashed(after)}.items()}
     if unhashed:   # a change in these folders would not be seen
         found["submodules_not_hashed"] = unhashed
     if receipt and isolation.get("backend") and unhashed:
@@ -3109,9 +3119,9 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
             scan = ignored_inputs(repo)
         except RepoRefused:   # git could not list them: nothing says the digest covers what the run loaded
             scan = Ignored((), {}, False)
-        found["ignored_inputs"] = dict(scan.other)
+        found["ignored_inputs"] = {_recorded(rel): sha for rel, sha in scan.other.items()}
         if scan.loadable or not scan.complete:   # review I2: the digest leaves ignored files out, and pytest loads them
-            found["ignored_loadable"] = list(scan.loadable)
+            found["ignored_loadable"] = [_recorded(rel) for rel in scan.loadable]
             found["receipt_withheld"] = (
                 "no test receipt: git ignores files that could change this run, "
                 + ", ".join(shown(rel) for rel in scan.loadable[:10])

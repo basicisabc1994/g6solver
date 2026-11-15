@@ -876,6 +876,11 @@ ALLOWED = {
                                                     "record's value (links_materialised), kept as git's text as every "
                                                     "persisted field is"),
     "g6.workforce.repo_tests: old + '::'": "run_before's moved: a pytest node id compared with pytest's own; " + _NEVER_SHOWN,
+    # report_covers, reached from Established.of, which reads a test file git listed by the id pytest was given for it
+    # (the disk rule, ``_in``): a selection compared with the report's own node ids
+    **dict.fromkeys(("g6.workforce.repo_tests: path + '/'", "g6.workforce.repo_tests: path + '::'",
+                     "g6.workforce.repo_tests: check + '::'", "g6.workforce.repo_tests: check + '['"),
+                    "report_covers: a pytest selection, a prefix compared with pytest's own node ids; " + _NEVER_SHOWN),
     "g6.safety_engine.weakening: TestWeakeningReport(bool(reasons), tuple(reasons), tuple(checked), (*not_checked, *LIMITS))":
         ("the report's record of the paths it compared (``checked``), kept as data, a persisted field; its reasons name "
          "each path by the rule"),
