@@ -131,9 +131,9 @@ def _hard_link(folder, outside):
 def _plant(way, folder, outside):
     """Plant ``way`` in ``folder``; the file outside it that a writer changes while the child runs and its bytes, if
     any."""
-    if way in STREAMS and not WINDOWS:
-        raise Refused('alternate data streams are an NTFS feature')
     try:
+        if way in STREAMS and not WINDOWS:   # inside the try: a way this system cannot make is a skip that names it
+            raise Refused('NTFS alternate data streams are a Windows file system feature')
         if way == 'hard-link':
             return _hard_link(folder, outside)
         WAYS[way](folder, outside)
