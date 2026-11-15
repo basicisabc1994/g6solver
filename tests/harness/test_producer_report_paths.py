@@ -126,6 +126,52 @@ def emit(cmd, repo, kind, log):
         "no_tests_collected", "deselected") else 0
 
 
+def observed(tmp_path, monkeypatch, result="passed"):
+    """An observation record from G6's own runner (``behaviour_runner.run``, ``_run``'s observation exit), with the
+    process and the OS boundary doubled: the child's frame is the bootstrap's for a call that returned 5, and the
+    confirmed value is 5 (``passed``), 6 (``failed``), or the child exits 1 (``error``). With the execution binding
+    ``verification_search._run_check`` adds to a bound run."""
+    import time
+
+    from g6.harness import behaviour_runner, verification_search
+
+    copy = tmp_path / "observed"
+    copy.mkdir()
+    (copy / "calc.py").write_text("def add():\n    return 5\n", encoding="utf-8")
+    data = {"function": ["module", "calc", "add", "calc.py"],
+            "cases": [{"args": [], "expect": "returns", "value": 6 if result == "failed" else 5}]}
+
+    def child(cmd, **kw):
+        Path(cmd[-2]).write_bytes(behaviour_runner.frame({"version": "observation.v2", "errors": {}, "outcomes": [
+            {"returned": behaviour_runner._fingerprint("5"), "arguments": []}]}))
+        return 1 if result == "error" else 0
+
+    monkeypatch.setattr(confine, "interpreter_paths", lambda python: ())
+    monkeypatch.setattr(confine, "plan", lambda spec, python: confine.Plan("test-boundary", "", spec))
+    monkeypatch.setattr(rt, "_bounded", child)
+    deadline = time.monotonic() + 30
+    files = rt._copy_snapshot(copy, deadline=deadline)
+    ran = behaviour_runner.run(copy, data, "test_example.py", timeout_s=20, deadline=deadline)
+    ran["execution_artifact"] = {"version": "execution-run.v1", "artifact_digest": verification_search.digest(files),
+                                 "base_commit": "", "files": files}
+    return ran
+
+
+@pytest.mark.parametrize("result,verdict", [("passed", "passed"), ("failed", "failed"), ("error", "not_run")])
+def test_the_observation_exit_writes_a_record_of_the_schema(tmp_path, monkeypatch, result, verdict):
+    from g6.harness import verification_search
+
+    raw = observed(tmp_path, monkeypatch, result)
+    assert raw["verdict"] == verdict and raw["g6_observation"]["result"] == result, raw
+    assert set(raw) <= set(rt.OBSERVATION_FIELDS) and all(rt.REPORT_FIELDS[name].accepts(item)
+                                                           for name, item in raw.items()), raw
+    assert rt.read_observation(raw) == raw
+    assert not rt.read_report(raw).valid   # an observation record is not a runner's report
+    got = verification_search.reading(raw, "test_example.py")
+    assert got["result"] == result and got["execution_artifact"] == raw["execution_artifact"]
+    assert got["bootstrap_sha256"] == raw["bootstrap_sha256"]
+
+
 @pytest.mark.parametrize("copied", [False, True], ids=["in-place", "confined-copy"])
 @pytest.mark.parametrize("kind,want", [
     ("passed", "passed"), ("failed", "failed"), ("could_not_start", "could_not_start"),
@@ -278,13 +324,11 @@ def test_all_report_return_sites_use_an_exercised_builder():
         for node in ast.walk(functions[name]):
             if isinstance(node, ast.Return) and id(node) not in identity_returns:
                 expression = ast.unparse(node.value)
-                # behaviour_runner.run: the observation exit (e15d9ad), taken only when an observation is asked for;
-                # it returns the scenario runner's own report, read under "g6_observation" by verification_search and
-                # exercised through this module in tests/repair_question5 (observation, error and execution
-                # inventories), not a test-run report these builders make.
+                # behaviour_runner.run: the observation exit's builder (``observed``,
+                # test_the_observation_exit_writes_a_record_of_the_schema).
                 assert (expression in ("found", "results") or expression.startswith((
                     "_run(", "_not_run_report(", "{'verdict': verdict,", "{**found,", "{**result(",
-                    "behaviour_runner.run(repo, observation,"))), (name, expression)
+                    "behaviour_runner.run("))), (name, expression)
             if isinstance(node, ast.Assign):
                 for target in node.targets:
                     if isinstance(target, ast.Subscript) and ast.unparse(target.value) == "results":

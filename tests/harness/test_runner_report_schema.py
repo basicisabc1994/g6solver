@@ -121,6 +121,57 @@ def test_all_observation_consumers_read_every_corruption_as_unknown():
         assert got.exit is None and not any(value in ("passed", "failed") for value in got.results.values()), name
 
 
+def observation_plants(valid):
+    """One wrong field per planted observation record: each field's and each member's type, a digest that is not one,
+    a required field missing, a field no observation record holds, and a verdict its observation does not give."""
+    wrongs = (None, False, 1, 1.5, "text", [], {})
+    for key in valid:
+        for wrong in wrongs:
+            if type(wrong) is not type(valid[key]):
+                yield f"{key}:{type(wrong).__name__}", {**deepcopy(valid), key: wrong}
+    for key in ("g6_observation", "execution_artifact"):
+        for member in valid[key]:
+            for wrong in wrongs:
+                if type(wrong) is not type(valid[key][member]):
+                    changed = deepcopy(valid)
+                    changed[key][member] = wrong
+                    yield f"{key}.{member}:{type(wrong).__name__}", changed
+    for key in ("verdict", "said", "g6_observation", "source_before", "seconds"):
+        yield f"missing:{key}", {name: value for name, value in deepcopy(valid).items() if name != key}
+    yield "bootstrap_sha256:not-a-digest", {**deepcopy(valid), "bootstrap_sha256": "x" * 64}
+    yield "execution_artifact.version", {**deepcopy(valid), "execution_artifact": {
+        **valid["execution_artifact"], "version": "execution-artifact.v1"}}
+    yield "extra", {**deepcopy(valid), "test_outcomes": {}}
+    yield "verdict-not-its-result", {**deepcopy(valid), "verdict": "failed"}
+    yield "result-unknown", {**deepcopy(valid), "g6_observation": {**valid["g6_observation"], "result": "unknown"}}
+
+
+def test_a_wrongly_typed_observation_field_reads_as_unknown_in_its_consumer(tmp_path, monkeypatch):
+    from tests.harness.test_producer_report_paths import observed
+
+    valid = observed(tmp_path, monkeypatch)
+    assert verification_search.reading(valid, NODE)["result"] == "passed"
+    escaped = []
+    for name, raw in observation_plants(valid):
+        try:
+            if verification_search.reading(raw, NODE)["result"] != "error":
+                escaped.append(name)
+        except Exception as exc:
+            escaped.append(f"{name}: {type(exc).__name__}")
+    assert escaped == []
+
+
+def test_the_observation_schema_refuses_each_planted_record(tmp_path, monkeypatch):
+    from tests.harness.test_producer_report_paths import observed
+
+    valid = observed(tmp_path, monkeypatch)
+    assert repo_tests.read_observation(valid) == valid
+    assert [name for name, raw in observation_plants(valid) if repo_tests.read_observation(raw) is not None] == []
+    # A runner's report never carries an observation record's own fields.
+    for name in repo_tests.OBSERVATION_ONLY:
+        assert not read({**report(PASSED), name: valid[name]}).valid, name
+
+
 def test_support_needs_the_same_positive_phase_match_in_every_consumer():
     skipped_cleanup = {**PASSED, "teardown": "skipped"}
     raw = report(skipped_cleanup)
@@ -228,12 +279,45 @@ def test_a_failed_parent_collection_reaches_its_stated_child_check(monkeypatch):
         assert not got["requirements"][0]["checked"], parent
 
 
-def test_schema_classifies_every_producer_field_and_exact_nested_type():
+def observation_fields() -> set[str]:
+    """Every field of the observation record, from its code: the record ``behaviour_runner.run`` returns with an
+    observation, and the binding ``verification_search._run_check`` adds to a run."""
+    from g6.harness import behaviour_runner
+
+    def function(path, name):
+        tree = ast.parse(Path(path).read_text(encoding="utf-8"))
+        return next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+
+    found = set()
+    for node in ast.walk(function(behaviour_runner.__file__, "run")):
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
+            keys = {key.value for key in node.value.keys if isinstance(key, ast.Constant)}
+            found |= keys if "g6_observation" in keys else set()
+    for node in ast.walk(function(verification_search.__file__, "_run_check")):
+        if (isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Subscript)
+                and ast.unparse(node.targets[0].value) == "ran" and isinstance(node.targets[0].slice, ast.Constant)):
+            found.add(node.targets[0].slice.value)
+    return found
+
+
+def test_schema_classifies_every_producer_field_and_exact_nested_type(tmp_path, monkeypatch):
+    from tests.harness.test_producer_report_paths import observed
+
     fields = schema()
-    assert set(fields) == producer_fields() | set(plugin_fields()), "unclassified producer field or stale schema field"
+    assert observation_fields() == set(repo_tests.OBSERVATION_FIELDS)
+    assert set(fields) == producer_fields() | set(plugin_fields()) | observation_fields(), \
+        "unclassified producer field or stale schema field"
+    observation = observed(tmp_path, monkeypatch)
     for name, field in fields.items():
         assert field.purpose, name
         assert field.constraint, name
+        if name in repo_tests.OBSERVATION_ONLY:   # read on the record that holds it, by that record's reader
+            valid = {**observation, name: observation.get(name, deepcopy(field.example))}
+            assert repo_tests.read_observation(valid) is not None, name
+            for wrong in (False, None, 1, 1.0, "text", [], {}, ()):
+                if not field.accepts(wrong):
+                    assert repo_tests.read_observation({**valid, name: wrong}) is None, (name, wrong)
+            continue
         valid = report(PASSED)
         if name not in valid:
             valid[name] = deepcopy(field.example)

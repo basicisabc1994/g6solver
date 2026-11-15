@@ -127,7 +127,10 @@
         "output"
       ],
       "reading": [
+        "bootstrap_sha256",
         "changed",
+        "execution_artifact",
+        "g6_observation",
         "import_path",
         "interpreter_source",
         "isolation",
@@ -791,6 +794,39 @@
       ],
       "type": "(<class 'bool'>, <class 'NoneType'>)",
       "constraint": "true requires a collection failure or missing selection; null when unrecorded"
+    },
+    "g6_observation": {
+      "meaning": "G6 observation runner result for a confirmed check or probe; reading takes result and detail from it, never from a test phase",
+      "consumers": [
+        "harness/verification_search.py:reading"
+      ],
+      "type": "{'result': <class 'str'>, 'detail': <class 'str'>, 'observed': <class 'dict'>, 'owned_probe': <class 'bool'>, 'observations': <class 'list'>}",
+      "constraint": "a known result and its detail; observations are input/output pairs"
+    },
+    "bootstrap_sha256": {
+      "meaning": "the digest of the program the observation runner started; reading carries it to the review execution record",
+      "consumers": [
+        "harness/verification_search.py:reading"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "a SHA-256 hex digest"
+    },
+    "execution_artifact": {
+      "meaning": "the copy a bound observation ran on; reading carries it, and search keeps it as probe custody",
+      "consumers": [
+        "harness/verification_search.py:reading",
+        "harness/verification_search.py:search"
+      ],
+      "type": "{'version': <class 'str'>, 'artifact_digest': <class 'str'>, 'base_commit': <class 'str'>, 'files': {<class 'str'>: <class 'str'>}}",
+      "constraint": "execution-run.v1, every member present"
+    },
+    "execution_limit": {
+      "meaning": "what the observation runner cannot rule out; a record field no consumer decides on",
+      "consumers": [
+        "none: behaviour_runner.run writes it; replies take the text from behaviour_runner.LIMIT"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "text only"
     }
   },
   "values": {
