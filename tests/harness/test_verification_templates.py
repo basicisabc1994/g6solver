@@ -144,6 +144,12 @@ def review(repo, requirements, **kwargs):
     return review_patch(repo, task="Make the change the requirements state.", requirements=requirements, **kwargs)
 
 
+#: What a real run at the base commit adds for these fixtures, whose stated tests are old ones that pass there too: a
+#: requirement that passes only on such a test has no independent check (b52da4d, c53d310), so the review ends at
+#: insufficient evidence with this reason. The recorded runs (``Tiers``) leave the base commit unrun, so they never show it.
+SELF_CHECKED = ("evidence", patch_review.SELF_CHECKED)
+
+
 def result(passed=(), failed=(), *, verdict=None, output="", seconds=0.25, digest="", messages=None):
     """One recorded ``repo_tests`` run result (as ``tests/harness/test_proposed_checks.py`` records them)."""
     from g6.workforce.repo_tests import probe_observations
@@ -666,7 +672,10 @@ def test_confined_the_reviewers_ordering_and_repr_cases_give_no_counterexample(t
         got = review(root, [{"id": "R1", "text": "the stated test passes", "checks": ["tests/test_ok.py::test_ok"]}],
                      template_instances=[item])
         assert _activity(got, "keep")["result"] == "not_refuted", _activity(got, "keep")
-        assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+        # no counterexample and no other finding: the one reason is the real base run's (SELF_CHECKED above), since
+        # the stated test passes at the base commit too; before b52da4d that alone was support
+        assert [(r["stage"], r["code"]) for r in got["assessment"]["reasons"]] == [SELF_CHECKED]
+        assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
 
 
 # --- the compiled checks through the review, with recorded runs ---------------------------------------------------------
@@ -1662,7 +1671,9 @@ def test_confined_each_template_catches_its_planted_defect_on_its_kind_of_applic
     found = _activity(got, item["id"])
     assert found["result"] == expected, found
     assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
-    assert [(r["stage"], r["code"]) for r in assessment["reasons"]] == [("evidence", code)]
+    # the second reason is the real base run's: each kind's stated test is an old one that passes at the base commit
+    # too, which since b52da4d and c53d310 is no independent support (the recorded runs above leave the base unrun)
+    assert [(r["stage"], r["code"]) for r in assessment["reasons"]] == [("evidence", code), SELF_CHECKED]
     assert _requirement(got, "R1")["status"] == "passed_on_stated_checks"
     assert got["completion_state"] == "qualified-draft"
     assert got["artifact_digest"] == before == patch_review.digest(repo_tests.snapshot(root))
@@ -1814,7 +1825,12 @@ def test_confined_a_reproduction_with_import_roots_gives_g6s_verdict(tmp_path, b
 def test_confined_surviving_mutants_are_reported_and_change_no_outcome(tmp_path, bwrap_backend):
     root = _patch(_repo(tmp_path, CLAMP), CLAMP_PATCH)
     got = review(root, CLAMP_RULE, search={"test_adequacy": True})
-    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    # the mutants change no outcome: with them and without them the review ends on the real base run's one reason
+    # (SELF_CHECKED above: the stated test passes at the base commit too), where before b52da4d it ended supported
+    plain = review(root, CLAMP_RULE)
+    for one in (got, plain):
+        assert [(r["stage"], r["code"]) for r in one["assessment"]["reasons"]] == [SELF_CHECKED]
+        assert one["assessment"]["outcome"] == "insufficient_evidence", one["assessment"]["reasons"]
     [adequacy] = got["assessment"]["completion"]["test_adequacy"]
     assert (adequacy["killed"], adequacy["survived"]) == (1, 2), adequacy
     assert all(run["verdict"] in ("passed", "failed") for run in got["assessment"]["completion"]["activities"]

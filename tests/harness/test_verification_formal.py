@@ -945,11 +945,17 @@ def test_confined_a_trace_the_patch_breaks_is_reproduced_and_the_base_alone_is_m
     found = _instance(got)
     assert found["result"] == "counterexample", found
     assert found["formal"]["correspondence"]["result"] == "reproduced"
-    assert [(r["stage"], r["code"]) for r in got["assessment"]["reasons"]] == [("evidence", "unconfirmed_counterexample")]
+    # the second reason is the real base run's: the stated test is an old one that passes at the base commit too, which
+    # since b52da4d and c53d310 is no independent support (the recorded runs above leave the base commit unrun)
+    assert [(r["stage"], r["code"]) for r in got["assessment"]["reasons"]] == [
+        ("evidence", "unconfirmed_counterexample"), ("evidence", patch_review.SELF_CHECKED)]
     assert got["artifact_digest"] == patch_review.digest(repo_tests.snapshot(root))
     clean = _patch(_repo(tmp_path, WALLET, "clean"), {"NOTES.txt": "no code changed\n"})
     quiet = review(clean, template_instances=[instance()])
     correspondence = _instance(quiet)["formal"]["correspondence"]
     assert (correspondence["result"], correspondence["reason"]) == ("not_reproduced", "model_only")
-    assert quiet["assessment"]["outcome"] == "supported_within_scope", quiet["assessment"]["reasons"]
+    # nothing is found against the base commit's code: the one reason is, again, the real base run's (the stated test
+    # passes there too), where before b52da4d this review ended supported
+    assert [(r["stage"], r["code"]) for r in quiet["assessment"]["reasons"]] == [("evidence", patch_review.SELF_CHECKED)]
+    assert quiet["assessment"]["outcome"] == "insufficient_evidence", quiet["assessment"]["reasons"]
     assert re.search(r"nobody is accused", correspondence["detail"])
