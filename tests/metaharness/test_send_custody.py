@@ -294,14 +294,19 @@ def test_a_stop_between_private_copy_writes_releases_every_owned_resource(tmp_pa
     meter = _Requests()
     call = _Call(object(), meter, meter.generation, lambda: True)
     meter.begin(call)
-    real_open = Path.open
+    real_copy = usage._create_copy
 
-    def open_file(path, mode="r", *args, **kwargs):
-        if mode == "xb" and path.name == "second":
+    # The failure is put where a private copy is created (``usage._create_copy``), the one place on every system:
+    # Windows creates it with Path.open("xb"), which this test used to replace, and elsewhere it is os.open under the
+    # copy folder's handle, which that replacement never reached, so nothing was raised there.
+    @contextmanager
+    def create_copy(path, parent):
+        if path.name == "second":
             raise failure
-        return real_open(path, mode, *args, **kwargs)
+        with real_copy(path, parent) as stream:
+            yield stream
 
-    monkeypatch.setattr(Path, "open", open_file)
+    monkeypatch.setattr(usage, "_create_copy", create_copy)
     before = set(usage._SENT)
     with usage.telling_stops(_Gate(meter, call)), pytest.raises(type(failure), match=str(failure)):
         usage._sending(object(), ["fake", str(first), str(second)], "user", tmp_path / "files")
