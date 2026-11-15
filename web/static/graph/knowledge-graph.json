@@ -7528,7 +7528,7 @@
         46,
         49
       ],
-      "summary": "Returns only the BASE_ENV variables a program needs to start and find its own sign-in, plus any the adapter keeps, so no G6 key or token is passed.",
+      "summary": "Returns only the BASE_ENV variables a program needs to start and find its own credentials, plus any the adapter keeps, so no G6 key or token is passed.",
       "tags": [
         "security",
         "environment",
@@ -18158,7 +18158,7 @@
       "type": "file",
       "name": "patterns.py",
       "filePath": "src/g6/code/adapt_webpage/patterns.py",
-      "summary": "Static library of reusable HTML/CSS section templates (hero, features, pricing and similar) and theme definitions used by the page generators.",
+      "summary": "Static library of reusable HTML/CSS section templates (hero, features, price tables and similar) and theme definitions used by the page generators.",
       "tags": [
         "data-model",
         "templates",
@@ -21717,7 +21717,7 @@
         106,
         112
       ],
-      "summary": "Computes the risk tier from detected risk terms, letting a declared tier raise but never lower it.",
+      "summary": "Computes the risk level from detected risk terms, letting a declared level raise but never lower it.",
       "tags": [
         "risk",
         "policy"
@@ -21783,7 +21783,7 @@
         252,
         279
       ],
-      "summary": "Checks a task and proposed action before acting: shortcuts, diff structure, risk tier, protected paths and missing evidence, returning block, needs_review, needs_evidence or proceed_with_caution.",
+      "summary": "Checks a task and proposed action before acting: shortcuts, diff structure, risk level, protected paths and missing evidence, returning block, needs_review, needs_evidence or proceed_with_caution.",
       "tags": [
         "coding-agent-gate",
         "policy",
@@ -24395,7 +24395,7 @@
         41,
         44
       ],
-      "summary": "Checks that a value is a G6 risk tier number from R0 to R3 (an int, never a bool).",
+      "summary": "Checks that a value is a G6 risk level number from R0 to R3 (an int, never a bool).",
       "tags": [
         "validation",
         "risk",
@@ -24463,7 +24463,7 @@
         71,
         105
       ],
-      "summary": "Validated domain standard profile with criteria, risk tier, manifest and digest.",
+      "summary": "Validated domain standard profile with criteria, risk level, manifest and digest.",
       "tags": [
         "data-model",
         "assurance",
@@ -25448,7 +25448,7 @@
         38,
         59
       ],
-      "summary": "Record of task features the selector matches trials on, including a risk tier.",
+      "summary": "Record of task features the selector matches trials on, including a risk level.",
       "tags": [
         "data-model",
         "metacognition"
@@ -27563,7 +27563,7 @@
         232,
         364
       ],
-      "summary": "Frozen self-declared block contract covering purpose, inputs, outputs, failure modes, cost, state surface and extension points, with human-review tier checks and reliability card access.",
+      "summary": "Frozen self-declared block contract covering purpose, inputs, outputs, failure modes, cost, state surface and extension points, with human-review level checks and reliability card access.",
       "tags": [
         "data-model",
         "contract",
@@ -28171,7 +28171,7 @@
         169,
         187
       ],
-      "summary": "Checks that a rule's kind fixes its allowed tier, effect and implementation.",
+      "summary": "Checks that a rule's kind fixes its allowed level, effect and implementation.",
       "tags": [
         "validation",
         "certification"
@@ -28187,7 +28187,7 @@
         190,
         229
       ],
-      "summary": "Parses a RULES table from Python source as syntax without importing it, extracting kind, source, effect, tier and implementation.",
+      "summary": "Parses a RULES table from Python source as syntax without importing it, extracting kind, source, effect, level and implementation.",
       "tags": [
         "static-analysis",
         "certification"
@@ -28203,7 +28203,7 @@
         243,
         263
       ],
-      "summary": "Determines which tiered rules a component's certificate covers within its family.",
+      "summary": "Determines which graded rules a component's certificate covers within its family.",
       "tags": [
         "certification",
         "rules"
@@ -31413,7 +31413,7 @@
       "type": "file",
       "name": "host_models.py",
       "filePath": "src/g6/core/host_models.py",
-      "summary": "Runs the person's own Claude Code or Codex sign-in headless as a tool-less text-completion LLMCaller, in empty per-call folders with a clean environment, stdin prompts and a deadline that kills the whole process tree.",
+      "summary": "Runs the person's own Claude Code or Codex account headless as a tool-less text-completion LLMCaller, in empty per-call folders with a clean environment, stdin prompts and a deadline that kills the whole process tree.",
       "tags": [
         "llm",
         "subprocess",
@@ -31531,7 +31531,7 @@
         306,
         335
       ],
-      "summary": "LLMCaller backed by the person's Claude Code sign-in, with its argv, command and reply parsing.",
+      "summary": "LLMCaller backed by the person's own Claude Code account, with its argv, command and reply parsing.",
       "tags": [
         "llm",
         "adapter",
@@ -31548,7 +31548,7 @@
         345,
         372
       ],
-      "summary": "LLMCaller backed by the person's Codex sign-in, reading the prompt from stdin.",
+      "summary": "LLMCaller backed by the person's own Codex account, reading the prompt from stdin.",
       "tags": [
         "llm",
         "adapter",
@@ -34500,7 +34500,7 @@
       "type": "file",
       "name": "risk_signals.py",
       "filePath": "src/g6/core/risk_signals.py",
-      "summary": "The single implicit-signal risk classifier: maps the words of a task to a risk tier R0-R3 by matching tiered signal terms, highest tier first, with a non-signal default of R1. Standard library only so the workforce can derive standards without loading the design block.",
+      "summary": "The single implicit-signal risk classifier: maps the words of a task to a risk level R0-R3 by matching graded signal terms, highest level first, with a non-signal default of R1. Standard library only so the workforce can derive standards without loading the design block.",
       "tags": [
         "utility",
         "classification",
@@ -34869,7 +34869,7 @@
         36,
         42
       ],
-      "summary": "Returns the risk tier and reason for a task's text by checking tier signal words from R3 down, falling back to the default tier.",
+      "summary": "Returns the risk level and reason for a task's text by checking level signal words from R3 down, falling back to the default level.",
       "tags": [
         "classification",
         "risk-tiering",
@@ -34886,7 +34886,7 @@
         45,
         49
       ],
-      "summary": "Returns the tuple of signal words found in a task's text across all tiers.",
+      "summary": "Returns the tuple of signal words found in a task's text across all levels.",
       "tags": [
         "classification",
         "risk-tiering",
@@ -39209,7 +39209,7 @@
       "type": "config",
       "name": "rule_review.json",
       "filePath": "src/g6/embodied/_motion/data/rule_review.json",
-      "summary": "Independent reader's review record of every tiered motion rule: hashes of the adapter, cases, rules and held sources, plus per-rule findings on whether the register clause is fair, the code matches it and the tier is justified.",
+      "summary": "Independent reader's review record of every graded motion rule: hashes of the adapter, cases, rules and held sources, plus per-rule findings on whether the register clause is fair, the code matches it and the level is justified.",
       "tags": [
         "configuration",
         "review-record",
@@ -39761,7 +39761,7 @@
       "type": "file",
       "name": "sources.py",
       "filePath": "src/g6/embodied/_motion/sources.py",
-      "summary": "Rule provenance for the motion checks: the RULES table naming each rule's source (register entry, caller field or G6's own guard), its tier and implementing function, plus loaders and checks over the committed source register and rule review.",
+      "summary": "Rule provenance for the motion checks: the RULES table naming each rule's source (register entry, caller field or G6's own guard), its level and implementing function, plus loaders and checks over the committed source register and rule review.",
       "tags": [
         "provenance",
         "configuration",
@@ -39780,7 +39780,7 @@
         28,
         38
       ],
-      "summary": "Frozen dataclass describing one rule a check applies: wording, kind (register, caller or own), source, effect, certificate tier and implementing function.",
+      "summary": "Frozen dataclass describing one rule a check applies: wording, kind (register, caller or own), source, effect, certificate level and implementing function.",
       "tags": [
         "data-model",
         "provenance",
@@ -39971,7 +39971,7 @@
       "type": "config",
       "name": "certificate.json",
       "filePath": "src/g6/embodied/adapt_physical_ai/certificate/certificate.json",
-      "summary": "Issued component certificate record for g6.embodied.adapt_physical_ai: attested tiers, context-only gaps, digest, falsification results, harness and input hashes, independent pass, isolation, issuer state qualified-draft and observations.",
+      "summary": "Issued component certificate record for g6.embodied.adapt_physical_ai: attested levels, context-only gaps, digest, falsification results, harness and input hashes, independent pass, isolation, issuer state qualified-draft and observations.",
       "tags": [
         "configuration",
         "certificate",
@@ -40014,7 +40014,7 @@
       "type": "document",
       "name": "CERTIFICATE.md",
       "filePath": "src/g6/embodied/adapt_physical_ai/certificate/CERTIFICATE.md",
-      "summary": "Human-readable component certificate for adapt_physical_ai at issuer state qualified-draft: rules by tier, the context-only friction gap, an itemised list of what was not checked, and the embedded full JSON record.",
+      "summary": "Human-readable component certificate for adapt_physical_ai at issuer state qualified-draft: rules by level, the context-only friction gap, an itemised list of what was not checked, and the embedded full JSON record.",
       "tags": [
         "documentation",
         "certificate",
@@ -40369,7 +40369,7 @@
         132,
         149
       ],
-      "summary": "Maps a declared action criticality to a risk tier R0-R3, failing closed on unknown values.",
+      "summary": "Maps a declared action criticality to a risk level R0-R3, failing closed on unknown values.",
       "tags": [
         "risk",
         "policy",
@@ -47259,7 +47259,7 @@
         371,
         401
       ],
-      "summary": "Claude Code session signed in as the person with scout tools, a clean environment and a bounded run.",
+      "summary": "Claude Code session running under the person's own account with scout tools, a clean environment and a bounded run.",
       "tags": [
         "llm",
         "host",
@@ -53605,7 +53605,7 @@
       "type": "config",
       "name": "certificate.json",
       "filePath": "src/g6/jobs/duty_of_care/certificate/certificate.json",
-      "summary": "The issued component certificate record for g6.jobs.duty_of_care: digests, harness and input hashes, rules by tier, observations, falsification results, stale sources, independent pass and issuer state.",
+      "summary": "The issued component certificate record for g6.jobs.duty_of_care: digests, harness and input hashes, rules by level, observations, falsification results, stale sources, independent pass and issuer state.",
       "tags": [
         "configuration",
         "certificate",
@@ -53620,7 +53620,7 @@
       "type": "document",
       "name": "CERTIFICATE.md",
       "filePath": "src/g6/jobs/duty_of_care/certificate/CERTIFICATE.md",
-      "summary": "Human-readable component certificate for g6.jobs.duty_of_care at issuer state qualified-draft: context-only gaps, every rule by tier with the independent reader's attestation, what was not checked, and the full record.",
+      "summary": "Human-readable component certificate for g6.jobs.duty_of_care at issuer state qualified-draft: context-only gaps, every rule by level with the independent reader's attestation, what was not checked, and the full record.",
       "tags": [
         "documentation",
         "certificate",
@@ -54503,7 +54503,7 @@
         28,
         37
       ],
-      "summary": "Frozen description of one rule the code applies: its source (register entry, caller, or G6), effect, tier and implementing function.",
+      "summary": "Frozen description of one rule the code applies: its source (register entry, caller, or G6), effect, level and implementing function.",
       "tags": [
         "data-model",
         "provenance",
@@ -61104,7 +61104,7 @@
       "type": "config",
       "name": "model_profiles.json",
       "filePath": "src/g6/llm_router/data/model_profiles.json",
-      "summary": "Committed table of 47 model profiles (18 local Ollama, 29 OpenRouter) with hand-assigned scores for cognitive tasks, modalities, context windows, cost tiers and per-million-token prices dated 2026-08-16.",
+      "summary": "Committed table of 47 model profiles (18 local Ollama, 29 OpenRouter) with hand-assigned scores for cognitive tasks, modalities, context windows, cost levels and per-million-token prices dated 2026-08-16.",
       "tags": [
         "configuration",
         "data-table",
@@ -61219,7 +61219,7 @@
       "type": "file",
       "name": "supervision.py",
       "filePath": "src/g6/llm_router/supervision.py",
-      "summary": "Cost-tier supervision policy: a model supervises a cheaper one only with at least its task score and a higher tier (or same tier and higher score), with specialist overrides and refusal of unknown models.",
+      "summary": "Cost-level supervision policy: a model supervises a cheaper one only with at least its task score and a higher level (or same level and higher score), with specialist overrides and refusal of unknown models.",
       "tags": [
         "policy",
         "llm-routing",
@@ -62454,7 +62454,7 @@
         94,
         166
       ],
-      "summary": "One model profile with provider, tier, context, modalities, task scores and prices, where unknown prices read as None.",
+      "summary": "One model profile with provider, level, context, modalities, task scores and prices, where unknown prices read as None.",
       "tags": [
         "data-model",
         "serialization",
@@ -62553,7 +62553,7 @@
         38,
         43
       ],
-      "summary": "Returns a model cost tier from the registry, raising KeyError for unknown models.",
+      "summary": "Returns a model cost level from the registry, raising KeyError for unknown models.",
       "tags": [
         "utility",
         "lookup"
@@ -62569,7 +62569,7 @@
         31,
         35
       ],
-      "summary": "IntEnum of cost tiers from free local to paid premium.",
+      "summary": "IntEnum of cost levels, from free local models to the most expensive paid ones.",
       "tags": [
         "enum",
         "type-definition"
@@ -62585,7 +62585,7 @@
         47,
         52
       ],
-      "summary": "A specialist model that supervises a task workers up to a tier.",
+      "summary": "A specialist model that supervises a task workers up to a level.",
       "tags": [
         "data-model",
         "supervision"
@@ -62617,7 +62617,7 @@
         97,
         212
       ],
-      "summary": "Decides which model can supervise another by tier, tool complexity and task score, with specialist overrides, and builds supervision chains.",
+      "summary": "Decides which model can supervise another by level, tool complexity and task score, with specialist overrides, and builds supervision chains.",
       "tags": [
         "policy",
         "supervision",
@@ -73773,7 +73773,7 @@
         473,
         488
       ],
-      "summary": "Determines who pays for a caller's requests from its type: host subscription, paid API key or local.",
+      "summary": "Determines who pays for a caller's requests from its type: host subscription, paid provider key or local.",
       "tags": [
         "llm",
         "cost",
@@ -76967,7 +76967,7 @@
       "type": "config",
       "name": "certificate.json",
       "filePath": "src/g6/ml/adapt_automl/certificate/certificate.json",
-      "summary": "Machine-readable component certificate for adapt_automl: per-rule tiers and independent-reader attestations, source cases, seeded checks and hashes binding the checked artifact; issuer state qualified-draft.",
+      "summary": "Machine-readable component certificate for adapt_automl: per-rule levels and independent-reader attestations, source cases, seeded checks and hashes binding the checked artifact; issuer state qualified-draft.",
       "tags": [
         "certificate",
         "vetting",
@@ -76981,7 +76981,7 @@
       "type": "document",
       "name": "CERTIFICATE.md",
       "filePath": "src/g6/ml/adapt_automl/certificate/CERTIFICATE.md",
-      "summary": "Human-readable component certificate for g6.ml.adapt_automl listing issuer state qualified-draft, rules by tier (computes, property, guard) with independent-reader attestations, and the recorded case and seeded-input checks.",
+      "summary": "Human-readable component certificate for g6.ml.adapt_automl listing issuer state qualified-draft, rules by level (computes, property, guard) with independent-reader attestations, and the recorded case and seeded-input checks.",
       "tags": [
         "documentation",
         "certificate",
@@ -77022,7 +77022,7 @@
       "type": "config",
       "name": "rule_review.json",
       "filePath": "src/g6/ml/adapt_automl/data/rule_review.json",
-      "summary": "Independent reader's review of all 22 tiered rules adapt_automl covers: per rule, whether the source clause is fair and the code matches, with the source hash and a written finding; label effect none.",
+      "summary": "Independent reader's review of all 22 graded rules adapt_automl covers: per rule, whether the source clause is fair and the code matches, with the source hash and a written finding; label effect none.",
       "tags": [
         "review",
         "vetting",
@@ -77134,7 +77134,7 @@
       "type": "config",
       "name": "certificate.json",
       "filePath": "src/g6/ml/adapt_bayesian/certificate/certificate.json",
-      "summary": "Machine-readable component certificate for adapt_bayesian: per-rule tiers with independent-reader attestations, case results, seeded and mutation checks and artifact hashes; issuer state qualified-draft.",
+      "summary": "Machine-readable component certificate for adapt_bayesian: per-rule levels with independent-reader attestations, case results, seeded and mutation checks and artifact hashes; issuer state qualified-draft.",
       "tags": [
         "certificate",
         "vetting",
@@ -77148,7 +77148,7 @@
       "type": "document",
       "name": "CERTIFICATE.md",
       "filePath": "src/g6/ml/adapt_bayesian/certificate/CERTIFICATE.md",
-      "summary": "Human-readable component certificate for g6.ml.adapt_bayesian: issuer state qualified-draft, context-only reading gaps, withheld quotes kept as hashes, and rules by tier with independent-reader attestations.",
+      "summary": "Human-readable component certificate for g6.ml.adapt_bayesian: issuer state qualified-draft, context-only reading gaps, withheld quotes kept as hashes, and rules by level with independent-reader attestations.",
       "tags": [
         "documentation",
         "certificate",
@@ -77756,7 +77756,7 @@
         33,
         47
       ],
-      "summary": "Dataclass naming one ml-family rule, its tier, the function that applies it, its source entry and what a guard may do to an answer.",
+      "summary": "Dataclass naming one ml-family rule, its level, the function that applies it, its source entry and what a guard may do to an answer.",
       "tags": [
         "data-model",
         "provenance"
@@ -77804,7 +77804,7 @@
         156,
         185
       ],
-      "summary": "Checks the register and rules for missing fields, unknown citations and inconsistent tiers.",
+      "summary": "Checks the register and rules for missing fields, unknown citations and inconsistent levels.",
       "tags": [
         "validation",
         "vetting"
@@ -79319,7 +79319,7 @@
         27,
         37
       ],
-      "summary": "Frozen dataclass naming one rule, its kind (register, own guard or caller input), source, effect, certificate tier and implementing function.",
+      "summary": "Frozen dataclass naming one rule, its kind (register, own guard or caller input), source, effect, certificate level and implementing function.",
       "tags": [
         "data-model",
         "provenance",
@@ -80297,7 +80297,7 @@
       "type": "config",
       "name": "certificate.json",
       "filePath": "src/g6/ml/adapt_sklearn/certificate/certificate.json",
-      "summary": "Issued component certificate record for g6.ml.adapt_sklearn: rule tiers and attestations, falsification observations, harness and input digests, isolation, independent pass, not-checked list, printed values, source register and review bindings.",
+      "summary": "Issued component certificate record for g6.ml.adapt_sklearn: rule levels and attestations, falsification observations, harness and input digests, isolation, independent pass, not-checked list, printed values, source register and review bindings.",
       "tags": [
         "certificate",
         "evidence",
@@ -80312,7 +80312,7 @@
       "type": "document",
       "name": "CERTIFICATE.md",
       "filePath": "src/g6/ml/adapt_sklearn/certificate/CERTIFICATE.md",
-      "summary": "Human-readable component certificate for g6.ml.adapt_sklearn at issuer state qualified-draft: rules by tier (computes, property, guard) with the independent reader's attestations, what was not checked, and the full record.",
+      "summary": "Human-readable component certificate for g6.ml.adapt_sklearn at issuer state qualified-draft: rules by level (computes, property, guard) with the independent reader's attestations, what was not checked, and the full record.",
       "tags": [
         "documentation",
         "certificate",
@@ -80449,7 +80449,7 @@
       "type": "config",
       "name": "rule_review.json",
       "filePath": "src/g6/ml/adapt_sklearn/data/rule_review.json",
-      "summary": "Independent reader's review of every tiered adapt_sklearn rule: per-rule clause fairness, code match, source hash and findings, with the method, re-bound notes and a statement that the review raises no label.",
+      "summary": "Independent reader's review of every graded adapt_sklearn rule: per-rule clause fairness, code match, source hash and findings, with the method, re-bound notes and a statement that the review raises no label.",
       "tags": [
         "review",
         "vetting",
@@ -89129,7 +89129,7 @@
         317,
         352
       ],
-      "summary": "Reports weakening signs in a Python test or startup file: deletion, removed tests or checks, new skips, mocks, patches and hooks.",
+      "summary": "Reports weakening signals in a Python test or startup file: deletion, removed tests or checks, new skips, mocks, patches and hooks.",
       "tags": [
         "static-analysis",
         "test-weakening"
@@ -89617,7 +89617,7 @@
       "type": "file",
       "name": "diagnosis.py",
       "filePath": "src/g6/self_training/diagnosis.py",
-      "summary": "Deterministic first classification of why a component audit fell short, using fixed tier/score and error-pattern rules and naming the rule that fired, with no confidence number.",
+      "summary": "Deterministic first classification of why a component audit fell short, using fixed level/score and error-pattern rules and naming the rule that fired, with no confidence number.",
       "tags": [
         "diagnostics",
         "classification",
@@ -89644,7 +89644,7 @@
       "type": "file",
       "name": "patch_promotion_gate.py",
       "filePath": "src/g6/self_training/patch_promotion_gate.py",
-      "summary": "Risk-tiered, deterministic, down-only promotion gate for proposed harness patches: tiers risk, checks protected paths and promotion criteria, and blocks permission expansion, weakened safety, removed human review or irreversible changes.",
+      "summary": "Risk-graded, deterministic, down-only promotion gate for proposed harness patches: levels risk, checks protected paths and promotion criteria, and blocks permission expansion, weakened safety, removed human review or irreversible changes.",
       "tags": [
         "validation",
         "safety",
@@ -89658,7 +89658,7 @@
       "type": "file",
       "name": "persistence.py",
       "filePath": "src/g6/self_training/persistence.py",
-      "summary": "ScorecardStore keeping the maturity scorecard as an append-only audit_log.jsonl and a rewritten scorecard.json, with flag-holding tier rules and refused promotions.",
+      "summary": "ScorecardStore keeping the maturity scorecard as an append-only audit_log.jsonl and a rewritten scorecard.json, with flag-holding level rules and refused promotions.",
       "tags": [
         "persistence",
         "self-training",
@@ -89684,7 +89684,7 @@
       "type": "file",
       "name": "rubrics.py",
       "filePath": "src/g6/self_training/rubrics.py",
-      "summary": "Evaluates a component's output against structured shape assertions, scores rubrics, classifies maturity tiers T0-T5 and holds a RubricRegistry loadable from JSON.",
+      "summary": "Evaluates a component's output against structured shape assertions, scores rubrics, classifies maturity levels T0-T5 and holds a RubricRegistry loadable from JSON.",
       "tags": [
         "validation",
         "scoring",
@@ -89697,7 +89697,7 @@
       "type": "file",
       "name": "schema.py",
       "filePath": "src/g6/self_training/schema.py",
-      "summary": "Pydantic types for the maturity scorecard: rubric assertions and provenance, component rubrics, assertion and rubric scores, audit results, maturity scores and the scorecard, with tier names T0-T6.",
+      "summary": "Pydantic types for the maturity scorecard: rubric assertions and provenance, component rubrics, assertion and rubric scores, audit results, maturity scores and the scorecard, with level names T0-T6.",
       "tags": [
         "type-definition",
         "data-model",
@@ -92336,7 +92336,7 @@
         66,
         88
       ],
-      "summary": "Classifies one audit's shortfall by fixed tier, score and error-pattern rules.",
+      "summary": "Classifies one audit's shortfall by fixed level, score and error-pattern rules.",
       "tags": [
         "diagnostics",
         "classification",
@@ -92489,7 +92489,7 @@
         194,
         212
       ],
-      "summary": "The gate's decision: action, risk tier, reasons, reliability state and the patch digest it was made on.",
+      "summary": "The gate's decision: action, risk level, reasons, reliability state and the patch digest it was made on.",
       "tags": [
         "data-model",
         "governance",
@@ -92540,7 +92540,7 @@
         228,
         248
       ],
-      "summary": "Risk tier of a patch as the max of surface base tiers and effect-flag floors, failing closed on unknown surfaces.",
+      "summary": "Risk level of a patch as the max of surface base levels and effect-flag floors, failing closed on unknown surfaces.",
       "tags": [
         "risk",
         "classification",
@@ -92608,7 +92608,7 @@
         321,
         445
       ],
-      "summary": "Fail-closed, down-only promotion decision for a harness patch: risk tier, hard safety blocks, protected paths and criteria tighten the action; autonomy only when asked.",
+      "summary": "Fail-closed, down-only promotion decision for a harness patch: risk level, hard safety blocks, protected paths and criteria tighten the action; autonomy only when asked.",
       "tags": [
         "governance",
         "safety",
@@ -92659,7 +92659,7 @@
         60,
         74
       ],
-      "summary": "Why promoting a component to a tier is refused, or None.",
+      "summary": "Why promoting a component to a level is refused, or None.",
       "tags": [
         "validation",
         "governance",
@@ -92829,7 +92829,7 @@
         95,
         109
       ],
-      "summary": "The maturity tier an audit earns, capped at T3 without a reviewed evaluable rubric and never T6.",
+      "summary": "The maturity level an audit earns, capped at T3 without a reviewed evaluable rubric and never T6.",
       "tags": [
         "classification",
         "scoring",
@@ -92965,7 +92965,7 @@
         105,
         120
       ],
-      "summary": "One audit of a component op: the tier earned and its evidence.",
+      "summary": "One audit of a component op: the level earned and its evidence.",
       "tags": [
         "data-model",
         "type-definition",
@@ -92982,7 +92982,7 @@
         123,
         144
       ],
-      "summary": "A component's scorecard standing: current evidenced tier, history and flags.",
+      "summary": "A component's scorecard standing: current evidenced level, history and flags.",
       "tags": [
         "data-model",
         "type-definition",
@@ -94803,7 +94803,7 @@
       "type": "file",
       "name": "backends.py",
       "filePath": "src/g6/sources/ctx_geo/backends.py",
-      "summary": "Map-service backends for ctx_geo reached through G6's checked HTTP client; GoogleBackend maps Google Maps Platform statuses (geocode, directions, distance matrix, places, elevation, timezone) to typed GeoAnswer outcomes without ever exposing the API key.",
+      "summary": "Map-service backends for ctx_geo reached through G6's checked HTTP client; GoogleBackend maps Google Maps Platform statuses (geocode, directions, distance matrix, places, elevation, timezone) to typed GeoAnswer outcomes without ever exposing the provider key.",
       "tags": [
         "service",
         "http-client",
@@ -96526,7 +96526,7 @@
       "type": "file",
       "name": "acceptance.py",
       "filePath": "src/g6/workforce/acceptance.py",
-      "summary": "Compiles a mission's acceptance contract from the intent engine's IntentContract and risk tier, then gathers ledger facts, measures each requirement and evaluates the roll-up so an unmet or unchecked requirement holds the result at qualified-draft and nothing is promoted.",
+      "summary": "Compiles a mission's acceptance contract from the intent engine's IntentContract and risk level, then gathers ledger facts, measures each requirement and evaluates the roll-up so an unmet or unchecked requirement holds the result at qualified-draft and nothing is promoted.",
       "tags": [
         "acceptance-contract",
         "data-model",
@@ -96975,7 +96975,7 @@
         334,
         351
       ],
-      "summary": "Derives the risk tier a task demands before planning from the declared tier and risk signals in the task's words.",
+      "summary": "Derives the risk level a task demands before planning from the declared level and risk signals in the task's words.",
       "tags": [
         "risk-tier",
         "classification",
@@ -97009,7 +97009,7 @@
         401,
         418
       ],
-      "summary": "Raises a contract to a tier and adds missing requirements as the next revision, recording what raised it.",
+      "summary": "Raises a contract to a level and adds missing requirements as the next revision, recording what raised it.",
       "tags": [
         "contract",
         "revision",
@@ -97060,7 +97060,7 @@
         458,
         470
       ],
-      "summary": "Keeps a contract at or above its mission's tier with the tier's verification requirements always included.",
+      "summary": "Keeps a contract at or above its mission's level with the level's verification requirements always included.",
       "tags": [
         "risk-tier",
         "standard",
@@ -97077,7 +97077,7 @@
         473,
         534
       ],
-      "summary": "Compiles a mission's acceptance contract from the clarified IntentContract at the tier the task demands.",
+      "summary": "Compiles a mission's acceptance contract from the clarified IntentContract at the level the task demands.",
       "tags": [
         "compiler",
         "acceptance-contract",
@@ -97347,7 +97347,7 @@
         1037,
         1059
       ],
-      "summary": "Measures one tier verification requirement across every do unit's latest output.",
+      "summary": "Measures one level verification requirement across every do unit's latest output.",
       "tags": [
         "measurement",
         "verification-requirement"
@@ -99119,7 +99119,7 @@
         327,
         375
       ],
-      "summary": "Validates one case of a covered rule as its tier requires.",
+      "summary": "Validates one case of a covered rule as its level requires.",
       "tags": [
         "validation",
         "cases"
@@ -99282,7 +99282,7 @@
         1027,
         1043
       ],
-      "summary": "States what a rule's tier rests on beyond its checks.",
+      "summary": "States what a rule's level rests on beyond its checks.",
       "tags": [
         "reporting",
         "tier"
@@ -100242,7 +100242,7 @@
         56,
         59
       ],
-      "summary": "Returns the highest of the given risk tiers, treating an unknown tier as R3.",
+      "summary": "Returns the highest of the given risk levels, treating an unknown level as R3.",
       "tags": [
         "utility",
         "risk-policy",
@@ -100293,7 +100293,7 @@
         124,
         135
       ],
-      "summary": "Returns the highest risk tier any unit of a drafted plan names.",
+      "summary": "Returns the highest risk level any unit of a drafted plan names.",
       "tags": [
         "utility",
         "risk-policy",
@@ -100480,7 +100480,7 @@
         618,
         711
       ],
-      "summary": "Validates a drafted plan against the mission's risk tier, budget and capability readiness, returning a Plan or raising PlanRejected with every problem.",
+      "summary": "Validates a drafted plan against the mission's risk level, budget and capability readiness, returning a Plan or raising PlanRejected with every problem.",
       "tags": [
         "entry-point",
         "validation",
@@ -103265,7 +103265,7 @@
         140,
         209
       ],
-      "summary": "Returns a saved result if a mission of the given risk tier may reuse it now, else raises ReuseRefused.",
+      "summary": "Returns a saved result if a mission of the given risk level may reuse it now, else raises ReuseRefused.",
       "tags": [
         "validation",
         "reuse",
@@ -103729,7 +103729,7 @@
       "type": "file",
       "name": "scheduler.py",
       "filePath": "src/g6/workforce/scheduler.py",
-      "summary": "Cost-aware scheduler that loads resource tiers and modes from tiers.json, weighs execution options per plan step, records SchedulerDecisions with reason codes, and decides escalation routes and retry codes for failed code steps.",
+      "summary": "Cost-aware scheduler that loads resource levels and modes from levels.json, weighs execution options per plan step, records SchedulerDecisions with reason codes, and decides escalation routes and retry codes for failed code steps.",
       "tags": [
         "service",
         "scheduling",
@@ -103747,7 +103747,7 @@
         82,
         90
       ],
-      "summary": "Dataclass for one resource tier as tiers.json declares it.",
+      "summary": "Dataclass for one resource level as levels.json declares it.",
       "tags": [
         "data-model",
         "dataclass",
@@ -103781,7 +103781,7 @@
         106,
         116
       ],
-      "summary": "Dataclass for the tier table, low-cost ceiling and modes, with mode lookup.",
+      "summary": "Dataclass for the level table, low-cost ceiling and modes, with mode lookup.",
       "tags": [
         "data-model",
         "dataclass",
@@ -103883,7 +103883,7 @@
         123,
         176
       ],
-      "summary": "Loads and validates tiers.json, naming every problem at once.",
+      "summary": "Loads and validates levels.json, naming every problem at once.",
       "tags": [
         "configuration",
         "parsing",
@@ -103900,7 +103900,7 @@
         180,
         182
       ],
-      "summary": "Returns the shipped tiers.json, read once per process.",
+      "summary": "Returns the shipped levels.json, read once per process.",
       "tags": [
         "configuration",
         "caching",
@@ -104019,7 +104019,7 @@
         458,
         459
       ],
-      "summary": "Returns the default tiers' settings for a mode.",
+      "summary": "Returns the default levels' settings for a mode.",
       "tags": [
         "configuration",
         "utility",
@@ -105169,7 +105169,7 @@
       "type": "config",
       "name": "tiers.json",
       "filePath": "src/g6/workforce/tiers.json",
-      "summary": "Declares the scheduler's eight resource tiers T0_REUSE to T7_HUMAN, the low-cost per-call ceiling and the fast, balanced, thorough and critical resource modes with their escalation ceilings and added verification.",
+      "summary": "Declares the scheduler's eight resource levels T0_REUSE to T7_HUMAN, the low-cost per-call ceiling and the fast, balanced, thorough and critical resource modes with their escalation ceilings and added verification.",
       "tags": [
         "configuration",
         "scheduling",
@@ -112750,7 +112750,7 @@
       "type": "file",
       "name": "v7common.py",
       "filePath": "validation/v7_swebench/v7common.py",
-      "summary": "Shared V7 module: frozen settings, spend rules and cap, the API key redactor, and the write-once archive of run folders indexed by run.json with an append-only runs.jsonl ledger.",
+      "summary": "Shared V7 module: frozen settings, spend rules and cap, the provider key redactor, and the write-once archive of run folders indexed by run.json with an append-only runs.jsonl ledger.",
       "tags": [
         "utility",
         "archive",
@@ -112837,7 +112837,7 @@
         156,
         170
       ],
-      "summary": "Replaces the API key value and any sk-ant- token in text bound for a file or terminal, and reports leaks.",
+      "summary": "Replaces the provider key value and any sk-ant- token in text bound for a file or terminal, and reports leaks.",
       "tags": [
         "security",
         "redaction",
@@ -114231,7 +114231,7 @@
         1412,
         1433
       ],
-      "summary": "Dataclass holding a run's archive, docker handle, key/issue/tree readers, G6 info, critic, round variant, arm, model and repeat; client_env passes the API key only when one is given.",
+      "summary": "Dataclass holding a run's archive, docker handle, key/issue/tree readers, G6 info, critic, round variant, arm, model and repeat; client_env passes the provider key only when one is given.",
       "tags": [
         "data-model",
         "context",
@@ -114586,7 +114586,7 @@
         1219,
         1256
       ],
-      "summary": "Returns the driver script that checks, under G6's confined review, that a test cannot see the API key while an unconfined control can.",
+      "summary": "Returns the driver script that checks, under G6's confined review, that a test cannot see the provider key while an unconfined control can.",
       "tags": [
         "security",
         "sandbox",
@@ -114670,7 +114670,7 @@
         1447,
         1459
       ],
-      "summary": "Masks the API key in every file under a folder copied out of a container.",
+      "summary": "Masks the provider key in every file under a folder copied out of a container.",
       "tags": [
         "security",
         "redaction",
@@ -115344,7 +115344,7 @@
       "type": "file",
       "name": "wecommon.py",
       "filePath": "validation/worked_examples/wecommon.py",
-      "summary": "Shared helpers for the worked-example scripts: the write-once run archive outside the repository with its runs.jsonl index, Anthropic model prices and cost accounting for Claude Code stream-json output, the API-key redactor, and the $100 spending stop.",
+      "summary": "Shared helpers for the worked-example scripts: the write-once run archive outside the repository with its runs.jsonl index, Anthropic model prices and cost accounting for Claude Code stream-json output, the provider-key redactor, and the $100 spending stop.",
       "tags": [
         "utility",
         "cost-accounting",
@@ -115464,7 +115464,7 @@
         111,
         125
       ],
-      "summary": "Masks an API key's value and any sk-ant- token in text bound for a file or terminal, and reports leaks.",
+      "summary": "Masks an provider key's value and any sk-ant- token in text bound for a file or terminal, and reports leaks.",
       "tags": [
         "security",
         "redaction",
@@ -116391,7 +116391,7 @@
       "type": "file",
       "name": "guard.py",
       "filePath": "web/pages/guard.py",
-      "summary": "Checks on rendered pages: finds hosted-service (SaaS) wording with inflection and look-alike character handling and an allow-list, extracts internal and relative links, and collects inline scripts for CSP hashing.",
+      "summary": "Checks on rendered pages: finds online-service (SaaS) wording with inflection and look-alike character handling and an allow-list, extracts internal and relative links, and collects inline scripts for CSP hashing.",
       "tags": [
         "validation",
         "security",
@@ -116445,7 +116445,7 @@
       "type": "file",
       "name": "build_static.py",
       "filePath": "web/pages/management/commands/build_static.py",
-      "summary": "The build_static management command: renders every page in the page table, refuses to write if any page fails, links to a missing path or reads like a hosted service, then writes HTML, static files, 404, robots.txt, sitemap.xml, _redirects and a CSP _headers file for Cloudflare Pages.",
+      "summary": "The build_static management command: renders every page in the page table, refuses to write if any page fails, links to a missing path or reads like an online service, then writes HTML, static files, 404, robots.txt, sitemap.xml, _redirects and a CSP _headers file for Cloudflare Pages.",
       "tags": [
         "cli",
         "build-system",
@@ -117553,7 +117553,7 @@
         84,
         128
       ],
-      "summary": "Writes the full static site to a marked folder, or returns problems (render failures, broken or relative links, hosted-service wording) and writes nothing.",
+      "summary": "Writes the full static site to a marked folder, or returns problems (render failures, broken or relative links, online-service wording) and writes nothing.",
       "tags": [
         "build-system",
         "static-site",
@@ -117851,7 +117851,7 @@
       "type": "file",
       "name": "src.css",
       "filePath": "web/tailwind/src.css",
-      "summary": "Tailwind source stylesheet for the site: base layer, a large components layer (glass panels, gradient text, numbered items, architecture stack, pricing rows, minimal footer, header, mobile menu and nav buttons) and a utilities layer, compiled into static/css/main.css.",
+      "summary": "Tailwind source stylesheet for the site: base layer, a large components layer (glass panels, gradient text, numbered items, architecture stack, price rows, minimal footer, header, mobile menu and nav buttons) and a utilities layer, compiled into static/css/main.css.",
       "tags": [
         "stylesheet",
         "tailwind",
@@ -237473,7 +237473,7 @@
     {
       "id": "layer:mcp-surface",
       "name": "MCP Server and Entry Surfaces",
-      "description": "The surfaces agents and people call G6 through: the MCP server (registrations, consent, review loop, composition), the setup/doctor CLI, runnable bundles with their own server, the using-g6 skill and the navigator that checks and runs plans against the registry.",
+      "description": "The surfaces agents and people call G6 through: the MCP server (registrations, consent, review loop, composition), the setup and doctor commands, runnable bundles with their own server, the using-g6 skill and the navigator that checks and runs plans against the registry.",
       "nodeIds": [
         "file:src/g6/mcp/__init__.py",
         "file:src/g6/mcp/behaviour.py",
@@ -237843,7 +237843,7 @@
     {
       "id": "layer:reasoning-formal",
       "name": "Reasoning and Formal Methods",
-      "description": "Checkable reasoning engines and formal tools: Lean, Prolog and Datalog adapters, model checking, CEGIS synthesis, solvers, algebra, causal and graph reasoning, optimisation, complexity analysis, debate, provers, abstraction engineering and algorithm design.",
+      "description": "Checkable reasoning engines and formal tools: Lean, Prolog and Datalog adapters, model checking, counterexample-guided synthesis, solvers, algebra, causal and graph reasoning, optimisation, complexity analysis, debate, provers, abstraction engineering and algorithm design.",
       "nodeIds": [
         "file:src/g6/formal/__init__.py",
         "file:src/g6/formal/contract.py",
@@ -238590,7 +238590,7 @@
     {
       "id": "layer:validation-examples",
       "name": "Validation Studies and Guides",
-      "description": "Evaluation studies under validation/ (SWE-bench, patch review, metaharness, grounding and action-gating runs with their fixtures), runnable demos and cognitive-bridge examples, and the top-level README and agent guide.",
+      "description": "Evaluation studies under validation/ (a benchmark of real coding issues, patch review, metaharness, grounding and action-gating runs with their fixtures), runnable demos and cognitive-bridge examples, and the top-level README and agent guide.",
       "nodeIds": [
         "file:validation/context_engine/colbert_spike/candidates.py",
         "file:validation/context_engine/colbert_spike/report.py",
@@ -238721,7 +238721,7 @@
     {
       "id": "layer:web",
       "name": "Django Site",
-      "description": "The project Django site: manage.py, g6site settings and URLs, the pages app, Django templates, site content and catalogue data, and the Tailwind CSS build.",
+      "description": "The project Django site: manage.py, g6site settings and URLs, the pages app, Django templates, site content and catalogue data, and the Tailwind stylesheet build.",
       "nodeIds": [
         "file:web/.gitattributes",
         "file:web/manage.py",
