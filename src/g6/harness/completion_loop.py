@@ -461,7 +461,10 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
     for ran in runs:
         body, refs, _ = cloud.freeze_output(ran)
         origins.extend(refs or (cloud.UNKNOWN,))
-        report = repo_tests.read_report(json.loads(body))
+        # The frozen bytes are what is read, but their JSON form makes a tuple or a set a list: a report that is not
+        # valid as the run gave it stays unknown, and is never made valid by its serialisation.
+        given = repo_tests.read_report(ran)
+        report = repo_tests.read_report(json.loads(body)) if given.valid else given
         ran = report.wire()
         boundary = (ran.get("isolation") or {}).get("backend") or boundary
         elsewhere, verdict = _loaded_elsewhere(change, ran), ran.get("verdict")
