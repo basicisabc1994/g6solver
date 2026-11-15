@@ -397,6 +397,41 @@ def test_native_final_names_normalize_unc_and_extended_forms_without_network(tmp
     assert not usage._inside(name, os.path.normcase("\\\\other\\share\\owned"))
 
 
+def test_an_opened_inputs_final_name_is_its_real_path_on_this_system(tmp_path):
+    """Read from the open descriptor wherever the system can say it: Linux's /proc, macOS's F_GETPATH, Windows' handle."""
+    path = tmp_path / "input"
+    path.write_bytes(b"local only")
+    with usage._open_input(path) as stream:
+        assert usage._final_path(stream) == os.path.normcase(os.path.realpath(path))
+
+
+def test_without_proc_the_final_name_is_the_descriptors_own_f_getpath(tmp_path, monkeypatch):
+    """macOS has no /proc: the name is the kernel's for the descriptor (``F_GETPATH``), never a lookup of a spelling."""
+    if os.name == "nt":
+        pytest.skip("POSIX descriptor names")
+    import fcntl
+
+    path = tmp_path / "input"
+    path.write_bytes(b"local only")
+    asked, readlink = [], os.readlink
+
+    def no_proc(where, *args, **kwargs):
+        if str(where).startswith("/proc/"):
+            raise FileNotFoundError(where)
+        return readlink(where, *args, **kwargs)
+
+    def getpath(fd, command, buffer):
+        asked.append((fd, command, len(buffer)))
+        return str(path).encode() + b"\0" * (len(buffer) - len(str(path).encode()))
+
+    monkeypatch.setattr(usage.sys, "platform", "darwin")
+    monkeypatch.setattr(os, "readlink", no_proc)
+    monkeypatch.setattr(fcntl, "fcntl", getpath)
+    with usage._open_input(path) as stream:
+        assert usage._final_path(stream) == os.path.normpath(path)
+        assert asked == [(stream.fileno(), getattr(fcntl, "F_GETPATH", 50), 1024)]
+
+
 def test_repeated_input_arguments_are_identified_at_each_open_and_share_one_snapshot(tmp_path, monkeypatch):
     path = tmp_path / "input"
     path.write_bytes(b"snapshot")
