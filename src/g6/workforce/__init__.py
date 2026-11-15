@@ -66,8 +66,8 @@ __g6_maturity__ = "beta"  # no block, so no g6_invoke op: this API and ``__g6_mc
 __g6_mcp_tools__: tuple[str, ...] = ("g6_mission_create", "g6_mission_clarify", "g6_mission_confirm",
                                      "g6_mission_submit", "g6_mission_status", "g6_mission_certificate")
 __g6_sensitive_ops__: tuple[str, ...] = ("mission",)
-__g6_requires__: tuple[str, ...] = ("evidence", "formal", "intent_engine", "learning", "reliability_pipeline",
-                                    "safety_engine")
+__g6_requires__: tuple[str, ...] = ("evidence", "formal", "harness", "integrity", "intent_engine", "learning",
+                                    "reliability_pipeline", "safety_engine")
 # Failure-mode codes (g6.core.failure_modes): what it guards against, and what its own use can cause.
 __g6_mitigates__: tuple[str, ...] = ("moved_goalposts", "unreproduced_failure")
 __g6_introduces__: tuple[str, ...] = ("runner_in_process", "live_working_tree")

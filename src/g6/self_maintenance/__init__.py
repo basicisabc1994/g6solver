@@ -24,7 +24,7 @@ __g6_component__ = True
 __g6_block__ = "SelfMaintenanceBlock"
 __g6_sensitive_ops__: tuple[str, ...] = ()
 __g6_requires__: tuple[str, ...] = ("action_gating", "agent_claude", "agent_codex", "agents", "operator",
-                                     "safety_engine")
+                                     "safety_engine", "workspace")
 # Failure-mode codes (g6.core.failure_modes): what it guards against, and what its own use can cause (a measured
 # constraint that is not what limits the people G6 serves).
 __g6_mitigates__: tuple[str, ...] = ("low_value_first", "unchecked_self_change")
