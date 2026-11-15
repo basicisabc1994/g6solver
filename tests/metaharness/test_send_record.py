@@ -791,6 +791,7 @@ STEPS = ("before the send is let in", "while it is out", "swallowed by a wrapper
 
 @pytest.mark.parametrize("step", STEPS)
 @pytest.mark.parametrize("fact", ["refusal", "limit"])
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_limit_and_a_refusal_at_each_step_from_admission_to_close(tmp_path, monkeypatch, host_folders, fact, step):
     """Wherever the provider's statement comes, up to the step that closes the tick, the tick ends with it, the refusal is in
     the store and the limit on the record before the charges settle; once the tick has closed it ends nothing of it, and what
@@ -823,11 +824,12 @@ def test_a_limit_and_a_refusal_at_each_step_from_admission_to_close(tmp_path, mo
 
     heard, late = threading.Event(), []
 
-    class AnswersThenHearsLate:
-        """Answers, and has the provider's reply read on a thread of its own, in the call's context, once ``heard`` is set."""
+    class AnswersThenHearsLate(_OverFake):
+        """Answers, and has the provider's reply read on a thread of its own, in the call's context, once ``heard`` is set.
+        A wrapper by the published contract over the fake that answers, so the sharing check knows where it sends."""
 
         def complete(self, system, user, *, max_tokens=1024):
-            answer, context = FakeLLM(default="an answer").complete(system, user), contextvars.copy_context()
+            answer, context = self.inner.complete(system, user), contextvars.copy_context()
             late.append(threading.Thread(target=context.run, args=(lambda: heard.wait(5) and _quietly(
                 usage.WatchedClaude()._reply, 1, printed, "", None, ("system", "refused request")),)))
             late[-1].start()
@@ -842,7 +844,7 @@ def test_a_limit_and_a_refusal_at_each_step_from_admission_to_close(tmp_path, mo
         elif step == "swallowed by a wrapper":
             _Counted(CatchesAll(ClaudeCodeCaller()), loop.requests).complete("system", "refused request")
         elif step == "after its call returned":
-            assert _Counted(AnswersThenHearsLate(), loop.requests).complete("system", "asked") == "an answer"
+            assert _Counted(AnswersThenHearsLate(default="an answer"), loop.requests).complete("system", "asked") == "an answer"
             heard.set()                                   # the call has returned, and the tick is still open
             late[0].join(10)
         return _idle_row()
