@@ -315,6 +315,14 @@ DESTINATION_READS = {
     ("metaharness/loop.py", "_made", "undoes"): "logs what a rollback row the cycle made says it undid; decides nothing",
     ("metaharness/store.py", "_resolve", "target_version"): "a person's profile store, another chain with its own rule",
     ("metaharness/store.py", "_store_rules", "target_version"): "a person's profile store, another chain with its own rule",
+    # section 12: another function of the same name, knowledge._destination, is the provider behind the calling client
+    # (the consent check's destination), not where a rollback goes; it reads no chain's rows
+    **{("mcp/knowledge.py", tool, "_destination"): "the knowledge tool's provider, for the consent check; no chain's rows"
+       for tool in ("g6_knowledge_context", "g6_knowledge_count", "g6_knowledge_delete", "g6_knowledge_job",
+                    "g6_knowledge_passage", "g6_knowledge_paths", "g6_knowledge_refresh", "g6_knowledge_revoke",
+                    "g6_knowledge_search", "g6_knowledge_sources")},
+    ("mcp/behaviour.py", "_with_knowledge", "_destination"): "the knowledge search's provider, for the consent check; "
+                                                             "no chain's rows",
 }
 _KEYS = {"base_version", "target_version", "parent", "restores", "undoes"}
 _RULES = {"_adopted", "_destination", "restores"}
