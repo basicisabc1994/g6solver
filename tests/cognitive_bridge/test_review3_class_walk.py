@@ -54,7 +54,9 @@ def test_registration_catalogue_help_skill_failure_map_and_counts():
     sys.path.insert(0, monkey_path)
     try:
         from pages import catalogue
-        assert len(catalogue.components()) == 35
+        # 35 on the bridge's own line; the 0.3 integration line it merged into (320a525) already held three more
+        # core components: algorithm_design and complexity (f59b6dd) and self_maintenance (a812a70).
+        assert len(catalogue.components()) == 38
         assert name in {r["name"] for r in catalogue.components()}
     finally:
         sys.path.remove(monkey_path)
