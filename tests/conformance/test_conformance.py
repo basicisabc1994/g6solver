@@ -25,8 +25,9 @@ SHARED = {t.name: t for t in kit.shared_targets()}
 SHARED_CHECKS = [c for c in kit.CHECKS if c.shared]
 WAIVERS = kit.load_waivers()
 #: Pinned to the number of waivers: lower it when a fix removes one; never raise it without the owner's ruling
-#: (raised to 5 on 2026-11-15 for the metaharness G2 waiver, by the owner's ruling).
-MAX_WAIVERS = 5
+#: (raised to 5 on 2026-11-15 for the metaharness G2 waiver, and to 6 the same day for the workforce G5 waiver, each by
+#: the owner's ruling).
+MAX_WAIVERS = 6
 # The four explicitly authorised step-2 retrofits had a separate, closed shrinking allowance; all four were certified
 # on 2026-10-23, so it is spent.
 MAX_C1_WAIVERS = 0
