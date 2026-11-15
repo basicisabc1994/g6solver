@@ -1699,19 +1699,31 @@ def test_a_host_caller_on_another_provider_behind_a_wrapper_sends_nothing(tmp_pa
 
 
 def test_a_caller_nothing_knows_that_notes_its_own_requests_sends_nothing(tmp_path):
-    class NotesItsOwn(Delegates):
+    class NotesItsOwn:
+        """A sender of no kind anything here knows, which notes its own requests."""
+
         def __init__(self) -> None:
-            super().__init__(FakeLLM())
             self.sent = 0
 
-        def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+        def send(self, system: str, user: str) -> str:
             model_calls.note_model_call()
             self.sent += 1
             return "an answer"
 
+    class SendsThroughItsOwn(Delegates):
+        """A wrapper by the published contract over a local model, as the sharing check accepts one, which sends through
+        a caller of its own in place of the one it holds."""
+
+        def __init__(self, own) -> None:
+            super().__init__(FakeLLM())
+            self.own = own
+
+        def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+            return self.own.send(system, user)
+
     domain = domains.WordProblems(tmp_path)
     caller = NotesItsOwn()
-    _with_model(domain, caller)
+    _with_model(domain, SendsThroughItsOwn(caller))
     loop, _ = _enrolled(tmp_path, domain=domain)
     assert _code(loop.tick()) == "G6_E_LOOP_UNKNOWN_CALLER" and caller.sent == 0
 

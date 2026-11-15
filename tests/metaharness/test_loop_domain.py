@@ -16,6 +16,7 @@ import pytest
 
 import g6
 from g6.core import host_models, llm
+from g6.core.consent_callers import destination
 from g6.core.llm import (
     AnthropicCaller,
     EmptyRetry,
@@ -231,6 +232,20 @@ def test_a_paid_caller_is_paid_however_it_inherits_a_host(tmp_path, monkeypatch,
 
 def test_a_host_with_no_key_stays_on_its_subscription_whatever_else_it_inherits():
     assert who_pays(HostBeforeNoKey()) == "claude"
+
+
+class LocalByType(FakeLLM):
+    """A local model by type and nothing else: the sharing check knows a local caller by its exact type, or as a
+    ``CallerWrapper``, so it can place no recipient for this one and refuses whatever is granted."""
+
+
+def test_a_sender_the_sharing_check_would_refuse_is_refused_by_the_loop_before_anything_is_sent(tmp_path):
+    caller = LocalByType()
+    assert destination(caller).provider == "cloud:unknown"            # the sharing check's own reading of it
+    assert who_pays(caller) == "" and sender_problems(caller, "claude")[0][0] == UNKNOWN_CALLER
+    loop = _a_loop_on(tmp_path, caller)
+    assert loop.enrol("Ada")["warning_card"]["code"] == UNKNOWN_CALLER
+    assert loop.tick()["warning_card"]["code"] == UNKNOWN_CALLER and caller.calls == []
 
 
 def test_a_retry_held_by_a_caller_that_sends_for_itself_is_no_wrapper_around_it(tmp_path):
