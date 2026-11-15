@@ -51,6 +51,7 @@
     "_runner_changes/branches": [
       "if name not in PYTEST_SECTIONS or rel in change.outside_links",
       "if name == 'tox.ini'",
+      "if path is None",
       "if path.is_file()",
       "except ValueError",
       "if old != new",
@@ -82,7 +83,7 @@
       "sorted((name for name in missing if any((name == mine or mine.startswith(name + '.') or name.startswith(mine + '.') for mine in added if not mine.startswith('.')))))"
     ],
     "_collection_errors": [
-      "set(_COLLECTING.findall(output.replace('\\\\', '/')))"
+      "set(repo_tests.read_report(ran).collection_errors)"
     ],
     "_names": [
       "any((path == head or path.startswith(head + '/') for path in files))"
@@ -130,53 +131,41 @@
       "(stated, assumed, unmapped, proposed, instances, config)"
     ],
     "_covers": [
-      "node == check or node.startswith((check + '::', check + '[', check + '/'))"
-    ],
-    "_node/branches": [
-      "if failed or 'failed' in states",
-      "if 'skipped' in states",
-      "if phases.get('call') == 'passed'"
-    ],
-    "_node": [
-      "'failed'",
-      "'skipped'",
-      "'passed' if phases.get('call') == 'passed' else 'not_run'"
-    ],
-    "_not_found/branches": [
-      "if sep and (rest.strip() == check or rest.strip().endswith('/' + check))"
+      "repo_tests.report_covers(check, node)"
     ],
     "_not_found": [
-      "True",
-      "False"
+      "check in {report.full(node) for node in report.data.get('not_found_ids', ())}"
     ],
     "_in_repository": [
-      "(lambda node: f'{prefix}/{node}') if prefix else lambda node: node"
-    ],
-    "_in_repository/branches": [
-      "if prefix"
+      "repo_tests.read_report(ran).full"
     ],
     "_observed": [
-      "{check: found['verdict'] for check, found in _verdicts(collected, ran).items()}"
+      "dict.fromkeys(checks, ERROR)",
+      "{check: ERROR if report.collection_errors_for(check) else observation(found) for check, found in _verdicts(collected, report).items()}"
     ],
     "_verdicts/branches": [
+      "if bodies",
+      "if said_of == ERROR",
       "if run in UNTRUSTED",
       "if run == repo_tests.RUN_INCONSISTENT",
       "if 'failed' in states",
       "if run == repo_tests.CRASHED",
       "if 'skipped' in states",
       "if dropped",
-      "if states == {'passed'}",
+      "if report.valid and states == {'passed'}",
       "if nodes",
-      "if run == 'timed_out'",
+      "if run == 'timed_out' and started",
+      "if started",
       "if check in missing",
       "if missing",
-      "if broken and (not _names(check, broken)) and (run in ('collection_error', repo_tests.FAILED))",
+      "if broken and report.data.get('collection_stopped') is True and (not _names(check, broken)) and (run in ('collection_error', repo_tests.FAILED))",
       "if run == repo_tests.FAILED",
       "if run == 'collection_error'",
       "if said",
       "if run == 'timed_out'",
       "if said",
-      "if run in repo_tests.RAN or run == 'no_tests_collected'"
+      "if run in repo_tests.RAN or run == 'no_tests_collected'",
+      "if not report.valid or (bodies and (not report.loading_known)) or report.collection_errors_for(check) or (verdict in repo_tests.RAN and report.body_result(check) != verdict)"
     ],
     "_verdicts": [
       "found"
@@ -204,11 +193,11 @@
       "{**out, 'status': PASSED_ON_CHECKS, 'reason': 'passed on its stated checks: ' + ', '.join((c['id'] for c in checks))}"
     ],
     "_unquoted/branches": [
-      "if len(name) >= 2 and name[0] == name[-1] == '\"'",
-      "if len(m[1]) == 3"
+      "except ValueError"
     ],
     "_unquoted": [
-      "name"
+      "repo_tests.unquoted_name(raw.rstrip('\\n').removesuffix('\\t'))",
+      "''"
     ],
     "_diff_name": [
       "'' if name == '/dev/null' else name[2:] if name[:2] in ('a/', 'b/') else name"
@@ -218,6 +207,7 @@
       "if name[:2] in ('a/', 'b/')"
     ],
     "_diff_files/branches": [
+      "if rows[-1]",
       "if old > 0 or new > 0",
       "if parts",
       "if not parts or line.startswith('diff --git ') or (line.startswith('--- ') and any((seen.startswith(('--- ', '@@')) for seen in lines)))",
@@ -424,7 +414,7 @@
       "{'checks': ids, 'why': f'G6 could not run them again ({type(exc).__name__})'}",
       "{'checks': ids, 'why': 'the run again is not read: it loaded code from outside the tree, or began on another working tree'}",
       "{'checks': ids, 'why': f\"the run again gave no result ({ran.get('verdict')})\"}",
-      "{'checks': ids, 'verdicts': {check: found['verdict'] for check, found in _verdicts(ids, ran).items()}, 'receipt': ran.get('receipt', ''), 'seconds': ran.get('seconds', 0.0)}"
+      "{'checks': ids, 'verdicts': {check: observation(found) for check, found in _verdicts(ids, ran).items()}, 'receipt': ran.get('receipt', ''), 'seconds': ran.get('seconds', 0.0)}"
     ],
     "_check_shas/branches": [
       "if check in found or path.is_symlink() or (not path.is_file()) or (not path.resolve().is_relative_to(top))",
@@ -445,9 +435,10 @@
     "_loaded_elsewhere": [
       "''",
       "'G6 cannot say which code it loaded'",
-      "'; '.join((f\"{rel} is changed, but it loaded {where['module']} from {where['file']}\" for rel, where in found.items()))"
+      "'; '.join((f\"{shown(rel)} is changed, but it loaded {where['module']} from {where['file']}\" for rel, where in found.items()))"
     ],
     "_not_loaded/branches": [
+      "if report.valid",
       "if verdict['verdict'] != 'passed' and mine"
     ],
     "_not_loaded": [
@@ -461,6 +452,7 @@
       "if elsewhere",
       "if ran.get('verdict') not in _READABLE_AT_BASE",
       "if 'isolation' in ran",
+      "if errors",
       "if found['verdict'] != 'passed'"
     ],
     "_at_base": [
@@ -474,8 +466,7 @@
     "_on_base/branches": [
       "if not failing",
       "if _left(deadline) < 1",
-      "if out.get('test_outcomes')",
-      "if unkept",
+      "if not seen and unkept",
       "if seen",
       "if elsewhere",
       "if elsewhere",
@@ -527,6 +518,42 @@
     ],
     "_reply": [
       "{**envelope_fields(reliability_label='qualified-draft', warning_card=card, evidence=evidence, request_id=uuid.uuid4().hex[:12], degradation_reason=summary[:300]), 'ok': True, 'assessment': assessment, 'merge': {'status': 'requires_separate_approval', 'reason': MERGE_REASON, 'reasons': merge_reasons}, 'gate': gate, 'grounding': _grounding(claim, sources), 'artifact_digest': artifact}"
+    ],
+    "_listing/branches": [
+      "if type(key) is not str or key not in LISTINGS",
+      "if type(value) in (dict, list)"
+    ],
+    "_listing": [
+      "([], False)",
+      "(sorted((report.full(node) for node in nodes)), report.valid)"
+    ],
+    "_failed_ids": [
+      "set(repo_tests.read_report(ran).failed)"
+    ],
+    "phases_of": [
+      "dict(repo_tests.read_report(ran).phases)"
+    ],
+    "_whole": [
+      "repo_tests.read_phases(phases).valid"
+    ],
+    "body_of": [
+      "repo_tests.read_phases(phases).body()"
+    ],
+    "observation": [
+      "ERROR if found.get('observation') is not None else str(found.get('verdict'))"
+    ],
+    "observation/branches": [
+      "if found.get('observation') is not None"
+    ],
+    "at_base_observations/branches": [
+      "if named is not None and (not isinstance(named, dict))"
+    ],
+    "at_base_observations": [
+      "{str(check): observation({'verdict': said, 'observation': (named or {}).get(check)}) for check, said in outcomes.items()}"
+    ],
+    "_observed/branches": [
+      "if not report.valid or (not report.has_phase_data and report.verdict != 'not_run')",
+      "if report.collection_errors_for(check)"
     ]
   },
   "src/g6/harness/patch_report.py": {
@@ -552,10 +579,11 @@
       "text"
     ],
     "_at_base": [
-      "dict((found or {}).get('outcomes') or {})"
+      "at_base_observations((assessment.get('scope') or {}).get('checks_run') or [])"
     ],
     "code/branches": [
       "if literal or confirmed",
+      "if isinstance(value, str)",
       "if ch.isprintable()",
       "if limit is not None and len(text) > limit",
       "if text[0] == '`' or text[-1] == '`'"
@@ -637,7 +665,7 @@
     "_steps/branches": [
       "if search.get('template_instances') or search.get('proposed_checks')",
       "if search.get('model_calls')",
-      "if run.get('check') == 'stated checks at the base commit' and outcomes",
+      "if run.get('check') == 'stated checks at the base commit' and run.get('outcomes')",
       "if run.get('verdict') == 'run_inconsistent'",
       "if run.get('verdict') == 'crashed'",
       "if _proposed(assessment)",
@@ -748,9 +776,9 @@
   "src/g6/mcp/review_reply.py": {
     "review": [
       "review_patch(repo, **kwargs)",
-      "blocked_reply(f'[{STOPPED}] the patch review was stopped before it finished: {exc}')",
-      "blocked_reply(f\"[G6_E_PATCH_REVIEW_INTERRUPTED] the patch review's time allowance ended before it finished, so it has no outcome: {exc}\")",
-      "blocked_reply(f\"[G6_E_PATCH_REVIEW_INTERRUPTED] G6 could not confirm that the review's test processes ended, so nothing from it is used: {exc}\")"
+      "refused_send(blocked_reply(f'[{STOPPED}] the patch review was stopped before it finished: {exc}'), code=STOPPED)",
+      "refused_send(blocked_reply(f\"[{INTERRUPTED}] the patch review's time allowance ended before it finished, so it has no outcome: {exc}\"), code=INTERRUPTED)",
+      "refused_send(blocked_reply(f\"[{INTERRUPTED}] G6 could not confirm that the review's test processes ended, so nothing from it is used: {exc}\"), code=INTERRUPTED)"
     ],
     "review/branches": [
       "except component_process.ExecutionInterrupted",
@@ -791,11 +819,13 @@
       "_shorten(value, items, chars, where, cut)"
     ],
     "finish/branches": [
-      "if not isinstance(reply, dict) or not isinstance(reply.get('assessment'), dict)"
+      "if not isinstance(reply, dict) or not isinstance(reply.get('assessment'), dict)",
+      "if refs is not None",
+      "if saved"
     ],
     "finish": [
       "reply",
-      "compact(reply, job_id, save(reply, job_id))"
+      "cloud.bind_output(compact(reply, job_id, saved), refs)"
     ]
   },
   "src/g6/mcp/behaviour.py": {
@@ -826,9 +856,9 @@
       "except StoreUnreadable"
     ],
     "_metaharness_tools.g6_review_patch": [
-      "blocked_reply(f'{_DENIED} patch_review.review runs repository code; the host must allow it')",
+      "public_instructions(blocked_reply(f'{_DENIED} patch_review.review runs repository code; the host must allow it'))",
       "blocked_reply(str(exc))",
-      "jobs.start(lambda: behaviour.reviewed(review, repo, task, requirements=requirements or [], tests=tests or [], claim=claim, sources=sources, base=base, expected_artifact_digest=expected_artifact_digest, timeout_s=timeout_s, intent=intent, proposed_checks=proposed_checks, template_instances=template_instances, search=search, import_roots=import_roots or []), compact=finish)"
+      "jobs.start(lambda: behaviour.reviewed(review, repo, task, requirements=requirements or [], tests=tests or [], claim=claim, sources=sources, base=base, expected_artifact_digest=expected_artifact_digest, timeout_s=timeout_s, intent=intent, proposed_checks=proposed_checks, template_instances=template_instances, search=search, import_roots=import_roots or []), compact=workflow.finishing(finish, repo, task, intent))"
     ]
   }
 }

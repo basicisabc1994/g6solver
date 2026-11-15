@@ -278,8 +278,13 @@ def test_all_report_return_sites_use_an_exercised_builder():
         for node in ast.walk(functions[name]):
             if isinstance(node, ast.Return) and id(node) not in identity_returns:
                 expression = ast.unparse(node.value)
+                # behaviour_runner.run: the observation exit (e15d9ad), taken only when an observation is asked for;
+                # it returns the scenario runner's own report, read under "g6_observation" by verification_search and
+                # exercised through this module in tests/repair_question5 (observation, error and execution
+                # inventories), not a test-run report these builders make.
                 assert (expression in ("found", "results") or expression.startswith((
-                    "_run(", "_not_run_report(", "{'verdict': verdict,", "{**found,", "{**result("))), (name, expression)
+                    "_run(", "_not_run_report(", "{'verdict': verdict,", "{**found,", "{**result(",
+                    "behaviour_runner.run(repo, observation,"))), (name, expression)
             if isinstance(node, ast.Assign):
                 for target in node.targets:
                     if isinstance(target, ast.Subscript) and ast.unparse(target.value) == "results":

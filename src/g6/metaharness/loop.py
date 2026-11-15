@@ -13,7 +13,7 @@ gate recommends in the loop's own workspace (``g6.metaharness.shadow``), so the 
 The only person in it is the one who enrols a domain: they confirm what judges the work, once, and the loop runs from
 there. Someone has to say what "better" means, and it cannot be the thing being judged.
 
-``python -P -B -X pycache_prefix=<an empty folder> -m g6.metaharness.loop run <folder>`` runs ticks on their own
+``python -B -X pycache_prefix=<an empty folder> -P -m g6.metaharness.loop run <folder>`` runs ticks on their own
 (``g6.metaharness.runner``).
 
 Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been
