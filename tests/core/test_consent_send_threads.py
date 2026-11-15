@@ -10,11 +10,13 @@ import contextvars
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 
 import pytest
 
 from g6.core import cloud_consent as c
+from g6.core import model_calls
 from g6.core.llm import LLMError
 
 P, OTHER = 'cloud:fixture', 'cloud:fixture-other'
@@ -245,6 +247,74 @@ def test_an_asyncio_task_made_before_a_send_on_the_same_loop_is_a_send_of_its_ow
     _on_a_loop(main)
     assert seen[:3] == [False, 'sent', 'refused'] and seen[3] < SETTLE
     assert len(c.disclosures()) == 2
+
+
+def test_where_an_observer_carries_the_context_only_the_sends_own_copies_are_inside_it():
+    """``model_calls`` carries the context into every thread started where an observer is open. A thread started so,
+    for work of its own, is not inside the send (it waits, and is disclosed); a copy the send's step makes itself, and a
+    pool task it submits, are. Inside such a thread the same holds for a send it makes there."""
+    seen, ended = {}, threading.Event()
+
+    def nested():                                   # on a thread carried into, not inside the send around it
+        seen['carried thread'] = c.admitted(P)
+        assert ended.wait(5)                        # a send of its own waits for the send around it: made after it
+
+        def own_step():
+            explicit = contextvars.copy_context()  # the nested send's own copy, started as a thread
+            thread, results = started(lambda: c.admitted(OTHER), context=explicit)
+            thread.join(5)
+            plain = threading.Thread(target=lambda: results.append(c.admitted(OTHER)))
+            plain.start()                           # carried again: work of its own
+            plain.join(5)
+            return results
+
+        seen['inside the nested send'] = send(OTHER, B, body=own_step)
+
+    def body():
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            seen['pool task'] = pool.submit(c.admitted, P).result(5)
+        finally:
+            pool.shutdown(wait=True)
+        explicit, plain = contextvars.copy_context(), threading.Thread(target=nested)
+        thread, results = started(lambda: c.admitted(P), context=explicit)
+        thread.join(5)
+        seen['explicit copy'] = results
+        seen['plain'] = plain
+        plain.start()
+
+    with model_calls.counting(before_call=lambda: None):
+        send(P, A, body=body)
+    ended.set()
+    seen.pop('plain').join(10)
+    assert seen == {'pool task': True, 'explicit copy': [True], 'carried thread': False,
+                    'inside the nested send': [True, False]}
+    assert len(c.disclosures()) == 2, 'the send made on the carried thread is a send of its own'
+
+
+def test_a_worker_started_inside_a_watched_send_waits_for_it_and_its_revoke_too():
+    out, seen = threading.Event(), {}
+
+    def worker():
+        seen['admitted'] = c.admitted(P)
+        began = time.monotonic()
+        seen['send'] = outcome(lambda: send(P, A))
+        seen['revoke'] = c.revoke(A.source_id, P)['status']
+        seen['waited'] = time.monotonic() - began >= SETTLE
+
+    def body():
+        thread = threading.Thread(target=worker)
+        seen['thread'] = thread
+        thread.start()
+        thread.join(SETTLE)
+        out.set()
+        assert thread.is_alive(), 'a thread started for work of its own went ahead of the send'
+
+    with model_calls.counting(before_call=lambda: None):
+        send(P, A, body=body)
+    seen.pop('thread').join(5)
+    assert seen == {'admitted': False, 'send': 'sent', 'revoke': 'revoked', 'waited': True}
+    assert kinds() == ['disclosure', 'disclosure', 'revoke']
 
 
 def test_threads_inside_one_send_read_decide_and_append_one_at_a_time(monkeypatch):

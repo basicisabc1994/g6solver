@@ -24,6 +24,7 @@ from pydantic_core import to_jsonable_python
 
 from g6.core.ledger import ChainLedger, digest
 from g6.core.llm import LLMError
+from g6.core.model_calls import carried_into_thread
 from g6.core.storage import contained, g6_home, plain_file
 
 REQUIRED = 'G6_E_CLOUD_CONSENT_REQUIRED'
@@ -45,8 +46,9 @@ _REFUSAL_TELL: contextvars.ContextVar[tuple] = contextvars.ContextVar('g6_consen
 _PROMPT_STATE: contextvars.ContextVar[tuple] = contextvars.ContextVar('g6_prompt_state', default=())
 #: The admitted send this context is inside of (``_Hold``). A host session's launch step is checked again inside its
 #: session's admission, on the send's own thread or on a thread the send's step started with a copy of its context: it
-#: is decided under the send's hold and never waits on the lock that send holds. A fresh thread, a context copied
-#: anywhere else, or one still alive after the send ended takes the lock itself.
+#: is decided under the send's hold and never waits on the lock that send holds. A fresh thread, a thread started for
+#: work of its own (one ``model_calls`` carried the context into, ``_Hold.here``), a context copied anywhere else, or
+#: one still alive after the send ended takes the lock itself.
 _HELD: contextvars.ContextVar[_Hold | None] = contextvars.ContextVar('g6_consent_held', default=None)
 
 
@@ -68,10 +70,18 @@ _CURRENT: _Lock | None = None
 
 @dataclass(eq=False)
 class _Hold:
-    """An admitted send: its lock, its terms (provider, sources, disclosed) and whether it is still out."""
+    """An admitted send: its lock, its terms (provider, sources, disclosed), whether it is still out, and the mark of
+    the latest thread start its context was carried into (``model_calls.carried_into_thread``) when it was admitted."""
     lock: _Lock
     send: tuple[str, frozenset, bool]
+    carried: object | None = None
     live: bool = True
+
+    def here(self) -> bool:
+        """Whether this context is inside the send: copied from inside it by the send's own step (an explicit copy, a
+        pool task, an asyncio task), never one carried into a thread started for work of its own since it was
+        admitted. Read under ``_TAKEN`` for an answer that holds."""
+        return self.live and self.carried is carried_into_thread()
 
 
 @contextmanager
@@ -390,7 +400,7 @@ def admitted(provider: str) -> bool:
     """Whether this context is inside an admitted send to ``provider`` that is still out: a host session's launch step
     sends only there."""
     hold = _HELD.get()
-    return hold is not None and hold.live and hold.send[0] == provider
+    return hold is not None and hold.here() and hold.send[0] == provider
 
 
 def ledger_path() -> Path:
@@ -496,7 +506,7 @@ def _joined() -> _Hold | None:
     if hold is None:
         return None
     with _TAKEN:
-        if not hold.live:
+        if not hold.here():
             return None
         _use(hold.lock)
     return hold
@@ -723,7 +733,7 @@ def admission(provider: str, sources: Sequence[Source], payload_sha256: str, *, 
                     'sources': [{'source': s.source_id, 'item_id': s.item_id, 'content_sha256': s.content_sha256,
                                  'basis': 'client-supplied' if s.source_id in supplied and
                                      (s.source_id, provider) not in decisions else 'grant'} for s in refs]})
-            hold = _Hold(lock, (provider, frozenset(refs), disclose or repeated))
+            hold = _Hold(lock, (provider, frozenset(refs), disclose or repeated), carried_into_thread())
     except BaseException:
         _POLICY.reset(policy)
         _leave(lock)

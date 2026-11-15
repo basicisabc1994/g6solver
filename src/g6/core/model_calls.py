@@ -107,6 +107,15 @@ _noting: contextvars.ContextVar[Note | None] = contextvars.ContextVar("g6_model_
 #: (``_carry_into_threads``).
 _thread_start: Callable[[threading.Thread], None] | None = None
 _pool_submit: Callable[..., Any] | None = None
+#: A mark of its own, set in the copy of the starting context a started thread is carried into (``start`` below); a
+#: pool task's copy and a context a caller copies itself keep the mark of the context they were copied from.
+_carried: contextvars.ContextVar[object | None] = contextvars.ContextVar("g6_carried_into_thread", default=None)
+
+
+def carried_into_thread() -> object | None:
+    """The mark of the latest carry of this context into a started thread (``None``: never carried). What was kept in
+    the context before that start, unchanged since, was kept by work the thread was not started as part of."""
+    return _carried.get()
 
 
 def _observed() -> bool:
@@ -141,6 +150,7 @@ def _carry_into_threads() -> None:
             if not _observed():
                 return started(thread)
             context, run, own = contextvars.copy_context(), thread.run, "run" in vars(thread)
+            context.run(_carried.set, object())
 
             def run_in_context() -> None:
                 try:
@@ -271,4 +281,4 @@ def counting(*, before_call: Callable[[], None] | None = None) -> Iterator[Calla
             note.frame = None
 
 
-__all__ = ["Note", "counting", "model_calls", "note_child_model_calls", "note_model_call", "noting", "outcome_of"]
+__all__ = ["Note", "carried_into_thread", "counting", "model_calls", "note_child_model_calls", "note_model_call", "noting", "outcome_of"]
