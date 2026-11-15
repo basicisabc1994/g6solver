@@ -368,6 +368,39 @@ def test_the_verdict_believes_only_an_exit_code_its_tallies_agree_with(code, cou
     assert rt._judge(code, counts, output, moved) == verdict
 
 
+#: What a run's output holds when its process ends with exit 3. Windows ends a process that calls abort(), or that a
+#: signal ends unhandled, with exit 3: Python's fault handler, which pytest turns on, writes its dump first, and pytest
+#: writes nothing of its own. pytest's own exit 3 is an internal error, which it always reports in INTERNALERROR> lines.
+ABORTED = ('Fatal Python error: Aborted\n\nCurrent thread 0x00008210 (most recent call first):\n'
+           '  File "C:\\r\\tests\\test_abort.py", line 5 in test_dies\n')
+INTERNAL = ("INTERNALERROR> Traceback (most recent call last):\n"
+            'INTERNALERROR>   File "/env/lib/python3.12/site-packages/_pytest/main.py", line 285, in wrap_session\n'
+            "INTERNALERROR> RuntimeError: a plugin's hook raised\n")
+
+
+@pytest.mark.parametrize("platform", [("nt", "win32"), ("posix", "linux"), ("posix", "darwin")],
+                         ids=["windows", "linux", "macos"])
+@pytest.mark.parametrize(("counts", "output", "verdict"), [
+    # no sign that pytest ended its session: the process was ended, whatever the platform
+    (NO_TALLY, ABORTED, "crashed"),
+    (NO_TALLY, "", "crashed"),
+    ({"passed": 0, "failures": 1, "errors": 0, "skipped": 0, "expected": 3, "finished": 1, "failed_ids": ["t"]},
+     ABORTED, "crashed"),
+    ({**OK, "expected": 2, "finished": 2}, ABORTED, "run_inconsistent"),   # ended after every test passed, as 134
+    # pytest's own internal error, as it reads today
+    (NO_TALLY, INTERNAL, "collection_error"),
+    (NO_TALLY, ABORTED + INTERNAL, "collection_error"),
+    ({"passed": 0, "failures": 0, "errors": 1, "skipped": 0, "collection": 1}, INTERNAL, "collection_error"),
+    ({"passed": 0, "failures": 1, "errors": 0, "skipped": 0}, INTERNAL, "failed"),
+], ids=["dump", "nothing", "dump-after-a-failure", "dump-after-every-pass", "internal-error", "dump-and-internal-error",
+        "internal-error-unplaced", "internal-error-after-a-failure"])
+def test_exit_3_is_pytests_own_only_where_it_reported_an_internal_error(monkeypatch, platform, counts, output, verdict):
+    monkeypatch.setattr(os, "name", platform[0])
+    monkeypatch.setattr(sys, "platform", platform[1])
+    found = rt._judge(3, counts, output, [])
+    assert found == verdict and found != rt.PASSED
+
+
 #: A process that ends with an error after pytest's session passed (as a GUI test suite's X connection can at exit).
 EXITS_AFTER = "import atexit\nimport os\n\natexit.register(os._exit, 1)\n"
 
@@ -411,6 +444,36 @@ def test_a_test_that_kills_the_interpreter_is_a_crash_and_never_a_pass(repo):
     found = rt.run(repo, ["tests/test_crash.py"])
     assert found["verdict"] == "crashed", (found["verdict"], found["output"][-500:])
     assert found["passed"] == 0 and "test_dies" in found["said"]
+
+
+def test_a_test_that_aborts_is_a_crash_where_the_process_ends_with_pytests_own_code(repo, monkeypatch):
+    """A test that calls os.abort(): under pytest's fault handler, Windows ends the process with exit 3, pytest's own
+    internal-error code, and pytest reports no internal error. The real runner and a real child; only the OS boundary is
+    doubled (this machine's AppContainer cannot read the worktree), and Windows' error dialogs are off for the child."""
+    from g6.core import confine
+
+    _write(repo, "calc.py", FIXED)
+    _write(repo, "tests/test_abort.py", "import os\n\n\ndef test_dies():\n    os.abort()\n")
+
+    def child(cmd, *, cwd, env, timeout_s, log, **kwargs):
+        mode = None
+        if os.name == "nt":
+            import ctypes
+            mode = ctypes.windll.kernel32.SetErrorMode(0x8003)   # inherited: no crash dialog to wait on
+        try:
+            with open(log, "wb") as sink:
+                return subprocess.run(cmd, cwd=cwd, env=env, stdout=sink, stderr=subprocess.STDOUT,
+                                      timeout=timeout_s).returncode
+        finally:
+            if mode is not None:
+                ctypes.windll.kernel32.SetErrorMode(mode)
+
+    monkeypatch.setattr(confine, "interpreter_paths", lambda python: ())
+    monkeypatch.setattr(confine, "plan", lambda spec, python=None: confine.Plan("test-boundary", "", spec))
+    monkeypatch.setattr(rt, "_bounded", child)
+    found = rt.run(repo, ["tests/test_abort.py"])
+    assert found["verdict"] == "crashed", (found["verdict"], found["output"][-500:])
+    assert found["passed"] == 0 and "INTERNALERROR>" not in found["output"]
 
 
 def test_the_repositorys_own_virtual_environment_runs_its_tests(tmp_path):

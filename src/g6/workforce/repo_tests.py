@@ -2595,6 +2595,10 @@ def _counts(report: Path, repo: Path, roots: tuple[Path, ...]) -> dict[str, int]
     return total
 
 
+#: pytest's report of its own internal error (``Config.notify_exception``): each line of the traceback, at a line's start.
+_INTERNAL_ERROR = re.compile(r"^INTERNALERROR> ", re.MULTILINE)
+
+
 def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, moved: list[str]) -> str:
     """One verdict for one run. Files that changed under it decide first (nothing it reported can be trusted). Then
     the archive coder's verdict rule, restated here (the library has no coder): the time bound, pytest's exit code, and
@@ -2620,9 +2624,15 @@ def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, mo
       as a failure the base has too (the failure itself survives, per check, in ``patch_review._verdicts``). A test can choose exit
       139, so ``crashed`` is no proof of a crash, and it
       needs no more: all that test gains is insufficient evidence in place of an integrity alarm, and an exit outside the signals'
-      range gains it nothing."""
-    # by a signal: the process's own negative code, a shell's 128 + n, or a Windows exception's status
-    killed = exit_code is not None and (exit_code < 0 or 128 < exit_code <= 192 or exit_code >= 0xC0000000)
+      range gains it nothing;
+    * exit 3 is pytest's own (an internal error) only where pytest reported one, in its ``INTERNALERROR>`` lines, which
+      it always writes. Without them it is a process ended from outside pytest's session: Windows ends one that calls
+      abort(), or that a signal ends unhandled, with exit 3. That is read from the run's output, never the platform."""
+    # by a signal: the process's own negative code, a shell's 128 + n, a Windows exception's status, or Windows' exit 3
+    # with no internal error pytest reported
+    pytest_exit = exit_code in (2, 4) or (exit_code == 3 and _INTERNAL_ERROR.search(output) is not None)
+    killed = exit_code is not None and (exit_code < 0 or 128 < exit_code <= 192 or exit_code >= 0xC0000000
+                                        or (exit_code == 3 and not pytest_exit))
     if moved:
         return CHANGED
     if exit_code is None:
@@ -2632,7 +2642,7 @@ def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, mo
     if exit_code == 5:
         return "no_tests_collected"
     if counts is None:
-        return CRASHED if killed else "collection_error" if exit_code in (2, 3, 4) else "inconsistent_report"
+        return CRASHED if killed else "collection_error" if pytest_exit else "inconsistent_report"
     bad, outside = counts["failures"] + counts["errors"], counts.get("outside", 0)
     if bad and outside == bad:
         return "collection_error"
@@ -2644,7 +2654,7 @@ def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, mo
         return PASSED
     if exit_code == 1 and bad:
         return FAILED
-    if exit_code in (2, 3, 4):
+    if pytest_exit:
         # Errors whose culprit is not in the tally are taken as collection errors G6 cannot place (exit 2-4's usual).
         unplaced = counts.get("collection", counts["errors"]) - counts.get("placed", 0)
         return FAILED if bad - outside - unplaced > 0 else "collection_error"
