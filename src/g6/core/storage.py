@@ -57,17 +57,28 @@ def confined_path(raw: str | os.PathLike[str], roots: tuple[Path, ...]) -> Path:
 def state_path(*parts: str) -> Path:
     """A path under the state root. Relative parts may not escape it."""
     root = g6_home().resolve()
-    p = (_unlinked_on_windows(root, parts) if os.name == "nt" else None) or root.joinpath(*parts).resolve()
+    p = root.joinpath(*parts).resolve()
+    if p != root and root not in p.parents and os.name == "nt":
+        p = _inside_after_a_race(root, p, parts) or p
     if p != root and root not in p.parents:
         raise ValueError(f"state path escapes G6_HOME: {'/'.join(parts)}")
     return p
 
 
-def _unlinked_on_windows(root: Path, parts: tuple[str, ...]) -> Path | None:
-    """``root`` joined with ``parts``, ``..`` taken on the words as Windows resolves it, when that is inside ``root`` and
-    no existing part below ``root`` is a link or other reparse point: then resolving could only change the spelling.
-    None otherwise, and the whole path is resolved. Resolving a whole path while another thread deletes or makes a file
-    or folder on it can come back as a ``\\\\?\\`` or ``$Extend\\$Deleted`` path outside ``root``; lstat by name cannot."""
+def _inside_after_a_race(root: Path, resolved: Path, parts: tuple[str, ...]) -> Path | None:
+    """Windows, for ``parts`` it resolved outside ``root``: where they are when that is inside ``root``, else None.
+
+    Resolving a path while another thread deletes or makes a file or folder on it can keep the ``\\\\?\\`` prefix (its
+    check of the plain spelling failed mid-change) or name a ``$Extend\\$Deleted`` file. A local ``\\\\?\\X:\\`` path is
+    the same path without the prefix, and is the answer when that is inside. Otherwise ``root`` joined with ``parts``,
+    ``..`` taken on the words as Windows takes it, is the answer when it is inside and lstat finds no link or other
+    reparse point on any existing part below ``root``: only a link could have taken it out. That answer is the
+    caller's spelling, not the resolved one."""
+    text = str(resolved)
+    if text.startswith("\\\\?\\") and not text.upper().startswith("\\\\?\\UNC\\"):
+        plain = Path(text[4:])
+        if plain == root or root in plain.parents:
+            return plain
     path = Path(os.path.normpath(root.joinpath(*parts)))
     if path != root and root not in path.parents:
         return None
