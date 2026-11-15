@@ -4,6 +4,10 @@ src/g6/** text=auto eol=lf
 # Vendored third-party files keep their upstream bytes: git never rewrites their line endings.
 src/g6/skills/vendor/** -text
 
+# Validation protocols bind the bytes of their own inputs (validation/freeze.py's tree_digest, e.g. the routing fixtures
+# every session reads): every file under validation/ checks out as the index holds it.
+validation/** text=auto eol=lf
+
 # Measurement protocols pin each label file by the sha256 of its bytes (validation/context_engine/frozen.py).
 tests/knowledge/labels/** text eol=lf
 
