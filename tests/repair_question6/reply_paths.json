@@ -258,7 +258,7 @@
     ],
     "review_patch": [
       "blocked_reply('[G6_E_PATCH_STALE] working tree differs from the supplied artifact digest')",
-      "_assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, deadline=started + timeout_s, started=started, listed=listed, assumed=assumed, unmapped=unmapped, proposed=proposed, placed=placed, instances=instances, config=config, roots=roots, llm=llm, confirmed=confirmed if confirmed is not None and confirmed.expectations else None)",
+      "_assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, deadline=deadline, limit=limit, started=started, listed=listed, assumed=assumed, unmapped=unmapped, proposed=proposed, placed=placed, instances=instances, config=config, roots=roots, llm=llm, confirmed=confirmed if confirmed is not None and confirmed.expectations else None)",
       "refused",
       "blocked_reply(f'[{CODE}] {exc}')"
     ],
@@ -365,6 +365,9 @@
       "if found.get('tree_changed')",
       "if found['result'] == confirmed_checks.FAILED",
       "if found['result'] != confirmed_checks.PASSED or found.get('scenario_unavailable')",
+      "if search is not None",
+      "if formal is not None",
+      "if final is None",
       "if repo_tests._moved(before, final)",
       "if rel not in repo_tests.submodules_not_hashed(before)",
       "if ran.get('source_before') and ran['source_before'] != artifact",
@@ -374,8 +377,6 @@
       "if finding.get('code') == 'shortcut_in_answer' and (not in_diff)",
       "if finding.get('code') == 'marker_on_new_test'",
       "if finding.get('code') in INTEGRITY_FINDINGS",
-      "if search is not None",
-      "if formal is not None",
       "if not stated",
       "if not req['checks']",
       "if verdicts[check]['verdict'] not in DEFECTS and verdicts[check]['verdict'] != 'passed'",
@@ -398,6 +399,12 @@
       "except LETS_THROUGH",
       "raise *",
       "except (repo_tests.RepoRefused, OSError)"
+    ],
+    "_closing.read": [
+      "(written, _self_checked(evaluated, change, Path(root), runs), repo_tests.snapshot(root))"
+    ],
+    "_closing": [
+      "repo_tests.within(until - time.monotonic(), read) or ({}, [], None)"
     ],
     "_run_again/branches": [
       "if not ids",
