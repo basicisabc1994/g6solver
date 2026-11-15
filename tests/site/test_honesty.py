@@ -856,7 +856,15 @@ def public_documents(seeds) -> list[Path]:
     return sorted(seen)
 
 
-MARKDOWN = public_documents(MARKDOWN)
+#: The using-g6 skill's two test fixtures: transcripts it is tested on, not documents a reader is pointed to.
+_SKILL_FIXTURES = frozenset({'docs/skills/using-g6/tests/context.md', 'docs/skills/using-g6/tests/scenarios.md'})
+#: Every document under docs/ and AGENTS.md is public on GitHub whether or not a page links to it, so each is a seed
+#: too; only the scope exclusions and the skill's fixtures stay out.
+MARKDOWN = public_documents(sorted({
+    *MARKDOWN, OSS / "AGENTS.md",
+    *(path for path in (OSS / "docs").rglob("*.md")
+      if not _excluded_document(path) and path.relative_to(OSS).as_posix() not in _SKILL_FIXTURES),
+}))
 
 
 def claims(copy: str) -> list[str]:

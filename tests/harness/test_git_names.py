@@ -902,6 +902,26 @@ ALLOWED = {
                                         "Change.sources shares; here it is the run's (workflow_source(project),), the "
                                         "project's consent source, and the reader is imported only for checked_repo, "
                                         "a folder, so no name git listed reaches the event"),
+    # 54ddcb9 (consent, nesting): the walk follows ``parent.sources`` by its attribute's name, which Change.sources shares;
+    # a Capture's sources are consent Source records (an opaque scope id and a hashed item id, which Source's own check
+    # refuses otherwise), so no name git listed reaches it
+    "g6.core.cloud_consent: Capture(sources=list(_observed_sources(parent)), outputs=dict(parent.outputs) if parent is "
+    "not None else {}, parent=parent)": "collect_sources: a nested capture's consent Source records, data",
+    # e15d9ad (behaviour execution): the execution-artifact.v1 record maps each listed file's name, as git listed it, to
+    # its bytes' digest; it is JSON (which writes a GitName as the name it is), hashed and compared, never shown
+    "g6.harness.verification_search: ExecutionSnapshot(sparse, _copy_manifest(change, deadline=deadline))":
+        "bind_execution: the record of each file's byte digest by its listed name, a persisted record; " + _NEVER_SHOWN,
+    # 5daf0a8 (one report schema): read_report freezes the report's own fields into read-only views and its reading; the
+    # values are what the report held, and whatever of them is shown is written where it is shown
+    "g6.workforce.repo_tests: MappingProxyType(data)": "read_report: a read-only view of the report's fields, data",
+    "g6.workforce.repo_tests: MappingProxyType({key: freeze(member) for key, member in item.items()})":
+        "read_report's freeze: a read-only view of one field's mapping, data",
+    "g6.workforce.repo_tests: RunReport(valid, MappingProxyType({full(node): record for node, record in phases.items()}), "
+    "frozenset((full(node) for node in named | collection_failures)), frozenset((full(node) for node in "
+    "listings['test_outcomes'])), frozenset((full(node) for node in failed | setup)), frozenset((full(node) for node in "
+    "omitted)), frozenset((full(node) for node in collection_failures)), root, text('verdict', 'not_run'), text('said'), "
+    "text('output'), MappingProxyType(data), outcome, loading_known, withheld)":
+        "read_report: the reading, a frozen record of the report's node ids and fields, data",
 }
 
 

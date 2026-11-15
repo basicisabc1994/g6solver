@@ -111,6 +111,10 @@
       "_refused_access": [
         "os_errors"
       ],
+      "_run_check": [
+        "source_before",
+        "verdict"
+      ],
       "_uncollected": [
         "failure_messages",
         "output"
@@ -268,6 +272,7 @@
         "harness/verification_search.py:measure_adequacy",
         "harness/verification_search.py:reading",
         "harness/verification_search.py:run",
+        "harness/verification_search.py:_run_check",
         "harness/completion_loop.py:_read",
         "workforce/receipt_store.py:_body",
         "bundles/agent_change.py:_as_run",
@@ -550,6 +555,7 @@
         "harness/patch_review.py:_assess",
         "harness/patch_review.py:_run_again",
         "harness/verification_search.py:reading",
+        "harness/verification_search.py:_run_check",
         "algorithm_design/autonomous.py:_observed"
       ],
       "type": "<class 'str'>",

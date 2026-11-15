@@ -369,8 +369,13 @@ CLASSIFIED = {
     ("harness/verification_search.py", "_messages"): "words: how a check failed",
     ("harness/verification_search.py", "_refused_access"): "makes a failure an error, never a result",
     ("harness/verification_search.py", "_uncollected"): "whether the check's own file failed to collect",
+    # the person's confirmed expectation: its one example.v1 check, read by verification search's reader and guard
+    # (the row's own reading); normal_reading only makes a reading that is not a result an error
+    ("harness/confirmed_checks.py", "read"): "a proposed check's run",
     ("harness/completion_loop.py", "_read"): "a probe set's run",
     ("harness/completion_loop.py", "_outcome"): "one case's phases: the reader's own rule, a fixture error unknown",
+    ("mcp/review_loop.py", "_step"): "words: completion_loop.read_report, the loop's report.md against its digest, "
+                                     "another function of that name; not a run report",
     # the whole-repository contexts
     ("bundles/agent_change.py", "_as_run"): "the bundle's mutant run",
     ("bundles/agent_change.py", "run"): "the bundle's first run",

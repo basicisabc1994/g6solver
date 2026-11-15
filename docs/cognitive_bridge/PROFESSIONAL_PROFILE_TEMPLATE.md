@@ -13,7 +13,7 @@
 | Claim decomposition | Each material subclaim; expected evidence type, confidence limitations |
 | Formalisation ownership | Named reviewer who checks that natural language was faithfully translated |
 | Evidence provenance | Original source artifacts, versions, dates, ownership and licensing |
-| Independent acceptance test | Verifier ID, rationale, executable method, independent test custody, positive and planted-negative cases |
+| Independent acceptance test | `verifier_id`, rationale, executable method, independent test custody, positive and planted-negative cases |
 | Uncertainty disposition | Unknowns, conflicting evidence, untested boundary cases, explicit escalation threshold |
 | Professional review | Competence, authenticated identity, separate scope-bound signature, when risk requires it |
 | Reproduction | Environment/inputs/code versions/artifact checksums and commands to rerun |
@@ -29,6 +29,6 @@
 
 ## Certificate admission checklist
 
-A candidate dossier can be assembled only when each declared acceptance criterion is linked to a verifiable artifact and an evaluator-owned replay route. An externally certified result additionally requires authentication of the issuer, verification of current source authority, independent replay under the real G6 promotion law, appropriate professional review and operator release authorisation.
+A candidate dossier can be assembled only when each declared acceptance criterion is linked to a checkable artifact and an evaluator-owned replay route. An externally certified result additionally requires authentication of the issuer, a check of current source authority, independent replay under the real G6 promotion law, appropriate professional review and operator release authorisation.
 
 `qualified-draft` means the evidence package is useful for review within its scope. It does **not** mean the work is finished to a professional standard unless that professional's independently authenticated acceptance procedure explicitly says so. `blocked-escalated` means one or more required gates could not establish the obligation.

@@ -66,6 +66,7 @@ def check(repo: str | Path, *, python: str | None = None, run_tests: Callable[..
           timeout_s: int = TEST_TIMEOUT_S) -> dict[str, Any]:
     import g6
     from g6.coding_agent_gate import scan_diff
+    from g6.core.git_name import shown
     from g6.safety_engine import detect_test_weakening
     from g6.workforce import repo_tests
 
@@ -96,7 +97,7 @@ def check(repo: str | Path, *, python: str | None = None, run_tests: Callable[..
             broken.append({"file": rel, "line": getattr(exc, "lineno", None), "message": str(getattr(exc, "msg", exc))})
     replies["does_not_parse"] = broken
     for item in broken:
-        findings.append({"check": "parse", "said": f"{item['file']} does not parse (line {item['line']}: "
+        findings.append({"check": "parse", "said": f"{shown(item['file'])} does not parse (line {item['line']}: "
                                                    f"{item['message']})"})
     derived, more = repo_tests.derive_tests(change)
     replies["workforce.repo_tests.derive_tests"] = {"tests": derived, "more": more}
@@ -111,7 +112,7 @@ def check(repo: str | Path, *, python: str | None = None, run_tests: Callable[..
         if result.get("verdict") == repo_tests.FAILED:
             tail = str(result.get("output") or "")[-4000:]
             findings.append({"check": "visible_tests", "said": f"the repository's own tests that the change touches "
-                                                               f"fail ({', '.join(derived)}): "
+                                                               f"fail ({', '.join(shown(test) for test in derived)}): "
                                                                f"{result.get('said', '')}", "output_tail": tail})
     return {"flag": bool(findings), "findings": findings, "tests": list(derived), "replies": replies,
             "g6_version": getattr(g6, "__version__", "")}

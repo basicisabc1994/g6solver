@@ -83,6 +83,9 @@ PLACES: dict[str, tuple[str, str]] = {
     "graph_reasoning/checks.py": ("other meaning", DERIVATION),
     "ml/adapt_bayesian/block.py": ("other meaning", DISTRIBUTION),
     "ml/adapt_bayesian/certificate/adapter.py": ("other meaning", DISTRIBUTION),
+    "cognitive_bridge/mixed_methods.py": ("other meaning", REFUTATION_TEST),
+    "_allowance/statusline.py": ("other meaning", "a status-line install's note on whether Claude Code support is "
+                                                  "established (allowance.CLAUDE_SUPPORT), not evidence for a requirement"),
     "workforce/readiness.py": ("open", "the cognitive state's per-check observations carry a support and refutation "
                                        "pair of their own; routing them through the issuer changes what that state's "
                                        "fields mean (a surface field), so it is listed for the owner, not changed"),

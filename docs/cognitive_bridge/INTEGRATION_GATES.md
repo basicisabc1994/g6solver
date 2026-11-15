@@ -8,14 +8,14 @@ This is a **release-blocker checklist**, not a claim of passed certification. Al
 - [ ] Resolve authoritative source bytes, edition, licence and canonical reference; pin and revalidate standards over time.
 - [ ] Bind every material natural-language requirement to typed claims, explicit assumptions and a reviewer-approved model.
 - [ ] Test on adversarial ambiguity where a valid SMT result about the wrong model must **not** certify the original request.
-- [ ] Supply qualified independent domain reviewers and verify their credentials for R2/R3 cases.
+- [ ] Supply qualified independent domain reviewers and check their credentials for R2/R3 cases.
 
 ## Gate B — True evaluator independence
 
 - [ ] Build an evaluator process/container not writable by the candidate, including test source, reference answers, secrets, standard profile, controls and freeze manifests.
 - [ ] Use external signing/key custody and authenticated immutable artifact storage, not unkeyed JSON digests as authenticity.
 - [ ] Ensure candidate execution cannot inspect hidden holdouts, examiner keys, negative controls or mutate their source.
-- [ ] Register exact trusted executable verification oracles; replay them against the exact final candidate bytes.
+- [ ] Register exact trusted executable checking oracles; replay them against the exact final candidate bytes.
 - [ ] Red-team candidate attempts to pass forged `completion_state=verified`, fabricated reviewer IDs, dummy tests and false evidence refs.
 
 ## Gate C — Reliability envelope and certificate issuance
@@ -23,7 +23,7 @@ This is a **release-blocker checklist**, not a claim of passed certification. Al
 - [ ] Connect candidate dossiers to `g6.core.component_certificate` and G6's independent reviewer/certificate process, respecting its signed scoped source requirements.
 - [ ] Add a **genuinely trusted** G6 door rechecker for this new scoped artifact type (or keep all outputs at qualified draft). At the inspected repository state, G6's door recheckers only include the integrity component; a new package declaration alone cannot promote results.
 - [ ] Make the door recompute the independent test against the pinned artifact and caller-held criterion, and detect a planted wrong answer.
-- [ ] Verify source authenticity, duplicate evidence dependence, reviewer identity, scope and timestamp at the authority boundary.
+- [ ] Check source authenticity, duplicate evidence dependence, reviewer identity, scope and timestamp at the authority boundary.
 - [ ] Confirm weakly evidenced/failed/advisory/missing cases cannot reach `verified` via MCP, CLI, Python, bundles, or the new component.
 
 ## Gate D — Meta-selector scientific validity
@@ -53,6 +53,6 @@ This is a **release-blocker checklist**, not a claim of passed certification. Al
 - [ ] Run the full repository test suite on Python 3.12 and 3.13; test optional G6 ML/DoWhy/Z3/OR-Tools backends if enabled.
 - [ ] Have an external security/code-quality reviewer challenge the certificate, provenance and tampering claims.
 
-## Current local verification record
+## Current local check record
 
 Unit tests in G6's suite and a worked two-variable Boolean example are supplied. These check the **reference implementation's internal logic and refusal paths**, with each executed step going through G6's checked door. They do not satisfy gates A–F for a production product; no completed professional assurance certificate is being issued by this bundle.

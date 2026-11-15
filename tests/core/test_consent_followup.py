@@ -1878,16 +1878,17 @@ def test_a_share_stands_on_its_own_and_both_launchers_hand_it_on(tmp_path, monke
 
 
 @pytest.mark.skipif(os.name != "nt", reason="drives and shares are Windows paths")
-def test_a_pinned_interpreter_is_named_by_a_path_that_stands_on_its_own():
+def test_a_pinned_interpreter_is_named_by_a_path_that_stands_on_its_own(monkeypatch):
     """The interpreter a folder pins is a path a G6 child starts from, so the one rule decides it too: this Python by its
     full path or its device path is taken; by its root with no drive, or by its drive and a path relative to the folder
-    this process stands in on that drive, it is refused, though each names a file from here."""
+    this process stands in on that drive, it is refused, though each names a file from here. The test stands in this
+    Python's folder, so that both refused forms name it: a checkout on another drive than the interpreter (CI's Windows
+    runner checks out on D: and keeps Python on C:) reads the rootless form against that other drive."""
     python = sys.executable
     drive = Path(python).drive
+    monkeypatch.chdir(Path(python).parent)
     taken = [python, "\\\\?\\" + python]
-    refused = [python[len(drive):]]
-    if Path.cwd().drive == drive:
-        refused.append(drive + os.path.relpath(python))
+    refused = [python[len(drive):], drive + os.path.relpath(python)]
     assert all(Path(each).is_file() for each in [*taken, *refused])
     assert [improve._pinned_python({"python": each}) for each in taken] == taken
     for each in refused:

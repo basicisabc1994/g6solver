@@ -52,7 +52,7 @@ a=(\rho, e, o, p, c),
 
 where \(\rho\) is the representation (e.g. causal DAG, SMT, annotated graph, tabular data), \(e\) is the approved G6 component, \(o\) its allowed operation, \(p\) is a well-typed declarative payload, and \(c\) is an estimated resource cost. No `eval`, arbitrary tool path, code import or LLM-selected instruction ever becomes an executable operation.
 
-A method's output is an **artifact** with a content digest \(h_A\), declared provenance, assumptions, and a bounded claim about what its evidence can establish. A criterion \(s_i\in S\) names a verifier \(v_i\) and expected evidence type. The evaluator-owned verifier runs against the original bytes and against planted wrong examples.
+A method's output is an **artifact** with a content digest \(h_A\), declared provenance, assumptions, and a bounded claim about what its evidence can establish. A criterion \(s_i\in S\) names a `verifier` \(v_i\) and expected evidence type. The evaluator-owned `verifier` runs against the original bytes and against planted wrong examples.
 
 An evaluated episode \(z\) contains the task signature, chosen method, evaluator-owned split/cohort, outcome and cost, plus authenticated identity of the independent oracle. The selector cannot learn from self-graded episodes; without an admission authority its history is empty.
 
@@ -83,7 +83,7 @@ All input costs must be finite and nonnegative. Alternative representations can 
 
 ### 3.2 Exploration and difficult cases
 
-The system may explore alternatives on low-risk tasks, within a hard cost limit and frozen evaluation. For R2/R3, it disables the exploration bonus: no speculative method may displace a mandatory professional verifier. Unknown or unsupported capability => refuse, not pretend the LLM understands how to execute it.
+The system may explore alternatives on low-risk tasks, within a hard cost limit and frozen evaluation. For R2/R3, it disables the exploration bonus: no speculative method may displace a mandatory professional check. Unknown or unsupported capability => refuse, not pretend the LLM understands how to execute it.
 
 The selector is **not a judge**. Historical reward is downstream of the evaluator's measured resolution of a frozen criterion. Pure novelty and LLM confidence must never count as positive validation. Penalties should include regressions, cost overruns, failed negative controls, source/standard mismatch, distribution shift, unsupported claims, and refusal to reproduce on independently held-out cases.
 
@@ -123,18 +123,18 @@ A method can only establish what its model and checker support:
 
 The G6 grades `model`, `instrument`, and `kernel` are about **method and provenance**, not the fluency of the answer or a model's word. The public promotion law requires G6's own trusted door to *re-run* the relevant independent check, bound to the artifact and caller's original criterion. This bridge produces only `qualified-draft` or `blocked-escalated`, even when every in-process check passed.
 
-## 6. Candidate verification dossier contract
+## 6. Candidate dossier contract
 
 A candidate dossier contains:
 
 - Format identifier, claim/artifact IDs, producer and evaluator identities.
-- Normative standard: edition, jurisdiction, authority, source SHA-256, a per-criterion verifier and risk classification.
+- Normative standard: edition, jurisdiction, authority, source SHA-256, a per-criterion `verifier` and risk classification.
 - Exact artifact bytes hashed individually, evidence source references, source provenance and intended claim scope.
-- Frozen checker ID, version digest, positive/negative control digests and actual control results. A verifier throwing an exception on a planted wrong result does **not** count as detecting it.
+- Frozen checker ID, version digest, positive/negative control digests and actual control results. A `verifier` throwing an exception on a planted wrong result does **not** count as detecting it.
 - Every requirement, checked or not; failed/missing/unsupported checks as blockers. No vacuous success when a critical criterion is absent.
 - Documentary sections: scope, methodology, standards, provenance, assumptions, uncertainties, counterexamples, reproduction instructions, exceptions.
 - Explicit limitation of what each method and the combined result establish.
-- For high-risk R2/R3 work, an independently authenticated professional attestation of the **exact** standard, artifact set, verifier manifest, documentary content and evaluator/producer identities.
+- For high-risk R2/R3 work, an independently authenticated professional attestation of the **exact** standard, artifact set, `verifier` manifest, documentary content and evaluator/producer identities.
 - Aggregate metrics with definitions: declared critical obligations, critical passed, controls actually detected, advisory exceptions, missing sections. No invented universal confidence score.
 - An unkeyed content digest for accidental-integrity checking; **not** a signature or a trust certificate.
 - External promotion instructions and a statement that a G6 door must independently reproduce before minting `verified`.
@@ -164,7 +164,7 @@ A preregistered conservative multiple-testing threshold is \(\alpha/m\), where \
 
 This **does not** show monotonic improvement in the deployment distribution. The guarantee is a *bounded nonregression observation on the frozen test set* plus an observed positive paired effect under specific assumptions. Maintain ongoing monitoring, canary cohorts, distribution-shift detection, recall/rollback, fresh tests and independent reviews after changes. Do not repeatedly inspect the same holdout until it stops being held out.
 
-A proposed guard affecting a protected path (tests, frozen validators, verification, certificates, approvals, ledger, G6 core) must never be promoted through this extension. Core changes require the repository's existing certificate-reissuance process and human authorisation.
+A proposed guard affecting a protected path (tests, frozen validators, checkers, certificates, approvals, ledger, G6 core) must never be promoted through this extension. Core changes require the repository's existing certificate-reissuance process and human authorisation.
 
 ## 8. Threat model and limits
 
@@ -184,7 +184,7 @@ A proposed guard affecting a protected path (tests, frozen validators, verificat
 | Hidden dependent errors | Failure-mode trace and compositional guard hypotheses | Causal root-cause evaluation and independent falsification |
 | Supply chain / compromised evaluator | None in same-process Python prototype | Isolated evaluator, sealed binaries, reproducible build and secure key storage |
 
-The `admit_trial`, `admit_pair`, `admit_control`, and `reviewer_authenticator` callables are **trust-boundary interfaces**, not built-in verification of the callers' trustworthiness. A malicious candidate can pass a permissive lambda in its own process. Production must make these capabilities inaccessible to candidate-generated code. The tests are unit tests inside G6's suite; they do not show that outside-process separation holds in a full G6 deployment.
+The `admit_trial`, `admit_pair`, `admit_control`, and `reviewer_authenticator` callables are **trust-boundary interfaces**, not a built-in check of the callers' trustworthiness. A malicious candidate can pass a permissive lambda in its own process. Production must make these capabilities inaccessible to candidate-generated code. The tests are unit tests inside G6's suite; they do not show that outside-process separation holds in a full G6 deployment.
 
 ## 9. Scientific and professional evaluation design
 

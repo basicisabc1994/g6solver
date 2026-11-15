@@ -228,7 +228,12 @@ def install(server) -> None:
                 capture.client = client_provider(ctx), session
                 def inputs(value):
                     if isinstance(value, str):
-                        capture.supplied.add(policy.input_source(value))
+                        try:
+                            capture.supplied.add(policy.input_source(value))
+                        except UnicodeEncodeError:
+                            # A lone surrogate has no UTF-8 bytes, so no exact input can be named: it is not counted
+                            # as the client's own, and the tool gives its own stable refusal or answer.
+                            pass
                     elif isinstance(value, dict):
                         for child in value.values():
                             inputs(child)

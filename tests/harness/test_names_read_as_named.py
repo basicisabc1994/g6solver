@@ -202,6 +202,8 @@ NAME_ALONE = {
     ("repository_copy", "_in"): (7, "the folders on the way looked at; a tracked link's own text and a submodule's folder "
                                     "taken where git and a run find them; the place in the copy. A file's bytes: source_of"),
     ("_base_revision", "_in"): (2, "looks in G6's own copy; what is written there is _disk's"),
+    ("of", "_in"): (1, "Established.of: a test file's scope, read by the id pytest was given for it (_test_id's rule) "
+                       "and compared with the report's node ids; nothing is looked at or opened"),
 }
 
 
@@ -237,7 +239,7 @@ def test_every_path_made_from_a_listed_name_asks_whether_it_is_exact_or_is_ruled
         key = (owner(call), "_in" if call.func.id == "_in" else "_on_disk[0]")
         alone[key] = alone.get(key, 0) + 1
     assert alone == {key: count for key, (count, _) in NAME_ALONE.items()}
-    assert asked == {"_disk", "_tracked_new", "diff_read.found"} and total == 40
+    assert asked == {"_disk", "_tracked_new", "diff_read.found"} and total == 41     # 41 since d60da76's Established.of
     functions = {owner(node) + "." + node.name if owner(node) else node.name: node for node in ast.walk(tree)
                  if isinstance(node, ast.FunctionDef)}
     for name in asked:      # the answer is read, not dropped
