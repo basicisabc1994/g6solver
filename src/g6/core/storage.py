@@ -57,10 +57,32 @@ def confined_path(raw: str | os.PathLike[str], roots: tuple[Path, ...]) -> Path:
 def state_path(*parts: str) -> Path:
     """A path under the state root. Relative parts may not escape it."""
     root = g6_home().resolve()
-    p = root.joinpath(*parts).resolve()
+    p = (_unlinked_on_windows(root, parts) if os.name == "nt" else None) or root.joinpath(*parts).resolve()
     if p != root and root not in p.parents:
         raise ValueError(f"state path escapes G6_HOME: {'/'.join(parts)}")
     return p
+
+
+def _unlinked_on_windows(root: Path, parts: tuple[str, ...]) -> Path | None:
+    """``root`` joined with ``parts``, ``..`` taken on the words as Windows resolves it, when that is inside ``root`` and
+    no existing part below ``root`` is a link or other reparse point: then resolving could only change the spelling.
+    None otherwise, and the whole path is resolved. Resolving a whole path while another thread deletes or makes a file
+    or folder on it can come back as a ``\\\\?\\`` or ``$Extend\\$Deleted`` path outside ``root``; lstat by name cannot."""
+    path = Path(os.path.normpath(root.joinpath(*parts)))
+    if path != root and root not in path.parents:
+        return None
+    step = root
+    for part in path.parts[len(root.parts):]:
+        step = step / part
+        try:
+            found = os.lstat(step)
+        except FileNotFoundError:
+            break
+        except OSError:
+            return None
+        if stat.S_ISLNK(found.st_mode) or getattr(found, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            return None
+    return path
 
 
 def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refuse_links: bool = False) -> Path:
