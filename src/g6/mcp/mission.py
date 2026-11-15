@@ -311,7 +311,10 @@ def submit(mission_id: str, repo: str, *, claim: str = "", timeout_s: int = 300)
         if unopened:
             raise repo_tests.RepoRefused("G6_E_GIT_COMMAND_FAILED", UNOPENED.format(
                 files=", ".join(shown(rel) for rel in unopened[:10])))
-        files = {rel: paths[rel].read_bytes().decode("utf-8") for rel in changed}
+        # the mission's bench takes a caller's paths as plain text (``bench._inside``): each name git listed goes to it
+        # as the system is given it, the name its file was just read by (``repo_tests._in``), never as the listing's own
+        # type, which refuses to become text and so ended every real submission in G6_E_JOB_FAILED
+        files = {repo_tests._in(rel): paths[rel].read_bytes().decode("utf-8") for rel in changed}
         requirements, tests = _stated(wf, mission_id, standard)
         reviewed = review_reply.review(root, task=wf.missions.get(mission_id)["objective"], requirements=requirements,
                                        tests=tests, claim=claim, base=base, timeout_s=timeout_s,
