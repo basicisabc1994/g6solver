@@ -34,6 +34,7 @@ import path, so the project's own packages never replace G6's)
 """
 from __future__ import annotations
 
+import inspect
 import json
 import math
 import os
@@ -72,6 +73,14 @@ mcp = FastMCP(
         "stale, and lift_abstraction to reuse trace-generic mechanisms on "
         "the search over abstractions itself."),
 )
+
+
+def _tool():
+    """``mcp.tool()``, described by the function's cleaned docstring: from Python 3.13 the compiler strips a
+    docstring's shared indentation, so the raw docstring would show an agent other text on 3.13 than on 3.12."""
+    def register(fn):
+        return mcp.tool(description=inspect.cleandoc(fn.__doc__ or ""))(fn)
+    return register
 
 _domains: dict[str, ConcreteDomain] = {}
 _library = Library()
@@ -166,7 +175,7 @@ def _err(exc: Exception) -> str:
 
 
 # ---------------------------------------------------------------------- #
-@mcp.tool()
+@_tool()
 def load_dataset(path: str, objective: str, maximise: bool = True,
                  name: str = "domain", fmt: str = "auto") -> str:
     """Register a concrete domain from a dataset file.
@@ -219,7 +228,7 @@ def load_dataset(path: str, objective: str, maximise: bool = True,
         return _err(exc)
 
 
-@mcp.tool()
+@_tool()
 def describe_domain(name: str = "domain") -> str:
     """Describe a loaded domain: parameters, trace length, score range."""
     try:
@@ -228,7 +237,7 @@ def describe_domain(name: str = "domain") -> str:
         return _err(exc)
 
 
-@mcp.tool()
+@_tool()
 def list_combinators() -> str:
     """List the abstraction DSL combinators, their validated parameter
     ranges, and example specs. Compose via 'product' nesting (depth <= 4);
@@ -245,7 +254,7 @@ def list_combinators() -> str:
                     "right": {"kind": "sufficient", "dim": "lr"}}]})
 
 
-@mcp.tool()
+@_tool()
 def propose_abstraction(spec_json: str, domain: str = "domain") -> str:
     """Denote a candidate abstraction (validated: resource limits on radius,
     bins, arms, nesting depth) and run the verification gate (extensivity,
@@ -262,7 +271,7 @@ def propose_abstraction(spec_json: str, domain: str = "domain") -> str:
         return _err(exc)
 
 
-@mcp.tool()
+@_tool()
 def evaluate_abstraction(spec_json: str, domain: str = "domain",
                          budget: int | None = None, notes: str = "") -> str:
     """Full robust evaluation, recorded in the library.
@@ -289,7 +298,7 @@ def evaluate_abstraction(spec_json: str, domain: str = "domain",
         return _err(exc)
 
 
-@mcp.tool()
+@_tool()
 def find_counterexamples(entry_id: str, budget: int | None = None) -> str:
     """CEGAR input for a library entry: soundness counterexamples (bound
     violations, replay regrets) and precision counterexamples (sound but
@@ -303,7 +312,7 @@ def find_counterexamples(entry_id: str, budget: int | None = None) -> str:
         return _err(exc)
 
 
-@mcp.tool()
+@_tool()
 def refine_abstraction(entry_id: str, max_iterations: int = 5,
                        budget: int | None = None) -> str:
     """CEGAR: apply the adaptive split operator on the worst soundness
@@ -326,7 +335,7 @@ def refine_abstraction(entry_id: str, max_iterations: int = 5,
         return _err(exc)
 
 
-@mcp.tool()
+@_tool()
 def leaderboard(domain: str | None = None,
                 include_superseded: bool = False) -> str:
     """Library ranked status-first (checked > provisional > degenerate >
@@ -341,7 +350,7 @@ def leaderboard(domain: str | None = None,
                "selection_pressure": _library.selection_pressure()})
 
 
-@mcp.tool()
+@_tool()
 def advise_pruning(entry_id: str, candidates_json: str,
                    incumbent: float | None = None) -> str:
     """Apply a library mechanism to fresh candidate configs — GUARDED.
@@ -373,7 +382,7 @@ def advise_pruning(entry_id: str, candidates_json: str,
         return _err(exc)
 
 
-@mcp.tool()
+@_tool()
 def record_evaluation(domain: str, config_json: str, objective: float) -> str:
     """Append a newly evaluated point to the domain trace (active mode).
     Axiom A0 in code: objectives enter only as caller-supplied data; no tool
@@ -393,7 +402,7 @@ def record_evaluation(domain: str, config_json: str, objective: float) -> str:
         return _err(exc)
 
 
-@mcp.tool()
+@_tool()
 def revalidate(entry_id: str, budget: int | None = None) -> str:
     """Re-evaluate an entry's spec on the CURRENT trace (remediation for
     staleness and for self-consistency findings). Produces a fresh entry
@@ -410,7 +419,7 @@ def revalidate(entry_id: str, budget: int | None = None) -> str:
         return _err(exc)
 
 
-@mcp.tool()
+@_tool()
 def lift_abstraction(entry_id: str, domain: str | None = None) -> str:
     """Lift functor: reuse a trace-generic mechanism on the meta-domain
     (configs = featurised abstraction specs, objective = recorded robust
@@ -435,7 +444,7 @@ def lift_abstraction(entry_id: str, domain: str | None = None) -> str:
         return _err(exc)
 
 
-@mcp.tool()
+@_tool()
 def tighten_abstraction(entry_id: str, budget: int | None = None,
                         iterations: int = 6) -> str:
     """The dual of refine (remediation for INERT mechanisms). CEGAR's
@@ -469,7 +478,7 @@ def tighten_abstraction(entry_id: str, budget: int | None = None,
 _SELF_DEBUG_SAFE = ("refine_abstraction", "tighten_abstraction", "revalidate")
 
 
-@mcp.tool()
+@_tool()
 def self_debug(max_rounds: int = 3, budget: int | None = None) -> str:
     """Closed-loop self-debugging: diagnose -> execute remediations ->
     re-diagnose, bounded and convergence-checked.
@@ -559,7 +568,7 @@ def self_debug(max_rounds: int = 3, budget: int | None = None) -> str:
         return _err(exc)
 
 
-@mcp.tool()
+@_tool()
 def diagnose() -> str:
     """Self-debugging audit: the harness examines its own verification
     decisions and returns findings ordered by severity, each with a
@@ -577,7 +586,7 @@ def diagnose() -> str:
         return _err(exc)
 
 
-@mcp.tool()
+@_tool()
 def save_state(path: str) -> str:
     """Persist the library and all domains to a JSON state file inside
     ABSTRACTION_MCP_DIR. Refused unless the person who runs the server
@@ -594,7 +603,7 @@ def save_state(path: str) -> str:
         return _err(exc)
 
 
-@mcp.tool()
+@_tool()
 def load_state(path: str) -> str:
     """Restore the library and domains from a state file inside
     ABSTRACTION_MCP_DIR (replaces current in-memory state; loaded entries
