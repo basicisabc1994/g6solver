@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import json
 import re
+import shutil
 import sys
 from collections import Counter
 from pathlib import Path
@@ -427,6 +428,30 @@ def test_a_task_that_needs_a_source_the_person_has_not_granted_is_refused_before
     assert (done["moment.before_done.1"].state, done["moment.before_done.1"].code) == ("refused", run.NOT_GRANTED)
     assert done["moment.after_refusal.3"].state == "completed"          # it starts without jobs anyway
     assert [consent_arm.by_prompt[s["prompt"]] for s in seen] == ["moment.after_refusal.3"]
+
+
+def test_a_changed_fixture_byte_refuses_a_moment_run_before_anything_starts(
+        arm: SimpleNamespace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tasks = run.load_moment()
+    used = {task["fixture"] for task in tasks["tasks"]}
+    assert run.fixtures_digest() == freeze.digest({name: freeze.tree_digest(run.fixture_dir(name))
+                                                   for name in sorted(used)})
+    assert run.moment_fixtures() == run.moment_pins()["fixtures_digest"]
+    assert run.moment_pins()["fixtures_digest"] in " ".join((HERE / "README.md").read_text(encoding="utf-8").split())
+    shared, own = tmp_path / "fixtures", tmp_path / "moment_fixtures"
+    shutil.copytree(run.FIXTURES, shared, ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(run.MOMENT_FIXTURES, own, ignore=shutil.ignore_patterns("__pycache__"))
+    monkeypatch.setattr(run, "FIXTURES", shared)
+    monkeypatch.setattr(run, "MOMENT_FIXTURES", own)
+    assert run.moment_fixtures() == run.moment_pins()["fixtures_digest"]  # copies of the same bytes: the same pin
+    seen = _fake(monkeypatch, lambda prompt: QUIET)
+    for changed in (shared / "shop" / "shop" / "prices.py", own / "ledger" / "ledger" / "money.py"):
+        data = changed.read_bytes()
+        changed.write_bytes(data + b" ")
+        with pytest.raises(freeze.FrozenError, match="fixtures"):
+            run.run(arm.path, arm.tmp / "before", client="codex", cohort="moment")
+        assert seen == [] and not (arm.tmp / "before" / "transcripts-codex-moment.jsonl").exists()
+        changed.write_bytes(data)
 
 
 def test_both_arms_are_read_again_from_their_kept_logs_and_paired(arm: SimpleNamespace,

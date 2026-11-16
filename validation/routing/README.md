@@ -167,7 +167,10 @@ once the wiring has landed. The tasks were written by someone who builds none of
   `1976b25f8d885fcb60086adbacd48d7f9bea0c85db79e88a159ab5f235933a75` and the bars at
   `9aa0237097e7dd22f013664850d3008513ac750834f577d793cab6f28556de59`. Nothing runs and nothing is scored on a list or
   bars that differ from these. A list may hold fewer tasks, so one task can be tried first. It may never hold a
-  changed one. It also pins the outcome arm's bar and held-out checks (see "Outcome arm"), and the withheld file.
+  changed one. It also pins the outcome arm's bar and held-out checks (see "Outcome arm"), the withheld file, and
+  the fixtures: every file of every fixture a moment task names (`fixtures/classify`, `notes`, `rules`, `shop` and
+  `moment_fixtures/ledger`), at `4084d2f1097198d53d304f83ff1a5113fcf8534083b320a05586922c351bab76`. A run refuses
+  before anything starts, and the outcome arm scores nothing, when one byte of them differs.
 - `moment_withheld.json`: the sources the person grants for every session beyond the fixtures
   (`host_configuration`, `jobs` and `completion_history`, which a review's reply carries), and, per task, those its
   session starts without. Only the two consent-refusal tasks (`moment.after_refusal.3` and `.4`) withhold them. It is a

@@ -350,7 +350,8 @@ def test_the_outcome_bar_and_the_checks_are_frozen_and_pinned() -> None:
     assert pins == {"tasks_digest": freeze.file_digest(run.MOMENT_TASKS), "bars_digest": freeze.file_digest(run.MOMENT_GATES),
                     "outcome_bars_digest": freeze.file_digest(run.OUTCOME_GATES),
                     "checks_digest": freeze.tree_digest(run.OUTCOME),
-                    "withheld_digest": freeze.file_digest(run.MOMENT_WITHHELD)}
+                    "withheld_digest": freeze.file_digest(run.MOMENT_WITHHELD),
+                    "fixtures_digest": run.fixtures_digest()}
     gates = run.load_outcome_gates()
     assert freeze.freeze(run.OUTCOME_GATES, gates) == pins["outcome_bars_digest"]   # written as freeze writes
     assert gates == {"format": score.FORMAT_OUTCOME_GATES, "cohort": "moment", "min_net_positive": 1,

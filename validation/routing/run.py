@@ -85,7 +85,10 @@ OUTCOME, OUTCOME_GATES = HERE / "moment_outcome", HERE / "moment_outcome_gates.j
 #: The sources the person grants for every moment session beyond the fixtures, and those a task's session starts
 #: without (its own frozen file, so the frozen task list is untouched), pinned beside the list.
 MOMENT_WITHHELD = HERE / "moment_withheld.json"
-MOMENT_PIN_KEYS = ("bars_digest", "tasks_digest", "outcome_bars_digest", "checks_digest", "withheld_digest")
+#: What ``moment_frozen.json`` pins. ``fixtures_digest`` binds every file of every fixture a moment task names
+#: (``fixtures/*`` and ``moment_fixtures/ledger``), so a run on a fixture changed after the freeze refuses first.
+MOMENT_PIN_KEYS = ("bars_digest", "tasks_digest", "outcome_bars_digest", "checks_digest", "withheld_digest",
+                   "fixtures_digest")
 #: What a session's final diff leaves out: what the interpreter and pytest write as they run.
 UNKEPT = (":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/.pytest_cache/**", ":(exclude,glob)**/*.pyc")
 #: The Claude Code plugin this tree ships (hooks and skills): a moment session of Claude Code loads it.
@@ -299,6 +302,24 @@ def load_withheld() -> dict[str, Any]:
     against the frozen moment list."""
     return score.validate_moment_withheld(freeze.bound(MOMENT_WITHHELD, moment_pins()["withheld_digest"],
                                                        what="the moment cohort's withheld sources"), load_moment())
+
+
+def fixtures_digest() -> str:
+    """The digest of every fixture a task of the frozen moment list names: fixture name -> the digest of its folder
+    as it stands (each file's path and the sha256 of its bytes)."""
+    names = sorted({task["fixture"] for task in freeze.bound(MOMENT_TASKS, moment_pins()["tasks_digest"],
+                                                             what="the moment task list")["tasks"]})
+    return freeze.digest({name: freeze.tree_digest(fixture_dir(name)) for name in names})
+
+
+def moment_fixtures() -> str:
+    """The digest of the moment fixtures as they stand, when it is the pinned one: a fixture changed after the freeze
+    runs and scores nothing."""
+    found = fixtures_digest()
+    if found != moment_pins()["fixtures_digest"]:
+        raise freeze.FrozenError(f"the moment fixtures have digest {found}, and {moment_pins()['fixtures_digest']} is "
+                                 "the one pinned: a fixture file changed since the cohort was frozen")
+    return found
 
 
 def outcome_checks() -> str:
@@ -986,6 +1007,7 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
         tasks = load_moment(Path(tasks_path))
         load_moment_gates()
         withheld = load_withheld()
+        moment_fixtures()
         listed, bars = moment_pins()["tasks_digest"], moment_pins()["bars_digest"]
     else:
         tasks = load_tasks(Path(tasks_path), cohort=cohort)
@@ -1235,6 +1257,7 @@ def outcome_reading(out_dir: Path, tasks: Mapping[str, Any], gate: Sequence[Sess
     session whose record does not bind (its ``fault``) cannot pass. The checks runner is made once, when a check is
     first run (``check_runner``)."""
     digest, runner = outcome_checks(), functools.cache(check_runner)
+    moment_fixtures()                                  # a kept diff is applied to the pinned fixtures only
     by_id = {session.transcript.task_id: session for session in gate}
     rows = []
     for task in tasks["tasks"]:
