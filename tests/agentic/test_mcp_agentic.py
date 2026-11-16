@@ -133,6 +133,21 @@ def test_a_decline_cancel_missing_dialog_or_empty_name_leaves_the_original_answe
     assert len(rig.asked) == (0 if handler is None else 1)
 
 
+def test_params_json_nested_past_the_depth_is_invalid_input_and_nobody_is_asked(rig):
+    reply = call(rig, {**FLOAT, "params_json": '{"sketch": ' + "[" * 3000 + "]" * 3000 + "}"})
+    assert reply["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and "nest" in reply["error"]
+    assert rig.asked == [] and rig.served == [] and rig.model.prompts == []
+
+
+def test_a_deeply_nested_model_reply_leaves_the_original_answer_standing(rig, monkeypatch):
+    deep = Model(raw='{"value": ' + "[" * 3000 + "]" * 3000 + "}")
+    monkeypatch.setattr(kernel, "person_caller", lambda: deep.llm)
+    reply = call(rig, FLOAT)
+    assert reply.get("status") != "failed" and reply["agentic"]["outcome"] == "degraded"
+    assert reply["degradation_reason"].startswith("agentic_value_invalid") and "result" not in reply
+    assert reply["warning_card"]["code"] == "G6_E_CEGIS_HOLE_UNSUPPORTED" and check_envelope(reply) == []
+
+
 def test_an_accepted_override_runs_as_a_job_and_records_the_question_digest_and_the_name(rig):
     reply = call(rig, {**FLOAT, "reason": "the table halves x"})
     assert len(rig.asked) == 1

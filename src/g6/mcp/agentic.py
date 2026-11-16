@@ -9,9 +9,11 @@ through ``metaharness_job`` like patch review; no pending proposal is stored."""
 from __future__ import annotations
 
 import asyncio
-import json
 from functools import partial
 from typing import Any
+
+#: The longest params_json the tool decodes.
+PARAMS_CHARS = 1_000_000
 
 
 def register(server: Any, context_type: Any, jobs: Any) -> None:
@@ -40,7 +42,7 @@ def register(server: Any, context_type: Any, jobs: Any) -> None:
         original's answer, with degradation_reason. Show the person both answers. A substituted result never passes
         a requirement and is never evidence. Requires host permission agentic.run and the op's own in
         G6_MCP_SENSITIVE."""
-        from g6._agentic import kernel
+        from g6._agentic import decode, kernel
         from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, is_allowed
         from g6.mcp.consent import request_consent
         from g6.mcp.consent_controls import public_instructions
@@ -52,10 +54,10 @@ def register(server: Any, context_type: Any, jobs: Any) -> None:
                 "model standing in for part of it. Only the person who runs this server can allow it, by adding "
                 f"agentic.run to {SENSITIVE_ENV} where the server is registered; the person is then still asked "
                 "before each override."))
-        try:
-            params = json.loads(params_json or "{}")
-        except json.JSONDecodeError as exc:
-            return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}")
+        try:   # the client's text, bounded in size and depth before it is decoded
+            params = decode.loads(params_json or "{}", max_chars=PARAMS_CHARS)
+        except decode.Undecodable as exc:
+            return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not decoded: {exc}")
         if not isinstance(params, dict):
             return blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object")
         prepared = await asyncio.to_thread(partial(kernel.prepare, component, op, params, part=part or None,

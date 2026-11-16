@@ -201,7 +201,7 @@ def test_the_protected_set_refuses_each_kind_including_this_kernel_and_patch_rev
     assert protected.reason("g6.cegis.hole:float_grid", verifiers=cegis_package.__g6_verifiers__) == ""
 
 
-@pytest.mark.parametrize("function", ["g6.cegis.loop:_verifier_says", "g6.cegis.verify:check_candidate",
+@pytest.mark.parametrize("function", ["g6.cegis.loop:_verifier_says","g6.cegis.verify:check_candidate",
                                       "g6.cegis.block:recheck", "g6.datalog.ops:evaluate", "g6.core.door:door_reply"])
 def test_a_part_naming_protected_or_foreign_code_is_refused_before_anything_runs(monkeypatch, captured, function):
     started, model = no_child(monkeypatch), Model([0.5])
@@ -353,6 +353,61 @@ def test_each_override_is_recorded_in_a_chained_ledger_with_the_question_digest_
     assert body["digests"]["question"] == reply["agentic"]["digests"]["question"] and body["person"]["name"] == "Ada"
     assert body["outcome"] == "substituted" and reply["agentic"]["ledger"]["entry"] == entries[0]["entry_sha256"]
     assert "sketch" not in json.dumps(body) and FLOAT_PARAMS["sketch"] not in json.dumps(body)
+
+
+def test_the_ledger_writer_refuses_any_field_outside_its_schema_and_writes_nothing(monkeypatch, tmp_path):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    in_process_child(monkeypatch)
+    kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm, name="Ada")
+    body = ChainLedger(ledger.path()).entries()[-1]["body"]
+    for extra in ({"detail": "x.__private_token_q7 is not allowed"}, {"note": "text"}):
+        with pytest.raises(ValueError):
+            ledger.append({**body, **extra})
+    for field, text in (("trigger", {**body["trigger"], "message": "free text"}), ("reason", "free text"),
+                        ("component", "cegis; free text"), ("checks", [{"check": "x", "passed": True, "detail": "t"}])):
+        with pytest.raises(ValueError):
+            ledger.append({**body, field: text})
+    assert len(ChainLedger(ledger.path()).entries()) == 1
+
+
+def test_the_ledger_never_holds_text_a_refusal_carried(monkeypatch, tmp_path):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    secret = "__private_token_q7"
+
+    def refusing(request, *, timeout_s):
+        raise kernel._child.Refused(f"[G6_E_AGENTIC_CHILD_FAILED] NameError: name {secret!r} is not defined")
+
+    monkeypatch.setattr(kernel._child, "launch", refusing)
+    reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm, name="Ada",
+                       reason=f"because {secret}")
+    assert reply["agentic"]["outcome"] == "degraded" and secret in reply["agentic"]["detail"]   # the caller's reply
+    entry = ChainLedger(ledger.path()).entries()[-1]["body"]
+    assert secret not in json.dumps(entry) and entry["reason"] == "child_failed"
+
+
+def test_a_substituted_result_carries_no_evidence_and_no_label_of_its_own(monkeypatch, tmp_path):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    in_process_child(monkeypatch)
+    reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm)
+    result = reply["result"]
+    assert reply["agentic"]["outcome"] == "substituted" and reply["evidence"] == []
+    assert result["program"] == "def f(x):\n    return x * 0.5\n" and result["control"] == {"0": 0.5}
+    for key in ("evidence", "completion_state", "reliability_label", "warning_card", "model_calls",
+                "evidence_collected"):
+        assert key not in json.dumps(result), key
+
+
+@pytest.mark.parametrize("raw", [
+    '{"value": ' + "[" * 3000 + "]" * 3000 + "}",
+    '{"value": ' + "[" * 65 + "0.5" + "]" * 65 + "}",
+])
+def test_a_deeply_nested_model_reply_is_an_invalid_value_and_the_original_stands(monkeypatch, tmp_path, raw):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    served = in_process_child(monkeypatch)
+    reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model(raw=raw).llm, name="Ada")
+    assert reply["agentic"]["outcome"] == "degraded" and reply["degradation_reason"].startswith("agentic_value_invalid")
+    assert reply["warning_card"]["code"] == "G6_E_CEGIS_HOLE_UNSUPPORTED" and len(served) == 1
+    assert ChainLedger(ledger.path()).entries()[-1]["body"]["reason"] == "value_invalid"
 
 
 def test_an_exception_inside_the_components_own_code_is_a_trigger(monkeypatch):

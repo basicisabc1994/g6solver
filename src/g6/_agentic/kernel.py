@@ -38,7 +38,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from g6._agentic import _child, ledger, protected
+from g6._agentic import _child, decode, ledger, protected
 from g6.core.consent_registry import GuardedRegistry
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, door_reply, invoke_checked, is_allowed
 from g6.core.ledger import digest
@@ -359,7 +359,8 @@ class _Envelope:
     def seconds_left(self) -> float:
         return self.budget.max_wall_clock_s - self.metered.elapsed_s()
 
-    def complete(self, system: str, user: str, *, max_tokens: int) -> str:
+    def ask(self, system: str, user: str, *, max_tokens: int) -> str:
+        """One model call through the consent-guarded caller the envelope meters, or :class:_Stop."""
         left =self.budget.max_output_chars - self.metered.output_chars
         try:
             text = self.metered.complete(system, user, max_tokens=max_tokens)
@@ -419,18 +420,16 @@ def _ask_model(pending: Pending, envelope: _Envelope, ask: Mapping[str, Any], pa
         "returns": str(returns), "arguments": arguments, "operation": f"{pending.component}.{pending.op}",
         "parameters": parameters, "original": original, "cut": cut, "reason": pending.reason})
     prompts.append(digest({"system": system, "user": user}))
-    text = envelope.complete(system, user, max_tokens=2000)
+    text = envelope.ask(system, user, max_tokens=2000)
     from pydantic import TypeAdapter, ValidationError
 
-    from g6.core.llm import LLMError, extract_json
-
     adapter = TypeAdapter(returns)
-    try:
-        said = extract_json(text)
+    try:   # bounded in size and depth before it is decoded (decode.Undecodable is a ValueError)
+        said = decode.extract(text, max_chars=pending.budget.max_output_chars)
         if not isinstance(said, dict) or set(said) != {"value"}:
             raise ValueError('the reply is not {"value": ...}')
         value = adapter.validate_json(_child.canonical(said["value"]), strict=True)
-    except (LLMError, ValueError, ValidationError) as exc:
+    except (ValueError, ValidationError, RecursionError, TypeError, MemoryError) as exc:
         checks.append({"check": "return_type", "passed": False, "detail": str(exc)[:REASON_CHARS]})
         raise _Stop("value_invalid", f"the model's value is not a {returns}: {str(exc)[:200]}") from exc
     checks.append({"check": "return_type", "passed": True})
@@ -439,6 +438,26 @@ def _ask_model(pending: Pending, envelope: _Envelope, ask: Mapping[str, Any], pa
     if why:
         raise _Stop("value_invalid", f"{pending.validator}: {why}"[:REASON_CHARS])
     return adapter.dump_python(value, mode="json")
+
+
+#: What a component's own reply says about itself (its label, card, evidence and the rest of its envelope): none of it
+#: stays in a substituted result, whose only label is the kernel's.
+_OWN_ENVELOPE = frozenset(envelope_fields()) | {"evidence_collected"}
+#: Keys removed at any depth of a substituted result: G6's evidence and labels, and a model-call count that would be
+#: false (the kernel's true counts are in ``agentic.cost``).
+_OWN_CLAIMS = frozenset({"evidence", "evidence_collected", "completion_state", "reliability_label", "warning_card",
+                         "model_calls"})
+
+
+def _bare(result: Any, *, top: bool = True) -> Any:
+    """``result`` with the component's own envelope and claims taken out; its answer (e.g. ``program``, ``control``)
+    kept."""
+    if isinstance(result, Mapping):
+        drop = (_OWN_ENVELOPE | _OWN_CLAIMS) if top else _OWN_CLAIMS
+        return {k: _bare(v, top=False) for k, v in result.items() if k not in drop}
+    if isinstance(result, list):
+        return [_bare(item, top=False) for item in result]
+    return result
 
 
 def override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
@@ -460,7 +479,7 @@ def override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
     record: dict[str, Any] = {
         "outcome": "", "substituted": False, "trigger": pending.trigger, "part": pending.part,
         "functions": list(pending.functions), "mode": pending.mode, "model": pending.model, "component": pending.component,
-        "op": pending.op, "person": {"answer": confirmation.answer, "name": confirmation.name, "authenticated": False},
+        "op": pending.op, "person": {"answer": confirmation.answer, "name": str(confirmation.name)[:200], "authenticated": False},
         "budget": {"max_model_calls": pending.budget.max_model_calls, "max_output_chars": pending.budget.max_output_chars,
                    "max_wall_clock_s": pending.budget.max_wall_clock_s},
         "note": NOTE}
@@ -529,7 +548,7 @@ def override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
                       "output_chars": metered.output_chars, "child_runs": runs,
                       "seconds": round(metered.elapsed_s(), 3)}
     try:
-        entry = ledger.append({k: v for k, v in record.items() if k != "isolation"})
+        entry = ledger.append(ledger.entry(record))
         record["ledger"] = {"entry": entry, "kind": ledger.KIND}
     except (OSError, ValueError) as exc:
         if record["outcome"] == "substituted":
@@ -554,7 +573,7 @@ def override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
                         "is never evidence in another G6 check.")
     envelope = envelope_fields(reliability_label=state, warning_card=card, evidence=[], request_id=pending.request_id,
                                run_id=str(reply.get("run_id") or ""), degradation_reason="agentic_substitute")
-    return {"ok": state != "blocked-escalated", "result": reply.get("result"), **envelope,
+    return {"ok": state != "blocked-escalated", "result": _bare(reply.get("result")), **envelope,
             "original": pending.original, "agentic": record}
 
 

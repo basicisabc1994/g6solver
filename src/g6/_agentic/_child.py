@@ -32,6 +32,8 @@ from typing import Any
 _ENV_KEEP = ("SYSTEMROOT", "WINDIR", "TEMP", "TMP", "LANG", "LC_ALL")
 _CHILD = "import sys; sys.path.append({folder!r}); from g6._agentic._child import main; sys.exit(main())"
 MEMORY_MB = 1024
+#: The longest reply line the parent decodes from a child.
+REPLY_CHARS = 4_000_000
 
 
 class Refused(RuntimeError):
@@ -183,6 +185,7 @@ def launch(request: Mapping[str, Any], *, timeout_s: float) -> tuple[dict[str, A
     """Run :func:`main` on ``request`` in a confined child: its reply and the run's isolation record. Raises
     :class:`Refused` when no backend can confine it (nothing starts), when it runs out of time, or when it fails."""
     import g6
+    from g6._agentic import decode
     from g6.core import component_process, confine
     from g6.core.errors import ISOLATION_UNAVAILABLE
 
@@ -213,9 +216,9 @@ def launch(request: Mapping[str, Any], *, timeout_s: float) -> tuple[dict[str, A
     if failure:
         raise Refused(failure, record)
     lines = [line for line in done.stdout.decode("utf-8", "replace").splitlines() if line.strip()]
-    try:
-        reply = json.loads(lines[-1])
-    except (IndexError, json.JSONDecodeError):
+    try:   # bounded: the line can carry what a substitute made
+        reply = decode.loads(lines[-1], max_chars=REPLY_CHARS)
+    except (IndexError, decode.Undecodable):
         reply = None
     if done.returncode != 0 or not isinstance(reply, dict):
         raise Refused(f"[G6_E_AGENTIC_CHILD_FAILED] the child exited with {done.returncode}: {stderr[-400:]}", record)
