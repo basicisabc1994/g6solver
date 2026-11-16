@@ -397,10 +397,12 @@ def _asked_nothing(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 def test_a_name_read_two_ways_is_refused_before_the_file_system_is_asked(root: Path, name: str,
                                                                           monkeypatch: pytest.MonkeyPatch) -> None:
     # one input gate in every entry point, on the caller's words, before any resolve or lstat: G6's own reason, never a
-    # path, never refused as outside
+    # path, never refused as outside; each name sits below another in a relative path ('j::$INDEX_ALLOCATION' first
+    # is a drive-qualified path, refused as outside)
     base = root.resolve()
     asked = _asked_nothing(monkeypatch)
-    calls = [lambda: contained(root, f"{name}/x.json"), lambda: contained(root, f"{name}/x.json", refuse_links=True),
+    calls = [lambda: contained(root, f"sub/{name}/x.json"),
+             lambda: contained(root, f"sub/{name}/x.json", refuse_links=True),
              lambda: contained(root, f"{base}\\{name}\\x.json"),
              lambda: contained(root, f"{base}\\{name}\\x.json", refuse_links=True),
              lambda: storage.confined_path(f"{base}\\{name}\\x.json", (root,))]
@@ -424,8 +426,24 @@ def test_an_absolute_path_on_another_drive_is_outside_before_the_file_system_is_
     assert (refused.value.outside, asked) == (True, [])
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows drive letters")
+@pytest.mark.parametrize("raw", ["C:x", "C:", "C:..\\x", "c:secret.txt", "j::$INDEX_ALLOCATION\\x.json"])
+@pytest.mark.parametrize("refuse_links", [False, True])
+def test_a_drive_qualified_relative_path_is_outside_before_the_file_system_is_asked(
+        root: Path, raw: str, refuse_links: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Windows reads 'C:x' against that drive's current folder, never the root: one rule with state_path, outside, on
+    # the words
+    asked = _asked_nothing(monkeypatch)
+    with pytest.raises(PathRefused) as refused:
+        contained(root, raw, refuse_links=refuse_links)
+    assert (refused.value.outside, asked) == (True, []), refused.value.reason
+    with pytest.raises(PathRefused) as by_state_path:
+        storage.state_path(raw)
+    assert by_state_path.value.outside is True
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows junctions and stream names")
-@pytest.mark.parametrize("stream", ["j::$INDEX_ALLOCATION", "j:$I30:$INDEX_ALLOCATION"])
+@pytest.mark.parametrize("stream",["j::$INDEX_ALLOCATION", "j:$I30:$INDEX_ALLOCATION"])
 def test_a_stream_name_on_a_one_letter_junction_out_of_the_root_is_refused(root: Path, stream: str) -> None:
     # open reads '<root>\j::$INDEX_ALLOCATION\secret.txt' as '<root>\j\secret.txt' and goes through the junction;
     # pathlib reads the part as the drive 'J:', so a walk over pathlib's parts never saw the junction

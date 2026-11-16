@@ -130,7 +130,8 @@ def test_d1_a_junction_named_with_a_trailing_space_is_never_read_or_written_thro
 def test_d1_a_stream_name_is_never_read_or_written_through_and_never_lets_a_raw_error_out(home, outside) -> None:
     # open reads '<ws>\j::$INDEX_ALLOCATION\secret.txt' as '<ws>\j\secret.txt', through the junction 'j'; a file's
     # index stream ('notes.txt::$INDEX_ALLOCATION') made resolving raise a raw NotADirectoryError. Both are refused as
-    # input G6 does not take, with an absolute path or a relative one
+    # input G6 does not take, with an absolute path or a relative one; a relative one starting 'j:' is drive-qualified
+    # (read against drive J:'s current folder), so it is outside, as state_path says
     ws = _task(home)
     made = subprocess.run(["cmd", "/c", "mklink", "/J", str(ws.root / "j"), str(outside.resolve())],
                           capture_output=True, text=True, check=False)
@@ -140,13 +141,24 @@ def test_d1_a_stream_name_is_never_read_or_written_through_and_never_lets_a_raw_
         for raw in ("j::$INDEX_ALLOCATION/secret.txt", "j:$I30:$INDEX_ALLOCATION/made/x.txt",
                     "notes.txt::$INDEX_ALLOCATION", "notes.txt:s:$INDEX_ALLOCATION/x.txt"):
             for given in (raw, f"{ws.root}\\{raw}"):
+                code = E.OUTSIDE_ROOT if given.startswith("j:") else E.INPUT_INVALID
                 with pytest.raises(E.WorkspaceRefused) as refused:
                     ws.read(given)
-                assert refused.value.code == E.INPUT_INVALID, given
-                assert ops.write("t1", given, "written", dry_run=False).code == E.INPUT_INVALID, given
+                assert refused.value.code == code, given
+                assert ops.write("t1", given, "written", dry_run=False).code == code, given
     finally:
         os.rmdir(ws.root / "j")
     assert sorted(p.name for p in outside.iterdir()) == ["secret.txt"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows drive letters")
+@pytest.mark.parametrize("raw", ["C:notes.txt", "C:", "C:..\\notes.txt"])
+def test_d1_a_drive_qualified_path_is_outside_the_workspace(home, raw) -> None:
+    ws = _task(home)
+    with pytest.raises(E.WorkspaceRefused) as refused:
+        ws.read(raw)
+    assert refused.value.code == E.OUTSIDE_ROOT
+    assert ops.write("t1", raw, "written", dry_run=False).code == E.OUTSIDE_ROOT
 
 
 @pytest.mark.parametrize("value", [None, b"notes.txt", 1], ids=["none", "bytes", "int"])

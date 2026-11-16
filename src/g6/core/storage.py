@@ -293,8 +293,9 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
     (by file identity, not by words, so a folder named as ``root`` but for case is outside), and a link resolving could
     not follow counts as outside too. Refused before anything is resolved: an empty path; a control character; a network
     or device path (:func:`_elsewhere`: ``\\\\host\\share``, ``//host/share``, ``\\\\?\\``, ``\\\\.\\``, ``\\??\\``),
-    outside, because resolving one on Windows opens it, over the network for a share; an absolute path on another drive or not under ``root`` (outside); a ``:`` in a relative
-    path (a drive, or a file's alternate stream, on Windows); a part named for a Windows device (``CON``, ``nul.txt``);
+    outside, because resolving one on Windows opens it, over the network for a share; an absolute path on another drive or not under ``root``, or a path
+    naming a drive without its root (``C:``, ``C:x``, read against that drive's current folder) (outside); a ``:`` in
+    a relative path (a file's alternate stream, on Windows); a part named for a Windows device (``CON``, ``nul.txt``);
     and any name below ``root`` that the input gate (:func:`_gate`) refuses: on Windows a ``:`` (a stream, even in an
     absolute path), a control character, half of a UTF-16 character, a device's name, or a name ending in a space or a
     dot, each of which Windows reads two ways. With ``refuse_links=True``, every existing path component is checked with lstat
@@ -320,6 +321,9 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
                           outside=True)
     if absolute and lexical != anchor and anchor not in lexical.parents:
         raise outside
+    if given.drive and not absolute:        # C:, C:x, C:..\x: Windows reads it against that drive's current folder
+        raise PathRefused("the path names a drive without its root (C:, C:x), which Windows reads against that drive's "
+                          "current folder, never the folder, so it counts as outside", outside=True)
     if why := _gate(*(lexical.parts[len(anchor.parts):] if absolute else (text,))):
         raise PathRefused(why)
     if not given.is_absolute() and ":" in text:
