@@ -113,7 +113,9 @@ kept out of training. It also differs from what was measured:
 ## Which G6 step fits
 
 The plugin also ships G6's `using-g6` skill, the same text `g6 skills install` copies, which says which G6 step fits each
-point of a coding task. G6's server tells a connected agent the same in a few lines when it connects.
+point of a coding task. G6's server tells a connected agent the same in a few lines when it connects. When a task starts,
+the prompt hook adds a hint of at most 60 words: the G6 calls that share the most words with the task, and when to call
+G6. It never repeats your prompt, and `G6_HINTS=off` in your key file, `~/.g6/.env`, turns it off.
 
 ## From another client
 
