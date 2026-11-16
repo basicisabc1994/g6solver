@@ -95,3 +95,15 @@ def test_the_recheck_refuses_a_program_that_is_not_the_sketch_filled_with_the_co
     assert said["passed"] is False and said["status"] == "mismatch"
     said = recheck({"sketch": FLOAT, "cases": CASES}, {"control": {"0": 1e9}, "program": ""})
     assert said["passed"] is False and said["status"] == "mismatch"
+
+def test_a_sketch_the_door_refuses_is_invalid_input_before_any_float_grid_is_asked(monkeypatch) -> None:
+    import g6.cegis.hole as hole
+
+    asked: list = []
+    monkeypatch.setattr(hole, "float_grid", lambda *args: asked.append(args) or (0.5,))
+    bad = "def f(x):\n    return x.__private_token_q7 * ??f\n"
+    with pytest.raises(ValueError, match="the sketch is refused") as refused:
+        Sketch.from_src(bad)
+    assert not isinstance(refused.value, HoleUnsupported) and asked == []
+    reply = g6.invoke("cegis", "synthesize", {"sketch": bad, "cases": CASES}, allow=("cegis.synthesize",))
+    assert reply["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and asked == []

@@ -503,3 +503,10 @@ def test_a_door_refusal_raised_in_the_components_own_code_is_not_a_trigger(monke
     reply = kernel.prepare("cegis", "synthesize", INT_PARAMS, allow=ALLOW, llm=model.llm)
     assert not isinstance(reply, kernel.Pending) and reply["warning_card"]["code"] == "G6_E_INVOKE_FAILED"
     assert model.prompts == [] and started == []
+
+def test_an_input_the_door_refuses_is_never_offered_for_an_override(monkeypatch, captured):
+    started, model = no_child(monkeypatch), Model([0.5])
+    bad = {"sketch": "def f(x):\n    return x.__private_token_q7 * ??f\n", "cases": CASES}
+    reply = kernel.prepare("cegis", "synthesize", bad, allow=ALLOW, llm=model.llm)
+    assert not isinstance(reply, kernel.Pending) and reply is captured[-1]
+    assert reply["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and model.prompts == [] and started == []
