@@ -17,7 +17,10 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
 3. ``candidates``: a log-IDF word overlap over the corpus (``discovery._tokens``, the scoring ``g6_find`` uses), as
    a share of a full match, times ``LEXICAL_WEIGHT`` (``ROUTE_WEIGHT`` more for a route), plus the fixed phase priors ``PRIORS`` (and ``PHASE_TAG_BONUS`` for a matched entry
    tagged with the phase) and the fixed intent priors ``INTENTS`` (a safety question raises the action gate; an
-   agent that keeps failing, the meta-harness). Every reply, whatever its words: a call that acts outside G6
+   agent that keeps failing, the meta-harness). A safety question is a task holding one of ``SAFETY_WORDS``, fixed
+   and reviewed: "safe", "should i", "risky", "dangerous", "allowed", "okay to", "fine to", "is it ok",
+   "production", "prod", "live", "delete", "rm", "overwrite", "reset", "push", "commit", "merge", "pay", "migrate",
+   "drop", "deploy", "send", "publish". Every reply, whatever its words: a call that acts outside G6
    (``_acts``: an op its component lists as sensitive, or whose name holds an ``OUTWARD_WORDS`` word) ranks below
    every call that does not, and is never ``next``. Where the rankers disagree it is listed. A semantic rerank (the local ColBERT rung) is
    deferred: it would make the reply depend on what the host has installed and cached, so ``rerank="colbert"`` is
@@ -75,16 +78,21 @@ PRIORS: dict[str, dict[str, float]] = {
     "stuck": {"tool:g6_premortem": 2.0, "tool:g6_confirm_behaviour": 2.0, "tool:g6_review_until_clean": 2.0,
               "tool:g6_knowledge_search": 1.0, "tool:g6_find": 1.0},
 }
+#: The words and phrases that make a task a safety question (``action_safety``): it asks whether an action is safe,
+#: should be done or is risky, or names an outward or destructive act. Fixed, reviewed data, listed in the module
+#: docstring; each is matched as whole words in the task, lower-cased.
+SAFETY_WORDS = ("safe", "should i", "risky", "dangerous", "allowed", "okay to", "fine to", "is it ok", "production",
+                "prod", "live", "delete", "rm", "overwrite", "reset", "push", "commit", "merge", "pay", "migrate",
+                "drop", "deploy", "send", "publish")
 #: Fixed, documented intent priors, read by a reviewer: name -> (a pattern over the task's words, {phase, or "*" for
-#: every phase: {entry id: bonus}}). ``action_safety`` is the task asking whether an action is safe, should be done
-#: or is risky, or naming an outward act (the word list below): the action gate that decides allow, confirm, review
-#: or block is raised first, and the premortem with it while planning. ``workflow_improvement`` is ``g6_find``'s own
-#: workflow-intent pattern (an agent that keeps failing on a kind of task): the meta-harness's diagnosis, its start
-#: and the self-improvement loop's status. A test keeps every id in the corpus.
+#: every phase: {entry id: bonus}}). ``action_safety`` is the task holding a ``SAFETY_WORDS`` word or phrase: the
+#: action gate that decides allow, confirm, review or block is raised first, and the premortem with it while
+#: planning. ``workflow_improvement`` is ``g6_find``'s own workflow-intent pattern (an agent that keeps failing on a
+#: kind of task): the meta-harness's diagnosis, its start and the self-improvement loop's status. A test keeps every
+#: id in the corpus.
 INTENTS: dict[str, tuple[re.Pattern[str], dict[str, dict[str, float]]]] = {
     "action_safety": (
-        re.compile(r"\b(safe|should i|risky|allowed|okay to|production|prod|delete|push|pay|migrate|drop|deploy|"
-                   r"send|publish)\b"),
+        re.compile(r"\b(" + "|".join(re.escape(w) for w in SAFETY_WORDS) + r")\b"),
         {"*": {"op:action_gating.evaluate": GATE_BONUS}, "plan": {"tool:g6_premortem": 2.0}}),
     "workflow_improvement": (
         re.compile(r"\b(tune|improve|keeps failing|make my agent better)\b"),

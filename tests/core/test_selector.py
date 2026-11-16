@@ -80,6 +80,24 @@ def test_a_safety_question_raises_the_action_gate(task: str, phase: str) -> None
     assert "action_safety" in stage["intents"]
 
 
+@pytest.mark.parametrize("task", [
+    "can I overwrite the release tag", "should we commit and merge now", "can I rm -rf the build folder",
+    "is it fine to run the migration on the live database", "is it dangerous to reset the staging branch",
+    "is it ok to force push to main"])
+def test_a_safety_question_in_other_words_raises_the_action_gate(task: str) -> None:
+    reply = selector.select(task, limit=5)
+    assert "op:action_gating.evaluate" in _ids(reply, 3), _ids(reply, 5)
+    assert "action_safety" in next(m for m in reply["mechanisms"] if m["stage"] == "candidates")["intents"]
+
+
+def test_the_safety_words_are_fixed_data_the_docstring_lists() -> None:
+    assert {"overwrite", "commit", "merge", "rm", "reset", "live", "dangerous", "fine to", "okay to",
+            "is it ok"} <= set(selector.SAFETY_WORDS)
+    listed = " ".join(selector.__doc__.split())
+    assert all(f'"{word}"' in listed for word in selector.SAFETY_WORDS), [
+        w for w in selector.SAFETY_WORDS if f'"{w}"' not in listed]
+
+
 def test_a_safety_question_while_planning_raises_the_premortem_too() -> None:
     reply = selector.select("should I run this database migration against production", "plan", limit=5)
     assert {"op:action_gating.evaluate", "tool:g6_premortem"} <= set(_ids(reply, 3)), _ids(reply, 5)
