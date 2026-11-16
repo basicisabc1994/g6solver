@@ -253,9 +253,8 @@ def _refused_path(exc: ValueError | OSError, what: str) -> CodeRefused:
 
 
 def under(path: Path, roots: tuple[Path, ...]) -> bool:
-    """Whether the resolved ``path`` is a root or inside one."""
-    parts = tuple(os.path.normcase(p) for p in path.parts)
-    return any(parts[:len(root.parts)] == tuple(os.path.normcase(p) for p in root.parts) for root in roots)
+    """Compare final paths component by component, preserving the file system's own case."""
+    return any(path.parts[:len(root.parts)] == root.parts for root in roots)
 
 
 def _check_roots(roots: Roots) -> None:
@@ -485,6 +484,55 @@ def _walk_open_identity(path: Path, opened: os.stat_result, roots: Roots) -> Pat
     raise PathRefused("the opened file could not be matched to a declared folder", outside=True)
 
 
+def _preopen_components(path: Path, roots: Roots) -> None:
+    """Refuse reparse points and special objects before the content open, without following a component."""
+    for root, identity in zip(roots.roots, roots.identities, strict=True):
+        if not under(path, (root,)):
+            continue
+        relative = path.parts[len(root.parts):]
+        current = root
+        for index, part in enumerate((None, *relative)):
+            if part is not None:
+                current = current / part
+            info = os.lstat(current)
+            directory = index < len(relative)
+            if (stat.S_ISLNK(info.st_mode)
+                    or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                    or not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode))):
+                raise PathRefused("a read component is a link or a special object", outside=True)
+            if index == 0 and _identity(info) != identity:
+                raise PathRefused("the declared folder changed", outside=True)
+        return
+    raise PathRefused("the read is outside the declared folders", outside=True)
+
+
+def _prepare_write_parent(parent: Path, base: Path, recorded: dict[Path, tuple[int, int]]) -> None:
+    """Make folders and retain each lstat identity; recheck all of them immediately before the caller opens."""
+    if not under(parent, (base,)):
+        raise CodeRefused(OUTSIDE_ROOT, "the write parent is outside its checked folder")
+    folders = [base]
+    for part in parent.parts[len(base.parts):]:
+        folders.append(folders[-1] / part)
+
+    def check(folder: Path) -> None:
+        info = os.lstat(folder)
+        if (not stat.S_ISDIR(info.st_mode)
+                or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+            raise CodeRefused(OUTSIDE_ROOT, "a write parent is a link or is no longer a folder")
+        identity = _identity(info)
+        if folder in recorded and recorded[folder] != identity:
+            raise CodeRefused(OUTSIDE_ROOT, "a write parent changed since it was made")
+        recorded.setdefault(folder, identity)
+
+    for folder in folders:
+        if folder in recorded:
+            check(folder)
+        folder.mkdir(exist_ok=True)
+        check(folder)
+    for folder in folders:
+        check(folder)
+
+
 def read_text(path: Path, max_bytes: int, *, roots: Roots) -> str:
     """Read only after the opened handle is inside unchanged captured roots and is a regular, single-link file.
 
@@ -506,6 +554,7 @@ def read_text(path: Path, max_bytes: int, *, roots: Roots) -> str:
             raise CodeRefused(PATH_INVALID, f"{path.name}: {exc.reason}") from None
         if found.st_size > max_bytes:
             raise CodeRefused(PATH_INVALID, f"{path.name} exceeds {max_bytes} bytes")
+        _preopen_components(path, roots)
         # NONBLOCK keeps a POSIX file replaced by a pipe from blocking before fstat can refuse it.
         options = {} if os.name == "nt" else {"opener": lambda p, flags: os.open(
             p, flags | os.O_NONBLOCK | os.O_NOFOLLOW)}
