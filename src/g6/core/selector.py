@@ -55,6 +55,12 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
    component is imported here, so a reply never depends on what the host can import. ``allowed_by_default`` is
    false for a call with a sensitive allowance, which the person grants where the server is registered. Every issue
    is attached to its candidate.
+
+The library route: where the right op cannot run over MCP for this person, a candidate of kind ``library`` gives its
+Python form, built from the corpus alone: a sensitive op the server refused (``g6.invoke`` with ``allow``, which is
+the person's own decision in their own code, never G6's), several ops the agent is considering (one ``g6.invoke``
+each), or a component with no block that the task matches better than any runnable call (``LIBRARY_MIN``; its import
+and call). They rank after every call that runs now over MCP, take at most ``LIBRARY_SLOTS``, and are never ``next``.
 """
 from __future__ import annotations
 
@@ -460,6 +466,12 @@ def remedy_for(outcome: str, data: dict[str, Any] | None = None) -> dict[str, An
         call = {"tool": tool, "arguments": {**(template["arguments"] if template else {}), **arguments}}
     out = {"key": key, "code": code or key, "fix_by": fix_by, "action": action, "tell_person": tell, "tool": tool,
            "call": call, "setup": setup, "available": available if tool else True}
+    # the library route: a sensitive op the server refused can run in the person's own Python, by their own allowance
+    if code == "G6_E_SENSITIVE_COMPONENT_DENIED" and pair and f"op:{pair}" in {e["id"] for e in data["entries"]}:
+        form = invoke_sketch([pair], data)
+        out["library"], out["library_op"] = form, pair
+        out["action"] += (f" Or the person runs it in their own Python: {form.splitlines()[-1].split(' = ', 1)[1]} "
+                          f"({_PERSONS_OWN}).")
     if key == "wrong_answer":
         out["recovery"] = recovery_remedies(data)
     return copy.deepcopy(out)                       # nothing a caller changes reaches the corpus or REMEDIES
@@ -759,6 +771,95 @@ def _validate(entry: dict[str, Any], call: dict[str, Any]) -> tuple[bool, list[s
     return found, [] if found else [f"the skill has no section {call['section']}"]
 
 
+#: The library route: a blockless component's word match, as a share of a full match over the corpus and the library
+#: together, at or above which its Python form is offered (when no runnable call matches as well), and how many such
+#: forms a reply holds at most. They rank after every call that runs now over MCP and are never ``next``.
+LIBRARY_MIN = 0.5
+LIBRARY_SLOTS = 2
+_PERSONS_OWN = ("`allow` is the person's own decision, in their own code: G6 never grants it, and you never add it "
+                "for them")
+
+
+def library_sketch(component: str, function: str, data: dict[str, Any] | None = None) -> str:
+    """A blockless component's Python form, from the corpus alone: the import of ``function`` and a call with the
+    names its signature requires; "" when the corpus lists no such function."""
+    found = (data or _corpus())["library"].get(component)
+    listed = next((f for f in found["functions"] if f["name"] == function), None) if found else None
+    if listed is None:
+        return ""
+    return f"from {found['module']} import {function}\n\nresult = {function}({', '.join(listed['required'])})"
+
+
+def invoke_sketch(steps: list[str], data: dict[str, Any] | None = None) -> str:
+    """``g6.invoke`` calls, one per ``component.op`` the corpus offers, each with its template's parameters; a
+    sensitive op names its allowance (the person's own decision in their own code). "" for an op the corpus lacks."""
+    data = data or _corpus()
+    entries = {e["id"]: e for e in data["entries"] if e["kind"] == "op"}
+    lines, allowed = ["import g6", ""], False
+    for index, step in enumerate(steps, 1):
+        entry = entries.get(f"op:{step}")
+        if entry is None:
+            return ""
+        component, op = step.split(".", 1)
+        params = repr(json.loads(entry["call"]["arguments"]["params_json"]))
+        allow = f', allow=("{step}",)' if entry["sensitive"] else ""
+        allowed = allowed or bool(allow)
+        lines.append(f'step{index} = g6.invoke("{component}", "{op}", {params}{allow})')
+    if allowed:
+        lines.insert(1, "# " + _PERSONS_OWN)
+    return "\n".join(lines)
+
+
+def _library_candidate(key: str, code: str, component: str, *, why: str, by: str, score: float = 0.0,
+                       fill: list[str] | None = None, sensitive: str = "") -> dict[str, Any]:
+    return {"id": key, "kind": "library", "call": {"python": code}, "component": component,
+            "establishes": "the same component's answer, from Python in the person's own process, where the MCP "
+                           "server cannot run it",
+            "not_established": "nothing ran; " + why,
+            "needs": {"sensitive": sensitive, "consent": [], "model": "none", "confined": False, "outside": [],
+                      "extras": []},
+            "cost": "low", "ranked_by": [by], "score": round(score, 3), "validated": True, "issues": [],
+            "fill": list(fill or []), "allowed_by_default": not sensitive,
+            "acts": (f"sensitive: {_PERSONS_OWN}" if sensitive else ""), "runs_over_mcp": False}
+
+
+def _library_route(task: str, data: dict[str, Any], documents: dict[str, str], remedy: dict[str, Any] | None,
+                   calls: list[str]) -> list[dict[str, Any]]:
+    """The Python forms to offer: a sensitive op the server refused (its ``g6.invoke`` with ``allow``), several ops
+    the agent is considering together (one ``g6.invoke`` each), and a blockless component the task matches better
+    than any runnable call (its import and call). Each names only what the corpus lists."""
+    out = []
+    if remedy is not None and remedy.get("library"):
+        step = remedy["library_op"]
+        out.append(_library_candidate(f"library:invoke:{step}", remedy["library"], step.split(".", 1)[0],
+                                      why="the server refused this op; only the person allows it, in their own code",
+                                      by="remedy", sensitive=step))
+    ops = [k[3:] for k in calls if k.startswith("op:")]
+    if len(ops) >= 2:
+        code = invoke_sketch(ops, data)
+        if code:
+            out.append(_library_candidate("library:compose", code, ops[0].split(".", 1)[0], by="considering",
+                                          why="the ops you are considering, chained in Python; fill each step's "
+                                              "parameters", fill=ops))
+    library = data.get("library", {})
+    docs = {f"library:{name}": " ".join([name.replace("_", " "), found["text"],
+                                         *(f["name"].replace("_", " ") for f in found["functions"])])
+            for name, found in library.items()}
+    shares = _lexical(task, {**documents, **docs})
+    best_runnable = max((v for k, v in shares.items() if not k.startswith("library:")), default=0.0)
+    matched = sorted(((v, k) for k, v in shares.items() if k.startswith("library:") and v >= LIBRARY_MIN
+                      and v > best_runnable), key=lambda p: (-p[0], p[1]))
+    for share, key in matched:
+        name = key.split(":", 1)[1]
+        first, *others = library[name]["functions"]
+        listed = ", ".join(f["signature"] for f in others) or "none"
+        out.append(_library_candidate(key, library_sketch(name, first["name"], data), name, by="lexical",
+                                      score=share, fill=first["required"],
+                                      why=f"{name} has no block, so g6_invoke cannot run it; its other functions: "
+                                          f"{listed}"))
+    return out[:LIBRARY_SLOTS]
+
+
 def select(task: str, phase: str = "", last_outcome: str = "", considering: Any = "", limit: int = 5,
            rerank: str = "lexical", *, corpus: dict[str, Any] | None = None,
            request_id: str = "", run_id: str = "") -> dict[str, Any]:
@@ -896,8 +997,12 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
 
     # the remedy first, then the scheduler's pick and the calls you are considering, kept within the limit; the rest
     # by score, and all but the remedy in score order
-    must = list(dict.fromkeys(k for k in (first, scheduled, *calls) if k))[:limit]
-    rest = [k for k in order if k not in must][:limit - len(must)]
+    # the library route's Python forms take the last slots, after every call that runs now over MCP
+    named_ops = list(dict.fromkeys(c["id"] for c in considered if c["kind"] == "call" and c.get("id")))
+    library = _library_route(task, data, documents, remedy, named_ops)
+    slots = max(1, limit - len(library))
+    must = list(dict.fromkeys(k for k in (first, scheduled, *calls) if k))[:slots]
+    rest = [k for k in order if k not in must][:slots - len(must)]
     rank = {k: i for i, k in enumerate(order)}
     chosen = ([first] if first else []) + sorted((k for k in must + rest if k != first),
                                                  key=lambda k: (bool(acting[k]), rank.get(k, len(rank)), k))
@@ -919,15 +1024,19 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         if entry["kind"] == "op":
             candidate["component"] = entry["component"]
         candidates.append(candidate)
+    library = library[:max(0, limit - len(candidates))]
+    candidates += library
     mechanisms.append({"stage": "validation", "ran": bool(candidates),
                        "why": "tool templates against their recorded schemas; op templates by the door's typed input "
                               "check and a run as given through g6_invoke, made when the corpus was built from "
-                              "shipped code"})
+                              "shipped code; a Python form names only what the corpus lists"
+                              + (f" ({len(library)} offered, after every call over MCP, never next)" if library
+                                 else "")})
 
     # the op whose outcome last_outcome reports (the reply's own component and op) is never next again
     reported = f"op:{seen['component']}.{seen['op']}" if seen["component"] and seen["op"] else ""
     # g6_cloud_grant asks the person to share data: next only as the remedy for the consent code itself
-    open_ = [c["id"] for c in candidates if not c["acts"] and c["id"] != reported
+    open_ = [c["id"] for c in candidates if not c["acts"] and c["id"] != reported and c["kind"] != "library"
              and (c["id"] != "tool:g6_cloud_grant" or c["id"] == first)]
     if remedy is not None and remedy["tell_person"]:
         say = remedy["action"] + (f" The step: {remedy['setup']}." if remedy["setup"] else "")

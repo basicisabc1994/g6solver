@@ -647,7 +647,99 @@ def build() -> dict[str, Any]:
         entry["text"] = " ".join(entry["text"].split())
     return {"format": FORMAT, "release": routing.load().release, "phases": list(PHASES), "costs": list(COSTS),
             "components": components, "refusals": refusals.as_data(refusals.component_declarations()),
-            "recovery": _recovery(), "entries": entries}
+            "recovery": _recovery(), "library": _library(set(components)), "entries": entries}
+
+
+#: How many public functions of a blockless component the corpus lists, in its ``__all__`` order.
+LIBRARY_FUNCTIONS = 8
+
+
+def _signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[str, list[str]]:
+    """``name(a, b, *, c=...)`` from a function's own definition: parameter names only (a default is ``...``, never
+    its value), and the names a call must give by position."""
+    args = node.args
+    positional = [*args.posonlyargs, *args.args]
+    first_default = len(positional) - len(args.defaults)
+    parts, required = [], []
+    for index, arg in enumerate(positional):
+        if index == 0 and arg.arg in ("self", "cls"):
+            continue
+        parts.append(arg.arg if index < first_default else f"{arg.arg}=...")
+        if index < first_default:
+            required.append(arg.arg)
+    if args.vararg:
+        parts.append(f"*{args.vararg.arg}")
+    elif args.kwonlyargs:
+        parts.append("*")
+    parts += [a.arg if d is None else f"{a.arg}=..." for a, d in zip(args.kwonlyargs, args.kw_defaults)]
+    if args.kwarg:
+        parts.append(f"**{args.kwarg.arg}")
+    return f"{node.name}({', '.join(parts)})", required
+
+
+def _defined(package: Path, dotted: str, module: str, name: str,
+             depth: int = 0) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """The function ``name`` as the module (a file under ``package``'s folder, by its dotted name relative to it;
+    ``dotted`` is the package's own) defines it or imports it from a module of the same package, read with ``ast``;
+    ``None`` when it is not a function there."""
+    path = package.joinpath(*module.split(".")) if module else package
+    path = path / "__init__.py" if path.is_dir() else path.with_suffix(".py")
+    if depth > 4 or not path.is_file():
+        return None
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            return node
+    for node in tree.body:
+        if not (isinstance(node, ast.ImportFrom) and any(a.name == name and a.asname in (None, name)
+                                                         for a in node.names)):
+            continue
+        if node.level == 0:                                     # g6.<package>.<module>: the same package only
+            source = node.module or ""
+            if source != dotted and not source.startswith(dotted + "."):
+                return None
+            return _defined(package, dotted, source[len(dotted) + 1:], name, depth + 1)
+        parts = module.split(".") if module else []
+        up = node.level - (1 if path.name == "__init__.py" else 0)
+        if up > len(parts):
+            return None                                         # a module outside the package
+        target = ".".join([*parts[:len(parts) - up], *((node.module or "").split(".") if node.module else [])])
+        return _defined(package, dotted, target, name, depth + 1)
+    return None
+
+
+def _library(runnable: set[str]) -> dict[str, Any]:
+    """Each built-in component ``g6_invoke`` cannot run (it has no block): its module, the first line of its doc and
+    up to ``LIBRARY_FUNCTIONS`` of the public functions its ``__all__`` lists, with their signatures, read with
+    ``ast`` from the shipped files (nothing is imported, so an optional extra a machine lacks changes nothing), so
+    ``g6_select`` can name its Python form without importing it at request time."""
+    from g6.core.registry import get_registry
+
+    root = Path(__file__).resolve().parents[1]                   # the g6 package
+    out: dict[str, Any] = {}
+    for name, ref in sorted(get_registry().refs.items()):
+        parts = ref.module.split(":", 1)[0].split(".")
+        package = root.joinpath(*parts[1:])
+        if ref.source != "builtin" or name in runnable or parts[0] != "g6" or not (package / "__init__.py").is_file():
+            continue
+        tree = ast.parse((package / "__init__.py").read_text(encoding="utf-8"))
+        written = next((node.value for node in tree.body if isinstance(node, ast.Assign)
+                        and any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets)), None)
+        try:
+            public = list(ast.literal_eval(written)) if written is not None else []
+        except ValueError:
+            public = []                                     # an __all__ computed at import: not read here
+        functions = []
+        for item in public:
+            node = _defined(package, ".".join(parts), "", item)
+            if node is not None and len(functions) < LIBRARY_FUNCTIONS:
+                signature, required = _signature(node)
+                functions.append({"name": item, "signature": signature, "required": required})
+        if functions:
+            doc = (ast.get_docstring(tree) or "").strip()
+            out[name] = {"module": ".".join(parts), "text": " ".join(doc.splitlines()[0].split()) if doc else "",
+                         "functions": functions}
+    return out
 
 
 def _recovery() -> list[dict[str, str]]:
@@ -667,10 +759,10 @@ def _recovery() -> list[dict[str, str]]:
 
 def dumps(data: dict[str, Any]) -> str:
     """The corpus as its file is written: one entry a line, sorted, so a change shows as the lines it changes."""
-    head = {k: v for k, v in data.items() if k not in ("components", "refusals", "recovery", "entries")}
+    head = {k: v for k, v in data.items() if k not in ("components", "refusals", "library", "recovery", "entries")}
     lines = ["{"]
     lines += [f"  {json.dumps(k)}: {json.dumps(v, ensure_ascii=False)}," for k, v in head.items()]
-    for section in ("components", "refusals"):
+    for section in ("components", "refusals", "library"):
         lines.append(f'  "{section}": {{')
         lines.append(",\n".join(f"    {json.dumps(k)}: {json.dumps(v, ensure_ascii=False, sort_keys=True)}"
                                 for k, v in sorted(data[section].items())))
