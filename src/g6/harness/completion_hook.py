@@ -284,6 +284,8 @@ def repair_line(name: str, repair: dict) -> str:
     if not row.declared or row.kind in ("person", "none"):
         return ""
     tool = next(name[len(prefix):] for prefix in G6_SERVER_PREFIXES if name.startswith(prefix))
+    if tool == "g6_cloud_grant":
+        return ""
     template = row.fix_by[5:] if row.kind == "tool" else tool
     key = ("op:" if "." in template else "tool:") + template
     if not any(e["id"] == key for e in data["entries"]):

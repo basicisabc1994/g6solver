@@ -58,6 +58,51 @@ def _state(session: Any) -> dict[str, Any]:
         return _LOCAL
 
 
+def declined(session: Any, source: str, provider: str, status: str = "") -> str:
+    """Remember the person's decision for this pair, in this session only. Keep hashes, never source text."""
+    pair = _digest((source, provider))
+    with _LOCK:
+        decisions = _state(session).setdefault("_declined", {})
+        if status in ("declined", "cancelled"):
+            decisions.setdefault(pair, status)
+        return decisions.get(pair, "")
+
+
+def declined_block(status: str) -> dict[str, Any]:
+    return {"code": "G6_E_CLOUD_CONSENT_REQUIRED", "fix_by": "person", "by": "person",
+            "step": f"The person {status} sharing this source with this provider in this session. "
+                    "Tell the person and stop; do not reopen the dialog.",
+            "call": None, "fill": [], "validated": False, "retries_left": 0}
+
+
+def suppress_declined_dialogs(value: Any, session: Any) -> Any:
+    """Apply session decisions to G6's selector guidance, including generic dialog templates."""
+    if isinstance(value, list):
+        return [suppress_declined_dialogs(v, session) for v in value]
+    if not isinstance(value, dict):
+        return value
+    out = {k: suppress_declined_dialogs(v, session) for k, v in value.items()}
+    call = value.get("call")
+    if not isinstance(call, dict) or call.get("tool") != "g6_cloud_grant":
+        return out
+    args = call.get("arguments", {})
+    source, provider = args.get("source", ""), args.get("provider", "")
+    if source and provider and not source.startswith("<") and not provider.startswith("<"):
+        from g6.core import cloud_consent as policy
+
+        status = declined(session, policy.source_id(source), provider)
+    else:
+        with _LOCK:
+            status = next(iter(_state(session).get("_declined", {}).values()), "")
+    if status:
+        step = declined_block(status)["step"]
+        out.update(call=None, by="person", tell_person=True, fill=[], validated=False, step=step)
+        for field in ("say", "action"):
+            if field in out:
+                out[field] = step
+    return out
+
+
 def _digest(arguments: Any) -> str:
     return hashlib.sha256(json.dumps(arguments, sort_keys=True, default=str).encode("utf-8", "surrogatepass")
                           ).hexdigest()
@@ -126,8 +171,9 @@ def block(tool: str, reply: dict[str, Any], *, data: dict[str, Any] | None = Non
 
     if not refused(reply):
         return None
-    if tool == "g6_cloud_grant" and selector._read(_envelope(reply))["code"] == "G6_E_CLOUD_CONSENT_REQUIRED":
-        return {"code": "G6_E_CLOUD_CONSENT_REQUIRED", "fix_by": "person", "by": "person",
+    if tool == "g6_cloud_grant":
+        return {"code": selector._read(_envelope(reply))["code"] or "G6_E_CLOUD_CONSENT_REQUIRED",
+                "fix_by": "person", "by": "person",
                 "step": "The person did not share this source, or the client cannot ask in a dialog. "
                         "Stop and tell the person; do not reopen the dialog.",
                 "call": None, "fill": [], "validated": False, "retries_left": 0}
@@ -178,6 +224,15 @@ def observe(tool: str, arguments: Any, reply: Any, session: Any = None) -> Any:
     found = block(tool, reply)
     if found is None:
         return reply
+    if tool == "g6_cloud_grant" and isinstance(arguments, dict):
+        from g6.core import cloud_consent as policy
+
+        try:
+            status = declined(session, policy.source_id(arguments.get("source")), arguments.get("provider"))
+        except (ValueError, TypeError, OSError):
+            status = ""
+        if status:
+            found = {**declined_block(status), "code": found["code"]}
     digest = _digest(arguments)
     with _LOCK:
         row = state.get((tool, found["code"]))
@@ -207,10 +262,19 @@ def observe(tool: str, arguments: Any, reply: Any, session: Any = None) -> Any:
     return {**reply, "repair": found}
 
 
-def consent_block() -> dict[str, Any]:
+def consent_block(session: Any = None, sources=(), provider: str = "") -> dict[str, Any]:
     """The repair block of a reply withheld for consent: the person decides, in the dialog ``g6_cloud_grant`` opens."""
     from g6.core import refusals
 
+    for source in sources:
+        status = declined(session, source.source_id, provider)
+        if status:
+            return declined_block(status)
+    if not sources:
+        with _LOCK:
+            status = next(iter(_state(session).get("_declined", {}).values()), "")
+        if status:
+            return declined_block(status)
     words = refusals.layer("G6_E_CLOUD_CONSENT_REQUIRED").words
     return {"code": "G6_E_CLOUD_CONSENT_REQUIRED", "fix_by": "person", "by": "person", "step": words,
             "call": {"tool": "g6_cloud_grant", "arguments": {"source": "<source>", "provider": "<provider>"}},
