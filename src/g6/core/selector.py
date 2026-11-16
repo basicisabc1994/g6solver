@@ -16,7 +16,10 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
    ``g6_confirm_behaviour`` are raised (``RAISE_BONUS``); each ``considering`` entry is validated.
 3. ``candidates``: a log-IDF word overlap over the corpus (``discovery._tokens``, the scoring ``g6_find`` uses), as
    a share of a full match, times ``LEXICAL_WEIGHT`` (``ROUTE_WEIGHT`` more for a route), plus the fixed phase priors ``PRIORS`` (and ``PHASE_TAG_BONUS`` for a matched entry
-   tagged with the phase). Where the rankers disagree it is listed. A semantic rerank (the local ColBERT rung) is
+   tagged with the phase) and the fixed intent priors ``INTENTS`` (a safety question raises the action gate; an
+   agent that keeps failing, the meta-harness). Every reply, whatever its words: a call that acts outside G6
+   (``_acts``: an op its component lists as sensitive, or whose name holds an ``OUTWARD_WORDS`` word) ranks below
+   every call that does not, and is never ``next``. Where the rankers disagree it is listed. A semantic rerank (the local ColBERT rung) is
    deferred: it would make the reply depend on what the host has installed and cached, so ``rerank="colbert"`` is
    kept for compatibility and answered lexically (``NOT_OFFERED``).
 4. ``next_action``: with open hypotheses in ``considering``, ``verification_controller.next_experiment`` picks the
@@ -54,6 +57,7 @@ ROUTE_WEIGHT = 0.5          # a route is an instruction to read, so its words co
 PHASE_TAG_BONUS = 0.5       # a matched entry tagged with the phase
 RAISE_BONUS = 1.0           # stage 2's raise
 CONSIDERED_BONUS = 2.0      # a call the agent is considering, once it validates
+GATE_BONUS = LEXICAL_WEIGHT + PHASE_TAG_BONUS + 1.0   # a safety question: the action gate above any word match
 COST_UNITS = {"low": 1, "medium": 2, "high": 4}
 BUDGET_UNITS = 4
 RAISED = ("tool:g6_premortem", "tool:g6_confirm_behaviour")
@@ -71,6 +75,24 @@ PRIORS: dict[str, dict[str, float]] = {
     "stuck": {"tool:g6_premortem": 2.0, "tool:g6_confirm_behaviour": 2.0, "tool:g6_review_until_clean": 2.0,
               "tool:g6_knowledge_search": 1.0, "tool:g6_find": 1.0},
 }
+#: Fixed, documented intent priors, read by a reviewer: name -> (a pattern over the task's words, {phase, or "*" for
+#: every phase: {entry id: bonus}}). ``action_safety`` is the task asking whether an action is safe, should be done
+#: or is risky, or naming an outward act (the word list below): the action gate that decides allow, confirm, review
+#: or block is raised first, and the premortem with it while planning. ``workflow_improvement`` is ``g6_find``'s own
+#: workflow-intent pattern (an agent that keeps failing on a kind of task): the meta-harness's diagnosis, its start
+#: and the self-improvement loop's status. A test keeps every id in the corpus.
+INTENTS: dict[str, tuple[re.Pattern[str], dict[str, dict[str, float]]]] = {
+    "action_safety": (
+        re.compile(r"\b(safe|should i|risky|allowed|okay to|production|prod|delete|push|pay|migrate|drop|deploy|"
+                   r"send|publish)\b"),
+        {"*": {"op:action_gating.evaluate": GATE_BONUS}, "plan": {"tool:g6_premortem": 2.0}}),
+    "workflow_improvement": (
+        re.compile(r"\b(tune|improve|keeps failing|make my agent better)\b"),
+        {"*": {"tool:metaharness_diagnose": 4.0, "tool:metaharness_start": 3.5, "tool:g6_improve_status": 2.0}}),
+}
+#: Words in an op's name that say it acts outside G6 (publishes, sends, pays, deletes, deploys, writes, removes),
+#: so the op acts even when its component does not list it among its sensitive ops.
+OUTWARD_WORDS = frozenset({"push", "send", "publish", "pay", "delete", "deploy", "drop", "remove", "write"})
 #: Tools a remedy may name before they are registered (built on another branch): such a remedy is marked
 #: ``available: false`` until the corpus holds the tool, and is never offered as a call.
 PENDING_TOOLS = {"g6_agentic_run": "the override kernel's tool (plan revision 8, phase D), built on its own branch"}
@@ -321,6 +343,20 @@ def _corpus() -> dict[str, Any]:
     from g6.skills import corpus
 
     return corpus.load()
+
+
+def _acts(entry: dict[str, Any]) -> str:
+    """Why an op acts outside G6's own checks, or "" when it does not: its component lists it as sensitive (it runs a
+    program, reaches the network or changes the machine), or its name holds an ``OUTWARD_WORDS`` word. A G6 tool
+    never acts in this sense: one that names an allowance runs G6's own confined check, or asks the person in the
+    client's dialog before anything happens."""
+    if entry["kind"] != "op":
+        return ""
+    if entry["needs"]["sensitive"]:
+        return ("sensitive: it runs a program, reaches the network or changes the machine; only the person allows "
+                "it, and the action gate decides first")
+    said = sorted(set(re.findall(r"[a-z]+", entry["id"].split(".", 1)[1])) & OUTWARD_WORDS)
+    return f"its name says it acts outside G6 ({', '.join(said)}); the action gate decides first" if said else ""
 
 
 def _registered(data: dict[str, Any]) -> set[str]:
@@ -692,12 +728,21 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
             add(key, PHASE_TAG_BONUS, "phase_prior")
     for key, value in PRIORS.get(phase, {}).items():
         add(key, value, "phase_prior")
+    words = " ".join(task.lower().split())
+    intents = [name for name, (pattern, _) in INTENTS.items() if pattern.search(words)]
+    for name in intents:
+        by_phase = INTENTS[name][1]
+        for key, value in {**by_phase.get("*", {}), **by_phase.get(phase, {})}.items():
+            add(key, value, "intent_prior")
     for key in calls:
         add(key, CONSIDERED_BONUS, "considering")
-    order = sorted(scores, key=lambda k: (-scores[k], k))
+    # a call that acts outside G6 ranks below every call that does not, whatever its score
+    acting = {key: _acts(entries[key]) for key in entries}
+    order = sorted(scores, key=lambda k: (bool(acting[k]), -scores[k], k))
     lexical_order = sorted(lexical, key=lambda k: (-lexical[k], k))
-    stage: dict[str, Any] = {"stage": "candidates", "ran": True, "rankers": ["lexical"] + (["phase_prior"] if phase
-                                                                                        else [])}
+    stage: dict[str, Any] = {"stage": "candidates", "ran": True, "intents": intents,
+                             "rankers": ["lexical"] + (["phase_prior"] if phase else [])
+                             + (["intent_prior"] if intents else [])}
     stage["rerank"] = NOT_OFFERED if rerank == "colbert" else "not asked (rerank=lexical)"
     top = order[:limit]
     disagreements = []
@@ -708,7 +753,9 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
             disagreements.append({"id": key, **ranks})
     stage["disagreements"] = disagreements
     stage["why"] = (f"{len(lexical)} entries share a word with the task; phase priors "
-                    + (f"for {phase}" if phase else "skipped: no phase given"))
+                    + (f"for {phase}" if phase else "skipped: no phase given") + "; intent priors "
+                    + (f"for {', '.join(intents)}" if intents else "matched none")
+                    + "; a call that acts outside G6 ranks below every other and is never next")
     mechanisms.append(stage)
 
     # 4. budgeted next action
@@ -740,7 +787,7 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     rest = [k for k in order if k not in must][:limit - len(must)]
     rank = {k: i for i, k in enumerate(order)}
     chosen = ([first] if first else []) + sorted((k for k in must + rest if k != first),
-                                                 key=lambda k: (rank.get(k, len(rank)), k))
+                                                 key=lambda k: (bool(acting[k]), rank.get(k, len(rank)), k))
 
     # 6. validation
     candidates = []
@@ -754,7 +801,7 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         candidate = {"id": key, "kind": entry["kind"], "call": call, "establishes": entry["establishes"],
                      "not_established": entry["not_established"], "needs": entry["needs"], "cost": entry["cost"],
                      "ranked_by": by, "score": round(scores.get(key, 0.0), 3), "validated": valid, "issues": issues,
-                     "allowed_by_default": not entry["needs"]["sensitive"]}
+                     "allowed_by_default": not entry["needs"]["sensitive"], "acts": acting[key]}
         if entry["kind"] == "op":
             candidate["component"] = entry["component"]
         candidates.append(candidate)
@@ -765,11 +812,17 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     if remedy is not None and remedy["tell_person"]:
         say = remedy["action"] + (f" The step: {remedy['setup']}." if remedy["setup"] else "")
         nxt = {"id": None, "call": None, "tell_person": True, "say": say, "why": f"remedy {remedy['key']}"}
-    elif candidates:
-        pick = first or scheduled or candidates[0]["id"]
+    elif any(not c["acts"] for c in candidates):
+        # a call that acts outside G6 is never next: the scheduler's pick only when it does not act
+        pick = first or (scheduled if scheduled and not acting[scheduled] else "") or next(
+            c["id"] for c in candidates if not c["acts"])
         found = next(c for c in candidates if c["id"] == pick)
         nxt = {"id": pick, "call": found["call"], "tell_person": False, "say": "",
-               "why": "remedy " + remedy["key"] if pick == first else why if pick == scheduled else "the first candidate"}
+               "why": "remedy " + remedy["key"] if pick == first else why if pick == scheduled else
+               "the first candidate that does not act outside G6"}
+    elif candidates:
+        nxt = {"id": None, "call": None, "tell_person": True, "why": "every candidate acts outside G6",
+               "say": "Every call offered here acts outside G6's checks: ask the person before any of them."}
     else:
         nxt = {"id": None, "call": None, "tell_person": False, "say": "Nothing matched: describe the task in other "
                "words, or call g6_find.", "why": "no candidate"}

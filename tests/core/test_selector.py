@@ -44,6 +44,59 @@ def test_an_ambiguous_behaviour_in_planning_raises_the_premortem_or_the_question
     assert stage["ran"] and "no stated requirements" in stage["why"]
 
 
+SAFETY = [("is it safe to run this git push", ""), ("is it safe to run this git push", "implement"),
+          ("is it safe to git push my branch now", ""), ("is it safe to push to main now", "verify"),
+          ("is it safe to delete these files", ""), ("should I run this database migration against production", ""),
+          ("is it safe to pay this invoice through the API", ""), ("okay to deploy this to prod?", "plan")]
+
+
+@pytest.mark.parametrize("task,phase", SAFETY + [("push my branch to origin", "implement"),
+                                                 ("delete the old build folder", ""),
+                                                 ("send the report by email", "implement")])
+def test_a_call_that_acts_outside_g6_is_never_next_and_ranks_below_every_other(task: str, phase: str) -> None:
+    reply = selector.select(task, phase, limit=8)
+    acts = [bool(c["acts"]) for c in reply["candidates"]]
+    assert acts == sorted(acts), [(c["id"], c["acts"]) for c in reply["candidates"]]
+    chosen = next((c for c in reply["candidates"] if c["id"] == reply["next"]["id"]), None)
+    assert chosen is None or not chosen["acts"], reply["next"]
+    for candidate in reply["candidates"]:
+        if candidate["kind"] == "op" and candidate["needs"]["sensitive"]:
+            assert candidate["acts"], candidate["id"]
+
+
+def test_an_outward_op_the_agent_names_is_listed_last_and_never_next() -> None:
+    reply = selector.select("push my branch to the remote", "implement", considering=["ctx_git.push"])
+    assert reply["candidates"][-1]["id"] == "op:ctx_git.push" and reply["candidates"][-1]["acts"]
+    assert reply["next"]["id"] != "op:ctx_git.push" and reply["next"]["call"] is not None
+
+
+@pytest.mark.parametrize("task,phase", SAFETY)
+def test_a_safety_question_raises_the_action_gate(task: str, phase: str) -> None:
+    reply = selector.select(task, phase, limit=5)
+    assert "op:action_gating.evaluate" in _ids(reply, 3), _ids(reply, 5)
+    if phase in ("", "implement", "plan"):
+        assert reply["next"]["id"] == "op:action_gating.evaluate", _ids(reply, 5)
+    stage = next(m for m in reply["mechanisms"] if m["stage"] == "candidates")
+    assert "action_safety" in stage["intents"]
+
+
+def test_a_safety_question_while_planning_raises_the_premortem_too() -> None:
+    reply = selector.select("should I run this database migration against production", "plan", limit=5)
+    assert {"op:action_gating.evaluate", "tool:g6_premortem"} <= set(_ids(reply, 3)), _ids(reply, 5)
+
+
+def test_an_agent_that_keeps_failing_is_sent_to_the_meta_harness() -> None:
+    reply = selector.select("my agent keeps failing on the same kind of task", "stuck", limit=5)
+    assert {"tool:metaharness_diagnose", "tool:metaharness_start"} & set(_ids(reply, 3)), _ids(reply, 5)
+    stage = next(m for m in reply["mechanisms"] if m["stage"] == "candidates")
+    assert "workflow_improvement" in stage["intents"]
+
+
+def test_an_ordinary_task_matches_no_intent() -> None:
+    reply = selector.select("review my patch before I say it is done", "verify")
+    assert next(m for m in reply["mechanisms"] if m["stage"] == "candidates")["intents"] == []
+
+
 def test_stated_requirements_do_not_raise_the_model_check() -> None:
     reply = selector.select("review my patch before I say it is done", phase="verify",
                             considering=[{"id": "R1", "text": "totals refuse a negative price",
@@ -464,6 +517,9 @@ def test_every_prior_names_an_entry_of_the_corpus() -> None:
     ids = {entry["id"] for entry in corpus.load()["entries"]}
     for phase, priors in selector.PRIORS.items():
         assert phase in corpus.PHASES and set(priors) <= ids, (phase, set(priors) - ids)
+    for name, (_, by_phase) in selector.INTENTS.items():
+        for phase, priors in by_phase.items():
+            assert phase in ("*", *corpus.PHASES) and set(priors) <= ids, (name, phase, set(priors) - ids)
 
 
 def test_every_tool_template_fits_its_recorded_schema_and_every_op_template_its_typed_input() -> None:
