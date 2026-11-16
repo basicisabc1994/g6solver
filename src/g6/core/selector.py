@@ -36,11 +36,14 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
    a code a component gave itself with no remedy of its own reads that component's input contract
    (``g6_describe``). The op whose outcome ``last_outcome`` reports is never ``next`` again.
 6. ``validation``: a tool template's keys are within its recorded schema and hold its required keys; an op template
-   carries the door's own typed input check (``registry.build_typed_input``), made when the corpus was built from
-   shipped code, and an op call in ``considering`` is checked against the fields the corpus recorded. No component
-   is imported here, so a reply never depends on what the host can import. ``validated`` says only that the door
-   takes the call's shape; ``allowed_by_default`` is false for a call with a sensitive allowance, which the person
-   grants where the server is registered. Every issue is attached to its candidate.
+   carries what the corpus recorded when it was built from shipped code: the door's own typed input check
+   (``registry.build_typed_input``) and, for an op that computes over its input alone, a run of the template as
+   given through ``g6_invoke``'s path. An op template is ``validated`` only when that run was not refused; any
+   other carries ``fill``, the fields to supply, and is ``next`` only with them and ``FILL_HINTS``' or G6's generic
+   instruction in ``say``. An op call in ``considering`` is checked against the fields the corpus recorded. No
+   component is imported here, so a reply never depends on what the host can import. ``allowed_by_default`` is
+   false for a call with a sensitive allowance, which the person grants where the server is registered. Every issue
+   is attached to its candidate.
 """
 from __future__ import annotations
 
@@ -769,6 +772,27 @@ def _schedule(hypotheses: list[dict[str, Any]], entries: dict[str, dict[str, Any
                        f"{BUDGET_UNITS} units ({', '.join(chosen.hypothesis_ids)}; {len(experiments)} calls compared)")
 
 
+#: What to put in a template whose op refuses it as given, where G6 can say it in one line; any other such template
+#: says which fields to fill, from the corpus's record of the refusal.
+FILL_HINTS = {
+    "op:action_gating.evaluate": 'Fill action with the act you are about to take, as {"action_type": "git_push", '
+                                 '"target_resource": "origin main"}: the gate decides allow, confirm, review or '
+                                 "block before you act.",
+}
+
+
+def _fill_say(candidate: dict[str, Any]) -> str:
+    """What ``next`` says about a call whose template is not known to run as given: the fields to fill and why."""
+    if candidate["validated"] or candidate["kind"] != "op":
+        return ""
+    hint = FILL_HINTS.get(candidate["id"], "")
+    if not hint:
+        fields = candidate["fill"]
+        hint = (f"Fill {', '.join(fields)} with your own values before you make this call." if fields else
+                f"Read g6_describe {candidate['component']} for the fields this call needs before you make it.")
+    return hint + (f" {candidate['issues'][-1]}" if candidate["issues"] else "")
+
+
 def _validate(entry: dict[str, Any], call: dict[str, Any]) -> tuple[bool, list[str]]:
     if entry["kind"] == "tool":
         issues = _check_tool(entry, call.get("arguments", {}))
@@ -943,35 +967,39 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         candidate = {"id": key, "kind": entry["kind"], "call": call, "establishes": entry["establishes"],
                      "not_established": entry["not_established"], "needs": entry["needs"], "cost": entry["cost"],
                      "ranked_by": by, "score": round(scores.get(key, 0.0), 3), "validated": valid, "issues": issues,
+                     "fill": list(entry.get("fill", ())) if call == entry["call"] and entry["kind"] == "op" else [],
                      "allowed_by_default": not entry["needs"]["sensitive"], "acts": acting[key]}
         if entry["kind"] == "op":
             candidate["component"] = entry["component"]
         candidates.append(candidate)
     mechanisms.append({"stage": "validation", "ran": bool(candidates),
                        "why": "tool templates against their recorded schemas; op templates by the door's typed input "
-                              "check, made when the corpus was built from shipped code"})
+                              "check and a run as given through g6_invoke, made when the corpus was built from "
+                              "shipped code"})
 
     # the op whose outcome last_outcome reports is never next again: its template is the call just made
     reported = _named_op(last_outcome, data) if last_outcome.strip() else ""
     open_ = [c["id"] for c in candidates if not c["acts"] and c["id"] != reported]
     if remedy is not None and remedy["tell_person"]:
         say = remedy["action"] + (f" The step: {remedy['setup']}." if remedy["setup"] else "")
-        nxt = {"id": None, "call": None, "tell_person": True, "say": say, "why": f"remedy {remedy['key']}"}
+        nxt = {"id": None, "call": None, "tell_person": True, "say": say, "why": f"remedy {remedy['key']}",
+               "fill": []}
     elif open_:
         # a call that acts outside G6 is never next: the scheduler's pick only when it does not act
         pick = first or (scheduled if scheduled in open_ else "") or open_[0]
         found = next(c for c in candidates if c["id"] == pick)
-        nxt = {"id": pick, "call": found["call"], "tell_person": False, "say": "",
+        nxt = {"id": pick, "call": found["call"], "tell_person": False, "say": _fill_say(found),
+               "validated": found["validated"], "fill": found["fill"],
                "why": "remedy " + remedy["key"] if pick == first else why if pick == scheduled else
                "the first candidate that does not act outside G6"
                + (", and is not the call last_outcome reports" if reported else "")}
     elif candidates:
         nxt = {"id": None, "call": None, "tell_person": True, "why": "every candidate acts outside G6 or was just made",
                "say": "Every call offered here acts outside G6's checks or is the one just made: ask the person "
-                      "before any of them."}
+                      "before any of them.", "fill": []}
     else:
         nxt = {"id": None, "call": None, "tell_person": False, "say": "Nothing matched: describe the task in other "
-               "words, or call g6_find.", "why": "no candidate"}
+               "words, or call g6_find.", "why": "no candidate", "fill": []}
     card = warning_card("G6_E_QUALIFIED_DRAFT",
                         "g6_select: a proposal ranked by fixed rules over G6's own text; nothing ran and nothing "
                         "about your task is checked",

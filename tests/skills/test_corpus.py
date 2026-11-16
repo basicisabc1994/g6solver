@@ -64,12 +64,17 @@ def test_an_agent_facing_member_with_no_corpus_entry_is_a_problem() -> None:
     assert [(p.code, p.key) for p in problems] == [("UNSELECTABLE", dropped)]
 
 
-def test_an_op_template_is_validated_exactly_when_the_doors_typed_input_check_takes_it() -> None:
-    """``validated`` is the door's own check (registry.build_typed_input, what g6_invoke runs), made when the corpus is
-    built from shipped code; a refused template says why in G6's words, with no path."""
+def test_an_op_template_is_validated_only_when_g6_invoke_runs_it_as_given(monkeypatch, tmp_path) -> None:
+    """``validated`` is true only when the template, run as given through g6_invoke's own path (``invoke_reply``)
+    when the corpus was built, was not refused. A template the door's typed input check refuses, one the op itself
+    refuses, and one never run (it could act, needs a model, a program, isolation or an optional extra, or its
+    component is not on the reviewed list) are ``validated: false``, with why in G6's words and the fields to fill."""
     from g6.core.registry import build_typed_input, get_registry
+    from g6.mcp import invoke_reply
 
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
     registry = get_registry()
+    validated = 0
     for entry in corpus.entries():
         if entry["kind"] != "op":
             continue
@@ -77,18 +82,57 @@ def test_an_op_template_is_validated_exactly_when_the_doors_typed_input_check_ta
         params = json.loads(entry["call"]["arguments"]["params_json"])
         _, error = build_typed_input(registry.get_class(component)(), {**params, "op": op},
                                      code=f"[{component.upper()}_ERROR]", op=op)
-        assert entry["validated"] is (error is None), (entry["id"], error)
+        assert isinstance(entry["fill"], list) and set(entry["fill"]) <= set(entry["fields"]), entry["id"]
         if error:
-            assert entry["issues"] and all(i.startswith("[G6_E_INPUT_VALIDATION]") for i in entry["issues"]), entry
+            assert not entry["validated"] and entry["issues"][0].startswith("[G6_E_INPUT_VALIDATION]"), entry
+        if entry["validated"]:
+            validated += 1
+            assert component in corpus.RUN_AT_BUILD and not entry["sensitive"] and error is None, entry["id"]
+            ran = invoke_reply(component, op, entry["call"]["arguments"]["params_json"], allow_sensitive=frozenset())
+            assert ran["completion_state"] != "blocked-escalated", (entry["id"], ran["warning_card"])
+            assert entry["issues"] == [] and entry["fill"] == [], entry["id"]
         else:
-            assert entry["issues"] == [], entry["id"]
+            assert entry["issues"], entry["id"]
         for issue in entry["issues"]:
             assert not re.search(r"[A-Za-z]:[\\/]|\\\\|/(?:home|Users|tmp)/", issue), issue
+    assert validated >= 5
+
+
+def test_a_template_the_op_refuses_as_given_names_the_fields_to_fill() -> None:
+    full = {entry["id"]: entry for entry in corpus.entries()}
+    gate = full["op:action_gating.evaluate"]
+    assert gate["validated"] is False and gate["fill"] == ["action"], gate
+    assert gate["issues"][0].startswith("[G6_E_ACTION_GATING_ACTION_REQUIRED] action_gating.evaluate:")
+    assert full["op:coding_agent_gate.preflight"]["validated"] is True
+
+
+def test_only_ops_that_compute_over_their_input_alone_are_run_when_the_corpus_is_built() -> None:
+    data = corpus.load()
+    for name in corpus.RUN_AT_BUILD:
+        needs = data["components"][name]["needs"]
+        assert needs["model"] == "none" and not needs["confined"] and not needs["outside"] and not needs["extras"], name
+    for entry in corpus.entries():
+        if entry["kind"] == "op" and (entry["component"] not in corpus.RUN_AT_BUILD or entry["sensitive"]):
+            assert entry["validated"] is False and "not run when the corpus was built" in entry["issues"][-1], entry
+
+
+def test_the_build_runs_in_a_scratch_home_and_leaves_the_persons_home_alone(monkeypatch, tmp_path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("G6_HOME", str(home))
+    assert corpus.dumps(corpus.build()) == corpus.PATH.read_text(encoding="utf-8")
+    assert list(home.iterdir()) == []
 
 
 def test_the_door_fields_a_refusal_names_are_filled_into_the_template() -> None:
+    from g6.core.registry import build_typed_input, get_registry
+
     query = next(e for e in corpus.entries() if e["id"] == "op:database.query")
-    assert "sql" in json.loads(query["call"]["arguments"]["params_json"]) and query["validated"] is True
+    params = json.loads(query["call"]["arguments"]["params_json"])
+    _, error = build_typed_input(get_registry().get_class("database")(), {**params, "op": "query"},
+                                 code="[DATABASE_ERROR]", op="query")
+    assert "sql" in params and error is None
+    assert query["validated"] is False and "not run when the corpus was built" in query["issues"][0]
 
 
 def test_entries_are_copies_so_a_caller_that_fills_a_template_changes_no_later_entry() -> None:

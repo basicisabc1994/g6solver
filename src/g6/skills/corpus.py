@@ -11,12 +11,16 @@ and compares, so it cannot drift. It holds, as G6's own built-in text only:
 * each runnable op of a built-in component (a package under ``g6``; an entry-point extension never), with a template
   from its typed input and the text of its block's ``help`` and ``BlockContract``. A component with no block has no
   op and so no entry: ``g6_invoke`` cannot run it. Each template is put through the door's own typed input check
-  here, when the corpus is built from shipped code (``_door_check``): ``validated`` says whether the door takes the
-  call's shape, and ``issues`` why not. ``g6_select`` reads that and imports no component, so its reply never
-  depends on what the host can import.
+  here, when the corpus is built from shipped code (``_door_check``), and then, for an op of a ``RUN_AT_BUILD``
+  component that is not sensitive, run as given through ``g6_invoke``'s own path in a scratch G6 home
+  (``_run_as_given``). ``validated`` is true only when that run was not refused; every other template (refused by
+  the door or the op, or never run because it could act, needs a model, a program, isolation or an optional extra)
+  is ``validated: false``, with ``issues`` saying why in G6's words and ``fill`` naming the fields the agent must
+  supply. ``g6_select`` reads that and imports no component, so its reply never depends on what the host can
+  import; the build records no time, path or host value, so it is the same on every machine.
 
 The separate abstraction server is registered by the person alone, apart from ``g6-mcp`` (``SERVERS_NOT_SELECTED``).
-Nothing here runs an op: ``help`` and ``ops`` are each block's own description of itself.
+Apart from those runs, ``help`` and ``ops`` are each block's own description of itself.
 
     python -P -m g6.skills.corpus --write     # after a tool, route or op changes
     python -P -m g6.skills.corpus --check     # exit 1 when the file is stale
@@ -24,6 +28,7 @@ Nothing here runs an op: ``help`` and ``ops`` are each block's own description o
 from __future__ import annotations
 
 import ast
+import contextlib
 import copy
 import json
 import re
@@ -415,6 +420,83 @@ def _door_check(instance: Any, name: str, op: str, params: dict[str, Any],
                     f"fill it in from g6_describe {name}"]
 
 
+#: The components whose ops are run as given when the corpus is built, reviewed by hand: each computes over its
+#: typed input alone, with no program, network, model, isolation boundary or optional extra, and reads no file or
+#: source of the person's (what it keeps goes under G6's state folder, a scratch one during the build). Any other op
+#: is never run here and stays ``validated: false``, and so does a sensitive op of these. A test holds each to its
+#: component's static needs.
+RUN_AT_BUILD = frozenset({
+    "action_gating", "action_logic", "adapt_physical_ai", "algorithm_design", "coding_agent_gate", "complexity",
+    "decision_making", "design_governance", "duty_of_care", "epistemic_integrity", "graph_reasoning",
+    "knowledge_chunker"})
+_G6_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
+
+
+def _fill(said: str, params: dict[str, Any], fields: dict[str, Any]) -> list[str]:
+    """The fields the agent must supply: those a refusal names (as a word, or a plural field by its singular), else
+    the template's own placeholders."""
+    named = sorted(f for f in fields if f not in ("op", "operation") and (
+        re.search(rf"\b{re.escape(f)}\b", said)
+        or (len(f) > 3 and f.endswith("s") and re.search(rf"\b{re.escape(f[:-1])}\b", said))))
+    return named or sorted(params)
+
+
+def _not_run(module: Any, op: str, name: str, confined: bool) -> str:
+    """Why an op is not run when the corpus is built, or "" when it is."""
+    if op in set(getattr(module, "__g6_sensitive_ops__", ())):
+        return "it acts outside G6, so only the person allows it"
+    if getattr(module, "__g6_model__", None):
+        return "it calls a model"
+    if confined:
+        return "it runs inside an isolation boundary"
+    outside = sorted(str(getattr(p, "name", p)) for p in getattr(module, "__g6_outside__", ()))
+    if outside:
+        return f"it runs {', '.join(outside)}"
+    extras = sorted(getattr(module, "__g6_extras__", {}))
+    if extras:
+        return f"it needs the optional extra {', '.join(extras)}, which a machine may lack"
+    if name not in RUN_AT_BUILD:
+        return "its component is not on the reviewed list of those that compute over their input alone"
+    return ""
+
+
+def _run_as_given(name: str, op: str, params: dict[str, Any],
+                  fields: dict[str, Any]) -> tuple[bool, list[str], list[str]]:
+    """Run the template as given through ``g6_invoke``'s own path (``invoke_reply``), with no sensitive op allowed:
+    ``(validated, issues, fill)``. Not refused (any state but ``blocked-escalated``) is validated; a refusal is put
+    in G6's fixed words, its code and the fields to fill only (none of the op's own text)."""
+    from g6.mcp import invoke_reply
+
+    ran = invoke_reply(name, op, json.dumps(params, sort_keys=True), allow_sensitive=frozenset())
+    if ran.get("completion_state") != "blocked-escalated":
+        return True, [], []
+    card = ran.get("warning_card") or {}
+    said = " ".join(str(card.get(k, "")) for k in ("message", "why")) + " " + str(ran.get("error", ""))
+    fill = _fill(said, params, fields)
+    code = card.get("code", "") if _G6_CODE.fullmatch(str(card.get("code", ""))) else "G6_E_BLOCKED"
+    what = f"fill {', '.join(fill)} with your own values" if fill else "fill the fields the op needs"
+    return False, [f"[{code}] {name}.{op}: the op refuses this template as given; {what} "
+                   f"(g6_describe {name} lists them)"], fill
+
+
+@contextlib.contextmanager
+def _scratch_home() -> Any:
+    """``G6_HOME`` set to a scratch folder while templates run, so a run reads and keeps nothing of the person's."""
+    import os
+    import tempfile
+
+    before = os.environ.get("G6_HOME")
+    with tempfile.TemporaryDirectory(prefix="g6-corpus-", ignore_cleanup_errors=True) as home:
+        os.environ["G6_HOME"] = home
+        try:
+            yield
+        finally:
+            if before is None:
+                os.environ.pop("G6_HOME", None)
+            else:
+                os.environ["G6_HOME"] = before
+
+
 def _components_and_ops() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     from g6.core import discovery
     from g6.core.consent_declarations import TOOLS
@@ -466,6 +548,16 @@ def _components_and_ops() -> tuple[dict[str, Any], list[dict[str, Any]]]:
             params = {k: _placeholder(k, _annotation_kind(fields[k].annotation) if k in fields else "string")
                       for k in sorted(required)}
             params, issues = _door_check(instance, name, op, params, fields)
+            why = _not_run(module, op, name, confined)
+            if issues or why:
+                validated, fill = False, _fill(issues[0], params, fields) if issues else sorted(params)
+                if why:
+                    what = (f"fill {', '.join(fill)} with your own values first" if fill
+                            else f"read g6_describe {name} for the fields it needs")
+                    issues = [*issues, f"{name}.{op}: not run when the corpus was built ({why}), so whether it runs "
+                                       f"as given is unknown; {what}"]
+            else:
+                validated, issues, fill = _run_as_given(name, op, params, fields)
             words = re.findall(r"[a-z]+", op)
             phases = sorted({p for w in words for p in _OP_PHASES.get(w, ())}, key=PHASES.index)
             cost = "high" if has_model else "medium" if (op in sensitive or outside or confined) else "low"
@@ -474,7 +566,7 @@ def _components_and_ops() -> tuple[dict[str, Any], list[dict[str, Any]]]:
                 "call": {"tool": "g6_invoke", "arguments": {"component": name, "op": op,
                                                             "params_json": json.dumps(params, sort_keys=True)}},
                 "text": line or op.replace("_", " "), "sensitive": op in sensitive, "cost": cost, "phases": phases,
-                "validated": not issues, "issues": issues,
+                "validated": validated, "issues": issues, "fill": fill,
             })
     return components, ops
 
@@ -506,12 +598,14 @@ def _expanded(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def build() -> dict[str, Any]:
-    """The corpus as the code stands. Imports each built-in component and asks its block for ``ops`` and ``help``;
-    runs no other op, no model and no program."""
+    """The corpus as the code stands. Imports each built-in component and asks its block for ``ops`` and ``help``,
+    and runs each ``RUN_AT_BUILD`` op's template as given in a scratch G6 home; runs no other op, no model and no
+    program."""
     from g6.skills import routing
 
     tools = _tools()
-    components, ops = _components_and_ops()
+    with _scratch_home():
+        components, ops = _components_and_ops()
     entries = sorted([*tools, *_routes(tools), *ops], key=lambda e: e["id"])
     for entry in entries:
         entry["text"] = " ".join(entry["text"].split())

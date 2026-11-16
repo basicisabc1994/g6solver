@@ -98,6 +98,27 @@ def test_the_safety_words_are_fixed_data_the_docstring_lists() -> None:
         w for w in selector.SAFETY_WORDS if f'"{w}"' not in listed]
 
 
+def test_the_action_gate_as_next_shows_the_field_to_fill_and_how() -> None:
+    reply = selector.select("is it safe to run this git push")
+    gate = next(c for c in reply["candidates"] if c["id"] == "op:action_gating.evaluate")
+    assert gate["validated"] is False and gate["fill"] == ["action"]
+    nxt = reply["next"]
+    assert nxt["id"] == "op:action_gating.evaluate" and nxt["validated"] is False and nxt["fill"] == ["action"]
+    assert "action_type" in nxt["say"] and "allow, confirm, review or block" in nxt["say"], nxt["say"]
+
+
+def test_a_next_call_whose_template_is_not_known_to_run_says_what_to_fill() -> None:
+    for task, phase in (("check that the claims in my summary are supported by the sources", "verify"),
+                        ("pytest fails with an import error after my change", "diagnose"),
+                        ("plan the refactor of the payment module", "plan"), ("query the datalog program", "")):
+        reply = selector.select(task, phase, limit=8)
+        for candidate in reply["candidates"]:
+            assert isinstance(candidate["fill"], list), candidate["id"]
+        nxt = reply["next"]
+        if nxt["call"] is not None and nxt["validated"] is False:
+            assert nxt["say"] and (not nxt["fill"] or all(f in nxt["say"] for f in nxt["fill"])), nxt
+
+
 def test_a_safety_question_while_planning_raises_the_premortem_too() -> None:
     reply = selector.select("should I run this database migration against production", "plan", limit=5)
     assert {"op:action_gating.evaluate", "tool:g6_premortem"} <= set(_ids(reply, 3)), _ids(reply, 5)
