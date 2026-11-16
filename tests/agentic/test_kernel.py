@@ -268,6 +268,79 @@ def test_budgets_are_enforced_and_counted(monkeypatch, tmp_path):
     assert kernel.DEFAULT_BUDGET.max_model_calls == 3
 
 
+def test_a_reply_longer_than_the_characters_left_is_refused_before_it_is_used(monkeypatch, tmp_path):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    served = in_process_child(monkeypatch)
+    raw = '{"value": [0.5]}' + " " * 200
+    reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model(raw=raw).llm,
+                       budget=kernel.Budget(max_model_calls=3, max_output_chars=100))
+    assert reply["agentic"]["outcome"] == "degraded" and reply["agentic"]["reason"] == "budget_exhausted"
+    assert reply["agentic"]["cost"]["output_chars"] == len(raw) and len(served) == 1   # counted, never used
+    assert reply["warning_card"]["code"] == "G6_E_CEGIS_HOLE_UNSUPPORTED" and "result" not in reply
+
+
+def test_one_deadline_bounds_every_run_of_the_override_and_each_child_gets_only_the_time_left(monkeypatch, tmp_path):
+    import time
+
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    in_process_child(monkeypatch)
+    stand_in, timeouts = kernel._child.launch, []
+
+    def slow(request, *, timeout_s):
+        timeouts.append(timeout_s)
+        time.sleep(0.3)
+        return stand_in(request, timeout_s=timeout_s)
+
+    monkeypatch.setattr(kernel._child, "launch", slow)
+    budget = kernel.Budget(max_model_calls=3, max_output_chars=20_000, max_wall_clock_s=0.45)
+    reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm, budget=budget)
+    assert reply["agentic"]["outcome"] == "degraded" and reply["agentic"]["reason"] == "budget_exhausted"
+    assert timeouts[0] <= 0.45 and all(later < 0.2 for later in timeouts[1:])   # the time left, never a fresh allowance
+    assert "result" not in reply and reply["warning_card"]["code"] == "G6_E_CEGIS_HOLE_UNSUPPORTED"
+
+
+def test_no_child_starts_when_too_little_time_is_left_for_it(monkeypatch, tmp_path):
+    import time
+
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    in_process_child(monkeypatch)
+    stand_in, started = kernel._child.launch, []
+
+    def slow(request, *, timeout_s):
+        started.append(request["kind"])
+        time.sleep(0.95)
+        return stand_in(request, timeout_s=timeout_s)
+
+    monkeypatch.setattr(kernel._child, "launch", slow)
+    budget = kernel.Budget(max_model_calls=3, max_output_chars=20_000, max_wall_clock_s=1.0)
+    reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm, budget=budget)
+    assert reply["agentic"]["reason"] == "budget_exhausted" and started == ["run"]
+    assert "none was started" in reply["agentic"]["detail"]
+
+
+def test_the_default_child_timeouts_fit_inside_the_default_budget_and_the_question_says_what_it_covers(monkeypatch):
+    worst = kernel.CHILD_TIMEOUT_S * (kernel.DEFAULT_BUDGET.max_model_calls + 2)
+    assert worst <= kernel.DEFAULT_BUDGET.max_wall_clock_s
+    no_child(monkeypatch)
+    question = kernel.prepare("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm).question
+    for words in ("at most 3 model calls", "20000 characters of model replies", "a longer reply is not used",
+                  "120 seconds for the whole override", "the re-check included",
+                  f"each run at most {kernel.CHILD_TIMEOUT_S:g} seconds"):
+        assert words in question, words
+
+
+def test_the_parameters_and_the_parts_arguments_together_are_cut_to_8000_characters(monkeypatch, tmp_path):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    in_process_child(monkeypatch)
+    sketch = "def f(x):\n    # " + "q" * 15_000 + "\n    return x * ??f\n"
+    model = Model([0.5])
+    kernel.run("cegis", "synthesize", {"sketch": sketch, "cases": CASES}, allow=ALLOW, llm=model.llm)
+    user = json.loads(model.prompts[0][1])
+    together = user["arguments"] + user["parameters"] + user["original"]
+    assert len(together) <= kernel.PARAMETER_CHARS == 8000 and model.prompts[0][1].count("q") <= 8000
+    assert user["cut"] is True and user["arguments"].startswith('{"args":[0,-32,32,')
+
+
 def test_each_override_is_recorded_in_a_chained_ledger_with_the_question_digest_and_the_name(monkeypatch, tmp_path):
     monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
     in_process_child(monkeypatch)
