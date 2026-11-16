@@ -152,25 +152,31 @@ class _LeftAlone(Exception):
     """Why setup leaves the person's ``AGENTS.md`` as it is."""
 
 
-def _agents_update(target, block: str) -> tuple[bytes | None, bytes]:
-    """The file's bytes now (``None`` when there is no file) and with G6's block in place: the block written in the
-    file's own newline style, as exactly one ``AGENTS_BEGIN ... AGENTS_END`` pair replaced, or appended where there is
-    none; every other byte (newlines, a byte-order mark, trailing blank lines) as it was. ``_LeftAlone`` for a file
-    G6 cannot change that way. A marker counts only as a whole line of its own."""
-    import re
-    from g6.mcp.instructions import AGENTS_BEGIN, AGENTS_END
+def _read(target) -> tuple[int, int, bytes] | None:
+    """The file as G6 may write over it: its identity (device and file number) and bytes; ``None`` when there is no
+    file. ``_LeftAlone`` for a file G6 does not change: a link, junction or other reparse point, not a plain file,
+    hard-linked to another name, read-only (no write access, no owner write bit, or Windows' read-only attribute),
+    unreadable, or not UTF-8 text without NUL. Setup runs this same check at its first read and again before it
+    writes, so the two cannot drift: the file it replaces is one it would have agreed to change at the start."""
+    import stat
 
-    if target.is_symlink():
-        raise _LeftAlone("it is a link to another file")
-    if not target.exists():
-        return None, block.encode("utf-8") + b"\n"
-    if not target.is_file():
-        raise _LeftAlone("it is not a plain file")
     try:
-        if os.stat(target).st_nlink > 1:
-            raise _LeftAlone("it is hard-linked to another name")
-        if not os.access(target, os.W_OK):
-            raise _LeftAlone("it is read-only")
+        status = os.stat(target, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise _LeftAlone(f"it could not be read ({type(exc).__name__})") from None
+    attributes = getattr(status, "st_file_attributes", 0)
+    if stat.S_ISLNK(status.st_mode) or attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        raise _LeftAlone("it is a link to another file")
+    if not stat.S_ISREG(status.st_mode):
+        raise _LeftAlone("it is not a plain file")
+    if status.st_nlink > 1:
+        raise _LeftAlone("it is hard-linked to another name")
+    if (not os.access(target, os.W_OK) or not status.st_mode & stat.S_IWUSR
+            or attributes & stat.FILE_ATTRIBUTE_READONLY):
+        raise _LeftAlone("it is read-only")
+    try:
         data = target.read_bytes()
     except OSError as exc:
         raise _LeftAlone(f"it could not be read ({type(exc).__name__})") from None
@@ -181,6 +187,20 @@ def _agents_update(target, block: str) -> tuple[bytes | None, bytes]:
         raise _LeftAlone("it is not UTF-8 text") from None
     if "\x00" in text:
         raise _LeftAlone("it is not UTF-8 text")
+    return status.st_dev, status.st_ino, data
+
+
+def _agents_update(data: bytes | None, block: str) -> bytes:
+    """The file's bytes (``None`` when there is no file) with G6's block in place: the block written in the file's own
+    newline style, as exactly one ``AGENTS_BEGIN ... AGENTS_END`` pair replaced, or appended where there is none;
+    every other byte (newlines, a byte-order mark, trailing blank lines) as it was. ``_LeftAlone`` for a file G6
+    cannot change that way. A marker counts only as a whole line of its own."""
+    import re
+    from g6.mcp.instructions import AGENTS_BEGIN, AGENTS_END
+
+    if data is None:
+        return block.encode("utf-8") + b"\n"
+    bom = b"\xef\xbb\xbf" if data.startswith(b"\xef\xbb\xbf") else b""
     first = data.find(b"\n")
     newline = b"\r\n" if first > 0 and data[first - 1:first] == b"\r" else b"\n"
     written = block.encode("utf-8").replace(b"\n", newline)
@@ -191,21 +211,29 @@ def _agents_update(target, block: str) -> tuple[bytes | None, bytes]:
     if not begins and not ends:
         body = data[len(bom):]
         gap = b"" if not body or body.endswith(newline * 2) else newline if body.endswith(newline) else newline * 2
-        return data, data + gap + written + newline
+        return data + gap + written + newline
     if len(begins) != 1 or len(ends) != 1 or ends[0].start() < begins[0].start():
         raise _LeftAlone(f"its g6:begin and g6:end lines do not make exactly one block ({len(begins)} begin, "
                          f"{len(ends)} end)")
     start = begins[0].start() + (len(bom) if begins[0].start() == 0 else 0)
-    return data, data[:start] + written + data[ends[0].end():]
+    return data[:start] + written + data[ends[0].end():]
 
 
-def _seen(target) -> tuple[int, int, bytes] | None:
-    """The file's identity (device and file number) and bytes now; ``None`` when there is no file."""
+def _remove(name: str, say: Say) -> None:
+    """Remove G6's temporary file, never raising: made writable first (a copied read-only mode would block the removal
+    on Windows), one attempt, and named to the person when it stays."""
+    import stat
+
     try:
-        status = os.stat(target, follow_symlinks=False)
+        os.chmod(name, stat.S_IREAD | stat.S_IWRITE)
+    except OSError:
+        pass
+    try:
+        os.unlink(name)
     except FileNotFoundError:
-        return None
-    return status.st_dev, status.st_ino, target.read_bytes()
+        pass
+    except OSError as exc:
+        say(f"G6 could not remove its temporary file {name} ({type(exc).__name__}); you can delete it.")
 
 
 def _terminal() -> bool:
@@ -223,12 +251,15 @@ def codex_agents(ask: Ask, say: Say) -> None:
     fails: the file stays byte for byte as it was, no temporary file is left, and the person is told why and shown
     the block to add by hand. Setup goes on either way.
 
-    The file may change while setup waits at its question (the person saves it in an editor, or another program
-    does). So after the yes, and once more just before the replace, G6 compares the file with what it read before
-    asking, by identity (device and file number) and bytes; a file that changed, or appeared, is left as it now is and
-    the person is shown the block to add by hand. What remains: a save that lands between that last comparison and the
-    rename is lost, a window of one rename, since no lock is taken on the person's file. The file's mode is kept;
-    Windows attributes (hidden, say) and ACLs are not, as the new file replaces the old one."""
+    The file may change while setup waits at its question (the person saves it in an editor, makes it read-only or
+    links it, or another program does). So after the yes, and once more just before the replace, G6 runs the whole
+    check of its first read again (``_read``: kind, links, link count, write access, text) and compares identity
+    (device and file number) and bytes with what it read before asking; any difference leaves the file as it now is
+    and the person is shown the block to add by hand. The temporary file takes the file's mode only after the first of
+    those checks passes, and is always removed (made writable first) or named to the person. What remains: a change
+    that lands between that last check and the rename is lost or overwritten, a window of one rename, since no lock is
+    taken on the person's file. The file's mode is kept; Windows attributes (hidden, say) and ACLs are not, as the new
+    file replaces the old one."""
     import tempfile
     from pathlib import Path
     from g6.mcp.instructions import agents_block
@@ -242,18 +273,12 @@ def codex_agents(ask: Ask, say: Say) -> None:
 
     changed = "it changed while setup waited, and G6 writes only over the file it showed you the change for"
     try:
-        previous, updated = _agents_update(target, block)
-        seen = _seen(target)
+        seen = _read(target)
+        updated = _agents_update(seen[2] if seen else None, block)
     except _LeftAlone as why:
         by_hand(str(why))
         return
-    except OSError as exc:
-        by_hand(f"it could not be read ({type(exc).__name__})")
-        return
-    if (seen[2] if seen else None) != previous:
-        by_hand(changed)
-        return
-    if updated == previous:
+    if seen is not None and updated == seen[2]:
         return
     if ask is input and not _terminal():
         by_hand("no terminal is attached to answer whether to write it, so nothing was asked or written")
@@ -269,26 +294,30 @@ def codex_agents(ask: Ask, say: Say) -> None:
         return
     name = None
     try:
-        if _seen(target) != seen:
+        if _read(target) != seen:
             by_hand(changed)
             return
         target.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(dir=target.parent, prefix=".g6-agents-")
         with os.fdopen(fd, "wb") as stream:
             stream.write(updated)
-        if previous is not None:
+        if seen is not None:
             import shutil
             shutil.copymode(target, name)
-        if _seen(target) != seen:           # the last comparison, just before the replace
+        if _read(target) != seen:           # the last check, just before the replace
             by_hand(changed)
             return
         os.replace(name, target)
+        name = None
+    except _LeftAlone as why:
+        by_hand(f"{why} now, which it was not when setup read it")
+        return
     except OSError as exc:
         by_hand(f"writing it failed ({type(exc).__name__})")
         return
     finally:
         if name is not None:
-            Path(name).unlink(missing_ok=True)
+            _remove(name, say)
     say(f"Wrote G6's block to {target}.")
 
 

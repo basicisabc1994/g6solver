@@ -254,6 +254,151 @@ def test_markers_quoted_inside_a_line_are_the_persons_text(codex, line):
     assert _setup("y", []) == 0 and codex.read_bytes() == original + b"\n" + BLOCK.encode() + b"\n"
 
 
+def _temporary_files(codex):
+    return [p.name for p in codex.parent.iterdir() if p.name.startswith(".g6-agents-")]
+
+
+def test_a_file_made_read_only_while_setup_waits_is_left_alone(codex):
+    """The person protects their file while the question waits: the check G6 made at its first read (writable) runs
+    again before the write, so nothing is written, no temporary file is left, and setup ends normally."""
+    import os
+    import stat
+
+    codex.parent.mkdir(parents=True)
+    codex.write_bytes(b"# Mine\n")
+    events = []
+
+    def ask(prompt):
+        os.chmod(codex, stat.S_IREAD)
+        return "y"
+    try:
+        assert setup.main(_args(), ask=ask, say=lambda text: events.append(("say", text))) == 0
+        _left_alone(codex, events, b"# Mine\n")
+        assert "read-only" in " ".join(text for kind, text in events if kind == "say")
+    finally:
+        for path in codex.parent.iterdir():
+            os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="POSIX modes: on Windows the test above is this case")
+def test_a_chmod_0444_made_while_setup_waits_is_kept(codex):
+    import os
+
+    codex.parent.mkdir(parents=True)
+    codex.write_bytes(b"# Mine\n")
+    events = []
+
+    def ask(prompt):
+        os.chmod(codex, 0o444)
+        return "y"
+    try:
+        assert setup.main(_args(), ask=ask, say=lambda text: events.append(("say", text))) == 0
+        _left_alone(codex, events, b"# Mine\n")
+        assert os.stat(codex).st_mode & 0o777 == 0o444
+    finally:
+        os.chmod(codex, 0o644)
+
+
+def test_a_hard_link_made_while_setup_waits_is_not_split(codex, tmp_path):
+    import os
+
+    codex.parent.mkdir(parents=True)
+    codex.write_bytes(b"# Mine\n")
+    other = tmp_path / "AGENTS.shared.md"
+    events = []
+
+    def ask(prompt):
+        try:
+            os.link(codex, other)
+        except OSError as exc:
+            pytest.skip(f"no hard links here: {exc}")
+        return "y"
+    assert setup.main(_args(), ask=ask, say=lambda text: events.append(("say", text))) == 0
+    _left_alone(codex, events, b"# Mine\n")
+    assert os.path.samefile(codex, other)
+    assert "hard-linked" in " ".join(text for kind, text in events if kind == "say")
+
+
+@pytest.mark.parametrize("when", ["after the yes", "just before the replace"])
+def test_the_check_before_the_write_is_the_first_reads_check(codex, monkeypatch, when):
+    """One function makes every check, at the first read and again before the write, so the two cannot drift."""
+    import shutil
+
+    codex.parent.mkdir(parents=True)
+    codex.write_bytes(b"# Mine\n")
+    calls = []
+    real = setup._read
+
+    def counted(target):
+        calls.append(target)
+        return real(target)
+    monkeypatch.setattr(setup, "_read", counted)
+    if when == "just before the replace":
+        copymode = shutil.copymode
+
+        def link_meanwhile(src, dst, **kwargs):
+            copymode(src, dst, **kwargs)
+            try:
+                __import__("os").link(codex, codex.parent / "linked.md")
+            except OSError as exc:
+                pytest.skip(f"no hard links here: {exc}")
+        monkeypatch.setattr(shutil, "copymode", link_meanwhile)
+    events = []
+    assert _setup("y", events) == 0
+    if when == "just before the replace":
+        _left_alone(codex, events, b"# Mine\n")
+        assert "hard-linked" in " ".join(text for kind, text in events if kind == "say")
+    assert len(calls) == 3
+
+
+def test_a_temporary_file_that_cannot_be_removed_is_named_and_setup_ends_normally(codex, monkeypatch):
+    import os
+
+    codex.parent.mkdir(parents=True)
+    codex.write_bytes(b"# Mine\n")
+
+    def refuse(*args, **kwargs):
+        raise PermissionError("the file is open elsewhere")
+    for name in ("replace", "unlink", "remove"):     # Path.unlink calls os.unlink
+        monkeypatch.setattr(os, name, refuse)
+    events = []
+    assert _setup("y", events) == 0
+    assert codex.read_bytes() == b"# Mine\n"
+    left = _temporary_files(codex)
+    assert len(left) == 1
+    assert left[0] in " ".join(text for kind, text in events if kind == "say")
+    monkeypatch.undo()
+    (codex.parent / left[0]).unlink()
+
+
+def test_a_read_only_temporary_file_is_removed(codex, monkeypatch):
+    """A failed replace after the mode was copied leaves no temporary file, however that mode came out."""
+    import os
+    import shutil
+    import stat
+
+    codex.parent.mkdir(parents=True)
+    codex.write_bytes(b"# Mine\n")
+    monkeypatch.setattr(shutil, "copymode", lambda src, dst, **kw: os.chmod(dst, stat.S_IREAD))
+
+    def refuse(*args, **kwargs):
+        raise PermissionError("the file is open elsewhere")
+    monkeypatch.setattr(os, "replace", refuse)
+    events = []
+    try:
+        assert _setup("y", events) == 0
+        _left_alone(codex, events, b"# Mine\n")
+    finally:
+        for path in codex.parent.iterdir():
+            os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+
+
+def _args():
+    parser = argparse.ArgumentParser()
+    setup.add_arguments(parser)
+    return parser.parse_args(["--client", "codex", "--refuse-unconfined"])
+
+
 def test_without_a_terminal_nothing_is_written_and_the_block_is_shown(codex, monkeypatch):
     import io
     import sys
