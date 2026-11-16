@@ -624,8 +624,11 @@ def _codex_argv(program: str, config_file: Path, config: Mapping[str, Any]) -> l
     argv = [program, "exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check", "--ephemeral",
             "--color", "never"]
     for name, server in config["mcpServers"].items():
+        # `codex exec` asks no one, so with no setting every MCP call fails ("requires approval, but approval policy
+        # is never"): the trial server's tools are approved, as a person who always allows G6's tools sets them.
         argv += ["-c", f"mcp_servers.{name}.command={json.dumps(server['command'])}",
-                 "-c", f"mcp_servers.{name}.args={json.dumps(server['args'])}"]
+                 "-c", f"mcp_servers.{name}.args={json.dumps(server['args'])}",
+                 "-c", f'mcp_servers.{name}.default_tools_approval_mode="approve"']
         for key, value in server.get("env", {}).items():
             argv += ["-c", f"mcp_servers.{name}.env.{key}={json.dumps(value)}"]
     return [*argv, "-"]

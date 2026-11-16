@@ -251,6 +251,18 @@ def test_a_session_gets_only_its_tasks_servers_through_the_trial_server() -> Non
     assert f'mcp_servers.g6.env.{run.WITHHOLD_ENV}="g6_find,g6_describe"' in codex
 
 
+def test_a_codex_session_lets_its_trial_servers_tools_run_without_an_approval_nobody_can_give() -> None:
+    """`codex exec` asks no one: with no setting, every MCP call fails "requires approval, but approval policy is
+    never" (seen in the moment pilot, 2026-11-16). Each trial server's tools are approved, as a person who always
+    allows G6's tools would set them; nothing else is approved and the sandbox stays workspace-write."""
+    config = run.mcp_config({"servers": ["g6", "abstraction"]}, python="python")
+    codex = run.CLIENTS["codex"].argv("codex", Path("mcp.json"), config)
+    for name in ("g6", "abstraction"):
+        assert f'mcp_servers.{name}.default_tools_approval_mode="approve"' in codex
+    assert codex[codex.index("--sandbox") + 1] == "workspace-write"
+    assert not any("bypass" in part or part == "--approve-for-me" for part in codex)
+
+
 def test_the_codex_parser_reads_calls_and_the_final_message() -> None:
     events = "\n".join([
         json.dumps({"type": "item.completed", "item": {"type": "mcp_tool_call", "server": "g6", "tool": "g6_invoke",

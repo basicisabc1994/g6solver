@@ -225,7 +225,10 @@ What ships, with as little else as the runner can manage:
 - **Codex arm.** The skill sits where `g6 setup --client codex` puts it, at the workspace's scope, in Codex's
   `workspace-write` sandbox. Codex also reads what setup writes in the person's home (`~/.codex/AGENTS.md`, once the
   wiring adds a block there). Run `g6 setup --client codex` and `g6 setup --client claude` from the tree under test
-  before each arm.
+  before each arm. `codex exec` asks nobody, so with no setting every MCP call fails ("MCP tool call requires
+  approval, but approval policy is never"). The one-task pilot of 2026-11-16, before any arm ran, showed this. Each
+  trial server's tools are therefore approved (`mcp_servers.<name>.default_tools_approval_mode="approve"`), as for a
+  person who always allows G6's tools. Nothing else is approved, and the sandbox stays `workspace-write`.
 - **Guidance record.** Every session's record names, as digests, the guidance it could read: the workspace's skill,
   the plugin, what the servers show, and what `g6 setup` writes in the person's home for each client. An absent file
   is "". The labels name no folder. The arms are compared on these. `run.py compare` prints both arms' `g6` package
