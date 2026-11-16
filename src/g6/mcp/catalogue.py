@@ -69,29 +69,60 @@ def carry(name: str, source: str = EXTENSION_SOURCE) -> None:
 #: The source a description's facts about this computer stay under.
 HOST_SOURCE = "host_configuration"
 #: What a description over MCP says in their place without ``HOST_SOURCE`` shared.
-HOST_FACTS_LEFT_OUT = ("left out: this computer's facts (the key file's path, which extras are installed, and which "
-                       "sensitive operations this server allows) are given once the person shares "
-                       f"{HOST_SOURCE} with this client (g6_cloud_grant)")
+HOST_FACTS_LEFT_OUT = ("left out: this computer's facts (the key file's path, which extras are installed, which "
+                       "sensitive operations this server allows, and where a program was found on it) are given once "
+                       f"the person shares {HOST_SOURCE} with this client (g6_cloud_grant)")
+#: What stands in a description over MCP, without ``HOST_SOURCE`` shared, for a program found on this computer.
+HOST_VALUE = "left out (found on this computer)"
+
+#: ``g6_describe``'s fields that are G6's catalogue text as it ships: without ``HOST_SOURCE`` shared, a reply over MCP
+#: is built from these alone, so a field added later stays out until it is listed here.
+CATALOGUE_FIELDS = ("name", "available", "source", "family", "package", "block", "contract", "maturity",
+                    "sensitive_ops", "summary", "ops", "requires", "mitigates", "introduces", "skill", "vetting",
+                    "certificate")
+#: Each declared need's catalogue fields: a program's (``outside``; its ``command`` is shown apart, see
+#: :func:`_program`), an extra's (the imports it provides, not whether they are installed) and a key's (not its file).
+NEED_FIELDS = {"outside": ("name", "purpose", "install", "licence", "url", "env", "paid", "online"),
+               "extras": ("extra", "provides"),
+               "keys": ("name", "purpose", "where", "paid")}
+
+
+def _program(command: object) -> str:
+    """A declared program's command as a fresh client sees it: a bare name as the catalogue declares it (``git``);
+    a path, which the code found on this computer, as ``HOST_VALUE``."""
+    text = str(command or "")
+    return HOST_VALUE if any(mark in text for mark in ("/", "\\", ":")) else text
+
+
+def _needs(field: str, rows: object) -> list[dict]:
+    out = []
+    for row in rows if isinstance(rows, list) else ():
+        if isinstance(row, dict):
+            out.append({k: row[k] for k in NEED_FIELDS[field] if k in row})
+            if field == "outside":
+                out[-1]["command"] = _program(row.get("command"))
+    return out
 
 
 def host_facts(info: dict) -> dict:
-    """``g6_describe``'s reply over MCP: G6's catalogue text as it is, and this computer's facts in it (each key's
-    ``file``, each extra's ``installed``, ``sensitive_ops_allowed_here``) only where the person shared ``HOST_SOURCE``
-    with the client's provider, the reply then carrying that source; otherwise they are left out and
-    ``host_facts`` says so. Outside an MCP call nothing is sent and ``info`` is returned whole."""
+    """``g6_describe``'s reply over MCP. Where the person shared ``HOST_SOURCE`` with the client's provider, the
+    description as it is, the reply then carrying that source. Otherwise it is built from an allow-list, never by
+    striking what is known to be this computer's: the fields of ``CATALOGUE_FIELDS``, and each declared need's
+    ``NEED_FIELDS`` (so no key file's path, no extra's ``installed``, no ``sensitive_ops_allowed_here``), a program
+    found as a path given as ``HOST_VALUE``; ``host_facts`` says what was left out. Outside an MCP call nothing is
+    sent and ``info`` is returned whole."""
     capture = policy.current_capture()
     if capture is None or not info.get("available"):
         return info
     if policy.is_granted(HOST_SOURCE, _provider(capture)):
         carry(str(info.get("name", "")), HOST_SOURCE)
         return info
-    info = {k: v for k, v in info.items() if k != "sensitive_ops_allowed_here"}
-    if isinstance(info.get("keys"), list):
-        info["keys"] = [{k: v for k, v in key.items() if k != "file"} for key in info["keys"]]
-    if isinstance(info.get("extras"), list):
-        info["extras"] = [{k: v for k, v in extra.items() if k != "installed"} for extra in info["extras"]]
-    info["host_facts"] = HOST_FACTS_LEFT_OUT
-    return info
+    shown = {k: info[k] for k in CATALOGUE_FIELDS if k in info}
+    for field in NEED_FIELDS:
+        if field in info:
+            shown[field] = _needs(field, info[field])
+    shown["host_facts"] = HOST_FACTS_LEFT_OUT
+    return shown
 
 
 def _provider(capture: policy.Capture) -> str:
@@ -147,8 +178,9 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-__all__ = ["EXTENSION_SOURCE", "HOST_FACTS_LEFT_OUT", "HOST_SOURCE", "PATH", "UNSHIPPED", "build", "built_in", "carry",
-           "dumps", "extension", "host_facts", "shipped", "shown_components", "unshipped_reply"]
+__all__ = ["CATALOGUE_FIELDS", "EXTENSION_SOURCE", "HOST_FACTS_LEFT_OUT", "HOST_SOURCE", "HOST_VALUE", "NEED_FIELDS",
+           "PATH", "UNSHIPPED", "build", "built_in", "carry", "dumps", "extension", "host_facts", "shipped",
+           "shown_components", "unshipped_reply"]
 
 if __name__ == "__main__":
     raise SystemExit(main())

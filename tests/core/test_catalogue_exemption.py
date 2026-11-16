@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -140,19 +141,52 @@ def test_a_built_in_description_holds_this_computers_facts_only_with_host_config
     monkeypatch.setenv("G6_MCP_SENSITIVE", "lean")
     if granted:
         _grant("host_configuration")
-    keyed, extras, lean = _calls([("g6_describe", {"component": "ctx_search"}),
-                                  ("g6_describe", {"component": "grounding"}),
-                                  ("g6_describe", {"component": "lean"})])
-    for reply in (keyed, extras, lean):
+    keyed, extras, lean, outside = _calls([("g6_describe", {"component": "ctx_search"}),
+                                           ("g6_describe", {"component": "grounding"}),
+                                           ("g6_describe", {"component": "lean"}),
+                                           ("g6_describe", {"component": "workforce"})])
+    for reply in (keyed, extras, lean, outside):
         assert "G6_E_CLOUD_CONSENT_REQUIRED" not in reply and "'available': True" in reply, reply[:300]
     assert "'keys': [{" in keyed and "'extras': [{" in extras and "check_proof" in lean   # the catalogue text stays
+    assert "'name': 'pytest'" in outside and "'command': 'git'" in outside   # a declared program's bare name stays
     assert (HOMEMARK in keyed) is granted                                # the key file's path
     assert ("'installed'" in extras) is granted                          # which extras this computer has
     assert ("sensitive_ops_allowed_here" in lean) is granted             # the server's own setting
+    assert _holds(outside, sys.executable) is granted                   # the Python found running G6
     if granted:
         from g6.core import cloud_consent as cloud
         assert any(row.get("provider") == "openai:codex" and "host_configuration" in json.dumps(row)
                    for row in cloud.disclosures())
+
+
+def _holds(reply: str, value: str) -> bool:
+    """Whether ``value`` is in a tool reply's text, as written or as Python's repr writes a backslash."""
+    return bool(value) and (value in reply or value.replace("\\", "\\\\") in reply)
+
+
+def test_a_fresh_describe_of_every_shipped_component_holds_nothing_of_this_computer(tmp_path, monkeypatch,
+                                                                                      registry_reset):
+    import getpass
+    import os
+    import re
+    import tempfile
+
+    from g6.mcp import catalogue
+
+    monkeypatch.setenv("G6_HOME", str(tmp_path / HOMEMARK / ".g6"))
+    names = sorted(catalogue.shipped())
+    replies = _calls([("g6_describe", {"component": name}) for name in names])
+    here = {sys.executable, sys.prefix, sys.base_prefix, sys.exec_prefix, os.path.expanduser("~"), os.getcwd(),
+            tempfile.gettempdir()}
+    here |= {value.replace("\\", "/") for value in here} | {HOMEMARK}
+    user = getpass.getuser()
+    for name, reply in zip(names, replies):
+        assert "'available': True" in reply and "host_facts" in reply, (name, reply[:300])
+        assert not [value for value in here if _holds(reply, value)], (name, [v for v in here if _holds(reply, v)])
+        # a Windows path as this computer writes one (a skill's own examples, such as C:/work/project, are G6's text)
+        assert not re.search(r"(?<![\w])[A-Za-z]:\\", reply), (name, "a drive path")
+        assert not re.search(r"(?<![\w.~])/(?:home|Users|root|tmp|var|opt|usr|private|nix|Library)/", reply), name
+        assert not re.search(r"[\\/]" + re.escape(user) + r"(?!\w)", reply), (name, "the user name")
 
 
 def test_outside_an_mcp_call_a_description_keeps_this_computers_facts(tmp_path, monkeypatch, registry_reset):
