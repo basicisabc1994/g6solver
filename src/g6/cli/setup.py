@@ -197,8 +197,9 @@ def _agents_update(data: bytes | None, block: str) -> bytes:
     cannot change that way. The newline style is the file's first line end of any kind (``\\r\\n``, ``\\n`` or a lone
     ``\\r``), and a marker counts only at column zero with at most trailing spaces or tabs, ended by any of them.
     Only certain line shapes before or inside the block (anywhere when appending) allow an edit: blank lines,
-    column-zero headings and markers, plain paragraphs and list text at zero to three spaces, and column-zero
-    CommonMark fences with literal contents. Every other shape refuses the edit."""
+    column-zero headings and markers, plain paragraphs and list text at zero to three spaces, nested bullets in
+    two-space steps, plain separators after blanks, front matter delimiters, and column-zero CommonMark fences
+    with literal contents. Every other shape refuses the edit."""
     import re
     from g6.mcp.instructions import AGENTS_BEGIN, AGENTS_END
 
@@ -213,10 +214,19 @@ def _agents_update(data: bytes | None, block: str) -> bytes:
     # A line ends at any line end, so mixed line ends still work. The file's initial byte-order mark is its encoding
     # signature, not part of the first line.
     parts = re.split(rb"(\r\n|\r|\n)", data[len(bom):])
+    lines = parts[::2]
+    # Recognise only the delimiters, not arbitrary YAML as safe Markdown. Interior lines still pass the allow-list.
+    front_matter_end = next((i for i, line in enumerate(lines[1:], 1)
+                             if line.rstrip(b" \t") in (b"---", b"...")), None) if lines[0] == b"---" else None
     begins, ends, fence, start = [], [], None, len(bom)
-    uncertain, previous_text = [], False
-    for line, end in zip(parts[::2], [*parts[1::2], b""]):
+    uncertain, previous_text, previous_blank = [], False, True
+    previous_item_indent = previous_item_content = None
+    for index, (line, end) in enumerate(zip(lines, [*parts[1::2], b""])):
         stop = start + len(line)
+        prior_item_indent = previous_item_indent
+        prior_item_content = previous_item_content
+        if line.strip(b" \t"):
+            previous_item_indent = previous_item_content = None
         if fence:
             # Contents of an open fence are literal, whatever their indentation or Markdown-like text.
             closing = re.fullmatch(rb" {0,3}(`{3,}|~{3,})[ \t]*", line)
@@ -233,23 +243,38 @@ def _agents_update(data: bytes | None, block: str) -> bytes:
             opening = re.fullmatch(rb"(`{3,}|~{3,})(.*)", line, re.S)
             heading = re.match(rb"#{1,6}(?:[ \t]|$)", line)
             prose = re.fullmatch(rb" {0,3}([^ \t<>].*)", line)
-            item = re.fullmatch(rb" {0,3}(?:[-+*]|[0-9]{1,9}\.) +([^ \t].*|)", line)
+            item = re.fullmatch(rb"( *)(?:[-+*]|[0-9]{1,9}\.)( +)([^ \t].*|)", line)
+            item_indent = len(item.group(1)) if item else 0
+            certain_item = item and (item_indent <= 3 or (
+                prior_item_indent is not None and prior_item_content is not None
+                and prior_item_indent % 2 == item_indent % 2 == 0
+                and (item_indent <= prior_item_indent or prior_item_content <= item_indent <= prior_item_content + 3)))
             text = prose.group(1) if prose else b""
             if not line.strip(b" \t") or heading:
+                previous_text = False
+            elif index == front_matter_end:
                 previous_text = False
             elif opening and not (opening.group(1)[:1] == b"`" and b"`" in opening.group(2)):
                 fence = opening.group(1)
                 previous_text = False
             elif re.fullmatch(rb"([-_*])(?:[ \t]*\1){2,}[ \t]*", text):
-                uncertain.append(start)      # thematic breaks, including spaced ones such as - - -
+                if previous_blank and re.fullmatch(rb"([-_*])\1{2,}[ \t]*", text):
+                    previous_text = False
+                else:
+                    uncertain.append(start)  # spaced breaks and possible setext underlines stay refused
             elif previous_text and re.fullmatch(rb"(?:=+|-+)[ \t]*", text):
                 uncertain.append(start)      # a setext underline changes the preceding text's block
-            elif item and not re.match(rb"(?:`{3,}|~{3,}|[<>]|[-+*](?:[ \t]|$)|[0-9]+[.)](?:[ \t]|$))", item.group(1)):
+            elif certain_item and not re.match(rb"(?:`{3,}|~{3,}|[<>]|[-+*](?:[ \t]|$)|[0-9]+[.)](?:[ \t]|$))", item.group(3)):
                 previous_text = True        # backticks elsewhere in the item's text are plain text
+                previous_item_indent = item_indent
+                # CommonMark nests at the parent's content column plus at most three spaces; four more is code.
+                if len(item.group(2)) <= 4:
+                    previous_item_content = len(line) - len(item.group(3))
             elif (prose and not re.match(rb"(?:`{3,}|~{3,}|[-+*](?:[ \t]|$)|[0-9]+[.)](?:[ \t]|$))", text)):
                 previous_text = True
             else:
                 uncertain.append(start)
+        previous_blank = not line.strip(b" \t")
         start = stop + len(end)
     boundary = ends[0][1] if len(begins) == len(ends) == 1 and ends[0][0] > begins[0][0] else len(data)
     if any(position <= boundary for position in uncertain):
