@@ -107,3 +107,58 @@ def test_a_sketch_the_door_refuses_is_invalid_input_before_any_float_grid_is_ask
     assert not isinstance(refused.value, HoleUnsupported) and asked == []
     reply = g6.invoke("cegis", "synthesize", {"sketch": bad, "cases": CASES}, allow=("cegis.synthesize",))
     assert reply["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and asked == []
+
+
+def _within(seconds: float, target):
+    """``target()``'s value when it returns within ``seconds``; a failure that names where it is stuck otherwise."""
+    import sys
+    import threading
+    import traceback
+
+    box: dict = {}
+    worker = threading.Thread(target=lambda: box.setdefault("value", target()), daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        frames = traceback.extract_stack(sys._current_frames()[worker.ident])[-3:]
+        raise AssertionError(f"did not return within {seconds}s: " + " | ".join(f"{f.name}:{f.lineno}" for f in frames))
+    return box.get("value")
+
+
+def test_a_domain_with_repeated_values_is_drawn_from_its_distinct_values_and_returns() -> None:
+    from g6.cegis.verify import InputDomain
+
+    domain = InputDomain.of({"x": [0] * 2001})
+    assert domain.size == 1 and domain.exhaustive
+    assert _within(5.0, domain.inputs) == [{"x": 0}]
+    wide = InputDomain.of({"x": list(range(1000)) * 3, "y": [True, False, 1, 0, True]}, max_inputs=2000)
+    assert wide.size == 1000 * 4 and not wide.exhaustive
+    drawn = _within(5.0, wide.inputs)
+    assert len(drawn) == 2000 and len({(d["x"], type(d["y"]), d["y"]) for d in drawn}) == 2000
+
+
+def test_sampling_a_domain_is_bounded_in_attempts() -> None:
+    from g6.cegis.verify import InputDomain
+
+    class Same(InputDomain):   # a domain whose draws all collide, as repeated values did
+        def __init__(self) -> None:
+            super().__init__(values=(("x", (0,) * 3000),), max_inputs=2000)
+
+    drawn = _within(10.0, Same().inputs)
+    assert drawn == [{"x": 0}]
+
+
+@pytest.mark.parametrize("params", [
+    {"sketch": "def f(x, y):\n    return ??\n", "cases": [{"input": {"x": float("nan"), "y": float("nan")}, "output": 1}] * 46},
+    {"sketch": "def f(x):\n    return x * ??\n", "cases": [{"input": {"x": float("inf")}, "output": 1}]},
+    {"sketch": "def f(x):\n    return x * ??\n", "cases": [{"input": {"x": 1}, "output": float("nan")}]},
+    {"sketch": "def f(x):\n    return x * ??\n", "cases": [{"input": {"x": 1}, "output": 1}], "domain": {"x": [float("nan")]}},
+    {"sketch": "def f(x):\n    return x * ??\n", "cases": [{"input": {"x": 0}, "output": 0}], "domain": {"x": [0] * 2001}},
+])
+def test_the_block_refuses_values_that_are_not_finite_and_returns_on_a_repeated_domain(params) -> None:
+    reply = _within(20.0, lambda: g6.invoke("cegis", "synthesize", params, allow=("cegis.synthesize",)))
+    assert check_envelope(reply) == []
+    if "domain" in params and params["domain"]["x"][0] == 0:
+        assert reply["warning_card"].get("code") != "G6_E_INPUT_VALIDATION"
+    else:
+        assert reply["warning_card"]["code"] == "G6_E_INPUT_VALIDATION"

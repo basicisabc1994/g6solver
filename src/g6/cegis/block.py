@@ -17,9 +17,9 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr
+from pydantic import AllowInfNan, BaseModel, ConfigDict, Field, Strict, StrictBool, StrictInt, StrictStr
 
 from g6.cegis.hole import _HOLE_PATTERN, HoleUnsupported
 from g6.cegis.loop import cegis
@@ -30,7 +30,8 @@ from g6.core.ai_block import AIBlock
 from g6.core.maturity import component_maturity
 from g6.core.result import Result
 
-Scalar = StrictBool | StrictInt | StrictFloat | StrictStr | None
+#: A value in the table or the domain: a float must be finite (NaN is not equal to itself, so no table could hold it).
+Scalar = StrictBool | StrictInt | Annotated[float, Strict(), AllowInfNan(False)] | StrictStr | None
 _OPS: dict[str, str] = {
     "synthesize": "synthesize(sketch, cases=[{input: {arg: value}, output: value}], domain={arg: [values]}?, lo, hi, "
                   "fn_name, max_iterations, timeout_s): fill the sketch's holes (?? integer in [lo, hi], ??b boolean, "
