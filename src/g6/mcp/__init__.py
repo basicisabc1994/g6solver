@@ -157,8 +157,9 @@ def build_server(surface: Any = None) -> Any:
         raise SystemExit("g6-mcp needs the MCP extra: pip install 'g6[mcp] @ git+https://github.com/basicisabc1994/g6solver'") from exc
 
     from g6.core import discovery
+    from g6.mcp.instructions import TEXT
 
-    server = FastMCP("g6")
+    server = FastMCP("g6", instructions=TEXT)     # when to call G6, before any skill is read
     from g6.mcp.cloud_consent import install, public_tool, register
     install(server)
     register(server, Context)
