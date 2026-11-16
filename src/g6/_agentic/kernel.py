@@ -12,6 +12,14 @@ override checks that seal before construction or sending, then uses only a priva
 fields never choose the operation, model, limits, validator or checker. prepare/override remain useful for staging
 and inspecting a preparation; run is the one-call Python API.
 
+The trust boundary is the process. Caller-supplied responders, validators and caller objects run with the library
+caller's own authority in that caller's process. Original-first execution, seals and digests, single use, authority
+records, the confined child and the prohibition on treating substitutes as evidence hold against the MCP client,
+model replies and child, not against Python the library caller runs on its own objects in this process. MCP accepts
+data only and builds its caller from G6's provider callers; clients cannot supply code. Callable pins are best-effort
+checks against accidental change. Functions held in defaults, dictionaries or partial arguments, and in-process
+seal discovery or rewriting (including gc.get_referrers), remain outside that boundary.
+
 There is no per-override dialog or typed name. The metered caller is rebuilt by G6. Host and endpoint calls use
 the existing consent check: remote admission records provider consent, local admission records local model, and a
 refusal records refused by the consent check. Process callers record allowed in code. Only owned host sign-in,
@@ -177,15 +185,46 @@ class _CallablePin:
     follows: tuple[Any, ...]
 
 
+def _type_mro(cls: type) -> tuple[type, ...]:
+    """Read the built-in descriptor directly; never dispatch a metaclass hook."""
+    return type.__dict__["__mro__"].__get__(cls)
+
+
+def _type_attribute(cls: type, name: str) -> Any:
+    for klass in _type_mro(cls):
+        namespace = type.__dict__["__dict__"].__get__(klass)
+        for key, value in namespace.items():
+            if type(key) is str and key == name:
+                return value
+    return None
+
+
+def _static_attribute(target: Any, name: str) -> Any:
+    """Read an ordinary instance dictionary or a raw class attribute without descriptors or caller hooks."""
+    cls = type(target)
+    if any(base is type for base in _type_mro(cls)):
+        return _type_attribute(target, name)
+    descriptor = _type_attribute(cls, "__dict__")
+    if type(descriptor) is types.GetSetDescriptorType or type(descriptor) is types.MemberDescriptorType:
+        namespace = descriptor.__get__(target, cls)
+        if type(namespace) is dict:
+            for key, value in namespace.items():
+                if type(key) is str and key == name:
+                    return value
+    return _type_attribute(cls, name)
+
+
 def _callable_function(target: Any) -> Any:
     if type(target) is types.MethodType:
         return target.__func__
     if type(target) is functools.partial:
         return target.func
+    if type(target) is staticmethod or type(target) is classmethod:
+        return target.__func__
     if type(target) is types.FunctionType or type(target) is types.BuiltinFunctionType:
         return target
     # Inspect the type without dispatching a responder object's attribute hooks.
-    function = inspect.getattr_static(type(target), "__call__", None)
+    function = _type_attribute(type(target), "__call__")
     if type(function) is staticmethod or type(function) is classmethod:
         function = function.__func__
     return function
@@ -194,14 +233,16 @@ def _callable_function(target: Any) -> Any:
 def _code_reference(value: Any) -> bool:
     """Only callable edges, never attributes or container contents of caller data."""
     if any(type(value) is cls for cls in (types.FunctionType, types.MethodType, types.BuiltinFunctionType,
-                                         functools.partial)):
+                                         functools.partial, staticmethod, classmethod, functools._lru_cache_wrapper)):
+        return True
+    if any(base is type for base in _type_mro(type(value))):
         return True
     return type(_callable_function(value)) is types.FunctionType
 
 
 def _pin(target: Any) -> _CallablePin:
     function = _callable_function(target)
-    wrapped = inspect.getattr_static(target, "__wrapped__", None)
+    wrapped = _static_attribute(target, "__wrapped__")
     follows_wrapped = (wrapped,) if _code_reference(wrapped) else ()
     if type(target) is functools.partial:
         return _CallablePin(target, function, None, None, None, target.args, target.keywords,
@@ -224,9 +265,16 @@ def _pin(target: Any) -> _CallablePin:
                             None, None, tuple(follows))
     if type(target) is types.BuiltinFunctionType:
         return _CallablePin(target, target, None, None, None, None, None, ())
-    if type(function) is not types.FunctionType:
-        raise TypeError("the responder has no inspectable Python call function")
-    return _CallablePin(target, function, None, None, None, None, None, (function, *follows_wrapped))
+    follows = list(follows_wrapped)
+    if any(base is type for base in _type_mro(type(target))):
+        # A class in a closure can reach Python code through any raw type-level attribute, including __call__.
+        for klass in _type_mro(target):
+            namespace = type.__dict__["__dict__"].__get__(klass)
+            follows.extend(value for value in namespace.values() if _code_reference(value))
+    if _code_reference(function):
+        follows.insert(0, function)
+    # Opaque builtins/C callables/descriptors stay usable: retain the object and compare only by identity.
+    return _CallablePin(target, function, None, None, None, None, None, tuple(follows))
 
 
 def _pins(targets: Iterable[Any]) -> tuple[_CallablePin, ...]:
@@ -1403,6 +1451,19 @@ def _bare(result: Any, *, top: bool = True) -> Any:
     return result
 
 
+def _plain_metadata(value: Any, depth: int = 0) -> bool:
+    if any(type(value) is cls for cls in (str, int, float, bool, type(None))):
+        return True
+    return type(value) is tuple and depth < 64 and all(_plain_metadata(item, depth + 1) for item in value)
+
+
+def _same_metadata(left: Any, right: Any) -> bool:
+    # SplitResult is a G6-created route, normalized only after an exact type check on both operands.
+    if type(left) is SplitResult and type(right) is SplitResult:
+        left, right = tuple(left), tuple(right)
+    return type(left) is type(right) and _plain_metadata(left) and _plain_metadata(right) and left == right
+
+
 def override(pending: Pending, *, confirmation: Confirmation | None = None) -> dict[str, Any]:
     """Consume a sealed preparation; record remote consent, local admission, code allowance or consent refusal.
 
@@ -1440,20 +1501,25 @@ def override(pending: Pending, *, confirmation: Confirmation | None = None) -> d
         # before digesting or formatting it; subsequent public mutations cannot affect execution.
         public_copy = _CallerSnapshot(**{name: object.__getattribute__(public_snapshot, name)
                                         for name in _CallerSnapshot.__dataclass_fields__})
-        _, why = _snapshot_kind(public_copy)
-        if why:
-            return _unmetered(why, data["original"], data["request_id"])
+        public_kind = _class_kind(public_copy.cls, public_copy.responder)
+        if not public_kind or (type(public_copy.kind) is str and public_kind != public_copy.kind):
+            return _unmetered("a snapshot whose exact caller class does not match its prepared kind",
+                              original, data["request_id"])
         snapshot = _CallerSnapshot(**{name: object.__getattribute__(sealed_snapshot, name)
                                       for name in _CallerSnapshot.__dataclass_fields__})
         kind, why = _snapshot_kind(snapshot)
         if why:
             return _unmetered(why, original, data["request_id"])
         same_identity = public_copy.cls is snapshot.cls and public_copy.responder is snapshot.responder
-        same_metadata = all(object.__getattribute__(public_copy, name) == object.__getattribute__(snapshot, name)
+        same_metadata = all(_same_metadata(object.__getattribute__(public_copy, name),
+                                           object.__getattribute__(snapshot, name))
                             for name in _CallerSnapshot.__dataclass_fields__ if name not in ("cls", "responder"))
         if not same_identity or not same_metadata:
             return _refused(DIGEST_MISMATCH, "the public caller metadata changed; nothing was constructed or sent",
                             original=original, request_id=data["request_id"])
+        _, why = _snapshot_kind(public_copy)
+        if why:
+            return _unmetered(why, data["original"], data["request_id"])
         package = _package(data["component"])
         current_code = tuple((name, _child.resolve(name, package)) for name, _ in owned)
         if any(current is not prepared for (_, current), (_, prepared) in zip(current_code, owned, strict=True)):
