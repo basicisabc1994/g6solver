@@ -160,6 +160,25 @@ def test_d1_a_path_that_is_not_text_is_refused_as_input_not_a_raw_type_error(hom
     assert refused.value.code == E.INPUT_INVALID
 
 
+class _Fails(os.PathLike):
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def __fspath__(self) -> str:
+        raise self.error
+
+
+@pytest.mark.parametrize("error", [ValueError("zz-caller"), OSError("zz-caller"), RuntimeError("zz-caller")],
+                         ids=["valueerror", "oserror", "runtimeerror"])
+def test_d1_a_path_object_that_raises_is_refused_as_input_in_g6s_words(home, error) -> None:
+    ws = _task(home)
+    for act in (ws.read, lambda p: ws.write(p, "written")):
+        with pytest.raises(E.WorkspaceRefused) as refused:
+            act(_Fails(error))
+        assert refused.value.code == E.INPUT_INVALID
+        assert "could not be read as text" in str(refused.value) and "zz-" not in str(refused.value)
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows' per-folder case-sensitive flag")
 def test_d1_a_folder_named_as_the_g6_home_but_for_case_is_never_read_or_written(tmp_path, monkeypatch) -> None:
     # in a case-sensitive folder holding the G6 home 'g6-home', 'G6-HOME' is another folder: a task's write or read of

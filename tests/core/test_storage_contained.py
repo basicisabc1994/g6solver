@@ -461,6 +461,31 @@ def test_a_value_that_is_not_text_is_refused_in_g6s_words(root: Path, value: obj
         calls[call](_Interrupted())
 
 
+class _Fails(os.PathLike):
+    """A path object whose ``__fspath__`` raises the caller's own error."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def __fspath__(self) -> str:
+        raise self.error
+
+
+@pytest.mark.parametrize("error", [ValueError("zz-caller"), OSError("zz-caller"), RuntimeError("zz-caller"),
+                                   TypeError("zz-caller")], ids=["valueerror", "oserror", "runtimeerror", "typeerror"])
+@pytest.mark.parametrize("call", ["contained", "refuse_links", "confined_path"])
+def test_a_path_object_that_raises_is_refused_as_not_read_as_text(root: Path, error: Exception, call: str) -> None:
+    # the caller's own error while its path object is read is not the file system's answer, and not raw: refused in
+    # G6's words, not as outside
+    calls = {"contained": lambda v: contained(root, v), "refuse_links": lambda v: contained(root, v, refuse_links=True),
+             "confined_path": lambda v: storage.confined_path(v, (root,))}
+    with pytest.raises(PathRefused) as refused:
+        calls[call](_Fails(error))
+    assert refused.value.outside is False
+    assert "could not be read as text" in refused.value.reason
+    assert "file system" not in refused.value.reason and "zz-" not in refused.value.reason, refused.value.reason
+
+
 #: What an entry point may meet while it decides: an OS error (WinError 87, a stream name lstat cannot take), a
 #: ValueError (a NUL) and a UnicodeError (half of a UTF-16 character encoded for Windows).
 ERRORS = [OSError(22, "zz-os-words", None, 87), ValueError("zz-python-words"),

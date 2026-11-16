@@ -60,15 +60,18 @@ def _in_g6s_words(start: str = "") -> Callable[[Callable[..., Path]], Callable[.
 
 def _text(value: object, what: str = "the path") -> str:
     """``value`` as a plain ``str`` (from a ``str``, or a path object that gives one); :class:`PathRefused` (not
-    outside) for anything else (``None``, bytes, a number), in G6's words, so no raw ``TypeError`` reaches a caller. An
+    outside) for anything else (``None``, bytes, a number), and for a path object whose ``__fspath__`` raises (the
+    caller's own error, not the file system's answer), in G6's words, so no raw exception reaches a caller. An
     interrupt raised while it is read is not caught.
 
     A ``str`` subclass is copied into a plain ``str`` by ``str.__str__``, which runs none of the subclass's methods:
     its own ``replace`` or ``[:4]`` could show every check one path and pathlib's parse, which open reads, another."""
     try:
         text = os.fspath(value)
-    except TypeError:
-        text = None
+    except Exception:
+        if hasattr(type(value), "__fspath__"):           # a path object that raised while it was read
+            raise PathRefused(f"{what} could not be read as text") from None
+        text = None                                       # None, a number: os.fspath's TypeError
     if not issubclass(type(text), str):
         raise PathRefused(f"{what} is not text (a str or a path object)")
     return str.__str__(text)

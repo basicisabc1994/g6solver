@@ -585,6 +585,27 @@ def test_a_part_that_is_not_text_is_refused_in_g6s_words(home: Path, value: obje
         state_path("churn", _Interrupted())
 
 
+class _Fails(os.PathLike):
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def __fspath__(self) -> str:
+        raise self.error
+
+
+@pytest.mark.parametrize("error", [ValueError("zz-caller"), OSError("zz-caller"), RuntimeError("zz-caller"),
+                                   TypeError("zz-caller")], ids=["valueerror", "oserror", "runtimeerror", "typeerror"])
+def test_a_part_whose_path_object_raises_is_refused_as_not_read_as_text(home: Path, error: Exception) -> None:
+    # the caller's own error is not "the file system could not answer", and never raw
+    from g6.core.storage import PathRefused
+
+    for parts in ((_Fails(error),), ("churn", _Fails(error))):
+        with pytest.raises(PathRefused, match="could not be read as text") as refused:
+            state_path(*parts)
+        assert refused.value.outside is False and "G6_HOME" in refused.value.reason
+        assert "file system" not in refused.value.reason and "zz-" not in refused.value.reason, refused.value.reason
+
+
 @pytest.mark.parametrize("where", ["lstat", "resolve"])
 @pytest.mark.parametrize("error", [OSError(22, "zz-os-words", None, 87), ValueError("zz-python-words"),
                                    UnicodeEncodeError("utf-16-le", "\udc80", 0, 1, "zz-codec-words")],
