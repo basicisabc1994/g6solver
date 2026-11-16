@@ -318,16 +318,23 @@ def test_an_absolute_path_is_allowed_only_inside(root: Path) -> None:
 
 
 @pytest.mark.parametrize("raw", ["\\\\attacker.example\\share\\x.txt", "//attacker.example/share/x.txt",
-                                 "\\\\?\\C:\\Windows\\x.txt", "\\\\.\\PhysicalDrive0"])
+                                 "\\\\?\\C:\\Windows\\x.txt", "\\\\.\\PhysicalDrive0", "\\??\\C:\\Windows\\x.txt",
+                                 "/??/C:/Windows/x.txt"])
 def test_a_network_or_device_path_is_refused_before_anything_is_resolved(root: Path, raw: str,
                                                                         monkeypatch: pytest.MonkeyPatch) -> None:
-    # resolving \\host\share on Windows opens it, which reaches the host over SMB (and offers it a login)
+    # resolving \\host\share on Windows opens it, which reaches the host over SMB (and offers it a login); \??\ is the
+    # NT form open takes as it is. Refused as outside on the words, in the same fixed words state_path gives, no path
     def never(self: Path, strict: bool = False) -> Path:
         raise AssertionError("resolved a network or device path")
 
     monkeypatch.setattr(Path, "resolve", never)
-    with pytest.raises(PathRefused, match="network or device"):
+    with pytest.raises(PathRefused, match="network or device") as refused:
         contained(root, raw)
+    assert refused.value.outside is True
+    assert raw not in refused.value.reason
+    with pytest.raises(PathRefused) as from_state_path:
+        storage.state_path(raw)
+    assert from_state_path.value.reason.endswith(refused.value.reason)
 
 
 @pytest.mark.parametrize("raw", ["", "  ", "a\x00b.txt", "a\nb.txt", "C:secret.txt", "notes.txt:hidden", "CON",

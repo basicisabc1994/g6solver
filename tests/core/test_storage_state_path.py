@@ -14,7 +14,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -188,8 +188,6 @@ def test_the_value_is_the_resolved_absolute_path_under_the_resolved_home(home: P
     assert state_path("churn", "a.json") == root / "churn" / "a.json" == (home / "churn" / "a.json").resolve()
     assert state_path("churn", "missing", "b.json") == root / "churn" / "missing" / "b.json"
     assert state_path("churn/a.json") == root / "churn" / "a.json"
-    assert state_path("churn", "..") == root
-    assert state_path("churn", "..", "churn", "a.json") == root / "churn" / "a.json"
     assert state_path("churn", "a.json").is_absolute()
 
 
@@ -364,26 +362,94 @@ def test_a_home_reached_through_a_link_is_its_target(tmp_path: Path, monkeypatch
 
 #: Names a check and open could read two ways on Windows (see test_storage_contained's TWO_WAYS); a NUL everywhere.
 TWO_WAYS = ["a\x00b"] + (["j::$INDEX_ALLOCATION", "f.txt:s:$DATA", "a\x01b", "dp\udc80", "con.txt", "COM1.log", "nul",
-                          "x.", "x ", "C:\\elsewhere"] if sys.platform == "win32" else [])
+                          "x.", "x "] if sys.platform == "win32" else [])
 
 
-@pytest.mark.parametrize("name", TWO_WAYS)
-def test_a_name_read_two_ways_is_refused_before_the_file_system_is_asked(home: Path, name: str,
-                                                                          monkeypatch: pytest.MonkeyPatch) -> None:
-    # the input gate refuses before any resolve or lstat, in G6's words (never Python's), naming no path
-    from g6.core.storage import PathRefused
-
+def _asked_nothing(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record every lstat and resolve; a refusal on the words must come before either is asked."""
     asked: list[str] = []
     real_lstat, real_resolve = os.lstat, Path.resolve
     monkeypatch.setattr(os, "lstat", lambda p, *a, **k: asked.append(f"lstat {p}") or real_lstat(p, *a, **k))
     monkeypatch.setattr(Path, "resolve", lambda self, strict=False: asked.append(f"resolve {self}")
                         or real_resolve(self, strict))
-    for parts in ((name, "x.json"), ("churn", name), (f"churn/{name}/x.json",)):
+    return asked
+
+
+@pytest.mark.parametrize("name", TWO_WAYS)
+def test_a_name_read_two_ways_is_refused_before_the_file_system_is_asked(home: Path, name: str,
+                                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    # the input gate refuses before any resolve or lstat, in G6's words (never Python's), naming no path; each name sits
+    # below another in its part ('j::$INDEX_ALLOCATION' as a whole part is a drive-qualified part, refused as outside)
+    from g6.core.storage import PathRefused
+
+    asked = _asked_nothing(monkeypatch)
+    for parts in ((f"churn/{name}", "x.json"), ("churn", f"sub/{name}"), (f"churn/{name}/x.json",)):
         with pytest.raises(PathRefused, match="G6_HOME") as refused:
             state_path(*parts)
         assert refused.value.outside is False
         assert str(home) not in refused.value.reason and name not in refused.value.reason, refused.value.reason
     assert asked == []
+
+
+#: Parts that are not names below the home: absolute, rooted, drive-qualified, network, device or \\?\ forms, and
+#: parts that split into an empty, '.' or '..' name. Joined onto the home, each either replaces it or leaves it.
+ELSEWHERE = ["", ".", "..", "a/", "a//b", "a/./b", "a/../b", "/rooted", "//host/share/x"] + (
+    ["C:", "C:x", "j::$INDEX_ALLOCATION", "C:\\elsewhere", "\\rooted", "\\\\host\\share\\x", "\\\\.\\pipe\\x",
+     "//./pipe/x", "\\\\?\\C:\\x", "\\??\\C:\\x", "a\\..\\b", "a\\\\b"] if sys.platform == "win32" else [])
+
+
+@pytest.mark.parametrize("part", ELSEWHERE)
+def test_a_part_that_is_not_names_below_the_home_is_refused_as_outside_on_its_words(
+        home: Path, part: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    # decided on the words alone, so refused as outside before anything is joined, resolved or asked about, in G6's
+    # fixed words (never the part's)
+    from g6.core.storage import PathRefused
+
+    asked = _asked_nothing(monkeypatch)
+    for parts in ((part, "x.json"), ("churn", part)):
+        with pytest.raises(PathRefused, match="escapes G6_HOME") as refused:
+            state_path(*parts)
+        assert refused.value.outside is True, refused.value.reason
+        assert len(part) < 3 or part not in refused.value.reason, refused.value.reason
+    assert asked == []
+
+
+@pytest.fixture
+def pipe() -> Iterator[tuple[str, Callable[[], bool]]]:
+    """A local named pipe served here (no network), and a check of whether anything opened it."""
+    import ctypes
+    import secrets
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateNamedPipeW.restype = wintypes.HANDLE
+    kernel32.CreateNamedPipeW.argtypes = [wintypes.LPCWSTR] + [wintypes.DWORD] * 6 + [wintypes.LPVOID]
+    kernel32.ConnectNamedPipe.argtypes = [wintypes.HANDLE, wintypes.LPVOID]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    name = "\\\\.\\pipe\\g6test-" + secrets.token_hex(6)
+    # PIPE_ACCESS_DUPLEX; PIPE_TYPE_BYTE | PIPE_NOWAIT; one instance
+    handle = kernel32.CreateNamedPipeW(name, 3, 1, 1, 512, 512, 0, None)
+    assert handle not in (None, wintypes.HANDLE(-1).value)
+
+    def opened() -> bool:
+        # ERROR_PIPE_CONNECTED (535) or ERROR_NO_DATA (232: opened and closed); 536 means never opened
+        return bool(kernel32.ConnectNamedPipe(handle, None)) or ctypes.get_last_error() in (535, 232)
+
+    yield name, opened
+    kernel32.CloseHandle(handle)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows named pipes")
+@pytest.mark.parametrize("form", ["device", "forward slashes", "after a plain part"])
+def test_a_device_part_is_refused_as_outside_and_never_opened(home: Path, pipe: tuple[str, Callable[[], bool]], form: str) -> None:
+    from g6.core.storage import PathRefused
+
+    name, opened = pipe
+    parts = {"device": (name,), "forward slashes": (name.replace("\\", "/"),), "after a plain part": ("churn", name)}
+    with pytest.raises(PathRefused) as refused:
+        state_path(*parts[form])
+    assert refused.value.outside is True, refused.value.reason
+    assert not opened(), "state_path opened the pipe while it decided"
 
 
 @pytest.mark.parametrize("where", ["lstat", "resolve"])

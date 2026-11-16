@@ -77,10 +77,34 @@ def confined_path(raw: str | os.PathLike[str], roots: tuple[Path, ...]) -> Path:
     raise refused
 
 
+#: G6's words for a network or device path, which every entry point refuses as outside on its words alone.
+_ELSEWHERE = ("the path is a network or device path (\\\\host\\share, //host/share, \\\\?\\, \\\\.\\ or \\??\\), which G6 "
+              "never resolves: resolving one on Windows opens it, over the network for a share")
+
+
+def _elsewhere(text: str) -> str | None:
+    """Why ``text`` names a network share or a device on its words alone (``\\\\host\\share``, ``//host/share``,
+    ``\\\\?\\``, ``\\\\.\\``, or ``\\??\\``, the NT form open takes as it is), or None. Every entry point asks first,
+    before anything is joined, resolved or asked about, and refuses such a path as outside in these same words."""
+    lead = text[:4].replace("/", "\\")
+    return _ELSEWHERE if lead[:2] == "\\\\" or lead == "\\??\\" else None
+
+
 @_in_g6s_words("state path under G6_HOME: ")
 def state_path(*parts: str) -> Path:
-    """A path under the state root. Relative parts may not escape it, nor hold a name :func:`_gate` refuses; a
-    :class:`PathRefused` (a ``ValueError``) says why."""
+    """A path under the state root. Each part is one name below it, or a relative path of names: a part that is a
+    network or device path (:func:`_elsewhere`), absolute, rooted (``\\x``), drive-qualified (``C:``, ``C:x``) or that
+    splits into an empty, ``.`` or ``..`` name is refused as outside on its words, before anything is joined or resolved;
+    a name :func:`_gate` refuses is refused too. A :class:`PathRefused` (a ``ValueError``) says why, in G6's words."""
+    for part in parts:
+        text = os.fspath(part)
+        names = set(text.replace("\\" if os.name == "nt" else "/", "/").split("/"))
+        why = _elsewhere(text)
+        if why is None and (Path(text).anchor or names & {"", ".", ".."}):
+            why = ("a part is not a relative path of names below the home (it is absolute, on a drive or a root, or "
+                   "holds an empty, '.' or '..' name)")
+        if why:
+            raise PathRefused(f"state path escapes G6_HOME: {why}", outside=True)
     if why := _gate(*parts):
         raise PathRefused(f"state path escapes G6_HOME: {why}")
     root = g6_home().resolve()
@@ -248,8 +272,8 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
     outside; on Windows the answer is checked as open reads it, inside only when the file system reaches ``root`` on it
     (by file identity, not by words, so a folder named as ``root`` but for case is outside), and a link resolving could
     not follow counts as outside too. Refused before anything is resolved: an empty path; a control character; a network
-    or device path (``\\\\host\\share``, ``//host/share``, ``\\\\?\\``, ``\\\\.\\``), because resolving one on Windows
-    opens it over the network; an absolute path on another drive or not under ``root`` (outside); a ``:`` in a relative
+    or device path (:func:`_elsewhere`: ``\\\\host\\share``, ``//host/share``, ``\\\\?\\``, ``\\\\.\\``, ``\\??\\``),
+    outside, because resolving one on Windows opens it, over the network for a share; an absolute path on another drive or not under ``root`` (outside); a ``:`` in a relative
     path (a drive, or a file's alternate stream, on Windows); a part named for a Windows device (``CON``, ``nul.txt``);
     and any name below ``root`` that the input gate (:func:`_gate`) refuses: on Windows a ``:`` (a stream, even in an
     absolute path), a control character, half of a UTF-16 character, a device's name, or a name ending in a space or a
@@ -263,8 +287,8 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
         raise PathRefused("the path is empty")
     if any(ord(ch) < 32 or ord(ch) == 127 for ch in text):
         raise PathRefused("the path holds a control character")
-    if text[:2] in ("\\\\", "//", "\\/", "/\\"):
-        raise PathRefused(f"{text!r} is a network or device path, which G6 never resolves", outside=True)
+    if why := _elsewhere(text):
+        raise PathRefused(why, outside=True)
     given = Path(text)
     # On the words first, before anything is resolved or asked about: resolving a path outside the folder could follow
     # a link out of it (a junction to a network share is opened by resolving it). An absolute path on another drive,
