@@ -459,10 +459,16 @@ def test_the_docs_state_the_limits_plainly(line):
 
 
 def test_the_plugins_text_makes_no_claim_it_may_not_and_names_no_private_path():
+    # The shipped using-g6 skill is G6's own, byte for byte (tests/skills/test_plugin_skill.py): it names the state
+    # `verified` to say never to claim it, and its word rules are tested where it is written (tests/skills/).
+    shipped = PLUGIN / "skills" / "using-g6"
     for path in [*PLUGIN.rglob("*"), ROOT / ".claude-plugin" / "marketplace.json"]:
         if path.is_file():
             text = path.read_text(encoding="utf-8").lower()
-            for word in ("experimental", "proved", "proven"):
-                assert word not in text, f"{path.name}: {word}"
-            assert not re.search(r"\bverified\b", text), path.name
+            if shipped in path.parents:
+                assert path.read_bytes() == (ROOT / "src/g6/skills/using-g6" / path.relative_to(shipped)).read_bytes()
+            else:
+                for word in ("experimental", "proved", "proven"):
+                    assert word not in text, f"{path.name}: {word}"
+                assert not re.search(r"\bverified\b", text), path.name
             assert not re.search(r"[a-z]:\\users\\|/home/\w+/|/users/\w+/", text), path.name
