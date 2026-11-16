@@ -17,6 +17,9 @@ each call, from the hook's ``last_assistant_message`` where Claude Code gives on
 agent's reason if it left the code as it was. Where a loop did not run, ``systemMessage`` says what did not run and why, in
 one line: a turn never ends with the work silently untested.
 
+``tool``: on ``PostToolUse`` after a G6 tool, one line of ``additionalContext`` when the reply's ``repair`` block is the
+agent's to make (``g6.mcp.repair``), once per code in a session; off with ``G6_HINTS=off``.
+
 The hooks are a convenience, not a security boundary. A failure never holds the person's turn or the agent's: it ends with
 one line on standard error, and only exit 2 would block, which these never give. A session's folder is named by a digest,
 so nothing in a hook's input can name a path. Inside a scout's session (``CHILD``) they do nothing, whatever settings that
@@ -27,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -249,7 +253,62 @@ def on_stop(event: dict) -> dict:
     return {"systemMessage": said} if said else {}
 
 
-HOOKS = {"prompt": on_prompt, "stop": on_stop}
+#: Set to ``off`` where Claude Code runs to keep G6's repair line out of the agent's context.
+HINTS = "G6_HINTS"
+_REPAIR_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
+
+
+def _repair(response: object) -> dict | None:
+    """The ``repair`` block of a G6 reply as the hook's ``tool_response`` holds it: the reply itself, its
+    ``structuredContent``, or a text item that is the reply's JSON."""
+    found: list[object] = [response]
+    if isinstance(response, dict):
+        found += [response.get("structuredContent"), response.get("structured_content")]
+        content = response.get("content")
+    else:
+        content = response
+    for item in content if isinstance(content, list) else ():
+        text = item.get("text") if isinstance(item, dict) else None
+        if isinstance(text, str) and text.lstrip().startswith("{"):
+            try:
+                found.append(json.loads(text))
+            except ValueError:
+                pass
+    if isinstance(response, str) and response.lstrip().startswith("{"):
+        try:
+            found.append(json.loads(response))
+        except ValueError:
+            pass
+    return next((one["repair"] for one in found if isinstance(one, dict) and isinstance(one.get("repair"), dict)),
+                None)
+
+
+def on_tool(event: dict) -> dict:
+    """``PostToolUse``: when a G6 reply carries a repair the agent makes itself (``repair.by`` is ``agent``), one short
+    line of ``additionalContext`` with its code and step, once per code in a session; nothing for any other reply,
+    another server's tool, or with ``G6_HINTS=off``."""
+    name = str(event.get("tool_name") or "")
+    if os.environ.get(HINTS, "").strip().lower() == "off" or not re.fullmatch(r"mcp__.*g6.*__\w+", name):
+        return {}
+    repair = _repair(event.get("tool_response"))
+    code = str((repair or {}).get("code") or "")
+    if not repair or repair.get("by") != "agent" or not _REPAIR_CODE.fullmatch(code):
+        return {}
+    seen = folder(event["session_id"]) / "repair_hints.json"
+    try:
+        codes = set(json.loads(seen.read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError):
+        codes = set()
+    if code in codes:
+        return {}
+    seen.parent.mkdir(parents=True, exist_ok=True)
+    seen.write_text(json.dumps(sorted(codes | {code})), encoding="utf-8")
+    step = " ".join(str(repair.get("step") or "").split())
+    line = f"G6 refused that call ({code}); repair it yourself as its reply's repair block says: {step}"
+    return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": line[:300]}}
+
+
+HOOKS = {"prompt": on_prompt, "stop": on_stop, "tool": on_tool}
 
 
 def main(argv: list[str] | None = None) -> int:

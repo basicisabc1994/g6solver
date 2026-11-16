@@ -347,7 +347,7 @@ LAYERS: dict[str, tuple[str, ...]] = {
     "G6_E_CLOUD_CONSENT_INPUT": ("person", "mcp",
         "The grant named a source or provider G6 does not take: ask the person which source and provider they mean, as "
         "the refusal lists them. Never grant for the person."),
-    "G6_E_CLOUD_CONSENT_REQUIRED": ("person", "core harness",
+    "G6_E_CLOUD_CONSENT_REQUIRED": ("person", "core harness mcp",
         "The reply was withheld until the person shares the source with your provider. Call g6_cloud_grant: the person "
         "answers in the client's dialog. Never grant for the person; if they decline, go on with local work."),
     "G6_E_CLOUD_CONSENT_STATE": ("none", "core",

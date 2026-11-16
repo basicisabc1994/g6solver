@@ -25,6 +25,20 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__.*g6.*__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": ["-P", "-m", "g6.harness.completion_hook", "tool"],
+            "timeout": 5,
+            "statusMessage": "G6 is reading its reply"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

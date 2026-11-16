@@ -54,6 +54,12 @@ def _source_function(fn):
                 try:
                     body, refs, metadata = policy.freeze_output(value)
                     value = json.loads(body)
+                    # A refused reply gains its repair block (g6.mcp.repair: G6's own words, codes and templates)
+                    # on the frozen snapshot, so the sources it carries are exactly the snapshot's.
+                    repaired = _repaired(fn.__name__, arguments, value, capture)
+                    if repaired is not value:
+                        value = repaired
+                        body = json.dumps(value, separators=(',', ':'), allow_nan=False)
                     content_hash = digest(value)
                 except (TypeError, ValueError):
                     # Unsupported serialization cannot establish source authority.
@@ -80,6 +86,16 @@ def _source_function(fn):
     invoke._g6_tool_identity = identity
     invoke._g6_declaration = declaration
     return invoke
+
+
+def _repaired(tool, arguments, value, capture):
+    """``value`` (a frozen snapshot) with its repair block when it is a refusal; the same object otherwise, or when
+    the repair cannot be made: the block never changes whether or how a call is answered."""
+    from g6.mcp.repair import observe
+    try:
+        return observe(tool, arguments, value, capture.client[1] if capture.client else None)
+    except Exception:  # noqa: BLE001
+        return value
 
 
 def client_provider(ctx: Any) -> str:
@@ -135,6 +151,8 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
     message = policy.withheld_message(provider, sources)
     refused = {**blocked_reply(f'[{code}] {message}'), **control}
     refused['cloud_consent_code'] = policy.REQUIRED
+    from g6.mcp.repair import consent_block
+    refused['repair'] = consent_block()     # the person decides, in the dialog g6_cloud_grant opens
     if empty_result is not None:
         refused['result'] = empty_result
     if has_report:
@@ -146,7 +164,8 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
             recipient = f' to {review_provider}' if _PROVIDER.fullmatch(review_provider) else ''
             refused.update(action='stop', ending='untested', report=f'The review was not sent{recipient}. ' + message)
         if job['status'] == 'completed':
-            return {'ok': True, 'job_id': job['job_id'], 'status': 'completed', 'result': refused}
+            return {'ok': True, 'job_id': job['job_id'], 'status': 'completed', 'result': refused,
+                    'repair': refused['repair']}
         return {**refused, 'job_id': job['job_id'], 'status': job['status']}
     return refused
 
