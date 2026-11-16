@@ -44,6 +44,40 @@ def _link(link: Path, target: Path) -> bool:
     return False
 
 
+def verbatim_junction(link: Path, substitute: str) -> None:
+    """Make ``link`` (a new, empty folder) a Windows junction whose target is ``substitute`` exactly as written (an NT
+    path such as ``\\??\\C:\\x\\..\\y``), which Windows may then be unable to follow. ``mklink /J`` would normalise
+    it; setting the reparse point on a folder of one's own needs no privilege."""
+    import ctypes
+    from ctypes import wintypes
+
+    link.mkdir()
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                     wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel32.DeviceIoControl.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                                         wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+                                         wintypes.LPVOID]
+    # GENERIC_WRITE, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT
+    handle = kernel32.CreateFileW(str(link), 0x40000000, 0, None, 3, 0x02000000 | 0x00200000, None)
+    if handle in (None, wintypes.HANDLE(-1).value):
+        raise OSError(ctypes.get_last_error(), "open for a reparse point")
+    try:
+        name = substitute.encode("utf-16-le")
+        shown = substitute.removeprefix("\\??\\").encode("utf-16-le")
+        body = (0).to_bytes(2, "little") + len(name).to_bytes(2, "little") + (len(name) + 2).to_bytes(2, "little") \
+            + len(shown).to_bytes(2, "little") + name + b"\0\0" + shown + b"\0\0"
+        data = (0xA0000003).to_bytes(4, "little") + len(body).to_bytes(2, "little") + b"\0\0" + body
+        buffer = ctypes.create_string_buffer(data, len(data))
+        returned = wintypes.DWORD()
+        if not kernel32.DeviceIoControl(handle, 0x000900A4, buffer, len(data), None, 0, ctypes.byref(returned),
+                                        None):                                      # FSCTL_SET_REPARSE_POINT
+            raise OSError(ctypes.get_last_error(), "FSCTL_SET_REPARSE_POINT")
+    finally:
+        kernel32.CloseHandle(wintypes.HANDLE(handle))
+
+
 def test_files_and_folders_being_made_and_removed_are_never_refused_as_escaping(home: Path) -> None:
     # the writers delete and make files (as a lock or a temporary file is) and folders (as a store's first write makes
     # its folders); the readers ask for paths to both, and every answer must be the path inside the home
@@ -139,6 +173,40 @@ def test_a_file_link_inside_the_home_to_a_file_outside_is_refused(home: Path, tm
         pytest.skip("this account may not make symbolic links")
     with pytest.raises(ValueError, match="escapes"):
         state_path("churn", "secret.txt")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junctions and \\\\?\\ paths")
+@pytest.mark.parametrize("case", ["dot-dot", "trailing-dot", "not-yet-made", "under-a-junction"])
+def test_a_junction_windows_cannot_follow_is_refused(home: Path, tmp_path: Path, case: str) -> None:
+    # Path.resolve stops at a link it cannot follow and gives the link's own words joined with the rest, '..' and a
+    # trailing dot kept; opening that value, Windows reads the words again and lands where the words lead. dot-dot:
+    # 'link' -> <home>\nothere\..\..\outside. trailing-dot: 'link' -> <home>\sub. with 'sub' a junction to outside
+    # (Windows drops the dot when opening). not-yet-made: the folder the words lead to does not exist yet, so a caller's
+    # mkdir(parents=True) would make it outside. under-a-junction: 'link' -> <home>\x\nothere, plain words, with 'x' a
+    # junction to outside and 'nothere' not made yet: the words stay inside, but a caller's mkdir goes through 'x'.
+    root = home.resolve()
+    outside = tmp_path.resolve() / "outside"
+    if case == "trailing-dot":
+        verbatim_junction(root / "sub", "\\??\\" + str(outside))
+        verbatim_junction(root / "link", "\\??\\" + str(root) + "\\sub.")
+    elif case == "under-a-junction":
+        verbatim_junction(root / "x", "\\??\\" + str(outside))
+        verbatim_junction(root / "link", "\\??\\" + str(root / "x" / "nothere"))
+    else:
+        leads_to = "outside" if case == "dot-dot" else "made_outside"
+        verbatim_junction(root / "link", "\\??\\" + str(root / "nothere" / ".." / ".." / leads_to))
+    for parts in (("link", "secret.txt"), ("link", "new", "kept.json")):
+        with pytest.raises(ValueError, match="escapes"):
+            state_path(*parts)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junctions and \\\\?\\ paths")
+def test_a_junction_windows_cannot_follow_whose_words_stay_inside_gives_the_words_as_open_reads_them(
+        home: Path) -> None:
+    # the value is what open reads: '..' taken, no \\?\ prefix, and no link on it, so opening it stays inside
+    root = home.resolve()
+    verbatim_junction(root / "link", "\\??\\" + str(root / "nothere" / ".." / "churn"))
+    assert str(state_path("link", "a.json")) == str(root / "churn" / "a.json")
 
 
 def test_a_link_inside_the_home_to_inside_it_resolves_to_its_target(home: Path) -> None:
