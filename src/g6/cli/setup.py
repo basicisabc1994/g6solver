@@ -195,7 +195,7 @@ def _agents_update(data: bytes | None, block: str) -> bytes:
     newline style, as exactly one ``AGENTS_BEGIN ... AGENTS_END`` pair replaced, or appended where there is none;
     every other byte (newlines, a byte-order mark, trailing blank lines) as it was. ``_LeftAlone`` for a file G6
     cannot change that way. The newline style is the file's first line end of any kind (``\\r\\n``, ``\\n`` or a lone
-    ``\\r``), and a marker counts only as a whole line of its own in that style."""
+    ``\\r``), and a marker counts only as a whole line of its own, ended by any of them."""
     import re
     from g6.mcp.instructions import AGENTS_BEGIN, AGENTS_END
 
@@ -206,10 +206,14 @@ def _agents_update(data: bytes | None, block: str) -> bytes:
     newline = first.group() if first else b"\n"
     written = block.encode("utf-8").replace(b"\n", newline)
     # a marker counts only as a whole line of its own (spaces or tabs around it allowed) outside a fenced code block:
-    # one quoted inside a line, or shown in a fence (CommonMark's fence lines), is the person's text, not G6's block
+    # one quoted inside a line, or shown in a fence (CommonMark's fence lines), is the person's text, not G6's block.
+    # A line ends at any line end, so a block an editor left in other line ends than the file's is still found, and a
+    # byte-order mark leading a line is not part of it.
+    parts = re.split(rb"(\r\n|\r|\n)", data[len(bom):])
     begins, ends, fence, start = [], [], None, len(bom)
-    for line in data[len(bom):].split(newline):
+    for line, end in zip(parts[::2], [*parts[1::2], b""]):
         stop = start + len(line)
+        line = line.removeprefix(b"\xef\xbb\xbf")
         opening = re.fullmatch(rb" {0,3}(`{3,}|~{3,})(.*)", line, re.S)
         if fence:
             closing = re.fullmatch(rb" {0,3}(`{3,}|~{3,})[ \t]*", line)
@@ -221,7 +225,7 @@ def _agents_update(data: bytes | None, block: str) -> bytes:
             begins.append((start, stop))
         elif line.strip(b" \t") == AGENTS_END.encode():
             ends.append((start, stop))
-        start = stop + len(newline)
+        start = stop + len(end)
     if not begins and not ends and fence:
         raise _LeftAlone("it ends inside an open code fence, so a block added at its end would be part of the fence")
     if not begins and not ends:

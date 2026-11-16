@@ -439,6 +439,26 @@ def test_the_newline_style_is_the_files_first_line_end(codex, newline):
     assert codex.read_bytes() == head + written + newline + b"tail" + newline
 
 
+@pytest.mark.parametrize("inside", ["\n", "\r"])
+def test_a_block_with_other_line_ends_than_the_file_is_still_one_block(codex, inside):
+    """Markers are whole lines ended by any line end (an editor or an earlier write can mix them); the block G6
+    writes takes the file's own style."""
+    codex.parent.mkdir(parents=True)
+    before, after = b"# Mine\r\n\r\n", b"\r\n## Later\r\nKeep this.\r\n"
+    stale = (instructions.AGENTS_BEGIN + inside + "old words" + inside + instructions.AGENTS_END).encode()
+    codex.write_bytes(before + stale + after)
+    assert _setup("y", []) == 0
+    assert codex.read_bytes() == before + BLOCK.encode().replace(b"\n", b"\r\n") + after
+
+
+def test_a_byte_order_mark_leading_a_later_marker_line_is_still_a_marker(codex):
+    codex.parent.mkdir(parents=True)
+    bom = "﻿"
+    codex.write_bytes(f"# Mine\n{bom}{instructions.AGENTS_BEGIN}\nold\n{bom}{instructions.AGENTS_END}\ntail\n".encode())
+    assert _setup("y", []) == 0
+    assert codex.read_bytes() == b"# Mine\n" + BLOCK.encode() + b"\ntail\n"
+
+
 def _args():
     parser = argparse.ArgumentParser()
     setup.add_arguments(parser)
