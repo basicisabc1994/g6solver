@@ -205,17 +205,19 @@ def _check_part(module: Any, spec: Mapping[str, Any], package: str) -> str:
         said = protected.reason(function, verifiers=verifiers)
         if said:
             return said
-    others = [spec.get("validator"), getattr(module, "__g6_agentic_check__", None),
-              getattr(module, "__g6_agentic_inside__", None)]
-    for function in (*functions, *(o for o in others if o)):
+    others = [o for o in (spec.get("validator"), getattr(module, "__g6_agentic_check__", None),
+                          getattr(module, "__g6_agentic_inside__", None)) if o]
+    resolved: dict[str, Any] = {}
+    for function in (*functions, *others):
         try:
-            resolved = _child.resolve(function, package)
+            resolved[function] = _child.resolve(function, package)
         except (ValueError, ImportError, AttributeError) as exc:
             return f"[{UNSUPPORTED}] {exc}"
-        if function in functions and _child.return_type(resolved) is Any:
+        if function in functions and _child.return_type(resolved[function]) is Any:
             return f"[{UNSUPPORTED}] {function} declares no return type, so a value could not be checked by type"
-    if set(functions) & {o for o in others if o}:
-        return f"[{UNSUPPORTED}] a part cannot be its own validator, checker or seam"
+    # by the objects the names resolve to: an alias of the validator, checker or seam is that function
+    if any(resolved[f] is resolved[o] for f in functions for o in others):
+        return f"[{UNSUPPORTED}] a part cannot be its own validator, checker or seam, whatever name reaches it"
     if not spec.get("validator"):
         return f"[{UNSUPPORTED}] the part declares no validator, so a value could not be checked before use"
     return ""

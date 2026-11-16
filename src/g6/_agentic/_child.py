@@ -131,9 +131,17 @@ def serve(request: Mapping[str, Any]) -> dict[str, Any]:
             raise _Asked()
         return stub
 
+    from g6._agentic import protected
+
+    module = registry.get_module(request["component"])
+    declared = (*tuple(getattr(module, "__g6_verifiers__", ())), getattr(module, "__g6_agentic_check__", "") or "")
+    for name in request["functions"]:   # fail closed before any swap: a protected object, whatever name reaches it
+        resolve(name, package)          # only the component's own code (ValueError otherwise)
+        said = protected.reason(name, verifiers=tuple(v for v in declared if v))
+        if said:
+            return {"refused": said}
     replaced: list[tuple[Any, str, Any]] = []
     try:
-        registry.get_module(request["component"])
         for name in request["functions"]:
             original = resolve(name, package)
             stub = stub_for(name, original)

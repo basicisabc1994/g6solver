@@ -10,15 +10,21 @@
   tests and the rest of ``PROTECTED_FRAGMENTS``);
 * each component's own declared verifiers (``__g6_verifiers__``: a module, or ``module:function``).
 
+A name is judged by the object it resolves to as well as by its text: a name bound to a protected function is
+protected like it, whatever the name.
+
 A part that touches any of them is refused (``G6_E_AGENTIC_PROTECTED``); so is a part when the certificates cannot be
 read, since then the set cannot be known.
 """
 from __future__ import annotations
 
+import importlib
 import json
+import types
 from collections.abc import Iterable
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from g6.core.adaptation_gate import protected_hits
 
@@ -62,9 +68,58 @@ def _module_of(name: str) -> str:
     return name.split(":", 1)[0]
 
 
+def _resolve(name: str) -> Any:
+    """The object ``module:qualname`` (or a module) names, or None when it cannot be found."""
+    module_name, _, qualname = name.partition(":")
+    try:
+        target: Any = importlib.import_module(module_name)
+        for part in qualname.split(".") if qualname else ():
+            target = getattr(target, part)
+    except (ImportError, AttributeError, ValueError, TypeError):
+        return None
+    return target
+
+
+def _own_name(target: Any) -> str:
+    """``module:qualname`` of the code ``target`` is (where it was defined), or ""."""
+    module, qualname = getattr(target, "__module__", None), getattr(target, "__qualname__", None)
+    return f"{module}:{qualname}" if isinstance(module, str) and isinstance(qualname, str) else ""
+
+
+def _verifier_objects(verifiers: Iterable[str]) -> list[Any]:
+    """The objects the declared verifiers name: a function, or every function a declared module holds."""
+    found: list[Any] = []
+    for declared in verifiers:
+        target = _resolve(declared)
+        if isinstance(target, types.ModuleType):
+            found += [value for value in vars(target).values() if isinstance(value, types.FunctionType)]
+        elif target is not None:
+            found.append(target)
+    return found
+
+
 def reason(function: str, *, verifiers: Iterable[str] = ()) -> str:
     """"" when ``function`` (``module:qualname``) is outside the protected set, else why it is protected (the code
-    first)."""
+    first). Identity is decided by the object the name resolves to, not by the name: a name bound to a declared
+    verifier, or to a function of a trust door or a certificate-bound file, is protected like that function."""
+    verifiers = tuple(verifiers)
+    said = _by_name(function, verifiers)
+    if said:
+        return said
+    target = _resolve(function)
+    if target is None:
+        return ""
+    own = _own_name(target)
+    if own and own != function:
+        said = _by_name(own, verifiers)
+        if said:
+            return f"[{PROTECTED}] {function} is {own}: {said[len(PROTECTED) + 3:]}"
+    if any(target is verifier for verifier in _verifier_objects(verifiers)):
+        return f"[{PROTECTED}] {function} is a verifier its component declares, under another name"
+    return ""
+
+
+def _by_name(function: str, verifiers: tuple[str, ...]) -> str:
     module = _module_of(function)
     if not module.startswith("g6.") or not all(part.isidentifier() for part in module.split(".")):
         return f"[{PROTECTED}] {function} is not a function of G6's own code"

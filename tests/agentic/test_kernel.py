@@ -201,6 +201,37 @@ def test_the_protected_set_refuses_each_kind_including_this_kernel_and_patch_rev
     assert protected.reason("g6.cegis.hole:float_grid", verifiers=cegis_package.__g6_verifiers__) == ""
 
 
+def test_the_protected_set_compares_function_objects_whatever_name_reaches_them(monkeypatch):
+    import g6.cegis.block as block
+    import g6.cegis.hole as hole
+    import g6.cegis.verify as verify
+    from g6._agentic import protected
+    from g6.core import door
+
+    verifiers = cegis_package.__g6_verifiers__
+    monkeypatch.setattr(block, "recheck_alias", block.recheck, raising=False)          # a declared verifier
+    monkeypatch.setattr(hole, "check_alias", verify.check_candidate, raising=False)    # in a declared verifier module
+    monkeypatch.setattr(hole, "door_alias", door.door_reply, raising=False)            # a trust door's function
+    for name in ("g6.cegis.block:recheck_alias", "g6.cegis.hole:check_alias", "g6.cegis.hole:door_alias"):
+        assert protected.reason(name, verifiers=verifiers).startswith("[G6_E_AGENTIC_PROTECTED]"), name
+    # a verifier declared by an alias protects the function it is bound to, under its own name too
+    monkeypatch.setattr(hole, "grid_check", hole.valid_float_grid, raising=False)
+    assert protected.reason("g6.cegis.hole:valid_float_grid", verifiers=("g6.cegis.hole:grid_check",))
+    assert protected.reason("g6.cegis.hole:float_grid", verifiers=verifiers) == ""
+
+
+def test_a_part_bound_to_its_own_validator_under_another_name_is_refused(monkeypatch, captured):
+    import g6.cegis.hole as hole
+
+    no_child(monkeypatch)
+    monkeypatch.setattr(hole, "grid_alias", hole.valid_float_grid, raising=False)
+    monkeypatch.setattr(cegis_package, "__g6_agentic_parts__", {"self": {
+        "ops": ("synthesize",), "functions": ("g6.cegis.hole:grid_alias",), "validator": "g6.cegis.hole:valid_float_grid"}})
+    reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm)
+    assert reply["warning_card"]["code"] in ("G6_E_AGENTIC_UNSUPPORTED", "G6_E_AGENTIC_PROTECTED")
+    assert "own validator" in reply["error"] and captured == []
+
+
 @pytest.mark.parametrize("function", ["g6.cegis.loop:_verifier_says","g6.cegis.verify:check_candidate",
                                       "g6.cegis.block:recheck", "g6.datalog.ops:evaluate", "g6.core.door:door_reply"])
 def test_a_part_naming_protected_or_foreign_code_is_refused_before_anything_runs(monkeypatch, captured, function):

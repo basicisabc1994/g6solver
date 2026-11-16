@@ -55,6 +55,16 @@ def test_a_part_outside_the_components_package_is_never_resolved():
         _child.serve({**RUN, "functions": ["os:system"]})
 
 
+def test_the_child_refuses_to_swap_a_declared_verifier_whatever_name_reaches_it(monkeypatch):
+    import g6.cegis.block as block
+
+    real = block.recheck
+    monkeypatch.setattr(block, "recheck_alias", block.recheck, raising=False)
+    said = _child.serve({**RUN, "functions": ["g6.cegis.block:recheck_alias"]})
+    assert said["refused"].startswith("[G6_E_AGENTIC_PROTECTED]") and block.recheck is real
+    assert block.recheck_alias is real
+
+
 def test_the_entry_point_reports_its_own_failure_as_one_line(monkeypatch):
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({**RUN, "functions": ["os:system"]})))
     out = io.StringIO()
