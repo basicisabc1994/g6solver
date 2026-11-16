@@ -99,6 +99,10 @@ TEST_RUNS = ("Bash(python -m pytest:*)", "Bash(pytest:*)")
 NOT_FRESH = "G6_E_ROUTING_NOT_FRESH"
 #: A moment session is not started while the person's decisions do not share a source its task needs.
 NOT_GRANTED = "G6_E_ROUTING_NOT_GRANTED"
+#: A moment session is not started while a review's reply, asked in a copy of its own G6 home, would not come back.
+REPLY_WITHHELD = "G6_E_ROUTING_REPLY_WITHHELD"
+#: Where a G6 home keeps the reviews it saved; a review's reply names this folder (``g6.mcp.review_reply.finish``).
+REVIEWS = "reviews"
 
 
 def _load(name: str, path: Path) -> Any:
@@ -408,6 +412,72 @@ def _fresh(tasks: Mapping[str, Any], provider: str, withheld: Mapping[str, Any],
         raise AgentRefusal(NOT_GRANTED, f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} not shared "
                                         f"with {provider}, and this task's session starts with it: grant it in the "
                                         "client's own dialog (run.py sources lists it)", detail={"started": False})
+
+
+def _shares(home: Path, provider: str, sources: Sequence[str]) -> list[str]:
+    """The ``sources`` that the decisions in G6 home ``home`` do not share with ``provider``, read as G6 reads them
+    (``cloud_consent``'s own opener, which checks the chain against its checkpoint, and its own reading of the
+    decisions)."""
+    from g6.core import cloud_consent as cloud
+
+    folder = Path(home) / "cloud_consent"
+    decisions = cloud._decisions(cloud._open(folder)) if folder.is_dir() else {}
+    return [source for source in sources
+            if (decisions.get((cloud.source_id(source), provider)) or {}).get("kind") != "grant"]
+
+
+def reply_probe(home: Path, workspace: Path, client: str) -> dict[str, Any]:
+    """Whether a review's reply comes back in a session's G6 home: ``server.probe`` (G6's own server, built as the
+    session's is, in this process, over an in-memory connection) with ``home`` as its G6 home, the review allowed and
+    model calls off, on ``workspace``, from ``client``. The settings are this process's only while it runs. The
+    runner makes the home and the workspace again before the session starts."""
+    probe = (sys.modules.get("g6_validation_routing_server")
+             or _load("g6_validation_routing_server", HERE / "server.py")).probe
+    given = {"G6_HOME": str(home), SENSITIVE_ENV: "patch_review.review", "G6_DISABLE_LLM": "1"}
+    before = {name: os.environ.get(name) for name in given}
+    os.environ.update(given)
+    try:
+        return probe("g6", str(workspace), client)
+    finally:
+        for name, value in before.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _ready(task: Mapping[str, Any], home: Path, workspace: Path, withheld: Mapping[str, Any],
+           withhold: Sequence[str], client: "Client", session: dict[str, Any]) -> None:
+    """Refuse a moment session before it starts unless its own G6 home is as the task needs, asked of that home and
+    not of the person's: through G6's own reader, the session's copy shares every source the task starts with (its
+    environment, its fixture, its workspace, the folder its home keeps reviews in, and each granted source it does
+    not withhold) and none it withholds; and through G6's own server (``reply_probe``), a review's reply comes back,
+    or, for a task that withholds sources, is withheld on them. The probe's answer goes in the record
+    (``reply_probe``)."""
+    from g6.agents._runtime.model import AgentRefusal
+    from g6.core import cloud_consent as cloud
+
+    needs = ["agent_environment", f"routing-fixture.{task['fixture']}", cloud.repository_source(workspace),
+             cloud.repository_source(Path(home) / REVIEWS),
+             *(source for source in withheld["granted"] if source not in withhold)]
+    missing = _shares(home, client.provider, needs)
+    if missing:
+        raise AgentRefusal(NOT_GRANTED, f"the session's own copy of the sharing decisions does not share "
+                                        f"{', '.join(missing)} with {client.provider}", detail={"started": False})
+    if withhold and len(_shares(home, client.provider, withhold)) != len(withhold):
+        raise AgentRefusal(NOT_FRESH, "the session's own copy shares a source its task withholds",
+                           detail={"started": False})
+    found = reply_probe(home, workspace, client.name)
+    session["reply_probe"] = {key: found.get(key) for key in ("reply", "code", "unshared")}
+    if withhold:
+        named = [source for source in withhold if source in found.get("named", ())]
+        if found.get("reply") != "withheld" or not named or not set(named) <= set(found.get("unshared", ())):
+            raise AgentRefusal(NOT_FRESH, "a review's reply in a copy of the session's home was not withheld on the "
+                                          f"sources the task withholds ({found.get('reply')})", detail={"started": False})
+    elif found.get("reply") != "returned":
+        raise AgentRefusal(REPLY_WITHHELD, f"a review's reply in a copy of the session's home was {found.get('reply')}"
+                                           f" (unshared: {', '.join(found.get('unshared') or ()) or 'none named'}); the"
+                                           " session would get no review result", detail={"started": False})
 
 
 @contextlib.contextmanager
@@ -754,6 +824,13 @@ def mcp_config(task: Mapping[str, Any], python: str = sys.executable, home: Path
                            for name in task.get("servers", ["g6"])}}
 
 
+def home_for(out_dir: Path, session: str) -> Path:
+    """Where one session's G6 home is: ``<out>/g6_homes/<task id>.<repeat>``."""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", session):
+        raise freeze.FrozenError(f"a session's name is its task id and repeat, not {session!r}")
+    return Path(out_dir).resolve() / "g6_homes" / session
+
+
 def trial_home(out_dir: Path, session: str = "", *, withhold: Sequence[str] = ()) -> Path:
     """A G6 home for a trial's servers: ``<out>/g6_home``, or, for one session, ``<out>/g6_homes/<session>``, made
     empty. It holds the person's sharing decisions (so a granted source is not withheld from the session) and nothing
@@ -775,9 +852,7 @@ def trial_home(out_dir: Path, session: str = "", *, withhold: Sequence[str] = ()
         raise ValueError("a withheld source is a plain source name")
     home = Path(out_dir).resolve() / "g6_home"
     if session:
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+", session):
-            raise freeze.FrozenError(f"a session's name is its task id and repeat, not {session!r}")
-        home = Path(out_dir).resolve() / "g6_homes" / session
+        home = home_for(out_dir, session)
         if home.exists():
             shutil.rmtree(home, onexc=_writable)
     with cloud._locked() as ledger:
@@ -890,6 +965,10 @@ def sources(tasks: Mapping[str, Any], out_dir: Path, client: str, cohort: str) -
             workspace = workspace_for(task, out_dir)
             workspace.mkdir(parents=True, exist_ok=True)
             wanted[cloud.repository_source(workspace)] = f"the workspace folder {workspace}"
+            if cohort == score.MOMENT:                  # a review's reply names where the session's home keeps it
+                reviews = home_for(out_dir, f"{task['id']}.0") / REVIEWS
+                wanted[cloud.repository_source(reviews)] = (f"the folder in which the session of {task['id']} keeps "
+                                                            f"G6's saved reviews, in its own trial G6 home: {reviews}")
     return [{"source": source, "provider": provider, "what": what} for source, what in sorted(wanted.items())]
 
 
@@ -1046,7 +1125,7 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
         session: dict[str, Any] = {"run": run_id, "bound": {**bound, "task": freeze.digest(task)}, "served": {}}
         withhold = list(withheld["withheld"].get(task["id"], [])) if moment else []
         if moment:
-            session["withheld_sources"] = withhold
+            session["withheld_sources"], session["reply_probe"] = withhold, None
         ended: dict[str, Any] = {"state": "interrupted", "code": UNFINISHED}     # until the session says otherwise
         data, exit_code, seconds, home, workspace, base = None, None, 0.0, None, None, ""
         try:
@@ -1055,12 +1134,15 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
                 said["produced"] = _produced(program, runner.require(stop=core_stop.engaged), programs)
             if moment:
                 _fresh(tasks, spec.provider, withheld, task["id"])
-            try:
-                home = trial_home(out_dir, f"{task['id']}.{repeat}", withhold=withhold)
-            except (cloud.LLMError, OSError, ValueError) as exc:
-                raise AgentRefusal(cloud.STATE_UNAVAILABLE, "the person's sharing decisions could not be read for "
-                                                            f"the session's G6 home ({type(exc).__name__})") from None
-            workspace = prepare(task, out_dir, spec)
+            for attempt in ("probe", "session") if moment else ("session",):
+                try:                                    # the probe asks the session's own home; then it is made again
+                    home = trial_home(out_dir, f"{task['id']}.{repeat}", withhold=withhold)
+                except (cloud.LLMError, OSError, ValueError) as exc:
+                    raise AgentRefusal(cloud.STATE_UNAVAILABLE, "the person's sharing decisions could not be read "
+                                                                f"for the session's G6 home ({type(exc).__name__})") from None
+                workspace = prepare(task, out_dir, spec)
+                if attempt == "probe":
+                    _ready(task, home, workspace, withheld, withhold, spec, session)
             base = _head(workspace) if moment else ""
             config = mcp_config(task, python, home, moment=moment)
             with tempfile.TemporaryDirectory(prefix="g6_routing_", ignore_cleanup_errors=True) as tmp:

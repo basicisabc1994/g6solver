@@ -259,19 +259,30 @@ What ships, with as little else as the runner can manage:
   read the copy through G6's own reader, and the runner reads the copy back before anything starts. A grant the
   person makes in the client's dialog during the session is written to the copy as usual. The session's record names
   the sources its task withholds (`withheld_sources`). A row whose record names other ones is read as no evidence.
+- **Asked of the session's own home.** Before each session starts, the runner asks the session's own G6 home, not
+  the person's. First, through G6's own reader, the copy must share every source the task starts with: the client's
+  environment, the fixture, the workspace folder, the folder the home keeps saved reviews in, and each granted source
+  the task does not withhold. It must share none of the sources the task withholds. Then, through G6's own server,
+  built as the session's is in the runner's process with model calls off, one review is taken on the workspace and
+  its job polled (`server.probe`). The reply must come back, or, for a task that withholds sources, be withheld on
+  them. Otherwise the session is `refused` with `G6_E_ROUTING_NOT_GRANTED` (the copy lacks a source),
+  `G6_E_ROUTING_NOT_FRESH` (a withheld source is shared) or `G6_E_ROUTING_REPLY_WITHHELD` (a review's reply would not
+  come back), and nothing starts. The home and the workspace are then made again, so the probe leaves the session
+  nothing. The record keeps the probe's answer (`reply_probe`).
 
 ### What is sent, and where
 
 Each session sends the same things as the cohorts above: the task's prompt, the fixture repository and G6's guidance,
 to the client's provider. The fixtures hold no user data. List what to grant, then grant each line in the client's own
-dialog (`g6_cloud_grant`). Each line is the client's environment, one fixture, one workspace folder, or one of the
-three sources a review's reply carries:
+dialog (`g6_cloud_grant`). Each line is the client's environment, one fixture, one workspace folder, one session's
+reviews folder, or one of the three sources a review's reply carries:
 
     python validation/routing/run.py sources --client codex --cohort moment --out <folder>
 
-For each client, 14 lines: `agent_environment`, the five fixtures (`routing-fixture.classify`, `.ledger`, `.notes`,
-`.rules`, `.shop`), the five workspace folders (`repository:<digest>`, one per fixture, under `<folder>/work`), and
-these six, three per client:
+For each client, 38 lines: `agent_environment`, the five fixtures (`routing-fixture.classify`, `.ledger`, `.notes`,
+`.rules`, `.shop`), the five workspace folders (`repository:<digest>`, one per fixture, under `<folder>/work`), one
+reviews folder per task (`repository:<digest>` of `<folder>/g6_homes/<task id>.0/reviews`: a finished review's reply
+names the folder in which the session's own G6 home saved it), and these six, three per client:
 
     completion_history   anthropic:claude_code
     host_configuration   anthropic:claude_code
@@ -280,7 +291,7 @@ these six, three per client:
     host_configuration   openai:codex
     jobs                 openai:codex
 
-Those three hold the session's own trial state, not the person's data: each session's G6 home is the runner's, and it
+Those three, and the reviews folders, hold the session's own trial state, not the person's data: each session's G6 home is the runner's, and it
 holds the trial's own records and a copy of the person's sharing decisions. The component catalogue and its data are
 never on the list.
 
@@ -366,7 +377,8 @@ Limits of the outcome arm:
 - Harm is read per file, so a damaging edit inside a file the task asked to change is not harm. The checks catch it in a
   positive task. In a negative task it is not caught.
 - In the two consent-refusal tasks a review's reply is withheld by consent, by design, so there an agent cannot use
-  what a review found. In every other task the person has granted what a review's reply carries, so it can.
+  what a review found. In every other task the person grants what a review's reply carries, and a session starts
+  only once a review's reply would come back there (see "Further limits": G6 as it stands does not let it).
 
 ### Not yet observed
 
@@ -381,8 +393,17 @@ run should be marked failed.
 
 Further limits:
 
-- Outside the two consent-refusal tasks, a review answers only once the person has granted the six lines above. No
-  session has yet shown a review's reply reaching an agent in this setup.
+- **G6 as it stands withholds every review's reply at its job poll in a fresh session.** The one-task pilot of
+  2026-11-16 (Claude Code, `moment.before_done.1`, every line granted) called `g6_review_patch` unprompted. Its
+  `metaharness_job` poll was withheld. The session's copy shared every named source of the reply. The one source it
+  did not share is `input:<sha256 of the review call's own arguments>`. G6 counts a client's own input as shared only
+  in the call that carries those exact bytes (`cloud_consent._refuse_unshared`). The poll is another call: the job
+  keeps the review call's input as its origin (`metaharness/jobs.py`, `start`), but the poll's reply is admitted with
+  the poll's own arguments only. No grant made before the call can name that input. G6's own test of a delivered
+  review (`tests/s16r3/test_completed_review_delivery.py`) grants the call's exact input first. The runner's check
+  above therefore refuses every session that starts with the granted sources (`G6_E_ROUTING_REPLY_WITHHELD`) until
+  G6 lets a client's own input come back to it at the poll of its own job, or the person grants each call's input
+  in the client's dialog during the session. `tests/validation/test_routing_moment_reply.py` holds this offline.
 - The READMEs of the four development fixtures, which every moment task outside `ledger` uses, name "G6's routing
   trials", a mild cue. They stay as they are so that the development cohort stays bound.
 - A trap may not stop a strong agent.

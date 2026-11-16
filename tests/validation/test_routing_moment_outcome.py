@@ -105,6 +105,13 @@ def _fake(monkeypatch: pytest.MonkeyPatch, act: Any) -> None:
     monkeypatch.setattr(cli, "CliAgentRunner", FakeCli)
 
 
+def stand_in_probe(home: Path, workspace: Path, client: str) -> dict[str, Any]:
+    """In the place of the runner's review probe (``tests/validation/test_routing_moment_reply.py`` holds the real
+    one): a reply that comes back, or, in the home of a task that withholds the three sources, one withheld on them."""
+    withheld = run.load_withheld()["withheld"]
+    three = next((names for task_id, names in withheld.items() if f"{task_id}." in Path(home).name), [])
+    return {"reply": "withheld" if three else "returned", "code": "", "named": list(three), "unshared": list(three)}
+
 KEPT = ("moment.before_done.1", "moment.after_refusal.1", "moment.negative.3")
 
 
@@ -118,6 +125,7 @@ def arm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     monkeypatch.delenv("G6_STOP", raising=False)
     monkeypatch.delenv("G6_DISABLE_LLM", raising=False)
     monkeypatch.setattr(run, "user_home", lambda: tmp_path / "person")
+    monkeypatch.setattr(run, "reply_probe", stand_in_probe)
     monkeypatch.setattr(run, "check_runner", lambda: PLAIN("unconfined: the test's"))
     tasks = run.load_moment()
     path = tmp_path / "few.json"
@@ -159,7 +167,8 @@ def test_each_moment_session_keeps_its_final_diff_before_the_next_session_wipes_
         # each diff is its own session's work, kept before the next session on the fixture wiped the workspace
         assert (b"total_with_tax" in data) == (task_id == "moment.after_refusal.1"), task_id
     # a moment record names its final diff and the sources its task withholds beside what it named before
-    assert all(set(row["session"]) == {"run", "bound", "served", "guidance", "final_diff_sha256", "withheld_sources"}
+    assert all(set(row["session"]) == {"run", "bound", "served", "guidance", "final_diff_sha256", "withheld_sources",
+                                         "reply_probe"}
                for row in rows.values())
 
 

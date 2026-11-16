@@ -141,7 +141,13 @@ def test_what_a_person_grants_for_the_moment_cohort_is_listed(tmp_path: Path) ->
     assert named == {"agent_environment", "completion_history", "host_configuration", "jobs",
                      *(f"routing-fixture.{name}" for name in fixtures),
                      *(row["source"] for row in rows if row["source"].startswith("repository:"))}
-    assert sum(source.startswith("repository:") for source in named) == len(fixtures)
+    # one workspace folder per fixture, and per task the folder its session's G6 home keeps reviews in, which a
+    # review's reply names
+    from g6.core import cloud_consent as cloud
+
+    reviews = {cloud.repository_source(run.home_for(tmp_path, f"{task['id']}.0") / run.REVIEWS) for task in tasks["tasks"]}
+    assert sum(source.startswith("repository:") for source in named) == len(fixtures) + len(tasks["tasks"])
+    assert reviews <= named and len(rows) == 1 + 3 + 2 * len(fixtures) + len(tasks["tasks"])
     assert set(withheld["granted"]) == {"completion_history", "host_configuration", "jobs"}
     assert not named & (set(tasks["ungranted"]) - set(withheld["granted"]))
     assert {"component_catalogue", "component_data"} <= set(tasks["ungranted"]) - named
@@ -170,6 +176,13 @@ def test_only_the_consent_refusal_tasks_start_without_the_sources_a_review_reads
         with pytest.raises(score.TaskError):
             score.validate_moment_withheld(bad, tasks)
 
+
+def stand_in_probe(home: Path, workspace: Path, client: str) -> dict[str, Any]:
+    """In the place of the runner's review probe (``tests/validation/test_routing_moment_reply.py`` holds the real
+    one): a reply that comes back, or, in the home of a task that withholds the three sources, one withheld on them."""
+    withheld = run.load_withheld()["withheld"]
+    three = next((names for task_id, names in withheld.items() if f"{task_id}." in Path(home).name), [])
+    return {"reply": "withheld" if three else "returned", "code": "", "named": list(three), "unshared": list(three)}
 
 # --- a moment arm, run by a fake client --------------------------------------------------------------------------
 
@@ -227,6 +240,7 @@ def arm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     (person / ".codex").mkdir(parents=True)
     (person / ".codex" / "AGENTS.md").write_bytes(b"# the person's own notes\n")
     monkeypatch.setattr(run, "user_home", lambda: person)
+    monkeypatch.setattr(run, "reply_probe", stand_in_probe)
     tasks = run.load_moment()
     path = tmp_path / "few.json"
     path.write_text(json.dumps(dict(tasks, tasks=[t for t in tasks["tasks"] if t["id"] in KEPT])), encoding="utf-8")
@@ -259,7 +273,8 @@ def test_a_claude_code_session_runs_with_the_shipped_plugin_and_may_run_tests(ar
     rows = [json.loads(line) for line in (arm.tmp / "before" / "transcripts-claude_code-moment.jsonl").read_text(
         encoding="utf-8").splitlines()]
     record = rows[0]["session"]
-    assert set(record) == {"run", "bound", "served", "guidance", "final_diff_sha256", "withheld_sources"}
+    assert set(record) == {"run", "bound", "served", "guidance", "final_diff_sha256", "withheld_sources",
+                           "reply_probe"}
     assert record["bound"]["tasks"] == run.moment_pins()["tasks_digest"]
     assert record["bound"]["bars"] == run.moment_pins()["bars_digest"]
     guidance = record["guidance"]
@@ -367,6 +382,7 @@ def consent_arm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamesp
     monkeypatch.delenv("G6_STOP", raising=False)
     monkeypatch.delenv("G6_DISABLE_LLM", raising=False)
     monkeypatch.setattr(run, "user_home", lambda: tmp_path / "person")
+    monkeypatch.setattr(run, "reply_probe", stand_in_probe)
     tasks = run.load_moment()
     path = tmp_path / "consent.json"
     path.write_text(json.dumps(dict(tasks, tasks=[t for t in tasks["tasks"] if t["id"] in CONSENT_KEPT])),
