@@ -148,27 +148,88 @@ def configure_model(provider: str) -> None:
         Path(name).unlink(missing_ok=True)
 
 
+class _LeftAlone(Exception):
+    """Why setup leaves the person's ``AGENTS.md`` as it is."""
+
+
+def _agents_update(target, block: str) -> tuple[bytes | None, bytes]:
+    """The file's bytes now (``None`` when there is no file) and with G6's block in place: the block written in the
+    file's own newline style, as exactly one ``AGENTS_BEGIN ... AGENTS_END`` pair replaced, or appended where there is
+    none; every other byte (newlines, a byte-order mark, trailing blank lines) as it was. ``_LeftAlone`` for a file
+    G6 cannot change that way."""
+    from g6.mcp.instructions import AGENTS_BEGIN, AGENTS_END
+
+    if target.is_symlink():
+        raise _LeftAlone("it is a link to another file")
+    if not target.exists():
+        return None, block.encode("utf-8") + b"\n"
+    if not target.is_file():
+        raise _LeftAlone("it is not a plain file")
+    try:
+        if os.stat(target).st_nlink > 1:
+            raise _LeftAlone("it is hard-linked to another name")
+        if not os.access(target, os.W_OK):
+            raise _LeftAlone("it is read-only")
+        data = target.read_bytes()
+    except OSError as exc:
+        raise _LeftAlone(f"it could not be read ({type(exc).__name__})") from None
+    bom = b"\xef\xbb\xbf" if data.startswith(b"\xef\xbb\xbf") else b""
+    try:
+        text = data[len(bom):].decode("utf-8")
+    except UnicodeDecodeError:
+        raise _LeftAlone("it is not UTF-8 text") from None
+    if "\x00" in text:
+        raise _LeftAlone("it is not UTF-8 text")
+    first = data.find(b"\n")
+    newline = b"\r\n" if first > 0 and data[first - 1:first] == b"\r" else b"\n"
+    written = block.encode("utf-8").replace(b"\n", newline)
+    begin, end = AGENTS_BEGIN.encode(), AGENTS_END.encode()
+    counts = data.count(begin), data.count(end)
+    if counts == (0, 0):
+        body = data[len(bom):]
+        gap = b"" if not body or body.endswith(newline * 2) else newline if body.endswith(newline) else newline * 2
+        return data, data + gap + written + newline
+    start, stop = data.find(begin), data.find(end)
+    if counts != (1, 1) or stop < start:
+        raise _LeftAlone(f"its g6:begin and g6:end lines do not make exactly one block ({counts[0]} begin, "
+                         f"{counts[1]} end)")
+    return data, data[:start] + written + data[stop + len(end):]
+
+
+def _terminal() -> bool:
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
 def codex_agents(ask: Ask, say: Say) -> None:
     """Offer G6's instructions to Codex as a delimited block in the person's own ``AGENTS.md`` (in ``CODEX_HOME``,
-    else ``~/.codex``): shown first, written only on a yes, the rest of the file kept byte for byte, and a block already
-    there replaced in place. Anything but a yes, or no answer at all, writes nothing."""
+    else ``~/.codex``): shown first, written only on a yes, and only the block's bytes change (``_agents_update``).
+    A file G6 cannot change that way (a lone begin or end line, two blocks, not UTF-8, not a plain file, a link,
+    read-only or unreadable), setup's own question with no terminal to answer it, anything but a yes, or a write that
+    fails: the file stays byte for byte as it was, no temporary file is left, and the person is told why and shown
+    the block to add by hand. Setup goes on either way."""
     import tempfile
     from pathlib import Path
-    from g6.mcp.instructions import AGENTS_BEGIN, AGENTS_END, agents_block
+    from g6.mcp.instructions import agents_block
 
     target = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "AGENTS.md"
-    if target.is_symlink():
-        say(f"{target} is a link, so G6 leaves it alone; nothing was written.")
-        return
-    previous = target.read_text(encoding="utf-8") if target.exists() else ""
     block = agents_block()
-    start = previous.find(AGENTS_BEGIN)
-    end = previous.find(AGENTS_END, start) if start >= 0 else -1
-    if end >= 0:
-        updated = previous[:start] + block + previous[end + len(AGENTS_END):]
-    else:
-        updated = (previous.rstrip("\n") + "\n\n" if previous.strip() else "") + block + "\n"
+
+    def by_hand(why: str) -> None:
+        say(f"G6 left {target} as it was: {why}. To give Codex G6's instructions, add this block to it yourself:"
+            f"\n\n{block}\n")
+
+    try:
+        previous, updated = _agents_update(target, block)
+    except _LeftAlone as why:
+        by_hand(str(why))
+        return
     if updated == previous:
+        return
+    if ask is input and not _terminal():
+        by_hand("no terminal is attached to answer whether to write it, so nothing was asked or written")
         return
     say(f"G6 can tell Codex when to call it with this block in {target}; the rest of the file stays as it is:\n\n"
         f"{block}\n")
@@ -179,14 +240,22 @@ def codex_agents(ask: Ask, say: Say) -> None:
     if reply.strip().lower() not in ("y", "yes"):
         say(f"Nothing was written to {target}.")
         return
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(dir=target.parent, prefix=".g6-agents-")
+    name = None
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(dir=target.parent, prefix=".g6-agents-")
+        with os.fdopen(fd, "wb") as stream:
             stream.write(updated)
+        if previous is not None:
+            import shutil
+            shutil.copymode(target, name)
         os.replace(name, target)
+    except OSError as exc:
+        by_hand(f"writing it failed ({type(exc).__name__})")
+        return
     finally:
-        Path(name).unlink(missing_ok=True)
+        if name is not None:
+            Path(name).unlink(missing_ok=True)
     say(f"Wrote G6's block to {target}.")
 
 

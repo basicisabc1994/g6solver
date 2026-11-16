@@ -83,6 +83,124 @@ def test_anything_but_a_yes_changes_nothing(codex, answer):
     assert any(kind == "say" and "Nothing was written" in text for kind, text in events)
 
 
+BLOCK = instructions.agents_block()
+
+
+@pytest.mark.parametrize("before,after", [
+    (b"# My rules\r\nUse tabs.\r\n", b""),                                  # Windows newlines
+    ("﻿# Mine\n".encode("utf-8"), b""),                               # a byte-order mark
+    (b"# Mine\nUse tabs.\n\n\n\n", b""),                                    # trailing blank lines
+    (b"# Mine\r\n\r\n", b"\r\n## Later\r\nKeep this.\r\n"),                  # a block between the person's lines
+])
+def test_only_the_blocks_bytes_change(codex, before, after):
+    codex.parent.mkdir(parents=True)
+    newline = "\r\n" if b"\r\n" in before + after else "\n"
+    stale = (instructions.AGENTS_BEGIN + newline + "old words" + newline + instructions.AGENTS_END).encode()
+    original = before + (stale if after else b"") + after
+    codex.write_bytes(original)
+    assert _setup("y", []) == 0
+    data = codex.read_bytes()
+    written = BLOCK.replace("\n", newline).encode("utf-8")
+    assert data.startswith(before) and data.endswith(after) and written in data, data
+    middle = data[len(before):len(data) - len(after)]
+    assert middle.strip(b"\r\n") == written                                 # nothing but the block and line ends
+    assert b"\n" not in middle.replace(b"\r\n", b"") if newline == "\r\n" else True
+    assert _setup("y", []) == 0 and codex.read_bytes() == data              # a re-run changes nothing
+
+
+def _left_alone(codex, events, original):
+    assert codex.read_bytes() == original if original is not None else not codex.is_file()
+    assert not codex.parent.exists() or not [p for p in codex.parent.iterdir() if p.name.startswith(".g6-agents-")]
+    said = " ".join(text for kind, text in events if kind == "say")
+    assert BLOCK in said and "add this block" in said, said                 # why, and how to add it by hand
+
+
+@pytest.mark.parametrize("content", [
+    f"# Rules\n{instructions.AGENTS_BEGIN}\nmy notes\n".encode(),                       # a lone begin line
+    f"# Rules\nmy notes\n{instructions.AGENTS_END}\n".encode(),                         # a lone end line
+    (BLOCK + "\nmine\n" + BLOCK + "\n").encode(),                                       # two blocks
+    f"{instructions.AGENTS_END}\nmine\n{instructions.AGENTS_BEGIN}\n".encode(),        # end before begin
+    "# Règles\n".encode("cp1252"),                                                      # not UTF-8
+    "# Mine\n".encode("utf-16"),                                                        # Notepad's "Unicode"
+])
+def test_a_file_g6_cannot_read_as_one_block_is_left_alone(codex, content):
+    codex.parent.mkdir(parents=True)
+    codex.write_bytes(content)
+    events = []
+    assert _setup("y", events) == 0
+    _left_alone(codex, events, content)
+    assert not any(kind == "ask" for kind, _ in events)
+
+
+def test_a_directory_named_agents_md_is_left_alone(codex):
+    codex.mkdir(parents=True)
+    events = []
+    assert _setup("y", events) == 0
+    assert codex.is_dir() and not list(codex.iterdir())
+    said = " ".join(text for kind, text in events if kind == "say")
+    assert BLOCK in said and "add this block" in said
+
+
+def test_a_read_only_agents_md_is_left_alone(codex):
+    import os
+    import stat
+
+    codex.parent.mkdir(parents=True)
+    codex.write_bytes(b"# Mine\n")
+    os.chmod(codex, stat.S_IREAD)
+    events = []
+    try:
+        assert _setup("y", events) == 0
+        _left_alone(codex, events, b"# Mine\n")
+    finally:
+        os.chmod(codex, stat.S_IREAD | stat.S_IWRITE)
+
+
+def test_a_hard_linked_agents_md_is_left_alone(codex, tmp_path):
+    import os
+
+    codex.parent.mkdir(parents=True)
+    dotfile = tmp_path / "dotfiles-AGENTS.md"
+    dotfile.write_bytes(b"# Mine\n")
+    try:
+        os.link(dotfile, codex)
+    except OSError as exc:
+        pytest.skip(f"no hard links here: {exc}")
+    events = []
+    assert _setup("y", events) == 0
+    _left_alone(codex, events, b"# Mine\n")
+    assert os.path.samefile(dotfile, codex)
+
+
+def test_a_failed_write_leaves_the_file_and_no_temporary_file(codex, monkeypatch):
+    import os
+
+    codex.parent.mkdir(parents=True)
+    codex.write_bytes(b"# Mine\n")
+
+    def refuse(*args, **kwargs):
+        raise PermissionError("the file is open elsewhere")
+    monkeypatch.setattr(os, "replace", refuse)
+    events = []
+    assert _setup("y", events) == 0
+    _left_alone(codex, events, b"# Mine\n")
+
+
+def test_without_a_terminal_nothing_is_written_and_the_block_is_shown(codex, monkeypatch):
+    import io
+    import sys
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO("y\n"))
+    parser = argparse.ArgumentParser()
+    setup.add_arguments(parser)
+    events = []
+    assert setup.main(parser.parse_args(["--client", "codex", "--refuse-unconfined"]),
+                      say=lambda text: events.append(("say", text))) == 0          # setup's own ask: input
+    assert sys.stdin.read() == "y\n"                                                 # nothing read the piped answer
+    _left_alone(codex, events, None)
+    assert "terminal" in " ".join(text for kind, text in events if kind == "say")
+
+
 def test_claude_registration_offers_no_agents_md(codex):
     events = []
     parser = argparse.ArgumentParser()
