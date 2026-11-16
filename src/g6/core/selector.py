@@ -210,10 +210,10 @@ REMEDIES: dict[str, dict[str, Any]] = {
     "G6_E_INPUT_VALIDATION": _remedy(
         "The input did not fit: the refusal names the field. For an op, read g6_describe; for a tool, its "
         "description. Fix the field and call again.", "g6_describe", {"component": "<component>"}),
-    "G6_E_INVOKE_FAILED": _remedy("The op failed while it ran: read g6_describe, check the inputs, and say so if it "
-                                  "fails again.", "g6_describe", {"component": "<component>"}),
-    "G6_E_RESOURCE_LIMIT": _remedy("The input was over a resource limit: read g6_describe and narrow it.",
-                                   "g6_describe", {"component": "<component>"}),
+    "G6_E_INVOKE_FAILED": _remedy("The op failed while it ran, which does not say the input was wrong: tell the "
+                                  "person what the refusal says.", tell=True),
+    "G6_E_RESOURCE_LIMIT": _remedy("The run was over a resource limit: tell the person; a narrower input may fit.",
+                                   tell=True),
     "G6_E_UNKNOWN_COMPONENT": _remedy("No component has that name: find one by the task.", "g6_find",
                                       {"query": "<the task>"}),
     "G6_E_NO_BLOCK": _remedy("That component is a library with no block, so g6_invoke cannot run it: pick a runnable "

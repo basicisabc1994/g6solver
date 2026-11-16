@@ -560,6 +560,8 @@ def test_a_known_component_input_code_reads_that_components_input_contract(outco
     "[G6_E_MISSION_SOMETHING_NEW] the mission refused",
     "[G6_E_LOOP_TERMS_CHANGED] what the person read is no longer what would start",
     json.dumps({"ok": False, "completion_state": "blocked-escalated"}),  # a refusal that carries no code
+    "[G6_E_INVOKE_FAILED] [GROUNDING_ERROR] check_claim: the op failed while it ran",      # not an input refusal
+    "[G6_E_RESOURCE_LIMIT] the run was over its memory limit",                          # a limit, not bad input
 ])
 def test_a_refusal_not_known_to_be_fixable_tells_the_person(outcome: str) -> None:
     remedy = selector.remedy_for(outcome)
