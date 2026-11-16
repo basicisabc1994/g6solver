@@ -43,11 +43,24 @@ def test_the_faq_opens_with_why_then_says_what_g6_is_and_how_it_differs(client):
     assert headings[0] == "Why G6" and headings[1] == "The basics", headings
     questions = re.findall(r"<h3[^>]*>(.*?)</h3>", page)
     assert questions[:3] == ["Why does G6 exist?", "Which limits does it answer, and how?", "What is G6?"]
-    for part in ("The meta-harness", "The components", "batteries-included", "250 million tokens",
+    for part in ("The meta-harness", "The components", "batteries-included",
                  "a periodic table of intelligence", "Explicitly, not implicitly", "From plain words",
-                 "With a model of itself", "nothing in its design caps how far it can go", "without training a model"):
+                 "With a model of itself", "without training a model"):
         assert part in text, part
     assert 'href="/#limits"' in page and 'href="/research/#theory"' in page
+
+
+def test_the_faq_claims_no_more_than_ships(client):
+    # plan revision 8, E (2026-11-16): an unbacked token count, an uncapped reach and absolute claims of engineering
+    # and safety are gone, and the source check says it is lexical, with its measured recall
+    text = _text(client)
+    for overclaim in ("250 million tokens", "nothing in its design caps how far it can go", "does the engineering itself",
+                      "makes its self-modification safe", "each claim is checked against your sources",
+                      "already hold the right kind of general intelligence", "It is a new kind of system",
+                      "human-level reasoning"):
+        assert overclaim not in text, overclaim
+    assert "shared words, numbers and negations" in text
+    assert "91 of 100 near-verbatim claims" in text and "19 of 100 paraphrased ones" in text
 
 
 def _plain(cell: str) -> str:
