@@ -22,9 +22,24 @@ def test_a_hint_is_short_names_g6_calls_and_ends_with_the_instructions_lead(prom
     assert 0 < len(said.split()) <= 60, said
     assert said.endswith(LEAD)
     named = re.findall(r"\b(?:g6|metaharness)_[a-z_]+\b", said.removesuffix(LEAD))
-    top = [c["call"]["tool"] for c in selector.select(prompt, "plan")["candidates"] if "tool" in c["call"]][:2]
+    top = [c["call"]["tool"] for c in selector.select(prompt, "plan")["candidates"]
+           if "tool" in c["call"] and not (c["kind"] == "op" and c["needs"]["sensitive"])][:2]
     assert named == top, (named, top)
     assert selector.hint(prompt) == said           # deterministic
+
+
+@pytest.mark.parametrize("prompt", ["lean check_proof prove", "review my patch", *PROMPTS])
+def test_a_hint_names_no_op_that_needs_an_allowance_and_claims_no_ranking_it_did_not_use(prompt):
+    # review 1 of claude/wire-entry, finding 10: the top calls are often set by a fixed phase rule, not shared words;
+    # and a sensitive op is refused until the person allows it, so the hint does not send the agent there
+    said = selector.hint(prompt)
+    assert said.startswith("G6 calls that may fit at the start of a task: ")
+    assert "shared words" not in said and "ranked" not in said
+    named = said.removesuffix(LEAD).removeprefix(selector.HINT_PREFIX).strip().rstrip(".").split(", ")
+    for c in selector.select(prompt, "plan")["candidates"]:
+        if c["kind"] == "op" and c["needs"]["sensitive"]:
+            arguments = c["call"]["arguments"]
+            assert f"g6_invoke {arguments['component']}.{arguments['op']}" not in named, said
 
 
 def test_a_hint_never_repeats_the_prompt():

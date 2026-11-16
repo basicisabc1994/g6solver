@@ -692,15 +692,16 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
 
 
 #: How the prompt hook's hint begins (``hint``).
-HINT_PREFIX = "G6 calls that may fit this task, ranked by shared words with nothing checked yet: "
+HINT_PREFIX = "G6 calls that may fit at the start of a task: "
 
 
 def hint(prompt: str) -> str:
     """The few words the prompt hook adds when a task starts (plan revision 8, A): the first two calls
-    ``select(prompt, "plan")`` ranks, by name only (an op as ``g6_invoke component.op``), then the lead of G6's
-    instructions (``g6.mcp.instructions.LEAD``); at most 60 words. Lexical and fixed rules, no model; nothing of the
-    prompt is repeated. ``""`` for an empty prompt. A route (a skill section to read) is not a call and is passed
-    over. ``select``'s reply is unchanged by it."""
+    ``select(prompt, "plan")`` puts first (by its plan-phase rules and shared words), by name only (an op as
+    ``g6_invoke component.op``), then the lead of G6's instructions (``g6.mcp.instructions.LEAD``); at most 60 words.
+    Fixed rules, no model; nothing of the prompt is repeated. ``""`` for an empty prompt. A route (a skill section to
+    read) is not a call, and a sensitive op is refused until the person allows it, so both are passed over.
+    ``select``'s reply is unchanged by it."""
     from g6.mcp.instructions import LEAD
 
     if not isinstance(prompt, str) or not prompt.strip():
@@ -708,7 +709,7 @@ def hint(prompt: str) -> str:
     names = []
     for candidate in select(prompt, "plan")["candidates"]:
         call = candidate["call"]
-        if "tool" not in call:
+        if "tool" not in call or (candidate["kind"] == "op" and candidate["needs"]["sensitive"]):
             continue
         names.append(call["tool"] + (f" {call['arguments']['component']}.{call['arguments']['op']}"
                                      if candidate["kind"] == "op" else ""))
