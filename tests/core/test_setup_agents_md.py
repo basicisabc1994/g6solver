@@ -393,6 +393,36 @@ def test_a_read_only_temporary_file_is_removed(codex, monkeypatch):
             os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
 
 
+@pytest.mark.parametrize("fence,close", [("```", "```"), ("~~~", "~~~~"), ("   ````text", "````  ")])
+def test_markers_inside_a_fenced_code_block_are_the_persons_text(codex, fence, close):
+    codex.parent.mkdir(parents=True)
+    example = f"{instructions.AGENTS_BEGIN}\nmy own example\n{instructions.AGENTS_END}\n"
+    original = f"# Notes\n\n{fence}\n{example}{close}\n\nMore notes.\n".encode()
+    codex.write_bytes(original)
+    assert _setup("y", []) == 0
+    assert codex.read_bytes() == original + b"\n" + BLOCK.encode() + b"\n"
+    assert _setup("y", []) == 0 and codex.read_bytes() == original + b"\n" + BLOCK.encode() + b"\n"
+
+
+def test_a_fence_closed_by_the_other_character_stays_open(codex):
+    """CommonMark: a ``` fence is closed only by backticks; a ~~~ line inside it is code."""
+    codex.parent.mkdir(parents=True)
+    original = (f"```\n~~~\n{instructions.AGENTS_BEGIN}\nx\n{instructions.AGENTS_END}\n```\n").encode()
+    codex.write_bytes(original)
+    assert _setup("y", []) == 0
+    assert codex.read_bytes() == original + b"\n" + BLOCK.encode() + b"\n"
+
+
+def test_a_file_ending_inside_an_open_fence_is_left_alone(codex):
+    """A block added after an unclosed fence would be part of it, and a re-run would add another."""
+    codex.parent.mkdir(parents=True)
+    original = b"# Notes\n\n```python\nprint(1)\n"
+    codex.write_bytes(original)
+    events = []
+    assert _setup("y", events) == 0
+    _left_alone(codex, events, original)
+
+
 @pytest.mark.parametrize("newline", [b"\r", b"\r\n", b"\n"])
 def test_the_newline_style_is_the_files_first_line_end(codex, newline):
     codex.parent.mkdir(parents=True)

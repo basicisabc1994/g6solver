@@ -205,16 +205,25 @@ def _agents_update(data: bytes | None, block: str) -> bytes:
     first = re.search(rb"\r\n|\r|\n", data)
     newline = first.group() if first else b"\n"
     written = block.encode("utf-8").replace(b"\n", newline)
-    # a marker counts only as a whole line of its own (spaces or tabs around it allowed): one quoted inside a line is
-    # the person's text, not G6's block
-    begins, ends, start = [], [], len(bom)
+    # a marker counts only as a whole line of its own (spaces or tabs around it allowed) outside a fenced code block:
+    # one quoted inside a line, or shown in a fence (CommonMark's fence lines), is the person's text, not G6's block
+    begins, ends, fence, start = [], [], None, len(bom)
     for line in data[len(bom):].split(newline):
         stop = start + len(line)
-        if line.strip(b" \t") == AGENTS_BEGIN.encode():
+        opening = re.fullmatch(rb" {0,3}(`{3,}|~{3,})(.*)", line, re.S)
+        if fence:
+            closing = re.fullmatch(rb" {0,3}(`{3,}|~{3,})[ \t]*", line)
+            if closing and closing.group(1)[:1] == fence[:1] and len(closing.group(1)) >= len(fence):
+                fence = None
+        elif opening and not (opening.group(1)[:1] == b"`" and b"`" in opening.group(2)):
+            fence = opening.group(1)
+        elif line.strip(b" \t") == AGENTS_BEGIN.encode():
             begins.append((start, stop))
         elif line.strip(b" \t") == AGENTS_END.encode():
             ends.append((start, stop))
         start = stop + len(newline)
+    if not begins and not ends and fence:
+        raise _LeftAlone("it ends inside an open code fence, so a block added at its end would be part of the fence")
     if not begins and not ends:
         body = data[len(bom):]
         gap = b"" if not body or body.endswith(newline * 2) else newline if body.endswith(newline) else newline * 2
@@ -252,10 +261,11 @@ def _terminal() -> bool:
 def codex_agents(ask: Ask, say: Say) -> None:
     """Offer G6's instructions to Codex as a delimited block in the person's own ``AGENTS.md`` (in ``CODEX_HOME``,
     else ``~/.codex``): shown first, written only on a yes, and only the block's bytes change (``_agents_update``).
-    A file G6 cannot change that way (a lone begin or end line, two blocks, not UTF-8, not a plain file, a link,
-    read-only or unreadable), setup's own question with no terminal to answer it, anything but a yes, or a write that
-    fails: the file stays byte for byte as it was, no temporary file is left, and the person is told why and shown
-    the block to add by hand. Setup goes on either way.
+    A file G6 cannot change that way (a lone begin or end line, two blocks, an open code fence at its end, not UTF-8,
+    not a plain file, a link, read-only or unreadable), setup's own question with no terminal to answer it, anything
+    but a yes, or a write that fails: the file stays byte for byte as it was, no temporary file is left (or one that
+    cannot be removed is named), and the person is told why and shown the block to add by hand. Setup goes on either
+    way.
 
     The file may change while setup waits at its question (the person saves it in an editor, makes it read-only or
     links it, or another program does). So after the yes, and once more just before the replace, G6 runs the whole
