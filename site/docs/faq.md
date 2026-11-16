@@ -76,9 +76,10 @@ That learning can be read, tested and rolled back. G6 is early alpha: whether it
 held-out examples to show.
 
 ### What can I do with it that I could not before?
-Build a specialist from the agent you already run and your own data, without training a model of your own: G6
-engineers the harness for your task on your examples, and your model's weights never change. Then try to cut what
-repeated work costs: pay a frontier model once to engineer the harness, and run a small model on your own computer
+Build a specialist from the agent you already run and your own data, without training a model of your own: G6's
+meta-harness proposes changes to the harness for your task, tests each on your examples and keeps those you approve,
+and your model's weights never change. Then try to cut what repeated work costs: pay a frontier model once to improve
+the harness, and run a small model on your own computer
 inside it, with no fee per call. Whether that saves anything on your work is for your own held-out examples to
 show.
 

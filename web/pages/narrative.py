@@ -48,8 +48,8 @@ LIMITS: tuple[dict, ...] = tuple(
          ("action_gating", "safety_engine", "guards", "self_training"), "self_improvement_safety"),
         ("cost", "The best models cost the most",
          "Frontier models charge for every call, and most work repeats.",
-         "A frontier model engineers the harness once; a small model on your own computer then runs it, with no fee "
-         "per call.",
+         "The aim: a frontier model improves the harness once, then a small model on your own computer runs it with no "
+         "fee per call; your own held-out examples show whether that saves anything.",
          ("metaharness", "distillation"), "economics_of_intelligence"),
     ))
 

@@ -99,8 +99,7 @@ Copy is a draft for the owner's review in the live preview.
             <div class="pair__item">
                 <h3 class="statement">The components know how AI fails.</h3>
                 <p>A prebuilt library of AI primitives, each extending what a model can do or closing one way it fails.
-                Built from some 250 million tokens of hand-reviewed failure traces, towards a complete set: a periodic
-                table of intelligence.</p>
+                Built from reviewing how agents fail, towards a complete set: a periodic table of intelligence.</p>
                 <a class="link" href="{% url 'pages:components' %}">See the components</a>
             </div>
         </div>
@@ -145,8 +144,8 @@ Copy is a draft for the owner's review in the live preview.
             <div><dt>From plain words</dt><dd>passed on by your coding agent.</dd></div>
             <div><dt>With a model of itself</dt><dd>every part and setting written down.</dd></div>
         </dl>
-        <p class="learning__reach">Give it a task you can check and enough examples, and nothing in its design caps how far
-        it can go on that task, up to training a model of its own.
+        <p class="learning__reach">Give it a task you can check and enough examples, and it can keep trying changes on that
+        task, up to training a small adapter for a local model; how far it gets has not been measured in general.
         <a class="link" href="{% url 'pages:research' %}#theory">The working theory</a></p>
     </div>
 </section>
@@ -159,13 +158,14 @@ Copy is a draft for the owner's review in the live preview.
                 <p>Every result carries one of three labels, and says why:
                 <span class="state is-verified">verified</span> <span class="state">qualified-draft</span>
                 <span class="state is-blocked">blocked-escalated</span></p></li>
-            <li><h3 class="statement">Agents you can deploy safely.</h3>
+            <li><h3 class="statement">Agents that act within what you approve.</h3>
                 <p>Every action gated, a stop switch, and no change without your approval.</p></li>
             <li><h3 class="statement">A specialist, without training a model.</h3>
                 <p>Your agent, your data, your examples. Your model's weights never change.</p></li>
-            <li><h3 class="statement">Frontier judgement at local cost.</h3>
-                <p>A frontier model engineers the harness once; a small model on your computer runs it, with no fee per
-                call.</p></li>
+            <li><h3 class="statement">Aiming at frontier judgement at local cost.</h3>
+                <p>The aim: a frontier model improves the harness once, then a small model on your computer runs inside
+                it, with no fee per call. Whether that saves anything on your work is for your own held-out examples to
+                show.</p></li>
         </ul>
     </div>
 </section>
@@ -174,11 +174,11 @@ Copy is a draft for the owner's review in the live preview.
     <div class="wrap">
         <div class="cols">
             <div class="band__head">
-                <h2 class="h2" id="tests">A worked example: G6 engineering itself, on a local model</h2>
+                <h2 class="h2" id="tests">A worked example: the meta-harness changing its harness, on a local model</h2>
             </div>
             <div class="band__body">
                 <p class="lede quiet">Not a benchmark: {{ facts.model }}, an 8-billion-parameter model on one computer,
-                before and after G6 engineered its harness, on {{ facts.per_dataset }} fresh tasks per task set. On your
+                before and after G6 changed its harness, on {{ facts.per_dataset }} fresh tasks per task set. On your
                 work, results will vary with the task and the data you have.</p>
             </div>
         </div>

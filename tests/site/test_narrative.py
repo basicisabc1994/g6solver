@@ -79,10 +79,13 @@ def test_each_limit_is_answered_by_components_that_exist(client):
 def test_the_two_parts_and_where_the_components_came_from_are_on_the_home_page_and_the_components_page(client):
     home = _text(client.get("/").content.decode().split('id="two-parts"', 1)[1].split("</section>", 1)[0])
     assert "The meta-harness learns" in home and "The components know how AI fails" in home
-    assert "batteries included" in home and "250 million tokens" in home and "a periodic table of intelligence" in home
+    # plan revision 8, E: the "250 million tokens" figure has no record behind it, so it stays out of the copy
+    assert "batteries included" in home and "a periodic table of intelligence" in home
+    assert "reviewing how agents fail" in home and "250 million" not in home
     components = _text(client.get("/components/").content.decode().split('class="wrap page-hero"', 1)[1]
                        .split("</header>", 1)[0])
-    assert "one of G6's two parts" in components and "250 million tokens" in components
+    assert "one of G6's two parts" in components and "failure traces were reviewed" in components
+    assert "250 million" not in components
 
 
 def test_the_home_page_says_how_g6_learns_differently_and_points_to_the_theory(client):
@@ -90,8 +93,9 @@ def test_the_home_page_says_how_g6_learns_differently_and_points_to_the_theory(c
     section = page.split('id="learning"', 1)[1].split("</section>", 1)[0]
     text = _text(section)
     for part in ("learns explicitly, through the harness", "From its own experiments", "From plain words",
-                 "With a model of itself", "nothing in its design caps how far it can go"):
+                 "With a model of itself", "how far it gets has not been measured in general"):
         assert part in text, part
+    assert "nothing in its design caps" not in text          # plan revision 8, E: no unmeasured reach claim
     assert 'href="/research/#theory"' in section and 'id="theory"' in client.get("/research/").content.decode()
 
 
