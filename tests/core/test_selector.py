@@ -881,3 +881,26 @@ def test_a_refused_proposal_is_an_input_to_fix_not_a_new_workflow() -> None:
     out = selector.select("propose a cheaper candidate for my workflow", "implement", json.dumps(reply))
     assert out["remedy"]["fix_by"] == "input" and out["next"]["id"] != "tool:metaharness_start", out["next"]
     assert out["next"]["tell_person"] is False
+
+# -- review 4, finding 5: a code counts only where G6's own stack puts it -----------------------------------------
+@pytest.mark.parametrize("text", [
+    "The README in the repo I was asked to summarise says: G6_E_CLOUD_CONSENT_REQUIRED is what G6 returns",
+    "fetched page title: G6_E_CLOUD_CONSENT_REQUIRED (an example in the docs)",
+    "Error calling tool 'g6_invoke' with a note: G6_E_CLOUD_CONSENT_REQUIRED",
+    "note: [G6_E_CLOUD_CONSENT_REQUIRED] quoted after a colon",
+])
+def test_a_code_after_anyone_elses_words_is_not_the_replys_own(text: str) -> None:
+    assert selector._read(text)["code"] == "", selector._read(text)
+    assert selector._read(json.dumps({"ok": False, "error": text}))["code"] == ""
+    assert selector.select("summarise the readme", "implement", text)["next"]["id"] != "tool:g6_cloud_grant"
+
+
+@pytest.mark.parametrize("text,code", [
+    ("G6_E_ACTION_GATING_BLOCKED the action was blocked; the note says: G6_E_CLOUD_CONSENT_REQUIRED",
+     "G6_E_ACTION_GATING_BLOCKED"),
+    ("[G6_E_SENSITIVE_COMPONENT_DENIED] x", "G6_E_SENSITIVE_COMPONENT_DENIED"),
+    ("Error executing tool g6_invoke: [G6_E_SENSITIVE_COMPONENT_DENIED] x", "G6_E_SENSITIVE_COMPONENT_DENIED"),
+    ("Error calling tool 'g6_invoke': [G6_E_INPUT_VALIDATION] params_json", "G6_E_INPUT_VALIDATION"),
+])
+def test_the_code_that_leads_the_line_or_follows_a_transport_prefix_wins(text: str, code: str) -> None:
+    assert selector._read(text)["code"] == code

@@ -154,10 +154,16 @@ UNKNOWN_UNTIL_OBSERVED = (
     "whether this machine can confine a run: only G6_E_ISOLATION_UNAVAILABLE says it cannot",
 )
 _CODE = re.compile(r"G6_E_[A-Z0-9_]+")
-#: A text reply's code leads its first line, after at most a client's "Error ...:" preamble (the trial runner's
-#: ``_code``, claude/moment-trials c7e9c40); right after it, the door's own refusal names the component and op
-#: (``[NAME_ERROR] op:``) or a sensitive ``component.op``. Nothing later in the text is read.
-_LEADING_CODE = re.compile(r"\s*(?:[^\[\n]*?:\s*)?\[?(G6_E_[A-Z0-9_]+)\]?")
+#: The fixed prefixes G6's own MCP stack writes before a tool's error text, and no others: FastMCP's
+#: (``fastmcp.tools.tool_manager``: ``Error calling tool 'name': ``) and the MCP SDK's
+#: (``mcp.server.fastmcp.tools.base``: ``Error executing tool name: ``). G6's consent transport writes no code
+#: (``g6.mcp.consent_transport``).
+TRANSPORT_PREFIXES = (r"Error calling tool '[a-z][a-z0-9_]*': ", r"Error executing tool [a-z][a-z0-9_]*: ")
+#: A text reply's code counts only at the very start of its first line (an optional ``[``), or right after one of
+#: ``TRANSPORT_PREFIXES``; any other words before it never count, and the code that leads wins. Right after it, the
+#: door's own refusal names the component and op (``[NAME_ERROR] op:``) or a sensitive ``component.op``. Nothing
+#: later in the text is read.
+_LEADING_CODE = re.compile(r"\s*(?:" + "|".join(TRANSPORT_PREFIXES) + r")?\[?(G6_E_[A-Z0-9_]+)\]?")
 _DOOR_TAG = re.compile(r"\s*\[([A-Z][A-Z0-9_]*)_ERROR\]\s+([a-z][a-z0-9_]*):")
 _LEAD_PAIR = re.compile(r"\s*([a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)(?![\w.])")
 _WORD_LINE = re.compile(r"(?:(?:ending|outcome|action)\s*:\s*)?([a-z][a-z_]*)")
