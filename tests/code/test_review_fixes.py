@@ -2,6 +2,7 @@
 """Regression cases for the code-family review; exercise real implementations."""
 import ast
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -404,6 +405,50 @@ def test_a_walk_names_at_most_ten_hard_linked_files(tmp_path):
     assert walked.skipped_hard_links == 12 and walked.hard_links == [f"m{i:02}.py" for i in range(10)]
     assert walked.hard_links_said().startswith("12 modules skipped because they are hard links: m00.py, ")
     assert walked.hard_links_said().endswith("m09.py and 2 more")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a file held open with no sharing, and Windows names")
+def test_a_read_refusal_is_in_g6s_words_and_labelled_by_its_own_outside_flag(tmp_path):
+    # read_text's refusals carry G6's words (the file's own name is allowed, never the full path nor the system's
+    # words), and a refusal that is not outside is never called OUTSIDE_ROOT, in read_text or existing
+    import ctypes
+    from ctypes import wintypes
+
+    from g6.code._types import CodeRefused
+    root = tmp_path.resolve() / "root"
+    root.mkdir()
+    (tmp_path / "elsewhere.py").write_text("x = 1\n", encoding="utf-8")
+    held = root / "held-name.py"
+    held.write_text("x = 1\n", encoding="utf-8")
+    roots = _roots.Roots((root,), "test")
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                                wintypes.DWORD, wintypes.HANDLE]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = k32.CreateFileW(str(held), 0x80000000, 0, None, 3, 0x80, None)   # GENERIC_READ, share none
+    assert handle not in (None, wintypes.HANDLE(-1).value)
+    try:
+        with pytest.raises(CodeRefused) as refused:
+            _roots.read_text(held, 10_000)
+    finally:
+        k32.CloseHandle(handle)
+    cases = [(refused.value, "G6_E_CODE_PATH_INVALID")]
+    for path, code in ((root / "a.py:s", "G6_E_CODE_PATH_INVALID"), (root / "con.py", "G6_E_CODE_PATH_INVALID"),
+                       (tmp_path.resolve() / "elsewhere.py", "G6_E_CODE_OUTSIDE_ROOT")):
+        with pytest.raises(CodeRefused) as refused:
+            _roots.read_text(path, 10_000, roots=roots)
+        cases.append((refused.value, code))
+    for error, code in cases:
+        assert error.code == code, error
+        assert str(tmp_path.resolve()) not in str(error) and "Errno" not in str(error), error
+    assert "held-name.py" in str(cases[0][0])
+    with pytest.raises(CodeRefused) as refused:
+        _roots.existing(str(root / "con.py"), roots)
+    assert refused.value.code == "G6_E_CODE_PATH_INVALID", refused.value
+    with pytest.raises(CodeRefused) as refused:
+        _roots.destination(str(root / "a.py:s"), roots)
+    assert refused.value.code == "G6_E_CODE_PATH_INVALID", refused.value
 
 
 def test_pattern_scan_linear_budget():

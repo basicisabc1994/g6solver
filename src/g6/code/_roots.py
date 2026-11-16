@@ -119,8 +119,8 @@ def existing(raw: str, roots: Roots, *, what: str = "path", kind: str = "any") -
                                    f"{how_to_declare()}")
     try:
         real = confined_path(_given(raw, what), roots.roots)
-    except (ValueError, OSError) as exc:
-        raise CodeRefused(OUTSIDE_ROOT, f"{what}: {exc}") from None
+    except (ValueError, OSError) as exc:          # labelled by the refusal's own outside flag
+        raise CodeRefused(OUTSIDE_ROOT if getattr(exc, "outside", False) else PATH_INVALID, f"{what}: {exc}") from None
     if not under(real, roots.roots):
         raise CodeRefused(OUTSIDE_ROOT, f"{what} resolves to {real}, which is not at or under a declared root (a link "
                                         f"out of one counts as outside): {how_to_declare()}")
@@ -141,8 +141,8 @@ def destination(raw: str, roots: Roots, *, what: str = "dest") -> Path:
                                    f"{how_to_declare()}")
     try:
         real = confined_path(_given(raw, what), roots.roots)
-    except (ValueError, OSError) as exc:
-        raise CodeRefused(OUTSIDE_ROOT, f"{what}: {exc}") from None
+    except (ValueError, OSError) as exc:          # labelled by the refusal's own outside flag
+        raise CodeRefused(OUTSIDE_ROOT if getattr(exc, "outside", False) else PATH_INVALID, f"{what}: {exc}") from None
     if not under(real, roots.roots) or real in roots.roots:
         raise CodeRefused(OUTSIDE_ROOT, f"{what} resolves to {real}, which is not inside a declared root: "
                                         f"{how_to_declare()}")
@@ -278,7 +278,9 @@ def _files(folder: Path, skip_dirs: frozenset[str], found: Walk, max_entries: in
 def read_text(path: Path, max_bytes: int, *, roots: Roots | None = None) -> str:
     """A contained read of a plain file, refusing oversized files before opening them. At most ``max_bytes`` of a file, as text with the line endings ``Path.read_text`` gives (undecodable bytes
     replaced). Containment decides where a name is; the file itself must be a regular file kept under that one name
-    (``plain_file``: no link, junction or hard link, which resolving never shows), and the one opened must be it."""
+    (``plain_file``: no link, junction or hard link, which resolving never shows), and the one opened must be it.
+    Every refusal is in G6's words, naming the file (never its full path, nor the system's words)."""
+    name = Path(path).name
     try:
         path = confined_path(path, roots.roots if roots is not None else (path.parent,))
         try:
@@ -294,10 +296,14 @@ def read_text(path: Path, max_bytes: int, *, roots: Roots | None = None) -> str:
             data = handle.read(max_bytes + 1)
         if len(data) > max_bytes:
             raise CodeRefused(PATH_INVALID, f"{path.name} grew beyond {max_bytes} bytes")
-    except ValueError as exc:
-        raise CodeRefused(OUTSIDE_ROOT, str(exc)) from None
-    except OSError as exc:
-        raise CodeRefused(PATH_INVALID, f"cannot read {path.name}: {exc}") from None
+    except ValueError as exc:               # where the name is (confined_path): labelled by its own outside flag
+        if getattr(exc, "outside", False):
+            raise CodeRefused(OUTSIDE_ROOT, f"{name} is not at or under a declared root (a link out of one counts as "
+                                            "outside)") from None
+        raise CodeRefused(PATH_INVALID, f"{name} is not a path G6 can check, so it is not read") from None
+    except OSError:
+        raise CodeRefused(PATH_INVALID, f"cannot read {name}: the file could not be opened or read (access is "
+                                        "denied, or another program holds it)") from None
     return data.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n")
 
 
