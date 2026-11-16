@@ -31,6 +31,58 @@ ROOT_CAPTURES = {
     ("g6.code._roots", "for_folder"): "Capture the installed folder at its explicit check.",
     ("g6.code.component_creator.conformance", "check_component"):
         "Capture installed package and nearby test folders before their walks and reads.",
+    ("g6.sources.ctx_git.config", "repository"):
+        "Capture declared git folders once at admission; reuse through all metadata and alternate reads.",
+}
+
+# Exact operation/owner exceptions, not module-wide exclusions. Caller metadata must use path_info/read_text.
+# These retain existing state I/O, low-level implementations, checked callers and exclusive writers. The bound
+# preliminary resolution limitations and same-user replacement windows remain listed in the repair report.
+PLAIN_IO = {
+    ("g6.code._roots", "_folder_handle", "os.open"): "Open a declared folder to capture its identity.",
+    ("g6.code._roots", "load", "file.exists"): "Trusted state_path configuration, bounded below.",
+    ("g6.code._roots", "load", "file.open"): "Trusted state_path config, plain_file and 1 MiB read cap.",
+    ("g6.code._roots", "existing", "real.is_file"): "Legacy shared admission after confined_path/root checks.",
+    ("g6.code._roots", "existing", "real.is_dir"): "Legacy shared admission after confined_path/root checks.",
+    ("g6.code._roots", "existing", "real.exists"): "Legacy shared admission after confined_path/root checks.",
+    ("g6.code._roots", "destination", "real.exists"): "Shared destination admission, before checked writer.",
+    ("g6.code._roots", "destination", "real.is_dir"): "Shared destination admission, before checked writer.",
+    ("g6.code._roots", "destination", "real.parent.is_dir"): "Shared destination admission, before checked writer.",
+    ("g6.code._roots", "walk", "path.stat"): "Walk skip/size accounting; content reader checks again.",
+    ("g6.code._roots", "_files", "entry.is_dir"): "Walk classification after link exclusion.",
+    ("g6.code._roots", "_files", "entry.is_file"): "Walk classification after link exclusion.",
+    ("g6.code._roots", "_walk_open_identity", "os.open"): "Descriptor-relative no-follow identity fallback.",
+    ("g6.code._roots", "_walk_open_identity", "os.stat"): "Descriptor-relative stat with follow_symlinks=False.",
+    ("g6.code._roots", "read_text", "os.open"): "No-follow nonblocking opener used by the confined reader.",
+    ("g6.code._roots", "read_text", "open"): "The capped, identity-checked content reader itself.",
+    ("g6.code._build", "write_files", "output.open"): "Exclusive write after retained parent identity checks.",
+    ("g6.code._build", "write_files", "output.read_bytes"): "Read back bytes this writer just created.",
+    ("g6.code.component_creator.render", "write", "target.exists"): "Writer overwrite refusal; exclusive open below.",
+    ("g6.code.component_creator.render", "write", "open"): "Exclusive write after retained parent identity checks.",
+    ("g6.code.component_creator.block", "_modules", "found.is_file"): "Admitted by existing; shared reader rechecks.",
+    ("g6.code.component_creator.block", "_modules", "found.stat"): "Admitted module's size cap before shared read.",
+    ("g6.code.swe_diagnostics.block", "_file", "path.stat"): "Admitted file's size check, caught as CodeRefused.",
+    ("g6.code.swe_diagnostics.read", "_inside", "real.exists"): "Legacy marker admission, wrapped; shared read rechecks.",
+    ("g6.code.swe_diagnostics.read", "_inside", "real.is_file"): "Legacy marker admission, wrapped; shared read rechecks.",
+    ("g6.code.swe_diagnostics.read", "_inside", "real.stat"): "Legacy marker size cap, wrapped; shared read rechecks.",
+    ("g6.sources.ctx_git.config", "load", "file.exists"): "Trusted state_path configuration, bounded below.",
+    ("g6.sources.ctx_git.config", "load", "file.open"): "Trusted state_path config, plain_file and 1 MiB read cap.",
+    ("g6.sources.ctx_git.config", "destination", "real.exists"): "Clone destination admission, not metadata content.",
+    ("g6.sources.ctx_git.config", "destination", "real.is_dir"): "Clone destination admission, not metadata content.",
+    ("g6.sources.ctx_git.config", "destination", "real.parent.is_dir"): "Clone destination admission, not metadata content.",
+    ("g6.sources.ctx_git.runner", "record", "open"): "Append the trusted state_path audit, not repository metadata.",
+    ("g6.sources.ctx_git.runner", "records", "path.is_file"): "Trusted state_path audit history.",
+    ("g6.sources.ctx_git.runner", "records", "path.read_text"): "Trusted state_path audit history.",
+    ("g6.code.adapt_webpage.checks", "html_script", "file.read_text"):
+        "Checker reads generated artefacts in the child sandbox, not caller repository metadata.",
+    ("g6.code.adapt_webpage.checks", "css_script", "f.read_text"):
+        "Checker reads generated artefacts in the child sandbox.",
+    ("g6.code.adapt_webpage.checks", "css_script", "file.read_text"):
+        "Checker reads generated artefacts in the child sandbox.",
+    ("g6.code.adapt_webpage.checks", "route_local", "path.is_file"):
+        "Child checker serves only generated artefacts after root containment check.",
+    ("g6.code.adapt_webpage.checks", "route_local", "path.read_bytes"):
+        "Child checker serves only generated artefacts after root containment check.",
 }
 
 
@@ -39,10 +91,11 @@ def test_read_requires_declared_roots():
 
 
 def _unchecked_calls(text, module):
-    """Return calls missing roots; module is the file's dotted module name."""
+    """Flag unchecked roots, recaptures, plain content I/O and following metadata queries."""
     missing = []
     targets = {"g6.code._roots.read_text": 3, "g6.core.storage.confined_path": 2,
-               "g6.code._roots.Roots": 0, "g6.code._roots.for_folder": 0}
+               "g6.code._roots.Roots": 0, "g6.code._roots.for_folder": 0, "g6.code._roots.path_info": 2}
+    io_methods = {"read_text", "read_bytes", "open", "exists", "is_file", "is_dir", "stat"}
     tree = ast.parse(text)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     aliases = {}
@@ -91,7 +144,7 @@ def _unchecked_calls(text, module):
         changed = False
         for target, value in bindings.items():
             name = qualified(value)
-            if name in targets and aliases.get(target) != name:
+            if (name in targets or name == "dataclasses.replace" or name.rpartition(".")[2] in io_methods) and aliases.get(target) != name:
                 aliases[target] = name
                 changed = True
         if not changed:
@@ -116,6 +169,18 @@ def _unchecked_calls(text, module):
         name, args = qualified(node.func), node.args
         if name == "functools.partial" and args:
             name, args = qualified(args[0]), args[1:]
+        scoped = module.startswith(("g6.code.", "g6.sources.ctx_git."))
+        if scoped:
+            method = name.rpartition(".")[2]
+            plain = method in io_methods and name not in targets
+            if plain and (*owner_of(node), ast.unparse(node.func)) not in PLAIN_IO:
+                missing.append(node.lineno)
+            rebuilt = (name == "dataclasses.replace" and (any(k.arg == "roots" for k in node.keywords)
+                       or args and isinstance(args[0], ast.Name) and "roots" in args[0].id)
+                       or isinstance(node.func, ast.Attribute) and node.func.attr == "__class__"
+                       or isinstance(node.func, ast.Call) and qualified(node.func.func) in {"type", "builtins.type"})
+            if rebuilt:
+                missing.append(node.lineno)
         if name not in targets:
             continue
         required = targets[name]
@@ -148,7 +213,7 @@ def _unchecked_calls(text, module):
 
 
 def test_no_source_call_omits_roots():
-    """Census imported helpers, including aliases, without mistaking Path.read_text for G6's helper."""
+    """Census helpers plus content opens/following checks in code and ctx_git, including aliases."""
     missing = []
     source = Path(__file__).resolve().parents[2] / "src"
     for file in source.rglob("*.py"):
@@ -182,6 +247,31 @@ def test_census_rejects_unchecked_roots_through_indirection(text):
 ])
 def test_census_rejects_read_time_captures_and_dynamic_calls(text):
     assert _unchecked_calls(text, "g6.code.x.probe"), "read-time roots escaped the census"
+
+
+@pytest.mark.parametrize("text", [
+    'import dataclasses\ndef f(p, roots):\n return dataclasses.replace(roots, roots=(p.parent,))',
+    'from dataclasses import replace as r\ndef f(p, roots):\n return r(roots, roots=(p.parent,))',
+    'def f(p, roots):\n return type(roots)((p.parent,), "x")',
+    'def f(p, roots):\n return roots.__class__((p.parent,), "x")',
+    'from pathlib import Path\ndef f(p):\n return Path(p).read_text()',
+    'def f(p):\n return p.read_bytes()',
+    'def f(p):\n return p.open("rb")',
+    'def f(p):\n return open(p).read()',
+    'from builtins import open as read\ndef f(p):\n return read(p)',
+    'def f(p):\n return p.exists()',
+    'def f(p):\n return p.is_file()',
+    'def f(p):\n return p.is_dir()',
+    'def f(p):\n return p.stat()',
+    'import os\ndef f(p):\n return os.stat(p)',
+    'import dataclasses\ndef f(p, roots):\n return dataclasses.replace(roots)',
+    'def f(p):\n reader = p.read_text\n return reader()',
+    'def f(p):\n check = p.exists\n return check()',
+    'import builtins\ndef f(p):\n reader = builtins.open\n return reader(p)',
+])
+@pytest.mark.parametrize("module", ["g6.code.x.probe", "g6.sources.ctx_git.probe"])
+def test_census_rejects_plain_io_following_checks_and_rebuilt_roots(text, module):
+    assert _unchecked_calls(text, module), "metadata I/O or rebuilt roots escaped the census"
 
 
 @pytest.fixture
