@@ -133,7 +133,8 @@ def state_path(*parts: str) -> Path:
         # file outside the home; then the words joined onto the home are the answer, when no link is on them
         p = _opened_inside(root, p) or _opened_inside(root, root.joinpath(*parts))
     if p is None or p != root and root not in p.parents:
-        raise PathRefused(f"state path escapes G6_HOME: {'/'.join(parts)}", outside=True)
+        raise PathRefused("state path escapes G6_HOME: it resolves out of the home (a link out of it counts as "
+                          "outside)", outside=True)
     return p
 
 
@@ -188,7 +189,7 @@ def _lstat(path: Path) -> os.stat_result | None:
             return None
         except OSError as error:
             if getattr(error, "winerror", None) in (123, 161, 206):  # an invalid name, path, or a name too long
-                raise PathRefused(f"{path.name!r} is not a name Windows can hold") from None
+                raise PathRefused("a name on the path is not one Windows can hold") from None
             if getattr(error, "winerror", None) not in (5, 32):     # access denied, a sharing violation
                 raise
             # below a folder marked for delete lstat answers access denied until the folder is gone: a few ms, tens of
@@ -202,7 +203,7 @@ def _lstat(path: Path) -> os.stat_result | None:
             if deadline is None:
                 deadline = time.perf_counter() + 0.01
             elif time.perf_counter() > deadline:
-                raise PathRefused(f"{path.parent.name!r} cannot be read now: access is denied, or another program "
+                raise PathRefused("a folder on the path cannot be read now: access is denied, or another program "
                                   "holds it; try again") from None
             time.sleep(0.001)
 

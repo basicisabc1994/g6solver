@@ -208,7 +208,7 @@ def test_a_folder_that_cannot_be_read_is_refused_soon_as_input_not_as_outside(ro
 
     monkeypatch.setattr(os, "lstat", denied)
     started = time.perf_counter()
-    with pytest.raises(PathRefused, match="'locked' cannot be read now") as refused:
+    with pytest.raises(PathRefused, match="a folder on the path cannot be read now") as refused:
         contained(root, "locked/x.json", refuse_links=refuse_links)
     took = time.perf_counter() - started
     assert refused.value.outside is False

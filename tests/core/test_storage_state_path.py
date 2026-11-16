@@ -331,11 +331,32 @@ def test_a_folder_that_cannot_be_read_is_refused_soon_as_unreadable_not_as_escap
 
     monkeypatch.setattr(os, "lstat", denied)
     started = time.perf_counter()
-    with pytest.raises(ValueError, match="'locked' cannot be read now") as refused:
+    with pytest.raises(ValueError, match="a folder on the path cannot be read now") as refused:
         state_path("locked", "x.json")
     took = time.perf_counter() - started
-    assert "escapes" not in str(refused.value)
+    assert "escapes" not in str(refused.value) and "locked" not in str(refused.value), str(refused.value)
     assert took < 0.05, f"state_path waited {took * 1000:.0f} ms"
+
+
+def test_a_refusal_after_resolving_is_in_g6s_fixed_words_not_the_parts(home: Path, tmp_path: Path) -> None:
+    # every state_path refusal is in G6's fixed words: never the parts' text, which may name a person's file
+    from g6.core.storage import PathRefused
+
+    if not _link(home / "churn" / "out", tmp_path / "outside"):
+        pytest.skip("neither a symbolic link nor a junction can be made here")
+    with pytest.raises(PathRefused, match="escapes G6_HOME") as refused:
+        state_path("churn", "out", "private-name.json")
+    assert refused.value.outside is True
+    assert "private-name" not in refused.value.reason and "churn" not in refused.value.reason, refused.value.reason
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="names Windows cannot hold")
+def test_a_name_windows_cannot_hold_is_refused_in_g6s_fixed_words(home: Path) -> None:
+    from g6.core.storage import PathRefused
+
+    with pytest.raises(PathRefused, match="not one Windows can hold") as refused:
+        state_path("churn", "private<name.json")
+    assert refused.value.outside is False and "private" not in refused.value.reason, refused.value.reason
 
 
 def test_a_link_inside_the_home_to_inside_it_resolves_to_its_target(home: Path) -> None:
