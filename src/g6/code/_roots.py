@@ -532,6 +532,23 @@ def _preopen_components(path: Path, roots: Roots) -> None:
     raise PathRefused("the read is outside the declared folders", outside=True)
 
 
+def _metadata_spelling(given: Path) -> Path:
+    """Normalise Windows dot-dot before walking; never cancel an unchecked POSIX link."""
+    if _gate(*given.parts[1:]):
+        raise CodeRefused(PATH_INVALID, "the metadata path has a name G6 cannot check")
+    if os.name != "nt" and ".." in given.parts:
+        # POSIX resolves link/.. through the physical parent. Check the original prefixes, including
+        # components that normpath will cancel, without following any link or opening their content.
+        current = Path(given.anchor)
+        last_parent = max(index for index, part in enumerate(given.parts) if part == "..")
+        for part in given.parts[1:last_parent + 1]:
+            current = current.parent if part == ".." else current / part
+            info = os.lstat(current)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise CodeRefused(PATH_INVALID, "the metadata path has a linked or special component")
+    return Path(os.path.normpath(given))
+
+
 def path_info(path: Path, *, roots: Roots) -> os.stat_result | None:
     """Check optional metadata without following any component; None only for a missing name.
 
@@ -546,15 +563,15 @@ def path_info(path: Path, *, roots: Roots) -> os.stat_result | None:
         if _elsewhere(text):
             raise CodeRefused(OUTSIDE_ROOT, "the metadata path is a network or device path")
         given = _given(text, "path")
+        if _lexically_outside(given, (*roots.roots, *roots.unavailable)):
+            raise CodeRefused(OUTSIDE_ROOT, "the metadata path is not at or under a checked root")
         _refuse_unavailable(given, roots)
+        given = _metadata_spelling(given)
         name = _name(given, roots)
-        lexical = Path(os.path.normpath(given))
         for root, identity in zip(roots.roots, roots.identities, strict=True):
             count = len(root.parts)
             if tuple(map(os.path.normcase, given.parts[:count])) != tuple(map(os.path.normcase, root.parts)):
                 continue
-            if not (lexical == root or root in lexical.parents):
-                raise CodeRefused(OUTSIDE_ROOT, f"{name} is not at or under a checked root")
             relative = given.parts[count:]
             if _gate(*relative):
                 raise CodeRefused(PATH_INVALID, f"{name} is not a path G6 can check")

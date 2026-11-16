@@ -30,7 +30,7 @@ import re
 import stat
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from urllib.parse import urlsplit
 
 from g6.code import _roots
@@ -48,6 +48,8 @@ CONFIG_INVALID = "G6_E_GIT_CONFIG_INVALID"
 REMOTE_REFUSED = "G6_E_GIT_REMOTE_REFUSED"
 #: How deep git follows alternates of alternates; a list nested deeper is refused.
 ALTERNATES_DEPTH = 5
+#: Distinct object folders, including the repository's own; repeated identities do not spend this budget.
+ALTERNATES_FOLDERS = 64
 CONFIG_MAX_BYTES = 1024 * 1024
 METADATA_MAX_BYTES = 64 * 1024
 #: The address forms a network op may reach: an https URL, an ssh URL, or ssh's ``user@host:path`` form.
@@ -179,6 +181,33 @@ def _metadata_target(path: Path, name: str, roots: _roots.Roots) -> Path:
     return _confined(path, roots.roots, name)
 
 
+def _metadata_entry(text: str, base: Path, name: str, roots: _roots.Roots) -> Path:
+    """Admit only unambiguous relative entries or checked local absolute entries.
+
+    Git for Windows treats a DOS drive prefix as absolute even without its separator. Never join that
+    spelling with base: classify the drive-root interpretation by words only, then refuse it either way.
+    Rooted, network and device spellings are refused before target I/O.
+    """
+    if (not text or text != text.strip() or text.startswith('"')
+            or any(ord(ch) < 32 or 0xD800 <= ord(ch) <= 0xDFFF for ch in text)):
+        raise GitRefused(PATH_INVALID, f"{name} holds an entry whose spelling G6 cannot check")
+    windows = PureWindowsPath(text)
+    if text.startswith(("\\\\", "//")):
+        raise GitRefused(OUTSIDE_ROOT, f"{name} names a network or device path outside the checked folders")
+    if windows.drive and not windows.root:
+        if os.name == "nt" and re.fullmatch(r"[A-Za-z]:", windows.drive):
+            git_path = Path(os.path.normpath(windows.drive + "/" + text[2:]))
+            if not _under(git_path, roots.roots):
+                raise GitRefused(OUTSIDE_ROOT, f"{name} names a drive-relative target outside the checked folders")
+        raise GitRefused(PATH_INVALID, f"{name} holds a drive-relative entry whose spelling G6 cannot check")
+    if windows.root and not windows.drive and (os.name == "nt" or text.startswith("\\")):
+        raise GitRefused(PATH_INVALID, f"{name} holds a rooted entry whose target G6 cannot determine")
+    if os.name != "nt" and windows.drive:
+        raise GitRefused(PATH_INVALID, f"{name} holds a drive entry G6 cannot interpret on this system")
+    target = Path(text)
+    return _metadata_target(target if target.is_absolute() else base / target, name, roots)
+
+
 def repository(raw: str, config: GitConfig) -> tuple[Path, Path]:
     """The working copy ``raw`` names and its git folder, both resolved; :class:`GitRefused` unless both are at or
     under a declared root."""
@@ -191,7 +220,7 @@ def repository(raw: str, config: GitConfig) -> tuple[Path, Path]:
                                            "the folder G6 runs in)")
     try:
         roots = _roots.Roots(config.roots, "the declared git folders")
-        roots.refuse_if_empty("checked")
+        roots.refuse_if_empty("checked", raw)
     except (CodeRefused, OSError, ValueError, MemoryError) as exc:
         raise _metadata_refusal(exc, "repo") from None
     repo_info = _metadata_info(Path(raw), "repo", roots)
@@ -209,8 +238,7 @@ def repository(raw: str, config: GitConfig) -> tuple[Path, Path]:
         line = _metadata_text(dotgit, ".git", roots).strip()
         if not line.startswith("gitdir:"):
             raise GitRefused(NOT_A_REPOSITORY, f"{name}/.git is a file that names no git folder")
-        named = Path(line.partition(":")[2].strip())
-        gitdir = _metadata_target(named if named.is_absolute() else real / named, ".git", roots)
+        gitdir = _metadata_entry(line.partition(":")[2].strip(), real, ".git", roots)
     if not _under(gitdir, config.roots):
         raise GitRefused(OUTSIDE_ROOT, f"the git folder of {name} is outside every declared root (its .git "
                                        "links out of the root)")
@@ -236,7 +264,7 @@ def _common(gitdir: Path, roots: _roots.Roots) -> Path:
     text = _metadata_text(named, "commondir", roots).rstrip("\r\n") if stat.S_ISREG(info.st_mode) else ""
     if not text.strip():
         raise GitRefused(NOT_A_REPOSITORY, "commondir is not a file naming a git folder")
-    common = _metadata_target(Path(text) if Path(text).is_absolute() else gitdir / text, "commondir", roots)
+    common = _metadata_entry(text, gitdir, "commondir", roots)
     if not _under(common, roots.roots):
         raise GitRefused(OUTSIDE_ROOT, "commondir names a git folder outside every declared root")
     common_info = _metadata_info(common, "commondir", roots)
@@ -245,10 +273,24 @@ def _common(gitdir: Path, roots: _roots.Roots) -> Path:
     return common
 
 
-def _alternates(objects: Path, roots: _roots.Roots, depth: int) -> None:
+def _alternates(objects: Path, roots: _roots.Roots, depth: int,
+                checked: set[tuple[int, int]] | None = None) -> None:
     """:class:`GitRefused` unless every entry of ``objects/info/alternates`` (and of each alternate's own list)
     resolves inside a root. Comment lines are skipped, as git skips them; a quoted entry, or one with white space
     around it, is refused rather than read differently from git."""
+    if checked is None:
+        checked = set()
+    folder = _metadata_info(objects, "objects/info/alternates", roots)
+    if (folder is None or not stat.S_ISDIR(folder.st_mode) or not getattr(folder, "st_ino", 0)
+            or getattr(folder, "st_dev", None) is None):
+        raise GitRefused(PATH_INVALID, "objects/info/alternates names no folder G6 can check")
+    identity = (folder.st_dev, folder.st_ino)
+    if identity in checked:
+        return
+    if len(checked) >= ALTERNATES_FOLDERS:
+        raise GitRefused(PATH_INVALID, f"objects/info/alternates exceeds G6's limit of {ALTERNATES_FOLDERS} "
+                                       "distinct object folders per repository")
+    checked.add(identity)
     listed = objects / "info" / "alternates"
     info = _metadata_info(listed, "objects/info/alternates", roots)
     if info is None:
@@ -258,15 +300,11 @@ def _alternates(objects: Path, roots: _roots.Roots, depth: int) -> None:
     for line in _metadata_text(listed, "objects/info/alternates", roots).split("\n"):
         if not line or line.startswith("#"):
             continue
-        if line.startswith('"') or line != line.strip():
-            raise GitRefused(PATH_INVALID, "objects/info/alternates holds an entry that is quoted or has white space "
-                                           "around it, which G6 does not read")
-        borrowed = _metadata_target(Path(line) if Path(line).is_absolute() else objects / line,
-                                    "objects/info/alternates", roots)
+        borrowed = _metadata_entry(line, objects, "objects/info/alternates", roots)
         if not _under(borrowed, roots.roots):
             raise GitRefused(OUTSIDE_ROOT, "objects/info/alternates borrows objects from a folder outside every declared root "
                                            "(objects/info/alternates)")
-        _alternates(borrowed, roots, depth + 1)
+        _alternates(borrowed, roots, depth + 1, checked)
 
 
 def destination(raw: str, config: GitConfig) -> Path:
@@ -345,6 +383,6 @@ def shown(url: str) -> str:
     return url
 
 
-__all__ = ["ALTERNATES_DEPTH", "CONFIG_ENV", "CONFIG_FILE", "CONFIG_INVALID", "NOT_A_REPOSITORY", "NO_ROOT",
+__all__ = ["ALTERNATES_DEPTH", "ALTERNATES_FOLDERS", "CONFIG_ENV", "CONFIG_FILE", "CONFIG_INVALID", "NOT_A_REPOSITORY", "NO_ROOT",
            "OUTSIDE_ROOT", "PATH_INVALID", "REMOTE_REFUSED", "GitConfig", "GitRefused", "destination", "inside", "load", "parse",
            "remote_host", "remote_problem", "repository", "shown"]
