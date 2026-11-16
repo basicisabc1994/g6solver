@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, TypeAdapter, model_validator
 
 from g6._agentic import decode
 from g6.core.ledger import ChainLedger
@@ -109,6 +109,13 @@ class Entry(_Closed):
     recheck_status: str = Field("", pattern=_NAME)
     digests: Digests
     cost: Cost
+
+    @model_validator(mode="after")
+    def _bounded_authority_sends(self) -> Entry:
+        # The bound belongs to this run, including nondefault budgets; historical omission remains an empty list.
+        TypeAdapter(Annotated[list[SendAuthority], Field(max_length=self.budget.max_model_calls)]).validate_python(
+            self.authority_sends, strict=True)
+        return self
 
 
 def path() -> Path:
