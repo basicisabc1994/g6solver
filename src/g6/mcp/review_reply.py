@@ -126,7 +126,8 @@ def carried(job_id: str) -> tuple | None:
             return None
         return tuple(cloud.Source(one["source"], one["item"], one["content"], one["recorded"])
                      for one in entry["sources"])
-    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError):
+        # RecursionError: a record swapped for deeply nested JSON does not read back either
         return None
 
 

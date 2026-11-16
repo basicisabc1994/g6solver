@@ -214,6 +214,16 @@ def test_a_job_with_no_origin_admits_no_input():
         jobs.close()
 
 
+def test_a_deeply_nested_sources_record_reads_as_no_record(repo):
+    # a record swapped for deeply nested JSON (review 1, suspicion 5) is a record that does not read back: fail closed
+    folder = g6_home() / 'reviews'
+    folder.mkdir(parents=True)
+    job = 'e' * 32
+    (folder / f'{job}.json').write_text('{}', encoding='utf-8')
+    (folder / f'{job}.sources.json').write_text('[' * 200_000 + ']' * 200_000, encoding='ascii')
+    assert review_reply.carried(job) is None
+
+
 @pytest.mark.parametrize('damage', ['no-record', 'no-sources', 'reply-changed', 'other-version'])
 def test_a_saved_review_without_its_recorded_sources_is_the_folders(repo, monkeypatch, damage):
     _share((*NAMED, cloud.repository_source(repo)), CODEX)
