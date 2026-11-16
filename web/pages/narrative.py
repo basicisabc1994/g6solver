@@ -13,7 +13,8 @@ LIMITS: tuple[dict, ...] = tuple(
         ("hallucination", "They make things up",
          "A model writes the likeliest words, true or not.",
          "G6 can check a claim against your sources word by word (shared words, numbers and negations, not a reading of "
-         "meaning), and labels each of its results for what the evidence supports.",
+         "meaning). Results of G6's checks and work tools returned over the MCP server carry labels for what "
+         "the evidence supports.",
          ("grounding", "epistemic_integrity", "evidence"), "hallucination_is_design"),
         ("memory", "They forget, and read only so much",
          "Nothing carries over between conversations, and the context window is finite.",
@@ -38,7 +39,8 @@ LIMITS: tuple[dict, ...] = tuple(
          ("metaharness", "reasoning"), "why_benchmarks_lie"),
         ("metacognition", "They do not know what they do not know",
          "To a model, a guess and a fact sound the same.",
-         "Every G6 result says what was checked: verified, qualified-draft or blocked-escalated, with the reason.",
+         "Every result of G6's checks and work tools returned over the MCP server says what was checked: "
+         "verified, qualified-draft or blocked-escalated, with the reason.",
          ("epistemic_integrity", "evidence", "invariants"), "metacognition_missing_skill"),
         ("done", "They say it is done when it is not",
          "Nothing inside an agent checks its own finish.",
