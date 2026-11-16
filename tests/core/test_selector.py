@@ -128,6 +128,31 @@ def test_considering_may_be_text() -> None:
     assert [entry["validated"] for entry in reply["considering"]] == [True, True]
 
 
+def _nested(depth: int) -> list:
+    value: list = []
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
+@pytest.mark.parametrize("considering", [
+    "[" * 100_000, '{"a":' * 100_000,                    # deep, and over the size cap
+    "[" * 40 + "]" * 40,                                 # under the cap, deeper than MAX_DEPTH
+    "x" * (64 * 1024 + 1),                               # plain text over the 64 KB cap
+    '["g6_review_patch",',                               # JSON that does not decode
+    _nested(2_000),                                      # a list from an in-process caller, too deep
+])
+def test_an_oversized_too_deep_or_broken_considering_is_refused_with_the_envelope(considering: object) -> None:
+    reply = selector.select("review my patch", "verify", considering=considering)
+    assert reply["completion_state"] == "blocked-escalated" and "G6_E_INPUT_VALIDATION" in json.dumps(reply)
+    assert "considering" in reply["error"]
+
+
+def test_a_considering_within_the_bounds_is_still_read() -> None:
+    reply = selector.select("review my patch", "verify", considering=_nested(3) + ["g6_review_patch"])
+    assert reply["ok"] is True and reply["considering"][-1]["validated"] is True
+
+
 @pytest.mark.parametrize("bad", [{"phase": "later"}, {"rerank": "model"}, {"task": "  "}])
 def test_an_input_outside_its_values_is_refused(bad: dict) -> None:
     arguments = {"task": "review my patch", **bad}

@@ -42,6 +42,8 @@ RERANKS = ("lexical", "colbert")
 NOT_OFFERED = ("not offered here: a semantic rerank would depend on what this machine has installed and cached, "
                "which this reply never says; ranked lexically")
 MAX_CANDIDATES = 8
+MAX_CONSIDERING_BYTES = 64 * 1024   # ``considering`` past this is refused, as text or as a value
+MAX_DEPTH = 16                      # and past this many nested lists or objects
 LEXICAL_WEIGHT = 6.0        # an entry holding every query word the corpus has scores this much; others in proportion
 ROUTE_WEIGHT = 0.5          # a route is an instruction to read, so its words count half beside the calls it names
 PHASE_TAG_BONUS = 0.5       # a matched entry tagged with the phase
@@ -367,18 +369,43 @@ def _lexical(task: str, documents: dict[str, str]) -> dict[str, float]:
     return out
 
 
+def _depth(value: Any) -> int:
+    """How deeply lists and objects nest in ``value``, walked without recursion; past ``MAX_DEPTH`` it stops."""
+    deepest, stack = 0, [(value, 1)]
+    while stack:
+        item, level = stack.pop()
+        if isinstance(item, (list, dict)):
+            deepest = max(deepest, level)
+            if deepest > MAX_DEPTH:
+                return deepest
+            stack.extend((child, level + 1) for child in (item.values() if isinstance(item, dict) else item))
+    return deepest
+
+
 def _items(considering: Any) -> list[Any]:
-    if isinstance(considering, list):
-        return considering
-    if isinstance(considering, dict):
-        return [considering]
+    """``considering`` as a list of entries. Raises ``ValueError`` (G6's own words) when it is over
+    ``MAX_CONSIDERING_BYTES``, nests deeper than ``MAX_DEPTH``, or is JSON that does not decode."""
+    if isinstance(considering, (list, dict)):
+        if _depth(considering) > MAX_DEPTH:
+            raise ValueError(f"considering nests deeper than {MAX_DEPTH} levels")
+        try:
+            size = len(json.dumps(considering, default=str).encode("utf-8"))
+        except (RecursionError, ValueError, TypeError):
+            raise ValueError("considering is not a JSON value") from None
+        if size > MAX_CONSIDERING_BYTES:
+            raise ValueError(f"considering is over {MAX_CONSIDERING_BYTES // 1024} KB")
+        return considering if isinstance(considering, list) else [considering]
     text = considering.strip() if isinstance(considering, str) else ""
+    if len(text.encode("utf-8")) > MAX_CONSIDERING_BYTES:
+        raise ValueError(f"considering is over {MAX_CONSIDERING_BYTES // 1024} KB")
     if text.startswith(("[", "{")):
         try:
             parsed = json.loads(text)
-            return parsed if isinstance(parsed, list) else [parsed]
-        except json.JSONDecodeError:
-            pass
+        except (RecursionError, ValueError, TypeError):
+            raise ValueError("considering starts as JSON but does not decode") from None
+        if _depth(parsed) > MAX_DEPTH:
+            raise ValueError(f"considering nests deeper than {MAX_DEPTH} levels")
+        return parsed if isinstance(parsed, list) else [parsed]
     return [part.strip() for part in re.split(r"[,\n]", text) if part.strip()]
 
 
@@ -539,7 +566,11 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     mechanisms: list[dict[str, Any]] = []
 
     # 1. facts
-    considered = _considered(_items(considering), entries, tools)
+    try:
+        items = _items(considering)
+    except ValueError as refused:
+        return _refuse(str(refused), request_id, run_id)
+    considered = _considered(items, entries, tools)
     requirements = [c for c in considered if c["kind"] == "requirement" and c["validated"]]
     hypotheses = [c for c in considered if c["kind"] == "hypothesis" and c["validated"]]
     calls = [c["id"] for c in considered if c["kind"] == "call" and c["validated"]]
