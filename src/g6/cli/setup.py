@@ -196,7 +196,9 @@ def _agents_update(data: bytes | None, block: str) -> bytes:
     every other byte (newlines, a byte-order mark, trailing blank lines) as it was. ``_LeftAlone`` for a file G6
     cannot change that way. The newline style is the file's first line end of any kind (``\\r\\n``, ``\\n`` or a lone
     ``\\r``), and a marker counts only at column zero with at most trailing spaces or tabs, ended by any of them.
-    Uncertain code-block shapes before or inside the block (anywhere when appending) refuse the edit."""
+    Only certain line shapes before or inside the block (anywhere when appending) allow an edit: blank lines,
+    column-zero headings and markers, plain paragraphs and list text at zero to three spaces, and column-zero
+    CommonMark fences with literal contents. Every other shape refuses the edit."""
     import re
     from g6.mcp.instructions import AGENTS_BEGIN, AGENTS_END
 
@@ -212,29 +214,42 @@ def _agents_update(data: bytes | None, block: str) -> bytes:
     # signature, not part of the first line.
     parts = re.split(rb"(\r\n|\r|\n)", data[len(bom):])
     begins, ends, fence, start = [], [], None, len(bom)
-    uncertain, saw_list = [], False
+    uncertain, previous_text = [], False
     for line, end in zip(parts[::2], [*parts[1::2], b""]):
         stop = start + len(line)
-        opening = re.fullmatch(rb" {0,3}(`{3,}|~{3,})(.*)", line, re.S)
-        list_line = re.match(rb"[ \t]*(?:[-+*]|[0-9]+[.)])[ \t]+", line)
-        # Do not try to parse container Markdown. Even a later plain fence might belong to a list item;
-        # once a list has appeared, refuse such fences rather than guess where the item's scope ends.
-        container = re.match(rb"[ \t]*(?:[-+*][ \t]+|[0-9]+[.)][ \t]+|>)", line)
-        indented = re.match(rb"(?: *\t[ \t]*| {4,})(?:`{3,}|~{3,})", line)
-        if (indented or container and re.search(rb"`{3,}|~{3,}", line) or opening and saw_list):
-            uncertain.append(start)
-        if not fence and list_line:
-            saw_list = True
         if fence:
+            # Contents of an open fence are literal, whatever their indentation or Markdown-like text.
             closing = re.fullmatch(rb" {0,3}(`{3,}|~{3,})[ \t]*", line)
             if closing and closing.group(1)[:1] == fence[:1] and len(closing.group(1)) >= len(fence):
                 fence = None
-        elif opening and not (opening.group(1)[:1] == b"`" and b"`" in opening.group(2)):
-            fence = opening.group(1)
+            previous_text = False
         elif line.rstrip(b" \t") == AGENTS_BEGIN.encode():
             begins.append((start, stop))
+            previous_text = False
         elif line.rstrip(b" \t") == AGENTS_END.encode():
             ends.append((start, stop))
+            previous_text = False
+        else:
+            opening = re.fullmatch(rb"(`{3,}|~{3,})(.*)", line, re.S)
+            heading = re.match(rb"#{1,6}(?:[ \t]|$)", line)
+            prose = re.fullmatch(rb" {0,3}([^ \t<>].*)", line)
+            item = re.fullmatch(rb" {0,3}(?:[-+*]|[0-9]{1,9}\.) +([^ \t].*|)", line)
+            text = prose.group(1) if prose else b""
+            if not line.strip(b" \t") or heading:
+                previous_text = False
+            elif opening and not (opening.group(1)[:1] == b"`" and b"`" in opening.group(2)):
+                fence = opening.group(1)
+                previous_text = False
+            elif re.fullmatch(rb"([-_*])(?:[ \t]*\1){2,}[ \t]*", text):
+                uncertain.append(start)      # thematic breaks, including spaced ones such as - - -
+            elif previous_text and re.fullmatch(rb"(?:=+|-+)[ \t]*", text):
+                uncertain.append(start)      # a setext underline changes the preceding text's block
+            elif item and not re.match(rb"(?:`{3,}|~{3,}|[<>]|[-+*](?:[ \t]|$)|[0-9]+[.)](?:[ \t]|$))", item.group(1)):
+                previous_text = True        # backticks elsewhere in the item's text are plain text
+            elif (prose and not re.match(rb"(?:`{3,}|~{3,}|[-+*](?:[ \t]|$)|[0-9]+[.)](?:[ \t]|$))", text)):
+                previous_text = True
+            else:
+                uncertain.append(start)
         start = stop + len(end)
     boundary = ends[0][1] if len(begins) == len(ends) == 1 and ends[0][0] > begins[0][0] else len(data)
     if any(position <= boundary for position in uncertain):
@@ -253,7 +268,9 @@ def _agents_update(data: bytes | None, block: str) -> bytes:
 
 def _remove(name: str, say: Say, identity: tuple[int, int] | None = None) -> None:
     """Unlink the temporary name, never raising; chmod only the recorded, single-link plain file before unlinking.
-    A replaced name or unknown identity gets only an unlink attempt, and is named to the person when it stays."""
+    A replaced name or unknown identity gets only an unlink attempt, and is named to the person when it stays.
+    Another program writing in the same client home can still swap the name between lstat and chmod: the identity
+    check takes no lock, the same trust-boundary limit as codex_agents' last-check/rename window."""
     import stat
 
     try:

@@ -14,12 +14,12 @@ from g6.mcp.instructions import AGENTS_BEGIN, AGENTS_END, agents_block
 
 @pytest.mark.parametrize("indent", [" ", "   ", "    ", "\t"])
 @pytest.mark.parametrize("newline", ["\n", "\r", "\r\n"])
-def test_indented_markers_are_preserved_when_appending(indent, newline):
+def test_indented_markers_refuse_the_edit(indent, newline):
+    # Follow-up repair 1's allow-list excludes indented HTML and 4+ space/tab code, even without a fence.
     example = newline.join([indent + AGENTS_BEGIN, indent + "old example", indent + AGENTS_END, ""])
     data = example.encode()
-    result = setup._agents_update(data, agents_block())
-    assert result.startswith(data)
-    assert result.count(AGENTS_BEGIN.encode()) == 2
+    with pytest.raises(setup._LeftAlone, match="uncertain"):
+        setup._agents_update(data, agents_block())
 
 
 @pytest.mark.parametrize("shape", [

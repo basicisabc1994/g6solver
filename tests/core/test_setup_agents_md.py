@@ -399,7 +399,13 @@ def test_markers_inside_a_fenced_code_block_are_the_persons_text(codex, fence, c
     example = f"{instructions.AGENTS_BEGIN}\nmy own example\n{instructions.AGENTS_END}\n"
     original = f"# Notes\n\n{fence}\n{example}{close}\n\nMore notes.\n".encode()
     codex.write_bytes(original)
-    assert _setup("y", []) == 0
+    events = []
+    assert _setup("y", events) == 0
+    if fence.startswith(" "):
+        # Follow-up repair 1 allows only column-zero opening fences; an indented fence is left for a by-hand edit.
+        _left_alone(codex, events, original)
+        assert not any(kind == "ask" for kind, _ in events)
+        return
     assert codex.read_bytes() == original + b"\n" + BLOCK.encode() + b"\n"
     assert _setup("y", []) == 0 and codex.read_bytes() == original + b"\n" + BLOCK.encode() + b"\n"
 
