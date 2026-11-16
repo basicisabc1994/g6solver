@@ -39,6 +39,7 @@ CONFIG_ENV = "G6_GIT_CONFIG"
 CONFIG_FILE = ("ctx_git", "config.json")
 NO_ROOT = "G6_E_GIT_NO_ROOT"
 OUTSIDE_ROOT = "G6_E_GIT_OUTSIDE_ROOT"
+PATH_INVALID = "G6_E_GIT_PATH_INVALID"
 NOT_A_REPOSITORY = "G6_E_GIT_NOT_A_REPOSITORY"
 CONFIG_INVALID = "G6_E_GIT_CONFIG_INVALID"
 REMOTE_REFUSED = "G6_E_GIT_REMOTE_REFUSED"
@@ -111,7 +112,8 @@ def _confined(raw: str | Path, roots: tuple[Path, ...], what: str = "") -> Path:
     try:
         return confined_path(raw, roots)
     except (ValueError, OSError) as exc:
-        raise GitRefused(OUTSIDE_ROOT, f"{what}: {exc}" if what else str(exc)) from None
+        code = OUTSIDE_ROOT if getattr(exc, "outside", False) else PATH_INVALID
+        raise GitRefused(code, f"{what}: {exc}" if what else str(exc)) from None
 
 
 def _under(path: Path, roots: tuple[Path, ...]) -> bool:
@@ -275,5 +277,5 @@ def shown(url: str) -> str:
 
 
 __all__ = ["ALTERNATES_DEPTH", "CONFIG_ENV", "CONFIG_FILE", "CONFIG_INVALID", "NOT_A_REPOSITORY", "NO_ROOT",
-           "OUTSIDE_ROOT", "REMOTE_REFUSED", "GitConfig", "GitRefused", "destination", "inside", "load", "parse",
+           "OUTSIDE_ROOT", "PATH_INVALID", "REMOTE_REFUSED", "GitConfig", "GitRefused", "destination", "inside", "load", "parse",
            "remote_host", "remote_problem", "repository", "shown"]
