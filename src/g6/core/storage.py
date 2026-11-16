@@ -270,13 +270,13 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
     # a link out of it (a junction to a network share is opened by resolving it). An absolute path on another drive,
     # or not under the root, is outside; the input gate then asks about the names below the root (a relative path's
     # every name)
-    anchor = Path(os.path.normpath(Path(root).absolute()))
-    lexical = Path(os.path.normpath(given if given.is_absolute() else anchor / given))
+    anchor, absolute = Path(os.path.normpath(Path(root).absolute())), given.is_absolute()
+    lexical = Path(os.path.normpath(anchor / given))             # an absolute path joined onto anything is itself
     outside = PathRefused(f"{text!r} is outside the folder (a '..' or a link out of it counts as outside)",
                           outside=True)
-    if given.is_absolute() and lexical != anchor and anchor not in lexical.parents:
+    if absolute and lexical != anchor and anchor not in lexical.parents:
         raise outside
-    if why := _gate(*(lexical.parts[len(anchor.parts):] if given.is_absolute() else (text,))):
+    if why := _gate(*(lexical.parts[len(anchor.parts):] if absolute else (text,))):
         raise PathRefused(why)
     if not given.is_absolute() and ":" in text:
         raise PathRefused(f"{text!r} names a drive or a file's stream (':'); give a path inside the folder")
