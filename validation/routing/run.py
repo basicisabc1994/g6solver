@@ -78,6 +78,8 @@ UNFINISHED = "G6_E_ROUTING_SESSION_UNFINISHED"
 #: ``fixtures/`` so the development cohort's bound digest of the fixtures does not move).
 MOMENT_TASKS, MOMENT_GATES, MOMENT_PINS = HERE / "moment_tasks.json", HERE / "moment_gates.json", HERE / "moment_frozen.json"
 MOMENT_FIXTURES = HERE / "moment_fixtures"
+#: What a session's final diff leaves out: what the interpreter and pytest write as they run.
+UNKEPT = (":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/.pytest_cache/**", ":(exclude,glob)**/*.pyc")
 #: The Claude Code plugin this tree ships (hooks and skills): a moment session of Claude Code loads it.
 PLUGIN = HERE.parents[1] / "plugins" / "g6"
 #: What the moment cohort's Claude Code arm may run beyond the development arm's tools: the tests, and nothing else.
@@ -766,8 +768,15 @@ def prepare(task: Mapping[str, Any], out_dir: Path, client: Client) -> Path:
     for argv in (["init", "-q"], ["add", "-A"],
                  ["-c", "user.name=routing-trial", "-c", "user.email=routing-trial@example.invalid", "commit", "-q",
                   "-m", "fixture"]):
-        subprocess.run(["git", *argv], cwd=workspace, check=True, capture_output=True)
+        _git(workspace, *argv)
     return workspace
+
+
+def _git(cwd: Path, *argv: str, env: Mapping[str, str] | None = None) -> bytes:
+    """What git prints for ``argv`` in ``cwd``: the one program this file starts directly. ``CalledProcessError`` when
+    it fails."""
+    return subprocess.run(["git", *argv], cwd=cwd, env=None if env is None else dict(env), check=True,
+                          capture_output=True, timeout=120).stdout
 
 
 def fixture_sources(task: Mapping[str, Any]) -> tuple[Any, ...]:
@@ -809,27 +818,52 @@ def _record(log: Path, transcript: Any, session: Mapping[str, Any]) -> None:
         handle.write(json.dumps({**transcript.to_json(), "session": dict(session)}, sort_keys=True) + "\n")
 
 
-def _keep(out_dir: Path, data: bytes) -> str:
-    """Keep an event log's bytes in the run's folder under their sha256, and answer it."""
+def _keep(out_dir: Path, data: bytes, suffix: str = ".log") -> str:
+    """Keep an event log's bytes (or, ``.diff``, a session's final diff) in the run's folder under their sha256, and
+    answer it."""
     digest = hashlib.sha256(data).hexdigest()
     folder = Path(out_dir) / EVENTS
     folder.mkdir(parents=True, exist_ok=True)
-    if not (folder / f"{digest}.log").is_file():
-        (folder / f"{digest}.log").write_bytes(data)
+    if not (folder / f"{digest}{suffix}").is_file():
+        (folder / f"{digest}{suffix}").write_bytes(data)
     return digest
 
 
-def kept(out_dir: Path, digest: str) -> tuple[bytes | None, str]:
-    """(the kept event log named by ``digest``, "") or (``None``, why it cannot be read as that log)."""
+def kept(out_dir: Path, digest: str, suffix: str = ".log") -> tuple[bytes | None, str]:
+    """(the kept event log, or with ``.diff`` the kept final diff, named by ``digest``, "") or (``None``, why it
+    cannot be read as that file)."""
+    what = "final diff" if suffix == ".diff" else "event log"
     if not re.fullmatch(r"[0-9a-f]{64}", digest or ""):
-        return None, "the row names no event log"
-    path = Path(out_dir) / EVENTS / f"{digest}.log"
+        return None, f"the row names no {what}"
+    path = Path(out_dir) / EVENTS / f"{digest}{suffix}"
     if not path.is_file():
-        return None, "the event log the row names is not in the run's folder"
+        return None, f"the {what} the row names is not in the run's folder"
     data = path.read_bytes()
     if hashlib.sha256(data).hexdigest() != digest:
-        return None, "the kept event log does not hash to the digest the row names"
+        return None, f"the kept {what} does not hash to the digest the row names"
     return data, ""
+
+
+def _head(workspace: Path) -> str:
+    """The commit ``prepare`` made of the fixture: what a session's final diff is taken against."""
+    return _git(workspace, "rev-parse", "HEAD").decode("ascii").strip()
+
+
+def final_diff(workspace: Path, base: str, client: Client) -> bytes:
+    """The workspace as the session left it, against the fixture commit ``base``: every change, deletion and new file
+    (a git-ignored one and the agent's own commits too), as a binary git diff with no line ending rewritten. What the
+    interpreter and pytest write (``UNKEPT``) and the skill the runner installed are left out. Read through an index
+    of its own, so the workspace's index stays as the session left it."""
+    from g6.core import skills
+
+    spec = [".", *UNKEPT, f":(exclude){client.skills_dir}/{skills.GUIDE}"]
+    raw = ("-c", "core.autocrlf=false", "-c", "core.safecrlf=false")
+    with tempfile.TemporaryDirectory(prefix="g6_routing_diff_", ignore_cleanup_errors=True) as tmp:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
+        _git(workspace, *raw, "read-tree", base, env=env)
+        _git(workspace, *raw, "add", "-A", "--force", "--", *spec, env=env)
+        return _git(workspace, *raw, "diff", "--cached", "--binary", "--full-index", "--no-renames", "--no-color",
+                    "--no-ext-diff", "--no-textconv", base, "--", *spec, env=env)
 
 
 def _produced(program: str, detected: Any, digests: dict[str, str]) -> str:
@@ -867,7 +901,9 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
     only while the person's decisions share none of the sources the list says a session lacks (``NOT_FRESH``), its
     server states the task's permissions even when they are none, its client is given the session's G6 home, a
     Claude Code session loads the plugin this tree ships and may run the tests, and its record names the digests of
-    the guidance it could read (``guidance``)."""
+    the guidance it could read (``guidance``) and the digest of its final diff (``final_diff_sha256``: the workspace as
+    the session left it against the fixture commit, kept as ``<out_dir>/events/<sha256>.diff`` before the next session
+    on that fixture wipes the folder; "" when no workspace was made)."""
     from g6.agents._runtime import cli
     from g6.agents._runtime.consent import consent_run
     from g6.agents._runtime.model import AgentRefusal
@@ -917,7 +953,7 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
                 "produced": "" if real else f"stand-in:{type(runner).__name__}"}
         session: dict[str, Any] = {"run": run_id, "bound": {**bound, "task": freeze.digest(task)}, "served": {}}
         ended: dict[str, Any] = {"state": "interrupted", "code": UNFINISHED}     # until the session says otherwise
-        data, exit_code, seconds, home = None, None, 0.0, None
+        data, exit_code, seconds, home, workspace, base = None, None, 0.0, None, None, ""
         try:
             program = runner.locate() if hasattr(runner, "locate") else spec.name
             if real:
@@ -930,6 +966,7 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
                 raise AgentRefusal(cloud.STATE_UNAVAILABLE, "the person's sharing decisions could not be read for "
                                                             f"the session's G6 home ({type(exc).__name__})") from None
             workspace = prepare(task, out_dir, spec)
+            base = _head(workspace) if moment else ""
             config = mcp_config(task, python, home, moment=moment)
             with tempfile.TemporaryDirectory(prefix="g6_routing_", ignore_cleanup_errors=True) as tmp:
                 scratch = Path(tmp)
@@ -965,6 +1002,12 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
         except Exception as exc:  # noqa: BLE001 - a fault of this runner's own: the task has its row and the run goes on
             session["fault"] = type(exc).__name__
         finally:
+            if moment:                                 # the final work, kept before the next session wipes the folder
+                try:
+                    session["final_diff_sha256"] = _keep(out_dir, final_diff(workspace, base, spec), ".diff") \
+                        if base else ""
+                except Exception as exc:  # noqa: BLE001 - a diff that cannot be made costs the session no row
+                    session["final_diff_sha256"], session["diff_fault"] = "", type(exc).__name__
             try:
                 session["served"] = _served(home)
                 if home is not None:

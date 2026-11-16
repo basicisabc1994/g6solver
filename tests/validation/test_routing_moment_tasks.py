@@ -227,7 +227,7 @@ def test_a_claude_code_session_runs_with_the_shipped_plugin_and_may_run_tests(ar
     rows = [json.loads(line) for line in (arm.tmp / "before" / "transcripts-claude_code-moment.jsonl").read_text(
         encoding="utf-8").splitlines()]
     record = rows[0]["session"]
-    assert set(record) == {"run", "bound", "served", "guidance"}
+    assert set(record) == {"run", "bound", "served", "guidance", "final_diff_sha256"}
     assert record["bound"]["tasks"] == run.moment_pins()["tasks_digest"]
     assert record["bound"]["bars"] == run.moment_pins()["bars_digest"]
     guidance = record["guidance"]
