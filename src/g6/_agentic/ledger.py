@@ -6,7 +6,7 @@ The file is owned by the same user as G6: it records what was done, it does not 
 writing it. An entry has a closed schema (:class:`Entry`): codes, names from G6's own declarations, digests, counts
 and historical person metadata. New entries record remote provider consent, local model admission, consent refusal
 or the caller's code allowance, with the observed provider where applicable and an empty name; no override dialog
-is claimed.
+is claimed. Each send's authority is kept alongside the combined authority; historical entries may omit the list.
 No parameter, result, exception text, refusal detail or reason is kept. The writer refuses any other field or value,
 and then nothing is written. :func:`entry` keeps that much of an override's record. It may direct where the loop looks
 next; it never counts as evidence that a change works (design 10.10)."""
@@ -59,6 +59,11 @@ class Person(_Closed):
     provider: Name = ""   # optional for historical entries; never stored in the name field
 
 
+class SendAuthority(_Closed):
+    answer: Literal["allowed in code", "provider consent", "local model", "refused by the consent check"]
+    provider: Name
+
+
 class Check(_Closed):
     check: str = Field(pattern=_NAME)
     passed: StrictBool
@@ -97,6 +102,7 @@ class Entry(_Closed):
     model: str = Field(pattern=_NAME)
     trigger: Trigger
     person: Person
+    authority_sends: list[SendAuthority] = Field(default_factory=list)  # absent in historical entries
     budget: Limits
     checks: list[Check] = Field(max_length=64)
     rechecked: StrictBool
@@ -123,6 +129,8 @@ def entry(record: Mapping[str, Any]) -> dict[str, Any]:
         "mode": record.get("mode"), "model": record.get("model"),
         "trigger": {k: trigger[k] for k in ("kind", "code", "exception") if k in trigger},
         "person": dict(record.get("person") or {}),
+        "authority_sends": [{"answer": one.get("answer"), "provider": one.get("provider")}
+                            for one in record.get("authority_sends") or ()],
         "budget": {**budget, "max_wall_clock_s": float(budget.get("max_wall_clock_s", 0))},
         "checks": [{"check": c.get("check"), "passed": c.get("passed")} for c in record.get("checks") or ()],
         "rechecked": bool(record.get("rechecked")),
