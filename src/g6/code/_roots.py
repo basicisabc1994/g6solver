@@ -175,7 +175,8 @@ def walk(folder: Path, roots: Roots, *, max_files: int, max_file_bytes: int, suf
          skip_dirs: frozenset[str] = SKIP_DIRS, max_entries: int = 50_000, timeout_s: float = 5.0) -> Walk:
     """The files under ``folder`` (already confined by :func:`existing`), each with a suffix in ``suffixes`` (any when
     empty), at most ``max_files`` of them and none larger than ``max_file_bytes``. A link or junction is never
-    followed; a file whose resolved path leaves the roots is skipped."""
+    followed; a file whose resolved path leaves the roots, and a hard-linked file (:func:`read_text` refuses it), is
+    skipped and counted in ``skipped_links``."""
     found = Walk()
     deadline = time.monotonic() + timeout_s
     for path in _files(folder, skip_dirs, found, max_entries, deadline):
@@ -185,10 +186,14 @@ def walk(folder: Path, roots: Roots, *, max_files: int, max_file_bytes: int, suf
             found.skipped_links += 1
             continue
         try:
-            size = path.stat().st_size
+            info = path.stat()
         except OSError:
             found.skipped_unreadable += 1
             continue
+        if info.st_nlink > 1:               # a hard link, which read_text refuses: skipped and counted as a link
+            found.skipped_links += 1
+            continue
+        size = info.st_size
         if size > max_file_bytes:
             found.skipped_large += 1
             continue

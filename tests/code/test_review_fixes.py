@@ -331,6 +331,33 @@ def test_a_read_refuses_a_hard_link_to_a_file_kept_outside_the_root(tmp_path):
         assert _roots.read_text(root / "own.txt", 1000, roots=given) == "kept here"
 
 
+def test_a_walk_skips_a_hard_linked_file_as_a_link_so_a_package_with_one_is_still_read(tmp_path):
+    # walk lists only files read_text will read: a hard-linked file is skipped and counted as a link, so one hard link
+    # no longer refuses a whole package in component_creator; read_text keeps refusing it
+    import os
+    import types
+
+    from g6.code._types import CodeRefused
+    from g6.code.component_creator import block
+    root, outside = tmp_path.resolve() / "root", tmp_path.resolve() / "outside.py"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "pkg" / "a.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+    outside.write_text("def b():\n    return 2\n", encoding="utf-8")
+    try:
+        os.link(outside, root / "pkg" / "b.py")
+    except OSError:
+        pytest.skip("hard links cannot be made here")
+    roots = _roots.Roots((root,), "test")
+    walked = _roots.walk(root / "pkg", roots, max_files=100, max_file_bytes=10_000, suffixes=(".py",))
+    assert sorted(p.name for p in walked.files) == ["__init__.py", "a.py"]
+    assert walked.skipped_links == 1
+    modules, _, _ = block._modules(types.SimpleNamespace(source="", path=str(root / "pkg"), module=""), roots)
+    assert "pkg.a" in modules and "pkg.b" not in modules
+    with pytest.raises(CodeRefused):
+        _roots.read_text(root / "pkg" / "b.py", 1000, roots=roots)
+
+
 def test_pattern_scan_linear_budget():
     import time
     from g6.code.swe_diagnostics.read import code_summarize
