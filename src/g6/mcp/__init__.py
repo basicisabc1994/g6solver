@@ -187,7 +187,7 @@ def build_server(surface: Any = None) -> Any:
 
         return report(useful_parallel_work=useful_parallel_work)
 
-    from g6.mcp.catalogue import carry, extension, shown_components
+    from g6.mcp.catalogue import shown_components, unshipped_reply
 
     @server.tool()
     def g6_components() -> list[str]:
@@ -203,8 +203,9 @@ def build_server(surface: Any = None) -> Any:
     def g6_describe(component: str) -> dict:
         """Maturity, ops and declared dependencies of one component, and which of its sensitive ops this server
         allows."""
-        if extension(component):
-            carry(component)     # withheld unless the person shared component_catalogue
+        hidden = unshipped_reply(component)     # a name G6 did not ship, before the person shares component_catalogue
+        if hidden is not None:
+            return hidden
         return describe_reply(component)
 
     @server.tool()

@@ -68,13 +68,14 @@ def extension(tmp_path, monkeypatch, registry_reset):
 def test_an_extensions_text_stays_behind_its_grant(extension, granted):
     if granted:
         _grant("component_catalogue")
-    listed, found, described, built_in = _calls([("g6_components", {}), ("g6_find", {"query": extension}),
-                                                 ("g6_describe", {"component": extension}),
-                                                 ("g6_describe", {"component": "grounding"})])
+    listed, found, described, built_in, absent = _calls([
+        ("g6_components", {}), ("g6_find", {"query": extension}), ("g6_describe", {"component": extension}),
+        ("g6_describe", {"component": "grounding"}), ("g6_describe", {"component": "zqxnosuchcomponent"})])
     assert (extension in listed) is granted and "grounding" in listed
     assert (extension in found) is granted
-    assert ("G6_E_CLOUD_CONSENT_REQUIRED" in described) is not granted, described[:400]
-    assert (extension in described) is granted
+    assert (extension in described) is granted and "G6_E_CLOUD_CONSENT_REQUIRED" not in described, described[:400]
+    if not granted:     # no existence oracle: an installed extension and a name nothing provides get one reply
+        assert described == absent and "'available': False" in described, (described[:300], absent[:300])
     assert "G6_E_CLOUD_CONSENT_REQUIRED" not in built_in
     for reply in (listed, found):
         assert "G6_E_CLOUD_CONSENT_REQUIRED" not in reply

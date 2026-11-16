@@ -64,15 +64,38 @@ def carry(name: str) -> None:
     policy.record_sources((policy.Source.text(EXTENSION_SOURCE, "extension:" + name, name),))
 
 
+def _provider(capture: policy.Capture) -> str:
+    return capture.client[0] if capture.client else "cloud:unknown"
+
+
+#: ``g6_describe``'s one reply over MCP, without ``EXTENSION_SOURCE`` shared, for every name G6 did not ship: an
+#: installed extension and a name nothing provides read the same, so the reply tells no one which are installed.
+UNSHIPPED = {"available": False,
+             "note": "No component G6 ships has this name. An installed extension is described only once the person "
+                     f"shares {EXTENSION_SOURCE} with this client (g6_cloud_grant)."}
+
+
+def unshipped_reply(name: str) -> dict | None:
+    """``UNSHIPPED`` for ``g6_describe`` of a name G6 did not ship, over MCP without ``EXTENSION_SOURCE`` shared;
+    otherwise ``None``, the description may be given (an extension's then carries that source)."""
+    capture = policy.current_capture()
+    if capture is None or built_in(name):
+        return None
+    if not policy.is_granted(EXTENSION_SOURCE, _provider(capture)):
+        return dict(UNSHIPPED)
+    if extension(name):
+        carry(name)
+    return None
+
+
 def shown_components() -> list[str]:
     """Every built-in component, and an extension only outside an MCP call or where the person shared
     ``EXTENSION_SOURCE`` with this client's provider (the reply then carries that source)."""
     capture = policy.current_capture()
-    provider = capture.client[0] if capture is not None and capture.client else "cloud:unknown"
     shown = []
     for name in registry.get_registry().names():
         if extension(name) and capture is not None:
-            if not policy.is_granted(EXTENSION_SOURCE, provider):
+            if not policy.is_granted(EXTENSION_SOURCE, _provider(capture)):
                 continue
             carry(name)
         shown.append(name)
@@ -94,8 +117,8 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-__all__ = ["EXTENSION_SOURCE", "PATH", "build", "built_in", "carry", "dumps", "extension", "shipped",
-           "shown_components"]
+__all__ = ["EXTENSION_SOURCE", "PATH", "UNSHIPPED", "build", "built_in", "carry", "dumps", "extension", "shipped",
+           "shown_components", "unshipped_reply"]
 
 if __name__ == "__main__":
     raise SystemExit(main())
