@@ -153,7 +153,7 @@ harness, and 60 extensions are in the library, each in a family for one kind of 
 | `algebra` | Does exact algebra and calculus for you, such as simplifying a formula, solving an equation, or finding a derivative, an integral or the inverse of a matrix, and checks each answer a second, independent way before handing it over | MCP | `sage_evaluate`, `sage_version` |
 | `algorithm_design` | Suggests textbook algorithms that fit the problem you describe, estimates what each would cost within your limits, and runs a fixed set of standard algorithms on your data, checking each answer a second way | MCP | none |
 | `causal` | Works out from your diagram of what causes what whether data can show the effect of one thing on another and which variables to control for, then estimates the effect and tries to knock it down | MCP | none |
-| `cegis` | Fills the gaps in a code template, then hunts for an input that breaks it, and repeats until none is left in the range you set | Python-only | — |
+| `cegis` | Fills the gaps in a code template, then hunts for an input that breaks it, and repeats until none is left in the range you set | MCP | `synthesize` |
 | `coding_agent_gate` | Checks a coding agent's work before it acts and again before it says the job is done | MCP | none |
 | `cognitive_bridge` | Picks which kind of check a claim needs, such as rules, cause and effect, logic, a prediction or an optimisation, ranks the questions that best tell rival explanations apart, and gathers the results for a reviewer outside the agent to check | MCP | none |
 | `complexity` | Reads a Python package's source without running it, maps its modules, shared state and side effects, and lists everything a change could reach and what it must keep | MCP | none |
@@ -283,7 +283,7 @@ All are implemented and tested. Three have been through a study registered befor
 checking, the action gate and the meta-harness (see [Research](research.md)). None has been studied in real use.
 
 ### Which components can I call over MCP?
-Every extension in the library can be called over MCP, as can 20 of the 38 core components; the other 18 are
+Every extension in the library can be called over MCP, as can 21 of the 38 core components; the other 17 are
 Python-only for now. The tables above say which. `workforce` has tools of its own, `g6_mission_create` and the others,
 and no op for `g6_invoke`.
 

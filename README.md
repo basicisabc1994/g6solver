@@ -110,9 +110,9 @@ Not a programmer? Ready-made **bundles** (double-click apps) are described in th
 
 ## Use it
 
-**From a coding agent (MCP), the main surface:** after `g6 setup`, the agent gets 56 tools.
+**From a coding agent (MCP), the main surface:** after `g6 setup`, the agent gets 57 tools.
 
-- Discovery and composition: `g6_help`, `g6_find`, `g6_components`, `g6_describe`, `g6_invoke`, `g6_compose`.
+- Discovery and composition: `g6_help`, `g6_find`, `g6_components`, `g6_describe`, `g6_invoke`, `g6_compose`; `g6_agentic_run` lets a model stand in for a part a component declares after it refuses, once the person agrees.
 - Patch review and missions: `g6_review_patch`, `g6_review_until_clean`, `g6_premortem`, `g6_mission_*` (six).
 - Consent: `g6_cloud_grant`, `g6_cloud_grants`, `g6_cloud_revoke`, `g6_disclosures`.
 - The self-improvement loop: `g6_improve_*` (six). A person agrees in the client's dialog to each start, enrolment,
