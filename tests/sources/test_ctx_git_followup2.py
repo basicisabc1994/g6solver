@@ -153,4 +153,4 @@ def test_metadata_entry_reader_census():
             if "_metadata_text" in calls:
                 readers.add(node.name)
                 assert "_metadata_entry" in calls, node.name
-    assert readers == {"repository", "_common", "_alternates"}
+    assert readers == {"repository", "_common", "_alternates", "_includes"}

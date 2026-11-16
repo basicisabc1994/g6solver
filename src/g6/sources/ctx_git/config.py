@@ -16,7 +16,8 @@ An agent names a repository by its absolute path. :func:`repository` resolves it
 refuses it unless it is at or under a root and is the top folder of a working copy whose ``.git`` also resolves
 inside a root, and so does every other folder git would read or write for it: the common git folder a ``commondir``
 file names (a worktree's refs and objects live there), the ``objects`` and ``refs`` folders, and every entry of
-``objects/info/alternates``, followed through each alternate's own list (git borrows objects from those). This is
+``objects/info/alternates``, followed through each alternate's own list (git borrows objects from those), and the
+repository and worktree configs' nested include paths. Reads and traversal share line and time budgets. This is
 checked before any git command runs. :func:`inside` does the same for every file an op names in the repository, and
 refuses the ``.git`` folder itself.
 :func:`remote_problem` says why a remote's address may not be reached (only https and ssh, only a declared host, no
@@ -29,14 +30,16 @@ import os
 import re
 import stat
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
+from time import monotonic
 from urllib.parse import urlsplit
 
 from g6.code import _roots
 from g6.code._types import CodeRefused
 from g6.core import http
 from g6.core.storage import confined_path, plain_file, state_path
+from g6.sources.ctx_git import _config_includes
 
 CONFIG_ENV = "G6_GIT_CONFIG"
 CONFIG_FILE = ("ctx_git", "config.json")
@@ -48,10 +51,15 @@ CONFIG_INVALID = "G6_E_GIT_CONFIG_INVALID"
 REMOTE_REFUSED = "G6_E_GIT_REMOTE_REFUSED"
 #: How deep git follows alternates of alternates; a list nested deeper is refused.
 ALTERNATES_DEPTH = 5
-#: Distinct object folders, including the repository's own; repeated identities do not spend this budget.
+#: Distinct object folders, including the repository's own and missing targets; repeated identities spend once.
 ALTERNATES_FOLDERS = 64
 CONFIG_MAX_BYTES = 1024 * 1024
 METADATA_MAX_BYTES = 64 * 1024
+METADATA_FILE_LINES = 1024
+METADATA_TOTAL_LINES = 4096
+ADMISSION_SECONDS = 10.0
+CONFIG_INCLUDE_FILES = 64
+CONFIG_INCLUDE_DEPTH = 10
 #: The address forms a network op may reach: an https URL, an ssh URL, or ssh's ``user@host:path`` form.
 _SCP = re.compile(r"^(?:(?P<user>[A-Za-z0-9._-]+)@)?(?P<host>[A-Za-z0-9.-]+):(?!//)(?P<path>[^\s]+)$")
 _HOST = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$")
@@ -75,6 +83,36 @@ class GitConfig:
 
     def describe(self) -> dict[str, object]:
         return {"roots": [str(r) for r in self.roots], "remote_hosts": list(self.remote_hosts), "source": self.source}
+
+
+@dataclass
+class _Admission:
+    """One repository's aggregate work budget, shared by includes and alternates."""
+
+    deadline: float = field(default_factory=lambda: monotonic() + ADMISSION_SECONDS)
+    lines: int = 0
+    configs: set[Path] = field(default_factory=set)
+    active_configs: set[Path] = field(default_factory=set)
+    missing_alternates: set[Path] = field(default_factory=set)
+
+    def check(self) -> None:
+        if monotonic() >= self.deadline:
+            raise GitRefused(PATH_INVALID, "repository metadata exceeds G6's admission time limit; git was not run")
+
+    def account(self, text: str) -> str:
+        self.check()
+        # Count physical lines, including repeated, blank and comment lines, before parsing or target checks.
+        count = text.count("\n") + bool(text and not text.endswith("\n"))
+        self.lines += count
+        if count > METADATA_FILE_LINES or self.lines > METADATA_TOTAL_LINES:
+            raise GitRefused(PATH_INVALID, "repository metadata exceeds G6's line limit per file or repository; "
+                                           "git was not run")
+        return text
+
+    def alternate_limit(self, checked: set[tuple[int, int]]) -> None:
+        if len(checked) + len(self.missing_alternates) >= ALTERNATES_FOLDERS:
+            raise GitRefused(PATH_INVALID, f"objects/info/alternates exceeds G6's limit of {ALTERNATES_FOLDERS} "
+                                           "distinct object folders per repository (missing targets count)")
 
 
 def parse(text: str, source: str) -> GitConfig:
@@ -211,6 +249,7 @@ def _metadata_entry(text: str, base: Path, name: str, roots: _roots.Roots) -> Pa
 def repository(raw: str, config: GitConfig) -> tuple[Path, Path]:
     """The working copy ``raw`` names and its git folder, both resolved; :class:`GitRefused` unless both are at or
     under a declared root."""
+    admission = _Admission()
     if not config.roots:
         raise GitRefused(NO_ROOT, f"no folder is declared for ctx_git, so git is not run anywhere: {_how_to_declare()}")
     if not raw.strip():
@@ -235,7 +274,8 @@ def repository(raw: str, config: GitConfig) -> tuple[Path, Path]:
         raise GitRefused(NOT_A_REPOSITORY, f"{name} is not the top folder of a git working copy (it has no .git)")
     gitdir = _metadata_target(dotgit, ".git", roots)
     if stat.S_ISREG(dotgit_info.st_mode):
-        line = _metadata_text(dotgit, ".git", roots).strip()
+        admission.check()
+        line = admission.account(_metadata_text(dotgit, ".git", roots)).strip()
         if not line.startswith("gitdir:"):
             raise GitRefused(NOT_A_REPOSITORY, f"{name}/.git is a file that names no git folder")
         gitdir = _metadata_entry(line.partition(":")[2].strip(), real, ".git", roots)
@@ -245,23 +285,32 @@ def repository(raw: str, config: GitConfig) -> tuple[Path, Path]:
     gitdir_info = _metadata_info(gitdir, ".git", roots)
     if gitdir_info is None or not stat.S_ISDIR(gitdir_info.st_mode):
         raise GitRefused(NOT_A_REPOSITORY, f"the git folder of {name} is missing")
-    common = _common(gitdir, roots)
+    common = _common(gitdir, roots, admission)
+    admission.check()
+    for file in dict.fromkeys((gitdir / "config", common / "config", gitdir / "config.worktree")):
+        _includes(file, roots, admission)
     for name in ("objects", "refs"):
         info = _metadata_info(common / name, name, roots)
         if info is not None and not stat.S_ISDIR(info.st_mode):
             raise GitRefused(PATH_INVALID, f"{name} is not a git metadata folder")
-    _alternates(common / "objects", roots, 0)
+    _alternates(common / "objects", roots, 0, admission=admission)
+    admission.check()
     return real, gitdir
 
 
-def _common(gitdir: Path, roots: _roots.Roots) -> Path:
+def _common(gitdir: Path, roots: _roots.Roots, admission: _Admission | None = None) -> Path:
     """The common git folder ``gitdir``'s ``commondir`` file names (``gitdir`` itself when there is none), resolved;
     :class:`GitRefused` when it is outside every root."""
+    if admission is not None:
+        admission.check()
     named = gitdir / "commondir"
     info = _metadata_info(named, "commondir", roots)
     if info is None:
         return gitdir
-    text = _metadata_text(named, "commondir", roots).rstrip("\r\n") if stat.S_ISREG(info.st_mode) else ""
+    text = _metadata_text(named, "commondir", roots) if stat.S_ISREG(info.st_mode) else ""
+    if admission is not None:
+        admission.account(text)
+    text = text.rstrip("\r\n")
     if not text.strip():
         raise GitRefused(NOT_A_REPOSITORY, "commondir is not a file naming a git folder")
     common = _metadata_entry(text, gitdir, "commondir", roots)
@@ -273,23 +322,67 @@ def _common(gitdir: Path, roots: _roots.Roots) -> Path:
     return common
 
 
+def _includes(path: Path, roots: _roots.Roots, admission: _Admission, depth: int = 0) -> None:
+    """Check every repository-local include, including inactive conditions, before git runs."""
+    admission.check()
+    if path in admission.active_configs or depth > CONFIG_INCLUDE_DEPTH:
+        raise GitRefused(PATH_INVALID, "repository config includes form a loop or exceed G6's nesting limit")
+    if path in admission.configs:
+        return
+    if len(admission.configs) >= CONFIG_INCLUDE_FILES:
+        raise GitRefused(PATH_INVALID, "repository config exceeds G6's included-file limit")
+    admission.configs.add(path)
+    info = _metadata_info(path, "repository config", roots)
+    if info is None:  # Git ignores a missing include, after its spelling and confinement were checked.
+        return
+    admission.active_configs.add(path)
+    try:
+        text = admission.account(_metadata_text(path, "repository config", roots))
+        for entry in _config_includes.paths(text):
+            admission.check()
+            if entry.startswith("~"):
+                # Git uses HOME. Without a bound home spelling, do not guess another user's expansion.
+                home = os.environ.get("HOME", "")
+                if (entry != "~" and not entry.startswith("~/")) or not home or not Path(home).is_absolute():
+                    raise ValueError("config home expansion cannot be classified")
+                entry = home if entry == "~" else home.rstrip("/\\") + "/" + entry[2:]
+            if entry.startswith("%(prefix)"):
+                raise ValueError("git installation prefix cannot be classified")
+            target = _metadata_entry(entry, path.parent, "repository config include", roots)
+            _includes(target, roots, admission, depth + 1)
+    except (ValueError, OSError, MemoryError, RecursionError):
+        raise GitRefused(PATH_INVALID, "repository config holds syntax or an include path G6 cannot classify; "
+                                       "git was not run") from None
+    finally:
+        admission.active_configs.remove(path)
+
+
 def _alternates(objects: Path, roots: _roots.Roots, depth: int,
-                checked: set[tuple[int, int]] | None = None) -> None:
+                checked: set[tuple[int, int]] | None = None, *, admission: _Admission | None = None) -> None:
     """:class:`GitRefused` unless every entry of ``objects/info/alternates`` (and of each alternate's own list)
     resolves inside a root. Comment lines are skipped, as git skips them; a quoted entry, or one with white space
     around it, is refused rather than read differently from git."""
     if checked is None:
         checked = set()
+    if admission is None:
+        admission = _Admission()
+    admission.check()
     folder = _metadata_info(objects, "objects/info/alternates", roots)
-    if (folder is None or not stat.S_ISDIR(folder.st_mode) or not getattr(folder, "st_ino", 0)
+    if folder is None:
+        if depth == 0:
+            raise GitRefused(PATH_INVALID, "the repository's object folder is missing")
+        if objects not in admission.missing_alternates:
+            admission.alternate_limit(checked)
+            admission.missing_alternates.add(objects)
+        return  # Git skips missing alternate folders; both lines and targets still consume the budget.
+    if (not stat.S_ISDIR(folder.st_mode) or not getattr(folder, "st_ino", 0)
             or getattr(folder, "st_dev", None) is None):
-        raise GitRefused(PATH_INVALID, "objects/info/alternates names no folder G6 can check")
+        raise GitRefused(PATH_INVALID, "objects/info/alternates names an existing entry that is not a folder "
+                                       "with an identity G6 can check")
     identity = (folder.st_dev, folder.st_ino)
     if identity in checked:
         return
-    if len(checked) >= ALTERNATES_FOLDERS:
-        raise GitRefused(PATH_INVALID, f"objects/info/alternates exceeds G6's limit of {ALTERNATES_FOLDERS} "
-                                       "distinct object folders per repository")
+    admission.alternate_limit(checked)
     checked.add(identity)
     listed = objects / "info" / "alternates"
     info = _metadata_info(listed, "objects/info/alternates", roots)
@@ -297,14 +390,20 @@ def _alternates(objects: Path, roots: _roots.Roots, depth: int,
         return
     if depth >= ALTERNATES_DEPTH or not stat.S_ISREG(info.st_mode):
         raise GitRefused(PATH_INVALID, "objects/info/alternates nests deeper than git follows, or is not a file")
-    for line in _metadata_text(listed, "objects/info/alternates", roots).split("\n"):
+    seen_lines = set()
+    text = admission.account(_metadata_text(listed, "objects/info/alternates", roots))
+    for line in text.removeprefix("\ufeff").split("\n"):
+        if line in seen_lines:
+            continue
+        seen_lines.add(line)
+        admission.check()
         if not line or line.startswith("#"):
             continue
         borrowed = _metadata_entry(line, objects, "objects/info/alternates", roots)
         if not _under(borrowed, roots.roots):
             raise GitRefused(OUTSIDE_ROOT, "objects/info/alternates borrows objects from a folder outside every declared root "
                                            "(objects/info/alternates)")
-        _alternates(borrowed, roots, depth + 1, checked)
+        _alternates(borrowed, roots, depth + 1, checked, admission=admission)
 
 
 def destination(raw: str, config: GitConfig) -> Path:
