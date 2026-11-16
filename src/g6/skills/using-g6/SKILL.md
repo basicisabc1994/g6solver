@@ -57,12 +57,15 @@ For a Python task, work in this order (each step in full: `references/lifecycle.
    Add optional inputs (`intent`, `template_instances`, `proposed_checks`) only in the shapes the tool's description
    gives; a refused call names the field to fix. It needs host permission `patch_review.review`, which the person
    grants with `g6 setup`; never change permissions yourself. Show the reply's `assessment["report"]` verbatim.
+   To have the model the person configured for G6 propose more checks, add `search: {"propose": true}`: what it
+   proposes runs as your proposed checks do, never passes a requirement, and gives at most insufficient evidence.
 6. **Repair.** Fix what G6 reproduced, add each reproduction as a stated check, and review again. Stop after 3
    rounds, when a round changes nothing, or when the report says only the person can decide.
 7. **Honesty.** Never call a patch `verified`, and never merge for the person. The result rests on your own tests:
    do not rewrite them to change it. The report's not-established list is the to-do list.
 
-Loop: `g6_review_until_clean` (`references/lifecycle.md`).
+Loop: in Claude Code with G6's plugin, its Stop hook runs the review-until-clean loop when you finish; elsewhere,
+call `g6_review_until_clean` (`references/lifecycle.md`).
 
 ## Find
 
@@ -70,7 +73,9 @@ Read `g6_allowances` before optional fan-out, and declare useful independent wor
 only: stale or missing data never justifies more use.
 
 Call `g6_help`, then `g6_find` with the task or failure mode. Read `g6_describe` before choosing fields or an operation.
-`g6_components` lists every installed component. Use grounding for source support, coding_agent_gate for declared
+`g6_components` lists every installed component. These three answer without any sharing grant for G6's built-in
+components; an installed extension's text, and the person's own data, are withheld or left out until the person
+grants that source. `g6_select` needs no grant either. Use grounding for source support, coding_agent_gate for declared
 coding evidence, action_gating before consequential actions, and the meta-harness for repeated failures.
 A direct call serializes its parameter object into `params_json`:
 
