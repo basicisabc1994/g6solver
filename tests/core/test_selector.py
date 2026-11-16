@@ -97,9 +97,36 @@ def test_no_host_fact_reaches_a_reply(monkeypatch: pytest.MonkeyPatch, tmp_path:
     monkeypatch.setenv("G6_HOME", str(tmp_path / "another-home"))
     assert run() == bare
     for word in ("sensitive_ops_allowed_here", "claude_code", str(tmp_path), str(Path.home())):
-        assert word not in bare, word
+        assert not _holds(json.loads(bare), word), word
     unknown = " ".join(json.loads(bare)["unknown_until_observed"])
     assert "allowed" in unknown and "grant" in unknown and "model" in unknown
+
+
+def _strings(value: object) -> list[str]:
+    """Every string in a reply, keys and values, as the client reads it once the JSON is parsed."""
+    out, stack = [], [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            out.append(item)
+        elif isinstance(item, dict):
+            stack.extend([*item.keys(), *item.values()])
+        elif isinstance(item, (list, tuple)):
+            stack.extend(item)
+    return out
+
+
+def _holds(reply: dict, word: str) -> bool:
+    """Whether the reply holds ``word`` in any of its parsed strings, or in its JSON text raw or escaped as JSON
+    escapes it (a Windows path's backslashes are doubled there)."""
+    text = json.dumps(reply, sort_keys=True)
+    return any(word in s for s in _strings(reply)) or word in text or json.dumps(word)[1:-1] in text
+
+
+def test_the_host_fact_check_fails_a_reply_that_holds_the_home_folder() -> None:
+    leaking = {"candidates": [{"issues": [f"does not load here ({Path.home() / 'lib' / 'x.dll'})"]}]}
+    assert _holds(leaking, str(Path.home()))
+    assert not _holds({"candidates": [{"issues": ["no path here"]}]}, str(Path.home()))
 
 
 def test_a_caller_that_changes_a_reply_changes_no_later_reply() -> None:
