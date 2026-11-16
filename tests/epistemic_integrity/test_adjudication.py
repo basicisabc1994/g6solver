@@ -127,6 +127,16 @@ def test_block_adjudicate_op() -> None:
     assert payload["llm_used"] is False
 
 
+def test_the_payload_says_its_confidence_is_a_ceiling_not_a_probability() -> None:
+    # plan revision 8, E: E3 read as "confidence: 1.0"; the payload now says what the number is
+    from g6.epistemic_integrity.epistemic_integrity_block import EpistemicIntegrityBlock
+
+    payload = EpistemicIntegrityBlock().infer(_mk_input()).value
+    assert payload["confidence_meaning"] == ("an upper bound set by the evidence grade (E0 0.2, E1 0.5, E2 0.8, E3 1.0; "
+                                             "contested 0.5), not a probability")
+    assert all("confidence" in claim for claim in payload["claims"])
+
+
 def _mk_input():
     from g6.epistemic_integrity.epistemic_integrity_block import EpistemicIntegrityInput
 
