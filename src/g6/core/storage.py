@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import stat
+import time
 from pathlib import Path
 
 #: Names Windows keeps for devices in every folder (``CON``, ``nul.txt``): a path naming one is never a plain file.
@@ -57,43 +58,49 @@ def confined_path(raw: str | os.PathLike[str], roots: tuple[Path, ...]) -> Path:
 def state_path(*parts: str) -> Path:
     """A path under the state root. Relative parts may not escape it."""
     root = g6_home().resolve()
-    p = root.joinpath(*parts).resolve()
-    if p != root and root not in p.parents and os.name == "nt":
-        p = _inside_after_a_race(root, p, parts) or p
-    if p != root and root not in p.parents:
+    p: Path | None = root.joinpath(*parts).resolve()
+    if os.name == "nt":
+        # resolving while another thread deletes or makes a file or folder on the path can name a $Extend\$Deleted
+        # file outside the home; then the words joined onto the home are the answer, when no link is on them
+        p = _opened_inside(root, p) or _opened_inside(root, root.joinpath(*parts))
+    if p is None or p != root and root not in p.parents:
         raise ValueError(f"state path escapes G6_HOME: {'/'.join(parts)}")
     return p
 
 
-def _inside_after_a_race(root: Path, resolved: Path, parts: tuple[str, ...]) -> Path | None:
-    """Windows, for ``parts`` it resolved outside ``root``: where they are when that is inside ``root``, else None.
+def _opened_inside(root: Path, path: Path) -> Path | None:
+    """Windows: ``path`` as a caller's open reads its words (a local ``\\\\?\\X:\\`` prefix dropped, ``..`` taken, a
+    trailing dot dropped), when that is ``root`` or inside it and lstat finds no symbolic link, junction or other
+    reparse point on any existing part of it below ``root``; None otherwise.
 
-    Resolving a path while another thread deletes or makes a file or folder on it can keep the ``\\\\?\\`` prefix (its
-    check of the plain spelling failed mid-change) or name a ``$Extend\\$Deleted`` file. A local ``\\\\?\\X:\\`` path is
-    the same path without the prefix, and is the answer when that is inside. Otherwise ``root`` joined with ``parts``,
-    ``..`` taken on the words as Windows takes it, is the answer when it is inside and lstat finds no link or other
-    reparse point on any existing part below ``root``: only a link could have taken it out. That answer is the
-    caller's spelling, not the resolved one."""
-    text = str(resolved)
-    if text.startswith("\\\\?\\") and not text.upper().startswith("\\\\?\\UNC\\"):
-        plain = Path(text[4:])
-        if plain == root or root in plain.parents:
-            return plain
-    path = Path(os.path.normpath(root.joinpath(*parts)))
-    if path != root and root not in path.parents:
+    ``Path.resolve`` follows every link it can, but a link whose target names no path yet, or none as written, stops
+    it: it gives the link's words joined with the rest, and open reads them again, perhaps out of ``root`` (``..``),
+    through a link (``sub.`` opens ``sub``) or into a folder a caller makes beyond a link on the way. A path resolving
+    followed to the end holds no link, so a link still on the answer is refused."""
+    text = str(path)
+    if text.startswith("\\\\?\\") and text[5:7] == ":\\":
+        text = text[4:]
+    plain = Path(os.path.abspath(text))
+    if plain != root and root not in plain.parents:
         return None
     step = root
-    for part in path.parts[len(root.parts):]:
+    for part in plain.parts[len(root.parts):]:
         step = step / part
-        try:
-            found = os.lstat(step)
-        except FileNotFoundError:
-            break
-        except OSError:
+        # in a folder being deleted just now lstat answers access denied until it is gone (a few ms): ask again, for
+        # up to about 50 ms, then refuse
+        found: os.stat_result | None = None
+        for _ in range(50):
+            try:
+                found = os.lstat(step)
+                break
+            except FileNotFoundError:
+                return plain
+            except OSError:
+                time.sleep(0.001)
+        if found is None or stat.S_ISLNK(found.st_mode) or (getattr(found, "st_file_attributes", 0)
+                                                            & stat.FILE_ATTRIBUTE_REPARSE_POINT):
             return None
-        if stat.S_ISLNK(found.st_mode) or getattr(found, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
-            return None
-    return path
+    return plain
 
 
 def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refuse_links: bool = False) -> Path:
@@ -101,7 +108,8 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
 
     A relative ``raw`` is joined onto ``root``, never onto the folder G6 runs in; an absolute one is taken as given.
     Both are resolved, ``..`` and every symbolic link and junction followed, so a link out of the folder counts as
-    outside. Refused before anything is resolved: an empty path; a control character; a network or device path
+    outside; on Windows the answer is checked as open reads it, and a link resolving could not follow counts as outside
+    too. Refused before anything is resolved: an empty path; a control character; a network or device path
     (``\\\\host\\share``, ``//host/share``, ``\\\\?\\``, ``\\\\.\\``), because resolving one on Windows opens it over the
     network; a ``:`` in a relative path (a drive, or a file's alternate stream, on Windows); and a part named for a
     Windows device (``CON``, ``nul.txt``). With ``refuse_links=True``, every existing path component is checked with
@@ -139,8 +147,10 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
         raise PathRefused(f"{text!r} is outside the folder (a '..' or a link out of it counts as outside)",
                           outside=True)
     base = Path(root).resolve()
-    real = (given if given.is_absolute() else base / given).resolve()
-    if real != base and base not in real.parents:
+    real: Path | None = (given if given.is_absolute() else base / given).resolve()
+    if os.name == "nt":
+        real = _opened_inside(base, real)  # refuses a link resolving could not follow
+    if real is None or real != base and base not in real.parents:
         raise PathRefused(f"{text!r} is outside the folder (a '..' or a link out of it counts as outside)",
                           outside=True)
     return real

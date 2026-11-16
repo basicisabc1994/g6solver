@@ -80,6 +80,30 @@ def test_a_junction_out_of_the_root_counts_as_outside(root: Path) -> None:
         contained(root, "jct/new.txt")  # a file not yet there, under the junction
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junctions and \\\\?\\ paths")
+@pytest.mark.parametrize("case", ["dot-dot", "trailing-dot", "not-yet-made", "under-a-junction"])
+def test_a_junction_windows_cannot_follow_out_of_the_root_counts_as_outside(root: Path, case: str) -> None:
+    # resolving stops at a link it cannot follow and keeps its words ('..', a trailing dot, or a link on the way),
+    # which Windows reads again when the value is opened: see test_storage_state_path's test of the same name
+    from tests.core.test_storage_state_path import verbatim_junction
+
+    base, outside = root.resolve(), root.parent.resolve() / "outside"
+    if case == "trailing-dot":
+        verbatim_junction(base / "sub", "\\??\\" + str(outside))
+        verbatim_junction(base / "link", "\\??\\" + str(base) + "\\sub.")
+    elif case == "under-a-junction":
+        verbatim_junction(base / "x", "\\??\\" + str(outside))
+        verbatim_junction(base / "link", "\\??\\" + str(base / "x" / "nothere"))
+    else:
+        leads_to = "outside" if case == "dot-dot" else "made_outside"
+        verbatim_junction(base / "link", "\\??\\" + str(base / "nothere" / ".." / ".." / leads_to))
+    for raw in ("link/secret.txt", "link/new/kept.json"):
+        with pytest.raises(PathRefused, match="outside"):
+            contained(root, raw)
+        with pytest.raises(PathRefused, match="outside"):
+            storage.confined_path(str(base / raw), (root,))
+
+
 @pytest.mark.parametrize("name", ["café.txt", unicodedata.normalize("NFD", "café.txt")])
 def test_unicode_names_inside_are_allowed_in_either_form(root: Path, name: str) -> None:
     assert contained(root, name).parent == root.resolve()
