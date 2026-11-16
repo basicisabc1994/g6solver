@@ -70,8 +70,19 @@ class Dialog:
 
 
 def ask(root: Path, *, data=None, dialog=None, task=TASK, **kwargs) -> dict:
-    return asyncio.run(behaviour.confirm(dialog or Dialog(), str(root), task,
-                                         candidates=[candidate()] if data is None else data, **kwargs))
+    # a known caller supplying its own arguments: since reply repair 3 a call with no known client is refused before a
+    # question is asked, which would stop before the store checks these tests are about
+    import json
+
+    from g6.core import cloud_consent as cloud
+
+    dialog = dialog or Dialog()
+    candidates = [candidate()] if data is None else data
+    with cloud.collect_sources() as capture:
+        capture.client = ("openai:codex", dialog.session)
+        capture.supplied.add(cloud.input_source(json.dumps(
+            {"repo": str(root), "task": task, "candidates": candidates}, sort_keys=True)))
+        return asyncio.run(behaviour.confirm(dialog, str(root), task, candidates=candidates, **kwargs))
 
 
 # --- review 1's findings, brought in as this change's own ---------------------------------------------------------

@@ -293,6 +293,12 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
         if asked is not None:
             _pending(asked)
         if asked is None:
+            if candidates or review_job:
+                from g6.core import cloud_consent as cloud
+
+                capture = cloud.current_capture()
+                if capture is None or capture.client is None or capture.client[0] == 'cloud:unknown':
+                    raise bq.CandidateRefused('a question needs a known client destination', cloud.REQUIRED)
             # the tree the question is asked about, which a saved review must have observed
             artifact = digest(repo_tests.snapshot(root)) if review_job else ""
             try:

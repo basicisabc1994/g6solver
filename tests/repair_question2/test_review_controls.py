@@ -10,7 +10,7 @@ from g6.harness import behaviour_question as bq
 from g6.harness import question_store as qs
 from g6.harness.confirmed_expectation import Answer
 from g6.mcp import behaviour
-from .helpers import Dialog, TASK, ask, candidate, repo
+from .helpers import Dialog, TASK, ask, candidate, legacy_pending, repo
 
 
 @pytest.mark.parametrize("raw,want", [(None, 1), ("", 0), ("0", 0), ("1", 1), ("10", 10),
@@ -30,17 +30,17 @@ def test_budget_edges(raw, want, monkeypatch):
                                            ("accept", {"choice": "A"})])
 def test_pending_statuses_without_provenance_cannot_confirm_or_spend_twice(tmp_path, action, content):
     root = repo(tmp_path)
-    first = ask(root, dialog=Dialog(content, action))
-    assert first["status"] == "pending"
+    first = legacy_pending(root)
+    assert first.provenance is None
     assert behaviour.enforced(str(root), TASK) is None
-    # These local fixtures have no client capture: the stored entry is legacy. F1 requires withholding it on replay,
-    # before any dialog, rather than relabelling its content as the retry's own arguments.
-    dialog = Dialog()
+    # F2 forbids creating a legacy entry over confirm. Seed the older record explicitly; F1 still withholds it
+    # before every dialog action, even when the retry supplies an identified client and its own arguments.
+    dialog = Dialog(content, action)
     second = ask(root, dialog=dialog)
     assert second['warning_card']['code'] == 'G6_E_CLOUD_CONSENT_REQUIRED'
     assert dialog.messages == [] and behaviour.enforced(str(root), TASK) is None
     state = qs.TaskQuestions(qs.task_identity(root, TASK)).state()
-    assert len(state.asked) == 1 and state.pending.question.sha256 == first['question_sha256'] and state.left == 0
+    assert len(state.asked) == 1 and state.pending.question.sha256 == first.question.sha256 and state.left == 0
 
 
 @pytest.mark.parametrize("damage", ["torn", "garbage", "empty", "reordered", "foreign_task"])

@@ -15,7 +15,9 @@ from g6.harness import behaviour_question as bq, question_store as qs
 from g6.harness import confirmed_checks as cc, patch_review, verification_templates as vt
 from g6.harness.confirmed_expectation import Answer
 from g6.mcp import behaviour, review_binding, review_reply
-from tests.repair_question2.helpers import TASK, NODE, REQUIREMENTS, Dialog, ask, candidate, repo, result, stated
+from tests.repair_question2.helpers import (
+    TASK, NODE, REQUIREMENTS, Dialog, ask, candidate, legacy_pending, repo, result, stated,
+)
 from tests.harness.example_contract import reference_instance_digest
 
 
@@ -144,8 +146,8 @@ def test_concurrent_calls_cannot_spend_the_last_slot_twice():
 
 def test_only_asked_once_answers_and_pending_retries(tmp_path):
     root = repo(tmp_path)
-    got = ask(root, dialog=Dialog({"choice": "skip", "name": "Maintainer"}))
-    assert got["status"] == "pending"
+    got = legacy_pending(root)
+    assert got.provenance is None
     store = qs.TaskQuestions(qs.task_identity(root, TASK))
     question = store.state().pending.question
     bad = Answer(question_sha256="f" * 64, option="A", answered_by="person:Maintainer",
