@@ -22,11 +22,13 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
    a share of a full match, times ``LEXICAL_WEIGHT`` (``ROUTE_WEIGHT`` more for a route), plus the fixed phase priors ``PRIORS`` (and ``PHASE_TAG_BONUS`` for a matched entry
    tagged with the phase) and the fixed intent priors ``INTENTS`` (a safety question raises the action gate; an
    agent that keeps failing, the meta-harness). A safety question is a task holding one of ``SAFETY_WORDS``, fixed
-   and reviewed, a verb among them in any of its word forms (pushing, deleted, dropping; "safely"): "safe",
-   "should i", "should we", "can i", "risky", "dangerous", "allowed", "okay to", "fine to", "is it ok",
-   "production", "prod", "live", "delete", "rm", "overwrite", "reset", "push", "commit", "merge", "pay", "migrate",
-   "drop", "deploy", "send", "publish", "wipe", "erase", "truncate", "destroy", "terminate", "remove", "upload",
-   "email", "transfer", "ship", "release". Every reply, whatever its words: a call that acts outside G6
+   and reviewed, a verb among them in any of its word forms (pushing, deleted, dropping, rolled back, tore down;
+   "safely"): "safe", "should i", "should we", "can i", "can we", "risky", "dangerous", "allowed", "okay to",
+   "ok to", "fine to", "is it ok", "production", "prod", "live", "delete", "rm", "overwrite", "reset", "push",
+   "commit", "merge", "pay", "migrate", "migration", "drop", "deploy", "send", "publish", "wipe", "erase",
+   "truncate", "destroy", "terminate", "remove", "upload", "email", "transfer", "ship", "release", "roll back",
+   "rollback", "revoke", "rotate", "tear down", "teardown", "kill", "refund", "charge", "shut down", "shutdown",
+   "rewrite history", "force". Every reply, whatever its words: a call that acts outside G6
    (``_acts``: an op its component lists as sensitive, or whose name holds an ``OUTWARD_WORDS`` word) ranks below
    every call that does not, and is never ``next``; ``g6_cloud_grant`` is ``next`` only as the remedy for the
    consent code. Where the rankers disagree it is listed. A semantic rerank (the local ColBERT rung) is
@@ -105,14 +107,22 @@ PRIORS: dict[str, dict[str, float]] = {
 #: should be done or is risky, or names an outward or destructive act. Fixed, reviewed data, listed in the module
 #: docstring; each is matched as whole words in the task, lower-cased, and a verb in ``SAFETY_VERBS`` in its word
 #: forms too (``_forms``: pushes, pushed, pushing; deleting; dropping; and "safely").
-SAFETY_WORDS = ("safe", "should i", "should we", "can i", "risky", "dangerous", "allowed", "okay to", "fine to",
-                "is it ok", "production", "prod", "live", "delete", "rm", "overwrite", "reset", "push", "commit",
-                "merge", "pay", "migrate", "drop", "deploy", "send", "publish", "wipe", "erase", "truncate", "destroy",
-                "terminate", "remove", "upload", "email", "transfer", "ship", "release")
+SAFETY_WORDS = ("safe", "should i", "should we", "can i", "can we", "risky", "dangerous", "allowed", "okay to",
+                "ok to", "fine to", "is it ok", "production", "prod", "live", "delete", "rm", "overwrite", "reset",
+                "push", "commit", "merge", "pay", "migrate", "migration", "drop", "deploy", "send", "publish", "wipe",
+                "erase", "truncate", "destroy", "terminate", "remove", "upload", "email", "transfer", "ship",
+                "release", "roll back", "rollback", "revoke", "rotate", "tear down", "teardown", "kill", "refund",
+                "charge", "shut down", "shutdown", "rewrite history", "force")
 SAFETY_VERBS = frozenset({"delete", "overwrite", "reset", "push", "commit", "merge", "pay", "migrate", "drop",
                           "deploy", "send", "publish", "wipe", "erase", "truncate", "destroy", "terminate", "remove",
-                          "upload", "email", "transfer", "ship", "release"})
-_IRREGULAR = {"pay": ("paid",), "send": ("sent",), "safe": ("safely",)}
+                          "upload", "email", "transfer", "ship", "release", "revoke", "rotate", "kill", "refund",
+                          "charge", "force"})
+_IRREGULAR = {"pay": ("paid",), "send": ("sent",), "safe": ("safely",), "migration": ("migrations",),
+              "roll back": ("rolls back", "rolled back", "rolling back"),
+              "tear down": ("tears down", "tore down", "torn down", "tearing down"),
+              "shut down": ("shuts down", "shutting down"),
+              "rewrite history": ("rewrote history", "rewriting history", "rewrite the history",
+                                  "rewrite the git history", "rewrite git history")}
 
 
 def _forms(word: str) -> set[str]:

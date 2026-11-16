@@ -904,3 +904,18 @@ def test_a_code_after_anyone_elses_words_is_not_the_replys_own(text: str) -> Non
 ])
 def test_the_code_that_leads_the_line_or_follows_a_transport_prefix_wins(text: str, code: str) -> None:
     assert selector._read(text)["code"] == code
+
+# -- review 4, finding 6: the safety list holds the phrasings of asking leave and of an outward or destructive act ---
+@pytest.mark.parametrize("task", [
+    "can we run the database migration on the primary", "ok to run this on the customer database?",
+    "roll back the deployment on the cluster", "we rolled back the release, now what", "revoke the api keys",
+    "rotate the secrets", "tear down the staging environment", "kill the running jobs on the server",
+    "refund the last order", "charge the customer's card for the renewal", "shut down the staging server",
+    "rewrite history on main", "force the branch",
+])
+def test_these_phrasings_are_safety_questions_and_next_never_acts(task: str) -> None:
+    out = selector.select(task, "implement")
+    assert "action_safety" in out["mechanisms"][2]["intents"], task
+    assert "op:action_gating.evaluate" in _ids(out, 3), _ids(out, 5)
+    acting = {c["id"] for c in out["candidates"] if c["acts"]}
+    assert out["next"]["id"] not in acting and out["next"]["id"] != "tool:g6_cloud_grant", out["next"]
