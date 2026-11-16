@@ -636,7 +636,10 @@ def _go(op: str, command: list[str], action: dict[str, Any], out: Outward,
     except Exception as exc:  # noqa: BLE001 - a gate that cannot decide holds the act
         gate = {"kind": "action_gate", "decision": "block", "reason_codes": [],
                 "message": f"the action gate could not decide: {type(exc).__name__}"}
-    shown = "git " + " ".join(cfg.shown(part) for part in command)
+    display = list(command)
+    if display[:1] == ["-C"] and len(display) >= 2:
+        display[1] = cfg._name(Path(display[1]), out.config.roots)
+    shown = "git " + " ".join(cfg.shown(part) for part in display)
     if c.dry_run:
         return answer(op, DRY_RUN, f"A dry run: nothing was sent. With dry_run false the action gate decides; it says "
                       f"{gate['decision']} now. A person can run: {shown} ({UNDER}).", ids=c.ids, would_run=shown,
