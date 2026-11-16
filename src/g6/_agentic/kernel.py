@@ -595,9 +595,9 @@ def override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
                         "'original'.",
                         "Treat it as a proposal and check it before relying on it: it never passes a requirement and "
                         "is never evidence in another G6 check.")
-    envelope = envelope_fields(reliability_label=state, warning_card=card, evidence=[], request_id=pending.request_id,
-                               run_id=str(reply.get("run_id") or ""), degradation_reason="agentic_substitute")
-    return {"ok": state != "blocked-escalated", "result": _bare(reply.get("result")), **envelope,
+    fields = envelope_fields(reliability_label=state, warning_card=card, evidence=[], request_id=pending.request_id,
+                             run_id=str(reply.get("run_id") or ""), degradation_reason="agentic_substitute")
+    return {"ok": state != "blocked-escalated", "result": _bare(reply.get("result")), **fields,
             "original": pending.original, "agentic": record}
 
 
