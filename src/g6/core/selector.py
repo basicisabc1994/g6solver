@@ -815,16 +815,16 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         return _refuse(f"last_outcome is over {MAX_OUTCOME_BYTES // 1024} KB: pass the refusal's code and message, "
                        "or the outcome word", request_id, run_id)
     limit = max(1, min(limit, MAX_CANDIDATES))
+    try:                                            # bounded before anything else is read
+        items = _items(considering)
+    except _Refusal as refused:
+        return _refuse(str(refused), request_id, run_id)
     data = corpus if corpus is not None else _corpus()
     entries = {e["id"]: e for e in expanded(data)}
     tools = {e["call"]["tool"]: e["id"] for e in data["entries"] if e["kind"] == "tool"}
     mechanisms: list[dict[str, Any]] = []
 
     # 1. facts
-    try:
-        items = _items(considering)
-    except _Refusal as refused:
-        return _refuse(str(refused), request_id, run_id)
     considered = _considered(items, entries, tools)
     requirements = [c for c in considered if c["kind"] == "requirement" and c["validated"]]
     hypotheses = [c for c in considered if c["kind"] == "hypothesis" and c["validated"]]
