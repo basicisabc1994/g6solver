@@ -254,6 +254,11 @@ READS = {
         ("state", "self._open()"), ("state", "self._read(self._open(), default, note)"),
     ],
     "mcp/behaviour.py": [("_review_candidates", "state_path('reviews', f'{review_job}.json')")],
+    # A saved review's provenance sidecar: save writes the reply; record only names its path to publish the
+    # byte-bound sources; carried hashes its bytes to check that record and returns Source objects, never content.
+    "mcp/review_reply.py": [("save", "state_path('reviews', f'{job_id}.json')"),
+                            ("record", "state_path('reviews', f'{job_id}.json')"),
+                            ("carried", "state_path('reviews', f'{job_id}.json')")],
 }
 
 
@@ -288,6 +293,12 @@ def test_every_read_of_a_store_entry_or_a_saved_review_checks_its_binding():
         text = path.read_text(encoding="utf-8")
         if "state_path(\"questions\"" in text or "state_path('questions'" in text:
             elsewhere.append(rel)
-        if ("state_path(\"reviews\"" in text or "state_path('reviews'" in text) and rel != "mcp/review_reply.py":
+        if "state_path(\"reviews\"" in text or "state_path('reviews'" in text:
             elsewhere.append(rel)
-    assert elsewhere == []   # review_reply only writes a review (save)
+    assert elsewhere == []
+    reply = ast.parse((ROOT / 'src/g6/mcp/review_reply.py').read_text(encoding='utf-8'))
+    carried = next(n for n in ast.walk(reply) if isinstance(n, ast.FunctionDef) and n.name == 'carried')
+    body = ast.unparse(carried)
+    assert 'hashlib.sha256(path.read_bytes()).hexdigest()' in body
+    assert 'json.loads(path.read_bytes())' not in body   # the saved content never becomes a candidate here
+    assert 'cloud.Source(' in body

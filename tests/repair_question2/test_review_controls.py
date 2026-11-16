@@ -28,15 +28,19 @@ def test_budget_edges(raw, want, monkeypatch):
                                            ("accept", {"choice": "skip", "name": "Maintainer"}),
                                            ("unknown_status", {"choice": "A", "name": "Maintainer"}),
                                            ("accept", {"choice": "A"})])
-def test_pending_statuses_cannot_confirm_or_spend_twice(tmp_path, action, content):
+def test_pending_statuses_without_provenance_cannot_confirm_or_spend_twice(tmp_path, action, content):
     root = repo(tmp_path)
     first = ask(root, dialog=Dialog(content, action))
     assert first["status"] == "pending"
     assert behaviour.enforced(str(root), TASK) is None
-    second = ask(root)
-    assert second["status"] == "confirmed"
-    assert second["question_sha256"] == first["question_sha256"]
-    assert second["budget"]["asked"] == 1
+    # These local fixtures have no client capture: the stored entry is legacy. F1 requires withholding it on replay,
+    # before any dialog, rather than relabelling its content as the retry's own arguments.
+    dialog = Dialog()
+    second = ask(root, dialog=dialog)
+    assert second['warning_card']['code'] == 'G6_E_CLOUD_CONSENT_REQUIRED'
+    assert dialog.messages == [] and behaviour.enforced(str(root), TASK) is None
+    state = qs.TaskQuestions(qs.task_identity(root, TASK)).state()
+    assert len(state.asked) == 1 and state.pending.question.sha256 == first['question_sha256'] and state.left == 0
 
 
 @pytest.mark.parametrize("damage", ["torn", "garbage", "empty", "reordered", "foreign_task"])

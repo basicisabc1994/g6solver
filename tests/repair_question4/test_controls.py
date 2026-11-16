@@ -152,8 +152,14 @@ def test_only_asked_once_answers_and_pending_retries(tmp_path):
                  answered_at="2026-11-08T00:00:00Z")
     with pytest.raises(qs.AnswerRefused):
         store.answer(bad)
-    assert ask(root)["status"] == "confirmed"
-    assert len(store.state().asked) == 1
+    # F1: a legacy pending record has no asking-client custody, so replay cannot confirm it or show a dialog.
+    dialog = Dialog()
+    retry = ask(root, dialog=dialog)
+    assert retry['warning_card']['code'] == 'G6_E_CLOUD_CONSENT_REQUIRED' and dialog.messages == []
+    assert len(store.state().asked) == 1 and store.state().pending.question.sha256 == question.sha256
+    # Keep the store's independent once-only answer control on its local API.
+    store.answer(Answer(question_sha256=question.sha256, option='A', answered_by='person:Maintainer',
+                        answered_at='2026-11-08T00:00:00Z'))
     with pytest.raises(qs.AnswerRefused):
         store.answer(store.state().answers[0])
     assert store.state().asked[0].question.sha256 == question.sha256

@@ -50,6 +50,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from contextlib import contextmanager
 from pathlib import Path
+from threading import Lock
+from uuid import uuid4
 
 from g6.core.ledger import ChainLedger, LedgerError, digest
 from g6.core.storage import state_path
@@ -77,6 +79,64 @@ ASKED, SHOWN, ANSWER, MORE = "asked", "shown", "answer", "more"
 RESERVED = "reserved"
 PURPOSES = ("feedback",)
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+_INPUT = re.compile(r"input:[0-9a-f]{64}\Z")
+# Opaque, process-local custody: a persisted token cannot recreate a session after restart. Strong references
+# prevent object-id reuse; bounded eviction withholds old pending questions rather than extending their custody.
+_clients: dict[str, tuple[str, object]] = {}
+_clients_lock = Lock()
+
+
+def _provenance() -> dict | None:
+    """Keep the sources held at ask time, including every input admitted from a review and this call's arguments."""
+    from g6.core import cloud_consent as cloud
+
+    capture = cloud.current_capture()
+    if capture is None or capture.client is None:
+        return None
+    inputs = sorted(source for source in capture.supplied if _INPUT.fullmatch(source))
+    sources = tuple(dict.fromkeys((*cloud.prompt_sources(), *(cloud.Source(
+        source, cloud.sha256('asking-call-input'), source.removeprefix('input:')) for source in inputs))))
+    token = uuid4().hex
+    with _clients_lock:
+        if len(_clients) >= 64:
+            del _clients[next(iter(_clients))]
+        _clients[token] = capture.client
+    return {'version': 'question-sources.v1', 'provider': capture.client[0], 'session': token, 'inputs': inputs,
+            'sources': [{'source': s.source_id, 'item': s.item_id, 'content': s.content_sha256, 'recorded': s.recorded}
+                        for s in sources]}
+
+
+def pending_sources(asked: Asked) -> tuple:
+    """Record a pending question's own sources before use; admit its inputs only to the provider that sent them.
+
+    Consent is per source and provider (the owner's 11-08 rule): a question built from a call's own input may go back
+    to that same provider in any later session (so the person can answer it later, after a reconnect), never to
+    another provider or an unknown one. Legacy records and malformed provenance disclose nothing, even if a later
+    caller supplies the same text. The consent check on the returned sources still makes every recorded revoke win.
+    """
+    from g6.core import cloud_consent as cloud
+    from g6.harness.behaviour_question import CandidateRefused
+
+    capture, record = cloud.current_capture(), asked.provenance
+    try:
+        if not isinstance(record, dict) or record.get('version') != 'question-sources.v1':
+            raise ValueError('no provenance')
+        sources = tuple(cloud.Source(s['source'], s['item'], s['content'], s['recorded']) for s in record['sources'])
+        inputs = record['inputs']
+        if not sources or not isinstance(inputs, list) or not all(
+                isinstance(s, str) and _INPUT.fullmatch(s) for s in inputs) or not set(inputs) <= {
+                    s.source_id for s in sources}:
+            raise ValueError('incomplete provenance')
+        cloud.record_sources(sources)
+        provider = record['provider']
+        if capture is None or capture.client is None or not isinstance(provider, str) \
+                or provider == 'cloud:unknown' or provider != capture.client[0]:
+            raise ValueError('another provider or no provider')
+        capture.supplied.update(inputs)
+        return sources
+    except (KeyError, TypeError, ValueError, AttributeError):
+        cloud.record_sources((cloud.UNKNOWN,))
+        raise CandidateRefused('that pending question has no source custody for this client', cloud.REQUIRED) from None
 
 
 class StoreUnreadable(Exception):
@@ -190,6 +250,7 @@ class Asked:
     candidate: Candidate
     asked_at: str
     number: int
+    provenance: dict | None = None
 
     @property
     def shas(self) -> tuple[str, ...]:
@@ -358,7 +419,8 @@ class TaskQuestions:
             body = entry["body"]
             if entry["kind"] == ASKED:
                 asked.append(Asked(_question(body["question"]), _question(body["rule"]) if body.get("rule") else None,
-                                   Candidate(body["candidate"]), body.get("asked_at", ""), len(asked) + 1))
+                                   Candidate(body["candidate"]), body.get("asked_at", ""), len(asked) + 1,
+                                   body.get('provenance')))
             elif entry["kind"] == ANSWER:
                 answer = _answer(body["answer"])
                 answers.append(answer)
@@ -394,7 +456,7 @@ class TaskQuestions:
                 raise CandidateRefused(f"the new question's outcomes do not compete: {why}", code)
             self._append(ledger, ASKED, question.sha256, {
                 "question": question.record.decode("ascii"), "rule": rule.record.decode("ascii") if rule is not None
-                else "", "candidate": candidate.data, "asked_at": at or now()})
+                else "", "candidate": candidate.data, "asked_at": at or now(), 'provenance': _provenance()})
             return self._read(ledger, default, note).asked[-1]
 
     def show(self, asked: Asked, result: str, *, shown_at: str, back_at: str, seconds: float) -> None:

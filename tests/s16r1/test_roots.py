@@ -129,6 +129,13 @@ SOURCE_SITES = {
     # 2026-11-16 (repair 1): g6_confirm_behaviour's read of a saved review carries that review's recorded sources
     # (planted in tests/s16r3/test_review_binding_reaches_confirm.py)
     'g6.mcp.behaviour._carried',
+    # Repair 2: asked entries retain the capture's sources and exact input ids; pending_sources restores them only
+    # for the original provider/session, and _shared runs the common pre-dialog refusal check. Planted cases:
+    # tests/s16r3/test_question_source_store.py (lost identity, other session/provider, legacy and revokes), and
+    # tests/s16r3/test_pending_question_sources.py (MCP retries, restart, and no dialog on refusal).
+    'g6.harness.question_store._provenance',
+    'g6.harness.question_store.pending_sources',
+    'g6.mcp.behaviour._shared',
     'g6.mcp.review_reply.finish',
     # 2026-11-16: a saved review's sources, recorded beside it and read back by finish; a record that does not read
     # back is the storage folder's source (planted in tests/s16r3/test_review_reaches_asker.py)

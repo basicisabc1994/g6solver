@@ -807,8 +807,8 @@
     ],
     "carried/branches": [
       "if not all((stat.S_ISREG(os.lstat(one).st_mode) for one in (path, side)))",
-      "if not isinstance(entry, dict) or entry.get('version') != SOURCES or entry.get('reply_sha256') != hashlib.sha256(path.read_bytes()).hexdigest() or (not isinstance(entry.get('sources'), list)) or (not entry['sources'])",
-      "except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError)"
+      "if not isinstance(entry, dict) or entry.get('version') != SOURCES or entry.get('reply_sha256') != hashlib.sha256(path.read_bytes()).hexdigest() or (expected_sha256 is not None and entry.get('reply_sha256') != expected_sha256) or (not isinstance(entry.get('sources'), list)) or (not entry['sources'])",
+      "except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, MemoryError)"
     ],
     "carried": [
       "None",

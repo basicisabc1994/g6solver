@@ -83,30 +83,44 @@ def identity_of(repo: str, task: str) -> str | None:
         return None
 
 
-def _carried(review_job: str, origin: Any) -> None:
+def _shared(read: tuple) -> None:
+    """The same pre-dialog consent check for a saved review and a question retained from it."""
+    from g6.core import cloud_consent as cloud
+    from g6.core.llm import LLMError
+
+    cloud.record_sources(read)
+    capture = cloud.current_capture()
+    if capture is None:
+        return
+    try:
+        cloud.refuse_unshared(capture.client[0] if capture.client is not None else "cloud:unknown", read,
+                              supplied=capture.supplied)
+    except LLMError:
+        raise bq.CandidateRefused("those question sources are not shared with this client", cloud.REQUIRED) from None
+
+
+def _pending(asked: qs.Asked) -> None:
+    _shared(qs.pending_sources(asked))
+
+
+def _carried(review_job: str, origin: Any, *, expected_sha256: str) -> None:
     """What this call now holds of the saved review ``review_job`` carries that review's sources: those recorded with
     it (``review_reply.carried``), or G6's storage folder's when the record is missing or does not read back, and the
     inputs of the call that submitted it (``origin``, ``Jobs.origin_inputs``), which count as supplied only when the
     same client session and provider ask. A call those sources are not shared for is refused here, as admission
     would refuse its reply, before anything is asked or stored."""
     from g6.core import cloud_consent as cloud
-    from g6.core.llm import LLMError
     from g6.core.storage import g6_home
     from g6.mcp import review_reply
 
     capture = cloud.current_capture()
     if capture is None:
         return
-    recorded = review_reply.carried(review_job)
+    recorded = review_reply.carried(review_job, expected_sha256=expected_sha256)
     read = (*(recorded if recorded is not None else (cloud.Source.text(
         cloud.repository_source(g6_home() / "reviews"), "assessment-location", review_job),)),
             *(origin(review_job) if origin is not None else ()))
-    cloud.record_sources(read)
-    try:
-        cloud.refuse_unshared(capture.client[0] if capture.client is not None else "cloud:unknown", read,
-                              supplied=capture.supplied)
-    except LLMError:
-        raise bq.CandidateRefused("that review's sources are not shared with this client", cloud.REQUIRED) from None
+    _shared(read)
 
 
 def _review_candidates(task: str, review_job: str, template_instances: Any, *, identity: str,
@@ -126,9 +140,9 @@ def _review_candidates(task: str, review_job: str, template_instances: Any, *, i
         saved_bytes = state_path("reviews", f"{review_job}.json").read_bytes()
         saved = json.loads(saved_bytes)
         _completion = saved["assessment"]["completion"]
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise bq.CandidateRefused(f"G6 holds no finished review with this job id it can read ({type(exc).__name__})"
-                                  ) from None
+    except (OSError, ValueError, KeyError, TypeError, RecursionError, MemoryError) as exc:
+        raise bq.CandidateRefused(f"G6 holds no finished review with this job id it can read ({type(exc).__name__})",
+                                  NOT_THIS_REVIEW) from None
     from g6.mcp import review_binding
 
     if not review_binding.matches(state_path("reviews", f"{review_job}.json"), identity, data=saved_bytes):
@@ -138,7 +152,9 @@ def _review_candidates(task: str, review_job: str, template_instances: Any, *, i
         raise bq.CandidateRefused("that review observed another tree: the working tree changed after it, so its "
                                   "observations are not about the tree the question is asked about; review again",
                                   NOT_THIS_REVIEW)
-    _carried(review_job, origin)
+    from g6.core.cloud_consent import sha256
+
+    _carried(review_job, origin, expected_sha256=sha256(saved_bytes))
     items = template_instances or []
     named = {item.get("requirement_id") for item in items if isinstance(item, dict)}
     try:
@@ -274,6 +290,8 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
         state = store.state()
         asked, plan = state.pending, None
         scenario = None
+        if asked is not None:
+            _pending(asked)
         if asked is None:
             # the tree the question is asked about, which a saved review must have observed
             artifact = digest(repo_tests.snapshot(root)) if review_job else ""
@@ -301,6 +319,11 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
                 asked = store.ask(case, rule, chosen)
             except qs.BudgetSpent as exc:
                 return _reply(SPENT, str(exc), state=store.state(), candidate=chosen, plan=plan)
+            from g6.core import cloud_consent as cloud
+
+            if cloud.current_capture() is not None:
+                # ask may have returned another call's existing entry under the store lock.
+                _pending(asked)
         if asked.candidate.source == 'differential':
             bq.require_probe(asked.candidate.to_dict().get('probe_sha256', ''))
         if scenario is None:
