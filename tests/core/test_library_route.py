@@ -47,19 +47,18 @@ def test_a_sensitive_refusal_offers_the_persons_own_python_form_and_never_grants
     reply = selector.select("check my lean proof", "verify", DENIED)
     remedy = reply["remedy"]
     assert remedy["tell_person"] is True and reply["next"]["tell_person"] is True and reply["next"]["call"] is None
-    form = 'g6.invoke("lean", "check_proof", '
-    assert form in remedy["action"] and 'allow=("lean.check_proof",)' in remedy["action"]
-    assert "the person's own decision" in remedy["action"]
+    assert "sensitive" in remedy["action"] and "person decides" in remedy["action"]
+    assert "allow=" not in remedy["action"]
     [library] = [c for c in _library(reply) if c["id"] == "library:invoke:lean.check_proof"]
-    ast.parse(library["call"]["python"])
-    assert form in library["call"]["python"] and library["validated"] is True
+    assert library["call"] is None and library["by"] == "person" and library["validated"] is False
 
 
 def test_the_repair_step_of_a_sensitive_refusal_offers_the_python_form() -> None:
     from g6.mcp.repair import block
 
     found = block("g6_invoke", {"ok": False, "completion_state": "blocked-escalated", "error": DENIED})
-    assert found["by"] == "person" and 'allow=("lean.check_proof",)' in found["step"]
+    assert found["by"] == "person" and found["call"] is None
+    assert "sensitive" in found["step"] and "allow=" not in found["step"]
 
 
 def test_ops_composed_in_considering_get_one_python_form_with_no_allowance_named_for_a_safe_op() -> None:

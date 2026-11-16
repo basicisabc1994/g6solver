@@ -126,6 +126,11 @@ def block(tool: str, reply: dict[str, Any], *, data: dict[str, Any] | None = Non
 
     if not refused(reply):
         return None
+    if tool == "g6_cloud_grant" and selector._read(_envelope(reply))["code"] == "G6_E_CLOUD_CONSENT_REQUIRED":
+        return {"code": "G6_E_CLOUD_CONSENT_REQUIRED", "fix_by": "person", "by": "person",
+                "step": "The person did not share this source, or the client cannot ask in a dialog. "
+                        "Stop and tell the person; do not reopen the dialog.",
+                "call": None, "fill": [], "validated": False, "retries_left": 0}
     data = data or corpus.load()
     remedy = selector.remedy_for(_envelope(reply), data) or selector.remedy_for(
         json.dumps({"completion_state": "blocked-escalated"}), data)

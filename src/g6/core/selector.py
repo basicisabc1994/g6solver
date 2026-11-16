@@ -468,10 +468,8 @@ def remedy_for(outcome: str, data: dict[str, Any] | None = None) -> dict[str, An
            "call": call, "setup": setup, "available": available if tool else True}
     # the library route: a sensitive op the server refused can run in the person's own Python, by their own allowance
     if code == "G6_E_SENSITIVE_COMPONENT_DENIED" and pair and f"op:{pair}" in {e["id"] for e in data["entries"]}:
-        form = invoke_sketch([pair], data)
-        out["library"], out["library_op"] = form, pair
-        out["action"] += (f" Or the person runs it in their own Python: {form.splitlines()[-1].split(' = ', 1)[1]} "
-                          f"({_PERSONS_OWN}).")
+        out["library"], out["library_op"] = _PERSONS_OWN, pair
+        out["action"] += " " + _PERSONS_OWN
     if key == "wrong_answer":
         out["recovery"] = recovery_remedies(data)
     return copy.deepcopy(out)                       # nothing a caller changes reaches the corpus or REMEDIES
@@ -776,8 +774,8 @@ def _validate(entry: dict[str, Any], call: dict[str, Any]) -> tuple[bool, list[s
 #: forms a reply holds at most. They rank after every call that runs now over MCP and are never ``next``.
 LIBRARY_MIN = 0.5
 LIBRARY_SLOTS = 2
-_PERSONS_OWN = ("`allow` is the person's own decision, in their own code: G6 never grants it, and you never add it "
-                "for them")
+_PERSONS_OWN = ("This op is sensitive. The person decides whether to allow it in their own code, using the "
+                "allow parameter of g6.invoke, or by g6 setup --allow. Tell the person and stop.")
 
 
 def library_sketch(component: str, function: str, data: dict[str, Any] | None = None) -> str:
@@ -792,40 +790,37 @@ def library_sketch(component: str, function: str, data: dict[str, Any] | None = 
 
 def invoke_sketch(steps: list[str], data: dict[str, Any] | None = None) -> str:
     """``g6.invoke`` calls, one per ``component.op`` the corpus offers, each with its template's parameters; a
-    sensitive op names its allowance (the person's own decision in their own code). "" for an op the corpus lacks."""
+    sensitive op or an op the corpus lacks has no agent-facing sketch."""
     data = data or _corpus()
     entries = {e["id"]: e for e in data["entries"] if e["kind"] == "op"}
-    lines, allowed = ["import g6", ""], False
+    lines = ["import g6", ""]
     for index, step in enumerate(steps, 1):
         entry = entries.get(f"op:{step}")
-        if entry is None:
+        if entry is None or entry["sensitive"]:
             return ""
         component, op = step.split(".", 1)
         params = repr(json.loads(entry["call"]["arguments"]["params_json"]))
-        allow = f', allow=("{step}",)' if entry["sensitive"] else ""
-        allowed = allowed or bool(allow)
-        lines.append(f'step{index} = g6.invoke("{component}", "{op}", {params}{allow})')
-    if allowed:
-        lines.insert(1, "# " + _PERSONS_OWN)
+        lines.append(f'step{index} = g6.invoke("{component}", "{op}", {params})')
     return "\n".join(lines)
 
 
 def _library_candidate(key: str, code: str, component: str, *, why: str, by: str, score: float = 0.0,
                        fill: list[str] | None = None, sensitive: str = "") -> dict[str, Any]:
-    return {"id": key, "kind": "library", "call": {"python": code}, "component": component,
+    return {"id": key, "kind": "library", "call": None if sensitive else {"python": code}, "component": component,
+            "by": "person" if sensitive else "agent", "step": _PERSONS_OWN if sensitive else "",
             "establishes": "the same component's answer, from Python in the person's own process, where the MCP "
                            "server cannot run it",
             "not_established": "nothing ran; " + why,
             "needs": {"sensitive": sensitive, "consent": [], "model": "none", "confined": False, "outside": [],
                       "extras": []},
-            "cost": "low", "ranked_by": [by], "score": round(score, 3), "validated": True, "issues": [],
+            "cost": "low", "ranked_by": [by], "score": round(score, 3), "validated": not sensitive, "issues": [],
             "fill": list(fill or []), "allowed_by_default": not sensitive,
             "acts": (f"sensitive: {_PERSONS_OWN}" if sensitive else ""), "runs_over_mcp": False}
 
 
 def _library_route(task: str, data: dict[str, Any], documents: dict[str, str], remedy: dict[str, Any] | None,
                    calls: list[str]) -> list[dict[str, Any]]:
-    """The Python forms to offer: a sensitive op the server refused (its ``g6.invoke`` with ``allow``), several ops
+    """The library routes to offer: a sensitive op the person decides on, several non-sensitive ops
     the agent is considering together (one ``g6.invoke`` each), and a blockless component the task matches better
     than any runnable call (its import and call). Each names only what the corpus lists."""
     out = []
@@ -836,11 +831,13 @@ def _library_route(task: str, data: dict[str, Any], documents: dict[str, str], r
                                       by="remedy", sensitive=step))
     ops = [k[3:] for k in calls if k.startswith("op:")]
     if len(ops) >= 2:
+        sensitive = [op for op in ops if op in _sensitive(data)]
         code = invoke_sketch(ops, data)
-        if code:
+        if code or sensitive:
             out.append(_library_candidate("library:compose", code, ops[0].split(".", 1)[0], by="considering",
                                           why="the ops you are considering, chained in Python; fill each step's "
-                                              "parameters", fill=ops))
+                                              "parameters", fill=[] if sensitive else ops,
+                                          sensitive=", ".join(sensitive)))
     library = data.get("library", {})
     docs = {f"library:{name}": " ".join([name.replace("_", " "), found["text"],
                                          *(f["name"].replace("_", " ") for f in found["functions"])])
