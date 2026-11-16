@@ -151,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("component")
     i.add_argument("op")
     i.add_argument("params", nargs="?", default="{}", help="JSON object of op parameters")
+    i.add_argument("--json", action="store_true", help="report an invocation failure as JSON")
     st = sub.add_parser("state", help="snapshot, list, roll back or export the state folder")
     st_sub = st.add_subparsers(dest="state_cmd", required=True)
     st_sub.add_parser("ls", help="list snapshots")
@@ -244,9 +245,17 @@ def main(argv: list[str] | None = None) -> int:
     # The same checked call as g6_invoke and g6.invoke: a verified stands only when G6's own re-check reproduces it, a
     # sensitive op runs only when the person lists it in G6_MCP_SENSITIVE, and a blocked reply exits 1.
     name = f"{args.component}.{args.op}"
-    reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(), registry=GuardedRegistry(),
-                           how_to_allow=f"Only the person who runs G6 can allow it, by listing {name} (or "
-                                        f"{args.component}) in {SENSITIVE_ENV} where they run g6.")
+    try:
+        reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(), registry=GuardedRegistry(),
+                               how_to_allow=f"Only the person who runs G6 can allow it, by listing {name} (or "
+                                            f"{args.component}) in {SENSITIVE_ENV} where they run g6.")
+    except Exception:  # noqa: BLE001 - the CLI masks component runtime failures, including their paths and text
+        message = f"G6: component {args.component!r}, op {args.op!r} failed while running."
+        if args.json:
+            _print({"completion_state": "blocked-escalated", "error": message})
+        else:
+            print(f"{message} completion_state: blocked-escalated", file=sys.stderr)
+        return 1
     if "result" not in reply:
         print(reply["error"], file=sys.stderr)
         return 1
