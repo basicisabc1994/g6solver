@@ -77,6 +77,7 @@ from typing import Any
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive
 from g6.mcp.consent_controls import public_instructions
 from g6.core.door import is_allowed as _allowed
+from g6.mcp._stdio import capture_stdout
 
 _DENIED = "[G6_E_SENSITIVE_COMPONENT_DENIED]"
 
@@ -94,6 +95,7 @@ def describe_reply(component: str, *, allow_sensitive: frozenset[str] | None = N
     return info
 
 
+@capture_stdout
 def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: Any = None,
                  allow_sensitive: frozenset[str] | None = None) -> dict[str, Any]:
     """The ``g6_invoke`` reply: the component's answer (or why there is none) inside the library envelope, through the

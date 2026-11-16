@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from g6.core.compose import Stage, compose
 from g6.core.door import blocked_reply, door_envelope
+from g6.mcp._stdio import capture_stdout
 
 
 class StageInput(BaseModel):
@@ -22,6 +23,7 @@ class CompositionInput(BaseModel):
     inputs: dict[str, Any]
 
 
+@capture_stdout
 def compose_reply(payload: dict, *, allow_sensitive: frozenset[str] = frozenset()) -> dict:
     try:
         request = CompositionInput.model_validate(payload)
