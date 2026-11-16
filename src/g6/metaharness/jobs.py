@@ -121,6 +121,13 @@ class Jobs:
             stored = self._provenance.get(ident, {})
         cloud.record_sources(stored.get("sources", ()))
         public = result.get("status") in ("pending", "running")
+        asker, asked = stored.get("origin") or (None, frozenset())
+        if not public and asker is not None and capture.client is not None \
+                and asker[0] == capture.client[0] and asker[1] is capture.client[1]:
+            # The job's own arguments go back to the client session and provider that sent them: the submitting
+            # call's exact inputs count as supplied here, and nothing else does. A person's decision on one of them
+            # still wins at admission, and a poll from any other session or provider is answered as before.
+            capture.supplied.update(source for source in asked if source.startswith('input:'))
         refs = () if public else cloud.boundary_sources(
             carried=(*stored.get(detail, (cloud.UNKNOWN,)), *stored.get('sources', ())))
         cloud.bind_output(result, refs)
