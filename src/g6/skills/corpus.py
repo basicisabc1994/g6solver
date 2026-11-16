@@ -424,11 +424,18 @@ def _door_check(instance: Any, name: str, op: str, params: dict[str, Any],
 #: typed input alone, with no program, network, model, isolation boundary or optional extra, and reads no file or
 #: source of the person's (what it keeps goes under G6's state folder, a scratch one during the build). Any other op
 #: is never run here and stays ``validated: false``, and so does a sensitive op of these. A test holds each to its
-#: component's static needs.
+#: component's static needs. The build records only whether a run was refused, its code and the fields to fill;
+#: what decides that must not read the clock, the environment, a file of the person's or chance. Checked by hand
+#: (review 3): duty_of_care is left out (its directory says how many days old its numbers are). In the others, a
+#: clock read is a timestamp, an id or a monotonic deadline in a reply (action_gating, algorithm_design,
+#: coding_agent_gate, graph_reasoning, knowledge_chunker) or a source-age finding reached only past the input check
+#: (adapt_physical_ai, whose templates are refused at their input); every draw is from a seeded random.Random
+#: (adapt_physical_ai, decision_making); files read are G6's own package data or its scratch state folder; the
+#: environment reads (action_gating's store path, coding_agent_gate's intake setting) are off the path of the
+#: templates run here. action_logic, complexity, design_governance and epistemic_integrity read none of these.
 RUN_AT_BUILD = frozenset({
     "action_gating", "action_logic", "adapt_physical_ai", "algorithm_design", "coding_agent_gate", "complexity",
-    "decision_making", "design_governance", "duty_of_care", "epistemic_integrity", "graph_reasoning",
-    "knowledge_chunker"})
+    "decision_making", "design_governance", "epistemic_integrity", "graph_reasoning", "knowledge_chunker"})
 _G6_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
 
 

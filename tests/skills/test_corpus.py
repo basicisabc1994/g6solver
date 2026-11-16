@@ -116,6 +116,30 @@ def test_only_ops_that_compute_over_their_input_alone_are_run_when_the_corpus_is
             assert entry["validated"] is False and "not run when the corpus was built" in entry["issues"][-1], entry
 
 
+def test_a_component_whose_reply_reads_the_clock_is_not_run_when_the_corpus_is_built(monkeypatch) -> None:
+    """duty_of_care.directory says how many days old its numbers are (it reads the clock), so it is not on the
+    reviewed list of components that compute over their typed input alone, and none of its ops is validated."""
+    import datetime as real
+    import types
+
+    from g6.jobs._care import directory
+    from g6.mcp import invoke_reply
+
+    def on(day: real.date) -> str:
+        class _Clock(real.datetime):
+            @classmethod
+            def now(cls, tz=None):  # noqa: ANN001, ANN206
+                return real.datetime(day.year, day.month, day.day, tzinfo=tz)
+
+        monkeypatch.setattr(directory, "dt", types.SimpleNamespace(
+            datetime=_Clock, date=real.date, timezone=real.timezone, timedelta=real.timedelta))
+        return invoke_reply("duty_of_care", "directory", "{}", allow_sensitive=frozenset())["warning_card"]["message"]
+
+    assert on(real.date(2026, 11, 1)) != on(real.date(2027, 9, 1))
+    assert "duty_of_care" not in corpus.RUN_AT_BUILD
+    assert not any(e["validated"] for e in corpus.entries() if e.get("component") == "duty_of_care")
+
+
 def test_the_build_runs_in_a_scratch_home_and_leaves_the_persons_home_alone(monkeypatch, tmp_path) -> None:
     home = tmp_path / "home"
     home.mkdir()
