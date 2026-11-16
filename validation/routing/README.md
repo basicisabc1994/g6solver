@@ -128,8 +128,9 @@ Sessions run one at a time, with nothing else running beside them on the machine
 workspace where the client reads skills: `.claude/skills/using-g6` for Claude Code and `.codex/skills/using-g6` for
 Codex, the folders `g6 skills install --client <client>` writes. G6's server, built as G6 builds it, also sends its
 instructions (`g6.mcp.instructions`) to each client when it connects. `g6 setup --client codex` offers the person a
-block for Codex's own `AGENTS.md`, written only on their yes; this runner writes no `AGENTS.md`, and no Codex plugin
-ships, so the Codex arm's guidance is that folder and the server's instructions.
+block for Codex's own `AGENTS.md`, written only on their yes (the file's mode is kept; Windows attributes and ACLs
+are not); this runner writes no `AGENTS.md`, and no Codex plugin ships, so the Codex arm's guidance is that folder and
+the server's instructions.
 
 The development cohort may be run again, in a folder of its own, after a revision of the skill; each revision
 re-binds the digests it changes. The final cohort's rows and kept logs are read by `run.py score` and

@@ -227,7 +227,8 @@ def codex_agents(ask: Ask, say: Say) -> None:
     does). So after the yes, and once more just before the replace, G6 compares the file with what it read before
     asking, by identity (device and file number) and bytes; a file that changed, or appeared, is left as it now is and
     the person is shown the block to add by hand. What remains: a save that lands between that last comparison and the
-    rename is lost, a window of one rename, since no lock is taken on the person's file."""
+    rename is lost, a window of one rename, since no lock is taken on the person's file. The file's mode is kept;
+    Windows attributes (hidden, say) and ACLs are not, as the new file replaces the old one."""
     import tempfile
     from pathlib import Path
     from g6.mcp.instructions import agents_block
