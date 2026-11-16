@@ -11,7 +11,11 @@ until observed, and the refusal that observes it is what the agent passes back.
 
 The stages, each reported in ``mechanisms`` as run or skipped, with why:
 
-1. ``facts``: what the agent supplied; each candidate carries its static needs.
+1. ``facts``: what the agent supplied; each candidate carries its static needs. Each input is bounded and refused
+   past its bound with the envelope, in G6's own words, before it is read: ``task`` past ``MAX_TASK_BYTES``,
+   ``last_outcome`` past ``MAX_OUTCOME_BYTES``, ``considering`` past ``MAX_CONSIDERING_BYTES``,
+   ``MAX_CONSIDERING_ENTRIES`` entries or ``MAX_DEPTH`` levels (measured by a walk that stops at the first excess).
+   Nothing is ranked on a part of an input; so a reply stays within ``MAX_REPLY_BYTES``.
 2. ``model_check``: in plan, implement or verify with no stated requirement, ``g6_premortem`` and
    ``g6_confirm_behaviour`` are raised (``RAISE_BONUS``); each ``considering`` entry is validated.
 3. ``candidates``: a log-IDF word overlap over the corpus (``discovery._tokens``, the scoring ``g6_find`` uses), as
@@ -39,6 +43,7 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
 from __future__ import annotations
 
 import copy
+import itertools
 import json
 import math
 import re
@@ -55,6 +60,10 @@ NOT_OFFERED = ("not offered here: a semantic rerank would depend on what this ma
 MAX_CANDIDATES = 8
 MAX_CONSIDERING_BYTES = 64 * 1024   # ``considering`` past this is refused, as text or as a value
 MAX_DEPTH = 16                      # and past this many nested lists or objects
+MAX_CONSIDERING_ENTRIES = 64        # and past this many entries
+MAX_TASK_BYTES = 16 * 1024          # ``task`` past this is refused: say what you are doing in fewer words
+MAX_OUTCOME_BYTES = 64 * 1024       # ``last_outcome`` past this is refused: pass the refusal's code and message
+MAX_REPLY_BYTES = 256 * 1024        # what the bounds above keep a reply within; past it the reply is refused
 LEXICAL_WEIGHT = 6.0        # an entry holding every query word the corpus has scores this much; others in proportion
 ROUTE_WEIGHT = 0.5          # a route is an instruction to read, so its words count half beside the calls it names
 PHASE_TAG_BONUS = 0.5       # a matched entry tagged with the phase
@@ -520,44 +529,90 @@ def _lexical(task: str, documents: dict[str, str]) -> dict[str, float]:
     return out
 
 
-def _depth(value: Any) -> int:
-    """How deeply lists and objects nest in ``value``, walked without recursion; past ``MAX_DEPTH`` it stops."""
-    deepest, stack = 0, [(value, 1)]
+class _Refusal(ValueError):
+    """A refusal of the agent's input, in G6's own fixed words: no exception's or codec's text is ever passed on."""
+
+
+def _size(text: str) -> int:
+    """``text``'s UTF-8 size; a lone surrogate counts as its three bytes instead of raising."""
+    return len(text.encode("utf-8", "surrogatepass"))
+
+
+_OVER = f"considering is over {MAX_CONSIDERING_BYTES // 1024} KB"
+_DEEP = f"considering nests deeper than {MAX_DEPTH} levels"
+_MANY = f"considering holds more than {MAX_CONSIDERING_ENTRIES} entries"
+
+
+def _bounded(value: Any) -> None:
+    """Refuse a value over ``MAX_CONSIDERING_BYTES`` (as JSON would write it, near enough) or nested deeper than
+    ``MAX_DEPTH``. The walk is lazy and stops at the first excess, so a wide or deep value costs no more than the
+    bound to refuse; a value that is not JSON (an object, bytes, a number too long to write) is refused too."""
+    budget, end = MAX_CONSIDERING_BYTES, object()
+    stack: list[tuple[Any, int]] = [(iter((value,)), 0)]
     while stack:
-        item, level = stack.pop()
-        if isinstance(item, (list, dict)):
-            deepest = max(deepest, level)
-            if deepest > MAX_DEPTH:
-                return deepest
-            stack.extend((child, level + 1) for child in (item.values() if isinstance(item, dict) else item))
-    return deepest
+        items, level = stack[-1]
+        item = next(items, end)
+        if item is end:
+            stack.pop()
+            continue
+        if isinstance(item, dict):
+            budget -= 2
+            children: Any = itertools.chain.from_iterable(item.items())
+        elif isinstance(item, (list, tuple)):
+            budget -= 2
+            children = iter(item)
+        else:
+            if isinstance(item, str):
+                if len(item) > budget:
+                    raise _Refusal(_OVER)
+                budget -= _size(item) + 3
+            elif item is None or isinstance(item, (bool, float)):
+                budget -= 6
+            elif isinstance(item, int):
+                if item.bit_length() > 64:
+                    raise _Refusal("considering holds a number too long to read")
+                budget -= len(str(item)) + 1
+            else:
+                raise _Refusal("considering holds only JSON values: text, numbers, lists and objects")
+            if budget < 0:
+                raise _Refusal(_OVER)
+            continue
+        if level + 1 > MAX_DEPTH:
+            raise _Refusal(_DEEP)
+        if budget < 0:
+            raise _Refusal(_OVER)
+        stack.append((children, level + 1))
 
 
 def _items(considering: Any) -> list[Any]:
-    """``considering`` as a list of entries. Raises ``ValueError`` (G6's own words) when it is over
-    ``MAX_CONSIDERING_BYTES``, nests deeper than ``MAX_DEPTH``, or is JSON that does not decode."""
-    if isinstance(considering, (list, dict)):
-        if _depth(considering) > MAX_DEPTH:
-            raise ValueError(f"considering nests deeper than {MAX_DEPTH} levels")
-        try:
-            size = len(json.dumps(considering, default=str).encode("utf-8"))
-        except (RecursionError, ValueError, TypeError):
-            raise ValueError("considering is not a JSON value") from None
-        if size > MAX_CONSIDERING_BYTES:
-            raise ValueError(f"considering is over {MAX_CONSIDERING_BYTES // 1024} KB")
-        return considering if isinstance(considering, list) else [considering]
-    text = considering.strip() if isinstance(considering, str) else ""
-    if len(text.encode("utf-8")) > MAX_CONSIDERING_BYTES:
-        raise ValueError(f"considering is over {MAX_CONSIDERING_BYTES // 1024} KB")
+    """``considering`` as a list of entries. Raises ``_Refusal`` (G6's own words) when it is over
+    ``MAX_CONSIDERING_BYTES``, holds more than ``MAX_CONSIDERING_ENTRIES`` entries, nests deeper than ``MAX_DEPTH``,
+    is JSON that does not decode, or is not a JSON value. Each bound is measured before the value is walked."""
+    if isinstance(considering, (list, tuple, dict)):
+        items = [considering] if isinstance(considering, dict) else considering
+        if len(items) > MAX_CONSIDERING_ENTRIES:
+            raise _Refusal(_MANY)
+        _bounded(considering)
+        return list(items)
+    if not isinstance(considering, str):
+        return []
+    if len(considering) > MAX_CONSIDERING_BYTES or _size(considering) > MAX_CONSIDERING_BYTES:
+        raise _Refusal(_OVER)
+    text = considering.strip()
     if text.startswith(("[", "{")):
         try:
             parsed = json.loads(text)
         except (RecursionError, ValueError, TypeError):
-            raise ValueError("considering starts as JSON but does not decode") from None
-        if _depth(parsed) > MAX_DEPTH:
-            raise ValueError(f"considering nests deeper than {MAX_DEPTH} levels")
-        return parsed if isinstance(parsed, list) else [parsed]
-    return [part.strip() for part in re.split(r"[,\n]", text) if part.strip()]
+            raise _Refusal("considering starts as JSON but does not decode") from None
+        items = parsed if isinstance(parsed, list) else [parsed]
+        if len(items) > MAX_CONSIDERING_ENTRIES:
+            raise _Refusal(_MANY)
+        _bounded(parsed)
+        return items
+    items = [part.strip() for part in re.split(r"[,\n]", text) if part.strip()]
+    if len(items) > MAX_CONSIDERING_ENTRIES:
+        raise _Refusal(_MANY)
+    return items
 
 
 def _check_tool(entry: dict[str, Any], arguments: Any) -> list[str]:
@@ -695,6 +750,9 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
 
     if not isinstance(task, str) or not task.strip():
         return _refuse("task says what you are doing", request_id, run_id)
+    if len(task) > MAX_TASK_BYTES or _size(task) > MAX_TASK_BYTES:
+        return _refuse(f"task is over {MAX_TASK_BYTES // 1024} KB: say what you are doing in fewer words",
+                       request_id, run_id)
     if phase not in ("", *PHASES):
         return _refuse(f"phase is one of {', '.join(PHASES)}, or empty", request_id, run_id)
     if rerank not in RERANKS:
@@ -704,6 +762,9 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         return _refuse("limit is a whole number", request_id, run_id)
     if not isinstance(last_outcome, str):
         return _refuse("last_outcome is a refusal's text, its G6_E_* code or an outcome word", request_id, run_id)
+    if len(last_outcome) > MAX_OUTCOME_BYTES or _size(last_outcome) > MAX_OUTCOME_BYTES:
+        return _refuse(f"last_outcome is over {MAX_OUTCOME_BYTES // 1024} KB: pass the refusal's code and message, "
+                       "or the outcome word", request_id, run_id)
     limit = max(1, min(limit, MAX_CANDIDATES))
     data = corpus if corpus is not None else _corpus()
     entries = {e["id"]: e for e in expanded(data)}
@@ -713,7 +774,7 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     # 1. facts
     try:
         items = _items(considering)
-    except ValueError as refused:
+    except _Refusal as refused:
         return _refuse(str(refused), request_id, run_id)
     considered = _considered(items, entries, tools)
     requirements = [c for c in considered if c["kind"] == "requirement" and c["validated"]]
@@ -866,11 +927,15 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     evidence = [{"kind": "selection", "corpus_entries": len(entries), "corpus_release": data.get("release", ""),
                  "stages_run": [m["stage"] for m in mechanisms if m["ran"]]}]
     # a deep copy: candidates hold the cached corpus's own objects, which a caller filling in a template must not change
-    return copy.deepcopy({
+    reply = copy.deepcopy({
         "ok": True, "phase": phase, "candidates": candidates, "next": nxt, "remedy": remedy,
         "considering": considered, "mechanisms": mechanisms, "unknown_until_observed": list(UNKNOWN_UNTIL_OBSERVED),
         **envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
                           request_id=request_id, run_id=run_id)})
+    if len(json.dumps(reply)) > MAX_REPLY_BYTES:       # the input bounds keep a reply well within it; this says so
+        return _refuse(f"the reply would be over {MAX_REPLY_BYTES // 1024} KB: pass fewer or shorter entries in "
+                       "considering", request_id, run_id)
+    return reply
 
 
 __all__ = ["BUDGET_UNITS", "COST_UNITS", "MAX_CANDIDATES", "PENDING_TOOLS", "PRIORS", "REMEDIES", "STAGES",

@@ -306,6 +306,64 @@ def test_an_oversized_too_deep_or_broken_considering_is_refused_with_the_envelop
     assert "considering" in reply["error"]
 
 
+def _refused(reply: dict, field: str) -> bool:
+    return (reply["completion_state"] == "blocked-escalated" and reply["warning_card"]["code"] == "G6_E_INPUT_VALIDATION"
+            and field in reply["error"])
+
+
+def test_a_task_or_last_outcome_over_its_bound_is_refused_before_it_is_read() -> None:
+    import time
+
+    start = time.perf_counter()
+    assert _refused(selector.select("word " * (selector.MAX_TASK_BYTES // 5 + 1)), "task")
+    assert _refused(selector.select("review my patch", last_outcome="x" * (selector.MAX_OUTCOME_BYTES + 1)),
+                    "last_outcome")
+    assert time.perf_counter() - start < 1.0
+    assert selector.select("word " * (selector.MAX_TASK_BYTES // 5 - 1))["ok"] is True
+    assert selector.select("review my patch", last_outcome="x" * selector.MAX_OUTCOME_BYTES)["ok"] is True
+
+
+@pytest.mark.parametrize("considering", [
+    ",".join(["a"] * (selector.MAX_CONSIDERING_ENTRIES + 1)),            # as text
+    ["g6_review_patch"] * (selector.MAX_CONSIDERING_ENTRIES + 1),        # as a value
+    json.dumps(["a"] * (selector.MAX_CONSIDERING_ENTRIES + 1)),          # as JSON text
+])
+def test_more_considering_entries_than_the_bound_are_refused(considering: object) -> None:
+    assert _refused(selector.select("review my patch", "verify", considering=considering), "considering")
+
+
+def test_a_wide_considering_is_refused_without_walking_it() -> None:
+    import tracemalloc
+
+    wide = [0] * 1_000_000
+    tracemalloc.start()
+    reply = selector.select("review my patch", considering=wide)
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    assert _refused(reply, "considering") and peak < 2_000_000, peak
+
+
+def test_a_value_g6_cannot_read_is_refused_in_g6s_own_words() -> None:
+    for considering in (["\ud800 g6_review_patch"], [{"hypothesis": object()}], [10 ** 5000], [b"bytes"]):
+        reply = selector.select("review my patch", considering=considering)
+        if not reply["ok"]:
+            assert _refused(reply, "considering"), reply["error"]
+            assert not re.search(r"codec|Error|object at|int_max_str_digits|\\u", reply["error"]), reply["error"]
+    reply = selector.select("review \ud800 my patch", last_outcome="\udfff", considering="\ud800 g6_review_patch")
+    assert "codec" not in json.dumps(reply)
+
+
+def test_the_reply_stays_within_its_stated_size() -> None:
+    claim = "c" * (selector.MAX_CONSIDERING_BYTES // selector.MAX_CONSIDERING_ENTRIES - 120)
+    worst = [{"hypothesis": claim, "id": f"H{i}", "predicts": "p", "check": "g6_review_patch", "severity": "x"}
+             for i in range(selector.MAX_CONSIDERING_ENTRIES)]
+    assert len(json.dumps(worst)) <= selector.MAX_CONSIDERING_BYTES
+    for considering in (worst, ",".join(["a"] * selector.MAX_CONSIDERING_ENTRIES), ""):
+        reply = selector.select("review my patch " * 200, "verify", "G6_E_CLOUD_CONSENT_REQUIRED " * 100,
+                                considering, limit=8)
+        assert reply["ok"] is True and len(json.dumps(reply)) <= selector.MAX_REPLY_BYTES, len(json.dumps(reply))
+
+
 def test_a_considering_within_the_bounds_is_still_read() -> None:
     reply = selector.select("review my patch", "verify", considering=_nested(3) + ["g6_review_patch"])
     assert reply["ok"] is True and reply["considering"][-1]["validated"] is True
