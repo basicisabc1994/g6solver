@@ -109,7 +109,9 @@ class Memory:
             return State()
         try:
             return State.model_validate(json.loads(self.path.read_text(encoding="utf-8")))
-        except (OSError, ValueError, ValidationError) as exc:
+        except (OSError, ValueError, ValidationError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             raise Refused("G6_E_ACTR_STORE", f"the memory {self.name!r} could not be read: "
                                                   f"{str(exc).splitlines()[0][:200]}") from exc
 

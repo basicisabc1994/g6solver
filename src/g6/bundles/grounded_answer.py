@@ -59,7 +59,8 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
                      "label": state})
     backed = sum(c.status in ("quoted", "supported") for c in checks)
     notes = ["Use only the backed sentences, or check the others yourself. The model's confidence counts for nothing "
-             "here: each sentence is checked against your sources by G6.",
+             "here: G6 checks each sentence against your sources word by word (shared words, numbers and negations), "
+             "not by reading its meaning.",
              "Backed means the wording and figures match a source sentence; it does not prove the source is right."]
     notes += [f"Source {name!r} has text that reads like instructions to the AI ({'; '.join(hits)}). This check is a "
               "short list of phrasings, not a detector; read the source before trusting the answer."

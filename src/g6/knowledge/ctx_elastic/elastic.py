@@ -116,7 +116,9 @@ def _call(method: str, path: str, body: Mapping[str, Any] | None, caller: Caller
         raise _failure(exc) from None
     try:
         return json.loads(reply.body)
-    except (ValueError, UnicodeDecodeError) as exc:
+    except (ValueError, UnicodeDecodeError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         raise ElasticError(PARSE_FAILED, f"the server's reply to {method} {path} is not JSON: {exc}") from None
 
 

@@ -65,3 +65,16 @@ __g6_introduces__: tuple[str, ...] = ("excessive_token_use",)
 __all__ = ["LEVELS", "MAX_AGENTS", "MAX_ROUNDS", "MODEL_CALL_FAILED", "MODEL_INFERENCE", "AgentRole", "DebateAgent",
            "Exchange", "JudgeResult", "OverlapResult", "Transcript", "is_mock", "judge_agreement", "overlap_agreement",
            "run_debate"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_DEBATE_INPUT": "input",
+    "G6_E_DEBATE_JUDGE_DIVERGED": "none",
+    "G6_E_DEBATE_JUDGE_FAILED": "none",
+    "G6_E_DEBATE_LEXICAL_ONLY": "none",
+    "G6_E_DEBATE_LIMIT": "person",
+    "G6_E_DEBATE_MODEL_AGREEMENT": "person",
+    "G6_E_DEBATE_NO_CONTENT": "input",
+    "G6_E_NO_MODEL": ("tool:g6_select", "no_model"),
+}

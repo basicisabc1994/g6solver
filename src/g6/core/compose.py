@@ -27,8 +27,20 @@ class CompositionError(ValueError):
     pass
 
 
+_CODES = {
+    "NO_CONTRACT": "G6_E_COMPOSITION_NO_CONTRACT",
+    "INVALID_MAPPING": "G6_E_COMPOSITION_INVALID_MAPPING",
+    "UNMET_INPUT": "G6_E_COMPOSITION_UNMET_INPUT",
+    "EVIDENCE_MISMATCH": "G6_E_COMPOSITION_EVIDENCE_MISMATCH",
+    "CONTRACT_CHANGED": "G6_E_COMPOSITION_CONTRACT_CHANGED",
+    "PRECONDITION_FAILED": "G6_E_COMPOSITION_PRECONDITION_FAILED",
+    "OUTPUT_MISSING": "G6_E_COMPOSITION_OUTPUT_MISSING",
+    "STOP_CONDITION": "G6_E_COMPOSITION_STOP_CONDITION",
+}
+
+
 def _error(code: str, index: int, message: str) -> CompositionError:
-    return CompositionError(f"[G6_E_COMPOSITION_{code}] stage {index}: {message}")
+    return CompositionError(f"[{_CODES[code]}] stage {index}: {message}")
 
 
 @dataclass(frozen=True)

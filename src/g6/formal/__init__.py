@@ -95,3 +95,30 @@ __all__ = ["ContractResult", "check_contract", "BACKENDS", "CoreResult", "CountR
            "ValidityResult", "apply_envelope", "check_entailment", "check_equivalence", "check_propositional",
            "check_sat", "check_validity", "count_models", "dpll_solve", "eliminate_quantifiers", "find_counterexample",
            "four_valued", "optimise", "recheck", "simplify", "solve", "solver_support", "unsat_core"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_FORMAL_BACKEND_REFUSED": "none",
+    "G6_E_FORMAL_CERTIFICATE_REFUTED": "person",
+    "G6_E_FORMAL_CLAIM_CONFLICT": "none",
+    "G6_E_FORMAL_CLAIM_REFUTED": "none",
+    "G6_E_FORMAL_CLAIM_UNKNOWN": "none",
+    "G6_E_FORMAL_CONCLUSION_ASSUMED": "none",
+    "G6_E_FORMAL_CONTRACT_FAILED": "none",
+    "G6_E_FORMAL_FRAME_UNFIT": "none",
+    "G6_E_FORMAL_INPUT_INVALID": "input",
+    "G6_E_FORMAL_INPUT_TOO_LARGE": "person",
+    "G6_E_FORMAL_NO_DECISION": "none",
+    "G6_E_FORMAL_NO_OPTIMUM": "none",
+    "G6_E_FORMAL_NO_PROPERTY": "none",
+    "G6_E_FORMAL_PARSE_ERROR": "input",
+    "G6_E_FORMAL_SOLVER_DECISION": "none",
+    "G6_E_FORMAL_SOLVER_ERROR": "none",
+    "G6_E_FORMAL_SOLVER_TIMEOUT": "person",
+    "G6_E_FORMAL_SOLVER_UNAVAILABLE": "person",
+    "G6_E_FORMAL_SOLVER_UNKNOWN": "none",
+    "G6_E_FORMAL_UNKNOWN_SORT": "input",
+    "G6_E_FORMAL_VACUOUS_PREMISES": "none",
+    "G6_E_FORMAL_VACUOUS_PROPERTY": "none",
+}

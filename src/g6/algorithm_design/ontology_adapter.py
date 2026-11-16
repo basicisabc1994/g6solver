@@ -52,7 +52,10 @@ def read_ontology(path: str | Path) -> dict:
     p = Path(path)
     if p.stat().st_size > 4_000_000:
         raise ValueError("ontology exceeds size budget")
-    result = json.loads(p.read_text(encoding="utf-8"))
+    try:
+        result = json.loads(p.read_text(encoding="utf-8"))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     if not isinstance(result, dict):
         raise ValueError("ontology must be a mapping")
     return result

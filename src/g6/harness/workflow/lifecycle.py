@@ -64,7 +64,7 @@ def receipts(project: str) -> tuple[dict, ...]:
         return ()
     try:
         rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError, MemoryError):
         raise RecordUnreadable("its receipts cannot be read") from None
     if not all(isinstance(row, dict) and tuple(row) == policy.RECEIPT_FIELDS for row in rows):
         raise RecordUnreadable("its receipts hold something that is not a receipt")
@@ -123,7 +123,7 @@ def _drop_export(record: ProjectRecord, now: datetime | None = None) -> int:
             written = json.loads(path.read_text(encoding="utf-8"))["written_at"]
             if _age_days(written, now) <= policy.RETENTION_DAYS["exports"]:
                 return 0
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError, RecursionError, MemoryError):
             pass
     return _remove([path])
 
@@ -454,7 +454,7 @@ def _read_corrections(path: Path) -> tuple[list, list[str]]:
         body = json.loads(text)
     except json.JSONDecodeError as bad:
         return [], [f"corrections.json is not valid JSON at line {bad.lineno}; nothing was applied"]
-    except (ValueError, RecursionError):
+    except (ValueError, RecursionError, MemoryError):
         return [], ["corrections.json is not valid JSON; nothing was applied"]
     if not isinstance(body, dict) or body.get("schema") != CORRECTIONS_SCHEMA or set(body) != {"schema", "corrections"}:
         return [], [f'corrections.json needs "schema": "{CORRECTIONS_SCHEMA}" and "corrections"; nothing was applied']

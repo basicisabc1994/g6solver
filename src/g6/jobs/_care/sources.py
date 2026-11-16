@@ -129,7 +129,10 @@ RULES: dict[str, Rule] = {
 def register() -> dict[str, Any]:
     """The committed register, read as package data."""
     text = resources.files("g6.jobs._care").joinpath("data/source_register.json").read_text(encoding="utf-8")
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def entries() -> dict[str, dict[str, Any]]:
@@ -141,7 +144,10 @@ def problematic_phrases() -> tuple[str, ...]:
     """The phrases Mindframe's language guide marks problematic, read from the register's quoted clause (its
     Problematic column, one issue per fragment after the first). The bare word quoted in an issue's own name ("the term
     'suicide'") is the issue, not a problematic phrase."""
-    fragments = entries()["mindframe-language"]["clause"].split(" [...] ")[1:]
+    try:
+        fragments = entries()["mindframe-language"]["clause"].split(" [...] ")[1:]
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     found = [p for fragment in fragments for p in re.findall(r"'([^']+)'", fragment)]
     return tuple(dict.fromkeys(p for p in found if p != "suicide"))
 
@@ -188,11 +194,14 @@ def stale_sources(today: _dt.date | None = None) -> list[dict[str, str]]:
     """A finding for each register entry retrieved longer ago than its review window."""
     today = today or _dt.date.today()
     out = []
-    for entry_id, entry in sorted(entries().items()):
-        due = _add_months(_dt.date.fromisoformat(entry["retrieved"]), int(entry["review_months"]))
-        if today > due:
-            out.append({"finding": "stale_source", "source": entry_id, "retrieved": entry["retrieved"],
-                        "review_due": due.isoformat()})
+    try:
+        for entry_id, entry in sorted(entries().items()):
+            due = _add_months(_dt.date.fromisoformat(entry["retrieved"]), int(entry["review_months"]))
+            if today > due:
+                out.append({"finding": "stale_source", "source": entry_id, "retrieved": entry["retrieved"],
+                            "review_due": due.isoformat()})
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     return out
 
 

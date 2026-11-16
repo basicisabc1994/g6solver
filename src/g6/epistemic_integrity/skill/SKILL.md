@@ -38,7 +38,8 @@ confidence by that grade, and applies a risk-by-evidence gate. No model runs, so
 claims. `overall_status` is `ASSERTED`, `CONTESTED`, `CLARIFICATION_REQUIRED`, `REFUTED` or `UNVERIFIABLE`. Each entry in
 `claims` gives `claim_type`, `risk_level`, `evidence_grade`, `epistemic_status`, `confidence` (the grade's ceiling:
 E0 0.2, E1 0.5, E2 0.8, E3 1.0, and at most 0.5 when contested), `disposition` and `triggered` (the checks that
-fired).
+fired). `confidence` is an upper bound set by the evidence grade, not a probability; the result's `confidence_meaning`
+says so, and a `confidence` of 1.0 means only that E3 evidence was declared.
 
 - Risk: `action_criticality` `creative` or `opinion` is R0; empty, `info` or `low` is R1; `reversible`,
   `decision`, `medium` or `operational` is R2; `irreversible`, `external`, `high`, `safety`, `health`, `legal`,

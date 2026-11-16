@@ -49,7 +49,8 @@ Alone over MCP, the loop every agent follows:
    there now, and write with the new `sha256`. Never write without saying what you read.
 
 `write` is refused over MCP (`G6_E_SENSITIVE_COMPONENT_DENIED`) unless the person who runs the server lists
-`shared_workspace.write` in `G6_MCP_SENSITIVE`; `g6_describe("shared_workspace")` shows whether it is allowed. Never
+`shared_workspace.write` in `G6_MCP_SENSITIVE`; `g6_describe("shared_workspace")` shows whether it is allowed, once the person shares
+host_configuration. Never
 change that setting yourself: ask the person. From Python: `from g6.workspace.shared_workspace import Workspace, ops`.
 
 How it is guarded:

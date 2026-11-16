@@ -42,3 +42,16 @@ __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["SENSITIVE_OPS", "SOURCES", "Candidate", "CandidateSource", "CtxLibraryMapperBlock", "CtxLibraryMapperInput",
            "SourceAnswer", "licences", "sources"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_LIBRARY_CANDIDATES": "none",
+    "G6_E_LIBRARY_INPUT": "input",
+    "G6_E_LIBRARY_LICENCES": "none",
+    "G6_E_LIBRARY_NONE_FOUND": "none",
+    "G6_E_LIBRARY_PARTIAL": "none",
+    "G6_E_LIBRARY_SEARCH_FAILED": "none",
+    "G6_E_LIBRARY_SOURCES": "none",
+    "G6_E_LIBRARY_UNKNOWN_SOURCE": "input",
+}

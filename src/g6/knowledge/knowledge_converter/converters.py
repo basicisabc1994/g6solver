@@ -207,7 +207,7 @@ def _read_pdf(data: bytes) -> dict | str:
         return f"the PDF reader stopped with exit code {done.returncode} (out of memory, or a crash): {tail}"[:500]
     try:
         reply = json.loads(done.stdout.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError, MemoryError):
         return "the PDF reader's reply could not be read"
     if not (isinstance(reply, dict) and isinstance(reply.get("version"), str)
             and (reply.get("ok") is False and isinstance(reply.get("reason"), str)

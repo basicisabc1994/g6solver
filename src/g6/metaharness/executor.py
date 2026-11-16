@@ -170,7 +170,7 @@ def code_factory(workflow: Workflow, artifacts: Any, *, timeout_s: float = 30.0,
                 return ""
             try:
                 return str(json.loads(ran.stdout.strip().splitlines()[-1])["output"])
-            except (ValueError, KeyError, IndexError):
+            except (ValueError, KeyError, IndexError, RecursionError, MemoryError):
                 return ""
 
         return execute

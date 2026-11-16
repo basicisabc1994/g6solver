@@ -45,3 +45,27 @@ __g6_outside__: tuple = ()
 __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["SENSITIVE_OPS", "CogArchActrBlock", "CogArchActrInput", "equations", "memory"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_ACTR_BELOW_THRESHOLD": "none",
+    "G6_E_ACTR_CAP": "none",
+    "G6_E_ACTR_CHUNK_EXISTS": "none",
+    "G6_E_ACTR_FULL": "none",
+    "G6_E_ACTR_GOAL_CLEARED": "none",
+    "G6_E_ACTR_GOAL_REACHED": "none",
+    "G6_E_ACTR_INPUT": "input",
+    "G6_E_ACTR_KEPT": "none",
+    "G6_E_ACTR_NOTHING_TO_REWARD": "none",
+    "G6_E_ACTR_NO_MATCH": "none",
+    "G6_E_ACTR_NUMERIC": "none",
+    "G6_E_ACTR_PRODUCTION_EXISTS": "none",
+    "G6_E_ACTR_PRODUCTION_INVALID": "input",
+    "G6_E_ACTR_PRODUCTION_KEPT": "none",
+    "G6_E_ACTR_RETRIEVED": "none",
+    "G6_E_ACTR_REWARDED": "none",
+    "G6_E_ACTR_STORE": "none",
+    "G6_E_ACTR_STORE_BUSY": "retry",
+    "G6_E_ACTR_STUCK": "none",
+}

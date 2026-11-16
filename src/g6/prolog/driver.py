@@ -54,7 +54,7 @@ def records(text: str, nonce: str) -> list[dict[str, Any]]:
             continue
         try:
             record = json.loads(line[len(mark):])
-        except ValueError:
+        except (ValueError, RecursionError, MemoryError):
             raise _unrecognised("a marked line is not JSON") from None
         if not isinstance(record, dict) or record.get("kind") not in _KINDS:
             raise _unrecognised("a marked line is not a record the driver writes")

@@ -45,3 +45,17 @@ __g6_index_backends__: tuple[str, ...] = ("sqlite",)  # the family's registry im
 
 __all__ = ["DEFAULT_MAX_BYTES", "SENSITIVE_OPS", "KnowledgeIndexerBlock", "KnowledgeIndexerInput", "SqliteIndex",
            "index"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_KNOWLEDGE_INDEXED": "none",
+    "G6_E_KNOWLEDGE_INDEX_BACKENDS": "none",
+    "G6_E_KNOWLEDGE_INDEX_EMPTY": "none",
+    "G6_E_KNOWLEDGE_INDEX_INPUT": "input",
+    "G6_E_KNOWLEDGE_INDEX_READ_ONLY": "none",
+    "G6_E_KNOWLEDGE_INDEX_STATUS": "none",
+    "G6_E_KNOWLEDGE_NO_MATCH": "none",
+    "G6_E_KNOWLEDGE_REMOVED": "none",
+    "G6_E_KNOWLEDGE_SEARCHED": "none",
+}

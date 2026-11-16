@@ -96,7 +96,10 @@ class Ledger:
     def __init__(self, path: str | Path | None = None, *, expect_head: str | None = None) -> None:
         """``expect_head``: the head a reviewer kept elsewhere; a ledger whose head differs (entries cut from its tail or
         added to it) does not open. Without one the ledger is unanchored: a clean chain says nothing about its tail."""
-        self._chain = ChainLedger(path, expect_head=expect_head, validate=_semantic)
+        try:
+            self._chain = ChainLedger(path, expect_head=expect_head, validate=_semantic)
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     @property
     def expect_head(self) -> str | None:
@@ -108,7 +111,10 @@ class Ledger:
         return ChainLedger.audit(path, expect_head=expect_head, validate=_semantic)
 
     def _add(self, kind: str, ident: str, body: dict) -> str:
-        return self._chain.append(kind, ident, body)
+        try:
+            return self._chain.append(kind, ident, body)
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def add_standard(self, ref: StandardRef) -> str:
         return self._add("standard", ref.standard_id, ref.to_dict())
@@ -126,25 +132,46 @@ class Ledger:
         return self._add("vault", vault_id, {"vault_id": vault_id, "digest": fixture_digest, "files": files, "roots": roots})
 
     def add_incident(self, kind: str, **fields: Any) -> str:
-        ident = f"incident-{sum(1 for e in self._chain.entries() if e['kind'] == 'incident') + 1}"
+        try:
+            ident = f"incident-{sum(1 for e in self._chain.entries() if e['kind'] == 'incident') + 1}"
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
         return self._add("incident", ident, {**fields, "incident_id": ident, "type": kind})
 
     def get(self, kind: str, ident: str) -> dict:
-        return self._chain.get(kind, ident)
+        try:
+            return self._chain.get(kind, ident)
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def entry(self, kind: str, ident: str) -> dict:
-        return self._chain.entry(kind, ident)
+        try:
+            return self._chain.entry(kind, ident)
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def entries(self) -> list[dict]:
-        return self._chain.entries()
+        try:
+            return self._chain.entries()
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def head(self) -> str:
-        return self._chain.head()
+        try:
+            return self._chain.head()
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def verify(self) -> tuple[str, ...]:
-        return self._chain.verify()
+        try:
+            return self._chain.verify()
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def contaminated_fixtures(self) -> set[str]:
         """Fixture digests with a recorded incident (a forbidden read, a change after sealing): evidence against them is void."""
-        return {e["body"]["fixture_digest"] for e in self._chain.entries()
-                if e["kind"] == "incident" and e["body"].get("type") in CONTAMINATING}
+        try:
+            return {e["body"]["fixture_digest"] for e in self._chain.entries()
+                    if e["kind"] == "incident" and e["body"].get("type") in CONTAMINATING}
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None

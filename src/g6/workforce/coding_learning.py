@@ -149,7 +149,7 @@ def probe_of(theory: Theory | None) -> dict | None:
         return None
     try:
         key, probe = json.loads(theory.trigger), json.loads(theory.instruction)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError, MemoryError):
         return None
     if not (isinstance(key, dict) and set(key) == set(_KEY) and isinstance(probe, dict) and set(probe) == set(_PROBE)
             and (probe["module"], probe["function"]) == (key["module"], key["function"])):

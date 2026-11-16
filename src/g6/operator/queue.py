@@ -92,7 +92,10 @@ def _person(reviewer: Any, drafted_by: str) -> str:
 def _public(row: Any) -> dict[str, Any]:
     out = dict(row)
     out.pop("decoy")
-    out["meta"], out["review"] = json.loads(out.pop("meta_json")), json.loads(out.pop("review_json"))
+    try:
+        out["meta"], out["review"] = json.loads(out.pop("meta_json")), json.loads(out.pop("review_json"))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     return out
 
 
@@ -125,7 +128,10 @@ class ActionQueue:
             action_id = self._insert(vid, task_id, kind, _clean(action.get("body")), action, drafted_by, review)
             if self._rng.random() < self._decoy_rate:
                 self._plant_decoy(vid, kind, review)
-        return self.get(vid, action_id)
+        try:
+            return self.get(vid, action_id)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     def propose_tasks(self, venture_id: str, tasks: Sequence[TaskProposal], *, proposed_by: str) -> list[dict[str, Any]]:
         """Atomically insert internal tasks as proposed; use the same queue and decision rules."""
@@ -139,7 +145,10 @@ class ActionQueue:
             for task in validated:
                 ids.append(self._insert(vid, task.task_id, "task_proposal", _clean(task.description),
                                         task.model_dump(mode="json"), proposed_by, review))
-        return [self.get(vid, action_id) for action_id in ids]
+        try:
+            return [self.get(vid, action_id) for action_id in ids]
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     def _insert(self, vid: str, task_id: str, kind: str, body: str, action: Mapping[str, Any], drafted_by: str,
                 review: Mapping[str, Any], *, decoy: bool = False) -> str:
@@ -192,7 +201,10 @@ class ActionQueue:
                            (outcome, after or row["approved_text"], row["action_id"]))
 
     def _decided(self, vid: str, action_id: str, decoy: bool) -> dict[str, Any]:
-        out = self.get(vid, action_id)
+        try:
+            out = self.get(vid, action_id)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
         out["decoy"] = decoy   # revealed only to the person who just decided it
         return out
 
@@ -244,7 +256,10 @@ class ActionQueue:
             who = _person(reviewer, row["drafted_by"])
             self._decide(row, "sent", who, "", row["approved_text"], note=str(channel))
             if row["action_type"] == "spend":
-                amount, month = amount_of(json.loads(row["meta_json"]).get("amount")), self._clock().strftime("%Y-%m")
+                try:
+                    amount, month = amount_of(json.loads(row["meta_json"]).get("amount")), self._clock().strftime("%Y-%m")
+                except (RecursionError, MemoryError):
+                    raise ValueError("a JSON record exceeds decoder limits") from None
                 self.scope._append_ledger(vid, month, "cash", "charge", amount, row["action_id"])
                 self.scope._append_evidence(vid, "cash_spent", row["action_id"], {"amount": amount, "month": month})
         return True
@@ -272,7 +287,10 @@ class ActionQueue:
         with self.scope.immediate():
             action_id = self._insert(vid, "", GUARD_CANDIDATE, _clean(body), {"guard": guard.name, "sha": guard.sha()},
                                      proposed_by, review)
-        return self.get(vid, action_id)
+        try:
+            return self.get(vid, action_id)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     # -- run approvals: a person's decision, bound to exactly one run -------------------------
     def request_run(self, venture_id: str, *, binding: str, summary: str, requested_by: str) -> dict[str, Any]:
@@ -288,7 +306,10 @@ class ActionQueue:
         with self.scope.immediate():
             action_id = self._insert(vid, "", RUN_APPROVAL, _clean(summary), {"binding": str(binding)},
                                      str(requested_by), review)
-        return self.get(vid, action_id)
+        try:
+            return self.get(vid, action_id)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     def run_approver(self, venture_id: str, action_id: str, *, binding: str) -> str:
         """The name of the person whose decision approved exactly ``binding``; otherwise ``QueueError`` starting
@@ -300,8 +321,11 @@ class ActionQueue:
             raise QueueError(f"[{APPROVAL_REQUIRED}] no run approval {str(action_id)[:40]!r} in this venture's queue")
         if row["status"] != "approved":
             raise QueueError(f"[{APPROVAL_REQUIRED}] this run approval is {row['status']}; a person must approve it")
-        if json.loads(row["meta_json"]).get("binding") != binding:
-            raise QueueError(f"[{APPROVAL_MISMATCH}] this approval was given for another run, not this one")
+        try:
+            if json.loads(row["meta_json"]).get("binding") != binding:
+                raise QueueError(f"[{APPROVAL_MISMATCH}] this approval was given for another run, not this one")
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
         decided = self._conn.execute("SELECT reviewer FROM decisions WHERE action_id=? AND outcome='approved'"
                                      " ORDER BY seq DESC LIMIT 1", (row["action_id"],)).fetchone()
         if decided is None:   # the schema's trigger makes this unreachable; a run never goes ahead on it
@@ -315,8 +339,11 @@ class ActionQueue:
             raise QueueError(f"no guard candidate {action_id!r} in this venture's queue")
         if row["status"] != "adopted":
             raise QueueError(f"This guard is {row['status']}; a person must adopt it before it can block anything.")
-        if json.loads(row["meta_json"]).get("sha") != guard.sha():
-            raise QueueError("This is not the guard that was adopted: its name or code differs.")
+        try:
+            if json.loads(row["meta_json"]).get("sha") != guard.sha():
+                raise QueueError("This is not the guard that was adopted: its name or code differs.")
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
         return dataclasses.replace(guard, promoted=True)
 
 class Estimate(BaseModel):

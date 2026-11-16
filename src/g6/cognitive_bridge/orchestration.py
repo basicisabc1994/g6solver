@@ -272,7 +272,10 @@ class CognitiveAssuranceOrchestrator:
                 return None
         except (TypeError, ValueError):
             return None
-        return json.loads(record[2])
+        try:
+            return json.loads(record[2])
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     @staticmethod
     def _every_step_ran(compiled: CompiledResearch, executed: Mapping[str, Any]) -> bool:

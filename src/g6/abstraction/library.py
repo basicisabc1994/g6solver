@@ -242,7 +242,10 @@ class Library:
     @classmethod
     def load(cls, path: str) -> tuple["Library", dict[str, ConcreteDomain]]:
         with open(path) as fh:
-            state = json.load(fh)
+            try:
+                state = json.load(fh)
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
         if state.get("version") != 1:
             raise ValueError(f"unsupported state version "
                              f"{state.get('version')!r}; expected 1")

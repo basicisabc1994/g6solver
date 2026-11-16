@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 import random
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -45,10 +46,31 @@ class TableOracle:
         raise KeyError("the table has no case for these inputs")
 
 
+#: At most this many draws per input wanted, when a domain is sampled: sampling always ends.
+MAX_DRAWS_PER_INPUT = 50
+
+
+def _key(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, default=repr)
+
+
+def _distinct(values: Sequence[Any]) -> tuple[Any, ...]:
+    """``values`` without repeats, in order; a repeat is the same type with the same JSON form."""
+    seen: set[tuple[type, str]] = set()
+    out = []
+    for value in values:
+        key = (type(value), _key(value))
+        if key not in seen:
+            seen.add(key)
+            out.append(value)
+    return tuple(out)
+
+
 @dataclass(frozen=True)
 class InputDomain:
-    """The inputs a candidate is checked on: the product of each argument's values, or ``max_inputs`` of them drawn
-    with ``seed`` when the product is larger. ``describe`` says which, so a result names its own boundary."""
+    """The inputs a candidate is checked on: the product of each argument's distinct values, or ``max_inputs`` of them
+    drawn with ``seed`` when the product is larger (in at most :data:`MAX_DRAWS_PER_INPUT` draws per input, so it
+    always ends). ``describe`` says which, so a result names its own boundary."""
 
     values: tuple[tuple[str, tuple[Any, ...]], ...]
     max_inputs: int = 2000
@@ -58,7 +80,7 @@ class InputDomain:
     def of(cls, values: Mapping[str, Sequence[Any]], *, max_inputs: int = 2000, seed: int = 0) -> InputDomain:
         if not values or any(len(v) == 0 for v in values.values()):
             raise ValueError("every argument needs at least one value")
-        return cls(tuple((name, tuple(v)) for name, v in values.items()), max_inputs, seed)
+        return cls(tuple((name, _distinct(v)) for name, v in values.items()), max_inputs, seed)
 
     @classmethod
     def ints(cls, names: Sequence[str], lo: int = -10, hi: int = 10, **kwargs: Any) -> InputDomain:
@@ -77,12 +99,15 @@ class InputDomain:
 
     def inputs(self) -> list[dict[str, Any]]:
         names = [n for n, _ in self.values]
-        if self.exhaustive:
-            return [dict(zip(names, combo, strict=True)) for combo in itertools.product(*(v for _, v in self.values))]
+        values = [_distinct(v) for _, v in self.values]
+        if math.prod(len(v) for v in values) <= self.max_inputs:
+            return [dict(zip(names, combo, strict=True)) for combo in itertools.product(*values)]
         rng, seen, out = random.Random(self.seed), set(), []
-        while len(out) < self.max_inputs:
-            combo = tuple(rng.choice(vals) for _, vals in self.values)
-            key = json.dumps(combo, sort_keys=True, default=repr)
+        for _ in range(self.max_inputs * MAX_DRAWS_PER_INPUT):
+            if len(out) >= self.max_inputs:
+                break
+            combo = tuple(rng.choice(vals) for vals in values)
+            key = _key(combo)
             if key not in seen:
                 seen.add(key)
                 out.append(dict(zip(names, combo, strict=True)))
@@ -95,7 +120,10 @@ class InputDomain:
 
 
 def _json(value: Any) -> Any:
-    return json.loads(json.dumps(value, allow_nan=False))
+    try:
+        return json.loads(json.dumps(value, allow_nan=False))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def answered(oracle: Oracle, inputs: Sequence[Mapping[str, Any]]) -> list[tuple[dict[str, Any], Any]]:

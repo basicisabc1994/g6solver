@@ -1,5 +1,6 @@
 """Trusted local fixtures; no model, network or real confinement executor."""
 import asyncio
+import json
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -8,6 +9,7 @@ from g6.harness import behaviour_question as bq
 from g6.harness import patch_review
 from g6.harness import verification_templates as vt
 from g6.harness.confirmed_expectation import ExpectationStandard, confirm
+from g6.core import cloud_consent as cloud
 from g6.mcp import behaviour
 
 TASK = "Repair the calculation."
@@ -53,8 +55,24 @@ class Dialog:
 
 
 def ask(root, *, dialog=None, data=None):
-    return asyncio.run(behaviour.confirm(dialog or Dialog(), str(root), TASK,
-                                        candidates=[candidate()] if data is None else data))
+    dialog = dialog or Dialog()
+    candidates = [candidate()] if data is None else data
+    # These success controls model a known caller supplying its own arguments. An absent capture now refuses
+    # before spending, so leaving the capture out would stop before the durability/probe gate under test.
+    with cloud.collect_sources() as capture:
+        capture.client = ('openai:codex', dialog.session)
+        capture.supplied.add(cloud.input_source(json.dumps(
+            {'repo': str(root), 'task': TASK, 'candidates': candidates}, sort_keys=True)))
+        return asyncio.run(behaviour.confirm(dialog, str(root), TASK, candidates=candidates))
+
+
+def legacy_pending(root):
+    """A pre-provenance entry, seeded through the store's local API rather than an unbound tool call."""
+    from g6.harness import question_store as qs
+
+    one = bq.caller_candidates(TASK, [candidate()])[0]
+    case, rule = one.questions('b' * 64)
+    return qs.TaskQuestions(qs.task_identity(root, TASK)).ask(case, rule, one)
 
 
 def standard():

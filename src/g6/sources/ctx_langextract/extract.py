@@ -281,7 +281,7 @@ def run_patterns(text: str, patterns: dict[str, str]) -> tuple[dict[str, FieldRe
         if done.status == "ok" and "spans.json" in done.outputs:
             try:
                 reply = json.loads(done.outputs["spans.json"].decode("utf-8"))
-            except (UnicodeDecodeError, ValueError):
+            except (UnicodeDecodeError, ValueError, RecursionError, MemoryError):
                 reply = {}
         if done.status == "timeout":
             raise ExtractStopped("G6_E_LANGEXTRACT_PATTERN_TIMEOUT", f"the pattern for {name} did not finish within "

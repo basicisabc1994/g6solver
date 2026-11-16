@@ -45,7 +45,7 @@ def load_settings() -> dict[str, str]:
     path = settings_path()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError, MemoryError):
         return {"provider": "none", "model": ""}
     if not isinstance(data, dict):
         data = {}
@@ -265,7 +265,9 @@ def make_handler(bundle: Bundle, token: str, llm: Any = None) -> type[BaseHTTPRe
                 body = json.loads(self.rfile.read(length) or b"{}")
                 if not isinstance(body, dict):
                     raise ValueError("body must be a JSON object")
-            except ValueError as exc:
+            except (ValueError, RecursionError, MemoryError) as exc:
+                if isinstance(exc, (RecursionError, MemoryError)):
+                    exc = ValueError("a JSON record exceeds decoder limits")
                 return self._json(400, {"error": f"bad request: {exc}"})
             if self.path == "/api/isolation":   # the person's click on the first-run question, and nothing else
                 if not bundle.runs_untrusted_code:

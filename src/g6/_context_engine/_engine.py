@@ -672,7 +672,10 @@ def pack(acc: Access, pack_id: str, *, clock: Clock = _utc) -> tuple[dict[str, A
     path = store.folder / "packs" / f"{pack_id}.json"
     if not isinstance(pack_id, str) or not pack_id.startswith("pack-") or not pack_id[5:].isalnum() or not path.is_file():
         raise Refused(PACK_UNKNOWN, "no such saved context in this project")
-    saved = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except (RecursionError, MemoryError):
+        raise Refused(PACK_UNKNOWN, "the saved context exceeds decoder limits") from None
     at = clock()
     invalid = store.invalidated("pack", pack_id, at=at)
     ids = [i["passage_id"] for i in saved["items"]]

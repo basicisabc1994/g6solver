@@ -54,8 +54,14 @@ def _source_function(fn):
                 try:
                     body, refs, metadata = policy.freeze_output(value)
                     value = json.loads(body)
+                    # A refused reply gains its repair block (g6.mcp.repair: G6's own words, codes and templates)
+                    # on the frozen snapshot, so the sources it carries are exactly the snapshot's.
+                    repaired = _repaired(fn.__name__, arguments, value, capture)
+                    if repaired is not value:
+                        value = repaired
+                        body = json.dumps(value, separators=(',', ':'), allow_nan=False)
                     content_hash = digest(value)
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, RecursionError, MemoryError):
                     # Unsupported serialization cannot establish source authority.
                     refs, metadata, content_hash, body = (policy.UNKNOWN,), {}, '', ''
                 if declaration is not None and refs != ():
@@ -82,6 +88,45 @@ def _source_function(fn):
     return invoke
 
 
+def _repaired(tool, arguments, value, capture):
+    """``value`` (a frozen snapshot) with its repair block when it is a refusal; the same object otherwise, or when
+    the repair cannot be made: the block never changes whether or how a call is answered."""
+    from g6.mcp.repair import observe, suppress_declined_dialogs
+    try:
+        session = capture.client[1] if capture.client else None
+        value = observe(tool, arguments, value, session)
+        return suppress_declined_dialogs(value, session) if tool == 'g6_select' else value
+    except Exception:  # noqa: BLE001
+        return value
+
+
+def input_refusal(tool: str, fields, *, arguments=None, session=None) -> dict:
+    """An undeclared argument is refused before executing or admitting any source.
+
+    Only published field names and G6's program text are returned; no argument value is read back.
+    """
+    from g6.core.door import blocked_reply
+    from g6.mcp.repair import observe
+
+    reply = blocked_reply('[G6_E_INPUT_VALIDATION] Undeclared tool argument; use only the declared arguments.')
+    reply = observe(tool, arguments, reply, session)
+    if reply.get('repair') is not None and reply['repair']['by'] == 'agent':
+        reply['repair']['fill'] = sorted(fields)
+    return reply
+
+
+def input_error_result(tool: str, fields, *, arguments=None, session=None):
+    """G6's public validation envelope, retaining the MCP protocol's error status."""
+    from fastmcp.tools.tool import ToolResult
+    from mcp import types
+
+    class InputErrorResult(ToolResult):
+        def to_mcp_result(self):
+            return types.CallToolResult(content=self.content, structuredContent=self.structured_content, isError=True)
+
+    return InputErrorResult(structured_content=input_refusal(tool, fields, arguments=arguments, session=session))
+
+
 def client_provider(ctx: Any) -> str:
     try:
         name = ctx.session.client_params.clientInfo.name.strip().lower()
@@ -97,6 +142,10 @@ async def request_grant(ctx: Any, source: str, provider: str, *, description: st
         return {'status': 'invalid', 'code': 'G6_E_CLOUD_CONSENT_INPUT'}
     capture = policy.current_capture()
     scope = policy.source_id(source)
+    from g6.mcp.repair import declined
+    previous = declined(ctx.session, scope, provider)
+    if previous:
+        return {'status': previous, 'code': policy.REQUIRED}
     allowed, revision = await anyio.to_thread.run_sync(policy.preview, scope, provider)
     if allowed:
         return {'status': 'granted', 'source': scope, 'provider': provider}
@@ -116,12 +165,13 @@ async def request_grant(ctx: Any, source: str, provider: str, *, description: st
             'What is sent cannot be recalled. You can revoke future sharing at any time with g6_cloud_revoke. '
             'Accept only if you want this sharing; your supplied name is an attribution, not authenticated identity.')
     if consent.status != 'accepted':
+        declined(ctx.session, scope, provider, consent.status)
         return {'status': consent.status, 'code': policy.REQUIRED}
     status = await anyio.to_thread.run_sync(policy._grant, scope, provider, revision, consent.answer)
     return {'status': status, 'source': scope, 'provider': provider}
 
 
-def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unknown', sources=()):
+def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unknown', sources=(), session=None):
     from g6.core.door import blocked_reply
     from g6.core.ledger import digest
     result = result if isinstance(result, dict) else {}
@@ -132,9 +182,12 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
     empty_result = control.pop('empty_result', None)
     review_provider = control.pop('review_provider', '')
     has_report, has_text = control.pop('has_report', False), control.pop('has_text', False)
-    message = policy.withheld_message(provider, sources)
+    message = ('Results were withheld from a source not shared with this provider. Tell the person. ' +
+               policy.withheld_message(provider, sources).removeprefix(policy.WITHHELD).lstrip())
     refused = {**blocked_reply(f'[{code}] {message}'), **control}
     refused['cloud_consent_code'] = policy.REQUIRED
+    from g6.mcp.repair import consent_block
+    refused['repair'] = consent_block(session, sources, provider)
     if empty_result is not None:
         refused['result'] = empty_result
     if has_report:
@@ -146,23 +199,27 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
             recipient = f' to {review_provider}' if _PROVIDER.fullmatch(review_provider) else ''
             refused.update(action='stop', ending='untested', report=f'The review was not sent{recipient}. ' + message)
         if job['status'] == 'completed':
-            return {'ok': True, 'job_id': job['job_id'], 'status': 'completed', 'result': refused}
+            return {'ok': True, 'job_id': job['job_id'], 'status': 'completed', 'result': refused,
+                    'repair': refused['repair']}
         return {**refused, 'job_id': job['job_id'], 'status': job['status']}
     return refused
 
 
 def protect_reply(ctx: Any, result: dict, sources, *, supplied=(), job=None, record=True) -> dict:
-
+    metadata = {}
     try:
         body, known, metadata = policy.freeze_output(result)
-        result = json.loads(body)
+        try:
+            result = json.loads(body)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
         sources = policy.boundary_sources(sources, carried=known or ())
         payload = policy.sha256(body)
         with policy.admission(client_provider(ctx), sources, payload, supplied=supplied, disclose=record):
             return result
-    except LLMError:
+    except (LLMError, ValueError, RecursionError, MemoryError):
         return withheld_reply(result, job=job, metadata=metadata,
-                              provider=client_provider(ctx), sources=sources)
+                              provider=client_provider(ctx), sources=sources, session=ctx.session)
 
 
 def _matches_return(returned, result, wire=None):
@@ -185,7 +242,7 @@ def _matches_return(returned, result, wire=None):
             return False
         expected = value if isinstance(value, dict) else {'result': value}
         return 'structuredContent' not in wire or digest(expected) == digest(wire['structuredContent'])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, RecursionError, MemoryError):
         return False
 
 
@@ -206,13 +263,14 @@ def install(server) -> None:
         async def on_call_tool(self, context, call_next):
             from g6.mcp.consent_transport import call_body, install as install_transport, prepare
             ctx = context.fastmcp_context
+            session = None
             try:
                 session = ctx.session
                 supported = install_transport(session)
             except (AttributeError, RuntimeError):
                 supported = False
             if not supported:
-                return ToolResult(structured_content=withheld_reply())
+                return ToolResult(structured_content=withheld_reply(session=session))
             args = context.message.arguments or {}
             with policy.collect_sources() as capture:
                 capture.client_arguments = deepcopy(args)
@@ -222,8 +280,11 @@ def install(server) -> None:
                 # them, including an agent's purported answer to a dialog.
                 # Enforce the published argument names before that conversion.
                 if set(args) - tool.parameters.get('properties', {}).keys():
-                    from fastmcp.exceptions import ToolError
-                    raise ToolError('Undeclared tool argument; use only the declared arguments.')
+                    result = input_error_result(context.message.name, tool.parameters.get('properties', {}),
+                                                arguments=args, session=session)
+                    wire = result.to_mcp_result().model_dump(mode='json', by_alias=True, exclude_none=True)
+                    prepare(session, ctx.request_context.request_id, result, (), body=wire)
+                    return result
                 capture.expected_tool = getattr(getattr(tool, 'fn', None), '_g6_tool_identity', None)
                 capture.client = client_provider(ctx), session
                 def inputs(value):
@@ -269,7 +330,7 @@ def register(server, context_type):
     def reply(operation):
         try:
             result = operation()
-        except (LLMError, ValueError):
+        except (LLMError, ValueError, RecursionError, MemoryError):
             return public_instructions(blocked_reply(
                 f'[{policy.STATE_UNAVAILABLE}] Sharing state is unavailable; no sharing was authorized.'))
         capture = policy.current_capture()
@@ -288,10 +349,11 @@ def register(server, context_type):
         """Ask in the client dialog before sharing a source/repository with a cloud provider. Sent data cannot be recalled."""
         try:
             result = await request_grant(ctx, source, provider)
-        except (LLMError, ValueError):
+        except (LLMError, ValueError, RecursionError, MemoryError):
             return blocked_reply(f'[{policy.STATE_UNAVAILABLE}] Sharing state is unavailable; no sharing was authorized.')
         if result['status'] != 'granted':
-            return blocked_reply(f'[{policy.REQUIRED}] The dialog did not grant sharing; no data was sent.')
+            previous = result['status'] if result['status'] in ('declined', 'cancelled') else 'did not grant'
+            return blocked_reply(f'[{policy.REQUIRED}] The person {previous} sharing; no data was sent.')
         return reply(lambda: result)
     g6_cloud_grant.__annotations__['ctx'] = context_type
     server.tool()(public_tool(g6_cloud_grant))

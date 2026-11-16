@@ -80,7 +80,7 @@ def run(op: str, params: dict[str, Any], *, time_limit: float = DEFAULT_TIME_LIM
         state["input"] = problem.shown()
         try:
             payload = json.loads(json.dumps(params))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RecursionError, MemoryError):
             raise Refusal(INPUT_INVALID, "the parameters must be plain text, numbers and lists") from None
         if not sympy_installed():
             raise Refusal(CAS_UNAVAILABLE, f"SymPy is not installed, so there is nothing to compute with: {INSTALL_CAS}")

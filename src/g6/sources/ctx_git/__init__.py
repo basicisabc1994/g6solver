@@ -45,3 +45,39 @@ __g6_outside__ = (GIT,)
 __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["GIT", "SENSITIVE_OPS", "CtxGitBlock", "CtxGitInput", "GitConfig", "GitRefused", "config", "ops", "runner"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_GIT_AUDIT_UNWRITABLE": "person",
+    "G6_E_GIT_AUTH_FAILED": "person",
+    "G6_E_GIT_BAD_REVISION": "input",
+    "G6_E_GIT_CHANGED": "none",
+    "G6_E_GIT_CHANGES": "none",
+    "G6_E_GIT_CONFIG_INVALID": "person",
+    "G6_E_GIT_CONFLICT": "person",
+    "G6_E_GIT_DIRTY_WORKTREE": "person",
+    "G6_E_GIT_DRY_RUN": "none",
+    "G6_E_GIT_EXISTS": "person",
+    "G6_E_GIT_FAILED": "person",
+    "G6_E_GIT_GATE_HELD": "person",
+    "G6_E_GIT_IDENTITY": "person",
+    "G6_E_GIT_INPUT": "input",
+    "G6_E_GIT_NOTHING_TO_COMMIT": "person",
+    "G6_E_GIT_NOTHING_TO_STASH": "person",
+    "G6_E_GIT_NOT_A_REPOSITORY": "person",
+    "G6_E_GIT_NO_ROOT": "person",
+    "G6_E_GIT_OUTPUT_TOO_LARGE": "person",
+    "G6_E_GIT_OUTSIDE_ROOT": "person",
+    "G6_E_GIT_READ": "none",
+    "G6_E_GIT_READ_BACK_DIFFERS": "person",
+    "G6_E_GIT_REJECTED": "person",
+    "G6_E_GIT_REMOTE_CONFIG_REFUSED": "person",
+    "G6_E_GIT_REMOTE_REFUSED": "person",
+    "G6_E_GIT_ROOTS": "none",
+    "G6_E_GIT_SENT": "none",
+    "G6_E_GIT_TIMEOUT": "person",
+    "G6_E_GIT_TRANSPORT_REFUSED": "person",
+    "G6_E_GIT_UNREACHABLE": "person",
+    "G6_E_GIT_UNSAFE_CONFIG": "person",
+}

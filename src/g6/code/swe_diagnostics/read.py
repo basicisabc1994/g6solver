@@ -89,18 +89,26 @@ def repo_map(folder: Path, roots: _roots.Roots) -> dict[str, Any]:
             "read": walked.describe()}
 
 
-def _json(path: Path) -> dict[str, Any] | None:
+def _json(path: Path, roots: _roots.Roots) -> dict[str, Any] | None:
     try:
-        value = json.loads(_roots.read_text(path, MAX_FILE_BYTES))
-    except (OSError, ValueError, CodeRefused):
+        value = json.loads(_roots.read_text(path, MAX_FILE_BYTES, roots=roots))
+    except CodeRefused as exc:
+        if exc.code == _roots.OUTSIDE_ROOT:
+            raise
+        return None
+    except (OSError, ValueError, RecursionError, MemoryError):
         return None
     return value if isinstance(value, dict) else None
 
 
-def _toml(path: Path) -> dict[str, Any] | None:
+def _toml(path: Path, roots: _roots.Roots) -> dict[str, Any] | None:
     try:
-        return tomllib.loads(_roots.read_text(path, MAX_FILE_BYTES))
-    except (OSError, tomllib.TOMLDecodeError, ValueError, CodeRefused):
+        return tomllib.loads(_roots.read_text(path, MAX_FILE_BYTES, roots=roots))
+    except CodeRefused as exc:
+        if exc.code == _roots.OUTSIDE_ROOT:
+            raise
+        return None
+    except (OSError, tomllib.TOMLDecodeError, ValueError):
         return None
 
 
@@ -116,7 +124,8 @@ def _inside(folder: Path, name: str, roots: _roots.Roots, reasons: dict[str, str
             raise ValueError(f"marker exceeds {MAX_FILE_BYTES} bytes")
         return real
     except (ValueError, OSError) as exc:
-        reasons[name] = str(exc)
+        size = str(exc) if isinstance(exc, ValueError) and str(exc).startswith("marker exceeds ") else ""
+        reasons[name] = size or "the marker could not be checked as a readable file under the declared roots"
         return None
 
 
@@ -128,7 +137,7 @@ def detect_build_env(folder: Path, roots: _roots.Roots) -> dict[str, Any]:
                              "unreadable_reasons": {}}
     package = _inside(folder, "package.json", roots, found["unreadable_reasons"])
     if package is not None:
-        pkg = _json(package)
+        pkg = _json(package, roots)
         if pkg is None:
             found["unreadable"].append("package.json")
         else:
@@ -148,7 +157,7 @@ def detect_build_env(folder: Path, roots: _roots.Roots) -> dict[str, Any]:
                 found["notes"].append("a monorepo (workspaces in package.json): tests may run from one workspace")
     pyproject = _inside(folder, "pyproject.toml", roots, found["unreadable_reasons"])
     if pyproject is not None:
-        data = _toml(pyproject)
+        data = _toml(pyproject, roots)
         if data is None:
             found["unreadable"].append("pyproject.toml")
         else:
@@ -172,14 +181,14 @@ def detect_build_env(folder: Path, roots: _roots.Roots) -> dict[str, Any]:
     if go_mod is not None:
         found["detected_files"].append("go.mod")
         found["package_manager"], found["test_runner"], found["test_command"] = "go modules", "go test", "go test ./..."
-        version = re.search(r"^go\s+(\S+)", _roots.read_text(go_mod, MAX_FILE_BYTES), re.MULTILINE)
+        version = re.search(r"^go\s+(\S+)", _roots.read_text(go_mod, MAX_FILE_BYTES, roots=roots), re.MULTILINE)
         if version:
             found["language_versions"]["go"] = version.group(1)[:20]
     for name, language in ((".nvmrc", "node"), (".node-version", "node"), (".python-version", "python"),
                            (".ruby-version", "ruby")):
         path = _inside(folder, name, roots, found["unreadable_reasons"])
         if path is not None:
-            found["language_versions"][language] = _roots.read_text(path, MAX_FILE_BYTES).strip()[:50]
+            found["language_versions"][language] = _roots.read_text(path, MAX_FILE_BYTES, roots=roots).strip()[:50]
             found["detected_files"].append(name)
     for name in found["unreadable"]:
         found["unreadable_reasons"].setdefault(name, "could not read or parse the marker")

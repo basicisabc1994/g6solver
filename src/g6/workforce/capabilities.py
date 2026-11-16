@@ -254,7 +254,10 @@ class ParamContract:
         if "cost_ceiling" in body:
             body["cost_ceiling"] = Money.from_dict(body["cost_ceiling"])
         if "operational" in data:  # after the digest (lead ruling L-1): its own digest, so no probe goes stale
-            body["operational"] = json.loads(json.dumps(data["operational"]))
+            try:
+                body["operational"] = json.loads(json.dumps(data["operational"]))
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
             body["operational_sha256"] = hashlib.sha256(json.dumps(
                 data["operational"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         contract = cls(**body, sha256=sha)
@@ -301,7 +304,9 @@ def _read(directory: Path, pattern: str) -> dict[tuple[str, str], ParamContract]
     for path in sorted(directory.glob(pattern)):
         try:
             contract = ParamContract.from_dict(json.loads(path.read_text(encoding="utf-8")))
-        except ValueError as exc:
+        except (ValueError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             raise ValueError(f"{path.name}: {exc}") from None
         if path.name != f"{contract.component}.{contract.op}.json":
             raise ValueError(f"{path.name}: a contract file is named <component>.<op>.json, here "

@@ -39,3 +39,18 @@ __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["SENSITIVE_OPS", "KnowledgeManifestBlock", "KnowledgeManifestInput", "Store", "StoreError", "Verdict",
            "manifest", "verify_passage"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_KNOWLEDGE_CHANGED": "none",
+    "G6_E_KNOWLEDGE_FOUND": "none",
+    "G6_E_KNOWLEDGE_MATCHES": "none",
+    "G6_E_KNOWLEDGE_NOT_RECORDED": "none",
+    "G6_E_KNOWLEDGE_NO_DOCUMENT": "none",
+    "G6_E_KNOWLEDGE_RECORDED": "none",
+    "G6_E_KNOWLEDGE_SOURCE_UNAVAILABLE": "person",
+    "G6_E_KNOWLEDGE_SPAN_MISMATCH": "none",
+    "G6_E_KNOWLEDGE_STORE": "none",
+    "G6_E_KNOWLEDGE_UNVERIFIABLE": "none",
+}

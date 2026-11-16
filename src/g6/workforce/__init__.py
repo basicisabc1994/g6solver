@@ -82,3 +82,83 @@ __g6_outside__ = (OutsideProgram(
 
 __all__ = ["DEFAULT_VENTURE", "Approver", "NotConfirmed", "allow_execution", "answer_clarification", "bind",
            "certificate", "confirm", "create_coding_mission", "repository_dir", "status", "submit_patch"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_CAPABILITY_UNAVAILABLE": ("tool:g6_select",
+        "The step needs a capability this server does not offer: pick another call for the task."),
+    "G6_E_CONFIG_INVALID": ("person",
+        "G6's configuration or the plan is not valid: tell the person what the refusal says; g6 doctor checks the "
+        "setup.",
+        "g6 doctor"),
+    "G6_E_COST_GATE_GATED": ("person",
+        "The step is over its cost budget or has no price: only the person raises a budget. Tell them."),
+    "G6_E_COST_GATE_OVER_BUDGET": ("person",
+        "The step is over its cost budget or has no price: only the person raises a budget. Tell them."),
+    "G6_E_DELIVERABLE_WITHHELD": ("person",
+        "The result is withheld until the person resolves what it names: act on no part of it. Show the reply's report "
+        "to the person as it is."),
+    "G6_E_DEPENDENCY_UNAVAILABLE": ("tool:g6_mission_status",
+        "A step this one depends on has no result yet: read the mission's state."),
+    "G6_E_EXECUTION_ARTIFACT_UNAVAILABLE": ("none",
+        "The copy G6 runs the tests in held something it cannot run with (a cache or an input it does not take). Show "
+        "the reply's report to the person as it is."),
+    "G6_E_GIT_COMMAND_FAILED": ("none", "git failed on the repository: tell the person what the refusal says."),
+    "G6_E_GIT_MISSING_BINARY": ("person",
+        "git is not installed where G6 runs: tell the person; g6 doctor says what this computer needs.",
+        "g6 doctor"),
+    "G6_E_GIT_REPO_INVALID": ("person",
+        "repo is not the top folder of a git repository G6 can use: tell the person what the refusal says."),
+    "G6_E_HUMAN_APPROVAL_REQUIRED": ("person",
+        "Only the person can approve this. Ask the person; offer no other way to agree, and never answer for them."),
+    "G6_E_INPUT_VALIDATION": ("input",
+        "The input did not fit: the refusal names the field. For an op, read g6_describe; for a tool, its description. "
+        "Fix the field and call again."),
+    "G6_E_INTERNAL": ("none", "G6 failed inside: tell the person; it is G6's fault."),
+    "G6_E_INVALID_PARAM": ("input",
+        "An input has a value G6 does not take: the refusal names it. Fix it and call again; for an op, g6_describe "
+        "lists its fields."),
+    "G6_E_LEARNING_NOT_RECOMMENDED": "none",
+    "G6_E_LEARNING_UNKNOWN_THEORY": "input",
+    "G6_E_MISSING_PARAM": ("input",
+        "An input is missing: the refusal names it. Fill it in and call again; for an op, g6_describe lists its "
+        "fields."),
+    "G6_E_PENDING_APPROVAL": ("person",
+        "The step waits for the person's approval. Ask the person; offer no other way to agree, and never answer for "
+        "them."),
+    "G6_E_POLICY_BLOCKED": ("person",
+        "A policy refused this step: only the person can change it. Tell them what the refusal says; never change the "
+        "policy yourself."),
+    "G6_E_REPO_ENV_INVALID": ("person",
+        "The environment G6 is set to run the repository's tests with is not valid: only the person changes that "
+        "setting; g6 doctor checks it.",
+        "g6 doctor"),
+    "G6_E_REPO_PYTHON_INVALID": ("person",
+        "The Python G6 is set to run the repository's tests with is not usable: only the person changes that setting; "
+        "g6 doctor checks it.",
+        "g6 doctor"),
+    "G6_E_RESOURCE_LIMIT": ("person", "The run was over a resource limit: tell the person; a narrower input may fit."),
+    "G6_E_RESULT_NOT_VERIFIED": ("none",
+        "The result did not pass its check: report it so, never as done. Show the reply's report to the person as it "
+        "is."),
+    "G6_E_RETRY": ("retry",
+        "A tool failed for a passing reason: make the same call once more; if it fails again, tell the person."),
+    "G6_E_SENSITIVE_COMPONENT_DENIED": ("person",
+        "This op is sensitive. The person decides whether to allow it themselves. Tell the person and stop."),
+    "G6_E_TASK_CONTRACT_UNVERIFIABLE": ("tool:g6_premortem",
+        "The task's standard of done cannot be checked as it is stated: say what done means and how each part is "
+        "checked."),
+    "G6_E_TESTS_DID_NOT_RUN": ("none",
+        "The repository's tests did not run, so nothing was checked. Show the reply's report to the person as it is."),
+    "G6_E_TEST_REPORT_UNKNOWN": "none",
+    "G6_E_TIMEOUT": ("person", "The step ran out of time: tell the person; a narrower step may fit."),
+    "G6_E_WORKFORCE_LEARNED_PROBE_DISAGREES": "none",
+    "G6_E_WORKFORCE_LEARNED_PROBE_UNMEASURED": "none",
+    "G6_E_WORKFORCE_LEARNING_EXPERIMENTAL": "none",
+    "G6_E_WORKFORCE_LEARNING_NOT_CLOSED": "none",
+    "G6_E_WORKFORCE_PROBE_SELF_LABELLED": "none",
+    "G6_E_WORKFORCE_REPOSITORY_LINKED": "none",
+    "G6_E_WORK_LOOP_NO_PROGRESS": ("none",
+        "The work loop made no progress. Show the reply's report to the person as it is."),
+}

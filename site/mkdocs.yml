@@ -1,6 +1,6 @@
 site_name: G6
 site_url: https://g6solver.com/
-site_description: Open-source harness for AI agents — checks their work, gates risky actions and labels every result for what the evidence shows. Free, local-first, Apache-2.0.
+site_description: Open-source harness for AI agents — checks their work, gates risky actions and labels results of its checks and work tools returned over its MCP server for what the evidence shows. Free, local-first, Apache-2.0.
 repo_url: https://github.com/basicisabc1994/g6solver
 repo_name: G6 on GitHub
 docs_dir: docs

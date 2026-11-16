@@ -267,7 +267,9 @@ def propose_abstraction(spec_json: str, domain: str = "domain") -> str:
         abstraction = from_spec(json.loads(spec_json))
         report = run_gate(abstraction, _dom(domain))
         return _j({"spec": abstraction.spec(), "gate": report.to_dict()})
-    except (SpecError, ValueError, KeyError) as exc:
+    except (SpecError, ValueError, KeyError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         return _err(exc)
 
 
@@ -294,7 +296,9 @@ def evaluate_abstraction(spec_json: str, domain: str = "domain",
                                   budget=budget, notes=notes)
         _autosave()
         return _j(entry.to_dict())
-    except (SpecError, ValueError, KeyError) as exc:
+    except (SpecError, ValueError, KeyError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         return _err(exc)
 
 

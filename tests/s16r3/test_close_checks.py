@@ -119,7 +119,8 @@ def test_every_ticket_is_cut_from_the_serialisation_its_sources_were_matched_aga
     root = Path(egress.__file__).resolve().parents[1]
     cuts = {path.relative_to(root).as_posix(): found for path in root.rglob('*.py')
             if (found := ticket_cuts(path.read_text(encoding='utf-8')))}
-    assert cuts == {'mcp/cloud_consent.py': [True, True]}
+    # The third cut is G6's envelope for an undeclared argument (wire-repair repair 1, F6); it is cut the same way.
+    assert cuts == {'mcp/cloud_consent.py': [True, True, True]}
     # The one place that cuts them serialises the rendered reply once and hands that to the match as well.
     handoff = next(node for node in ast.walk(ast.parse((root / 'mcp/cloud_consent.py').read_text(encoding='utf-8')))
                    if isinstance(node, ast.AsyncFunctionDef) and node.name == 'on_call_tool')

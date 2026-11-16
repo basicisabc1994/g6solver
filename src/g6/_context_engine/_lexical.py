@@ -135,10 +135,13 @@ class ScopedLexical(SqliteIndex):
                 if time.monotonic() > deadline:
                     ended.append(True)
                     raise sqlite3.OperationalError("interrupted")
-                if self.excluded and json.loads(row["source"]).get("uri") in self.excluded:
-                    if len(left_out) < LEFT_OUT:
-                        left_out.append(row["id"])
-                    continue   # a file observed changed is denied: it takes no place among the hits
+                try:
+                    if self.excluded and json.loads(row["source"]).get("uri") in self.excluded:
+                        if len(left_out) < LEFT_OUT:
+                            left_out.append(row["id"])
+                        continue   # a file observed changed is denied: it takes no place among the hits
+                except (RecursionError, MemoryError):
+                    raise ValueError("a JSON record exceeds decoder limits") from None
                 words = _tokens(row["text"])
                 counts = Counter(words)
                 score = 0.0

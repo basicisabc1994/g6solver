@@ -216,7 +216,10 @@ class Harness:
 
 def harness(path: Path = HARNESS) -> Harness:
     """The harness in ``path``. Training can only add to a part's instructions: anything else in ``trained`` is refused."""
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     added = data.get("trained") or {}
     odd = sorted(set(added) - set(TRAINED))
     if odd:
@@ -351,7 +354,7 @@ def scout_gate(raw: str, *, exit_code: int, collected: int, broken: int = 0, ran
     try:
         dimensions = json.loads(raw).get("dimensions") or {}
         domain = InputDomain.of(dimensions, max_inputs=MAX_CROSS)
-    except (ValueError, TypeError, AttributeError):
+    except (ValueError, TypeError, AttributeError, RecursionError, MemoryError):
         dimensions, domain = {}, None
     if domain is None or len(dimensions) < 2:
         wrong.append('tree.json needs "dimensions" with at least two dimensions')
@@ -464,7 +467,10 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
         # The frozen bytes are what is read, but their JSON form makes a tuple or a set a list: a report that is not
         # valid as the run gave it stays unknown, and is never made valid by its serialisation.
         given = repo_tests.read_report(ran)
-        report = repo_tests.read_report(json.loads(body)) if given.valid else given
+        try:
+            report = repo_tests.read_report(json.loads(body)) if given.valid else given
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
         ran = report.wire()
         boundary = (ran.get("isolation") or {}).get("backend") or boundary
         elsewhere, verdict = _loaded_elsewhere(change, ran), ran.get("verdict")
@@ -494,7 +500,10 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
 def _snapshot_probe(value):
     body, refs, _ = cloud.freeze_output(value)
     refs = refs or (cloud.UNKNOWN,)
-    return cloud.bind_output(ProbeRun(**json.loads(body)), refs), refs
+    try:
+        return cloud.bind_output(ProbeRun(**json.loads(body)), refs), refs
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def run_set(change: repo_tests.Change, probes: Path, *, at_base: bool, deadline: float, only: str = "") -> ProbeRun:
@@ -1059,7 +1068,7 @@ def _load(session: Path) -> dict:
         state = json.loads(cloud.read_retained(path, expected))
         if not isinstance(state, dict):
             raise ValueError('retained state is not an object')
-    except (OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError, RecursionError, MemoryError):
         # Neither content nor control fields from unbound state are reusable.
         state = {'done': True, 'code': cloud.REQUIRED, 'ending': 'untested', 'stop': cloud.WITHHELD,
                  'consent_sources': [asdict(cloud.UNKNOWN)]}
@@ -1199,7 +1208,7 @@ def _row_of(line: str, session: Path) -> bool:
     """Whether ``line`` is a whole row of this session. A line a killed hook tore does not parse, so it is no row."""
     try:
         return json.loads(line).get("session") == session.name
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, RecursionError, MemoryError):
         return False
 
 

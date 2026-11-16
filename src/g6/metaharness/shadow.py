@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from g6.core.adaptation_gate import is_automated
-from g6.core.ledger import ChainLedger
+from g6.core.ledger import LedgerError, ChainLedger
 from g6.metaharness import monitor as drift
 from g6.metaharness import recovery
 from g6.metaharness.api import MetaHarness, _blocked, _envelope, _now, _serialized, recorded_versions
@@ -101,7 +101,10 @@ def restores(workspace: str | Path) -> dict[str, Any] | None:
     row or, for generation 0, from the version a person confirmed (``recorded_versions``, as a harness reads its head).
     ``None`` when nothing adopted stands. A chain that does not check out raises, as ``lineage`` does."""
     workspace = Path(workspace)
-    rows = [entry["body"] for entry in ChainLedger(workspace / ADOPTIONS, validate=_rules).entries()]
+    try:
+        rows = [entry["body"] for entry in ChainLedger(workspace / ADOPTIONS, validate=_rules).entries()]
+    except (RecursionError, MemoryError):
+        raise LedgerError("a stored JSON record exceeds decoder limits") from None
     found = _destination(rows)
     if found is None:
         return None
@@ -157,7 +160,10 @@ def _generation(row: Mapping[str, Any]) -> dict[str, Any]:
 def lineage(workspace: str | Path, *, last: int = 8) -> dict[str, Any]:
     """The current generation and the ``last`` before it, read from the chain and written nowhere. Generation 0 is what a
     person confirmed. A chain that does not check out raises, as it does for the loop."""
-    rows = [entry["body"] for entry in ChainLedger(Path(workspace) / ADOPTIONS, validate=_rules).entries()]
+    try:
+        rows = [entry["body"] for entry in ChainLedger(Path(workspace) / ADOPTIONS, validate=_rules).entries()]
+    except (RecursionError, MemoryError):
+        raise LedgerError("a stored JSON record exceeds decoder limits") from None
     return {"current": rows[-1]["version"] if rows else 0, "recent": [_generation(row) for row in rows[-last:]]}
 
 
@@ -190,7 +196,10 @@ class ShadowHarness(MetaHarness):
                  before_evaluation: Callable[[], None] = lambda: None,
                  hold: Callable[[], Any] | None = None) -> None:
         super().__init__(workflow, factory, workspace, theories=None, clock=clock, problems=problems)
-        self.adoptions = ChainLedger(workspace / ADOPTIONS, validate=_rules) if not problems else None
+        try:
+            self.adoptions = ChainLedger(workspace / ADOPTIONS, validate=_rules) if not problems else None
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
         self._measured: tuple[tuple[str, str, int], ProposerView] | None = None
         self._before_evaluation = before_evaluation
         self._hold = hold                     # this harness's own last check: what judges, read and compared
@@ -198,12 +207,24 @@ class ShadowHarness(MetaHarness):
     def refresh(self) -> None:
         """Read every ledger again: another handle may have written them. What it wrote decides the head."""
         if self._moved():
-            self.store._chain.reload()
-            self.ledger._chain.reload()
-        self.adoptions.reload()
+            try:
+                self.store._chain.reload()
+            except (RecursionError, MemoryError):
+                raise LedgerError("a stored JSON record exceeds decoder limits") from None
+            try:
+                self.ledger._chain.reload()
+            except (RecursionError, MemoryError):
+                raise LedgerError("a stored JSON record exceeds decoder limits") from None
+        try:
+            self.adoptions.reload()
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def adoption_rows(self) -> list[dict]:
-        return [e["body"] for e in self.adoptions.entries()]
+        try:
+            return [e["body"] for e in self.adoptions.entries()]
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def _head(self) -> tuple[int, Profile]:
         rows = self.adoption_rows()
@@ -269,7 +290,10 @@ class ShadowHarness(MetaHarness):
             return _blocked(FROZEN_CHANGED, "the reading of what judges this adoption was offered is not the one this "
                             "cycle read before it developed anything, so nothing is adopted")
         row["frozen"] = dict(held.frozen)
-        self.adoptions.append("adopt", str(number), row)
+        try:
+            self.adoptions.append("adopt", str(number), row)
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
         return _envelope("qualified-draft", ADOPTED, f"version {number} is the loop's head, in its own workspace only",
                          next_action="Later ticks run on it; the monitor compares it with the version before.",
                          head_version=number, head_profile=proposal.candidate_digest)
@@ -351,11 +375,14 @@ class ShadowHarness(MetaHarness):
             head_ok, result, _ = self._on_case(head, case)
             previous_ok, _, _ = self._on_case(previous, case)
             differences.append(float(previous_ok) - float(head_ok))
-            self.ledger.append("run", f"audit-{version}-{case.case_id}", {
-                "workflow_digest": self.workflow.digest(), "profile_digest": adopted["profile_digest"],
-                "purpose": "audit", "head_version": version, "previous_version": before,
-                "case_id": case.case_id, "difference": differences[-1],
-                "completion_state": result.get("completion_state", "blocked-escalated")})
+            try:
+                self.ledger.append("run", f"audit-{version}-{case.case_id}", {
+                    "workflow_digest": self.workflow.digest(), "profile_digest": adopted["profile_digest"],
+                    "purpose": "audit", "head_version": version, "previous_version": before,
+                    "case_id": case.case_id, "difference": differences[-1],
+                    "completion_state": result.get("completion_state", "blocked-escalated")})
+            except (RecursionError, MemoryError):
+                raise LedgerError("a stored JSON record exceeds decoder limits") from None
         verdict = drift.assess([d for d in differences if d], alpha=self.workflow.policy.demote_alpha)
         said = {"audited": len(fresh), "pairs": verdict.pairs, "mean_difference": verdict.mean_difference,
                 "threshold": verdict.threshold if verdict.pairs else None, "rolled_back": verdict.demote}
@@ -363,16 +390,22 @@ class ShadowHarness(MetaHarness):
             return _envelope("qualified-draft", AUDITED, f"{len(fresh)} audited, no sign it got worse", **said)
         number = len(self.adoption_rows()) + 1
         gate = adopted.get("measured", {})
-        self.adoptions.append("rollback", str(number), {
-            "kind": "rollback", "version": number, "base_version": number - 1, "target_version": before,
-            "by": ADOPTER, "scope": SCOPE, "at": _now(), "undoes": version, "audit": said,
-            "profile": previous.model_dump(mode="json"), "profile_digest": previous.digest(),
-            "change": f"went back to generation {before} after generation {version} fell behind it",
-            "measured": {"split": gate.get("split"), "cases": gate.get("cases"), "before": gate.get("after"),
-                         "after": gate.get("before"),
-                         "monitor": {key: said[key] for key in ("audited", "pairs", "mean_difference")}}})
-        self.ledger.append("ticket", f"ticket-{number}", {"kind": "re-evaluate", "demoted_version": version,
-                                                          "now_version": number, "audit": said})
+        try:
+            self.adoptions.append("rollback", str(number), {
+                "kind": "rollback", "version": number, "base_version": number - 1, "target_version": before,
+                "by": ADOPTER, "scope": SCOPE, "at": _now(), "undoes": version, "audit": said,
+                "profile": previous.model_dump(mode="json"), "profile_digest": previous.digest(),
+                "change": f"went back to generation {before} after generation {version} fell behind it",
+                "measured": {"split": gate.get("split"), "cases": gate.get("cases"), "before": gate.get("after"),
+                             "after": gate.get("before"),
+                             "monitor": {key: said[key] for key in ("audited", "pairs", "mean_difference")}}})
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
+        try:
+            self.ledger.append("ticket", f"ticket-{number}", {"kind": "re-evaluate", "demoted_version": version,
+                                                              "now_version": number, "audit": said})
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
         return _blocked(ROLLED_BACK, f"version {version} fell behind the version before it on {verdict.pairs} audited "
                         f"disagreements; the head is version {number}", **said, undoes=version, head_version=number)
 
@@ -399,11 +432,14 @@ class ShadowHarness(MetaHarness):
         stopped = last_check({**found, "profile_digest": previous.digest()})
         if stopped:
             return stopped
-        self.adoptions.append("rollback", str(number), {
-            "kind": "rollback", "version": number, "base_version": generation, "target_version": back,
-            "by": by, "scope": SCOPE, "at": _now(), "undoes": undone, "measured": {},
-            "profile": previous.model_dump(mode="json"), "profile_digest": previous.digest(),
-            "change": f"a person went back to generation {back} from generation {undone}"})
+        try:
+            self.adoptions.append("rollback", str(number), {
+                "kind": "rollback", "version": number, "base_version": generation, "target_version": back,
+                "by": by, "scope": SCOPE, "at": _now(), "undoes": undone, "measured": {},
+                "profile": previous.model_dump(mode="json"), "profile_digest": previous.digest(),
+                "change": f"a person went back to generation {back} from generation {undone}"})
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
         return _envelope("qualified-draft", DEMOTED, f"generation {undone} is taken back: the head is generation "
                          f"{number}, the profile of generation {back}", head_version=number,
                          undoes=undone, next_action="Later ticks run on it. The monitor compares it with the "

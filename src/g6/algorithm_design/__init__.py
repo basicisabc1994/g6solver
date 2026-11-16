@@ -39,3 +39,21 @@ __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["AlgorithmDesignBlock", "AlgorithmDesignInput", "AlgorithmPrimitive", "DesignCandidate", "DesignProblem",
            "DesignSearch", "FusionResult", "fuse", "primitives", "search_algorithms"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_ALGO_CATALOGUE": "none",
+    "G6_E_ALGO_ESTIMATE": "none",
+    "G6_E_ALGO_INPUT_INVALID": "input",
+    "G6_E_ALGO_KERNEL_CHECKED": "none",
+    "G6_E_ALGO_KERNEL_REFUSED": "none",
+    "G6_E_ALGO_NO_CANDIDATE": "none",
+    "G6_E_ALGO_ONTOLOGY": "none",
+    "G6_E_ALGO_PROPOSAL": "none",
+    "G6_E_ALGO_UNKNOWN_CANDIDATE": "input",
+    "G6_E_OPERATOR_APPROVAL_REQUIRED": ("person", "wait"),
+    "G6_E_ALGO_LEDGER_CONFLICT": "person",
+    "G6_E_ALGO_NO_ENGINEER": "person",
+    "G6_E_OPERATOR_APPROVAL_MISMATCH": "person",
+}

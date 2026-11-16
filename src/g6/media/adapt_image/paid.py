@@ -94,7 +94,7 @@ def _decode(text: Any, said: str) -> bytes:
 def _json(reply: http.Response, said: str) -> Any:
     try:
         return json.loads(reply.body)
-    except ValueError:
+    except (ValueError, RecursionError, MemoryError):
         raise MediaError(BACKEND_FAILED, f"{said} answered with something that is not JSON") from None
 
 

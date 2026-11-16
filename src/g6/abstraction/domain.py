@@ -151,7 +151,10 @@ class ConcreteDomain:
     @classmethod
     def from_json(cls, path: str, objective: str, **kw: Any) -> "ConcreteDomain":
         with open(path) as fh:
-            data = json.load(fh)
+            try:
+                data = json.load(fh)
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
         rows = data["rows"] if isinstance(data, dict) and "rows" in data else data
         return cls.from_rows(rows, objective, **kw)
 

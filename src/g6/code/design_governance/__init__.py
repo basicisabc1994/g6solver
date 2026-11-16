@@ -37,3 +37,18 @@ __g6_outside__: tuple = ()
 __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["SENSITIVE_OPS", "Contract", "DesignGovernanceBlock", "DesignGovernanceInput", "Forbid", "graph"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_CODE_RESOURCE_LIMIT": "person",
+    "G6_E_DESIGN_BAD_PATH": "input",
+    "G6_E_DESIGN_CONTRACT_UNMATCHED": "none",
+    "G6_E_DESIGN_FINDINGS": "none",
+    "G6_E_DESIGN_INCOMPLETE": "none",
+    "G6_E_DESIGN_INPUT": "input",
+    "G6_E_DESIGN_NONE_FOUND": "none",
+    "G6_E_DESIGN_NO_EDGES": "none",
+    "G6_E_DESIGN_NO_MODULES": "none",
+    "G6_E_DESIGN_READ": "none",
+}

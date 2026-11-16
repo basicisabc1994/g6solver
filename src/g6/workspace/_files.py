@@ -43,7 +43,7 @@ from types import EllipsisType
 from typing import Any
 
 from g6.core.resources import RESOURCE_LIMIT
-from g6.core.storage import PathRefused, contained, plain_file, state_path
+from g6.core.storage import PathRefused, _text, contained, plain_file, state_path
 from g6.workspace._coordination import Coordination, bookkeeping_path
 from g6.workspace._envelope import (ARCHIVE_REFUSED, INPUT_INVALID, LOCKED, NOT_A_FILE, NOT_A_WORKSPACE, NOT_FOUND,
                                     OUTSIDE_ROOT, RESERVED, STALE_WRITE, WorkspaceRefused)
@@ -245,18 +245,21 @@ class Workspace:
     def contained(self, path: str | os.PathLike[str]) -> Path:
         """Where ``path`` really is, resolved against the folder; :class:`WorkspaceRefused` when it leaves the folder
         (``OUTSIDE_ROOT``), names G6's bookkeeping (``RESERVED``) or is not a path G6 resolves (``INPUT_INVALID``)."""
-        raw_parts = os.fspath(path).replace("\\", "/").split("/")
-        if any(part.lower().startswith(".partial-") for part in raw_parts):
+        try:
+            text = _text(path)              # a plain str, read once: every check and the open read the same characters
+        except PathRefused as exc:          # None, bytes, a number: not a path G6 takes
+            raise WorkspaceRefused(INPUT_INVALID, exc.reason) from None
+        if any(part.lower().startswith(".partial-") for part in text.replace("\\", "/").split("/")):
             raise WorkspaceRefused(RESERVED, "the .partial- prefix is reserved for G6 temporary files")
         try:
-            real = contained(self.root, path)
+            real = contained(self.root, text)
         except PathRefused as exc:
             raise WorkspaceRefused(OUTSIDE_ROOT if exc.outside else INPUT_INVALID, exc.reason) from None
         parts = real.relative_to(self.root).parts
         if any(part.lower().startswith(".partial-") for part in parts):
             raise WorkspaceRefused(RESERVED, "the .partial- prefix is reserved for G6 temporary files")
         if parts and parts[0].lower() == BOOKKEEPING:
-            raise WorkspaceRefused(RESERVED, f"{os.fspath(path)!r} is inside G6's own bookkeeping folder ({BOOKKEEPING})")
+            raise WorkspaceRefused(RESERVED, f"{text!r} is inside G6's own bookkeeping folder ({BOOKKEEPING})")
         return real
 
     def relative(self, real: Path) -> str:

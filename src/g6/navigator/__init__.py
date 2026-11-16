@@ -61,3 +61,25 @@ __g6_introduces__: tuple[str, ...] = ()
 __all__ = ["ACTS_BELOW_A2", "CARD_CHARS", "NOT_CLEARED", "Finding", "Issue", "PlanReport", "PlanResult", "StepCheck",
            "StepRun", "card", "check_plan", "contract_for", "judge", "ops_of", "purpose", "run_plan",
            "shipped_authority"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_INPUT_VALIDATION": ("input",
+        "The input did not fit: the refusal names the field. For an op, read g6_describe; for a tool, its description. "
+        "Fix the field and call again."),
+    "G6_E_NAV_COMPONENT_UNLOADABLE": "none",
+    "G6_E_NAV_EFFECT_OVER_BUDGET": "person",
+    "G6_E_NAV_EMPTY_PLAN": "input",
+    "G6_E_NAV_NO_EXECUTOR": "none",
+    "G6_E_NAV_RAN_UNCHECKED": "none",
+    "G6_E_NAV_STATIC_CHECK": "none",
+    "G6_E_NAV_STEP_FAILED": "none",
+    "G6_E_NAV_STEP_MALFORMED": "input",
+    "G6_E_NAV_UNKNOWN_OP": "input",
+    "G6_E_OP_ACTS_BELOW_A2": "none",
+    "G6_E_OP_NOT_CLEARED": "none",
+    "G6_E_SENSITIVE_COMPONENT_DENIED": ("person",
+        "This op is sensitive. The person decides whether to allow it themselves. Tell the person and stop."),
+    "G6_E_UNKNOWN_COMPONENT": ("tool:g6_find", "No component has that name: find one by the task."),
+}

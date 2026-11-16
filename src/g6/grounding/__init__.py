@@ -58,3 +58,23 @@ __g6_introduces__: tuple[str, ...] = ()
 __all__ = ["ClaimCheck", "CorroborationReport", "CoverageReport", "GroundingBlock", "GroundingInput", "Passage",
            "Retriever", "SourceAge", "StalenessReport", "TextRetriever", "check_claim", "check_claims",
            "check_staleness", "corroboration", "coverage", "instruction_signals", "split_claims"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_GROUNDING_CLAIM_REQUIRED": "input",
+    "G6_E_GROUNDING_CONFLICT": "none",
+    "G6_E_GROUNDING_CONTESTED": "none",
+    "G6_E_GROUNDING_JUDGE_FAILED": "none",
+    "G6_E_GROUNDING_NOT_FOUND": "none",
+    "G6_E_GROUNDING_NO_CHECKABLE_SENTENCE": "none",
+    "G6_E_GROUNDING_PARTIAL": "none",
+    "G6_E_GROUNDING_SOURCES_REQUIRED": "input",
+    "G6_E_GROUNDING_SOURCES_TOO_LARGE": "person",
+    "G6_E_GROUNDING_TEXT_TOO_LARGE": "person",
+    "G6_E_GROUNDING_THIN_SOURCES": "none",
+    "G6_E_GROUNDING_UNSUPPORTED": "person",
+    "G6_E_NLI_FAILED": "none",
+    "G6_E_NLI_NOT_INSTALLED": "person",
+    "G6_E_NLI_WEIGHTS_REQUIRED": "person",
+}

@@ -71,6 +71,10 @@ def test_retained_producers_and_handoffs_are_inventoried():
                        # Re-derived on the 0.3 integration line, each classified: G6's own saved review reply, read
                        # only when bound to the task (g6_confirm_behaviour declares source:jobs) and its digest check;
                        'behaviour.py:_review_candidates': {'read_bytes'}, 'review_binding.py:matches': {'read_bytes'},
+                       # 2026-11-16: the record of a saved review's sources and that reply's bytes it is bound to,
+                       # read back by finish; never returned as text, and a record that does not read back is the
+                       # storage folder's source (tests/s16r3/test_review_reaches_asker.py);
+                       'review_reply.py:carried': {'read_bytes'},
                        # the loop folder's own stop records, which decide a stop and are never returned as text;
                        'improve.py:_stop_before': {'read_bytes'}, 'improve.py:_stop_entry_on_record': {'read_bytes'},
                        # G6's installed program text (its servers, skills and guidance), which holds no person's data.

@@ -908,7 +908,10 @@ def gather(*, plan: Plan, runs: Iterable[Mapping], artifacts: Mapping[str, Mappi
         sends.setdefault(unit_of.get(receipt.get("run_id", ""), ""), []).append(str(receipt.get("state", "")))
     degradations: dict[str, tuple[str, ...]] = {}
     for key, run in latest.items():
-        outcome = Outcome.from_record(json.loads(run.get("outcome_json") or "{}"))
+        try:
+            outcome = Outcome.from_record(json.loads(run.get("outcome_json") or "{}"))
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
         if outcome.degraded:
             texts = tuple(r.removeprefix("degraded: ") for r in outcome.reasons if r.startswith("degraded: "))
             degradations[key] = texts or ("no reason was given",)

@@ -65,6 +65,14 @@ _TIER_RANK = {"low": 0, "medium": 1, "high": 2}
 _TIER_WORDS = {"low": "low", "medium": "medium", "high": "high", "critical": "high",
                "r0": "low", "r1": "medium", "r2": "high", "r3": "high"}
 _DRAFT_VERDICTS = frozenset({"pass", "proceed_with_caution", "revise", "needs_evidence"})
+_CODES = {
+    "pass": "G6_E_CODING_AGENT_GATE_PASS",
+    "proceed_with_caution": "G6_E_CODING_AGENT_GATE_PROCEED_WITH_CAUTION",
+    "revise": "G6_E_CODING_AGENT_GATE_REVISE",
+    "needs_evidence": "G6_E_CODING_AGENT_GATE_NEEDS_EVIDENCE",
+    "block": "G6_E_CODING_AGENT_GATE_BLOCK",
+    "needs_review": "G6_E_CODING_AGENT_GATE_NEEDS_REVIEW",
+}
 _NEXT = {"block": "Do not proceed: remove the shortcut and repair the behaviour with every check still active.",
          "needs_review": "Stop: get the named human or domain-expert review before acting or reporting done.",
          "revise": "Fix the findings, attach the missing evidence, and call the gate again.",
@@ -178,8 +186,7 @@ class GateDecision:
 
     def to_envelope(self, *, request_id: str = "", run_id: str = "") -> dict[str, Any]:
         """The decision as the library envelope (``g6.core.reliability_envelope.envelope_fields``)."""
-        code = "G6_E_CODING_AGENT_GATE_" + (self.verdict.upper() if self.verdict in _NEXT or self.verdict in
-                                            _DRAFT_VERDICTS else "UNKNOWN_VERDICT")
+        code = _CODES.get(self.verdict, "G6_E_CODING_AGENT_GATE_UNKNOWN_VERDICT")
         message = self._message()
         card = warning_card(code, message, _NEXT.get(self.verdict, "Report this as a qualified draft with its "
                                                     "evidence; do not call it verified."))

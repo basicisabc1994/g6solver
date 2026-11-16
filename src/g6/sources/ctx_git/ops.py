@@ -530,7 +530,7 @@ def stash_pop(run: Run, repo: Path, c: Call) -> Outcome:
     done = run("stash", "pop", ok=(0, 1))
     if done.code == 1:
         raise GitRefused(CONFLICT if "conflict" in done.said.lower() else "G6_E_GIT_FAILED",
-                         f"stash pop did not apply cleanly ({done.said}); git keeps the stash")
+                         "stash pop did not apply cleanly; git keeps the stash")
     found = status_of(run)
     return Outcome(answer("stash_pop", CHANGED, "The newest stash was applied and dropped (read back from status).",
                           texts=[*found["modified"], *found["untracked"]], ids=c.ids, **found))

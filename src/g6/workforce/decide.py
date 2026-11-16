@@ -168,7 +168,9 @@ def main(argv: list[str] | None = None, *, ask: Callable[[str], str] | None = No
 
         if args.command == "approve" and coding.frozen(wf, args.mission):
             coding.advance(wf, args.mission)
-    except (ValueError, LookupError, OSError) as exc:
+    except (ValueError, LookupError, OSError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         print(f"refused: {exc}", file=sys.stderr)
         return 2
     print(json.dumps({"decision_id": found.get("decision_id"), "unit": found.get("unit_key") or args.unit,

@@ -51,7 +51,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from time import monotonic, sleep
 
-from g6.core.ledger import ChainLedger, digest
+from g6.core.ledger import LedgerError, ChainLedger, digest
 from g6.core.outside import find_program
 from g6.core.storage import state_path
 
@@ -115,7 +115,10 @@ def _record(body: dict) -> str:
     ident = receipt_id(body)
     path = store_path()
     with _locked(path):
-        ChainLedger(path).append(KIND, ident, body)
+        try:
+            ChainLedger(path).append(KIND, ident, body)
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
     return ident
 
 

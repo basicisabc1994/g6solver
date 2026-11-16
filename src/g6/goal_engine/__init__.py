@@ -88,3 +88,28 @@ __all__ = ["DEFAULT_MAX_DEPTH", "HAZARDS", "ApprovalRecord", "BreakpointSpec", "
            "ControlResult", "DroppedNode", "GoalEngineBlock", "GoalEngineInput", "GoalSpec", "GuardrailSpec",
            "Observation", "PauseRequest", "PlanNode", "PlanTree", "ResourceBoundsSpec", "Verdict", "build_plan_tree",
            "evaluate_controls", "list_predicates", "register_predicate", "release_pause"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_GOAL_APPROVAL_REQUIRED": ("person", "wait"),
+    "G6_E_GOAL_CHECKPOINT_FAILED": "none",
+    "G6_E_GOAL_CHECKPOINT_UNKNOWN": "input",
+    "G6_E_GOAL_CONTROL_INVALID": "input",
+    "G6_E_GOAL_EMPTY": "input",
+    "G6_E_GOAL_GUARDRAIL_FAILED": "none",
+    "G6_E_GOAL_GUARDRAIL_UNKNOWN": "input",
+    "G6_E_GOAL_INPUT_INVALID": "input",
+    "G6_E_GOAL_NODE_UNKNOWN": "input",
+    "G6_E_GOAL_NOT_DECOMPOSED": "none",
+    "G6_E_GOAL_NO_MODEL": ("tool:g6_select", "no_model"),
+    "G6_E_GOAL_OBSERVATION_UNCHECKED": "none",
+    "G6_E_GOAL_PLAN_DECLARED": "none",
+    "G6_E_GOAL_PLAN_REJECTED": "none",
+    "G6_E_GOAL_PLAN_TRUNCATED": "none",
+    "G6_E_GOAL_PREDICATE_ERROR": "none",
+    "G6_E_GOAL_PREDICATE_REGISTRATION": "none",
+    "G6_E_GOAL_PREDICATE_UNKNOWN": "input",
+    "G6_E_GOAL_PROPOSAL_INCOMPLETE": "none",
+    "G6_E_GOAL_PROPOSED": "none",
+}

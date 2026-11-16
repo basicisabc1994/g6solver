@@ -33,3 +33,34 @@ __g6_outside__ = ()
 __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["MaintenanceInput", "SelfMaintenanceBlock", "SelfMaintenanceRefused"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_LLM_HOST_FAILED": "person",
+    "G6_E_LLM_RATE_LIMITED": "retry",
+    "G6_E_LOOP_ENROLMENT_CHANGED": "none",
+    "G6_E_LOOP_HOST_UNKNOWN": "person",
+    "G6_E_LOOP_INPUT_CHANGED": "person",
+    "G6_E_LOOP_STOPPED": "person",
+    "G6_E_LOOP_STOP_CANONICAL": "none",
+    "G6_E_LOOP_STOP_CANONICAL_FAILED": "none",
+    "G6_E_LOOP_STOP_COUNT_FAILED": "none",
+    "G6_E_LOOP_STOP_READ_FAILED": "none",
+    "G6_E_LOOP_STOP_REASON_ESCAPED": "none",
+    "G6_E_LOOP_STOP_REASON_FAILED": "none",
+    "G6_E_LOOP_STOP_STATE_UNREADABLE": "none",
+    "G6_E_LOOP_STOP_UNREADABLE": "none",
+    "G6_E_LOOP_STOP_WRITE_FAILED": "none",
+    "G6_E_LOOP_TICK_BUDGET_SPENT": "person",
+    "G6_E_LOOP_UNNAMED_REQUEST": "none",
+    "G6_E_LOOP_UNOBSERVABLE_HOST": "person",
+    "G6_E_LOOP_UNWATCHED_HOST": "person",
+    "G6_E_MODEL_AT_CAPACITY": "person",
+    "G6_E_MODEL_REFUSED": "person",
+    "G6_E_SELF_MAINTENANCE_CONSTRAINT": "none",
+    "G6_E_SELF_MAINTENANCE_INPUT": "input",
+    "G6_E_SELF_MAINTENANCE_LIVE_AGENT_OFF": "none",
+    "G6_E_SELF_MAINTENANCE_PLAN": "none",
+    "G6_E_OPERATOR_APPROVAL_MISMATCH": "person",
+}

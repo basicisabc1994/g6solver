@@ -43,3 +43,24 @@ __g6_outside__: tuple = ()
 __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["SENSITIVE_OPS", "CogArchGpsBlock", "CogArchGpsInput", "OperatorSpec", "Problem", "engine"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_GPS_CAP": "none",
+    "G6_E_GPS_ENCODED": "none",
+    "G6_E_GPS_ENCODED_NO_PLAN": "none",
+    "G6_E_GPS_ENCODE_MALFORMED": "input",
+    "G6_E_GPS_INPUT": "input",
+    "G6_E_GPS_KEPT": "none",
+    "G6_E_GPS_MODEL_FAILED": "person",
+    "G6_E_GPS_NO_MODEL": ("tool:g6_select", "no_model"),
+    "G6_E_GPS_NO_PLAN": "none",
+    "G6_E_GPS_NO_SET": "none",
+    "G6_E_GPS_PLANNED": "none",
+    "G6_E_GPS_PLAN_FAILS": "none",
+    "G6_E_GPS_PLAN_REPLAYED": "none",
+    "G6_E_GPS_REPLAY_FAILED": "none",
+    "G6_E_GPS_SET_EXISTS": "none",
+    "G6_E_GPS_STORE": "none",
+}

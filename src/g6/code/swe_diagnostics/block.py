@@ -95,9 +95,12 @@ def _file(d: SweDiagnosticsInput, roots: _roots.Roots) -> tuple[str, str, str]:
     if not d.path.strip():
         raise CodeRefused(INPUT, "give path (a file under a declared root) or source with name")
     path = _roots.existing(d.path, roots, kind="file")
-    if path.stat().st_size > read.MAX_FILE_BYTES:
-        raise CodeRefused(INPUT, f"{path.name} is over {read.MAX_FILE_BYTES} bytes; read a smaller file")
-    return _roots.read_text(path, read.MAX_FILE_BYTES), path.name, str(path)
+    try:
+        if path.stat().st_size > read.MAX_FILE_BYTES:
+            raise CodeRefused(INPUT, f"{path.name} is over {read.MAX_FILE_BYTES} bytes; read a smaller file")
+        return _roots.read_text(path, read.MAX_FILE_BYTES, roots=roots), path.name, str(path)
+    except (OSError, ValueError):
+        raise CodeRefused(_roots.PATH_INVALID, f"{_roots._name(path, roots)} could not be checked or read") from None
 
 
 def repo_map(d: SweDiagnosticsInput, roots: _roots.Roots) -> dict[str, Any]:

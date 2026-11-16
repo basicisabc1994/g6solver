@@ -132,14 +132,20 @@ RULES: dict[str, Rule] = {
 def register() -> dict[str, Any]:
     """The committed register, read as package data."""
     text = resources.files("g6.embodied._motion").joinpath("data/source_register.json").read_text(encoding="utf-8")
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def review() -> dict[str, Any]:
     """The record of the independent pass over each rule against its source (``data/rule_review.json``). It is
     evidence of kind ``review`` and raises no label."""
     text = resources.files("g6.embodied._motion").joinpath("data/rule_review.json").read_text(encoding="utf-8")
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def entries() -> dict[str, dict[str, Any]]:
@@ -151,7 +157,10 @@ def register_problems() -> list[str]:
     """What is wrong with the register or the rule table, or ``[]``: an entry with a field missing or empty, a hash
     that is not SHA-256, a date that is not one, or a rule naming an entry the register does not have."""
     out: list[str] = []
-    found = entries()
+    try:
+        found = entries()
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     for entry_id, entry in found.items():
         missing = [f for f in FIELDS if entry.get(f) in (None, "")]
         if missing:
@@ -191,21 +200,27 @@ def stale_sources(today: _dt.date | None = None, rules: tuple[str, ...] = ()) ->
     today = today or _dt.date.today()
     wanted = {RULES[r].source for r in rules if RULES[r].kind == "register"} if rules else None
     out = []
-    for entry_id, entry in sorted(entries().items()):
-        if wanted is not None and entry_id not in wanted:
-            continue
-        due = _add_months(_dt.date.fromisoformat(entry["retrieved"]), int(entry["review_months"]))
-        if today > due:
-            out.append({"finding": "stale_source", "source": entry_id, "retrieved": entry["retrieved"],
-                        "review_due": due.isoformat(),
-                        "message": f"{entry_id} was retrieved on {entry['retrieved']} and was due for review on "
-                                   f"{due.isoformat()}: re-read it against its URL before relying on this check"})
+    try:
+        for entry_id, entry in sorted(entries().items()):
+            if wanted is not None and entry_id not in wanted:
+                continue
+            due = _add_months(_dt.date.fromisoformat(entry["retrieved"]), int(entry["review_months"]))
+            if today > due:
+                out.append({"finding": "stale_source", "source": entry_id, "retrieved": entry["retrieved"],
+                            "review_due": due.isoformat(),
+                            "message": f"{entry_id} was retrieved on {entry['retrieved']} and was due for review on "
+                                       f"{due.isoformat()}: re-read it against its URL before relying on this check"})
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     return out
 
 
 def cited(rules: tuple[str, ...]) -> list[dict[str, Any]]:
     """Each rule with where it comes from, as evidence carries it."""
-    found = entries()
+    try:
+        found = entries()
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     out = []
     for name in rules:
         rule = RULES[name]

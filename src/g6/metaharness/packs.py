@@ -48,7 +48,9 @@ def read_pack(path: str | Path) -> tuple[dict[str, Any] | None, list[str]]:
     try:
         text = Path(path).read_text(encoding="utf-8")
         pack = json.loads(text)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         return None, [f"not a readable pack: {type(exc).__name__}"]
     problems = []
     if not isinstance(pack, dict) or pack.get("format") != FORMAT:

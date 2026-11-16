@@ -16,6 +16,25 @@ class BoundReply(dict):
         super().__init__(reply)
         self.task_identity = identity
 
+    def custody(self, copy: dict) -> BoundReply:
+        """The same custody over ``copy``, a detached JSON copy of this reply (a job's compact step renders one), so the
+        binding and owned observation activities reach ``save``. Only an activity whose JSON fields match the
+        detached snapshot receives custody; mutations never attach ownership to different content."""
+        from g6.harness.behaviour_runner import Activity
+
+        originals = self.get('assessment', {}).get('completion', {}).get('activities', [])
+        detached = copy.get('assessment', {}).get('completion', {}).get('activities', [])
+        for index, (original, held) in enumerate(zip(originals, detached)):
+            if isinstance(original, Activity) and original == held:
+                owned = Activity(held)
+                owned.owned_runs = list(original.owned_runs)
+                try:
+                    owned.execution_artifacts = json.loads(json.dumps(original.execution_artifacts))
+                except (RecursionError, MemoryError):
+                    raise ValueError("a JSON record exceeds decoder limits") from None
+                detached[index] = owned
+        return BoundReply(copy, self.task_identity)
+
 
 def write(path: Path, reply: dict, data: bytes) -> None:
     """Publish custody last. A stop at any earlier boundary leaves an inadmissible reply."""
@@ -42,5 +61,5 @@ def matches(path: Path, identity: str, *, data: bytes | None = None) -> bool:
         record = json.loads(side.read_bytes())
         return record == {"version": "review-binding.v1", "task_identity": identity,
                           "reply_sha256": hashlib.sha256(path.read_bytes() if data is None else data).hexdigest()}
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, RecursionError, MemoryError):
         return False

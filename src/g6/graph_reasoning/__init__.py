@@ -86,3 +86,34 @@ __g6_introduces__: tuple[str, ...] = ()
 
 __all__ = ["GraphReasoningBlock", "GraphReasoningInput", "GraphReasoningResult", "Model", "Refusal", "check_model",
            "checks", "explain", "finish", "parse_atom", "parse_model", "query", "reason"]
+
+
+__g6_refusals__ = {
+    "G6_E_GRAPH_REASONING_ANSWER_TOO_LARGE": "person",
+    "G6_E_GRAPH_REASONING_ARITY_CLASH": "person",
+    "G6_E_GRAPH_REASONING_BAD_INTERVAL": "person",
+    "G6_E_GRAPH_REASONING_CERTIFICATE_REFUTED": "person",
+    "G6_E_GRAPH_REASONING_CONFLICT": "person",
+    "G6_E_GRAPH_REASONING_ENGINES_DISAGREE": "person",
+    "G6_E_GRAPH_REASONING_ENGINE_ANSWER": "person",
+    "G6_E_GRAPH_REASONING_ENGINE_ERROR": "person",
+    "G6_E_GRAPH_REASONING_ENGINE_UNAVAILABLE": "person",
+    "G6_E_GRAPH_REASONING_INPUT_INVALID": "input",
+    "G6_E_GRAPH_REASONING_INPUT_TOO_LARGE": "person",
+    "G6_E_GRAPH_REASONING_NOT_CHECKED": "person",
+    "G6_E_GRAPH_REASONING_NOT_COMPARABLE": "person",
+    "G6_E_GRAPH_REASONING_NOT_EVALUATED": "person",
+    "G6_E_GRAPH_REASONING_NOT_STRATIFIABLE": "person",
+    "G6_E_GRAPH_REASONING_ONE_ENGINE": "person",
+    "G6_E_GRAPH_REASONING_PARSE_ERROR": "input",
+    "G6_E_GRAPH_REASONING_PYREASON_ERROR": "person",
+    "G6_E_GRAPH_REASONING_TIME_LIMIT": "person",
+    "G6_E_GRAPH_REASONING_TIME_LIMIT_TOO_LONG": "person",
+    "G6_E_GRAPH_REASONING_TOO_MANY_GROUNDINGS": "person",
+    "G6_E_GRAPH_REASONING_UNKNOWN_EDGE": "person",
+    "G6_E_GRAPH_REASONING_UNKNOWN_FUNCTION": "person",
+    "G6_E_GRAPH_REASONING_UNKNOWN_LABEL": "person",
+    "G6_E_GRAPH_REASONING_UNKNOWN_NODE": "person",
+    "G6_E_GRAPH_REASONING_UNSAFE_RULE": "person",
+    "G6_E_GRAPH_REASONING_VACUOUS_CLAUSE": "person",
+}

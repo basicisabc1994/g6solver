@@ -68,7 +68,10 @@ def read_job(queue: Any, job_id: str, job_class: Any, serializer: Any) -> tuple[
     if job.origin != queue.name:
         raise Refusal("G6_E_RQ_QUEUE_MISMATCH", "This job belongs to a different queue.")
     data = bounded_data(raw["data"])
-    payload = json_value(json.loads(data))
+    try:
+        payload = json_value(json.loads(data))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     if (not isinstance(payload, list) or len(payload) != 4 or not isinstance(payload[0], str)
             or not isinstance(payload[2], list) or not isinstance(payload[3], dict)):
         raise Refusal("G6_E_RQ_PAYLOAD_REFUSED", "Stored job data is not an RQ JSON call.")
@@ -82,9 +85,15 @@ def read_job(queue: Any, job_id: str, job_class: Any, serializer: Any) -> tuple[
         if raw.get(name):
             setattr(job, name, raw[name].decode("utf-8"))
     if raw.get("meta"):
-        job.meta = json_value(json.loads(raw["meta"]))
+        try:
+            job.meta = json_value(json.loads(raw["meta"]))
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     if raw.get("result"):
-        job._result = json_value(json.loads(raw["result"]))
+        try:
+            job._result = json_value(json.loads(raw["result"]))
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     if raw.get("exc_info"):
         job._exc_info = bounded_data(raw["exc_info"]).decode("utf-8")
     return job, raw
@@ -123,4 +132,7 @@ def return_value(job: Any) -> Any:
     data = base64.b64decode(fields[b"return_value"], validate=True)
     if len(data) > MAX_BYTES:
         raise Refusal(RESOURCE_LIMIT, "Decoded result exceeds 64 KiB.")
-    return json_value(json.loads(data))
+    try:
+        return json_value(json.loads(data))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None

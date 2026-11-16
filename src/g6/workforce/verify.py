@@ -412,7 +412,9 @@ def result_schema(path: Path) -> Verdict:
         return Verdict(False, "VERIFY_SCHEMA", f"{path.name} was not written")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, json.JSONDecodeError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         return Verdict(False, "VERIFY_SCHEMA", f"{path.name} is not JSON: {exc}")
     if not isinstance(data, dict):
         return Verdict(False, "VERIFY_SCHEMA", "result is not an object")

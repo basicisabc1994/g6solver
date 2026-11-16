@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from g6.core.adaptation_gate import is_automated
-from g6.core.ledger import ChainLedger
+from g6.core.ledger import LedgerError, ChainLedger
 from g6.metaharness.schema import Profile
 
 VERSION_KINDS = ("initial", "activate", "rollback", "demote")
@@ -94,39 +94,63 @@ def _store_rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str
 
 class ProfileStore:
     def __init__(self, path: str | Path | None = None, *, expect_head: str | None = None) -> None:
-        self._chain = ChainLedger(path, expect_head=expect_head, validate=_store_rules)
+        try:
+            self._chain = ChainLedger(path, expect_head=expect_head, validate=_store_rules)
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def head_hash(self) -> str:
-        return self._chain.head()
+        try:
+            return self._chain.head()
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def confirmed(self) -> dict | None:
-        rows = [e["body"] for e in self._chain.entries() if e["kind"] == "workflow"]
+        try:
+            rows = [e["body"] for e in self._chain.entries() if e["kind"] == "workflow"]
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
         return rows[-1] if rows else None
 
     def confirm(self, *, workflow_digest: str, judging_sha256: str, held_out_digest: str, accepted_by: str,
                 at: str) -> str:
         # each re-confirmation of the same workflow gets its own row id: after G6's judging code changed, and since F2
         # whenever a person confirms from a G6 state folder that has not recorded it (another client, a third time)
-        taken = {e["id"] for e in self._chain.entries() if e["kind"] == "workflow"}
+        try:
+            taken = {e["id"] for e in self._chain.entries() if e["kind"] == "workflow"}
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
         ident, again = workflow_digest, 1
         while ident in taken:
             ident = f"{workflow_digest}:{judging_sha256}" + (f":{again}" if again > 1 else "")
             again += 1
-        return self._chain.append("workflow", ident, {
-            "workflow_digest": workflow_digest, "judging_sha256": judging_sha256, "held_out_digest": held_out_digest,
-            "accepted_by": accepted_by, "identity": UNAUTHENTICATED, "at": at})
+        try:
+            return self._chain.append("workflow", ident, {
+                "workflow_digest": workflow_digest, "judging_sha256": judging_sha256, "held_out_digest": held_out_digest,
+                "accepted_by": accepted_by, "identity": UNAUTHENTICATED, "at": at})
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def _put_profile(self, profile: Profile) -> str:
         d = profile.digest()
-        if ("profile", d) not in {(e["kind"], e["id"]) for e in self._chain.entries()}:
-            self._chain.append("profile", d, {"digest": d, "profile": profile.model_dump(mode="json")})
+        try:
+            if ("profile", d) not in {(e["kind"], e["id"]) for e in self._chain.entries()}:
+                self._chain.append("profile", d, {"digest": d, "profile": profile.model_dump(mode="json")})
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
         return d
 
     def versions(self) -> list[dict]:
-        return [e["body"] for e in self._chain.entries() if e["kind"] == "version"]
+        try:
+            return [e["body"] for e in self._chain.entries() if e["kind"] == "version"]
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def profile(self, profile_digest: str) -> Profile:
-        return Profile.model_validate(self._chain.get("profile", profile_digest)["profile"])
+        try:
+            return Profile.model_validate(self._chain.get("profile", profile_digest)["profile"])
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def head(self) -> tuple[int, Profile] | None:
         versions = self.versions()
@@ -152,11 +176,17 @@ class ProfileStore:
                                 "snapshot": snapshot, "reason": reason}
         if target_version is not None:
             body["target_version"] = target_version
-        self._chain.append("version", str(number), body)
+        try:
+            self._chain.append("version", str(number), body)
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
         return number
 
     def verify(self) -> tuple[str, ...]:
-        return self._chain.verify()
+        try:
+            return self._chain.verify()
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
 
 class RunLedger:
@@ -165,7 +195,10 @@ class RunLedger:
     that proposed a change (``proposed_by``), so another process can approve a decision they led to."""
 
     def __init__(self, path: str | Path | None = None, *, expect_head: str | None = None) -> None:
-        self._chain = ChainLedger(path, expect_head=expect_head, validate=self._rules)
+        try:
+            self._chain = ChainLedger(path, expect_head=expect_head, validate=self._rules)
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     @staticmethod
     def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dict]) -> list[str]:
@@ -194,33 +227,57 @@ class RunLedger:
 
     # the g6.core.vault ledger protocol: a sealed held-out file and any incident against it are ledger rows
     def add_vault(self, vault_id: str, fixture_digest: str, *, files: int, roots: int) -> str:
-        return self._chain.append("vault", vault_id, {"vault_id": vault_id, "digest": fixture_digest, "files": files,
-                                                      "roots": roots})
+        try:
+            return self._chain.append("vault", vault_id, {"vault_id": vault_id, "digest": fixture_digest, "files": files,
+                                                          "roots": roots})
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def add_incident(self, kind: str, **fields: Any) -> str:
         ident = f"incident-{len(self.rows('incident')) + 1}"
-        return self._chain.append("incident", ident, {**fields, "incident_id": ident, "type": kind})
+        try:
+            return self._chain.append("incident", ident, {**fields, "incident_id": ident, "type": kind})
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def append(self, kind: str, ident: str, body: dict) -> str:
-        return self._chain.append(kind, ident, body)
+        try:
+            return self._chain.append(kind, ident, body)
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def has(self, kind: str, ident: str) -> bool:
         try:
-            self._chain.get(kind, ident)
+            try:
+                self._chain.get(kind, ident)
+            except (RecursionError, MemoryError):
+                raise LedgerError("a stored JSON record exceeds decoder limits") from None
         except KeyError:
             return False
         return True
 
     def get(self, kind: str, ident: str) -> dict:
         """One row's body (``KeyError`` when there is none)."""
-        return self._chain.get(kind, ident)
+        try:
+            return self._chain.get(kind, ident)
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def rows(self, kind: str | None = None) -> list[dict]:
-        return [e["body"] | {"_id": e["id"], "_kind": e["kind"]} for e in self._chain.entries()
-                if kind is None or e["kind"] == kind]
+        try:
+            return [e["body"] | {"_id": e["id"], "_kind": e["kind"]} for e in self._chain.entries()
+                    if kind is None or e["kind"] == kind]
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def head(self) -> str:
-        return self._chain.head()
+        try:
+            return self._chain.head()
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def verify(self) -> tuple[str, ...]:
-        return self._chain.verify()
+        try:
+            return self._chain.verify()
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
