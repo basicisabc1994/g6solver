@@ -361,6 +361,7 @@ def check_component(name: str) -> dict[str, Any]:
     if not locations:
         raise CodeRefused(NOT_A_PACKAGE, f"{package} is not a package folder")
     every = _roots.for_folder(Path(locations[0]), "the installed package")
+    every.refuse_if_empty("read")
     folder = every.roots[0]
     files, walked = _files(folder, every)
     cls = reg.get_class(name)

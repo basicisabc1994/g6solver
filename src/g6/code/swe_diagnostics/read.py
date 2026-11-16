@@ -124,7 +124,8 @@ def _inside(folder: Path, name: str, roots: _roots.Roots, reasons: dict[str, str
             raise ValueError(f"marker exceeds {MAX_FILE_BYTES} bytes")
         return real
     except (ValueError, OSError) as exc:
-        reasons[name] = str(exc)
+        size = str(exc) if isinstance(exc, ValueError) and str(exc).startswith("marker exceeds ") else ""
+        reasons[name] = size or "the marker could not be checked as a readable file under the declared roots"
         return None
 
 
