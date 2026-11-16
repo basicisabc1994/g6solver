@@ -161,3 +161,12 @@ def test_an_accepted_override_runs_as_a_job_and_records_the_question_digest_and_
     assert record["digests"]["question"] == shown and record["outcome"] == "substituted"
     assert record["person"] == {"answer": "accepted in the client's dialog", "name": "Ada", "authenticated": False}
     assert record["rechecked"] is True and record["cost"]["model_calls"] == 1
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "1e999"])
+def test_params_json_with_a_number_that_is_not_finite_is_invalid_input_and_nobody_is_asked(rig, number):
+    params_json = ('{"sketch": ' + json.dumps(FLOAT_PARAMS["sketch"]) + ', "cases": [{"input": {"x": 1}, "output": '
+                   + number + "}]}")
+    reply = call(rig, {**FLOAT, "params_json": params_json})
+    assert reply["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and "finite" in reply["error"]
+    assert check_envelope(reply) == [] and rig.asked == [] and rig.served == [] and rig.model.prompts == []

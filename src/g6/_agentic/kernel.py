@@ -278,6 +278,13 @@ def prepare(component: str, op: str, params: Any, *, part: str | None = None, mo
         return _refused("G6_E_INPUT_VALIDATION", f"mode must be one of {list(MODES)}", request_id=request_id)
     if not isinstance(params, Mapping):
         return _refused("G6_E_INPUT_VALIDATION", "the op's parameters must be a JSON object", request_id=request_id)
+    try:   # digested and made canonical here, inside the reply's path: a value no JSON holds is refused, never raised
+        params_digest = digest(params)
+        _child.canonical(params)
+    except (TypeError, ValueError, RecursionError) as exc:
+        return _refused("G6_E_INPUT_VALIDATION", "the op's parameters must be JSON values: finite numbers, text, "
+                                                 f"true, false, null, lists and objects with text keys "
+                                                 f"({type(exc).__name__})", request_id=request_id)
     from g6.core.registry import get_registry
 
     registry = get_registry()
@@ -332,7 +339,7 @@ def prepare(component: str, op: str, params: Any, *, part: str | None = None, mo
     quoted = json.dumps(str(reason)[:REASON_CHARS]) if str(reason).strip() else "(none given)"
     binding = {
         "Operation": f"{component}.{op}",
-        "Parameters digest": digest(params),
+        "Parameters digest": params_digest,
         "What G6's code returned": _summary(original),
         "Why an override is possible": {"refused": f"{component} refused with a limit it declares ({code})",
                                         "failed": f"{component}'s own code raised {trigger.get('exception')}",

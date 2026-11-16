@@ -39,6 +39,27 @@ def test_every_other_decode_failure_is_one_refusal(text, why):
         decode.loads(text, max_chars=100)
 
 
+@pytest.mark.parametrize("text", ["NaN", "Infinity", "-Infinity", "1e999", "-1e999", '{"a": [1, NaN]}',
+                                  '{"a": 1E400}'])
+def test_a_number_that_is_not_finite_is_refused(text):
+    with pytest.raises(decode.Undecodable, match="finite"):
+        decode.loads(text, max_chars=100)
+    with pytest.raises(decode.Undecodable, match="finite"):
+        decode.extract('{"value": [' + text + "]}", max_chars=100)
+
+
+def test_the_depth_is_measured_on_the_span_that_is_decoded():
+    deep = "[" * 300 + "]" * 300
+    for reply in ('He said "here it is: {"value": ' + deep + "}",       # a stray quote in the prose before it
+                  'a "quoted" word, then " and {"value": ' + deep + "}",
+                  'see [note] then {"value": ' + deep + "}"):
+        with pytest.raises(decode.Undecodable, match="nest"):
+            decode.extract(reply, max_chars=20_000)
+    assert decode.extract('He said "here it is: {"value": [0.5]}', max_chars=1000) == {"value": [0.5]}
+    assert decode.extract('see [note] then {"value": [0.5]}', max_chars=1000) == {"value": [0.5]}
+    assert decode.extract('a list [1, 2] and more', max_chars=1000) == [1, 2]
+
+
 def test_a_recursion_error_from_the_decoder_itself_is_a_refusal(monkeypatch):
     def deep(*args, **kwargs):
         raise RecursionError("maximum recursion depth exceeded")

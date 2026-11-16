@@ -598,3 +598,14 @@ def test_the_question_states_only_the_model_call_bound_the_code_enforces(monkeyp
         assert "a model reply that arrives after the deadline is not used" in question
     assert "given the time left as its timeout" in cut and "given the time left as its timeout" not in uncut
     assert "takes no timeout" in uncut
+
+
+# review 2, F3: a value no JSON holds (NaN, infinity) gets G6's envelope, never a raise
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+def test_parameters_no_json_can_hold_are_refused_with_an_envelope(monkeypatch, bad):
+    started, model = no_child(monkeypatch), Model([0.5])
+    params = {"sketch": FLOAT_PARAMS["sketch"], "cases": [*CASES, {"input": {"x": 8}, "output": bad}]}
+    reply = kernel.run("cegis", "synthesize", params, allow=ALLOW, llm=model.llm)
+    assert reply["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and check_envelope(reply) == []
+    assert model.prompts == [] and started == []
