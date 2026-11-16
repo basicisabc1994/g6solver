@@ -13,6 +13,7 @@ import secrets
 import zipfile
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
@@ -265,8 +266,8 @@ def write_files(artefact: Artefact, dest: str, roots: _roots.Roots, *, dry_run: 
         return {"written": [], "dry_run": True}
     target = _roots.destination(dest, roots)
     written = []
+    parents: dict[Path, tuple[int, int]] = {}
     try:
-        target.mkdir(exist_ok=True)
         for name, data in artefact.files.items():
             output = target / name
             # Recheck every parent and file immediately before writing; refuse links.
@@ -276,7 +277,7 @@ def write_files(artefact: Artefact, dest: str, roots: _roots.Roots, *, dry_run: 
                     raise CodeRefused("G6_E_BUILD_PATH", "destination contains a link")
             if not _roots.under(output.resolve(), (target.resolve(),)):
                 raise CodeRefused("G6_E_BUILD_PATH", "destination leaves its root")
-            output.parent.mkdir(parents=True, exist_ok=True)
+            _roots._prepare_write_parent(output.parent, target, parents)
             with output.open("xb") as handle:
                 handle.write(data)
             if output.read_bytes() != data:

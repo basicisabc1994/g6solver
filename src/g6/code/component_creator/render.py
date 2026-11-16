@@ -214,15 +214,18 @@ def render(spec: ComponentSpec) -> dict[str, str]:
 def write(dest: Path, files: dict[str, str]) -> list[dict[str, object]]:
     """Each of ``files`` written under ``dest`` (a new or empty folder, already confined), never over a file; what was
     written, with its size and SHA-256."""
+    from g6.code import _roots
+
     written = []
+    parents: dict[Path, tuple[int, int]] = {}
     for rel, text in files.items():
         target = (dest / rel).resolve()
         if dest not in target.parents:
             raise ValueError(f"{rel} is not inside {dest}")
         if target.exists():
             raise FileExistsError(f"{target} exists; nothing is overwritten")
-        target.parent.mkdir(parents=True, exist_ok=True)
         data = text.encode("utf-8")
+        _roots._prepare_write_parent(target.parent, dest, parents)
         with open(target, "xb") as handle:
             handle.write(data)
         written.append({"path": rel, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()})

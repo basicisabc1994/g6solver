@@ -170,7 +170,8 @@ def _runner(where: Path, env: dict[str, str], timeout: float) -> Callable[..., D
                                         "call keeps: narrow the request (paths, rev, max_count)")
         found = Done(done.returncode, done.stdout[:MAX_OUTPUT], done.stderr[:MAX_ERROR], cut)
         if found.code not in ok:
-            raise GitRefused(classify(found.said), f"git {args[0]} failed: {found.said or f'exit {found.code}'}")
+            raise GitRefused(classify(found.said), f"git {args[0]} failed with exit {found.code}; "
+                             "check the repository and the requested operation")
         return found
     return run
 

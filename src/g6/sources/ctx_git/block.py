@@ -190,8 +190,8 @@ def _write(entry: dict[str, Any], phase: str) -> str:
     """Append ``entry`` to the audit log as its ``phase``; what went wrong, or ``""``."""
     try:
         runner.record({**entry, "phase": phase})
-    except OSError as exc:
-        return f"{type(exc).__name__}: {exc}"[:300]
+    except OSError:
+        return "the audit log under G6's home could not be written"
     return ""
 
 
@@ -199,7 +199,7 @@ def _intend(entry: dict[str, Any]) -> None:
     """The call's intent in the audit log; :class:`GitRefused` (``AUDIT``) when the log cannot take it."""
     problem = _write(entry, "intent")
     if problem:
-        raise GitRefused(AUDIT, f"the audit log ({runner.audit_path()}) could not be written ({problem}), so the op was "
+        raise GitRefused(AUDIT, "the audit log under G6's home could not be written, so the op was "
                                 "not run: a change ctx_git made would go unrecorded")
 
 
