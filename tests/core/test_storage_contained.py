@@ -337,6 +337,24 @@ def test_a_network_or_device_path_is_refused_before_anything_is_resolved(root: P
     assert from_state_path.value.reason.endswith(refused.value.reason)
 
 
+@pytest.mark.parametrize("system", ["nt", "posix"])
+@pytest.mark.parametrize("raw", ["\\\\name", "\\??\\name", "//name", "/\\name", "\\/name"])
+def test_a_network_or_device_form_is_read_as_the_system_reads_it(raw: str, system: str,
+                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    # Windows reads '\\name' and '\??\name' as network or device paths; Linux and macOS read a backslash as a character
+    # of a plain name, so there only '//name' (a path some systems take as a network one) is refused
+    monkeypatch.setattr(storage.os, "name", system)
+    why = storage._elsewhere(raw)
+    monkeypatch.undo()
+    assert (why is not None) == (system == "nt" or raw.startswith("//")), (raw, system, why)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX names")
+@pytest.mark.parametrize("name", ["\\\\name", "\\??\\name"])
+def test_a_posix_name_holding_backslashes_is_a_plain_name(root: Path, name: str) -> None:
+    assert contained(root, name) == root.resolve() / name
+
+
 @pytest.mark.parametrize("raw", ["", "  ", "a\x00b.txt", "a\nb.txt", "C:secret.txt", "notes.txt:hidden", "CON",
                                  "sub/nul.txt", "LPT1.log", "aux"])
 def test_empty_control_drive_stream_and_device_names_are_refused(root: Path, raw: str) -> None:

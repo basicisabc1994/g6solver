@@ -104,7 +104,11 @@ _ELSEWHERE = ("the path is a network or device path (\\\\host\\share, //host/sha
 def _elsewhere(text: str) -> str | None:
     """Why ``text`` names a network share or a device on its words alone (``\\\\host\\share``, ``//host/share``,
     ``\\\\?\\``, ``\\\\.\\``, or ``\\??\\``, the NT form open takes as it is), or None. Every entry point asks first,
-    before anything is joined, resolved or asked about, and refuses such a path as outside in these same words."""
+    before anything is joined, resolved or asked about, and refuses such a path as outside in these same words. Only
+    Windows reads a backslash as a separator: on Linux and macOS ``\\\\name`` and ``\\??\\name`` are plain names, and
+    only ``//host/share`` is refused."""
+    if os.name != "nt":
+        return _ELSEWHERE if text.startswith("//") else None
     lead = text[:4].replace("/", "\\")
     return _ELSEWHERE if lead[:2] == "\\\\" or lead == "\\??\\" else None
 
