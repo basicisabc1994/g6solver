@@ -285,6 +285,9 @@ def test_every_remedy_names_a_registered_tool_or_op_or_tells_the_person() -> Non
                 assert remedy["tool"] in selector.PENDING_TOOLS and remedy["tool"] not in tools, key
             else:
                 assert remedy["tool"] in tools or remedy["tool"] in ops, (key, remedy["tool"])
+                schema = next(e["schema"] for e in data["entries"] if e["call"].get("tool") == remedy["tool"]
+                              and e["kind"] == "tool")
+                assert set(remedy["arguments"]) <= set(schema["properties"]), (key, remedy["arguments"])
     for remedy in selector.recovery_remedies():
         assert remedy["tell_person"] or remedy["tool"] in tools | ops, remedy
 
@@ -325,13 +328,62 @@ def _emitted() -> dict[str, set[str]]:
     return found
 
 
+def _behind_mcp() -> dict[str, set[str]]:
+    """Every G6_E_* code written in the modules whose refusals and results the MCP tools pass on as they are: the
+    review (harness/patch_review.py, the review loop's harness/completion_loop.py, the verification_* modules it
+    and the mission use), the mission's workforce/ package, and each g6.metaharness module an MCP module imports
+    (the tool-facing ones). A code is counted when its text is there, so a code only a comment names is counted too:
+    the inventory errs on the side of a remedy too many."""
+    harness = SRC / "harness"
+    files = [harness / "patch_review.py", harness / "completion_loop.py", *sorted(harness.glob("verification_*.py")),
+             *sorted((SRC / "workforce").glob("*.py"))]
+    imported = {m or "__init__" for path in (SRC / "mcp").glob("*.py")
+                for m in re.findall(r"g6\.metaharness(?:\.(\w+))?", path.read_text(encoding="utf-8"))}
+    for name in sorted(imported):
+        module = SRC / "metaharness" / f"{name}.py"
+        files.append(module if module.exists() else SRC / "metaharness" / name / "__init__.py")
+    found: dict[str, set[str]] = {}
+    for path in files:
+        for code in CODE.findall(path.read_text(encoding="utf-8")):
+            found.setdefault(code, set()).add(path.name)
+    return found
+
+
 def test_every_code_the_mcp_surface_and_the_door_emit_has_a_remedy_or_tells_the_person() -> None:
     emitted = _emitted()
     assert len(emitted) >= 60 and "G6_E_CLOUD_CONSENT_REQUIRED" in emitted and "G6_E_NO_BLOCK" in emitted
-    missing = sorted(code for code in emitted if selector.remedy_for(code) is None)
+    behind = _behind_mcp()
+    assert {"G6_E_PATCH_REVIEW", "G6_E_PATCH_STALE", "G6_E_NO_PYTHON_CHANGED", "G6_E_POLICY_BLOCKED",
+            "G6_E_JOB_UNKNOWN"} <= set(behind)
+    missing = sorted(code for code in {**emitted, **behind} if selector.remedy_for(code) is None)
     assert not missing, missing
     for code in ("G6_E_ISOLATION_UNAVAILABLE", "G6_E_LLM_DISABLED", "G6_E_LEAN_NO_MODEL"):
         assert selector.remedy_for(code) is not None, code
+
+
+@pytest.mark.parametrize("outcome,key,tool", [
+    ("[G6_E_PATCH_REVIEW] outcome: defect_detected", "defect_detected", "g6_review_patch"),
+    ("[G6_E_PATCH_REVIEW] insufficient_evidence", "insufficient_evidence", "g6_review_patch"),
+    ("[G6_E_PATCH_STALE] working tree differs from the supplied artifact digest", "G6_E_PATCH_STALE",
+     "g6_review_patch"),
+    ("[G6_E_SOMETHING_G6_HAS_NO_REMEDY_FOR] ending: untested", "untested", ""),
+])
+def test_an_outcome_word_beside_a_review_card_code_or_an_unknown_code_decides_the_remedy(
+        outcome: str, key: str, tool: str) -> None:
+    remedy = selector.remedy_for(outcome)
+    assert remedy is not None and remedy["key"] == key and remedy["tool"] == tool, remedy
+
+
+def test_a_review_card_code_alone_says_to_read_the_outcome_beside_it() -> None:
+    remedy = selector.remedy_for("G6_E_PATCH_REVIEW")
+    assert remedy is not None and "outcome" in remedy["action"]
+
+
+@pytest.mark.parametrize("code", ["G6_E_LOOP_WAITING_ON_PERSON", "G6_E_PENDING_APPROVAL", "G6_E_POLICY_BLOCKED"])
+def test_a_wait_on_the_person_tells_the_person(code: str) -> None:
+    reply = selector.select("finish my patch", "verify", last_outcome=f"[{code}] action: wait")
+    assert reply["remedy"]["tell_person"] is True and reply["next"]["tell_person"] is True, reply["remedy"]
+    assert reply["next"]["id"] != "tool:g6_improve_status"
 
 
 def test_a_declared_limit_code_points_at_the_override_tool_marked_unavailable_until_it_is_registered() -> None:

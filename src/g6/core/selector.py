@@ -91,6 +91,9 @@ def _remedy(action: str, tool: str = "", arguments: dict[str, Any] | None = None
             "setup": setup, "available": tool not in PENDING_TOOLS}
 
 
+#: Codes that only say what kind of result this is: every g6_review_patch result carries G6_E_PATCH_REVIEW, and
+#: the outcome word beside it is what says what to do.
+CARRIES_OUTCOME = frozenset({"G6_E_PATCH_REVIEW"})
 _ASK = "Ask the person; offer no other way to agree, and never answer for them."
 _SHOW = "Show the reply's report to the person as it is."
 #: Remedies by refusal code (exact), code family (a key ending ``_``), ``*_NO_MODEL``, outcome word, or
@@ -161,17 +164,88 @@ REMEDIES: dict[str, dict[str, Any]] = {
     "G6_E_MISSION_REFUSED": _remedy("The mission refused this step: tell the person what it says.", tell=True),
     "G6_E_MISSION_": _remedy("Read the mission's state and what it waits for.", "g6_mission_status",
                              {"mission_id": "<mission_id>"}),
+    "G6_E_POLICY_BLOCKED": _remedy("A policy refused this step: only the person can change it. Tell them what the "
+                                   "refusal says; never change the policy yourself.", tell=True),
+    "G6_E_PENDING_APPROVAL": _remedy("The step waits for the person's approval. " + _ASK, tell=True),
+    "G6_E_PIPELINE_FEASIBILITY_RISKY_CONFIRMATION_REQUIRED": _remedy(
+        "The mission looks risky to carry out as asked and needs the person's confirmation. " + _ASK, tell=True),
+    "G6_E_MISSING_PARAM": _remedy("An input is missing: the refusal names it. Fill it in and call again; for an op, "
+                                  "g6_describe lists its fields.", "g6_describe", {"component": "<component>"}),
+    "G6_E_INVALID_PARAM": _remedy("An input has a value G6 does not take: the refusal names it. Fix it and call "
+                                  "again; for an op, g6_describe lists its fields.", "g6_describe",
+                                  {"component": "<component>"}),
+    "G6_E_CAPABILITY_UNAVAILABLE": _remedy("The step needs a capability this server does not offer: pick another "
+                                           "call for the task.", "g6_select", {"task": "<the task>"}),
+    "G6_E_DEPENDENCY_UNAVAILABLE": _remedy("A step this one depends on has no result yet: read the mission's state.",
+                                           "g6_mission_status", {"mission_id": "<mission_id>"}),
+    "G6_E_TASK_CONTRACT_UNVERIFIABLE": _remedy(
+        "The task's standard of done cannot be checked as it is stated: say what done means and how each part is "
+        "checked.", "g6_premortem", {"task": "<task>"}),
+    "G6_E_RESULT_NOT_VERIFIED": _remedy("The result did not pass its check: report it so, never as done. " + _SHOW,
+                                        tell=True),
+    "G6_E_WORK_LOOP_NO_PROGRESS": _remedy("The work loop made no progress. " + _SHOW, tell=True),
+    "G6_E_CONFIG_INVALID": _remedy("G6's configuration or the plan is not valid: tell the person what the refusal "
+                                   "says; g6 doctor checks the setup.", tell=True, setup="g6 doctor"),
+    "G6_E_COST_GATE_": _remedy("The step is over its cost budget or has no price: only the person raises a budget. "
+                               "Tell them.", tell=True),
+    "G6_E_TIMEOUT": _remedy("The step ran out of time: tell the person; a narrower step may fit.", tell=True),
+    "G6_E_RETRY": _remedy("A tool failed for a passing reason: call the same step once more; if it fails again, "
+                          "tell the person.", tell=True),
+    "G6_E_INTERNAL": _remedy("G6 failed inside: tell the person; it is G6's fault.", tell=True),
+    "G6_E_DELIVERABLE_WITHHELD": _remedy("The result is withheld until the person resolves what it names: act on no "
+                                         "part of it. " + _SHOW, tell=True),
+    "G6_E_TESTS_DID_NOT_RUN": _remedy("The repository's tests did not run, so nothing was checked. " + _SHOW,
+                                      tell=True),
+    "G6_E_TEST_REPORT_UNKNOWN": _remedy("G6 could not read the test runner's report: tell the person; it is G6's "
+                                        "fault.", tell=True),
+    "G6_E_EXECUTION_ARTIFACT_UNAVAILABLE": _remedy(
+        "The copy G6 runs the tests in held something it cannot run with (a cache or an input it does not take). "
+        + _SHOW, tell=True),
+    "G6_E_LEARNING_": _remedy("The mission's learning step refused: " + _SHOW, tell=True),
+    "G6_E_WORKFORCE_": _remedy("The mission's own check refused: " + _SHOW, tell=True),
+    # the repository and this machine
+    "G6_E_GIT_MISSING_BINARY": _remedy("git is not installed where G6 runs: tell the person; g6 doctor says what this "
+                                       "computer needs.", tell=True, setup="g6 doctor"),
+    "G6_E_GIT_REPO_INVALID": _remedy("Check that repo is the top folder of a git repository; if it is, tell the "
+                                     "person what the refusal says.", tell=True),
+    "G6_E_GIT_SUBMODULE_REFUSED": _remedy("The repository holds a submodule that was set up, which G6 does not run "
+                                          "tests in: tell the person.", tell=True),
+    "G6_E_REPO_PYTHON_INVALID": _remedy("The Python G6 is set to run the repository's tests with is not usable: only "
+                                        "the person changes that setting; g6 doctor checks it.", tell=True,
+                                        setup="g6 doctor"),
+    "G6_E_REPO_ENV_INVALID": _remedy("The environment G6 is set to run the repository's tests with is not valid: "
+                                     "only the person changes that setting; g6 doctor checks it.", tell=True,
+                                     setup="g6 doctor"),
     # the Context Engine
     "G6_E_KNOWLEDGE": _remedy("Read which sources are indexed and shared, then search again.", "g6_knowledge_sources"),
     "G6_E_KNOWLEDGE_": _remedy("Read which sources are indexed and shared, then search again.", "g6_knowledge_sources"),
     # the review and its loop
+    "G6_E_PATCH_REVIEW": _remedy(
+        "The code every review result carries: the outcome beside it (test_integrity_compromised, defect_detected, "
+        "insufficient_evidence or supported_within_scope) says what to do. Pass that outcome back as last_outcome.",
+        "g6_select", {"task": "<the task>", "last_outcome": "<the outcome beside the code>"}),
+    "G6_E_PATCH_STALE": _remedy(
+        "The working tree changed since the digest you passed: review it again as it stands now, without the old "
+        "expected_artifact_digest.", "g6_review_patch", {"repo": "<repo>", "task": "<task>"}),
     "G6_E_PATCH_REVIEW_INTERRUPTED": _remedy("The review was interrupted: start it again.", "g6_review_patch",
                                              {"repo": "<repo>", "task": "<task>"}),
+    "G6_E_NO_PYTHON_CHANGED": _remedy(
+        "No Python file changed against the base, so nothing was tested and no loop began: make the change, or "
+        "name the right base, then call again.", "g6_review_until_clean",
+        {"repo": "<repo>", "task": "<task>", "session": "<session>"}),
+    "G6_E_DEFECT_NOT_REPRODUCED": _remedy(
+        "The loop stopped on a defect the reviewer named and no test could show. " + _SHOW, tell=True),
+    "G6_E_LOOP_WAITING_ON_PERSON": _remedy(
+        "G6's review loop waits for the person's answer to the question that was asked. " + _ASK, tell=True),
     "G6_E_REVIEW_UNTIL_CLEAN": _remedy(_SHOW, tell=True),
     "G6_E_NO_CLEAN_REVIEW": _remedy("The loop stopped with no clean review. " + _SHOW, tell=True),
     "G6_E_STOPPED": _remedy("The review stopped: " + _SHOW, tell=True),
     "G6_E_LOOP_BUSY": _remedy("Another step of this session is running: wait for its result, then call again.",
                               "metaharness_job", {"job_id": "<job_id>"}),
+    "G6_E_JOB_LIMIT": _remedy("Sixteen jobs are already pending: read one's result before starting another.",
+                              "metaharness_job", {"job_id": "<job_id>"}),
+    "G6_E_JOB_UNKNOWN": _remedy("No job is kept under that id (the server may have restarted): start the step again.",
+                                "g6_select", {"task": "<the step to start again>"}),
     # the self-improvement loop
     "G6_E_LOOP_NOT_ENROLLED": _remedy("No domain is enrolled: only the person enrols one, in the client's dialog.",
                                       "g6_improve_enrol"),
@@ -192,6 +266,8 @@ REMEDIES: dict[str, dict[str, Any]] = {
                                 "metaharness_start", {"specification_json": "<specification_json>"}),
     "G6_E_META_": _remedy("Read the workflow's record and its recovery.", "metaharness_inspect",
                           {"workflow": "<workflow>"}),
+    "G6_E_HARNESS_EXECUTOR_FAILED": _remedy("The workflow's version failed while it ran: read its record and recovery.",
+                                            "metaharness_inspect", {"workflow": "<workflow>"}),
     # the workflow record
     "G6_E_WORKFLOW_NOT_ADMITTED": _remedy("G6's workflow record is off or this call is not one it keeps: tell the "
                                           "person, who may set G6_WORKFLOW_RECORD=on.", tell=True),
@@ -258,16 +334,16 @@ def _code(outcome: str) -> str:
 
 
 def _outcome_word(text: str) -> str:
-    """The outcome a text without a code names: an outcome with an underscore wherever it stands
-    (``defect_detected``); a plain word (``open``, ``wait``) only as the whole text or after ``ending`` or
-    ``action``, so a sentence that merely holds the word is not read as it."""
+    """The outcome a text names: an outcome with an underscore wherever it stands (``defect_detected``); a plain
+    word (``open``, ``wait``) only as the whole text or after ``ending``, ``action`` or ``outcome``, so a sentence
+    that merely holds the word is not read as it."""
     lowered = (text or "").strip().lower()
     found = next((w for w in re.findall(r"[a-z][a-z_]*", lowered) if "_" in w and w in REMEDIES), "")
     if found:
         return found
     if lowered in REMEDIES:
         return lowered
-    said = re.search(r"\b(?:ending|action)\W+([a-z]+)", lowered)
+    said = re.search(r"\b(?:ending|action|outcome)\W+([a-z]+)", lowered)
     return said.group(1) if said and said.group(1) in REMEDIES else ""
 
 
@@ -295,25 +371,31 @@ def recovery_remedies(data: dict[str, Any] | None = None) -> list[dict[str, Any]
 
 def remedy_for(outcome: str, data: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """The remedy for a refusal or an outcome, or ``None`` when G6 has none. A ``G6_E_*`` code is read first: a
-    component's declared limit, then the code itself, ``*_NO_MODEL``, then its longest family prefix; otherwise the
-    first outcome word that has one. Its call is filled from the refusal's own text where that names it."""
+    component's declared limit; a code in ``CARRIES_OUTCOME`` gives way to the outcome word beside it; then the code
+    itself, ``*_NO_MODEL``, the outcome word beside a code G6 has no remedy for, then the code's longest family
+    prefix. With no code, the outcome word. Its call is filled from the refusal's own text where that names it."""
     data = data or _corpus()
     text, code = outcome or "", _code(outcome or "")
+    word = _outcome_word(text)
     key = ""
     if code:
         limits = {c for component in data["components"].values() for c in component.get("limits", ())}
         if code in limits:
             key = "component_limit"
+        elif code in CARRIES_OUTCOME and word:
+            key = word
         elif code in REMEDIES:
             key = code
         elif code.endswith("_NO_MODEL"):
             key = "*_NO_MODEL"
+        elif word:
+            key = word                                  # the outcome beside a code G6 has no remedy for
         else:
             key = max((k for k in REMEDIES if k.endswith("_") and code.startswith(k)), key=len, default="")
             if not key:
                 key = max((k for k in REMEDIES if k.startswith("G6_E_") and code.startswith(k)), key=len, default="")
     else:
-        key = _outcome_word(text)
+        key = word
     if not key:
         return None
     found = dict(REMEDIES[key])
