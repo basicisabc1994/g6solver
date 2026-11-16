@@ -18,44 +18,109 @@ from g6.code.component_creator import conformance
 from g6.code.swe_diagnostics import block as diagnostics
 from g6.code.swe_diagnostics import read
 
+# Explicit captures, rather than roots rebuilt from a file's parent at read time.
+SELF_ROOTED = {
+    ("g6.code._roots", "parse"): "Validate a person's root declaration before capturing its folder identity.",
+    ("g6.code._roots", "for_folder"): "Capture an installed package folder once at the caller's check.",
+    ("g6.sources.ctx_git.config", "parse"): "Validate the person's declared git roots, not a read-time parent.",
+    ("g6.sources.australian_legal_corpus.block", "_register"):
+        "Validate a person-selected corpus file; its size and pinned digest authorize registration.",
+}
+
 
 def test_read_requires_declared_roots():
     assert inspect.signature(_roots.read_text).parameters["roots"].default is inspect.Parameter.empty
 
 
+def _unchecked_calls(text, module):
+    """Return calls missing roots; module is the file's dotted module name."""
+    missing = []
+    targets = {"g6.code._roots.read_text": 3, "g6.core.storage.confined_path": 2}
+    tree = ast.parse(text)
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    aliases = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                package = module.split(".")[:-node.level]
+                base = ".".join([*package, *([base] if base else [])])
+            for alias in node.names:
+                if alias.name == "*":
+                    for target in targets:
+                        if target.rpartition(".")[0] == base:
+                            aliases[target.rpartition(".")[2]] = target
+                else:
+                    aliases[alias.asname or alias.name] = f"{base}.{alias.name}"
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                aliases[alias.asname or alias.name.split(".")[0]] = alias.name if alias.asname else alias.name.split(".")[0]
+
+    def qualified(node):
+        if isinstance(node, ast.Name):
+            return aliases.get(node.id, node.id)
+        if isinstance(node, ast.Attribute):
+            return f"{qualified(node.value)}.{node.attr}"
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr"
+                and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)):
+            return f"{qualified(node.args[0])}.{node.args[1].value}"
+        return ""
+
+    # Direct assignment aliases, including a saved getattr result.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and qualified(node.value) in targets:
+                    aliases[target.id] = qualified(node.value)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name, args = qualified(node.func), node.args
+        if name == "functools.partial" and args:
+            name, args = qualified(args[0]), args[1:]
+        if name not in targets:
+            continue
+        required = targets[name]
+        value = next((k.value for k in node.keywords if k.arg == "roots"), None)
+        if value is None and len(args) >= required:
+            value = args[required - 1]
+        invalid = value is None or isinstance(value, ast.Constant) and value.value is None
+        if isinstance(value, (ast.Tuple, ast.List)):
+            owner = parents.get(node)
+            while owner is not None and not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                owner = parents.get(owner)
+            capture = (module, owner.name if owner else "") in SELF_ROOTED
+            invalid = (not value.elts or not capture or any(
+                isinstance(part, ast.Attribute) and part.attr in {"parent", "parents"}
+                for part in ast.walk(value)))
+        if invalid:
+            missing.append(node.lineno)
+    return missing
+
+
 def test_no_source_call_omits_roots():
     """Census imported helpers, including aliases, without mistaking Path.read_text for G6's helper."""
     missing = []
-    targets = {"g6.code._roots.read_text": 3, "g6.core.storage.confined_path": 2}
     source = Path(__file__).resolve().parents[2] / "src"
     for file in source.rglob("*.py"):
-        tree = ast.parse(file.read_text(encoding="utf-8"))
-        aliases = {}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                for alias in node.names:
-                    aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    aliases[alias.asname or alias.name.split(".")[0]] = alias.name if alias.asname else alias.name.split(".")[0]
-
-        def qualified(node):
-            if isinstance(node, ast.Name):
-                return aliases.get(node.id, node.id)
-            if isinstance(node, ast.Attribute):
-                return f"{qualified(node.value)}.{node.attr}"
-            return ""
-
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or qualified(node.func) not in targets:
-                continue
-            required = targets[qualified(node.func)]
-            value = next((k.value for k in node.keywords if k.arg == "roots"), None)
-            if value is None and len(node.args) >= required:
-                value = node.args[required - 1]
-            if value is None or isinstance(value, ast.Constant) and value.value is None:
-                missing.append(f"{file.relative_to(source)}:{node.lineno}")
+        relative = file.relative_to(source)
+        module = ".".join(relative.with_suffix("").parts)
+        missing.extend(f"{relative}:{line}" for line in _unchecked_calls(file.read_text(encoding="utf-8"), module))
     assert not missing, missing
+
+
+@pytest.mark.parametrize("text", [
+    "from g6.core.storage import confined_path\nconfined_path(p, (p.parent,))",
+    "from g6.core.storage import confined_path\nconfined_path(p, ())",
+    "from .._roots import read_text\nread_text(p, 10)",
+    "from g6.code._roots import *\nread_text(p, 10)",
+    "import functools\nfrom g6.code import _roots\nr = functools.partial(_roots.read_text, roots=None)",
+    'from g6.code import _roots\ngetattr(_roots, "read_text")(p, 10)',
+])
+def test_census_rejects_unchecked_roots_through_indirection(text):
+    assert _unchecked_calls(text, "g6.code.x.probe"), "unchecked roots escaped the census"
 
 
 @pytest.fixture

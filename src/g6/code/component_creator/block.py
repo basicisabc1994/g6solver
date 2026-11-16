@@ -134,10 +134,10 @@ def _modules(d: ComponentCreatorInput, roots: _roots.Roots) -> tuple[dict[str, s
             continue
         modules[".".join([package, *parts])] = _roots.read_text(file, MAX_MODULE_BYTES, roots=roots)
     if not modules and walked.skipped_hard_links:
-        raise CodeRefused(SOURCE_INVALID, f"{found}: no module was read: {walked.hard_links_said()} (a second name "
+        raise CodeRefused(SOURCE_INVALID, f"{_roots._name(found, roots)}: no module was read: {walked.hard_links_said()} (a second name "
                                           "for a file kept elsewhere, which G6 does not read)")
     if not modules:
-        raise CodeRefused(SOURCE_INVALID, f"{found} holds no public Python module")
+        raise CodeRefused(SOURCE_INVALID, f"{_roots._name(found, roots)} holds no public Python module")
     return modules, package, {"kind": "ast_read", "from": str(found), "modules": len(modules), **walked.describe(),
                               "imported": False}
 
@@ -200,8 +200,9 @@ def render_op(d: ComponentCreatorInput, roots: _roots.Roots) -> dict[str, Any]:
     dest = _roots.destination(d.dest, roots)
     try:
         written = write(dest, files)
-    except (OSError, ValueError) as exc:
-        raise CodeRefused(WRITE_FAILED, f"writing into {dest} failed: {type(exc).__name__}: {exc}"[:400]) from None
+    except (OSError, ValueError):
+        raise CodeRefused(WRITE_FAILED, f"writing into {_roots._name(dest, roots)} failed: "
+                                        "the files could not be written") from None
     return answer(COMPONENT, "render", WRITTEN, f"Wrote the scaffold for {d.spec.package} into {dest}: its ops refuse "
                   "until written, and its first test fails until replaced.", action=_ACTIONS[WRITTEN],
                   evidence=[shape, {"kind": "write", "dest": str(dest), "files": written}], **_ids(d),

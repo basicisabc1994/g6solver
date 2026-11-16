@@ -304,7 +304,9 @@ def _tests_near(folder: Path, name: str, family: str, roots: _roots.Roots,
                 if real.is_file():
                     found.setdefault(real.as_posix(), _roots.read_text(candidate, MAX_FILE_BYTES, roots=roots))
             except (ValueError, OSError, CodeRefused) as exc:
-                problems.append(_problem("read", str(candidate), f"test file was not read: {exc}"))
+                reason = (f"[{exc.code}] {exc.reason}" if isinstance(exc, CodeRefused)
+                          else "the test file could not be opened and checked")
+                problems.append(_problem("read", _roots._name(candidate, roots), f"test file was not read: {reason}"))
         if found:
             break
     return found
@@ -330,7 +332,7 @@ def check_folder(path: str, roots: _roots.Roots) -> dict[str, Any]:
     """A package folder under a declared root, checked as text."""
     folder = _roots.existing(path, roots, kind="folder")
     if not (folder / "__init__.py").is_file():
-        raise CodeRefused(NOT_A_PACKAGE, f"{folder} holds no __init__.py, so it is not a package")
+        raise CodeRefused(NOT_A_PACKAGE, f"{_roots._name(folder, roots)} holds no __init__.py, so it is not a package")
     files, walked = _files(folder, roots)
     package = _package_name(folder)
     family = package.split(".")[1] if package.count(".") == 2 else ""

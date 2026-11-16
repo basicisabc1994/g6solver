@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import time
 from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -41,14 +43,127 @@ SKIP_DIRS = frozenset({".git", ".hg", ".svn", "node_modules", "__pycache__", ".t
                        ".next", ".nyc_output", "coverage"})
 #: How many hard-linked files a walk names (it counts them all).
 HARD_LINK_NAMES = 10
+CONFIG_MAX_BYTES = 1024 * 1024
+
+
+@contextmanager
+def _folder_handle(path: Path) -> Iterator[int]:
+    """Open folder metadata, following its current name, and always close the handle."""
+    if os.name == "nt":
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        create = kernel.CreateFileW
+        create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                           wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        create.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle.restype = wintypes.BOOL
+        handle = create(str(path), 0x80, 7, None, 3, 0x02000000, None)  # attributes; share; open; folder
+        if handle == wintypes.HANDLE(-1).value:
+            raise OSError("folder metadata unavailable")
+        try:
+            fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)
+        except BaseException:
+            kernel.CloseHandle(handle)
+            raise
+    else:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _final_path(fd: int) -> Path | None:
+    """The opened object's final path, without resolving its original name again."""
+    if os.name == "nt":
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        get = ctypes.WinDLL("kernel32", use_last_error=True).GetFinalPathNameByHandleW
+        get.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+        get.restype = wintypes.DWORD
+        size = 512
+        while size <= 65536:
+            buffer = ctypes.create_unicode_buffer(size)
+            used = get(msvcrt.get_osfhandle(fd), buffer, size, 0)
+            if not used:
+                raise OSError("opened path unavailable")
+            if used < size:
+                text = buffer.value
+                if text.startswith("\\\\?\\UNC\\"):
+                    raise PathRefused("the opened file is on a network path", outside=True)
+                if text.startswith("\\\\?\\"):
+                    text = text[4:]
+                return Path(os.path.normpath(text))
+            size = used + 1
+        raise OSError("opened path unavailable")
+    descriptor = f"/proc/self/fd/{fd}"
+    if os.path.islink(descriptor):
+        return Path(os.path.realpath(descriptor))
+    return None
+
+
+def _identity(info: os.stat_result) -> tuple[int, int]:
+    if not info.st_ino:
+        raise OSError("folder identity unavailable")
+    return info.st_dev, info.st_ino
+
+
+def _folder_state(folder: Path) -> tuple[Path, tuple[int, int]]:
+    with _folder_handle(folder) as fd:
+        info = os.fstat(fd)
+        if not stat.S_ISDIR(info.st_mode):
+            raise OSError("not a folder")
+        final = _final_path(fd)
+        if final is None:
+            # On systems without descriptor paths, match the resolved name to the opened folder.
+            final = folder.resolve(strict=True)
+            if _identity(os.lstat(final)) != _identity(info):
+                raise OSError("folder changed")
+        return final, _identity(info)
 
 
 @dataclass(frozen=True)
 class Roots:
-    """The declared roots (resolved) and where the declaration came from."""
+    """Final folder paths and their identities, captured once at the caller's check."""
 
     roots: tuple[Path, ...]
     source: str
+    identities: tuple[tuple[int, int], ...] = field(init=False, repr=False)
+    #: Declared folders that could not be opened at the check (missing, not a folder, unreadable). They contain nothing:
+    #: they are not in ``roots``, so no check admits a path under them; the other declared folders keep working.
+    unavailable: tuple[Path, ...] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        captured: list[tuple[Path, tuple[int, int]]] = []
+        missing: list[Path] = []
+        for root in self.roots:
+            try:
+                given = Path(_text(root))
+            except (OSError, ValueError, TypeError):
+                raise CodeRefused(PATH_INVALID, "a declared folder is not a path G6 can read") from None
+            try:
+                captured.append(_folder_state(given))
+            except (OSError, ValueError):
+                missing.append(given)
+        object.__setattr__(self, "roots", tuple(final for final, _ in captured))
+        object.__setattr__(self, "identities", tuple(identity for _, identity in captured))
+        object.__setattr__(self, "unavailable", tuple(missing))
+
+    def refuse_if_empty(self, doing: str) -> None:
+        """No usable folder: NO_ROOT when none is declared, OUTSIDE_ROOT when the declared ones could not be opened."""
+        if self.roots:
+            return
+        if self.unavailable:
+            raise CodeRefused(OUTSIDE_ROOT, "no declared folder could be opened when it was checked, so nothing is "
+                              f"{doing}")
+        raise CodeRefused(NO_ROOT, f"no folder is declared for the code extensions, so nothing is {doing}: "
+                          + how_to_declare())
 
     def describe(self) -> dict[str, object]:
         return {"roots": [str(r) for r in self.roots], "source": self.source}
@@ -59,8 +174,8 @@ def parse(text: str, source: str) -> Roots:
     The message never repeats a value from it."""
     try:
         data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise CodeRefused(CONFIG_INVALID, f"{source} is not JSON ({exc.msg} at line {exc.lineno})") from None
+    except (ValueError, RecursionError, TypeError, MemoryError):
+        raise CodeRefused(CONFIG_INVALID, f"{source} is not JSON G6 can read") from None
     if not isinstance(data, Mapping) or set(data) - {"roots"}:
         raise CodeRefused(CONFIG_INVALID, f"{source} must be a JSON object with only roots")
     roots = data.get("roots", [])
@@ -74,7 +189,10 @@ def parse(text: str, source: str) -> Roots:
             resolved.append(confined_path(raw, (Path(raw),)))
         except (ValueError, OSError):
             raise CodeRefused(CONFIG_INVALID, f"{source}: a root is not a local folder G6 can check") from None
-    return Roots(tuple(resolved), source)
+    try:
+        return Roots(tuple(resolved), source)
+    except CodeRefused:
+        raise CodeRefused(CONFIG_INVALID, f"{source}: a root is not a folder G6 can check") from None
 
 
 def load(environ: Mapping[str, str] | None = None) -> Roots:
@@ -85,8 +203,15 @@ def load(environ: Mapping[str, str] | None = None) -> Roots:
         return parse(raw, CONFIG_ENV)
     try:
         file = state_path(*CONFIG_FILE)
-        text = file.read_text(encoding="utf-8") if file.is_file() else None
-    except (OSError, ValueError):
+        text = None
+        if file.exists():
+            plain_file(file)
+            with file.open("rb") as handle:
+                data = handle.read(CONFIG_MAX_BYTES + 1)
+            if len(data) > CONFIG_MAX_BYTES:
+                raise ValueError("configuration too large")
+            text = data.decode("utf-8")
+    except (OSError, ValueError, TypeError, RecursionError, MemoryError):
         raise CodeRefused(CONFIG_INVALID, "the code configuration file under the G6 home could not be read as "
                                           "UTF-8 text; check code/config.json") from None
     if text is not None:
@@ -129,7 +254,19 @@ def _refused_path(exc: ValueError | OSError, what: str) -> CodeRefused:
 
 def under(path: Path, roots: tuple[Path, ...]) -> bool:
     """Whether the resolved ``path`` is a root or inside one."""
-    return any(path == root or root in path.parents for root in roots)
+    parts = tuple(os.path.normcase(p) for p in path.parts)
+    return any(parts[:len(root.parts)] == tuple(os.path.normcase(p) for p in root.parts) for root in roots)
+
+
+def _check_roots(roots: Roots) -> None:
+    """A changed or unavailable folder never becomes a new declaration."""
+    try:
+        for root, identity in zip(roots.roots, roots.identities, strict=True):
+            final, current = _folder_state(root)
+            if current != identity or not under(final, (root,)) or not under(root, (final,)):
+                raise OSError("folder changed")
+    except (OSError, ValueError):
+        raise CodeRefused(OUTSIDE_ROOT, "the folder changed since it was checked") from None
 
 
 def _given(raw: str, what: str) -> Path:
@@ -147,46 +284,52 @@ def _given(raw: str, what: str) -> Path:
 def existing(raw: str, roots: Roots, *, what: str = "path", kind: str = "any") -> Path:
     """The file or folder ``raw`` names, resolved; :class:`CodeRefused` unless it exists at or under a declared root.
     ``kind`` is ``file``, ``folder`` or ``any``."""
-    if not roots.roots:
-        raise CodeRefused(NO_ROOT, f"no folder is declared for the code extensions, so nothing is read: "
-                                   f"{how_to_declare()}")
+    roots.refuse_if_empty("read")
     try:
         given = _given(raw, what)
+        _check_roots(roots)
         real = confined_path(given, roots.roots)
+        _check_roots(roots)
     except (ValueError, OSError) as exc:          # labelled by the refusal's own outside flag
         raise _refused_path(exc, what) from None
     name = _name(given, roots)
     if not under(real, roots.roots):
         raise CodeRefused(OUTSIDE_ROOT, f"{what} {name} is not at or under a declared root (a link "
                                         f"out of one counts as outside): {how_to_declare()}")
-    if kind == "file" and not real.is_file():
-        raise CodeRefused(PATH_INVALID, f"{what} is not a file: {name}")
-    if kind == "folder" and not real.is_dir():
-        raise CodeRefused(PATH_INVALID, f"{what} is not a folder: {name}")
-    if kind == "any" and not real.exists():
-        raise CodeRefused(PATH_INVALID, f"nothing exists at {what}: {name}")
+    try:
+        if kind == "file" and not real.is_file():
+            raise CodeRefused(PATH_INVALID, f"{what} is not a file: {name}")
+        if kind == "folder" and not real.is_dir():
+            raise CodeRefused(PATH_INVALID, f"{what} is not a folder: {name}")
+        if kind == "any" and not real.exists():
+            raise CodeRefused(PATH_INVALID, f"nothing exists at {what}: {name}")
+    except (OSError, ValueError):
+        raise CodeRefused(PATH_INVALID, f"{name}: the file or folder could not be checked") from None
     return real
 
 
 def destination(raw: str, roots: Roots, *, what: str = "dest") -> Path:
     """A folder an op may write into: an absolute path under a declared root (never a root itself) that does not exist
     yet or is an empty folder, whose parent folder exists."""
-    if not roots.roots:
-        raise CodeRefused(NO_ROOT, f"no folder is declared for the code extensions, so nothing is written: "
-                                   f"{how_to_declare()}")
+    roots.refuse_if_empty("written")
     try:
         given = _given(raw, what)
+        _check_roots(roots)
         real = confined_path(given, roots.roots)
+        _check_roots(roots)
     except (ValueError, OSError) as exc:          # labelled by the refusal's own outside flag
         raise _refused_path(exc, what) from None
     name = _name(given, roots)
     if not under(real, roots.roots) or real in roots.roots:
         raise CodeRefused(OUTSIDE_ROOT, f"{what} {name} is not inside a declared root: "
                                         f"{how_to_declare()}")
-    if real.exists() and (not real.is_dir() or any(real.iterdir())):
-        raise CodeRefused(PATH_INVALID, f"{name} already exists and is not an empty folder; nothing is overwritten")
-    if not real.parent.is_dir():
-        raise CodeRefused(PATH_INVALID, f"the parent folder of {name} does not exist")
+    try:
+        if real.exists() and (not real.is_dir() or any(real.iterdir())):
+            raise CodeRefused(PATH_INVALID, f"{name} already exists and is not an empty folder; nothing is overwritten")
+        if not real.parent.is_dir():
+            raise CodeRefused(PATH_INVALID, f"the parent folder of {name} does not exist")
+    except (OSError, ValueError):
+        raise CodeRefused(PATH_INVALID, f"{name}: the destination folder could not be checked") from None
     return real
 
 
@@ -236,6 +379,11 @@ def walk(folder: Path, roots: Roots, *, max_files: int, max_file_bytes: int, suf
     deadline = time.monotonic() + timeout_s
     for path in _files(folder, skip_dirs, found, max_entries, deadline):
         if suffixes and path.suffix.lower() not in suffixes:
+            continue
+        try:
+            _check_roots(roots)
+        except CodeRefused:
+            found.skipped_links += 1
             continue
         if _is_link(path) or not under(path.resolve(), roots.roots):
             found.skipped_links += 1
@@ -312,16 +460,45 @@ def _files(folder: Path, skip_dirs: frozenset[str], found: Walk, max_entries: in
         stack.extend(reversed(dirs))
 
 
+def _walk_open_identity(path: Path, opened: os.stat_result, roots: Roots) -> Path:
+    """Without descriptor paths, compare the file to an lstat walk anchored by the captured root identity."""
+    for root, identity in zip(roots.roots, roots.identities, strict=True):
+        if not under(path, (root,)):
+            continue
+        relative = path.relative_to(root)
+        if not relative.parts or any(p in (".", "..") for p in relative.parts):
+            break
+        fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            if _identity(os.fstat(fd)) != identity:
+                break
+            for part in relative.parts[:-1]:
+                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = child
+            info = os.stat(relative.name, dir_fd=fd, follow_symlinks=False)
+            if (stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+                    and _identity(info) == _identity(opened)):
+                return root / relative
+        finally:
+            os.close(fd)
+    raise PathRefused("the opened file could not be matched to a declared folder", outside=True)
+
+
 def read_text(path: Path, max_bytes: int, *, roots: Roots) -> str:
-    """A contained read of a plain file, refusing oversized files before opening them. At most ``max_bytes`` of a file, as text with the line endings ``Path.read_text`` gives (undecodable bytes
-    replaced). Containment decides where a name is; the file itself must be a regular file kept under that one name
-    (``plain_file``: no link, junction or hard link, which resolving never shows), and the one opened must be it.
-    Every refusal is in G6's words, naming the file (never its full path, nor the system's words).
-    ``roots`` is the same declaration used at the caller's check; there is no default root."""
-    if not isinstance(roots, Roots) or not roots.roots:
+    """Read only after the opened handle is inside unchanged captured roots and is a regular, single-link file.
+
+    The name check is preliminary. The handle's final path decides containment; neither a path lookup's identity
+    nor a root's newly resolved name can authorize the read. Every refusal uses G6's words and a relative name.
+    """
+    if not isinstance(roots, Roots) or not (roots.roots or roots.unavailable):
         raise CodeRefused(NO_ROOT, "no checked folder was supplied for the read")
-    name = Path(path).name
+    roots.refuse_if_empty("read")
+    name = "file"
     try:
+        path = Path(_text(path))
+        name = _name(path, roots)
+        _check_roots(roots)
         path = confined_path(path, roots.roots)
         try:
             found = plain_file(path)
@@ -329,10 +506,23 @@ def read_text(path: Path, max_bytes: int, *, roots: Roots) -> str:
             raise CodeRefused(PATH_INVALID, f"{path.name}: {exc.reason}") from None
         if found.st_size > max_bytes:
             raise CodeRefused(PATH_INVALID, f"{path.name} exceeds {max_bytes} bytes")
-        with open(path, "rb") as handle:
+        # NONBLOCK keeps a POSIX file replaced by a pipe from blocking before fstat can refuse it.
+        options = {} if os.name == "nt" else {"opener": lambda p, flags: os.open(
+            p, flags | os.O_NONBLOCK | os.O_NOFOLLOW)}
+        with open(path, "rb", **options) as handle:
             opened = os.fstat(handle.fileno())
-            if (opened.st_dev, opened.st_ino) != (found.st_dev, found.st_ino) or opened.st_nlink > 1:
-                raise CodeRefused(PATH_INVALID, f"{path.name} changed between the check and the read")
+            final = _final_path(handle.fileno())
+            if final is None:
+                final = _walk_open_identity(path, opened, roots)
+            if not under(final, roots.roots):
+                raise PathRefused("the opened file is outside the declared folders", outside=True)
+            _check_roots(roots)
+            if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+                raise CodeRefused(PATH_INVALID, f"{name} is not a regular file kept under one name")
+            if _identity(opened) != _identity(found):
+                raise CodeRefused(PATH_INVALID, f"{name} changed between the check and the read")
+            if opened.st_size > max_bytes:
+                raise CodeRefused(PATH_INVALID, f"{name} exceeds {max_bytes} bytes")
             data = handle.read(max_bytes + 1)
         if len(data) > max_bytes:
             raise CodeRefused(PATH_INVALID, f"{path.name} grew beyond {max_bytes} bytes")
