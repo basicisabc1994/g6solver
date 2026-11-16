@@ -125,7 +125,10 @@ def encoded(value: Any) -> str:
 
 def decoded(text: str) -> Any:
     """A value ``encoded`` wrote, read back: the one reader of the probe's text."""
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 # --- candidates ---------------------------------------------------------------------------------------------------------

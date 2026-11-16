@@ -95,8 +95,11 @@ def record_decision(ledger: Ledger, decision: Mapping, *, recorded_at: str, acto
                     actor_role: str = "planner") -> dict:
     """Append a decision to the caller's ledger as ``DECISION_RECORDED``; returns what the ledger returns. The
     actor fields are the caller's claim, kept as given."""
-    return ledger.append("DECISION_RECORDED", recorded_at=recorded_at, actor_id=actor_id, actor_role=actor_role,
-                         payload=dict(decision))
+    try:
+        return ledger.append("DECISION_RECORDED", recorded_at=recorded_at, actor_id=actor_id, actor_role=actor_role,
+                             payload=dict(decision))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 __all__ = ["ACTION_RUN_EXPERIMENT", "ACTION_STOP", "ExperimentCandidate", "Ledger", "PlanNextActionPolicy",

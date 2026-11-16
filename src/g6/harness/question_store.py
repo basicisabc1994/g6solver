@@ -375,21 +375,32 @@ class TaskQuestions:
             raise StoreUnreadable(self.path, "the store's place holds something that is not a file")
         try:
             ledger = ChainLedger(self.path, validate=self._validate)
-        except (LedgerError, OSError, UnicodeError) as exc:
+        except (LedgerError, OSError, UnicodeError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             raise StoreUnreadable(self.path, str(exc)[:300]) from None
-        if ledger.head() != (kept or ""):
-            entries = ledger.entries()
-            before = entries[-2]["entry_sha256"] if len(entries) >= 2 else ""
-            if not entries or before != (kept or ""):
-                raise StoreUnreadable(self.path, "its chain does not end at the head G6 kept after its last write: "
-                                                 "it was emptied, cut back to an earlier prefix, or replaced")
-            self._keep(ledger.head())   # a stop between a write and its head: the head catches up
+        try:
+            if ledger.head() != (kept or ""):
+                entries = ledger.entries()
+                before = entries[-2]["entry_sha256"] if len(entries) >= 2 else ""
+                if not entries or before != (kept or ""):
+                    raise StoreUnreadable(self.path, "its chain does not end at the head G6 kept after its last write: "
+                                                     "it was emptied, cut back to an earlier prefix, or replaced")
+                self._keep(ledger.head())   # a stop between a write and its head: the head catches up
+        except (RecursionError, MemoryError):
+            raise StoreUnreadable(self.path, "a stored JSON record exceeds decoder limits") from None
         return ledger
 
     def _append(self, ledger: ChainLedger, kind: str, ident: str, body: dict) -> None:
         """One entry, bound to this task, then its head kept."""
-        ledger.append(kind, ident, {**body, "task": self.identity})
-        self._keep(ledger.head())
+        try:
+            ledger.append(kind, ident, {**body, "task": self.identity})
+        except (RecursionError, MemoryError):
+            raise StoreUnreadable(self.path, "a stored JSON record exceeds decoder limits") from None
+        try:
+            self._keep(ledger.head())
+        except (RecursionError, MemoryError):
+            raise StoreUnreadable(self.path, "a stored JSON record exceeds decoder limits") from None
 
     def state(self) -> State:
         """What the store holds now; ``StoreUnreadable`` when it cannot be read."""
@@ -415,22 +426,25 @@ class TaskQuestions:
     def _read(ledger: ChainLedger, default: int, note: str) -> State:
         asked, answers, shown, more = [], [], [], 0
         answer_scenarios, reserved = {}, []
-        for entry in ledger.entries():
-            body = entry["body"]
-            if entry["kind"] == ASKED:
-                asked.append(Asked(_question(body["question"]), _question(body["rule"]) if body.get("rule") else None,
-                                   Candidate(body["candidate"]), body.get("asked_at", ""), len(asked) + 1,
-                                   body.get('provenance')))
-            elif entry["kind"] == ANSWER:
-                answer = _answer(body["answer"])
-                answers.append(answer)
-                answer_scenarios[answer.sha256] = body.get('scenario_sha256', '')
-            elif entry["kind"] == SHOWN:
-                shown.append(dict(body))
-            elif entry["kind"] == MORE:
-                more += 1
-            elif entry["kind"] == RESERVED:
-                reserved.append(dict(body))
+        try:
+            for entry in ledger.entries():
+                body = entry["body"]
+                if entry["kind"] == ASKED:
+                    asked.append(Asked(_question(body["question"]), _question(body["rule"]) if body.get("rule") else None,
+                                       Candidate(body["candidate"]), body.get("asked_at", ""), len(asked) + 1,
+                                       body.get('provenance')))
+                elif entry["kind"] == ANSWER:
+                    answer = _answer(body["answer"])
+                    answers.append(answer)
+                    answer_scenarios[answer.sha256] = body.get('scenario_sha256', '')
+                elif entry["kind"] == SHOWN:
+                    shown.append(dict(body))
+                elif entry["kind"] == MORE:
+                    more += 1
+                elif entry["kind"] == RESERVED:
+                    reserved.append(dict(body))
+        except (RecursionError, MemoryError):
+            raise StoreUnreadable(ledger.path, "a stored JSON record exceeds decoder limits") from None
         state = State(tuple(asked), tuple(answers), tuple(shown), more, default, note,
                       answer_scenarios=answer_scenarios)
         return State(state.asked, state.answers, state.shown, more, default, note, _standard(state)[1], answer_scenarios,
@@ -463,7 +477,10 @@ class TaskQuestions:
         """Record one showing of ``asked``'s form and what came back."""
         with _locked(self.path):
             ledger = self._open()
-            ident = digest(["shown", asked.question.sha256, len(ledger.entries())])
+            try:
+                ident = digest(["shown", asked.question.sha256, len(ledger.entries())])
+            except (RecursionError, MemoryError):
+                raise StoreUnreadable(self.path, "a stored JSON record exceeds decoder limits") from None
             self._append(ledger, SHOWN, ident, {"question_sha256": asked.question.sha256, "result": result,
                                                 "shown_at": shown_at, "back_at": back_at, "seconds": round(seconds, 3)})
 
@@ -503,7 +520,10 @@ class TaskQuestions:
             state = self._read(ledger, default, note)
             if state.left < 1:
                 raise BudgetSpent(note or f"the budget of {state.allowance} question(s) for this task is spent")
-            ident = digest([RESERVED, purpose, len(ledger.entries())])
+            try:
+                ident = digest([RESERVED, purpose, len(ledger.entries())])
+            except (RecursionError, MemoryError):
+                raise StoreUnreadable(self.path, "a stored JSON record exceeds decoder limits") from None
             self._append(ledger, RESERVED, ident, {"purpose": purpose, "reserved_at": at or now()})
             return ident
 
@@ -511,7 +531,10 @@ class TaskQuestions:
         """Record that the person, in ``asked``'s form, let G6 ask one more question on this task."""
         with _locked(self.path):
             ledger = self._open()
-            ident = digest(["more", asked.question.sha256, len(ledger.entries())])
+            try:
+                ident = digest(["more", asked.question.sha256, len(ledger.entries())])
+            except (RecursionError, MemoryError):
+                raise StoreUnreadable(self.path, "a stored JSON record exceeds decoder limits") from None
             self._append(ledger, MORE, ident, {"question_sha256": asked.question.sha256, "by": by, "at": at or now()})
 
 

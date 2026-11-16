@@ -287,7 +287,10 @@ def _run(standard: Standard, executor: Callable[[Any], str] | None, decisions: s
                          standard_sha=standard_sha, predicates=tuple(keys), standard_predicates=tuple(keys),
                          gates=tuple(standard.gates))
     # EVIDENCE-01: the controls and receipts this run observed go to its own ledger, which the issuer resolves them in.
-    observed = ChainLedger()
+    try:
+        observed = ChainLedger()
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     record(observed, *(c for made in controls.values() for c in made), *receipts)
     try:
         cert = issue(facts, artifact, checks, receipts, decisions=decisions & set(standard.gates), ledger=observed)

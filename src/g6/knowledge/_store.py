@@ -82,7 +82,7 @@ def origins(sha256: str) -> list[dict[str, str]]:
         return []
     try:
         found = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError, MemoryError):
         found = None
     if not isinstance(found, list) or not all(
             isinstance(o, dict) and all(isinstance(o.get(k), str) and o[k] for k in _FIELDS)

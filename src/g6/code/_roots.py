@@ -56,7 +56,10 @@ def parse(text: str, source: str) -> Roots:
     """The declaration in ``text`` (JSON); :class:`CodeRefused` (``G6_E_CODE_CONFIG_INVALID``) when it cannot be used.
     The message never repeats a value from it."""
     try:
-        data = json.loads(text)
+        try:
+            data = json.loads(text)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     except json.JSONDecodeError as exc:
         raise CodeRefused(CONFIG_INVALID, f"{source} is not JSON ({exc.msg} at line {exc.lineno})") from None
     if not isinstance(data, Mapping) or set(data) - {"roots"}:

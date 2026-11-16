@@ -95,7 +95,10 @@ class InputDomain:
 
 
 def _json(value: Any) -> Any:
-    return json.loads(json.dumps(value, allow_nan=False))
+    try:
+        return json.loads(json.dumps(value, allow_nan=False))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def answered(oracle: Oracle, inputs: Sequence[Mapping[str, Any]]) -> list[tuple[dict[str, Any], Any]]:

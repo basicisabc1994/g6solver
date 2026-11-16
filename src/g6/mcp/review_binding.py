@@ -28,7 +28,10 @@ class BoundReply(dict):
             if isinstance(original, Activity) and original == held:
                 owned = Activity(held)
                 owned.owned_runs = list(original.owned_runs)
-                owned.execution_artifacts = json.loads(json.dumps(original.execution_artifacts))
+                try:
+                    owned.execution_artifacts = json.loads(json.dumps(original.execution_artifacts))
+                except (RecursionError, MemoryError):
+                    raise ValueError("a JSON record exceeds decoder limits") from None
                 detached[index] = owned
         return BoundReply(copy, self.task_identity)
 

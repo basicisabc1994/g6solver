@@ -141,7 +141,7 @@ class OpenAIVoice(_Paid):
                      "Content-Type": f"multipart/form-data; boundary={boundary}"})
         try:
             found = json.loads(reply.body)
-        except ValueError:
+        except (ValueError, RecursionError, MemoryError):
             raise MediaError(BACKEND_FAILED, "OpenAI's transcription is not JSON") from None
         if not isinstance(found, dict) or not isinstance(found.get("text"), str):
             raise MediaError(BACKEND_FAILED, "OpenAI's transcription has no text")

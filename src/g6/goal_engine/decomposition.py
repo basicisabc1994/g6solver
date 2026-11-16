@@ -161,7 +161,9 @@ def _parse(raw: str | list[str]) -> list[str]:
             raise ValueError("proposal output exceeds 40000 characters")
         try:
             raw = json.loads(raw)
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             raise ValueError("subgoal proposal must be a JSON array of strings") from exc
     if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
         raise ValueError("subgoal proposal must be a JSON array of strings")

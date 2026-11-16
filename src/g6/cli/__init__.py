@@ -234,7 +234,10 @@ def main(argv: list[str] | None = None) -> int:
         _print(info)
         return 0 if info.get("available") else 1
     try:
-        params = json.loads(args.params)
+        try:
+            params = json.loads(args.params)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     except json.JSONDecodeError as exc:
         print(f"params is not JSON: {exc}", file=sys.stderr)
         return 2

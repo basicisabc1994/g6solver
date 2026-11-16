@@ -103,7 +103,7 @@ def probe(path: Path, *, seconds: float = 60.0) -> dict[str, Any]:
         raise MediaError(UNDECODABLE, f"ffprobe could not read {path.name}: {ran.text(400) or f'exit {ran.code}'}")
     try:
         found = json.loads(ran.out.decode("utf-8", "replace"))
-    except ValueError:
+    except (ValueError, RecursionError, MemoryError):
         raise MediaError(UNDECODABLE, f"ffprobe's account of {path.name} is not JSON") from None
     if not isinstance(found, dict) or not isinstance(found.get("format"), dict):
         raise MediaError(UNDECODABLE, f"ffprobe found no format in {path.name}")

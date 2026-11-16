@@ -16,7 +16,10 @@ def _load(name: str) -> dict[str, Any]:
     raw = resource.read_bytes()
     if len(raw) > 4_000_000:
         raise ValueError("knowledge bundle exceeds size limit")
-    value = json.loads(raw)
+    try:
+        value = json.loads(raw)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     if not isinstance(value, dict) or value.get("version") != "0.1.0":
         raise ValueError("unsupported knowledge bundle schema")
     return value

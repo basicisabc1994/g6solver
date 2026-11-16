@@ -92,7 +92,7 @@ def repo_map(folder: Path, roots: _roots.Roots) -> dict[str, Any]:
 def _json(path: Path) -> dict[str, Any] | None:
     try:
         value = json.loads(_roots.read_text(path, MAX_FILE_BYTES))
-    except (OSError, ValueError, CodeRefused):
+    except (OSError, ValueError, CodeRefused, RecursionError, MemoryError):
         return None
     return value if isinstance(value, dict) else None
 

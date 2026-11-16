@@ -145,7 +145,10 @@ RULES: dict[str, Rule] = {
 def register() -> dict[str, Any]:
     """The committed register, read as package data."""
     text = resources.files("g6.ml").joinpath("_data/source_register.json").read_text(encoding="utf-8")
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def entries() -> dict[str, dict[str, Any]]:
@@ -158,7 +161,10 @@ def register_problems() -> list[str]:
     that is not SHA-256, a date that is not one, a rule naming an entry the register does not have, an entry no rule
     uses, or a rule of G6's own that does not say what it can do to an answer."""
     out: list[str] = []
-    found = entries()
+    try:
+        found = entries()
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     for entry_id, entry in found.items():
         missing = [f for f in FIELDS if entry.get(f) in (None, "")]
         if missing:
@@ -200,19 +206,25 @@ def stale_sources(today: _dt.date | None = None) -> list[dict[str, str]]:
     """A finding for each register entry retrieved longer ago than its review window."""
     today = today or _dt.date.today()
     out = []
-    for entry_id, entry in sorted(entries().items()):
-        due = _add_months(_dt.date.fromisoformat(entry["retrieved"]), int(entry["review_months"]))
-        if today > due:
-            out.append({"finding": "stale_source", "source": entry_id, "retrieved": entry["retrieved"],
-                        "review_due": due.isoformat(),
-                        "message": f"{entry_id} was retrieved on {entry['retrieved']} and was due for review on "
-                                   f"{due.isoformat()}: re-read it against its URL before relying on this rule"})
+    try:
+        for entry_id, entry in sorted(entries().items()):
+            due = _add_months(_dt.date.fromisoformat(entry["retrieved"]), int(entry["review_months"]))
+            if today > due:
+                out.append({"finding": "stale_source", "source": entry_id, "retrieved": entry["retrieved"],
+                            "review_due": due.isoformat(),
+                            "message": f"{entry_id} was retrieved on {entry['retrieved']} and was due for review on "
+                                       f"{due.isoformat()}: re-read it against its URL before relying on this rule"})
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     return out
 
 
 def cited(rules: tuple[str, ...]) -> dict[str, Any]:
     """The rules a result applied, each with where it comes from, as evidence carries them, and any stale source."""
-    found = entries()
+    try:
+        found = entries()
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     items = []
     for name in rules:
         rule = RULES[name]

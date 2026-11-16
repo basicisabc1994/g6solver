@@ -70,7 +70,10 @@ def prepare(session, request_id, result, sources, supplied=(), job=None, *, meta
         return
     body = call_body(result) if body is None else body
     # Refusal controls and retained-job metadata must not retain live aliases.
-    controls = json.loads(json.dumps({'job': job, 'metadata': metadata}))
+    try:
+        controls = json.loads(json.dumps({'job': job, 'metadata': metadata}))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     session._g6_tickets[key] = Ticket(tuple(sources), provider(session), frozenset(supplied),
                                     digest(body), controls['job'], controls['metadata'])
 
@@ -140,7 +143,7 @@ class _Stream:
             try:
                 with policy.admission(actual, ticket.sources, ticket.body_sha256, supplied=supplied):
                     anyio.from_thread.run(self.inner.send, packet)
-            except LLMError:
+            except (LLMError, RecursionError, MemoryError):
                 anyio.from_thread.run(self.inner.send, _refused(packet, ticket, actual))
         await anyio.to_thread.run_sync(handoff)
 

@@ -445,7 +445,10 @@ class ExecutionSnapshot(dict):
 
     @property
     def execution(self) -> dict:
-        return json.loads(self._execution)
+        try:
+            return json.loads(self._execution)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
 def bind_execution(change: repo_tests.Change, sparse: dict[str, str], *, deadline: float) -> ExecutionSnapshot:
     """Capture raw bytes before any review execution. Git-normalised blob bytes are never substituted for them."""

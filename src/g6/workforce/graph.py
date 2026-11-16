@@ -81,7 +81,7 @@ def _blocker(row: dict) -> str:
         return ""
     try:
         found = json.loads(row.get("metadata_json") or "{}")
-    except ValueError:
+    except (ValueError, RecursionError, MemoryError):
         return ""
     return str(found.get("blocker") or "") if isinstance(found, dict) else ""
 

@@ -270,8 +270,11 @@ def artifact_sha(content: object) -> str:
 
 def outcome_of(row: dict) -> Outcome:
     """A stored run's outcome (an open or empty one is blocked: nothing finished)."""
-    return Outcome.from_record(json.loads(row.get("outcome_json") or "{}"),
-                               missing=f"run {row.get('run_id')} has no outcome ({row.get('state')})")
+    try:
+        return Outcome.from_record(json.loads(row.get("outcome_json") or "{}"),
+                                   missing=f"run {row.get('run_id')} has no outcome ({row.get('state')})")
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 @dataclass(frozen=True)
@@ -516,7 +519,10 @@ class RunLedger:
             if identity != (row["holder"], row["fence"]) or (lease is None and mission["lease_holder"]):
                 raise LeaseLost("a call reservation requires the attempt's current mission lease")
             self._missions.hold(mid, lease)
-            worker = json.loads(self.instance(mid, row["instance_id"])["spec_json"])
+            try:
+                worker = json.loads(self.instance(mid, row["instance_id"])["spec_json"])
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
             if [contract.component, contract.op] not in worker["allowed"]:
                 raise ValueError("a reservation must name an allowed capability")
             reservations = self._cost_entries("cost.reserved", mid, run_id=run_id)
@@ -697,7 +703,10 @@ class RunLedger:
             (str(artifact_id), self.owner)).fetchone()
         if row is None:
             raise LookupError(NOT_FOUND)
-        return row[0], {"artifact_id": str(artifact_id), "at": row[2], **json.loads(row[1] or "{}")}
+        try:
+            return row[0], {"artifact_id": str(artifact_id), "at": row[2], **json.loads(row[1] or "{}")}
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     def makers(self, sha256: str) -> set[tuple[str, str]]:
         """The ops that made any of THIS owner's results whose content has this digest, in any of their missions
@@ -746,7 +755,10 @@ class RunLedger:
                 verdict["authority"] = "A3"
             reasons = limits.get((verdict["run_id"], verdict["unit_key"], verdict["verifies_key"], verdict["artifact_id"]))
             if reasons:
-                original = Outcome(verdict["state"], reasons=tuple(json.loads(verdict["reasons_json"])))
+                try:
+                    original = Outcome(verdict["state"], reasons=tuple(json.loads(verdict["reasons_json"])))
+                except (RecursionError, MemoryError):
+                    raise ValueError("a JSON record exceeds decoder limits") from None
                 effective = contracts.limited_outcome(original, reasons)
                 verdict.update(state=effective.state, reasons_json=json.dumps(effective.reasons))
             found.append(verdict)
@@ -775,8 +787,11 @@ class RunLedger:
             sql += " AND json_extract(e.detail_json, '$.attempt_id') = ?"
             args.append(run_id)
         rows = self._conn.execute(sql + " ORDER BY e.rowid", args).fetchall()
-        return [CostEntry.from_detail(json.loads(r[2] or "{}"), id=r[0], mission_id=r[1], recorded_at=r[3])
-                for r in rows]
+        try:
+            return [CostEntry.from_detail(json.loads(r[2] or "{}"), id=r[0], mission_id=r[1], recorded_at=r[3])
+                    for r in rows]
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     def pending_reservations(self, mission_id: str | None = None, *, unit_key: str | None = None,
                              run_id: str | None = None) -> list[CostEntry]:

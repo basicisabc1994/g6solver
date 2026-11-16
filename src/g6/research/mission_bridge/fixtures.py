@@ -23,7 +23,10 @@ NAMES = ("medico_legal", "engineering", "coding")
 
 
 def _read(stem: str) -> dict[str, Any]:
-    return json.loads((FOLDER / f"{stem}.json").read_text(encoding="utf-8"))
+    try:
+        return json.loads((FOLDER / f"{stem}.json").read_text(encoding="utf-8"))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def _named(name: str) -> str:

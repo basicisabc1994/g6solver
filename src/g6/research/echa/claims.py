@@ -59,7 +59,7 @@ def _control_holds(ledger: Any, rec: EvidenceRecord, contaminated: set) -> bool:
         return False
     try:
         control = EvidenceRecord.from_dict(ledger.get("evidence", rec.negative_control_ref))
-    except (KeyError, ValueError, TypeError):
+    except (KeyError, ValueError, TypeError, RecursionError, MemoryError):
         return False
     (of_control, control_refused), (of_check, _) = about(control), about(rec)
     return (not control_refused and control.purpose == "negative_control" and control.result == "fail"
@@ -74,7 +74,10 @@ def _once(items: list[str], item: str) -> None:
 
 
 def evaluate_claim(ledger: Any, claim_id: str) -> dict:
-    claim = ClaimRecord.from_dict(ledger.get("claim", claim_id))
+    try:
+        claim = ClaimRecord.from_dict(ledger.get("claim", claim_id))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     contaminated = ledger.contaminated_fixtures()
     subject = subject_artefact(claim)
     reasons: list[str] = []
@@ -82,7 +85,7 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
     for eid in claim.evidence_ids:
         try:
             rec = EvidenceRecord.from_dict(ledger.get("evidence", eid))
-        except (KeyError, ValueError, TypeError):
+        except (KeyError, ValueError, TypeError, RecursionError, MemoryError):
             _once(reasons, "evidence_not_traceable")
             continue
         parts, disagree = about(rec)

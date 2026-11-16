@@ -55,7 +55,7 @@ def _source_function(fn):
                     body, refs, metadata = policy.freeze_output(value)
                     value = json.loads(body)
                     content_hash = digest(value)
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, RecursionError, MemoryError):
                     # Unsupported serialization cannot establish source authority.
                     refs, metadata, content_hash, body = (policy.UNKNOWN,), {}, '', ''
                 if declaration is not None and refs != ():
@@ -152,15 +152,18 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
 
 
 def protect_reply(ctx: Any, result: dict, sources, *, supplied=(), job=None, record=True) -> dict:
-
+    metadata = {}
     try:
         body, known, metadata = policy.freeze_output(result)
-        result = json.loads(body)
+        try:
+            result = json.loads(body)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
         sources = policy.boundary_sources(sources, carried=known or ())
         payload = policy.sha256(body)
         with policy.admission(client_provider(ctx), sources, payload, supplied=supplied, disclose=record):
             return result
-    except LLMError:
+    except (LLMError, ValueError, RecursionError, MemoryError):
         return withheld_reply(result, job=job, metadata=metadata,
                               provider=client_provider(ctx), sources=sources)
 
@@ -185,7 +188,7 @@ def _matches_return(returned, result, wire=None):
             return False
         expected = value if isinstance(value, dict) else {'result': value}
         return 'structuredContent' not in wire or digest(expected) == digest(wire['structuredContent'])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, RecursionError, MemoryError):
         return False
 
 
@@ -269,7 +272,7 @@ def register(server, context_type):
     def reply(operation):
         try:
             result = operation()
-        except (LLMError, ValueError):
+        except (LLMError, ValueError, RecursionError, MemoryError):
             return public_instructions(blocked_reply(
                 f'[{policy.STATE_UNAVAILABLE}] Sharing state is unavailable; no sharing was authorized.'))
         capture = policy.current_capture()
@@ -288,7 +291,7 @@ def register(server, context_type):
         """Ask in the client dialog before sharing a source/repository with a cloud provider. Sent data cannot be recalled."""
         try:
             result = await request_grant(ctx, source, provider)
-        except (LLMError, ValueError):
+        except (LLMError, ValueError, RecursionError, MemoryError):
             return blocked_reply(f'[{policy.STATE_UNAVAILABLE}] Sharing state is unavailable; no sharing was authorized.')
         if result['status'] != 'granted':
             return blocked_reply(f'[{policy.REQUIRED}] The dialog did not grant sharing; no data was sent.')

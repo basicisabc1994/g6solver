@@ -94,10 +94,16 @@ class _Open:
         self._chain, self._ledger, self._write = chain, ledger, write
 
     def entries(self) -> list[dict]:
-        return self._ledger.entries()
+        try:
+            return self._ledger.entries()
+        except (RecursionError, MemoryError):
+            raise RecordUnreadable("a stored JSON record exceeds decoder limits") from None
 
     def has(self, kind: str, ident: str) -> bool:
-        return any(entry["kind"] == kind and entry["id"] == ident for entry in self._ledger.entries())
+        try:
+            return any(entry["kind"] == kind and entry["id"] == ident for entry in self._ledger.entries())
+        except (RecursionError, MemoryError):
+            raise RecordUnreadable("a stored JSON record exceeds decoder limits") from None
 
     def append(self, kind: str, ident: str, body: dict) -> bool:
         """One entry, and its head kept; False when this kind and id are already there (a retry). ``LedgerError``
@@ -106,9 +112,15 @@ class _Open:
             raise RecordOff("a chain opened to read takes no entry")
         if self.has(kind, ident):
             return False
-        self._ledger.append(kind, ident, body)
+        try:
+            self._ledger.append(kind, ident, body)
+        except (RecursionError, MemoryError):
+            raise RecordUnreadable("a stored JSON record exceeds decoder limits") from None
         if self._chain.keeps_head:
-            write_whole(self._chain.head, self._ledger.head() + "\n")
+            try:
+                write_whole(self._chain.head, self._ledger.head() + "\n")
+            except (RecursionError, MemoryError):
+                raise RecordUnreadable("a stored JSON record exceeds decoder limits") from None
         return True
 
 
@@ -138,15 +150,20 @@ class Chain:
         plain(self.path)
         try:
             ledger = ChainLedger(self.path, validate=self._validate)
-        except (LedgerError, OSError, UnicodeError) as exc:
+        except (LedgerError, OSError, UnicodeError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             # the ledger's own words name entries and rules, never a stored value
             raise RecordUnreadable(str(exc)[:300] if isinstance(exc, LedgerError) else "it cannot be opened") from None
-        if self.keeps_head and ledger.head() != (kept or ""):
-            entries = ledger.entries()
-            before = entries[-2]["entry_sha256"] if len(entries) >= 2 else ""
-            if not entries or before != (kept or ""):
-                raise RecordUnreadable("its chain does not end at the head G6 kept after its last write")
-            return ledger, True
+        try:
+            if self.keeps_head and ledger.head() != (kept or ""):
+                entries = ledger.entries()
+                before = entries[-2]["entry_sha256"] if len(entries) >= 2 else ""
+                if not entries or before != (kept or ""):
+                    raise RecordUnreadable("its chain does not end at the head G6 kept after its last write")
+                return ledger, True
+        except (RecursionError, MemoryError):
+            raise RecordUnreadable("a stored JSON record exceeds decoder limits") from None
         return ledger, False
 
     @contextmanager
@@ -161,7 +178,7 @@ class Chain:
                 if behind and write:
                     write_whole(self.head, ledger.head() + "\n")
                 yield _Open(self, ledger, write)
-        except OSError:
+        except (OSError, RecursionError, MemoryError):
             raise RecordUnreadable("it cannot be opened or written") from None
 
     def entries(self) -> list[dict]:
@@ -199,7 +216,7 @@ class Chain:
                         if os.path.lexists(path):
                             path.unlink()
                 return len(entries) - len(staying)
-        except (OSError, LedgerError):
+        except (OSError, LedgerError, RecursionError, MemoryError):
             raise RecordUnreadable("it cannot be rewritten") from None
 
     def append(self, kind: str, ident: str, body: dict) -> bool:

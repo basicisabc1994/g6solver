@@ -34,7 +34,10 @@ class DatasetBuilder:
             if not line.strip():
                 continue
             try:
-                obj = json.loads(line)
+                try:
+                    obj = json.loads(line)
+                except (RecursionError, MemoryError):
+                    raise ValueError("a JSON record exceeds decoder limits") from None
             except json.JSONDecodeError as exc:
                 raise ValueError(f"G6_E_LEARNING_DATASET_INVALID: line {line_num} is not JSON: {exc}") from exc
             if not isinstance(obj, dict):

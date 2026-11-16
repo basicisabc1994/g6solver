@@ -205,7 +205,10 @@ def finish(reply: Any, job_id: str) -> Any:
     body, refs, _ = cloud.freeze_output(reply)
     # the reply's task binding (review_binding.BoundReply) goes with the copy, so save writes it
     custody = getattr(reply, "custody", None)
-    reply = custody(json.loads(body)) if callable(custody) else json.loads(body)
+    try:
+        reply = custody(json.loads(body)) if callable(custody) else json.loads(body)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     # A job entered through a declared producer already carries that contract.
     # Absence of a value receipt is distinct from an explicitly unknown origin;
     # the latter stays in refs and cannot be replaced by the declaration.

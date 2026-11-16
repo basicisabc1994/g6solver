@@ -845,6 +845,8 @@
     "finish/branches": [
       "if not isinstance(reply, dict) or not isinstance(reply.get('assessment'), dict)",
       "if callable(custody)",
+      "except (RecursionError, MemoryError)",
+      "raise ValueError('a JSON record exceeds decoder limits')",
       "if refs is not None",
       "if saved",
       "if recorded is not None"

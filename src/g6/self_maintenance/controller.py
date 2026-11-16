@@ -73,29 +73,47 @@ def run_one_cycle(
     plan = focus_plan(tickets, stages, ticket_stages, book=book, policy=policy,
                       day=day, provider=preferred_provider)
     if plan.selected is None or plan.provider is None:
-        return CycleReport("blocked-escalated", "", "", plan.rationale, 0, None, None,
-                           (), "measure limiting stage and correct constraints", book.ledger.head())
+        try:
+            return CycleReport("blocked-escalated", "", "", plan.rationale, 0, None, None,
+                               (), "measure limiting stage and correct constraints", book.ledger.head())
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     ticket = next(t for t in tickets if t.id == plan.selected)
     if queue is None or not approval:
-        return CycleReport("qualified-draft", ticket.id, plan.provider, "simulation_only", 0, None, None,
-                           (), "a person must approve a bounded disposable-copy run", book.ledger.head())
+        try:
+            return CycleReport("qualified-draft", ticket.id, plan.provider, "simulation_only", 0, None, None,
+                               (), "a person must approve a bounded disposable-copy run", book.ledger.head())
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     try:
         approved_by = queue.run_approver(venture_id, approval, binding=cycle_binding(ticket, plan.provider, day))
     except (QueueError, LookupError) as exc:
         if str(exc).startswith(f"[{APPROVAL_MISMATCH}]"):
-            return CycleReport("blocked-escalated", ticket.id, plan.provider, "approval_mismatch", 0, None, None,
-                               (), "the approval was given for another ticket, provider or day", book.ledger.head())
-        return CycleReport("qualified-draft", ticket.id, plan.provider, "simulation_only", 0, None, None,
-                           (), "a person must approve a bounded disposable-copy run", book.ledger.head())
+            try:
+                return CycleReport("blocked-escalated", ticket.id, plan.provider, "approval_mismatch", 0, None, None,
+                                   (), "the approval was given for another ticket, provider or day", book.ledger.head())
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
+        try:
+            return CycleReport("qualified-draft", ticket.id, plan.provider, "simulation_only", 0, None, None,
+                               (), "a person must approve a bounded disposable-copy run", book.ledger.head())
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     path = Path(workspace)
     if not path.is_absolute() or not path.is_dir() or not (path / ".git").exists():
-        return CycleReport("blocked-escalated", ticket.id, plan.provider, "invalid_disposable_workspace",
-                           0, None, None, (), "provide a separately versioned disposable checkout", book.ledger.head(),
-                           approved_by)
+        try:
+            return CycleReport("blocked-escalated", ticket.id, plan.provider, "invalid_disposable_workspace",
+                               0, None, None, (), "provide a separately versioned disposable checkout", book.ledger.head(),
+                               approved_by)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     if not all(allowed_source(f) for f in ticket.files):
-        return CycleReport("blocked-escalated", ticket.id, plan.provider, "protected_scope",
-                           0, None, None, (), "change must be routed for independent human review", book.ledger.head(),
-                           approved_by)
+        try:
+            return CycleReport("blocked-escalated", ticket.id, plan.provider, "protected_scope",
+                               0, None, None, (), "change must be routed for independent human review", book.ledger.head(),
+                               approved_by)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     reservation = book.reserve(ticket, plan.provider, policy, day)
     observed_tokens, observed_usd = None, None
     claim = "not_started"
@@ -112,42 +130,60 @@ def run_one_cycle(
         except SelfMaintenanceRefused as refused:
             claim = refused.code
             reason = "live_agent_off" if refused.code == LIVE_AGENT_OFF else "agent_failed_or_refused"
-            return CycleReport("blocked-escalated", ticket.id, plan.provider, reason, reservation.reserved_tokens,
-                               None, None, (), "no live agent runs in this release; run the mission container",
-                               book.ledger.head(), approved_by)
+            try:
+                return CycleReport("blocked-escalated", ticket.id, plan.provider, reason, reservation.reserved_tokens,
+                                   None, None, (), "no live agent runs in this release; run the mission container",
+                                   book.ledger.head(), approved_by)
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
         claim = str(getattr(agent, "state", "unknown"))
         usage = getattr(agent, "usage", {})
         if isinstance(usage, dict):
             observed_tokens = usage.get("tokens") if type(usage.get("tokens")) is int else None
             observed_usd = (usage.get("cost_usd") if type(usage.get("cost_usd")) in (int, float) else None)
         if claim != "qualified-draft":
-            return CycleReport("blocked-escalated", ticket.id, plan.provider, "agent_failed_or_refused",
-                               reservation.reserved_tokens, observed_tokens, observed_usd, (),
-                               "inspect refusal; do not retry without a fresh budget decision", book.ledger.head(),
-                               approved_by)
+            try:
+                return CycleReport("blocked-escalated", ticket.id, plan.provider, "agent_failed_or_refused",
+                                   reservation.reserved_tokens, observed_tokens, observed_usd, (),
+                                   "inspect refusal; do not retry without a fresh budget decision", book.ledger.head(),
+                                   approved_by)
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
         # The checker is host-owned; no agent claims can replace it.
         checked = independent_checker(path, ticket)
         changed = checked.get("changed_files", ())
         if not isinstance(changed, (list, tuple)) or not all(
             isinstance(p, str) and p in ticket.files and allowed_source(p) for p in changed
         ) or not changed:
-            return CycleReport("blocked-escalated", ticket.id, plan.provider, "unsafe_or_missing_changed_scope",
-                               reservation.reserved_tokens, observed_tokens, observed_usd, (),
-                               "discard candidate and inspect changed paths", book.ledger.head(), approved_by)
+            try:
+                return CycleReport("blocked-escalated", ticket.id, plan.provider, "unsafe_or_missing_changed_scope",
+                                   reservation.reserved_tokens, observed_tokens, observed_usd, (),
+                                   "discard candidate and inspect changed paths", book.ledger.head(), approved_by)
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
         if checked.get("test_integrity") != "intact" or checked.get("verdict") != "passed":
-            return CycleReport("blocked-escalated", ticket.id, plan.provider, "independent_checks_not_passed",
-                               reservation.reserved_tokens, observed_tokens, observed_usd, (),
-                               "discard or send candidate to diagnosis", book.ledger.head(), approved_by)
+            try:
+                return CycleReport("blocked-escalated", ticket.id, plan.provider, "independent_checks_not_passed",
+                                   reservation.reserved_tokens, observed_tokens, observed_usd, (),
+                                   "discard or send candidate to diagnosis", book.ledger.head(), approved_by)
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
         # A run may be successful within frozen check scope but never self-approve.
         receipts = tuple(str(x) for x in checked.get("receipt_ids", ()) if isinstance(x, str))[:30]
         if not receipts:
-            return CycleReport("blocked-escalated", ticket.id, plan.provider, "missing_independent_receipts",
-                               reservation.reserved_tokens, observed_tokens, observed_usd, (),
-                               "obtain a host-authored verifier receipt", book.ledger.head(), approved_by)
-        return CycleReport("qualified-draft", ticket.id, plan.provider, "candidate_checked_in_scope",
-                           reservation.reserved_tokens, observed_tokens, observed_usd, receipts,
-                           "open a draft PR for independent human review; never merge automatically",
-                           book.ledger.head(), approved_by)
+            try:
+                return CycleReport("blocked-escalated", ticket.id, plan.provider, "missing_independent_receipts",
+                                   reservation.reserved_tokens, observed_tokens, observed_usd, (),
+                                   "obtain a host-authored verifier receipt", book.ledger.head(), approved_by)
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
+        try:
+            return CycleReport("qualified-draft", ticket.id, plan.provider, "candidate_checked_in_scope",
+                               reservation.reserved_tokens, observed_tokens, observed_usd, receipts,
+                               "open a draft PR for independent human review; never merge automatically",
+                               book.ledger.head(), approved_by)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     finally:
         # A provider's self-reported usage is not independent metering.
         book.settle(reservation, day, observed_tokens=observed_tokens,

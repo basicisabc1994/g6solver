@@ -41,7 +41,10 @@ class _FrozenResult:
         body, expected = self.body, self.body_sha256
         if cloud.sha256(body) != expected:
             raise ValueError('retained result digest mismatch')
-        return json.loads(body)
+        try:
+            return json.loads(body)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 class Jobs:

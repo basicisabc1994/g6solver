@@ -277,14 +277,20 @@ class CognitiveTaskRegistry:
 @lru_cache(maxsize=1)
 def _committed() -> tuple[dict[str, Any], tuple[ModelProfile, ...]]:
     text = resources.files(__package__).joinpath("data", "model_profiles.json").read_text(encoding="utf-8")
-    raw = json.loads(text)
+    try:
+        raw = json.loads(text)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     return {k: v for k, v in raw.items() if k != "models"}, tuple(ModelProfile.from_dict(r) for r in raw["models"])
 
 
 def table() -> dict[str, Any]:
     """What the committed table says about itself: ``about``, ``prices_as_of``, ``prices``, ``scores``, ``changes``
     and ``unknown_price`` (a fresh copy)."""
-    return json.loads(json.dumps(_committed()[0]))
+    try:
+        return json.loads(json.dumps(_committed()[0]))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def default_registry() -> CognitiveTaskRegistry:

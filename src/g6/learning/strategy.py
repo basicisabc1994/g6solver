@@ -60,7 +60,7 @@ def _trigger_ok(trigger: str) -> bool:
     if trigger.startswith("condition_keys:"):
         try:
             keys = json.loads(trigger.removeprefix("condition_keys:"))
-        except ValueError:
+        except (ValueError, RecursionError, MemoryError):
             return False
         return isinstance(keys, list) and all(isinstance(key, str) and key for key in keys)
     return bool(_KEY_VALUE.match(trigger))
@@ -121,7 +121,9 @@ class StrategyArtefact:
             found = cls(**{**body, "config": tuple(tuple(pair) for pair in body["config"])})
         except StrategyError:
             raise
-        except (ValueError, TypeError, KeyError) as exc:
+        except (ValueError, TypeError, KeyError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             raise StrategyError(BYTES, f"not a strategy artefact: {type(exc).__name__}") from None
         if found.to_bytes() != data:
             raise StrategyError(BYTES, "not a strategy artefact in its canonical byte form")

@@ -78,7 +78,10 @@ class Store:
             content = stream.read(self.max_bytes + 1)
         if len(content) > self.max_bytes:
             raise Refusal(RESOURCE_LIMIT, "Orchestrator state exceeds 1 MiB; ask the operator to archive records.")
-        return Snapshot.model_validate(json.loads(content))
+        try:
+            return Snapshot.model_validate(json.loads(content))
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     @property
     def backup_path(self):
@@ -116,7 +119,10 @@ class Store:
             content = stream.read(65_537)
         if len(content) > 65_536:
             raise Refusal(RESOURCE_LIMIT, "Operator roster exceeds 64 KiB.")
-        return Policy.model_validate(json.loads(content))
+        try:
+            return Policy.model_validate(json.loads(content))
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     @contextmanager
     def transaction(self):

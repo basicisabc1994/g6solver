@@ -320,7 +320,10 @@ def strict_json(text: str) -> object:
     """``text`` read as JSON, strictly: a repeated key, NaN, an infinity or a number too large to be finite is a
     ``ValueError``, never the last value given or a number that is not one."""
     try:
-        return json.loads(text, object_pairs_hook=_no_repeat, parse_constant=_no_constant, parse_float=_finite)
+        try:
+            return json.loads(text, object_pairs_hook=_no_repeat, parse_constant=_no_constant, parse_float=_finite)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     except RecursionError:
         raise ValueError("it is nested too deeply") from None
 
@@ -742,20 +745,29 @@ def issue_records(facts: MissionFacts, artifact: Artifact, records: Iterable[Sou
     # every record read: each caveat keeps the id refuse() gave it unless an accepted check or receipt has it (_fresh)
     taken = {*checks, *receipts}
     kept = [(*_named(check, receipt, _fresh(taken, check.check_id)), rec, codes) for check, receipt, rec, codes in kept]
-    ledger = ChainLedger()
+    try:
+        ledger = ChainLedger()
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     # the ledger's own order is the order G6 observed things in, the one each record's position states
     record(ledger, *sorted([*controls.values(), *(r for r, _ in receipts.values()), *(r for _, r, _, _ in kept)],
                            key=lambda item: (item.seq, isinstance(item, Receipt))))
     for receipt, rec in receipts.values():
         parts, _ = about(rec)
-        ledger.append(PROVENANCE_KIND, receipt.receipt_id, _provenance({
-            "source_kind": rec.kind, "issuer_kind": checks[receipt.check_id].kind, "environment_sha256":
-            parts.environment, "model_sha256": rec.model_sha256, "scope": parts.scope,
-            **({"binding": rec.binding.to_dict()} if rec.binding else {})}, extra))
+        try:
+            ledger.append(PROVENANCE_KIND, receipt.receipt_id, _provenance({
+                "source_kind": rec.kind, "issuer_kind": checks[receipt.check_id].kind, "environment_sha256":
+                parts.environment, "model_sha256": rec.model_sha256, "scope": parts.scope,
+                **({"binding": rec.binding.to_dict()} if rec.binding else {})}, extra))
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     for _, receipt, rec, codes in kept:   # what a refused record observed, and why it was refused, in words
-        ledger.append(PROVENANCE_KIND, receipt.receipt_id, _provenance({
-            "source_kind": str(rec.kind), "issuer_kind": CAVEAT_KIND, "kept_as": "caveat",
-            "record_id": str(rec.record_id), "refused": [[str(code), str(why)] for code, why in codes]}, extra))
+        try:
+            ledger.append(PROVENANCE_KIND, receipt.receipt_id, _provenance({
+                "source_kind": str(rec.kind), "issuer_kind": CAVEAT_KIND, "kept_as": "caveat",
+                "record_id": str(rec.record_id), "refused": [[str(code), str(why)] for code, why in codes]}, extra))
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     certificate = issue(facts, artifact, [*checks.values(), *(c for c, _, _, _ in kept)],
                         [*(r for r, _ in receipts.values()), *(r for _, r, _, _ in kept)],
                         decisions=decisions, ledger=ledger)

@@ -62,7 +62,7 @@ def _resolved(ledger: ChainLedger | None, kind: str, ident: str, body: Mapping[s
         return None
     try:
         return ledger.entry(kind, ident)["body_sha256"] == _digest(dict(body))
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, RecursionError, MemoryError):
         return False
 
 
@@ -71,7 +71,7 @@ def _provenance(ledger: ChainLedger | None, receipt_id: str) -> dict | None:
         return None
     try:
         return dict(ledger.get("provenance", receipt_id))
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, RecursionError, MemoryError):
         return None
 
 
