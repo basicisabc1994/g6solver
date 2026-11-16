@@ -275,6 +275,23 @@ def test_a_replys_code_is_its_own_envelopes_not_a_code_its_text_mentions() -> No
         "G6_E_INPUT_VALIDATION"
 
 
+@pytest.mark.parametrize(("reply", "expected"), [
+    ("Note: G6_E_X is documented here", ""),
+    ("README.md says the refusal is: G6_E_X", ""),
+    (json.dumps({"error": "Something: G6_E_X"}), ""),
+    ("G6_E_A op: G6_E_B is mentioned later", "G6_E_A"),
+], ids=["note", "readme-quote", "json-error", "leading-code-wins"])
+def test_a_replys_leading_code_allows_only_stack_transport_prefixes(reply: str, expected: str) -> None:
+    assert run._code(reply) == expected
+    assert run._code([{"type": "text", "text": reply}]) == expected
+    assert run._code({"message": reply}) == expected
+    for text in ("G6_E_X details", "[G6_E_X] op: details",
+                 "Error calling tool 'g6_find': G6_E_X details",
+                 "Error executing tool g6_find: [G6_E_X] details"):
+        assert run._code(text) == "G6_E_X"
+        assert run._code(json.dumps({"error": text})) == "G6_E_X"
+
+
 def test_a_command_that_only_names_a_pytest_file_is_no_test_run() -> None:
     assert not run.TEST_COMMAND.search("powershell -Command \"rg --files -g pytest.ini -g setup.cfg\"")
     assert not run.TEST_COMMAND.search("Get-Content pytest-plugins.txt")

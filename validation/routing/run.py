@@ -621,8 +621,9 @@ def finished_codex(text: str) -> bool:
 TEST_COMMAND = re.compile(r"(?<![\w.-])(?:pytest|unittest)(?![\w.-])")
 _FAILED = re.compile(r"\b\d+ (?:failed|errors?)\b|\bExit code [1-9]")
 _G6_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
-#: An error a client reports for a refused call leads with its code, after at most an "Error ...:" preamble.
-_LEADING_CODE = re.compile(r"\s*(?:[^\[\n]*?:\s*)?\[?(G6_E_[A-Z0-9_]+)\]?")
+#: Only FastMCP's and the MCP SDK's transport prefixes may precede a refused call's leading code.
+TRANSPORT_PREFIXES = (r"Error calling tool '[a-z][a-z0-9_]*': ", r"Error executing tool [a-z][a-z0-9_]*: ")
+_LEADING_CODE = re.compile(r"\s*(?:" + "|".join(TRANSPORT_PREFIXES) + r")?\[?(G6_E_[A-Z0-9_]+)\]?")
 #: Claude Code's file tools, and the argument that names the file each one changes.
 EDIT_TOOLS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 

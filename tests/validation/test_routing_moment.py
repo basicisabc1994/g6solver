@@ -149,6 +149,19 @@ def test_the_order_of_a_sessions_steps_is_read_from_its_log(client: str) -> None
 
 
 @pytest.mark.parametrize("client", CLIENTS)
+@pytest.mark.parametrize("reply", [
+    "Note: G6_E_SENSITIVE_COMPONENT_DENIED is documented here",
+    "README.md says the refusal is: G6_E_SENSITIVE_COMPONENT_DENIED",
+    json.dumps({"error": "Something: G6_E_SENSITIVE_COMPONENT_DENIED"}),
+], ids=["note", "readme-quote", "json-error"])
+def test_a_mentioned_code_cannot_reach_or_credit_the_refusal_moment(client: str, reply: str) -> None:
+    found = judged(client, REFUSED, [("call", "g6_review_patch", REVIEW, reply)],
+                   "Allow patch_review.review where G6 is registered.")
+    assert not found["moment_reached"]
+    assert not found["moment_hit"]
+
+
+@pytest.mark.parametrize("client", CLIENTS)
 def test_call_before_final_is_a_review_after_the_last_python_edit(client: str) -> None:
     edit, review = ("edit", "shop/prices.py"), ("call", "g6_review_patch", REVIEW, STARTED)
     hit = judged(client, BEFORE, [edit, ("test", False), review])
