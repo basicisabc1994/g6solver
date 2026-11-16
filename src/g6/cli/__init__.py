@@ -239,27 +239,44 @@ def main(argv: list[str] | None = None) -> int:
     except json.JSONDecodeError as exc:
         print(f"params is not JSON: {exc}", file=sys.stderr)
         return 2
-    from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
+    from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, invoke_checked
     from g6.core.consent_registry import GuardedRegistry
+    from uuid import uuid4
 
     # The same checked call as g6_invoke and g6.invoke: a verified stands only when G6's own re-check reproduces it, a
     # sensitive op runs only when the person lists it in G6_MCP_SENSITIVE, and a blocked reply exits 1.
     name = f"{args.component}.{args.op}"
+    request_id = uuid4().hex[:12]
+
+    def failed(message: str, door_reply: dict | None = None) -> int:
+        error = f"[G6_E_INVOKE_FAILED] {message}"
+        reply_request_id = (door_reply.get("request_id") or request_id) if door_reply else request_id
+        failure = blocked_reply(error, request_id=reply_request_id)
+        if door_reply and door_reply.get("run_id"):
+            failure["run_id"] = door_reply["run_id"]
+        if args.json:
+            _print(failure)
+        else:
+            print(f"{error} completion_state: blocked-escalated", file=sys.stderr)
+        return 1
+
     try:
         reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(), registry=GuardedRegistry(),
+                               request_id=request_id,
                                how_to_allow=f"Only the person who runs G6 can allow it, by listing {name} (or "
                                             f"{args.component}) in {SENSITIVE_ENV} where they run g6.")
-    except Exception:  # noqa: BLE001 - the CLI masks component runtime failures, including their paths and text
-        message = f"G6: component {args.component!r}, op {args.op!r} failed while running."
-        if args.json:
-            _print({"completion_state": "blocked-escalated", "error": message})
-        else:
-            print(f"{message} completion_state: blocked-escalated", file=sys.stderr)
-        return 1
+    except (Exception, SystemExit):  # noqa: BLE001 - mask op failures, but let KeyboardInterrupt propagate
+        return failed(f"G6: component {args.component!r}, op {args.op!r} failed while running.")
     if "result" not in reply:
-        print(reply["error"], file=sys.stderr)
+        if args.json:
+            _print(reply)
+        else:
+            print(reply["error"], file=sys.stderr)
         return 1
-    _print(reply["result"])
+    try:
+        _print(reply["result"])
+    except (Exception, SystemExit):  # noqa: BLE001 - JSON encoding may run a result object's own code
+        return failed(f"G6: component {args.component!r}, op {args.op!r}: the result could not be written as JSON.", reply)
     return 0 if reply["ok"] else 1
 
 
