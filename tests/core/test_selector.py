@@ -134,6 +134,13 @@ def test_the_action_gate_as_next_shows_the_field_to_fill_and_how() -> None:
     assert "action_type" in nxt["say"] and "allow, confirm, review or block" in nxt["say"], nxt["say"]
 
 
+def test_a_validated_next_that_ran_on_placeholders_or_defaults_says_to_fill_them_first() -> None:
+    nxt = selector.select("what is the expected improvement of trying the next configuration", "plan")["next"]
+    assert nxt["id"] == "op:decision_making.expected_improvement" and nxt["validated"], nxt
+    assert {"mean", "std", "best"} <= set(nxt["fill"]), nxt
+    assert "before relying on its answer" in nxt["say"] and all(f in nxt["say"] for f in nxt["fill"]), nxt["say"]
+
+
 def test_the_gate_hint_example_is_an_act_the_gate_decides() -> None:
     """The example the hint teaches is an action type the gate profiles, and the gate decides it."""
     from g6.mcp import invoke_reply

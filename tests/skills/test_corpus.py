@@ -90,7 +90,7 @@ def test_an_op_template_is_validated_only_when_g6_invoke_runs_it_as_given(monkey
             assert component in corpus.RUN_AT_BUILD and not entry["sensitive"] and error is None, entry["id"]
             ran = invoke_reply(component, op, entry["call"]["arguments"]["params_json"], allow_sensitive=frozenset())
             assert ran["completion_state"] != "blocked-escalated", (entry["id"], ran["warning_card"])
-            assert entry["issues"] == [] and entry["fill"] == [], entry["id"]
+            assert entry["issues"] == [], entry["id"]
         else:
             assert entry["issues"], entry["id"]
         for issue in entry["issues"]:
@@ -104,6 +104,28 @@ def test_a_template_the_op_refuses_as_given_names_the_fields_to_fill() -> None:
     assert gate["validated"] is False and gate["fill"] == ["action"], gate
     assert gate["issues"][0].startswith("[G6_E_ACTION_GATING_ACTION_REQUIRED] action_gating.evaluate:")
     assert full["op:coding_agent_gate.preflight"]["validated"] is True
+
+
+def _unfilled(value: object) -> bool:
+    return (value in ([], {}, "") or value is False or (type(value) in (int, float) and value == 0)
+            or (isinstance(value, str) and re.fullmatch(r"<[^<>]*>", value) is not None))
+
+
+def test_fill_names_every_field_the_template_leaves_absent_empty_or_a_placeholder() -> None:
+    """Validated or not, ``fill`` lists each field the template holds as an empty value or a placeholder, and each
+    field the op requires that the template leaves out (for an op that requires none, those its help line names):
+    a run as given that answered only on placeholders or defaults is not a usable answer."""
+    full = {entry["id"]: entry for entry in corpus.entries()}
+    for entry in full.values():
+        if entry["kind"] != "op":
+            continue
+        params = json.loads(entry["call"]["arguments"]["params_json"])
+        unfilled = {key for key, value in params.items() if _unfilled(value)}
+        assert unfilled <= set(entry["fill"]), (entry["id"], sorted(unfilled - set(entry["fill"])))
+    improvement = full["op:decision_making.expected_improvement"]
+    assert improvement["validated"] and {"mean", "std", "best"} <= set(improvement["fill"]), improvement
+    assert {"task", "answer"} <= set(full["op:coding_agent_gate.verify_answer"]["fill"])
+    assert full["op:coding_agent_gate.preflight"]["fill"] == ["task"]
 
 
 def test_only_ops_that_compute_over_their_input_alone_are_run_when_the_corpus_is_built() -> None:

@@ -914,9 +914,14 @@ FILL_HINTS = {
 
 
 def _fill_say(candidate: dict[str, Any]) -> str:
-    """What ``next`` says about a call whose template is not known to run as given: the fields to fill and why."""
-    if candidate["validated"] or candidate["kind"] != "op":
+    """What ``next`` says about an op's template: for one that ran as given on placeholders or defaults, to fill
+    them before relying on its answer; for one not known to run as given, the fields to fill and why."""
+    if candidate["kind"] != "op":
         return ""
+    if candidate["validated"]:
+        fields = candidate["fill"]
+        return (f"This call ran as given when G6 was built, but only on placeholders or defaults: fill "
+                f"{', '.join(fields)} with your own values before relying on its answer." if fields else "")
     hint = FILL_HINTS.get(candidate["id"], "")
     if not hint:
         fields = candidate["fill"]

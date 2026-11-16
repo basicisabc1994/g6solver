@@ -15,8 +15,10 @@ and compares, so it cannot drift. It holds, as G6's own built-in text only:
   component that is not sensitive, run as given through ``g6_invoke``'s own path in a scratch G6 home
   (``_run_as_given``). ``validated`` is true only when that run was not refused; every other template (refused by
   the door or the op, or never run because it could act, needs a model, a program, isolation or an optional extra)
-  is ``validated: false``, with ``issues`` saying why in G6's words and ``fill`` naming the fields the agent must
-  supply. ``g6_select`` reads that and imports no component, so its reply never depends on what the host can
+  is ``validated: false``, with ``issues`` saying why in G6's words. Every op's ``fill``, validated or not, names
+  the fields the agent must supply: each its template holds as a placeholder or empty, and each the op's contract
+  requires that the template leaves out (for an op that requires none, so that its empty template runs on defaults
+  alone, the fields its help line's signature names). ``g6_select`` reads that and imports no component, so its reply never depends on what the host can
   import; the build records no time, path or host value, so it is the same on every machine.
 
 The separate abstraction server is registered by the person alone, apart from ``g6-mcp`` (``SERVERS_NOT_SELECTED``).
@@ -448,6 +450,32 @@ def _fill(said: str, params: dict[str, Any], fields: dict[str, Any]) -> list[str
     return named or sorted(params)
 
 
+def _unfilled(value: Any) -> bool:
+    """Whether a template value is a typed placeholder or empty (``_placeholder``'s values, or "")."""
+    return (value in ([], {}, "") or value is False or (type(value) in (int, float) and value == 0)
+            or (isinstance(value, str) and re.fullmatch(r"<[^<>]*>", value) is not None))
+
+
+def _declared(op: str, line: str, required: set[str], fields: dict[str, Any]) -> set[str]:
+    """The fields the agent must supply for the op: those its contract requires; or, for an op that requires none
+    (its template is empty and runs on defaults alone), those of its typed input that its own help line names in its
+    signature (``expected_improvement(mean, std, best, xi): ...``)."""
+    must = set(required) - {"op", "operation"}
+    if must:
+        return must
+    said = re.match(rf"\s*{re.escape(op)}\s*\(([^)]*)\)", line)
+    named = {m.group(1) for part in (said.group(1).split(",") if said else ())
+             if (m := re.match(r"\s*\**([a-z_][a-z0-9_]*)", part))}
+    return (named & set(fields)) - {"op", "operation"}
+
+
+def _complete_fill(fill: list[str], params: dict[str, Any], declared: set[str], fields: dict[str, Any]) -> list[str]:
+    """``fill`` with every field the template holds as a placeholder or empty, and every declared field it leaves
+    out: all the agent must supply before relying on the call's answer (kept within the typed input's fields)."""
+    return sorted((set(fill) | {k for k, v in params.items() if _unfilled(v)} | (declared - set(params)))
+                  & set(fields))
+
+
 def _not_run(module: Any, op: str, name: str, confined: bool) -> str:
     """Why an op is not run when the corpus is built, or "" when it is."""
     if op in set(getattr(module, "__g6_sensitive_ops__", ())):
@@ -565,6 +593,7 @@ def _components_and_ops() -> tuple[dict[str, Any], list[dict[str, Any]]]:
                                        f"as given is unknown; {what}"]
             else:
                 validated, issues, fill = _run_as_given(name, op, params, fields)
+            fill = _complete_fill(fill, params, _declared(op, line, required, fields), fields)
             words = re.findall(r"[a-z]+", op)
             phases = sorted({p for w in words for p in _OP_PHASES.get(w, ())}, key=PHASES.index)
             cost = "high" if has_model else "medium" if (op in sensitive or outside or confined) else "low"
