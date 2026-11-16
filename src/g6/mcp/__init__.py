@@ -187,7 +187,7 @@ def build_server(surface: Any = None) -> Any:
 
         return report(useful_parallel_work=useful_parallel_work)
 
-    from g6.mcp.catalogue import host_facts, shown_components, unshipped_reply
+    from g6.mcp.catalogue import host_facts, shown_components, unloadable, unshipped_reply
 
     @server.tool()
     def g6_components() -> list[str]:
@@ -206,7 +206,11 @@ def build_server(surface: Any = None) -> Any:
         hidden = unshipped_reply(component)     # a name G6 did not ship, before the person shares component_catalogue
         if hidden is not None:
             return hidden
-        return host_facts(describe_reply(component))    # this computer's facts only with host_configuration shared
+        try:
+            info = describe_reply(component)
+        except Exception as exc:    # a built-in that fails to load: G6's words, not the error's text (paths)
+            return unloadable(component, exc)
+        return host_facts(info)    # this computer's facts only with host_configuration shared
 
     @server.tool()
     def g6_invoke(component: str, op: str, params_json: str = "{}") -> dict:

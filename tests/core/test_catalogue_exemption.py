@@ -189,6 +189,49 @@ def test_a_fresh_describe_of_every_shipped_component_holds_nothing_of_this_compu
         assert not re.search(r"[\\/]" + re.escape(user) + r"(?!\w)", reply), (name, "the user name")
 
 
+def test_a_fresh_describe_of_a_built_in_that_fails_to_import_answers_in_g6s_words(tmp_path, monkeypatch,
+                                                                                  registry_reset):
+    from g6.core import registry
+
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    real = registry.ComponentRegistry.get_module
+
+    def broken(self, name):
+        if name == "grounding":
+            raise ImportError(f"cannot import name 'x' from 'y' (C:\\Users\\{HOMEMARK}\\site-packages\\y.py)")
+        return real(self, name)
+    monkeypatch.setattr(registry.ComponentRegistry, "get_module", broken)
+    described, other = _calls([("g6_describe", {"component": "grounding"}), ("g6_describe", {"component": "lean"})])
+    assert HOMEMARK not in described and "site-packages" not in described, described[:400]
+    assert "'available': False" in described and "grounding" in described, described[:400]
+    assert "'available': True" in other                                  # the next call is answered as before
+
+
+def test_a_fresh_describe_runs_no_program(tmp_path, monkeypatch, registry_reset):
+    """A review signature is checked by running ssh-keygen (``component_certificate.signed_review``), which a fresh
+    describe reaches through ``vetting.summary``. It cannot run there: every package G6 ships declares no signed
+    review, so the check returns before its program. If a shipped package ever declares one, this test fails, and the
+    check must first be made unreachable for a client that has granted nothing."""
+    import subprocess
+
+    from g6.core import component_process, vetting
+    from g6.core.discovery import _package
+    from g6.mcp import catalogue
+
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    names = sorted(catalogue.shipped())
+    declared = {name: vetting.declared(_package(name)) for name in names}
+    assert not [name for name, value in declared.items() if isinstance(value, dict) and value.get("signed_review")]
+
+    def no_program(*args, **kwargs):
+        raise AssertionError(f"a fresh describe started a program: {args[:1]}")
+    monkeypatch.setattr(subprocess, "Popen", no_program)
+    monkeypatch.setattr(component_process, "run_contained", no_program)
+    replies = _calls([("g6_describe", {"component": name}) for name in names])
+    assert all("'available': True" in reply for reply in replies)
+    assert all("'signed_review': True" not in reply for reply in replies)
+
+
 def test_outside_an_mcp_call_a_description_keeps_this_computers_facts(tmp_path, monkeypatch, registry_reset):
     from g6.mcp import describe_reply
 

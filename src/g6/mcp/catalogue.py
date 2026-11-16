@@ -125,6 +125,14 @@ def host_facts(info: dict) -> dict:
     return shown
 
 
+def unloadable(name: str, exc: BaseException) -> dict:
+    """``g6_describe``'s reply over MCP for a component G6 could not load here: in G6's words and the error's class,
+    never the error's text, which can hold this computer's paths."""
+    return {"name": name, "available": False,
+            "note": f"G6 could not load this component on this computer ({type(exc).__name__}); the person can see "
+                    f"why with g6 describe {name} in a terminal."}
+
+
 def _provider(capture: policy.Capture) -> str:
     return capture.client[0] if capture.client else "cloud:unknown"
 
@@ -180,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
 
 __all__ = ["CATALOGUE_FIELDS", "EXTENSION_SOURCE", "HOST_FACTS_LEFT_OUT", "HOST_SOURCE", "HOST_VALUE", "NEED_FIELDS",
            "PATH", "UNSHIPPED", "build", "built_in", "carry", "dumps", "extension", "host_facts", "shipped",
-           "shown_components", "unshipped_reply"]
+           "shown_components", "unloadable", "unshipped_reply"]
 
 if __name__ == "__main__":
     raise SystemExit(main())
