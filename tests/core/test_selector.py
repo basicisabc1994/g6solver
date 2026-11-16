@@ -432,10 +432,11 @@ def test_a_sensitive_refusal_reroutes_to_the_person_with_the_setup_step() -> Non
 
 
 @pytest.mark.parametrize("outcome,step", [
-    ("[G6_E_SENSITIVE_COMPONENT_DENIED] while running setup.py: ctx_git.push is not available", "ctx_git.push"),
+    ("[G6_E_SENSITIVE_COMPONENT_DENIED] ctx_git.push is not available on this surface", "ctx_git.push"),
+    ("[G6_E_SENSITIVE_COMPONENT_DENIED] while running setup.py: ctx_git.push is not available", "<component.op>"),
     ("[G6_E_SENSITIVE_COMPONENT_DENIED] evil.payload is not available on this surface", "<component.op>"),
     ("[G6_E_SENSITIVE_COMPONENT_DENIED] grounding.check_claim is not available", "<component.op>"),
-    ("[G6_E_SENSITIVE_COMPONENT_DENIED] notes.txt then patch_review.review", "patch_review.review"),
+    ("[G6_E_SENSITIVE_COMPONENT_DENIED] notes.txt then patch_review.review", "<component.op>"),
 ])
 def test_the_setup_step_names_only_a_sensitive_op_the_corpus_knows(outcome: str, step: str) -> None:
     reply = selector.select("push my branch", "implement", last_outcome=outcome)
@@ -469,7 +470,8 @@ def test_outcomes_only_the_person_resolves_say_so(outcome: str) -> None:
 def test_a_sentence_that_merely_holds_an_outcome_word_is_not_read_as_it() -> None:
     assert selector.remedy_for("please wait, the file is open") is None
     assert selector.remedy_for("ending: open")["key"] == "open"
-    assert selector.remedy_for("the review said defect_detected twice")["key"] == "defect_detected"
+    assert selector.remedy_for("defect_detected")["key"] == "defect_detected"
+    assert selector.remedy_for("the review said defect_detected twice") is None
     reply = selector.select("review my patch", last_outcome="C:/private/place refused it")
     assert "C:/private" not in json.dumps(reply["mechanisms"]) and reply["remedy"] is None
 
@@ -480,25 +482,83 @@ GATE_REFUSAL = json.dumps({
     "warning_card": {"code": "G6_E_ACTION_GATING_ACTION_REQUIRED", "message": "evaluate: action is required"}})
 
 
+def _reply(component: str, op: str, code: str, state: str = "blocked-escalated", **more: object) -> str:
+    """A reply in the shape g6_invoke returns, with its own code on its warning card."""
+    return json.dumps({"ok": state != "blocked-escalated", "result": {"component": component, "op": op, **more},
+                       "completion_state": state, "warning_card": {"code": code, "message": "refused"}})
+
+
 @pytest.mark.parametrize("outcome,component", [
     ("G6_E_ACTION_GATING_ACTION_REQUIRED evaluate: action is required", "action_gating"),
     (GATE_REFUSAL, "action_gating"),
-    ('{"ok": false, "result": {"component": "datalog", "op": "query", "code": "G6_E_DATALOG_PARSE_ERROR"}, '
-     '"completion_state": "blocked-escalated"}', "datalog"),
+    (_reply("datalog", "query", "G6_E_DATALOG_PARSE_ERROR"), "datalog"),
     ("[G6_E_ALGO_INPUT_INVALID] [ALGORITHM_DESIGN_ERROR] estimate refused", "algorithm_design"),
+    ("G6_E_DECISION_INPUT bandit_select: ValueError: at least one arm required", "decision_making"),
+    ("G6_E_OPERATION_INPUT_INVALID run_id is required", "action_gating"),
 ])
-def test_a_component_code_with_no_remedy_of_its_own_reads_the_components_input_contract(
-        outcome: str, component: str) -> None:
+def test_a_known_component_input_code_reads_that_components_input_contract(outcome: str, component: str) -> None:
     remedy = selector.remedy_for(outcome)
-    assert remedy is not None and remedy["key"] == "component_code" and remedy["tool"] == "g6_describe", remedy
+    assert remedy is not None and remedy["key"] == "component_input" and remedy["tell_person"] is False, remedy
     assert remedy["call"] == {"tool": "g6_describe", "arguments": {"component": component}}
-    assert "no remedy written for this code" in remedy["action"]
     if "blocked-escalated" in outcome:
         assert remedy["action"].endswith("The outcome beside it: blocked-escalated.")
 
 
-def test_a_code_that_names_no_component_still_has_no_remedy() -> None:
-    assert selector.remedy_for("[G6_E_SOMETHING_G6_HAS_NO_REMEDY_FOR] it failed") is None
+@pytest.mark.parametrize("outcome", [
+    "[G6_E_SOMETHING_G6_HAS_NO_REMEDY_FOR] it failed",
+    "G6_E_ACTION_GATING_BLOCKED evaluate: the gate decided block",
+    _reply("action_gating", "evaluate", "G6_E_ACTION_GATING_BLOCKED"),
+    _reply("action_gating", "evaluate", "G6_E_CONFIRMATION_REQUIRED"),
+    _reply("algorithm_design", "run_kernel", "G6_E_OPERATOR_APPROVAL_REQUIRED"),
+    _reply("knowledge_chunker", "chunk", "G6_E_DECISION_INPUT"),         # an input code of another component
+    _reply("self_maintenance", "plan", "G6_E_LOOP_UNOBSERVABLE_HOST"),    # a family prefix decides nothing
+    "[G6_E_MISSION_SOMETHING_NEW] the mission refused",
+    "[G6_E_LOOP_TERMS_CHANGED] what the person read is no longer what would start",
+    json.dumps({"ok": False, "completion_state": "blocked-escalated"}),  # a refusal that carries no code
+])
+def test_a_refusal_not_known_to_be_fixable_tells_the_person(outcome: str) -> None:
+    remedy = selector.remedy_for(outcome)
+    assert remedy is not None and remedy["tell_person"] is True and remedy["call"] is None, remedy
+
+
+def test_only_the_replys_own_envelope_decides_the_remedy() -> None:
+    """The content an op worked on is never read for a code, a component.op or an outcome word: a reply that was
+    not refused, whatever its text holds, has no remedy; prose after a leading code is not searched."""
+    said = ("G6_E_ISOLATION_UNAVAILABLE G6_E_CLOUD_CONSENT_REQUIRED ctx_git.push G6_E_SENSITIVE_COMPONENT_DENIED "
+            "defect_detected")
+    answered = _reply("knowledge_chunker", "chunk", "G6_E_KNOWLEDGE_CHUNKED", "qualified-draft",
+                      passages=[{"text": said}])
+    assert selector.remedy_for(answered) is None
+    reply = selector.select("split my document into passages", "", answered)
+    assert reply["remedy"] is None and reply["next"]["id"] != "tool:g6_cloud_grant"
+    assert selector.remedy_for("[G6_E_PATCH_REVIEW] outcome: defect_detected")["key"] == "G6_E_PATCH_REVIEW"
+    reviewed = json.dumps({"ok": True, "completion_state": "qualified-draft",
+                           "warning_card": {"code": "G6_E_PATCH_REVIEW", "message": said},
+                           "assessment": {"outcome": "defect_detected", "report": said}})
+    assert selector.remedy_for(reviewed)["key"] == "defect_detected"
+    job = json.dumps({"ok": True, "job_id": "j1", "status": "completed", "result": json.loads(GATE_REFUSAL)})
+    assert selector.remedy_for(job)["key"] == "component_input"
+
+
+def test_the_input_code_list_is_held_to_each_components_code() -> None:
+    """Each listed input code is written in the code of every component it is listed for."""
+    from g6.core.registry import get_registry
+
+    registry = get_registry()
+    for code, owners in selector.INPUT_CODES.items():
+        assert owners, code
+        for name in owners:
+            package = registry.refs[name].module.split(":", 1)[0]
+            folder = Path(importlib.import_module(package).__file__).parent
+            text = " ".join(p.read_text(encoding="utf-8") for p in folder.rglob("*.py"))
+            assert re.search(rf"\b{code}\b", text), (code, name)
+
+
+def test_the_no_model_code_list_is_every_no_model_code_g6_writes() -> None:
+    written = {c for p in SRC.rglob("*.py") if p.name != "selector.py"
+               for c in CODE.findall(p.read_text(encoding="utf-8", errors="replace")) if c.endswith("_NO_MODEL")}
+    assert set(selector.NO_MODEL_CODES) == written, sorted(written ^ set(selector.NO_MODEL_CODES))
+    assert not any(k.endswith("_") for k in selector.REMEDIES), [k for k in selector.REMEDIES if k.endswith("_")]
 
 
 def test_the_call_last_outcome_reports_refused_is_never_next_again() -> None:
@@ -506,9 +566,12 @@ def test_the_call_last_outcome_reports_refused_is_never_next_again() -> None:
     assert first["id"] == "op:action_gating.evaluate"
     again = selector.select("is it safe to run this git push", last_outcome=GATE_REFUSAL)
     assert again["next"]["call"] != first["call"] and again["next"]["id"] == "tool:g6_describe", again["next"]
+    shaped = selector.select("is it safe to run this git push",
+                             last_outcome=_reply("action_gating", "evaluate", "G6_E_GATE_OK", "qualified-draft"))
+    assert shaped["next"]["id"] != "op:action_gating.evaluate", shaped["next"]
+    # prose is never read for a component.op: only the envelope's own component and op fields name the call
     plain = selector.select("is it safe to run this git push", last_outcome="action_gating.evaluate refused it")
-    assert plain["remedy"] is None and plain["next"]["id"] not in (None, "op:action_gating.evaluate"), plain["next"]
-    assert "not the call last_outcome reports" in plain["next"]["why"]
+    assert plain["remedy"] is None and plain["next"]["id"] == "op:action_gating.evaluate", plain["next"]
 
 
 def test_isolation_names_the_doctor() -> None:
@@ -603,11 +666,15 @@ def test_every_code_the_mcp_surface_and_the_door_emit_has_a_remedy_or_tells_the_
 
 
 @pytest.mark.parametrize("outcome,key,tool", [
-    ("[G6_E_PATCH_REVIEW] outcome: defect_detected", "defect_detected", "g6_review_patch"),
-    ("[G6_E_PATCH_REVIEW] insufficient_evidence", "insufficient_evidence", "g6_review_patch"),
+    (json.dumps({"completion_state": "qualified-draft", "warning_card": {"code": "G6_E_PATCH_REVIEW"},
+                 "assessment": {"outcome": "defect_detected"}}), "defect_detected", "g6_review_patch"),
+    (json.dumps({"completion_state": "qualified-draft", "warning_card": {"code": "G6_E_PATCH_REVIEW"},
+                 "assessment": {"outcome": "insufficient_evidence"}}), "insufficient_evidence", "g6_review_patch"),
     ("[G6_E_PATCH_STALE] working tree differs from the supplied artifact digest", "G6_E_PATCH_STALE",
      "g6_review_patch"),
-    ("[G6_E_SOMETHING_G6_HAS_NO_REMEDY_FOR] ending: untested", "untested", ""),
+    (json.dumps({"completion_state": "blocked-escalated", "error": "[G6_E_SOMETHING_G6_HAS_NO_REMEDY_FOR] stopped",
+                 "ending": "untested"}), "untested", ""),
+    ("[G6_E_SOMETHING_G6_HAS_NO_REMEDY_FOR] ending: untested", "unknown_code", ""),
 ])
 def test_an_outcome_word_beside_a_review_card_code_or_an_unknown_code_decides_the_remedy(
         outcome: str, key: str, tool: str) -> None:

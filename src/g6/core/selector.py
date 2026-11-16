@@ -32,9 +32,13 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
 4. ``next_action``: with open hypotheses in ``considering``, ``verification_controller.next_experiment`` picks the
    call with the most severity-weighted open-hypothesis coverage per cost unit (``COST_UNITS``) within
    ``BUDGET_UNITS``; otherwise the first candidate.
-5. ``reroute``: ``REMEDIES`` by refusal code or outcome, and ``g6.metaharness.recovery``'s remedies by component;
-   a code a component gave itself with no remedy of its own reads that component's input contract
-   (``g6_describe``). The op whose outcome ``last_outcome`` reports is never ``next`` again.
+5. ``reroute``: read only from G6's own reply (``_read``: the envelope's code, state, named outcome field and
+   ``result`` component and op; in plain text, only a code that leads the first line), never from the content an
+   op worked on. Each refusal resolves to one class: a written remedy (``REMEDIES``, by exact code or outcome word;
+   ``g6.metaharness.recovery``'s remedies by component), fix your input (``G6_E_INPUT_VALIDATION`` or a reviewed
+   ``INPUT_CODES`` code: read the component's contract with ``g6_describe``), or tell the person (any wait on a
+   person, and any refusal not known to be one of the others). ``g6_cloud_grant`` is offered only for the consent
+   code itself. The op whose outcome ``last_outcome`` reports is never ``next`` again.
 6. ``validation``: a tool template's keys are within its recorded schema and hold its required keys; an op template
    carries what the corpus recorded when it was built from shipped code: the door's own typed input check
    (``registry.build_typed_input``) and, for an op that computes over its input alone, a run of the template as
@@ -125,8 +129,18 @@ UNKNOWN_UNTIL_OBSERVED = (
     "whether this machine can confine a run: only G6_E_ISOLATION_UNAVAILABLE says it cannot",
 )
 _CODE = re.compile(r"G6_E_[A-Z0-9_]+")
-_PAIR = re.compile(r"(?<![\w.])([a-z][a-z0-9_]*)\.([a-z][a-z0-9_]*)(?![\w.])")
-_COMPONENT_CODE = re.compile(r"\[([A-Z][A-Z0-9_]*)_ERROR\]")
+#: A text reply's code leads its first line, after at most a client's "Error ...:" preamble (the trial runner's
+#: ``_code``, claude/moment-trials c7e9c40); right after it, the door's own refusal names the component and op
+#: (``[NAME_ERROR] op:``) or a sensitive ``component.op``. Nothing later in the text is read.
+_LEADING_CODE = re.compile(r"\s*(?:[^\[\n]*?:\s*)?\[?(G6_E_[A-Z0-9_]+)\]?")
+_DOOR_TAG = re.compile(r"\s*\[([A-Z][A-Z0-9_]*)_ERROR\]\s+([a-z][a-z0-9_]*):")
+_LEAD_PAIR = re.compile(r"\s*([a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)(?![\w.])")
+_WORD_LINE = re.compile(r"(?:(?:ending|outcome|action)\s*:\s*)?([a-z][a-z_]*)")
+STATES = ("verified", "qualified-draft", "blocked-escalated")
+CONSENT = "G6_E_CLOUD_CONSENT_REQUIRED"
+#: The envelope fields that name an outcome: a review's assessment, a mission's outcome, a review loop's ending and
+#: action, read in this order.
+OUTCOME_FIELDS = (("assessment", "outcome"), ("outcome",), ("ending",), ("action",))
 
 
 def _remedy(action: str, tool: str = "", arguments: dict[str, Any] | None = None, *, tell: bool = False,
@@ -140,24 +154,34 @@ def _remedy(action: str, tool: str = "", arguments: dict[str, Any] | None = None
 CARRIES_OUTCOME = frozenset({"G6_E_PATCH_REVIEW"})
 _ASK = "Ask the person; offer no other way to agree, and never answer for them."
 _SHOW = "Show the reply's report to the person as it is."
-#: Remedies by refusal code (exact), code family (a key ending ``_``), ``*_NO_MODEL``, outcome word,
-#: ``component_limit`` (a code a component declares in ``__g6_limits__``) or ``component_code`` (any other code a
-#: component gave itself, which has no remedy of its own). Each names a registered tool or op, or
-#: tells the person; a test holds every code the MCP surface and the door emit to one.
+_WAIT = _remedy("A gate decision, an approval, a confirmation or an authority that only a person gives: tell the "
+                "person what the reply says. Never rework the act or its input until the gate stops refusing it.",
+                tell=True)
+#: Remedies by refusal code (exact: a code's family or spelling decides nothing), ``*_NO_MODEL`` (the codes in
+#: ``NO_MODEL_CODES``), outcome word, ``component_limit`` (a code a component declares in ``__g6_limits__``),
+#: ``component_input`` (a code in ``INPUT_CODES``, from the component it is listed for) or ``unknown_code`` (any
+#: other refusal: tell the person). Each names a registered tool or op, or tells the person; a test holds every code
+#: the MCP surface and the door emit to one.
 REMEDIES: dict[str, dict[str, Any]] = {
-    # consent and dialogs
-    "G6_E_CLOUD_CONSENT_REQUIRED": _remedy(
+    # consent and dialogs: g6_cloud_grant only for the consent code itself
+    CONSENT: _remedy(
         "The reply was withheld until the person shares the source with your provider. Call g6_cloud_grant: the "
         "person answers in the client's dialog. Never grant for the person; if they decline, go on with local work.",
         "g6_cloud_grant", {"source": "<the source the refusal names>", "provider": "<your client's provider>"}),
     "G6_E_CLOUD_CONSENT": _remedy("Read which sources are shared with which providers.", "g6_cloud_grants"),
     "G6_E_CLOUD_CONSENT_INPUT": _remedy(
-        "The grant's source or provider was not one G6 takes: name the provider as the refusal lists them.",
-        "g6_cloud_grant", {"source": "<source>", "provider": "<your client's provider>"}),
+        "The grant named a source or provider G6 does not take: ask the person which source and provider they "
+        "mean, as the refusal lists them. Never grant for the person.", tell=True),
     "G6_E_CLOUD_CONSENT_STATE": _remedy(
         "G6 could not read its sharing state, so nothing was shared. Tell the person.", tell=True),
-    "G6_E_CONSENT_": _remedy("The person declined or cancelled, gave no name, or the client has no dialog. " + _ASK,
-                             tell=True),
+    **{code: _remedy("The person declined or cancelled, gave no name, or the client has no dialog. " + _ASK, tell=True)
+       for code in ("G6_E_CONSENT_CANCELLED", "G6_E_CONSENT_DECLINED", "G6_E_CONSENT_DIALOG_ONLY",
+                    "G6_E_CONSENT_NO_DIALOG", "G6_E_CONSENT_NO_NAME")},
+    # a component that waits on a person (the gate's own block among them)
+    **{code: _WAIT for code in ("G6_E_ACTION_GATING_BLOCKED", "G6_E_CONFIRMATION_REQUIRED",
+                                "G6_E_AUTHORITY_UNVERIFIED", "G6_E_OPERATOR_APPROVAL_REQUIRED",
+                                "G6_E_GOAL_APPROVAL_REQUIRED", "G6_E_COGNITIVE_APPROVAL_REQUIRED",
+                                "G6_E_PROTECTED_REVIEW_REQUIRED", "G6_E_HAT_AUTHORITY_ESCALATED")},
     # the door and the registry beneath it
     "G6_E_BLOCKED": _remedy("Read the warning card: it says why and what can be done. Tell the person.", tell=True),
     "G6_E_INPUT_VALIDATION": _remedy(
@@ -190,10 +214,13 @@ REMEDIES: dict[str, dict[str, Any]] = {
     "*_NO_MODEL": _remedy(
         "No model is configured for this op. Do the step yourself, then ask for the op that checks it.", "g6_select",
         {"task": "<the step you did yourself>", "phase": "verify"}),
-    "component_code": _remedy(
-        "G6 has no remedy written for this code, which the component gave itself. Read the component's input "
-        "contract with g6_describe, fix the field its refusal names, then call again; if it refuses again, tell the "
-        "person what it says.", "g6_describe", {"component": "<component>"}),
+    "component_input": _remedy(
+        "The component refused its input. Read its input contract with g6_describe, fix the field its refusal "
+        "names, then call again; if it refuses again, tell the person what it says.", "g6_describe",
+        {"component": "<component>"}),
+    "unknown_code": _remedy(
+        "G6 has no remedy written for this refusal, so it is not known to be one you can fix: tell the person what "
+        "it says. Never work around it.", tell=True),
     "component_limit": _remedy(
         "The component refused at a limit it declares. The override kernel can try a substitute for that part, "
         "with the person's agreement, beside the original refusal.", "g6_agentic_run",
@@ -211,8 +238,6 @@ REMEDIES: dict[str, dict[str, Any]] = {
     "G6_E_MISSION_OUT_OF_SCOPE": _remedy("Change only the permitted file, never a test, then submit again.",
                                          "g6_mission_submit", {"mission_id": "<mission_id>", "repo": "<repo>"}),
     "G6_E_MISSION_REFUSED": _remedy("The mission refused this step: tell the person what it says.", tell=True),
-    "G6_E_MISSION_": _remedy("Read the mission's state and what it waits for.", "g6_mission_status",
-                             {"mission_id": "<mission_id>"}),
     "G6_E_POLICY_BLOCKED": _remedy("A policy refused this step: only the person can change it. Tell them what the "
                                    "refusal says; never change the policy yourself.", tell=True),
     "G6_E_PENDING_APPROVAL": _remedy("The step waits for the person's approval. " + _ASK, tell=True),
@@ -235,8 +260,8 @@ REMEDIES: dict[str, dict[str, Any]] = {
     "G6_E_WORK_LOOP_NO_PROGRESS": _remedy("The work loop made no progress. " + _SHOW, tell=True),
     "G6_E_CONFIG_INVALID": _remedy("G6's configuration or the plan is not valid: tell the person what the refusal "
                                    "says; g6 doctor checks the setup.", tell=True, setup="g6 doctor"),
-    "G6_E_COST_GATE_": _remedy("The step is over its cost budget or has no price: only the person raises a budget. "
-                               "Tell them.", tell=True),
+    **{code: _remedy("The step is over its cost budget or has no price: only the person raises a budget. Tell them.",
+                     tell=True) for code in ("G6_E_COST_GATE_GATED", "G6_E_COST_GATE_OVER_BUDGET")},
     "G6_E_TIMEOUT": _remedy("The step ran out of time: tell the person; a narrower step may fit.", tell=True),
     "G6_E_RETRY": _remedy("A tool failed for a passing reason: call the same step once more; if it fails again, "
                           "tell the person.", tell=True),
@@ -250,8 +275,6 @@ REMEDIES: dict[str, dict[str, Any]] = {
     "G6_E_EXECUTION_ARTIFACT_UNAVAILABLE": _remedy(
         "The copy G6 runs the tests in held something it cannot run with (a cache or an input it does not take). "
         + _SHOW, tell=True),
-    "G6_E_LEARNING_": _remedy("The mission's learning step refused: " + _SHOW, tell=True),
-    "G6_E_WORKFORCE_": _remedy("The mission's own check refused: " + _SHOW, tell=True),
     # the repository and this machine
     "G6_E_GIT_MISSING_BINARY": _remedy("git is not installed where G6 runs: tell the person; g6 doctor says what this "
                                        "computer needs.", tell=True, setup="g6 doctor"),
@@ -267,7 +290,6 @@ REMEDIES: dict[str, dict[str, Any]] = {
                                      setup="g6 doctor"),
     # the Context Engine
     "G6_E_KNOWLEDGE": _remedy("Read which sources are indexed and shared, then search again.", "g6_knowledge_sources"),
-    "G6_E_KNOWLEDGE_": _remedy("Read which sources are indexed and shared, then search again.", "g6_knowledge_sources"),
     # the review and its loop
     "G6_E_PATCH_REVIEW": _remedy(
         "The code every review result carries: the outcome beside it (test_integrity_compromised, defect_detected, "
@@ -300,7 +322,11 @@ REMEDIES: dict[str, dict[str, Any]] = {
                                       "g6_improve_enrol"),
     "G6_E_LOOP_PAUSED": _remedy("The loop is paused: the person reads why and may lift it in the dialog.",
                                 "g6_improve_resume"),
-    "G6_E_LOOP_": _remedy("Read where the self-improvement loop stands and why.", "g6_improve_status"),
+    "G6_E_LOOP_TERMS_CHANGED": _remedy(
+        "What the person read is no longer what would start, so nothing started: the person reads the terms as "
+        "they stand now. " + _ASK, tell=True),
+    "G6_E_LOOP_PERSON_REQUIRED": _remedy("Outside the loop's own workspace only a person accepts a change. " + _ASK,
+                                         tell=True),
     # behaviour questions
     "G6_E_QUESTION_CONFIRMED": _remedy("The person's answer is enforced on each later review of the task: review it.",
                                        "g6_review_patch", {"repo": "<repo>", "task": "<task>"}),
@@ -309,7 +335,6 @@ REMEDIES: dict[str, dict[str, Any]] = {
                                               {"repo": "<repo>", "task": "<task>"}),
     "G6_E_SCENARIO_UNAVAILABLE": _remedy("Give the question a concrete candidate with two competing outcomes.",
                                          "g6_confirm_behaviour", {"repo": "<repo>", "task": "<task>"}),
-    "G6_E_QUESTION_": _remedy("The question is held, unanswered or over the person's budget. " + _ASK, tell=True),
     # the meta-harness: a wait on the person tells the person; any other refusal reads the workflow's record
     "G6_E_META_APPROVAL_REQUIRED": _remedy(
         "No person approved, confirmed or asked for this: a name comes only from the client's dialog. " + _ASK,
@@ -329,8 +354,8 @@ REMEDIES: dict[str, dict[str, Any]] = {
         "No promotion policy was confirmed: only the person confirms one. " + _ASK, tell=True),
     "G6_E_META_SCHEMA": _remedy("The workflow's specification did not fit: fix the field the refusal names.",
                                 "metaharness_start", {"specification_json": "<specification_json>"}),
-    "G6_E_META_": _remedy("Read the workflow's record and its recovery.", "metaharness_inspect",
-                          {"workflow": "<workflow>"}),
+    "G6_E_META_BUSY": _remedy("Another operation of this workflow is running: read the workflow's record, then call "
+                              "again.", "metaharness_inspect", {"workflow": "<workflow>"}),
     "G6_E_HARNESS_EXECUTOR_FAILED": _remedy("The workflow's version failed while it ran: read its record and recovery.",
                                             "metaharness_inspect", {"workflow": "<workflow>"}),
     # the workflow record
@@ -360,9 +385,8 @@ REMEDIES: dict[str, dict[str, Any]] = {
                         {"repo": "<repo>", "task": "<task>", "session": "<session>"}),
     "wait": _remedy("Another step is running: read its result before calling again.", "metaharness_job",
                     {"job_id": "<job_id>"}),
-    "withheld": _remedy("The reply was withheld for consent. Call g6_cloud_grant; never grant for the person.",
-                        "g6_cloud_grant", {"source": "<the source the refusal names>",
-                                           "provider": "<your client's provider>"}),
+    "withheld": _remedy("The reply was withheld for consent: pass its code back (G6_E_CLOUD_CONSENT_REQUIRED), or ask "
+                        "the person whether to share the source. Never grant for the person.", tell=True),
     # the meta-harness recovery's causes
     "wrong_answer": _remedy("The workflow's answers are wrong: diagnose, then propose a candidate that uses one of "
                             "the components in recovery.", "metaharness_diagnose", {"workflow": "<workflow>"}),
@@ -380,6 +404,65 @@ REMEDIES: dict[str, dict[str, Any]] = {
     "held_out_spent": _remedy("The held-out split is spent: only the person freezes a fresh one.", tell=True),
     "needs_a_person": _remedy("Only the person can resolve this. " + _ASK, tell=True),
 }
+#: Every code G6 writes for "no model is configured for this op" (a test holds the list to the code).
+NO_MODEL_CODES = frozenset({
+    "G6_E_AGENT_AUTOGEN_NO_MODEL", "G6_E_AGENT_LANGGRAPH_NO_MODEL", "G6_E_AGENT_SMOLAGENTS_NO_MODEL",
+    "G6_E_EVIDENCE_NO_MODEL", "G6_E_GOAL_NO_MODEL", "G6_E_GPS_NO_MODEL", "G6_E_HEAL_NO_MODEL",
+    "G6_E_LANGEXTRACT_NO_MODEL", "G6_E_LEAN_NO_MODEL", "G6_E_NO_MODEL", "G6_E_OPERATOR_NO_MODEL",
+    "G6_E_ROUTER_NO_MODEL", "G6_E_SCAFFOLD_NO_MODEL", "G6_E_SYNTH_NO_MODEL", "G6_E_VISION_NO_MODEL"})
+#: The component codes known to mean "the input was missing or malformed", reviewed by hand from each component's
+#: own validator: code -> the components that write it (a test holds each to that component's code). Only these,
+#: from a reply whose ``component`` is one of them (or none named), send the agent to fix its input; a code that
+#: says too large, a policy, a program, a model, an approval or a store is left out and tells the person.
+INPUT_CODES: dict[str, tuple[str, ...]] = {
+    "G6_E_ACTION_GATING_ACTION_INVALID": ("action_gating",), "G6_E_ACTION_GATING_ACTION_REQUIRED": ("action_gating",),
+    "G6_E_OPERATION_INPUT_INVALID": ("action_gating",),
+    "G6_E_ACTION_LOGIC_FIELD_REQUIRED": ("action_logic",), "G6_E_ACTION_LOGIC_INVALID_FIELD": ("action_logic",),
+    "G6_E_ACTR_INPUT": ("cog_arch_actr",), "G6_E_ACTR_PRODUCTION_INVALID": ("cog_arch_actr",),
+    "G6_E_AIXI_INPUT": ("cog_arch_aixi",), "G6_E_GPS_INPUT": ("cog_arch_gps",),
+    "G6_E_AGENT_AUTOGEN_TEAM_REQUIRED": ("agent_autogen",), "G6_E_AGENT_CLAUDE_GOAL_REQUIRED": ("agent_claude",),
+    "G6_E_AGENT_CODEX_GOAL_REQUIRED": ("agent_codex",), "G6_E_AGENT_LANGGRAPH_SPEC_REQUIRED": ("agent_langgraph",),
+    "G6_E_AGENT_LANGGRAPH_THREAD_REQUIRED": ("agent_langgraph",),
+    "G6_E_AGENT_SMOLAGENTS_AGENT_REQUIRED": ("agent_smolagents",),
+    "G6_E_ALGO_INPUT_INVALID": ("algorithm_design",),
+    "G6_E_CAUSAL_GRAPH_INVALID": ("causal",), "G6_E_CAUSAL_INPUT_INVALID": ("causal",),
+    "G6_E_CODING_AGENT_GATE_TASK_REQUIRED": ("coding_agent_gate",),
+    "G6_E_COGNITIVE_BRIDGE_INPUT": ("cognitive_bridge",), "G6_E_COMPLEXITY_INPUT_INVALID": ("complexity",),
+    "G6_E_DATALOG_INPUT_INVALID": ("datalog",), "G6_E_DATALOG_PARSE_ERROR": ("datalog",),
+    "G6_E_DATALOG_SESSION_INPUT": ("datalog",), "G6_E_DB_INPUT_INVALID": ("database",),
+    "G6_E_DECISION_INPUT": ("decision_making",), "G6_E_DESIGN_INPUT": ("design_governance",),
+    "G6_E_DJANGO_INPUT": ("adapt_django",),
+    "G6_E_EPISTEMIC_INTEGRITY_EVIDENCE_INVALID": ("epistemic_integrity",),
+    "G6_E_EPISTEMIC_INTEGRITY_MESSAGE_REQUIRED": ("epistemic_integrity",), "G6_E_MARKER_INPUT": ("epistemic_integrity",),
+    "G6_E_FORMAL_INPUT_INVALID": ("formal",), "G6_E_FORMAL_PARSE_ERROR": ("formal",),
+    "G6_E_GEO_INPUT": ("ctx_geo",), "G6_E_GIT_INPUT": ("ctx_git",),
+    "G6_E_GOAL_EMPTY": ("goal_engine",), "G6_E_GOAL_INPUT_INVALID": ("goal_engine",),
+    "G6_E_GRAPH_REASONING_PARSE_ERROR": ("graph_reasoning",),
+    "G6_E_GROUNDING_CLAIM_REQUIRED": ("grounding",), "G6_E_GROUNDING_SOURCES_REQUIRED": ("grounding",),
+    "G6_E_HEAL_INPUT": ("adapt_healing",),
+    "G6_E_KNOWLEDGE_CHUNK_INPUT": ("knowledge_chunker",), "G6_E_KNOWLEDGE_NO_TEXT": ("knowledge_chunker",),
+    "G6_E_KNOWLEDGE_CONVERT_INPUT": ("knowledge_converter",), "G6_E_KNOWLEDGE_ELASTIC_INPUT": ("ctx_elastic",),
+    "G6_E_KNOWLEDGE_FETCH_INPUT": ("knowledge_fetcher",), "G6_E_KNOWLEDGE_HUB_INPUT": ("ctx_contexthub",),
+    "G6_E_KNOWLEDGE_INDEX_INPUT": ("knowledge_indexer",), "G6_E_KNOWLEDGE_RANK_INPUT": ("ctx_colbert",),
+    "G6_E_KNOWLEDGE_SEARCH_INPUT": ("ctx_search",),
+    "G6_E_LANGEXTRACT_INPUT": ("ctx_langextract",), "G6_E_LANGEXTRACT_PATTERN_INVALID": ("ctx_langextract",),
+    "G6_E_LIBRARY_INPUT": ("ctx_library_mapper",),
+    "G6_E_MEDIA_INPUT_INVALID": ("adapt_blender", "adapt_diagrams", "adapt_ffmpeg", "adapt_image"),
+    "G6_E_MEDIA_DIAGRAM_DOES_NOT_PARSE": ("adapt_diagrams",),
+    "G6_E_MEMORY_INPUT": ("ctx_ace",), "G6_E_MEMORY_NO_TEXT": ("ctx_ace", "ctx_cognee"),
+    "G6_E_ML_INPUT_INVALID": ("adapt_bayesian",), "G6_E_ML_SEED_MISSING": ("adapt_sklearn",),
+    "G6_E_OPTIM_INPUT_INVALID": ("optimisation",), "G6_E_OPTIM_MODEL_INVALID": ("optimisation",),
+    "G6_E_REPO_INPUT": ("swe_diagnostics",), "G6_E_ROUTER_INPUT_INVALID": ("llm_router",),
+    "G6_E_SCAFFOLD_INPUT": ("component_creator",), "G6_E_SCAFFOLD_SPEC_INVALID": ("component_creator",),
+    "G6_E_SCAFFOLD_SOURCE_INVALID": ("component_creator",),
+    "G6_E_SELF_MAINTENANCE_INPUT": ("self_maintenance",),
+    "G6_E_SYNTAX_INPUT": ("meta_programming",), "G6_E_SYNTAX_DOES_NOT_PARSE": ("meta_programming",),
+    "G6_E_SYNTH_INPUT": ("adapt_library_synthesizer",), "G6_E_VISION_INPUT": ("ctx_vision",),
+    "G6_E_WEB_INPUT": ("adapt_webpage",),
+}
+#: The outcome words a reply names (a review's outcome, a loop's ending or action, a meta-harness cause).
+OUTCOME_WORDS = frozenset(k for k in REMEDIES if re.fullmatch(r"[a-z][a-z_]*", k)) - {
+    "component_input", "component_limit", "unknown_code"}
 
 
 def _corpus() -> dict[str, Any]:
@@ -413,60 +496,64 @@ def _sensitive(data: dict[str, Any]) -> set[str]:
         e["needs"]["sensitive"] for e in data["entries"] if e["kind"] == "tool" and e["needs"]["sensitive"]}
 
 
-_JSON_FIELD = re.compile(r'"(component|op)"\s*:\s*"([a-z][a-z0-9_]*)"')
+def _field(value: Any, path: tuple[str, ...]) -> Any:
+    for key in path:
+        value = value.get(key) if isinstance(value, dict) else None
+    return value
 
 
-def _component_of(text: str, code: str, pairs: list[str], data: dict[str, Any]) -> str:
-    """The component a refusal names: its ``[NAME_ERROR]`` tag, the ``component`` field of a reply passed back as
-    JSON, the component whose name begins its ``G6_E_*`` code, or the first ``component.op`` it names."""
-    components = data["components"]
-    tag = _COMPONENT_CODE.search(text)
-    if tag and tag.group(1).lower() in components:
-        return tag.group(1).lower()
-    field = next((v for k, v in _JSON_FIELD.findall(text) if k == "component" and v in components), "")
-    if field:
-        return field
-    if code:
-        prefixed = [c for c in components if code.startswith(f"G6_E_{c.upper()}_")]
-        if prefixed:
-            return max(prefixed, key=len)
-    return next((p.split(".")[0] for p in pairs if p.split(".")[0] in components), "")
-
-
-def _named_op(text: str, data: dict[str, Any]) -> str:
-    """The op id (``op:component.op``) whose outcome ``text`` reports, or "": a ``component.op`` it names, the
-    ``component`` and ``op`` fields of a reply passed back as JSON, or the component its code or tag names with the
-    op its message begins with (``evaluate: action is required``)."""
-    ops = {e["id"] for e in data["entries"] if e["kind"] == "op"}
-    pairs = [f"{c}.{o}" for c, o in _PAIR.findall(text)]
-    named = next((f"op:{p}" for p in pairs if f"op:{p}" in ops), "")
-    if named:
-        return named
-    component = _component_of(text, _code(text), pairs, data)
-    if not component:
-        return ""
-    fields = dict(reversed(_JSON_FIELD.findall(text)))           # the first of each
-    said = [fields["op"]] if "op" in fields else re.findall(r"\b([a-z][a-z0-9_]*): ", text)
-    return next((f"op:{component}.{op}" for op in said if f"op:{component}.{op}" in ops), "")
-
-
-def _code(outcome: str) -> str:
-    found = _CODE.search(outcome or "")
-    return found.group(0) if found else ""
-
-
-def _outcome_word(text: str) -> str:
-    """The outcome a text names: an outcome with an underscore wherever it stands (``defect_detected``); a plain
-    word (``open``, ``wait``) only as the whole text or after ``ending``, ``action`` or ``outcome``, so a sentence
-    that merely holds the word is not read as it."""
-    lowered = (text or "").strip().lower()
-    found = next((w for w in re.findall(r"[a-z][a-z_]*", lowered) if "_" in w and w in REMEDIES), "")
-    if found:
-        return found
-    if lowered in REMEDIES:
-        return lowered
-    said = re.search(r"\b(?:ending|action|outcome)\W+([a-z]+)", lowered)
-    return said.group(1) if said and said.group(1) in REMEDIES else ""
+def _read(outcome: str) -> dict[str, str]:
+    """What ``last_outcome`` says, read only from G6's own reply. A reply passed back as JSON: its code is the
+    envelope's own (``warning_card.code``, else a top-level or ``error`` code, else the code its ``error`` text
+    leads with; ``cloud_consent_code`` when it is the consent code), its state is ``completion_state``, its outcome
+    word the first of ``OUTCOME_FIELDS`` that names one, and its call the ``result``'s ``component`` and ``op``; a
+    finished job's wrapped reply is read through. Plain text: only a code that leads its first line counts (the
+    door's ``[NAME_ERROR] op:`` or a ``component.op`` right after it is read with it), or, with no code, a first
+    line that is an outcome word (``defect_detected``, ``ending: open``). The content an op worked on and the rest
+    of any text are never searched for codes, ``component.op`` pairs or outcome words."""
+    seen = dict.fromkeys(("code", "state", "word", "component", "op", "pair"), "")
+    text = (outcome or "").strip()
+    try:
+        value = json.loads(text) if text.startswith("{") else None
+    except (ValueError, RecursionError):
+        value = None
+    lead = ""
+    if isinstance(value, dict):
+        if "job_id" in value and isinstance(value.get("result"), dict):
+            value = value["result"]          # a finished job (metaharness_job) wraps the reply it ran
+        for holder in (value.get("warning_card"), value, value.get("error")):
+            code = holder.get("code") if isinstance(holder, dict) else None
+            if isinstance(code, str) and _CODE.fullmatch(code):
+                seen["code"] = code
+                break
+        error = value.get("error")
+        first = error.split("\n", 1)[0] if isinstance(error, str) else ""
+        found = _LEADING_CODE.match(first)
+        if found and seen["code"] in ("", found.group(1)):
+            seen["code"], lead = found.group(1), first[found.end():]
+        if value.get("cloud_consent_code") == CONSENT:
+            seen["code"] = CONSENT
+        state = value.get("completion_state")
+        seen["state"] = state if state in STATES else ""
+        result = value.get("result")
+        if isinstance(result, dict) and isinstance(result.get("component"), str) and isinstance(result.get("op"), str):
+            seen["component"], seen["op"] = result["component"], result["op"]
+        seen["word"] = next((w for w in (_field(value, p) for p in OUTCOME_FIELDS)
+                             if isinstance(w, str) and w in OUTCOME_WORDS), "")
+    else:
+        first = text.split("\n", 1)[0]
+        found = _LEADING_CODE.match(first)
+        if found:
+            seen["code"], lead = found.group(1), first[found.end():]
+        else:
+            said = _WORD_LINE.fullmatch(first.strip().lower())
+            seen["word"] = said.group(1) if said and said.group(1) in OUTCOME_WORDS else ""
+    tag = _DOOR_TAG.match(lead)
+    if tag and not seen["component"]:
+        seen["component"], seen["op"] = tag.group(1).lower(), tag.group(2)
+    pair = _LEAD_PAIR.match(lead)
+    seen["pair"] = pair.group(1) if pair else ""
+    return seen
 
 
 def recovery_remedies(data: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -492,48 +579,53 @@ def recovery_remedies(data: dict[str, Any] | None = None) -> list[dict[str, Any]
 
 
 def remedy_for(outcome: str, data: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    """The remedy for a refusal or an outcome, or ``None`` when G6 has none. A ``G6_E_*`` code is read first: a
-    component's declared limit; a code in ``CARRIES_OUTCOME`` gives way to the outcome word beside it; then the code
-    itself, ``*_NO_MODEL``, the outcome word beside a code G6 has no remedy for, then the code's longest family
-    prefix, then, for a code a component gave itself (``_component_of`` names the component), ``component_code``:
-    read that component's input contract with ``g6_describe``, the outcome beside the code said with it. With no
-    code, the outcome word. Its call is filled from the refusal's own text where that names it."""
+    """The remedy for a refusal or an outcome, or ``None`` when G6 has none, from what ``_read`` finds in G6's own
+    reply. Every refusal resolves to one of three classes: a written remedy for G6's own tools, matched by exact
+    code (``REMEDIES``; a code in ``CARRIES_OUTCOME`` gives way to the reply's outcome word; ``NO_MODEL_CODES``;
+    a component's declared limit); fix your input (``G6_E_INPUT_VALIDATION``, the door's, or an ``INPUT_CODES``
+    code from a component it is listed for: read that component's contract with ``g6_describe``); or tell the
+    person (a wait on a person, and any refusal not known to be one of the others: ``unknown_code``). A reply that
+    was not refused and names no code or outcome G6 has a remedy for has none."""
     data = data or _corpus()
-    text, code = outcome or "", _code(outcome or "")
-    word = _outcome_word(text)
-    pairs = [f"{c}.{o}" for c, o in _PAIR.findall(text)]
-    component = _component_of(text, code, pairs, data)
-    key = ""
+    seen = _read(outcome)
+    code, word, state = seen["code"], seen["word"], seen["state"]
+    components = data["components"]
+    named = seen["component"] if seen["component"] in components else ""
+    component, key = named, ""
     if code:
-        limits = {c for component in data["components"].values() for c in component.get("limits", ())}
+        limits = set(components[named].get("limits", ())) if named else {
+            c for comp in components.values() for c in comp.get("limits", ())}
         if code in limits:
             key = "component_limit"
         elif code in CARRIES_OUTCOME and word:
             key = word
         elif code in REMEDIES:
             key = code
-        elif code.endswith("_NO_MODEL"):
+        elif code in NO_MODEL_CODES:
             key = "*_NO_MODEL"
+        elif code in INPUT_CODES and (not seen["component"] or seen["component"] in INPUT_CODES[code]):
+            key = "component_input"
+            owners = [c for c in INPUT_CODES[code] if c in components]
+            component = named or (owners[0] if len(owners) == 1 else "")
         elif word:
-            key = word                                  # the outcome beside a code G6 has no remedy for
+            key = word                                  # the reply's own outcome beside a code G6 has no remedy for
+        elif state in ("verified", "qualified-draft"):
+            return None                                 # not a refusal: nothing to reroute
         else:
-            key = max((k for k in REMEDIES if k.endswith("_") and code.startswith(k)), key=len, default="")
-            if not key:
-                key = max((k for k in REMEDIES if k.startswith("G6_E_") and code.startswith(k)), key=len, default="")
-            if not key and component:
-                key = "component_code"                  # a component's own code: read its input contract
-    else:
+            key = "unknown_code"
+    elif word:
         key = word
-    if not key:
+    elif state == "blocked-escalated":
+        key = "unknown_code"
+    else:
         return None
     found = dict(REMEDIES[key])
     arguments = dict(found["arguments"])
-    # the setup step names an op or a tool's allowance (patch_review.review) only when the corpus knows it as
-    # sensitive; any other text the agent passed stays out of G6's words, and the step stays generic
-    pair = next((p for p in pairs if p in _sensitive(data)), "")
-    if key == "component_code":
-        state = next((s for s in ("blocked-escalated", "qualified-draft") if s in text), "")
-        found["action"] += f" The outcome beside it: {state}." if state else ""
+    # the setup step names an op or a tool's allowance (patch_review.review) only when it leads the refusal and the
+    # corpus knows it as sensitive; any other text the agent passed stays out of G6's words
+    pair = seen["pair"] if seen["pair"] in _sensitive(data) else ""
+    if key == "component_input" and state:
+        found["action"] += f" The outcome beside it: {state}."
     if "component" in arguments and component:
         arguments["component"] = component
     if found["setup"].endswith("<component.op>") and pair:
@@ -853,8 +945,8 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     requirements = [c for c in considered if c["kind"] == "requirement" and c["validated"]]
     hypotheses = [c for c in considered if c["kind"] == "hypothesis" and c["validated"]]
     calls = [c["id"] for c in considered if c["kind"] == "call" and c["validated"]]
-    code = _code(last_outcome)
-    outcome = code or _outcome_word(last_outcome) or ("not recognised" if last_outcome.strip() else "")
+    seen = _read(last_outcome)
+    outcome = seen["code"] or seen["word"] or ("not recognised" if last_outcome.strip() else "")
     facts = {"phase": phase or "unknown", "last_outcome": outcome,
              "stated_requirements": len(requirements), "hypotheses": len(hypotheses), "considered_calls": len(calls)}
     mechanisms.append({"stage": "facts", "ran": True, "facts": facts,
@@ -977,8 +1069,8 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
                               "check and a run as given through g6_invoke, made when the corpus was built from "
                               "shipped code"})
 
-    # the op whose outcome last_outcome reports is never next again: its template is the call just made
-    reported = _named_op(last_outcome, data) if last_outcome.strip() else ""
+    # the op whose outcome last_outcome reports (the reply's own component and op) is never next again
+    reported = f"op:{seen['component']}.{seen['op']}" if seen["component"] and seen["op"] else ""
     open_ = [c["id"] for c in candidates if not c["acts"] and c["id"] != reported]
     if remedy is not None and remedy["tell_person"]:
         say = remedy["action"] + (f" The step: {remedy['setup']}." if remedy["setup"] else "")
