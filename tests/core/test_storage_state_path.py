@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -76,6 +77,27 @@ def verbatim_junction(link: Path, substitute: str) -> None:
             raise OSError(ctypes.get_last_error(), "FSCTL_SET_REPARSE_POINT")
     finally:
         kernel32.CloseHandle(wintypes.HANDLE(handle))
+
+
+def make_case_sensitive(folder: Path) -> None:
+    """Make ``folder`` (new, empty, in the test's own temporary folder) case-sensitive: Windows' per-folder flag, which
+    any user may set on a folder of their own; folders WSL makes have it, and folders made in one inherit it. There
+    ``home`` and ``HOME`` are two folders. The test removes ``folder`` at its end."""
+    folder.mkdir()
+    done = subprocess.run(["fsutil", "file", "setCaseSensitiveInfo", str(folder), "enable"], capture_output=True,
+                          text=True, check=False)
+    if done.returncode != 0:
+        shutil.rmtree(folder)
+        pytest.skip(f"the case-sensitive flag cannot be set here: {done.stdout.strip()} {done.stderr.strip()}")
+
+
+@pytest.fixture
+def case_sensitive(tmp_path: Path) -> Iterator[Path]:
+    """A case-sensitive folder of the test's own, removed at the end."""
+    folder = tmp_path.resolve() / "cs"
+    make_case_sensitive(folder)
+    yield folder
+    shutil.rmtree(folder)
 
 
 def test_files_and_folders_being_made_and_removed_are_never_refused_as_escaping(home: Path) -> None:
@@ -232,6 +254,25 @@ def test_a_junction_windows_cannot_follow_whose_words_stay_inside_gives_the_word
     root = home.resolve()
     verbatim_junction(root / "link", "\\??\\" + str(root / "nothere" / ".." / "churn"))
     assert str(state_path("link", "a.json")) == str(root / "churn" / "a.json")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' per-folder case-sensitive flag")
+@pytest.mark.parametrize("made", [False, True])
+@pytest.mark.parametrize("home_made", [True, False])
+def test_a_folder_named_as_the_home_but_for_case_is_outside_it(case_sensitive: Path, monkeypatch: pytest.MonkeyPatch,
+                                                                made: bool, home_made: bool) -> None:
+    # in a case-sensitive folder 'HOME' is not 'home', though pathlib compares the two words as equal on Windows: the
+    # check must ask the file system which folder the value reaches, not compare the words
+    if home_made:
+        (case_sensitive / "home").mkdir()
+    if made:
+        (case_sensitive / "HOME").mkdir()
+    monkeypatch.setenv("G6_HOME", str(case_sensitive / "home"))
+    for parts in (("..", "HOME", "made", "kept.json"), ("..", "HOME"), ("..", "HOME", "kept.json")):
+        with pytest.raises(ValueError, match="escapes"):
+            state_path(*parts)
+    assert sorted(os.listdir(case_sensitive)) == [name for name, there in (("HOME", made), ("home", home_made)) if there]
+    assert state_path("made", "kept.json") == (case_sensitive / "home").resolve() / "made" / "kept.json"
 
 
 def test_a_link_inside_the_home_to_inside_it_resolves_to_its_target(home: Path) -> None:

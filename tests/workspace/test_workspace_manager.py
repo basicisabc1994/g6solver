@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import sys
 import tarfile
 import tempfile
@@ -122,6 +123,33 @@ def test_d1_a_junction_named_with_a_trailing_space_is_never_read_or_written_thro
         os.rmdir(link)
     assert sorted(p.name for p in outside.iterdir()) == ["secret.txt"]
     assert (outside / "secret.txt").read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' per-folder case-sensitive flag")
+def test_d1_a_folder_named_as_the_g6_home_but_for_case_is_never_read_or_written(tmp_path, monkeypatch) -> None:
+    # in a case-sensitive folder holding the G6 home 'g6-home', 'G6-HOME' is another folder: a task's write or read of
+    # '../../../G6-HOME/...' leaves the home, though pathlib compares the two words as equal on Windows
+    from tests.core.test_storage_state_path import make_case_sensitive
+
+    parent = tmp_path.resolve() / "cs"
+    make_case_sensitive(parent)
+    try:
+        monkeypatch.setenv("G6_HOME", str(parent / "g6-home"))
+        ws = _task(parent / "g6-home")
+        raw = "../../../G6-HOME/workspaces/t1/x.txt"
+        with pytest.raises(E.WorkspaceRefused) as refused:
+            ws.write(raw, "written by the caller", dry_run=False)
+        assert refused.value.code == E.OUTSIDE_ROOT
+        assert ops.write("t1", raw, "written", dry_run=False).code == E.OUTSIDE_ROOT
+        assert sorted(os.listdir(parent)) == ["g6-home"]
+        (parent / "G6-HOME" / "workspaces" / "t1").mkdir(parents=True)
+        (parent / "G6-HOME" / "workspaces" / "t1" / "x.txt").write_text("kept outside", encoding="utf-8")
+        with pytest.raises(E.WorkspaceRefused) as refused:
+            ws.read(raw)
+        assert refused.value.code == E.OUTSIDE_ROOT
+        assert ops.read("t1", raw).code == E.OUTSIDE_ROOT
+    finally:
+        shutil.rmtree(parent)
 
 
 def test_paths_inside_are_allowed_and_the_check_is_the_shared_one(home) -> None:

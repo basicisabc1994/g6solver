@@ -10,6 +10,7 @@ resolved, and a hard link, which resolving never shows. Each escape is refused; 
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import unicodedata
@@ -139,6 +140,33 @@ def test_the_link_walk_sees_a_junction_named_with_a_trailing_space_in_the_roots_
                 contained(str(base) + "\\a ", raw, refuse_links=True)
     finally:
         os.rmdir(link)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' per-folder case-sensitive flag")
+@pytest.mark.parametrize("made", [False, True])
+def test_a_folder_named_as_the_root_but_for_case_is_outside_it(tmp_path: Path, made: bool) -> None:
+    # in a case-sensitive folder 'WS' is not 'ws', though pathlib compares the two words as equal on Windows: the check
+    # must ask the file system which folder the value reaches, not compare the words
+    from tests.core.test_storage_state_path import make_case_sensitive
+
+    parent = tmp_path.resolve() / "cs"
+    make_case_sensitive(parent)
+    try:
+        root = parent / "ws"
+        root.mkdir()
+        if made:
+            (parent / "WS").mkdir()
+            (parent / "WS" / "secret.txt").write_text("x", encoding="utf-8")
+        for raw in ("../WS/made/kept.json", "../WS/secret.txt", "../WS"):
+            for refuse_links in (False, True):
+                with pytest.raises(PathRefused, match="outside") as refused:
+                    contained(root, raw, refuse_links=refuse_links)
+                assert refused.value.outside
+            with pytest.raises(PathRefused, match="outside"):
+                storage.confined_path(str(parent / "WS" / raw.removeprefix("../WS").lstrip("/")), (root,))
+        assert contained(root, "made/kept.json") == root / "made" / "kept.json"
+    finally:
+        shutil.rmtree(parent)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows drops a trailing space or dot from a name")

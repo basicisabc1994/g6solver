@@ -87,44 +87,70 @@ def _verbatim(path: Path) -> str:
     return "\\\\?\\UNC\\" + text[2:] if text.startswith("\\\\") else "\\\\?\\" + text
 
 
+def _lstat(path: Path) -> os.stat_result | None:
+    """Windows: lstat of ``path`` (absolute, as open reads it) in its ``\\\\?\\`` form, so it asks about the very name
+    open goes through (plain lstat of ``a `` would ask about ``a``); None when nothing is there. :class:`PathRefused`
+    (not outside) for a name Windows cannot hold; any other error is raised."""
+    for _ in range(50):
+        try:
+            return os.lstat(_verbatim(path))
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            if getattr(error, "winerror", None) in (123, 161, 206):  # an invalid name, path, or a name too long
+                raise PathRefused(f"{path.name!r} is not a name Windows can hold") from None
+            # in a folder being deleted just now lstat answers access denied (5) or a sharing violation (32) until it
+            # is gone (a few ms): ask again, for up to about 50 ms. Any other error is no such race.
+            if getattr(error, "winerror", None) not in (5, 32):
+                raise
+            last = error
+            time.sleep(0.001)
+    raise last
+
+
 def _opened_inside(root: Path, path: Path) -> Path | None:
     """Windows: ``path`` as a caller's open reads its words (a local ``\\\\?\\X:\\`` prefix dropped, ``..`` taken, a
-    trailing dot dropped), when that is ``root`` or inside it, no part of it below ``root`` ends in a space or a dot,
-    and lstat finds no symbolic link, junction or other reparse point on any existing part of it below ``root``; None
-    otherwise. :class:`PathRefused` (not outside) for a name Windows cannot hold.
+    trailing dot dropped), when the file system says it is ``root`` or inside it, no part of it below ``root`` ends in
+    a space or a dot, and lstat finds no symbolic link, junction or other reparse point on any existing part of it below
+    ``root``; None otherwise. :class:`PathRefused` (not outside) for a name Windows cannot hold.
+
+    Inside is decided by file identity, not by words: pathlib compares Windows paths ignoring case, but in a
+    case-sensitive folder (a per-folder flag any user may set) ``HOME`` is not ``home``. So the part of the value at the
+    root's place must be the root itself as lstat reaches it (the same volume and file number), or, for a root not made
+    yet, its deepest folder there now, with the root's own names below that. The words may refuse a path, never admit
+    one; identical words name the same file, so they need no second lstat.
 
     ``Path.resolve`` follows every link it can, but a link whose target names no path yet, or none as written, stops
     it: it gives the link's words joined with the rest, and open reads them again, perhaps out of ``root`` (``..``),
     through a link (``sub.`` opens ``sub``) or into a folder a caller makes beyond a link on the way. A path resolving
     followed to the end holds no link, so a link still on the answer is refused. Each part is asked about in its
-    ``\\\\?\\`` form, exactly as open goes through it: plain lstat of ``a `` would ask about ``a``."""
+    ``\\\\?\\`` form, exactly as open goes through it."""
     text = str(path)
     if text.startswith("\\\\?\\") and text[5:7] == ":\\":
         text = text[4:]
     plain = Path(os.path.abspath(text))
     if plain != root and root not in plain.parents or _read_two_ways(plain.parts[len(root.parts):]):
         return None
-    step = root
-    for part in plain.parts[len(root.parts):]:
-        step = step / part
-        # in a folder being deleted just now lstat answers access denied (5) or a sharing violation (32) until it is
-        # gone (a few ms): ask again, for up to about 50 ms, then refuse. Any other error is no such race.
-        found: os.stat_result | None = None
-        for _ in range(50):
-            try:
-                found = os.lstat(_verbatim(step))
-                break
-            except FileNotFoundError:
-                return plain
-            except OSError as error:
-                if getattr(error, "winerror", None) in (123, 161, 206):  # an invalid name, path, or a name too long
-                    raise PathRefused(f"{part!r} is not a name Windows can hold") from None
-                if getattr(error, "winerror", None) not in (5, 32):
-                    return None
-                time.sleep(0.001)
-        if found is None or stat.S_ISLNK(found.st_mode) or (getattr(found, "st_file_attributes", 0)
-                                                            & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+    try:
+        known = root                                 # the root, or the deepest folder above it that is there now
+        while (want := _lstat(known)) is None and known != known.parent:
+            known = known.parent
+        at = len(known.parts)
+        if want is None or plain.parts[at:len(root.parts)] != root.parts[at:]:
             return None
+        if plain.parts[:at] != known.parts:
+            found = _lstat(Path(*plain.parts[:at]))
+            if found is None or not want.st_ino or (found.st_dev, found.st_ino) != (want.st_dev, want.st_ino):
+                return None
+        for depth in range(at + 1, len(plain.parts) + 1):
+            found = _lstat(Path(*plain.parts[:depth]))   # the value's own words, as open reads them
+            if found is None:
+                return plain
+            if stat.S_ISLNK(found.st_mode) or (getattr(found, "st_file_attributes", 0)
+                                               & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                return None
+    except OSError:
+        return None
     return plain
 
 
@@ -133,8 +159,9 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
 
     A relative ``raw`` is joined onto ``root``, never onto the folder G6 runs in; an absolute one is taken as given.
     Both are resolved, ``..`` and every symbolic link and junction followed, so a link out of the folder counts as
-    outside; on Windows the answer is checked as open reads it, and a link resolving could not follow counts as outside
-    too. Refused before anything is resolved: an empty path; a control character; a network or device path
+    outside; on Windows the answer is checked as open reads it, inside only when the file system reaches ``root`` on it
+    (by file identity, not by words, so a folder named as ``root`` but for case is outside), and a link resolving could
+    not follow counts as outside too. Refused before anything is resolved: an empty path; a control character; a network or device path
     (``\\\\host\\share``, ``//host/share``, ``\\\\?\\``, ``\\\\.\\``), because resolving one on Windows opens it over the
     network; a ``:`` in a relative path (a drive, or a file's alternate stream, on Windows); a part named for a
     Windows device (``CON``, ``nul.txt``); and, on Windows, a part whose name ends in a space or a dot, which Windows
