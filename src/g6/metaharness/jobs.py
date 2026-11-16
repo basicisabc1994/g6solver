@@ -89,7 +89,11 @@ class Jobs:
                     try:
                         # A compactor must render the full snapshot, not reread
                         # the producer's mutable result under its old receipt.
-                        detached = cloud.bind_output(json.loads(body), refs, metadata=metadata.read())
+                        # A result's process-local custody (a review's task binding) goes with the copy.
+                        custody = getattr(result, "custody", None)
+                        copy = json.loads(body)
+                        detached = cloud.bind_output(custody(copy) if callable(custody) else copy, refs,
+                                                     metadata=metadata.read())
                         shown = compact(detached, ident)
                         body, known, shown_metadata = cloud.freeze_output(shown)
                         shown_refs = cloud.boundary_sources(carried=(*refs, *(known or ()), *capture.sources))

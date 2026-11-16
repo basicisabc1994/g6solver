@@ -529,7 +529,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         authenticated. Runs no code."""
         from g6.mcp import behaviour
         return await behaviour.confirm(ctx, repo, task, candidates=candidates, review_job=review_job,
-                                       template_instances=template_instances)
+                                       template_instances=template_instances, origin=jobs.origin_inputs)
 
     async def g6_mission_create(repo: str, objective: str, ctx: Any, module: str = "", function: str = "",
                                 helpers: list[str] | None = None, risk: str = "R2", budget_cents: int = 0) -> dict:

@@ -83,12 +83,39 @@ def identity_of(repo: str, task: str) -> str | None:
         return None
 
 
+def _carried(review_job: str, origin: Any) -> None:
+    """What this call now holds of the saved review ``review_job`` carries that review's sources: those recorded with
+    it (``review_reply.carried``), or G6's storage folder's when the record is missing or does not read back, and the
+    inputs of the call that submitted it (``origin``, ``Jobs.origin_inputs``), which count as supplied only when the
+    same client session and provider ask. A call those sources are not shared for is refused here, as admission
+    would refuse its reply, before anything is asked or stored."""
+    from g6.core import cloud_consent as cloud
+    from g6.core.llm import LLMError
+    from g6.core.storage import g6_home
+    from g6.mcp import review_reply
+
+    capture = cloud.current_capture()
+    if capture is None:
+        return
+    recorded = review_reply.carried(review_job)
+    read = (*(recorded if recorded is not None else (cloud.Source.text(
+        cloud.repository_source(g6_home() / "reviews"), "assessment-location",
+        str(state_path("reviews", f"{review_job}.json"))),)), *(origin(review_job) if origin is not None else ()))
+    cloud.record_sources(read)
+    try:
+        cloud.refuse_unshared(capture.client[0] if capture.client is not None else "cloud:unknown", read,
+                              supplied=capture.supplied)
+    except LLMError:
+        raise bq.CandidateRefused("that review's sources are not shared with this client", cloud.REQUIRED) from None
+
+
 def _review_candidates(task: str, review_job: str, template_instances: Any, *, identity: str,
-                       artifact: str) -> list[bq.Candidate]:
+                       artifact: str, origin: Any = None) -> list[bq.Candidate]:
     """The candidates a finished review's differences give: G6 reads its own saved reply (``reviews/<job>.json``) for
     what it observed, only when the reply is bound to this task's ``identity`` (its repository and text) and its
-    artefact digest is ``artifact``, the tree the question is asked about; and takes the instances' bindings from
-    ``template_instances``, each held to the review's record of it by its digest."""
+    artefact digest is ``artifact``, the tree the question is asked about, under that review's sources (``_carried``);
+    and takes the instances' bindings from ``template_instances``, each held to the review's record of it by its
+    digest."""
     if not review_job:
         return []
     if not isinstance(review_job, str) or not _JOB.match(review_job):
@@ -111,6 +138,7 @@ def _review_candidates(task: str, review_job: str, template_instances: Any, *, i
         raise bq.CandidateRefused("that review observed another tree: the working tree changed after it, so its "
                                   "observations are not about the tree the question is asked about; review again",
                                   NOT_THIS_REVIEW)
+    _carried(review_job, origin)
     items = template_instances or []
     named = {item.get("requirement_id") for item in items if isinstance(item, dict)}
     try:
@@ -228,8 +256,9 @@ def _reply(status: str, why: str, *, state: qs.State, asked: qs.Asked | None = N
 
 
 async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review_job: str = "",
-                  template_instances: Any = None) -> dict:
-    """The tool (the module's docstring)."""
+                  template_instances: Any = None, origin: Any = None) -> dict:
+    """The tool (the module's docstring). ``origin``: the server's ``Jobs.origin_inputs``, for a ``review_job``'s
+    submitting call."""
     from g6.mcp.consent import elicit
     from g6.harness import executable_scenario
 
@@ -250,7 +279,7 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
             artifact = digest(repo_tests.snapshot(root)) if review_job else ""
             try:
                 made = [*bq.caller_candidates(task, candidates), *_review_candidates(
-                    task, review_job, template_instances, identity=identity, artifact=artifact)]
+                    task, review_job, template_instances, identity=identity, artifact=artifact, origin=origin)]
             except bq.CandidateRefused as exc:
                 return blocked_reply(f"[{exc.code}] {bq.caller_text(exc, literal=False)}")
             made = _with_knowledge(made)   # cited passages of the person's own indexed files, beside each candidate

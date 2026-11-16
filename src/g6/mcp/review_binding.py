@@ -16,6 +16,11 @@ class BoundReply(dict):
         super().__init__(reply)
         self.task_identity = identity
 
+    def custody(self, copy: dict) -> BoundReply:
+        """The same custody over ``copy``, a detached JSON copy of this reply (a job's compact step renders one), so the
+        binding reaches ``save``."""
+        return BoundReply(copy, self.task_identity)
+
 
 def write(path: Path, reply: dict, data: bytes) -> None:
     """Publish custody last. A stop at any earlier boundary leaves an inadmissible reply."""

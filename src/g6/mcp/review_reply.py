@@ -200,7 +200,9 @@ def finish(reply: Any, job_id: str) -> Any:
     from g6.core import cloud_consent as cloud
     from g6.core.storage import g6_home
     body, refs, _ = cloud.freeze_output(reply)
-    reply = json.loads(body)
+    # the reply's task binding (review_binding.BoundReply) goes with the copy, so save writes it
+    custody = getattr(reply, "custody", None)
+    reply = custody(json.loads(body)) if callable(custody) else json.loads(body)
     # A job entered through a declared producer already carries that contract.
     # Absence of a value receipt is distinct from an explicitly unknown origin;
     # the latter stays in refs and cannot be replaced by the declaration.

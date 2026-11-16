@@ -126,6 +126,9 @@ SOURCE_SITES = {
     'g6.mcp.consent_transport._Stream.send',
     'g6.mcp.consent_transport._Stream.send.handoff',
     'g6.mcp.mission.reply',
+    # 2026-11-16 (repair 1): g6_confirm_behaviour's read of a saved review carries that review's recorded sources
+    # (planted in tests/s16r3/test_review_binding_reaches_confirm.py)
+    'g6.mcp.behaviour._carried',
     'g6.mcp.review_reply.finish',
     # 2026-11-16: a saved review's sources, recorded beside it and read back by finish; a record that does not read
     # back is the storage folder's source (planted in tests/s16r3/test_review_reaches_asker.py)
