@@ -106,7 +106,7 @@ def test_the_parsers_raise_on_nothing_an_event_can_hold(client: str) -> None:
     for raw in (b"", b"\xff\xfe\x00", b"not json\n{]\n", b"[" * 200000, b'{"type": "result"}' * 3, b"7\nnull\n[]\n\"x\""):
         assert run.reading(client, raw, 0)["state"] == "interrupted"
     assert run.reading(client, None, 0) == {"state": "interrupted", "code": run.UNFINISHED, "calls": (),
-                                           "final_text": "", "cost_usd": None, "questions": 0}
+                                           "final_text": "", "cost_usd": None, "questions": 0, "timeline": ()}
 
 
 def test_finished_is_the_clients_one_success_event_and_exit_code_zero() -> None:

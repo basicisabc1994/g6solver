@@ -260,6 +260,7 @@ class Client:
     argv: Callable[[str, Path, Mapping[str, Any]], list[str]]          # (program path, mcp config file, config) -> argv
     parse: Callable[[str], tuple[list[dict[str, Any]], str, float | None]]   # event text -> calls, final text, cost
     finished: Callable[[str], bool]                                    # whether the events hold the client's terminal event
+    steps: Callable[[str], list[dict[str, Any]]]                       # event text -> the session's steps, in order
 
 
 def _events(text: str) -> list[dict[str, Any]]:
@@ -366,6 +367,110 @@ def finished_codex(text: str) -> bool:
     return "turn.completed" in kinds and "turn.failed" not in kinds and "error" not in kinds
 
 
+#: A shell command that runs tests, and what a test run's output says when it failed.
+TEST_COMMAND = re.compile(r"\bpytest\b|\bunittest\b")
+_FAILED = re.compile(r"\b\d+ (?:failed|errors?)\b|\bExit code [1-9]")
+_G6_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
+#: Claude Code's file tools, and the argument that names the file each one changes.
+EDIT_TOOLS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
+
+
+def _said(content: Any) -> str:
+    """The text of a tool result or an error, whatever shape it came in."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(part if isinstance(part, str) else str(part.get("text", "")) if isinstance(part, dict) else ""
+                         for part in content)
+    if isinstance(content, dict):
+        return str(content.get("message", content.get("text", "")))
+    return ""
+
+
+def _code(content: Any) -> str:
+    """The first ``G6_E_*`` code a reply carries: how a refused call is told from an answered one."""
+    found = _G6_CODE.search(_said(content))
+    return found.group(0) if found else ""
+
+
+def _step_call(server: Any, tool: Any, args: Any, valid: Any, state: str = "", code: str = "") -> dict[str, Any]:
+    return {"kind": "call", **_call(server, tool, args, valid, state), "code": code}
+
+
+def steps_claude(text: str) -> list[dict[str, Any]]:
+    """The steps of a ``claude -p --output-format stream-json`` session in the order its log holds them: each MCP
+    call (as ``parse_claude`` reads it, with the code its reply carried), each file a file tool changed, each shell
+    command that ran tests (failed when its result is an error or says tests failed), and the final message."""
+    out: list[dict[str, Any]] = []
+    pending: dict[str, dict[str, Any]] = {}
+    for event in _events(text):
+        message = event.get("message")
+        parts = message.get("content") if isinstance(message, dict) else None
+        for part in parts if isinstance(parts, list) else ():
+            if not isinstance(part, dict):
+                continue
+            name, args = part.get("name"), part.get("input")
+            if part.get("type") == "tool_use" and isinstance(name, str):
+                if name.startswith("mcp__"):
+                    step = _step_call(*_tool(name), args, True)
+                elif name in EDIT_TOOLS and isinstance(args, dict):
+                    step = {"kind": "edit", "path": str(args.get(EDIT_TOOLS[name], ""))}
+                elif name == "Bash" and isinstance(args, dict) and TEST_COMMAND.search(str(args.get("command", ""))):
+                    step = {"kind": "test", "command": str(args.get("command", "")), "failed": None}
+                else:
+                    continue
+                out.append(step)
+                pending[repr(part.get("id"))] = step
+            elif part.get("type") == "tool_result" and repr(part.get("tool_use_id")) in pending:
+                step = pending.pop(repr(part.get("tool_use_id")))
+                if step["kind"] == "call":
+                    step.update(valid=step["valid"] and part.get("is_error", False) is False,
+                                result_state=_state(part.get("content")), code=_code(part.get("content")))
+                elif step["kind"] == "test":
+                    step["failed"] = part.get("is_error") is True or bool(_FAILED.search(_said(part.get("content"))))
+        if event.get("type") == "result":
+            said = event.get("result")
+            out.append({"kind": "final", "text": said if isinstance(said, str) else ""})
+    return out
+
+
+def steps_codex(text: str) -> list[dict[str, Any]]:
+    """The steps of a ``codex exec --json`` session in the order its log holds them: each MCP call (as
+    ``parse_codex`` reads it, with the code its reply or error carried), each file a ``file_change`` item changed,
+    each command that ran tests (failed on a non-zero exit code or a failed status), each agent message, and the
+    last agent message as the final one."""
+    out: list[dict[str, Any]] = []
+    for event in _events(text):
+        item = event.get("item")
+        if not isinstance(item, dict) or event.get("type") != "item.completed":
+            continue
+        kind = item.get("type")
+        if kind == "mcp_tool_call":
+            result = item.get("result") if isinstance(item.get("result"), dict) else {}
+            out.append(_step_call(item.get("server"), item.get("tool"), item.get("arguments"),
+                                  item.get("status") == "completed" and not item.get("error"),
+                                  _state(result.get("content")),
+                                  _code(result.get("content")) or _code(item.get("error"))))
+        elif kind == "file_change":
+            changes = item.get("changes")
+            out += [{"kind": "edit", "path": str(change.get("path", ""))}
+                    for change in (changes if isinstance(changes, list) else ()) if isinstance(change, dict)]
+        elif kind == "command_execution":
+            command = item.get("command")
+            command = " ".join(map(str, command)) if isinstance(command, list) else str(command or "")
+            if TEST_COMMAND.search(command):
+                code = item.get("exit_code")
+                out.append({"kind": "test", "command": command,
+                            "failed": (type(code) is int and code != 0) or item.get("status") == "failed"})
+        elif kind == "agent_message":
+            out.append({"kind": "text", "text": item.get("text") if isinstance(item.get("text"), str) else ""})
+    for step in reversed(out):
+        if step["kind"] == "text":
+            step["kind"] = "final"
+            break
+    return out
+
+
 def reading(client: str, data: bytes | None, exit_code: Any) -> dict[str, Any]:
     """The one reading of a session: its state, code, calls, final text, cost and questions, from its event log's
     bytes and its exit code. ``run`` writes it and ``read_sessions`` (so ``score`` and ``release``) takes it again
@@ -377,7 +482,7 @@ def reading(client: str, data: bytes | None, exit_code: Any) -> dict[str, Any]:
     finished = data is not None and type(exit_code) is int and exit_code == 0 and spec.finished(text)
     return {"state": "completed" if finished else "interrupted", "code": "" if finished else UNFINISHED,
             "calls": tuple(calls), "final_text": final, "cost_usd": cost,
-            "questions": sum(call["tool"] in DIALOG_TOOLS for call in calls)}
+            "questions": sum(call["tool"] in DIALOG_TOOLS for call in calls), "timeline": tuple(spec.steps(text))}
 
 
 def _claude_argv(program: str, config_file: Path, config: Mapping[str, Any]) -> list[str]:
@@ -412,9 +517,9 @@ def _codex_program() -> Any:
 
 CLIENTS: dict[str, Client] = {
     "claude_code": Client("claude_code", "anthropic:claude_code", ".claude/skills", _claude_program, _claude_argv,
-                          parse_claude, finished_claude),
+                          parse_claude, finished_claude, steps_claude),
     "codex": Client("codex", "openai:codex", ".codex/skills", _codex_program, _codex_argv, parse_codex,
-                    finished_codex),
+                    finished_codex, steps_codex),
 }
 
 
