@@ -31,10 +31,14 @@ budget, a model or child failure, a failed re-check, no isolation) leaves the or
 """
 from __future__ import annotations
 
+import contextvars
+import copy
 import hashlib
 import inspect
 import json
 import re
+import threading
+import time
 import traceback
 import uuid
 from collections.abc import Iterable, Mapping
@@ -42,19 +46,25 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from g6._agentic import _child, decode, ledger, protected
+from g6.core import consent_callers
+from g6.core.consent_callers import CallerWrapper
 from g6.core.consent_registry import GuardedRegistry
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, door_reply, invoke_checked, is_allowed
 from g6.core.ledger import digest
+from g6.core.llm import DEFAULT_MAX_TOKENS
 from g6.core.reliability_envelope import envelope_fields, warning_card
-from g6.reasoning.budget import Budget, BudgetExhausted, MeteredCaller
+from g6.reasoning.budget import Budget, BudgetExhausted
 
 MODES = ("prompt", "code")
 #: The allowance the kernel itself needs, besides the operation's own: ``agentic.run`` (or ``agentic``).
 ALLOWANCE = ("agentic", "run")
 #: The small default (design 5.7): at most 3 model calls, 20,000 characters of model replies and 120 seconds for one
-#: override. One envelope (:class:`_Envelope`) holds every limit, enforced where the cost is spent: the 120 seconds
-#: cover every model call and every run of the operation in a child, the final run and the re-check included.
+#: override. One envelope (:class:`_Envelope`) holds every limit, enforced where the cost is spent: each request to the
+#: model is counted at the send, retries included, and the 120 seconds cover every model call and every run of the
+#: operation in a child, the final run and the re-check included.
 DEFAULT_BUDGET = Budget(max_model_calls=3, max_output_chars=20_000, max_wall_clock_s=120.0)
+#: The tokens one request to the model may ask for; a retry is never given more.
+MODEL_TOKENS = 2000
 #: The most one child run may take, and never more than the time left: the worst case of the default (3 asking runs,
 #: the final run and the re-check) fits inside the default's 120 seconds.
 CHILD_TIMEOUT_S = 24.0
@@ -332,11 +342,18 @@ def prepare(component: str, op: str, params: Any, *, part: str | None = None, mo
         "How": f"prompt mode: a model proposes each value the part returns; G6 checks it against the function's "
                f"return type and {spec['validator']} before it is used",
         "Model": model,
-        "Limits": f"at most {budget.max_model_calls} model calls and {budget.max_output_chars} characters of model "
-                  f"replies in all (a longer reply is not used); {budget.max_wall_clock_s:g} seconds for the whole "
-                  "override, every model call and every run of the operation (the final run and the re-check "
-                  f"included), each run at most {CHILD_TIMEOUT_S:g} seconds; the operation runs again in an isolated "
-                  "child with no network that writes only its own folder",
+        "Limits": f"at most {budget.max_model_calls} model calls in all, retries included, each counted before it is "
+                  f"sent; {budget.max_output_chars} characters of model replies in all (a longer reply is not used); "
+                  f"{budget.max_wall_clock_s:g} seconds for the whole override, every model call and every run of the "
+                  "operation (the final run and the re-check included): none starts with less than "
+                  f"{min(MIN_CHILD_S, budget.max_wall_clock_s / 10):g} seconds left, each run at most "
+                  f"{CHILD_TIMEOUT_S:g} seconds and never longer than the time left, "
+                  + ("each model call is given the time left as its timeout" if _cut(caller) else
+                     "this model's caller takes no timeout, so a request already sent may run on at the provider "
+                     "after the deadline")
+                  + ", G6 stops waiting at the deadline, and a model reply that arrives after the deadline is not "
+                    "used; the operation runs again in an isolated child with no network that writes only its own "
+                    "folder",
     }
     question_digest = digest({"binding": binding, "params": binding["Parameters digest"], "functions": list(functions),
                               "mode": mode, "trigger": trigger})
@@ -369,37 +386,179 @@ class _Stop(Exception):  # noqa: N818 - an override's stop, with the reason the 
         self.reason, self.detail = reason, detail
 
 
+class _OutOfBudget(BudgetExhausted):
+    """The envelope's own refusal of a send, in G6's words (a ``BudgetExhausted``, so a retry does not swallow it)."""
+
+
+def _timed(caller: Any) -> bool:
+    timeout = getattr(caller, "timeout", None)
+    return isinstance(timeout, int | float) and not isinstance(timeout, bool)
+
+
+def _raw(backend: Any) -> Any:
+    """The backend that sends, under a guarded form ``consent_callers.guard`` made of it (guarded again by
+    :class:`_Envelope`), or ``backend`` itself."""
+    raw = getattr(type(backend), "_guards", None) if isinstance(backend, consent_callers._Consent) else None
+    return backend if raw is None else raw
+
+
+def _backends(caller: Any, seen: frozenset[int] = frozenset()) -> Iterable[Any]:
+    """The callers that send, below every wrapper G6 knows (``consent_callers.wrapper_slot``, by class identity)."""
+    slot = consent_callers.wrapper_slot(caller)
+    if not slot or id(caller) in seen:
+        yield caller
+        return
+    inner = getattr(caller, slot)
+    for one in (inner if slot == "_callers" else (inner,)):
+        yield from _backends(one, seen | {id(caller)})
+
+
+def _cut(caller: Any) -> bool:
+    """Whether every request ``caller`` sends can be given the time left as its timeout."""
+    return all(_timed(_raw(backend)) for backend in _backends(caller))
+
+
+def _gated(caller: Any, envelope: _Envelope, seen: frozenset[int] = frozenset()) -> Any:
+    """``caller`` with each backend that sends behind :class:`_Send`, below every retry or fallback G6 knows: copies
+    of its wrappers, so the person's own caller is never changed."""
+    slot = consent_callers.wrapper_slot(caller)
+    if not slot or id(caller) in seen:
+        return _Send(caller, envelope)
+    inner, clone, seen = getattr(caller, slot), copy.copy(caller), seen | {id(caller)}
+    setattr(clone, slot, tuple(_gated(one, envelope, seen) for one in inner) if slot == "_callers"
+            else _gated(inner, envelope, seen))
+    return clone
+
+
+class _Send(CallerWrapper):
+    """One request to the model, at the send itself: counted before it is sent (the envelope refuses the one past the
+    budget, and any once the time left is too little), never given more tokens than :data:`MODEL_TOKENS`, given the
+    time left as its timeout where its backend takes one, and its reply's characters counted. A ``CallerWrapper``, so
+    the consent guard still checks the backend below it at each send."""
+
+    def __init__(self, backend: Any, envelope: _Envelope) -> None:
+        raw = _raw(backend)
+        own = copy.copy(raw) if _timed(raw) else backend   # the timeout is set on G6's copy, never the person's
+        super().__init__(own)
+        self._timed = own if own is not backend else None
+        self._envelope = envelope
+
+    def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
+        left = self._envelope.admit()
+        if self._timed is not None:
+            self._timed.timeout = left
+        try:
+            text = self.inner.complete(system, user, max_tokens=min(max_tokens, MODEL_TOKENS))
+        except Exception:
+            self._envelope.failed()
+            raise
+        return self._envelope.took(text)
+
+
+def _words(exc: BaseException) -> str:
+    """A failed model call in G6's words: its type and the first stable code in its text, never the text itself."""
+    try:
+        code = re.search(r"G6_E_[A-Z0-9_]{1,80}", str(exc))
+    except Exception:  # noqa: BLE001 - a text that cannot be read names no code
+        code = None
+    return f"the model call failed with {type(exc).__name__}" + (f" ({code.group()})" if code else "")
+
+
 class _Envelope:
-    """Every limit of one override in one place, enforced where the cost is spent (``budget_exhausted`` otherwise):
-    model calls and characters of model replies (a reply longer than the characters left is refused before it is
-    used), and one deadline for the whole override, every model call and every child run, the final run and the
-    re-check included. Each child gets the time left (at most :data:`CHILD_TIMEOUT_S`); none starts when too little
-    is left, and a run that returns after the deadline is not used."""
+    """Every limit of one override in one place, enforced where the cost is spent (``budget_exhausted`` otherwise).
+    Model calls: every request to the model is counted at the send itself (:class:`_Send`, below any retry), before
+    it is sent, and the one past the budget is refused. Characters of model replies: a reply longer than the
+    characters left is refused before it is used. One deadline for the whole override, every model call and every
+    child run, the final run and the re-check included: none starts with less than :meth:`floor` left; a child, and
+    a model request whose backend takes a timeout, gets the time left; G6 stops waiting for a model call at the
+    deadline, and a reply or a run that returns after it is not used."""
 
     def __init__(self, caller: Any, budget: Budget) -> None:
         self.budget = budget
-        self.metered = MeteredCaller(caller, budget)   # its clock starts now: the override's one deadline
+        self._lock = threading.Lock()
+        self._start = time.monotonic()   # the override's one deadline starts now
+        self.calls = self.failed_calls = self.output_chars = 0
+        self.closed = False
+        self.caller = consent_callers.guard(_gated(caller, self))   # the guard checks each backend below the meter
+
+    def elapsed_s(self) -> float:
+        return time.monotonic() - self._start
 
     def seconds_left(self) -> float:
-        return self.budget.max_wall_clock_s - self.metered.elapsed_s()
+        return self.budget.max_wall_clock_s - self.elapsed_s()
 
-    def ask(self, system: str, user: str, *, max_tokens: int) -> str:
-        """One model call through the consent-guarded caller the envelope meters, or :class:_Stop."""
-        left =self.budget.max_output_chars - self.metered.output_chars
-        try:
-            text = self.metered.complete(system, user, max_tokens=max_tokens)
-        except BudgetExhausted as exc:
-            raise _Stop("budget_exhausted", str(exc)[:REASON_CHARS]) from exc
-        except Exception as exc:  # noqa: BLE001 - a model that fails leaves the original standing
-            raise _Stop("model_failed", f"{type(exc).__name__}: {exc}"[:REASON_CHARS]) from exc
-        if len(text or "") > left:
-            raise _Stop("budget_exhausted", f"the model's reply ({len(text)} characters) is longer than the {left} "
-                                            "characters left of the budget, so it was not used")
+    def floor(self) -> float:
+        return min(MIN_CHILD_S, self.budget.max_wall_clock_s / 10)
+
+    def admit(self) -> float:
+        """Count one request before it is sent: the seconds left, or :class:`_OutOfBudget`."""
+        with self._lock:
+            if self.closed:
+                raise _OutOfBudget("G6_E_BUDGET_EXHAUSTED: the override stopped waiting for the model, so nothing more "
+                                   "is sent")
+            if self.calls >= self.budget.max_model_calls:
+                raise _OutOfBudget(f"G6_E_BUDGET_EXHAUSTED: max_model_calls: {self.calls} model calls were sent, the "
+                                   "most the budget allows; no more was sent")
+            left = self.seconds_left()
+            if left < self.floor():
+                raise _OutOfBudget(f"G6_E_BUDGET_EXHAUSTED: max_wall_clock_s: {max(left, 0.0):.2f}s of the "
+                                   f"{self.budget.max_wall_clock_s:g}s budget were left, too little for a model call; "
+                                   "none was started")
+            self.calls += 1
+            return left
+
+    def failed(self) -> None:
+        with self._lock:
+            self.failed_calls += 1
+
+    def took(self, text: str) -> str:
+        """Count a reply's characters: ``text``, or :class:`_OutOfBudget` when it is longer than what was left."""
+        size = len(text or "")
+        with self._lock:
+            left = self.budget.max_output_chars - self.output_chars
+            self.output_chars += size
+        if size > left:
+            raise _OutOfBudget(f"G6_E_BUDGET_EXHAUSTED: max_output_chars: the model's reply ({size} characters) is "
+                               f"longer than the {max(left, 0)} characters left of the budget, so it was not used")
         return text
+
+    def ask(self, system: str, user: str) -> str:
+        """One model call through the metered, consent-guarded caller, waited for only until the deadline; or
+        :class:`_Stop`."""
+        left = self.seconds_left()
+        if left < self.floor():
+            raise _Stop("budget_exhausted", f"{max(left, 0.0):.2f}s of the {self.budget.max_wall_clock_s:g}s budget "
+                                            "were left, too little for a model call; none was started")
+        box: dict[str, Any] = {}
+
+        def call() -> None:
+            try:
+                box["text"] = self.caller.complete(system, user, max_tokens=MODEL_TOKENS)
+            except BaseException as exc:  # noqa: BLE001 - reported to the waiting override, never lost
+                box["error"] = exc
+
+        worker = threading.Thread(target=contextvars.copy_context().run, args=(call,), name="g6-agentic-model",
+                                  daemon=True)
+        worker.start()
+        worker.join(max(left, 0.0))
+        if worker.is_alive():
+            with self._lock:
+                self.closed = True   # an abandoned retry sends nothing more
+            raise _Stop("budget_exhausted", f"no model reply came within the {self.budget.max_wall_clock_s:g}s budget: "
+                                            "G6 stopped waiting at the deadline, and a reply that arrives later is "
+                                            "not used")
+        error = box.get("error")
+        if isinstance(error, _OutOfBudget):
+            raise _Stop("budget_exhausted", str(error).removeprefix("G6_E_BUDGET_EXHAUSTED: ")[:REASON_CHARS])
+        if error is not None:
+            raise _Stop("model_failed", _words(error)[:REASON_CHARS])
+        if self.seconds_left() < 0:
+            raise _Stop("budget_exhausted", "the model's reply came after the deadline, so it was not used")
+        return box["text"]
 
     def child_timeout(self) -> float:
         left = self.seconds_left()
-        if left < min(MIN_CHILD_S, self.budget.max_wall_clock_s / 10):
+        if left < self.floor():
             raise _Stop("budget_exhausted", f"{max(left, 0.0):.2f}s of the {self.budget.max_wall_clock_s:g}s budget "
                                             "were left, too little for another run of the operation; none was started")
         return min(CHILD_TIMEOUT_S, left)
@@ -427,9 +586,6 @@ def _ask_model(pending: Pending, envelope: _Envelope, ask: Mapping[str, Any], pa
     name = call.get("function")
     if name not in pending.functions or _child.call_digest(call) != ask.get("digest"):
         raise _Stop("child_failed", "the child asked for a function that is not the part, or its call was altered")
-    if envelope.metered.check():
-        raise _Stop("budget_exhausted", f"the budget ran out ({envelope.metered.check()}) before call "
-                                        f"{ask.get('index')}")
     function = _child.resolve(name, package)
     returns = _child.return_type(function)
     system = ("You stand in for one Python function of G6's code, for one call. Reply with JSON only: "
@@ -444,7 +600,7 @@ def _ask_model(pending: Pending, envelope: _Envelope, ask: Mapping[str, Any], pa
         "returns": str(returns), "arguments": arguments, "operation": f"{pending.component}.{pending.op}",
         "parameters": parameters, "original": original, "cut": cut, "reason": pending.reason})
     prompts.append(digest({"system": system, "user": user}))
-    text = envelope.ask(system, user, max_tokens=2000)
+    text = envelope.ask(system, user)
     from pydantic import TypeAdapter, ValidationError
 
     adapter = TypeAdapter(returns)
@@ -491,10 +647,7 @@ def override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
         return _refused(DIGEST_MISMATCH, "the answer is not for this question's digest, so it allows nothing; ask "
                                          "the person again", original=pending.original, request_id=pending.request_id)
     package = _package(pending.component)
-    from g6.core.consent_callers import guard
-
-    envelope = _Envelope(guard(pending.caller), pending.budget)
-    metered = envelope.metered
+    envelope = _Envelope(pending.caller, pending.budget)
     prompts: list[str] = []
     checks: list[dict] = []
     runs = 0
@@ -568,9 +721,9 @@ def override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
     record["isolation"] = isolation
     record["digests"] = {"source": pending.source_digest, "prompts": prompts, "question": pending.digest,
                          "params": digest(pending.params), "result": digest(result) if result is not None else ""}
-    record["cost"] = {"model_calls": metered.calls, "failed_model_calls": metered.failed_calls,
-                      "output_chars": metered.output_chars, "child_runs": runs,
-                      "seconds": round(metered.elapsed_s(), 3)}
+    record["cost"] = {"model_calls": envelope.calls, "failed_model_calls": envelope.failed_calls,
+                      "output_chars": envelope.output_chars, "child_runs": runs,
+                      "seconds": round(envelope.elapsed_s(), 3)}
     try:
         entry = ledger.append(ledger.entry(record))
         record["ledger"] = {"entry": entry, "kind": ledger.KIND}

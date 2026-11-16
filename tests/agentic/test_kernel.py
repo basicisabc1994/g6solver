@@ -510,3 +510,91 @@ def test_an_input_the_door_refuses_is_never_offered_for_an_override(monkeypatch,
     reply = kernel.prepare("cegis", "synthesize", bad, allow=ALLOW, llm=model.llm)
     assert not isinstance(reply, kernel.Pending) and reply is captured[-1]
     assert reply["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and model.prompts == [] and started == []
+
+
+# review 2, class A: every request to the model is metered at the send itself, and one deadline bounds model calls too
+
+def _ollama(monkeypatch, replies, sent, *, delay=0.0):
+    """A local Ollama caller behind the retry G6 builds for it (``EmptyRetry``), whose transport is replaced: each
+    request is recorded (its token allowance and timeout) and answered with the next reply; nothing leaves the test."""
+    import time
+
+    from g6.core import llm
+
+    answers = iter(replies)
+
+    def post(url, body, headers, timeout):
+        sent.append({"tokens": body["options"]["num_predict"], "timeout": timeout})
+        time.sleep(delay)
+        return {"message": {"content": next(answers)}}
+
+    monkeypatch.setattr(llm, "_post_json", post)
+    return llm.EmptyRetry(llm.OllamaCaller("fixture-model", base_url="http://127.0.0.1:9"))
+
+
+def test_a_retrying_caller_sends_at_most_the_dialogs_number_of_requests_each_counted_before_it_is_sent(
+        monkeypatch, tmp_path):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    in_process_child(monkeypatch)
+    sent: list[dict] = []
+    caller = _ollama(monkeypatch, ["", " ", "\n", json.dumps({"value": [0.5]})], sent)
+    budget = kernel.Budget(max_model_calls=3, max_output_chars=20_000, max_wall_clock_s=30.0)
+    reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=caller, name="Ada", budget=budget)
+    assert len(sent) == 3, sent                     # the retry's fourth request is refused before it is sent
+    assert reply["agentic"]["outcome"] == "degraded" and reply["agentic"]["reason"] == "budget_exhausted"
+    assert reply["agentic"]["cost"]["model_calls"] == 3 and "result" not in reply
+    assert [s["tokens"] for s in sent] == [2000] * 3   # never more tokens than the kernel asked for
+    assert all(0 < s["timeout"] <= 30.0 for s in sent)   # each request is given the time left as its timeout
+    assert caller._inner.timeout == 600               # the person's own caller is not changed
+
+
+def test_a_model_call_is_abandoned_at_the_deadline_and_its_late_reply_is_not_used(monkeypatch, tmp_path):
+    import time
+
+    from g6.core.llm import FakeLLM
+
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    in_process_child(monkeypatch)
+
+    def slow(system, user):
+        time.sleep(2.0)
+        return json.dumps({"value": [0.5]})
+
+    budget = kernel.Budget(max_model_calls=3, max_output_chars=20_000, max_wall_clock_s=0.5)
+    started = time.monotonic()
+    reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=FakeLLM(slow), name="Ada", budget=budget)
+    assert time.monotonic() - started < 1.0
+    assert reply["agentic"]["outcome"] == "degraded" and reply["agentic"]["reason"] == "budget_exhausted"
+    assert "not used" in reply["agentic"]["detail"] and "result" not in reply
+
+
+def test_no_model_call_starts_with_too_little_time_left(monkeypatch, tmp_path):
+    import time
+
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    in_process_child(monkeypatch)
+    stand_in, sent = kernel._child.launch, []
+
+    def slow(request, *, timeout_s):
+        time.sleep(0.95)
+        return stand_in(request, timeout_s=timeout_s)
+
+    monkeypatch.setattr(kernel._child, "launch", slow)
+    caller = _ollama(monkeypatch, [json.dumps({"value": [0.5]})], sent)
+    budget = kernel.Budget(max_model_calls=3, max_output_chars=20_000, max_wall_clock_s=1.0)
+    reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=caller, budget=budget)
+    assert sent == [] and reply["agentic"]["reason"] == "budget_exhausted"
+    assert reply["agentic"]["cost"]["model_calls"] == 0
+
+
+def test_the_question_states_only_the_model_call_bound_the_code_enforces(monkeypatch):
+    from g6.core.llm import FakeLLM
+
+    no_child(monkeypatch)
+    uncut = kernel.prepare("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=FakeLLM()).question
+    cut = kernel.prepare("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=_ollama(monkeypatch, [], [])).question
+    for question in (uncut, cut):
+        assert "retries included, each counted before it is sent" in question
+        assert "a model reply that arrives after the deadline is not used" in question
+    assert "given the time left as its timeout" in cut and "given the time left as its timeout" not in uncut
+    assert "takes no timeout" in uncut
