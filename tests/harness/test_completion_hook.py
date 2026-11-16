@@ -233,6 +233,23 @@ def test_a_hint_that_fails_never_holds_the_prompt(repo, monkeypatch, capsys):
     assert code == 0 and context_of(out) == "SCOUTS"
 
 
+def test_a_key_file_that_cannot_be_read_never_holds_the_prompt(repo, monkeypatch, capsys):
+    from g6.core import keys
+
+    hints_on(repo)
+    monkeypatch.setattr(loop, "prepare", lambda *args: "SCOUTS")
+
+    read = keys.get
+
+    def unreadable(name, *args, **kwargs):     # the hint's own read of the key file fails
+        if name == hook.HINTS_LINE:
+            raise PermissionError("the key file is locked")
+        return read(name, *args, **kwargs)
+    monkeypatch.setattr(keys, "get", unreadable)
+    code, out, _ = hooked(monkeypatch, capsys, "prompt", prompt(repo))
+    assert code == 0 and context_of(out) == "SCOUTS"         # no hint, and the loop's own context as it was
+
+
 def advance_says(monkeypatch, step) -> list:
     calls = []
 

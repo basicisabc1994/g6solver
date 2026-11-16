@@ -203,12 +203,12 @@ def _model(event: dict) -> str:
 def _hint(task: str) -> str:
     """At a task's start, which G6 calls may fit it and when to call G6 (``g6.core.selector.hint``: lexical, no model,
     never the prompt's words); "" where the person's key file says ``HINTS_LINE=off``, or if it cannot be made, as a
-    hint never holds a prompt."""
-    from g6.core import keys
-
-    if (keys.get(HINTS_LINE) or "").strip().lower() == "off":
-        return ""
+    hint never holds a prompt (a key file that cannot be read among them: then no hint)."""
     try:
+        from g6.core import keys
+
+        if (keys.get(HINTS_LINE) or "").strip().lower() == "off":
+            return ""
         from g6.core import selector
 
         return selector.hint(task)
