@@ -452,6 +452,121 @@ def test_a_device_part_is_refused_as_outside_and_never_opened(home: Path, pipe: 
     assert not opened(), "state_path opened the pipe while it decided"
 
 
+def _two_faced(real: str, shown: str, after: int) -> str:
+    """A str whose value is ``real``, but whose own methods show the checks ``shown``; pathlib's parse
+    (``replace('/', '\\\\')``) sees ``shown`` for its first ``after`` calls, then ``real``."""
+    class TwoFaced(str):
+        parses = 0
+
+        def replace(self, old: str, new: str, *rest: int) -> str:  # type: ignore[override]
+            if (old, new) == ("/", "\\"):
+                TwoFaced.parses += 1
+                return shown if TwoFaced.parses <= after else str.replace(str(self), old, new, *rest)
+            return str.replace(shown, old, new, *rest)
+
+        def __getitem__(self, key):  # type: ignore[no-untyped-def]  # noqa: ANN001, ANN204
+            return shown[:4] if key == slice(None, 4, None) else str.__getitem__(self, key)
+
+        def strip(self, *chars: str) -> str:  # type: ignore[override]
+            return shown.strip(*chars)
+
+    return TwoFaced(real)
+
+
+#: Every entry point that takes a caller's path.
+ENTRY_POINTS = ["state_path", "state_path after a plain part", "contained", "contained refuse_links", "confined_path",
+                "Workspace.read", "code existing"]
+
+
+def _enter(call: str, root: Path, raw: object) -> object:
+    from g6.code import _roots
+    from g6.core import storage
+    from g6.workspace._files import Workspace
+
+    return {"state_path": lambda: state_path(raw), "state_path after a plain part": lambda: state_path("churn", raw),
+            "contained": lambda: storage.contained(root, raw),
+            "contained refuse_links": lambda: storage.contained(root, raw, refuse_links=True),
+            "confined_path": lambda: storage.confined_path(raw, (root,)),
+            "Workspace.read": lambda: Workspace(root).read(raw),
+            "code existing": lambda: _roots.existing(raw, _roots.Roots((root,), "test"))}[call]()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows named pipes")
+@pytest.mark.parametrize("after", range(5))
+@pytest.mark.parametrize("call", ENTRY_POINTS)
+def test_a_str_subclass_cannot_show_the_checks_one_path_and_open_another(
+        home: Path, tmp_path: Path, pipe: tuple[str, Callable[[], bool]], call: str, after: int) -> None:
+    # each entry point reads the value once, as a plain str, so every check and the open read the same characters: a
+    # str subclass whose methods show the checks a plain name never has its device path joined, resolved or opened
+    from g6.code._types import CodeRefused
+    from g6.workspace._envelope import WorkspaceRefused
+
+    name, opened = pipe
+    root = (tmp_path / "root").resolve()
+    root.mkdir()
+    with contextlib.suppress(ValueError, WorkspaceRefused, CodeRefused):
+        _enter(call, root, _two_faced(name, "plain", after))
+    assert not opened(), f"{call} opened the device path while it decided (switch after {after} parses)"
+
+
+#: Run in a fresh interpreter: a str subclass that records every method of its own that runs, handed to each entry
+#: point. ``_text`` reads it without running any of them and gives a plain str; nothing after it may run one either.
+_NO_METHOD_RUNS = r"""
+import json, sys
+from pathlib import Path
+from g6.core import storage
+from g6.code import _roots
+from g6.workspace._files import Workspace
+
+ran = []
+KEEP = {"__new__", "__init__", "__init_subclass__", "__subclasshook__", "__getattribute__", "__setattr__",
+        "__delattr__", "__class__", "__dir__", "__reduce__", "__reduce_ex__", "__getstate__", "__sizeof__",
+        "__getnewargs__"}
+
+def spy(name):
+    real = getattr(str, name)
+    def method(self, *args, **kwargs):
+        ran.append(name)
+        return real(self, *args, **kwargs)
+    return method
+
+Spy = type("Spy", (str,), {n: spy(n) for n in dir(str) if callable(getattr(str, n)) and n not in KEEP})
+root = Path(sys.argv[1]).resolve()
+calls = {
+    "_text": lambda v: type(storage._text(Spy(v))) is str or "not a plain str",
+    "state_path": lambda v: storage.state_path(Spy(v)),
+    "state_path after a plain part": lambda v: storage.state_path("churn", Spy(v)),
+    "contained": lambda v: storage.contained(root, Spy(v)),
+    "contained refuse_links": lambda v: storage.contained(root, Spy(v), refuse_links=True),
+    "confined_path": lambda v: storage.confined_path(Spy(str(root / v)), (root,)),
+    "Workspace.read": lambda v: Workspace(root).read(Spy(v)),
+    "code existing": lambda v: _roots.existing(Spy(str(root / v)), _roots.Roots((root,), "test")),
+}
+out = {}
+for call, run in calls.items():
+    for value in ("a.json", "..\\x", "con.txt"):
+        del ran[:]
+        try:
+            answer = run(value)
+        except Exception as error:
+            answer = type(error).__name__
+        if ran or answer == "not a plain str":
+            out[f"{call} {value}"] = [answer if isinstance(answer, str) else "", sorted(set(ran))]
+print(json.dumps(out))
+"""
+
+
+def test_no_method_of_a_str_subclass_runs_after_the_value_is_read(home: Path, tmp_path: Path) -> None:
+    import json
+
+    root = tmp_path / "root"
+    root.mkdir()
+    done = subprocess.run([sys.executable, "-X", "utf8", "-c", _NO_METHOD_RUNS, str(root)], capture_output=True,
+                          text=True, check=False, env={**os.environ, "G6_HOME": str(home)}, timeout=120)
+    assert done.returncode == 0, done.stderr[-2000:]
+    assert json.loads(done.stdout) == {}, done.stdout
+
+
 class _Interrupted(os.PathLike):
     def __fspath__(self) -> str:
         raise KeyboardInterrupt

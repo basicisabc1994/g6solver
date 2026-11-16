@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from g6.code._types import CodeRefused
-from g6.core.storage import PathRefused, confined_path, plain_file, state_path
+from g6.core.storage import PathRefused, _text, confined_path, plain_file, state_path
 
 CONFIG_ENV = "G6_CODE_CONFIG"
 CONFIG_FILE = ("code", "config.json")
@@ -98,7 +98,10 @@ def under(path: Path, roots: tuple[Path, ...]) -> bool:
 
 
 def _given(raw: str, what: str) -> Path:
-    if not isinstance(raw, str) or not raw.strip() or any(ord(ch) < 32 for ch in raw):
+    # a plain str, read once (storage._text), so a str subclass's own methods cannot show a check one path and open
+    # another
+    raw = _text(raw) if isinstance(raw, str) else ""
+    if not raw.strip() or any(ord(ch) < 32 for ch in raw):
         raise CodeRefused(PATH_INVALID, f"give {what}: an absolute path under a declared root")
     if raw.startswith("~") or not Path(raw).is_absolute():
         raise CodeRefused(PATH_INVALID, f"{what} is an absolute path (a relative one, or ~, is never resolved against "
