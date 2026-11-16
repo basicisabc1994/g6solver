@@ -234,11 +234,6 @@ def main(argv: list[str] | None = None) -> int:
         info = discovery.describe(args.component)
         _print(info)
         return 0 if info.get("available") else 1
-    try:
-        params = json.loads(args.params)
-    except json.JSONDecodeError as exc:
-        print(f"params is not JSON: {exc}", file=sys.stderr)
-        return 2
     from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, invoke_checked
     from g6.core.consent_registry import GuardedRegistry
     from uuid import uuid4
@@ -248,35 +243,57 @@ def main(argv: list[str] | None = None) -> int:
     name = f"{args.component}.{args.op}"
     request_id = uuid4().hex[:12]
 
-    def failed(message: str, door_reply: dict | None = None) -> int:
-        error = f"[G6_E_INVOKE_FAILED] {message}"
+    def output(text: str) -> bool:
+        try:
+            print(text)
+            sys.stdout.flush()
+        except (OSError, ValueError):
+            # Python flushes stdout again at shutdown; a failed stream must not leak then or replace exit 1.
+            sys.stdout = None
+            print("[G6_E_INVOKE_FAILED] G6: output could not be written.", file=sys.stderr)
+            return False
+        return True
+
+    def failed(message: str, door_reply: dict | None = None, *, code: str = "G6_E_INVOKE_FAILED",
+               exit_code: int = 1) -> int:
+        error = f"[{code}] {message}"
         reply_request_id = (door_reply.get("request_id") or request_id) if door_reply else request_id
         failure = blocked_reply(error, request_id=reply_request_id)
         if door_reply and door_reply.get("run_id"):
             failure["run_id"] = door_reply["run_id"]
         if args.json:
-            _print(failure)
+            if not output(json.dumps(failure, indent=2, default=str)):
+                return 1
         else:
             print(f"{error} completion_state: blocked-escalated", file=sys.stderr)
-        return 1
+        return exit_code
+
+    try:
+        params = json.loads(args.params)
+    except (ValueError, RecursionError):
+        return failed("G6: params must be valid JSON.", code="G6_E_INVALID_PARAMS", exit_code=2)
 
     try:
         reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(), registry=GuardedRegistry(),
                                request_id=request_id,
                                how_to_allow=f"Only the person who runs G6 can allow it, by listing {name} (or "
                                             f"{args.component}) in {SENSITIVE_ENV} where they run g6.")
-    except (Exception, SystemExit):  # noqa: BLE001 - mask op failures, but let KeyboardInterrupt propagate
+    except KeyboardInterrupt:
+        raise
+    except BaseException:  # noqa: BLE001 - op failures must not expose library or exception text
         return failed(f"G6: component {args.component!r}, op {args.op!r} failed while running.")
     if "result" not in reply:
         if args.json:
-            _print(reply)
+            output(json.dumps(reply, indent=2, default=str))
         else:
             print(reply["error"], file=sys.stderr)
         return 1
     try:
-        _print(reply["result"])
+        encoded = json.dumps(reply["result"], indent=2, default=str)
     except (Exception, SystemExit):  # noqa: BLE001 - JSON encoding may run a result object's own code
         return failed(f"G6: component {args.component!r}, op {args.op!r}: the result could not be written as JSON.", reply)
+    if not output(encoded):
+        return 1
     return 0 if reply["ok"] else 1
 
 
