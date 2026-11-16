@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -76,6 +77,40 @@ def test_agent_text_that_cannot_be_written_as_utf8_still_gets_the_envelope(
     assert not is_error, reply
     assert reply["completion_state"] == "qualified-draft" and reply["request_id"]
     assert "�" in json.dumps(reply["considering"], ensure_ascii=False)
+
+
+def _texts(calls: list[tuple[str, dict]], client: str = "codex") -> list[str]:
+    async def run() -> list[str]:
+        async with Client(build_server(), client_info=Implementation(name=client, version="test")) as session:
+            return [str(await session.call_tool(name, arguments)) for name, arguments in calls]
+    return asyncio.run(run())
+
+
+class _ReadyRung:
+    """Stands in for the ColBERT rung with its extra and weights present (its ready() says "")."""
+
+    def ready(self) -> str:
+        return ""
+
+    def score(self, query: str, texts: list[str]) -> list[float]:
+        return [float(len(t) % 7) for t in texts]
+
+
+def test_a_colbert_rerank_says_nothing_of_this_computers_extras(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ported from wire-entry review 2, finding 3: g6_select (client_request and g6_operational only) answers
+    rerank="colbert" lexically in fixed words, the same whether the ColBERT extra and weights are on this computer
+    or not."""
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "fresh-home"))
+    arguments = {"task": "check my patch before I say it is done", "phase": "verify", "rerank": "colbert"}
+    absent, = _texts([("g6_select", arguments)])
+    from g6.knowledge.ctx_colbert import rungs
+    monkeypatch.setitem(rungs.RUNGS._rungs, "colbert", _ReadyRung())
+    present, = _texts([("g6_select", arguments)])
+    for reply in (absent, present):
+        assert '"ok":true' in reply, reply[:300]
+        assert "not ready on this machine" not in reply and "colbert ran" not in reply
+    strip = re.compile(r"""["'](request_id|run_id|task_id)["']:\s*["'][^"']*["']""")    # ids differ per call
+    assert strip.sub("", absent) == strip.sub("", present)
 
 
 def test_it_takes_no_repository_argument() -> None:
