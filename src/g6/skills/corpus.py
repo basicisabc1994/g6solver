@@ -16,9 +16,9 @@ and compares, so it cannot drift. It holds, as G6's own built-in text only:
   (``_run_as_given``). ``validated`` is true only when that run was not refused; every other template (refused by
   the door or the op, or never run because it could act, needs a model, a program, isolation or an optional extra)
   is ``validated: false``, with ``issues`` saying why in G6's words. Every op's ``fill``, validated or not, names
-  the fields the agent must supply: each its template holds as a placeholder or empty, and each the op's contract
-  requires that the template leaves out (for an op that requires none, so that its empty template runs on defaults
-  alone, the fields its help line's signature names). ``g6_select`` reads that and imports no component, so its reply never depends on what the host can
+  the fields the agent must supply: each its template holds as a placeholder or empty, each the op's contract
+  requires that the template leaves out, and each its help line's signature names, required or not (an optional
+  field can change the answer). ``g6_select`` reads that and imports no component, so its reply never depends on what the host can
   import; the build records no time, path or host value, so it is the same on every machine;
 * ``refusals``: who repairs each refusal each component writes, as its package declares it (``g6.core.refusals``,
   read statically) or, for a bound package, ``refusals.OVERLAY``.
@@ -459,16 +459,13 @@ def _unfilled(value: Any) -> bool:
 
 
 def _declared(op: str, line: str, required: set[str], fields: dict[str, Any]) -> set[str]:
-    """The fields the agent must supply for the op: those its contract requires; or, for an op that requires none
-    (its template is empty and runs on defaults alone), those of its typed input that its own help line names in its
-    signature (``expected_improvement(mean, std, best, xi): ...``)."""
-    must = set(required) - {"op", "operation"}
-    if must:
-        return must
+    """The fields the agent must supply for the op: those its contract requires, and every field of its typed input
+    its own help line names in its signature (``preflight(task, proposed_action, evidence, ...): ...``), required or
+    not, since an optional one can change the answer (the act a gate decides on, the evidence)."""
     said = re.match(rf"\s*{re.escape(op)}\s*\(([^)]*)\)", line)
     named = {m.group(1) for part in (said.group(1).split(",") if said else ())
              if (m := re.match(r"\s*\**([a-z_][a-z0-9_]*)", part))}
-    return (named & set(fields)) - {"op", "operation"}
+    return (set(required) | (named & set(fields))) - {"op", "operation"}
 
 
 def _complete_fill(fill: list[str], params: dict[str, Any], declared: set[str], fields: dict[str, Any]) -> list[str]:

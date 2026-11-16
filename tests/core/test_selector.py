@@ -128,9 +128,9 @@ def test_the_safety_words_are_fixed_data_the_docstring_lists() -> None:
 def test_the_action_gate_as_next_shows_the_field_to_fill_and_how() -> None:
     reply = selector.select("is it safe to run this git push")
     gate = next(c for c in reply["candidates"] if c["id"] == "op:action_gating.evaluate")
-    assert gate["validated"] is False and gate["fill"] == ["action"]
+    assert gate["validated"] is False and gate["fill"] == ["action", "scope"]
     nxt = reply["next"]
-    assert nxt["id"] == "op:action_gating.evaluate" and nxt["validated"] is False and nxt["fill"] == ["action"]
+    assert nxt["id"] == "op:action_gating.evaluate" and nxt["validated"] is False and nxt["fill"] == ["action", "scope"]
     assert "action_type" in nxt["say"] and "allow, confirm, review or block" in nxt["say"], nxt["say"]
 
 

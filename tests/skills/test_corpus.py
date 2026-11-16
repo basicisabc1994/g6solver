@@ -7,6 +7,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from g6.mcp import registrations
 from g6.skills import corpus, routing
 
@@ -101,7 +103,7 @@ def test_an_op_template_is_validated_only_when_g6_invoke_runs_it_as_given(monkey
 def test_a_template_the_op_refuses_as_given_names_the_fields_to_fill() -> None:
     full = {entry["id"]: entry for entry in corpus.entries()}
     gate = full["op:action_gating.evaluate"]
-    assert gate["validated"] is False and gate["fill"] == ["action"], gate
+    assert gate["validated"] is False and gate["fill"] == ["action", "scope"], gate
     assert gate["issues"][0].startswith("[G6_E_ACTION_GATING_ACTION_REQUIRED] action_gating.evaluate:")
     assert full["op:coding_agent_gate.preflight"]["validated"] is True
 
@@ -125,7 +127,8 @@ def test_fill_names_every_field_the_template_leaves_absent_empty_or_a_placeholde
     improvement = full["op:decision_making.expected_improvement"]
     assert improvement["validated"] and {"mean", "std", "best"} <= set(improvement["fill"]), improvement
     assert {"task", "answer"} <= set(full["op:coding_agent_gate.verify_answer"]["fill"])
-    assert full["op:coding_agent_gate.preflight"]["fill"] == ["task"]
+    assert full["op:coding_agent_gate.preflight"]["fill"] == ["constraints", "evidence", "proposed_action", "risk_tier",
+                                                               "task"]
 
 
 def test_only_ops_that_compute_over_their_input_alone_are_run_when_the_corpus_is_built() -> None:
@@ -197,3 +200,19 @@ def test_the_corpus_is_sorted_and_written_one_way() -> None:
     data = json.loads(corpus.PATH.read_text(encoding="utf-8"))
     ids = [entry["id"] for entry in data["entries"]]
     assert ids == sorted(ids)
+
+
+@pytest.mark.parametrize("key,fields", [
+    ("op:coding_agent_gate.preflight", {"task", "proposed_action", "evidence", "risk_tier", "constraints"}),
+    ("op:epistemic_integrity.adjudicate", {"message", "action_criticality", "evidence"}),
+])
+def test_fill_names_every_field_the_ops_signature_declares_not_only_the_required_ones(key: str, fields: set) -> None:
+    """Review 4, finding 8: an op that requires one field still has optional fields that change its answer (the act
+    a gate decides on, the evidence); fill lists them, and next says why."""
+    from g6.core import selector
+
+    entry = next(e for e in corpus.entries() if e["id"] == key)
+    assert fields <= set(entry["fill"]), entry["fill"]
+    candidate = {**entry, "kind": "op", "issues": list(entry["issues"])}
+    said = selector._fill_say(candidate)
+    assert all(f in said for f in fields) and "change" in said, said

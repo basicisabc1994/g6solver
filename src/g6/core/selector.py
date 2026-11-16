@@ -724,8 +724,14 @@ def _fill_say(candidate: dict[str, Any]) -> str:
     if candidate["validated"]:
         fields = candidate["fill"]
         return (f"This call ran as given when G6 was built, but only on placeholders or defaults: fill "
-                f"{', '.join(fields)} with your own values before relying on its answer." if fields else "")
+                f"{', '.join(fields)} with your own values before relying on its answer; a field its signature "
+                f"names but you leave out (the act a gate decides on, the evidence) can change that answer."
+                if fields else "")
     hint = FILL_HINTS.get(candidate["id"], "")
+    others = [f for f in candidate["fill"] if not re.search(rf"\b{re.escape(f)}\b", hint)]
+    if hint and others:
+        hint += (f" Also fill {', '.join(others)} where they apply: a field its signature names but you leave out "
+                 "can change the answer.")
     if not hint:
         fields = candidate["fill"]
         hint = (f"Fill {', '.join(fields)} with your own values before you make this call." if fields else
