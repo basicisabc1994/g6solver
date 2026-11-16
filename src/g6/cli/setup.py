@@ -116,7 +116,7 @@ def main(args: argparse.Namespace, *, ask: Ask = input, say: Say = print) -> int
             return 2
     clients = list(dict.fromkeys(getattr(args, "client", [])))
     if clients:
-        code = register_clients(args, clients, say)
+        code = register_clients(args, clients, say, ask)
         if code:
             return code
     return 0
@@ -148,8 +148,51 @@ def configure_model(provider: str) -> None:
         Path(name).unlink(missing_ok=True)
 
 
-def register_clients(args, clients: list[str], say: Say) -> int:
-    """Explicit registration via the clients' CLIs; never parses or overwrites their config files."""
+def codex_agents(ask: Ask, say: Say) -> None:
+    """Offer G6's instructions to Codex as a delimited block in the person's own ``AGENTS.md`` (in ``CODEX_HOME``,
+    else ``~/.codex``): shown first, written only on a yes, the rest of the file kept byte for byte, and a block already
+    there replaced in place. Anything but a yes, or no answer at all, writes nothing."""
+    import tempfile
+    from pathlib import Path
+    from g6.mcp.instructions import AGENTS_BEGIN, AGENTS_END, agents_block
+
+    target = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "AGENTS.md"
+    if target.is_symlink():
+        say(f"{target} is a link, so G6 leaves it alone; nothing was written.")
+        return
+    previous = target.read_text(encoding="utf-8") if target.exists() else ""
+    block = agents_block()
+    start = previous.find(AGENTS_BEGIN)
+    end = previous.find(AGENTS_END, start) if start >= 0 else -1
+    if end >= 0:
+        updated = previous[:start] + block + previous[end + len(AGENTS_END):]
+    else:
+        updated = (previous.rstrip("\n") + "\n\n" if previous.strip() else "") + block + "\n"
+    if updated == previous:
+        return
+    say(f"G6 can tell Codex when to call it with this block in {target}; the rest of the file stays as it is:\n\n"
+        f"{block}\n")
+    try:
+        reply = ask(f"Write this block to {target}? [y/N] ")
+    except (EOFError, OSError):
+        reply = ""
+    if reply.strip().lower() not in ("y", "yes"):
+        say(f"Nothing was written to {target}.")
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(dir=target.parent, prefix=".g6-agents-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
+            stream.write(updated)
+        os.replace(name, target)
+    finally:
+        Path(name).unlink(missing_ok=True)
+    say(f"Wrote G6's block to {target}.")
+
+
+def register_clients(args, clients: list[str], say: Say, ask: Ask = input) -> int:
+    """Explicit registration via the clients' CLIs; never parses or overwrites their config files. For Codex it also
+    offers G6's block for the person's ``AGENTS.md`` (``codex_agents``), written only on their yes."""
     import re
     import subprocess
     from g6.cli import main as cli
@@ -192,6 +235,8 @@ def register_clients(args, clients: list[str], say: Say) -> int:
         cli(["skills", "install", "--user", "--client", client, "--force"])
         if earlier:
             say(f"Replaced the earlier copy of the {skills.GUIDE} skill for {client} with this version's.")
+        if client == "codex":
+            codex_agents(ask, say)
         say(f"Registered G6 for {client} with this installation's Python, started with -P so that the packages in "
             "the project's folder never replace G6's own. Restart the client to load it.")
     say("Local settings assume a trusted host. An agent with your account's unrestricted shell can change them.")
