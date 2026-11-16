@@ -22,7 +22,10 @@ def public_instructions(value: dict) -> dict:
 def host_controls(value: dict, controls: dict, *, sources: Sequence[cloud.Source] | None = None) -> dict:
     """Bind explicitly supplied host controls while retaining the content's origins."""
     body, refs, metadata = cloud.freeze_output(value)
-    value = json.loads(body)
+    try:
+        value = json.loads(body)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     if sources is not None:
         refs = cloud.boundary_sources(sources, carried=refs if refs is not None else (), inherit=False)
     if refs is None:

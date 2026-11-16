@@ -229,7 +229,7 @@ def records(repo: Path) -> list[dict[str, Any]]:
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
             entry = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError, MemoryError):
             continue
         if not isinstance(entry, dict) or entry.get("repo") != str(repo):
             continue

@@ -111,7 +111,7 @@ def _rows(reply: Any) -> list[dict[str, Any]]:
     try:
         text = str(reply)
         found = json.loads(text[text.index("["):text.rindex("]") + 1])
-    except ValueError:
+    except (ValueError, RecursionError, MemoryError):
         return []
     return [row for row in found if isinstance(row, dict)] if isinstance(found, list) else []
 

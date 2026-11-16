@@ -572,7 +572,10 @@ def canonical_json(value: Any, *, cap: int | None = None, error: str | None = No
 
 def record_data(value: Any) -> Any:
     """A record's plain representation, through the bounded canonical encoder."""
-    return json.loads(canonical_json(value))
+    try:
+        return json.loads(canonical_json(value))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def publish(value: T, *, where: str) -> T:
@@ -648,7 +651,10 @@ def plain(value: Any, *, where: str, _depth: int = 0, cap: int | None = None, er
     found = _not_json(value, where, _depth)
     if found:
         raise NotPlainData(*found)
-    out = json.loads(canonical_json(value))
+    try:
+        out = json.loads(canonical_json(value))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     if not _same(value, out, _depth):
         raise NotPlainData(where, "it does not survive the bridge's canonical encoder unchanged")
     return out
@@ -1022,7 +1028,10 @@ def json_reply(reply: Any, cap: int, preflight: Callable[[Any], None] | None = N
     _admit_reply(reply, cap)
     reply = text(reply, where="a model's reply")
     try:
-        parsed = json.loads(reply, object_pairs_hook=_unique)
+        try:
+            parsed = json.loads(reply, object_pairs_hook=_unique)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     except RecursionError:
         raise _too_deep("a model's reply") from None
     if preflight is not None:

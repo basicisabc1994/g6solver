@@ -145,7 +145,7 @@ class GoogleBackend:
         read = [Source.of(shown(reply.url), reply.body, provenance="fetched").model_dump()]
         try:
             return json.loads(reply.body), read
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError, MemoryError):
             raise _Failed(GeoAnswer("parse_failed", reason=f"{self.service} answered with something that is not JSON",
                                     sent=sent, read=read)) from None
 

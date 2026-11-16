@@ -103,7 +103,10 @@ RULES = {
 
 def register() -> dict:
     text = resources.files("g6.ml.adapt_bayesian").joinpath("data/source_register.json").read_text(encoding="utf-8")
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def entries() -> dict:
@@ -155,13 +158,16 @@ def register_problems() -> list[str]:
 def stale_sources(today: dt.date | None = None) -> list[dict]:
     today = today or dt.date.today()
     stale = []
-    for e in entries().values():
-        day = dt.date.fromisoformat(e["retrieved"])
-        months = day.year*12 + day.month-1 + e["review_months"]
-        year, month = months//12, months % 12 + 1
-        due = dt.date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
-        if today > due:
-            stale.append({"finding": "stale_source", "source": e["id"], "review_due": due.isoformat()})
+    try:
+        for e in entries().values():
+            day = dt.date.fromisoformat(e["retrieved"])
+            months = day.year*12 + day.month-1 + e["review_months"]
+            year, month = months//12, months % 12 + 1
+            due = dt.date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
+            if today > due:
+                stale.append({"finding": "stale_source", "source": e["id"], "review_due": due.isoformat()})
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     return stale
 
 
@@ -170,6 +176,9 @@ def ensure() -> list[dict]:
     if problems:
         raise MLError(INPUT_INVALID, "cannot assess: source register is incomplete or inconsistent", [
             {"kind": "source_register", "problems": problems}])
-    return [{"kind": "bayesian_sources", "sources": sorted(entries()), "rules": list(RULES),
-             "stale_sources": stale_sources(), "review_status": "built, awaiting review",
-             "monitoring": register()["monitoring"]}]
+    try:
+        return [{"kind": "bayesian_sources", "sources": sorted(entries()), "rules": list(RULES),
+                 "stale_sources": stale_sources(), "review_status": "built, awaiting review",
+                 "monitoring": register()["monitoring"]}]
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None

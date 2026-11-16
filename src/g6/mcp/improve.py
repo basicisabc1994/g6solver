@@ -921,7 +921,7 @@ def _recognised(out: Any) -> tuple[dict[str, Any] | None, str]:
         return None, "no reply"
     try:
         reply = json.loads(lines[-1])
-    except (ValueError, RecursionError):
+    except (ValueError, RecursionError, MemoryError):
         return None, "a last line that does not read as JSON"
     if not isinstance(reply, dict):
         return None, f"a reply that is {_kind(reply)}, not an object"

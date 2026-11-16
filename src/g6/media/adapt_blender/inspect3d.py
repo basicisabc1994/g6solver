@@ -100,7 +100,7 @@ def inspect_glb(path: Path | str) -> Inspection:
         if version == 2 and length == len(data) and kind == b"JSON" and 20 + size <= len(data):
             try:
                 found = json.loads(data[20:20 + size])
-            except ValueError:
+            except (ValueError, RecursionError, MemoryError):
                 found = None
     if not isinstance(found, dict):
         checks.append(Check(name="parses", passed=False, code=UNDECODABLE if data[:4] == b"glTF" else FORMAT_MISMATCH,
@@ -169,7 +169,10 @@ def _gltf(path: Path) -> Any:
         if kind != b"JSON" or 20 + size > len(data):
             raise ValueError("its first chunk is not its JSON")
         data = data[20:20 + size]
-    return json.loads(data.decode("utf-8-sig"))
+    try:
+        return json.loads(data.decode("utf-8-sig"))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def self_contained(path: Path) -> None:

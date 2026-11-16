@@ -861,7 +861,9 @@ def act_main() -> int:
     try:
         request = json.loads(sys.stdin.read())
         reply = as_recorded(request, _blocked(CACHED_BYTECODE, unsafe[:500])) if unsafe else act(request)
-    except (ValueError, KeyError, TypeError) as exc:
+    except (ValueError, KeyError, TypeError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         reply = _blocked(CANNOT_OPEN, f"the request could not be read: {type(exc).__name__}", recorded=None)
     sys.stdout.write(json.dumps(reply, default=str) + "\n")
     return 1 if reply["completion_state"] == "blocked-escalated" else 0

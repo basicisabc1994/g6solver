@@ -87,7 +87,7 @@ def unit_floors(data: Any, *, effects: Callable[[str, str], str | None], inherit
     if isinstance(data, str):
         try:
             data = json.loads(data)
-        except ValueError:
+        except (ValueError, RecursionError, MemoryError):
             return data
     if not isinstance(data, dict) or not isinstance(data.get("units"), list):
         return data
@@ -127,7 +127,7 @@ def highest_risk(data: Any) -> str:
     if isinstance(data, str):
         try:
             data = json.loads(data)
-        except ValueError:
+        except (ValueError, RecursionError, MemoryError):
             return "R0"
     units = data.get("units") if isinstance(data, dict) else None
     if not isinstance(units, list):
@@ -635,6 +635,8 @@ def parse_plan(data: dict | str, *, risk_tier: str, budget_cents: int,
     if isinstance(data, str):
         try:
             data = json.loads(data)
+        except (RecursionError, MemoryError):
+            raise PlanRejected(["plan: not JSON (decoder limits)"]) from None
         except ValueError as exc:
             raise PlanRejected([f"plan: not JSON ({exc.msg})"]) from None
     if not isinstance(data, dict):

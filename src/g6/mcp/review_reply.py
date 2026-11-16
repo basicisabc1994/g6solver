@@ -14,8 +14,10 @@ A reply with no assessment, a refusal, is returned as it is. Nothing here decide
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import stat
 from typing import Any
 
 from g6.mcp.consent_controls import refused_send
@@ -29,6 +31,8 @@ INTERRUPTED = "G6_E_PATCH_REVIEW_INTERRUPTED"
 ENVELOPE = ("ok", "completion_state", "reliability_label", "request_id", "run_id", "artifact_digest")
 #: The fields of each evidence item it keeps.
 EVIDENCE = ("source", "summary", "authority", "artifact_digest", "base_commit", "scope")
+#: The version of the record of a saved review's sources (``reviews/<job id>.sources.json``).
+SOURCES = "review-sources.v1"
 HOLDS = ("every field of the review: each requirement's status, assessment.completion (what was demonstrated, what is "
          "not established, each reproduction with its text, preservation, open questions, every activity), the scope "
          "with every check run, the gate, the grounding and all the evidence")
@@ -76,6 +80,57 @@ def save(reply: dict, job_id: str) -> str | None:
     except (OSError, ValueError, TypeError):
         return None
     return str(path)
+
+
+def record(job_id: str, reply: dict, sources: Any) -> None:
+    """The sources of the review that made ``reply``, beside its saved copy under G6's state folder
+    (``reviews/<job_id>.sources.json``), bound to the bytes ``save`` writes for it (serialised here as ``save``
+    serialises it, so a saved copy that differs does not read back), published last. Nothing is recorded when it
+    cannot be written."""
+    from g6.core.storage import state_path
+
+    try:
+        data = json.dumps(reply, ensure_ascii=False, indent=1, default=str).encode("utf-8")
+        entry = {"version": SOURCES, "reply_sha256": hashlib.sha256(data).hexdigest(),
+                 "sources": [{"source": s.source_id, "item": s.item_id, "content": s.content_sha256,
+                              "recorded": s.recorded} for s in sources]}
+        side = state_path("reviews", f"{job_id}.json").with_suffix(".sources.json")
+        part = side.with_name(side.name + ".part")
+        with os.fdopen(os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="ascii",
+                       newline="\n") as out:
+            json.dump(entry, out, sort_keys=True)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(part, side)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return
+
+
+def carried(job_id: str, *, expected_sha256: str | None = None) -> tuple | None:
+    """The sources recorded with the saved review of ``job_id`` under G6's state folder, read afresh: ``None`` when
+    the record or the saved reply is missing or not a regular file, or the record is of another version, empty,
+    malformed, or not bound to the saved reply's present bytes. A reader then treats the review as G6's storage
+    folder's own source (fail closed). ``expected_sha256`` also binds the record to bytes a reader already checked,
+    so a replacement saved/source pair cannot relabel content the reader retained before the replacement."""
+    from g6.core import cloud_consent as cloud
+    from g6.core.storage import state_path
+
+    try:
+        path = state_path("reviews", f"{job_id}.json")
+        side = path.with_suffix(".sources.json")
+        if not all(stat.S_ISREG(os.lstat(one).st_mode) for one in (path, side)):
+            return None
+        entry = json.loads(side.read_bytes())
+        if not isinstance(entry, dict) or entry.get("version") != SOURCES \
+                or entry.get("reply_sha256") != hashlib.sha256(path.read_bytes()).hexdigest() \
+                or expected_sha256 is not None and entry.get("reply_sha256") != expected_sha256 \
+                or not isinstance(entry.get("sources"), list) or not entry["sources"]:
+            return None
+        return tuple(cloud.Source(one["source"], one["item"], one["content"], one["recorded"])
+                     for one in entry["sources"])
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, MemoryError):
+        # RecursionError: a record swapped for deeply nested JSON does not read back either
+        return None
 
 
 def _shorten(value: Any, items: int, chars: int, where: str, cut: set[str]) -> Any:
@@ -148,7 +203,12 @@ def finish(reply: Any, job_id: str) -> Any:
     from g6.core import cloud_consent as cloud
     from g6.core.storage import g6_home
     body, refs, _ = cloud.freeze_output(reply)
-    reply = json.loads(body)
+    # the reply's task binding (review_binding.BoundReply) goes with the copy, so save writes it
+    custody = getattr(reply, "custody", None)
+    try:
+        reply = custody(json.loads(body)) if callable(custody) else json.loads(body)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     # A job entered through a declared producer already carries that contract.
     # Absence of a value receipt is distinct from an explicitly unknown origin;
     # the latter stays in refs and cannot be replaced by the declaration.
@@ -156,8 +216,13 @@ def finish(reply: Any, job_id: str) -> Any:
                                    cloud.current_sources() or (cloud.UNKNOWN,))
     saved = save(reply, job_id)
     if saved:
-        refs += (cloud.Source.text(cloud.repository_source(g6_home() / 'reviews'), 'assessment-location', saved),)
+        # The saved assessment is derived from the review's own sources, recorded with it: read back, those are what
+        # its location carries. A record without them (older, damaged or changed) is G6's storage folder's, as before.
+        record(job_id, reply, refs)
+        recorded = carried(job_id)
+        refs = tuple(dict.fromkeys((*refs, *recorded))) if recorded is not None else (*refs, cloud.Source.text(
+            cloud.repository_source(g6_home() / 'reviews'), 'assessment-location', saved))
     return cloud.bind_output(compact(reply, job_id, saved), refs)
 
 
-__all__ = ["BUDGET", "compact", "finish", "review", "save"]
+__all__ = ["BUDGET", "SOURCES", "carried", "compact", "finish", "record", "review", "save"]

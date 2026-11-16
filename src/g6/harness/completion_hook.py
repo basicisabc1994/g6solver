@@ -108,7 +108,7 @@ def _task(session: Path) -> dict:
         if not isinstance(asked, dict) or not {'repo', 'task', 'base'} <= asked.keys():
             raise ValueError('malformed retained task')
         return asked
-    except (OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError, RecursionError, MemoryError):
         cloud.record_sources((cloud.UNKNOWN,))
         raise ValueError(f'{cloud.REQUIRED}: {cloud.WITHHELD}') from None
 
@@ -163,7 +163,7 @@ def _lines(transcript: object) -> list[dict]:
     for line in lines:
         try:
             item = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError, MemoryError):
             continue
         if isinstance(item, dict):
             found.append(item)

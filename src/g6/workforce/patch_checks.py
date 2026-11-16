@@ -213,7 +213,7 @@ def _observe(repo, module, function, inputs, scratch, timeout: float | None = No
         return None, receipt
     try:
         values = json.loads(output.read_text(encoding="utf-8"))
-    except (ValueError, OSError):
+    except (ValueError, OSError, RecursionError, MemoryError):
         return None, receipt
     return (values if isinstance(values, list) and len(values) == len(inputs) else None), receipt
 

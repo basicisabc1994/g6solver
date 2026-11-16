@@ -48,7 +48,7 @@ def _asked(repo: str, task: str, base: str, session: Path) -> dict:
             asked = json.loads(cloud.read_retained(known, expected))
             if not isinstance(asked, dict) or set(asked) != {'repo', 'task', 'base'}:
                 raise ValueError('malformed retained task')
-        except (OSError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError, RecursionError, MemoryError):
             cloud.record_sources((cloud.UNKNOWN,))
             raise repo_tests.RepoRefused(cloud.REQUIRED, cloud.WITHHELD) from None
         if asked["repo"] != str(root):
@@ -133,7 +133,10 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
         capture.review_unsent = (result.get('ending') == 'untested' and
             str(result.get('error', '')).startswith(f'[{REQUIRED}]'))
     body, refs, _ = freeze_output(result)
-    result = json.loads(body)
+    try:
+        result = json.loads(body)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     metadata = {key: result[key] for key in ('action', 'ending', 'request_id', 'run_id') if key in result}
     metadata.update(has_report='report' in result, has_text='text' in result)
     if capture is not None and capture.review_unsent and capture.refused_provider:

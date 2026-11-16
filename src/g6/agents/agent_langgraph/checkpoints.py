@@ -143,12 +143,15 @@ class Checkpoints(BaseCheckpointSaver[str]):
     def _tuple(self, cur: Any, row: Any) -> CheckpointTuple:
         thread_id, ns, checkpoint_id = row["thread_id"], row["checkpoint_ns"], row["checkpoint_id"]
         parent = row["parent_checkpoint_id"]
-        return CheckpointTuple(
-            {"configurable": {"thread_id": thread_id, "checkpoint_ns": ns, "checkpoint_id": checkpoint_id}},
-            self.serde.loads_typed((row["type"], row["checkpoint"])),
-            json.loads(row["metadata"]) if row["metadata"] is not None else {},
-            {"configurable": {"thread_id": thread_id, "checkpoint_ns": ns, "checkpoint_id": parent}} if parent else None,
-            self._pending(cur, thread_id, ns, checkpoint_id))
+        try:
+            return CheckpointTuple(
+                {"configurable": {"thread_id": thread_id, "checkpoint_ns": ns, "checkpoint_id": checkpoint_id}},
+                self.serde.loads_typed((row["type"], row["checkpoint"])),
+                json.loads(row["metadata"]) if row["metadata"] is not None else {},
+                {"configurable": {"thread_id": thread_id, "checkpoint_ns": ns, "checkpoint_id": parent}} if parent else None,
+                self._pending(cur, thread_id, ns, checkpoint_id))
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     def get_tuple(self, config: dict[str, Any]) -> CheckpointTuple | None:
         conf = config["configurable"]
@@ -189,7 +192,10 @@ class Checkpoints(BaseCheckpointSaver[str]):
         for row in rows:
             if limit is not None and shown >= limit:
                 return
-            meta = json.loads(row["metadata"]) if row["metadata"] is not None else {}
+            try:
+                meta = json.loads(row["metadata"]) if row["metadata"] is not None else {}
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
             if filter and any(meta.get(k) != v for k, v in filter.items()):
                 continue
             with self._cursor() as cur:

@@ -218,7 +218,7 @@ def _loudness(where: str, name: str, d: FFmpegInput) -> dict[str, str]:
         raise MediaError(BACKEND_FAILED, f"ffmpeg measured no loudness for {name}: {ran.text(300) or f'exit {ran.code}'}")
     try:
         measured = {k: str(v) for k, v in json.loads(found[-1]).items()}
-    except ValueError:
+    except (ValueError, RecursionError, MemoryError):
         raise MediaError(BACKEND_FAILED, f"ffmpeg's loudness measurement of {name} is not JSON") from None
     if measured.get("input_i", "").lstrip("-") in ("inf", "") or measured.get("input_tp", "").lstrip("-") == "inf":
         raise MediaError(SILENT, f"{name} is silent: there is no loudness to measure or set")

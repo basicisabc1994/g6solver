@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import dataclass
 import json
+import re
 from g6.core import cloud_consent as cloud
 from g6.core.ledger import digest
 from threading import Lock
@@ -16,6 +17,8 @@ from uuid import uuid4
 from g6.core.door import blocked_reply
 
 DETAILS = ("compact", "full")
+#: An exact caller-supplied input (``cloud_consent.input_source``).
+_INPUT = re.compile(r"input:[0-9a-f]{64}")
 
 
 @dataclass(frozen=True)
@@ -38,7 +41,10 @@ class _FrozenResult:
         body, expected = self.body, self.body_sha256
         if cloud.sha256(body) != expected:
             raise ValueError('retained result digest mismatch')
-        return json.loads(body)
+        try:
+            return json.loads(body)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 class Jobs:
@@ -86,7 +92,11 @@ class Jobs:
                     try:
                         # A compactor must render the full snapshot, not reread
                         # the producer's mutable result under its old receipt.
-                        detached = cloud.bind_output(json.loads(body), refs, metadata=metadata.read())
+                        # A result's process-local custody (a review's task binding) goes with the copy.
+                        custody = getattr(result, "custody", None)
+                        copy = json.loads(body)
+                        detached = cloud.bind_output(custody(copy) if callable(custody) else copy, refs,
+                                                     metadata=metadata.read())
                         shown = compact(detached, ident)
                         body, known, shown_metadata = cloud.freeze_output(shown)
                         shown_refs = cloud.boundary_sources(carried=(*refs, *(known or ()), *capture.sources))
@@ -113,6 +123,24 @@ class Jobs:
                         "sources": tuple(capture.sources), "origin": origin, "review_unsent": capture.review_unsent,
                         "metadata": {'full': metadata, 'compact': shown_metadata}}
 
+    def origin_inputs(self, ident):
+        """The exact inputs of the call that submitted finished job ``ident``, as the sources of a reply derived from
+        it, when the asking call comes from the same client session and provider: they count as supplied for that
+        call, and nothing else does. Each is carried, so a person's decision on any one of them (a revoke for this
+        provider) withholds the reply at admission. Nothing for a job with no origin, nor for any other session or
+        provider, whose reply is answered as before."""
+        capture = cloud.current_capture()
+        with self._lock:
+            stored = self._provenance.get(ident, {})
+        asker, asked = stored.get("origin") or (None, frozenset())
+        if asker is None or capture is None or capture.client is None \
+                or asker[0] != capture.client[0] or asker[1] is not capture.client[1]:
+            return ()
+        inputs = sorted(source for source in asked if _INPUT.fullmatch(source))
+        capture.supplied.update(inputs)
+        return tuple(cloud.Source(source, cloud.sha256("submitting-call-input"), source.removeprefix("input:"))
+                     for source in inputs)
+
     def _status_reply(self, ident, result, detail):
         capture = cloud.current_capture()
         if capture is None:
@@ -122,7 +150,7 @@ class Jobs:
         cloud.record_sources(stored.get("sources", ()))
         public = result.get("status") in ("pending", "running")
         refs = () if public else cloud.boundary_sources(
-            carried=(*stored.get(detail, (cloud.UNKNOWN,)), *stored.get('sources', ())))
+            carried=(*stored.get(detail, (cloud.UNKNOWN,)), *stored.get('sources', ()), *self.origin_inputs(ident)))
         cloud.bind_output(result, refs)
         try:
             metadata = stored['metadata'][detail].read()

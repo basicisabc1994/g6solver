@@ -202,7 +202,9 @@ def _load_set(name: str) -> list[OperatorSpec]:
         if _digest(_plain(ops)) != data["sha256"]:
             raise ValueError("its operators no longer match the digest kept with them")
         return _unique(ops)
-    except (OSError, KeyError, TypeError, ValueError, ValidationError) as exc:
+    except (OSError, KeyError, TypeError, ValueError, ValidationError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         raise _Refusal(STORE, f"the kept set {name!r} could not be used: {str(exc)[:200]}") from exc
 
 
@@ -228,7 +230,7 @@ def keep_operators(d: CogArchGpsInput) -> dict[str, Any]:
     if path.is_file():
         try:
             same = json.loads(path.read_text(encoding="utf-8")).get("sha256") == digest
-        except (OSError, ValueError, AttributeError):
+        except (OSError, ValueError, AttributeError, RecursionError, MemoryError):
             same = False
         if not same:
             return _refuse("keep_operators", SET_EXISTS, f"a different operator set is already kept as {d.name!r}", d)

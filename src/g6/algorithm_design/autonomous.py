@@ -349,7 +349,10 @@ def _ledger(given: ChainLedger | None) -> ChainLedger:
         return given
     path = state_path("algorithm_design", "missions.jsonl")
     path.parent.mkdir(parents=True, exist_ok=True)
-    return ChainLedger(path)
+    try:
+        return ChainLedger(path)
+    except (RecursionError, MemoryError):
+        raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
 
 def run_agent(mission: DesignMission, producer: ProposalAgent, runner: CandidateRunner, *,
@@ -377,15 +380,20 @@ def run_agent(mission: DesignMission, producer: ProposalAgent, runner: Candidate
     def log(kind: str, ident: str, body: dict) -> None:
         try:
             book.append(kind, f"{run_id}:{ident}", body)
-        except LedgerError as exc:
+        except (LedgerError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             raise _LedgerConflict(str(exc)) from None
 
     try:
         return _run(mission, producer, runner, queue, book, run_id, log, said)
     except _LedgerConflict:
-        return AgentReport("blocked-escalated", "ledger_conflict", "", None, (), (), (), (), 0, (), book.head(),
-                           code=CODE_PREFIX + "LEDGER_CONFLICT", run_id=run_id, approved_by=said["approved_by"],
-                           receipts=said["receipts"])
+        try:
+            return AgentReport("blocked-escalated", "ledger_conflict", "", None, (), (), (), (), 0, (), book.head(),
+                               code=CODE_PREFIX + "LEDGER_CONFLICT", run_id=run_id, approved_by=said["approved_by"],
+                               receipts=said["receipts"])
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
 
 def _run(mission: DesignMission, producer: ProposalAgent, runner: CandidateRunner, queue: ActionQueue | None,
@@ -422,11 +430,14 @@ def _run(mission: DesignMission, producer: ProposalAgent, runner: CandidateRunne
 
     def result(state: str, reason: str, patch: PatchProposal | None = None,
                obs: tuple[TestObservation, ...] = (), gate: str = "not_run") -> AgentReport:
-        return AgentReport(state, reason, patch.algorithm_id if patch else "", patch, tuple(plans),
-                           impact.impacted, normative, tuple(sorted(set(cir.unknowns) | set(impact.uncertainty))),
-                           len(obs), obs, ledger.head(), gate, knowledge.insights, architecture.obligations,
-                           CODE_PREFIX + reason.upper() if state == "blocked-escalated" else "", run_id,
-                           said["approved_by"], said["receipts"])
+        try:
+            return AgentReport(state, reason, patch.algorithm_id if patch else "", patch, tuple(plans),
+                               impact.impacted, normative, tuple(sorted(set(cir.unknowns) | set(impact.uncertainty))),
+                               len(obs), obs, ledger.head(), gate, knowledge.insights, architecture.obligations,
+                               CODE_PREFIX + reason.upper() if state == "blocked-escalated" else "", run_id,
+                               said["approved_by"], said["receipts"])
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
     if not normative:
         return result("blocked-escalated", "no_authoritative_obligations")
     if mission.mode != "swe" and not choices:

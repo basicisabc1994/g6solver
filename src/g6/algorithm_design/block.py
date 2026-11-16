@@ -137,7 +137,10 @@ def _json(value: Any) -> Any:
         if isinstance(item, (set, frozenset)):
             return sorted(item, key=repr)
         raise TypeError(type(item).__name__)
-    return json.loads(json.dumps(value, default=plain))
+    try:
+        return json.loads(json.dumps(value, default=plain))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def _found(found: DesignSearch) -> dict[str, Any]:

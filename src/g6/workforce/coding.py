@@ -1346,10 +1346,13 @@ def focused(missions, ledger, mission_id: str, unit: str, artifact_id: str, *, s
     for verdict in ledger.verdicts(mission_id, unit):
         if verdict["artifact_id"] != artifact_id or verdict["result"] != "fail" or not verdict["executed"]:
             continue
-        reasons = json.loads(verdict["reasons_json"] or "[]")
+        try:
+            reasons = json.loads(verdict["reasons_json"] or "[]")
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
         try:
             answered = json.loads(next((r[len(_ANSWERED):] for r in reasons if r.startswith(_ANSWERED)), "{}"))
-        except ValueError:  # cut short in the record: the check's own words stand instead
+        except (ValueError, RecursionError, MemoryError):  # cut short in the record: the check's own words stand instead
             answered = {}
         # Partial checks have full observations in the existing run receipt; the
         # legacy displayed JSON may be truncated. Bind all four identities before

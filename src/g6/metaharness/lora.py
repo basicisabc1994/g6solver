@@ -120,7 +120,10 @@ def sandbox_trainer(spec: LoraSpec, rows: Sequence[tuple[str, str]], out: Path) 
     for name, data in ran.outputs.items():
         if name not in ("spec.json", "examples.jsonl"):
             (out / name).write_bytes(data)
-    return json.loads(ran.stdout.strip().splitlines()[-1])
+    try:
+        return json.loads(ran.stdout.strip().splitlines()[-1])
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def train(spec: LoraSpec, rows: Sequence[tuple[str, str]], *,

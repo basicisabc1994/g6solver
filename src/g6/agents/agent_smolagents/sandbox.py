@@ -256,7 +256,10 @@ class SandboxSession:
                              f"{printed[-_TAIL:]}")
         self.earlier.append(code)
         if FINAL in done.outputs:
-            return json.loads(done.outputs[FINAL].decode("utf-8")), printed, True
+            try:
+                return json.loads(done.outputs[FINAL].decode("utf-8")), printed, True
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
         return None, printed, False
 
 

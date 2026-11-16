@@ -88,7 +88,7 @@ def run_batch(source: str, values: Sequence[Any], *, timeout_s: float = 10.0, me
         return [Run("timeout", reason=done.stderr[:300]) for _ in values]
     try:
         outcomes = json.loads(done.outputs["outcomes.json"].decode("utf-8"))
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, RecursionError, MemoryError):
         why = (done.stderr or done.stdout or f"the child ended with {done.status}").strip().splitlines()
         return [Run("error", reason=(why[-1] if why else done.status)[:300]) for _ in values]
     if not isinstance(outcomes, list) or len(outcomes) != len(values):

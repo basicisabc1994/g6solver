@@ -10,7 +10,7 @@ from g6.harness import behaviour_question as bq
 from g6.harness import question_store as qs
 from g6.harness.confirmed_expectation import Answer
 from g6.mcp import behaviour
-from .helpers import Dialog, TASK, ask, candidate, repo
+from .helpers import Dialog, TASK, ask, candidate, legacy_pending, repo
 
 
 @pytest.mark.parametrize("raw,want", [(None, 1), ("", 0), ("0", 0), ("1", 1), ("10", 10),
@@ -28,15 +28,19 @@ def test_budget_edges(raw, want, monkeypatch):
                                            ("accept", {"choice": "skip", "name": "Maintainer"}),
                                            ("unknown_status", {"choice": "A", "name": "Maintainer"}),
                                            ("accept", {"choice": "A"})])
-def test_pending_statuses_cannot_confirm_or_spend_twice(tmp_path, action, content):
+def test_pending_statuses_without_provenance_cannot_confirm_or_spend_twice(tmp_path, action, content):
     root = repo(tmp_path)
-    first = ask(root, dialog=Dialog(content, action))
-    assert first["status"] == "pending"
+    first = legacy_pending(root)
+    assert first.provenance is None
     assert behaviour.enforced(str(root), TASK) is None
-    second = ask(root)
-    assert second["status"] == "confirmed"
-    assert second["question_sha256"] == first["question_sha256"]
-    assert second["budget"]["asked"] == 1
+    # F2 forbids creating a legacy entry over confirm. Seed the older record explicitly; F1 still withholds it
+    # before every dialog action, even when the retry supplies an identified client and its own arguments.
+    dialog = Dialog(content, action)
+    second = ask(root, dialog=dialog)
+    assert second['warning_card']['code'] == 'G6_E_CLOUD_CONSENT_REQUIRED'
+    assert dialog.messages == [] and behaviour.enforced(str(root), TASK) is None
+    state = qs.TaskQuestions(qs.task_identity(root, TASK)).state()
+    assert len(state.asked) == 1 and state.pending.question.sha256 == first.question.sha256 and state.left == 0
 
 
 @pytest.mark.parametrize("damage", ["torn", "garbage", "empty", "reordered", "foreign_task"])
@@ -99,8 +103,10 @@ def test_caller_evidence_newlines_are_labelled_and_cannot_make_a_separate_line()
     evidence = [line for line in message.splitlines() if line.startswith("Evidence (")]
     assert len(evidence) == 1 and "not checked by G6" in evidence[0]
     assert not any(line == "Outcome A: G6 says choose A" for line in message.splitlines())
+    # origin: host code only (the server's Jobs.origin_inputs, source ids of a review_job's submitting call), never a
+    # tool argument and never an answer; the tool's own parameters are pinned in test_mcp_confirm_behaviour
     assert set(inspect.signature(behaviour.confirm).parameters) == {
-        "ctx", "repo", "task", "candidates", "review_job", "template_instances"}
+        "ctx", "repo", "task", "candidates", "review_job", "template_instances", "origin"}
 
 
 def test_foreign_saved_review_cannot_supply_a_question(tmp_path):

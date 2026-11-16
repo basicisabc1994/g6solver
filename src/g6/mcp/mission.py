@@ -123,7 +123,10 @@ def _here(value: Any) -> Any:
 def reply(found: dict, *, control_id: str | None = None) -> dict:
     """``found`` in the library envelope: the state a closed mission reached, a ``qualified-draft`` while it is open."""
     body, sources, _ = cloud.freeze_output(found)
-    found = json.loads(body)
+    try:
+        found = json.loads(body)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     said = said_state(found) if found.get("completion_state") else "qualified-draft"
     if said == "blocked-escalated":
         shown = card(None, "G6_E_BLOCKED", f"{WHO} reported blocked-escalated: {found.get('result')}"[:500])

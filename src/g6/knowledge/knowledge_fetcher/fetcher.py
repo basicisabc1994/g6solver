@@ -313,7 +313,9 @@ def json_body(body: bytes) -> Any:
     """A JSON reply's value."""
     try:
         return json.loads(body)
-    except (ValueError, UnicodeDecodeError) as exc:
+    except (ValueError, UnicodeDecodeError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         raise ParseProblem(f"the reply is not JSON: {exc}") from None
 
 

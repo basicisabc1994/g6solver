@@ -132,7 +132,10 @@ def loads(text: str) -> Manifest:
     both a route and an exemption or with neither, a short exemption or a malformed key or version raises
     ``ManifestError``."""
     try:
-        data = json.loads(text, object_pairs_hook=_pairs)
+        try:
+            data = json.loads(text, object_pairs_hook=_pairs)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     except json.JSONDecodeError as exc:
         raise ManifestError(f"not JSON: {exc}") from exc
     data = _fields("the manifest", data, {"format", "release", "routes", "entries"})
@@ -187,7 +190,10 @@ def manifest_path() -> Path:
 
 def load(path: Path | None = None) -> Manifest:
     """The manifest G6 ships (or the one at ``path``), read strictly (``loads``)."""
-    return loads((path or manifest_path()).read_text(encoding="utf-8"))
+    try:
+        return loads((path or manifest_path()).read_text(encoding="utf-8"))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def dumps(manifest: Manifest) -> str:

@@ -288,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         params = json.loads(args.params)
-    except (ValueError, RecursionError):
+    except (ValueError, RecursionError, MemoryError):
         return failed("G6: params must be valid JSON.", code="G6_E_INVALID_PARAMS", exit_code=2)
 
     with warnings.catch_warnings(record=True) as caught:

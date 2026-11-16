@@ -89,7 +89,9 @@ def read_settings(root: str | Path) -> dict[str, Any]:
     path = Path(root) / SETTINGS_FILE
     try:
         found = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as exc:
+    except (OSError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         raise ValueError(f"{SETTINGS_FILE} cannot be read in {root} ({type(exc).__name__})") from None
     except ValueError as exc:
         raise ValueError(f"{SETTINGS_FILE} is not JSON: {exc}") from None

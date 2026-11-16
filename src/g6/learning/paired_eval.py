@@ -171,10 +171,16 @@ class PairReceipt:
 
 
 def _rows(ledger: ChainLedger) -> list[tuple[str, PairReceipt]]:
-    problems = ledger.verify()
+    try:
+        problems = ledger.verify()
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     if problems:
         raise ValueError(f"the receipt ledger does not check out: {problems[0]}")
-    return [(entry["id"], PairReceipt.from_body(entry["body"])) for entry in ledger.entries() if entry["kind"] == KIND]
+    try:
+        return [(entry["id"], PairReceipt.from_body(entry["body"])) for entry in ledger.entries() if entry["kind"] == KIND]
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def receipts(ledger: ChainLedger, *, strategy_digest: str | None = None) -> tuple[PairReceipt, ...]:
@@ -263,8 +269,14 @@ class _Case:
 
     def __init__(self, receipt: PairReceipt, evidence: Evidence) -> None:
         self.task = evidence.get(receipt.task_digest).decode("utf-8")
-        self.meta = json.loads(evidence.get(receipt.information_digest))
-        oracle = json.loads(evidence.get(receipt.oracle_digest))
+        try:
+            self.meta = json.loads(evidence.get(receipt.information_digest))
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
+        try:
+            oracle = json.loads(evidence.get(receipt.oracle_digest))
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
         self.instance = TaskInstance(input=self.task, expected_output=oracle["expected"],
                                      instance_id=receipt.case_id, metadata={**self.meta, **oracle["rule"]})
 
@@ -272,7 +284,10 @@ class _Case:
 def _arm_again(receipt: PairReceipt, arm: Arm, case: _Case, store: StrategyStore, evidence: Evidence) -> str:
     """Build and score one completed arm again from its kept record, and answer the hint block its prompt carried.
     ``ValueError`` (or the store's and the evidence's own errors) when it does not come out as the receipt says."""
-    kept = json.loads(evidence.get(arm.evidence))
+    try:
+        kept = json.loads(evidence.get(arm.evidence))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     named = {"cohort_id": receipt.cohort_id, "replay_id": receipt.replay_id, "case_id": receipt.case_id,
              "strategy_digest": arm.strategy_digest, "prompt_digest": arm.prompt_digest, "seconds": arm.seconds,
              "cost_usd": arm.cost_usd, "error": ""}
@@ -349,8 +364,11 @@ def credited(ledger: ChainLedger, store: StrategyStore, *, evidence: Evidence | 
              strategy_digest: str | None = None) -> tuple[PairReceipt, ...]:
     """The receipts that are evidence about their candidate (for one candidate strategy, when named): those ``audit``
     reads again from the kept bytes. This is the one reading of paired credit; a row alone supplies none."""
-    return tuple(receipt for receipt, why in audit(ledger, store, evidence=evidence)
-                 if not why and (strategy_digest is None or receipt.candidate.strategy_digest == strategy_digest))
+    try:
+        return tuple(receipt for receipt, why in audit(ledger, store, evidence=evidence)
+                     if not why and (strategy_digest is None or receipt.candidate.strategy_digest == strategy_digest))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 class PairedEvaluator:
@@ -450,8 +468,11 @@ class PairedEvaluator:
         self._resolve(baseline)
         self._calls = 0
         mine = (self.seed, self.budget, self.agent_id, self.split, self.environment_digest)
-        read = [(r, why) for r, why in audit(self.ledger, self.store, evidence=self.evidence)
-                if (r.cohort_id, r.replay_id) == (self.cohort_id, replay_id)]
+        try:
+            read = [(r, why) for r, why in audit(self.ledger, self.store, evidence=self.evidence)
+                    if (r.cohort_id, r.replay_id) == (self.cohort_id, replay_id)]
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
         earlier = [r for r, _ in read]
         sound = {r.pair_id for r, why in read if not why}       # a row that does not read again is never reused
         if any(self._settings(r) != mine for r in earlier):
@@ -470,8 +491,11 @@ class PairedEvaluator:
                 out.append(kept)
                 continue
             # both arms are given exactly the bytes whose digest the receipt names, so the pair can be built again
-            meta = json.loads(canonical(_plain({key: value for key, value in instance.metadata.items()
-                                                if key not in ORACLE_KEYS})))
+            try:
+                meta = json.loads(canonical(_plain({key: value for key, value in instance.metadata.items()
+                                                    if key not in ORACLE_KEYS})))
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
             oracle = {"expected": instance.expected_output,
                       "rule": {key: instance.metadata[key] for key in sorted(ORACLE_KEYS) if key in instance.metadata}}
             self.evidence.put(instance.input.encode("utf-8"))
@@ -507,7 +531,10 @@ class PairedEvaluator:
                 baseline=base_arm, candidate=cand_arm, evaluator_ref=self.evaluator_ref,
                 baseline_shared_from=shared.pair_id if shared is not None else "",
                 critical=instance.metadata.get("critical") is True)
-            self.ledger.append(KIND, pair_id, receipt.to_body())
+            try:
+                self.ledger.append(KIND, pair_id, receipt.to_body())
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
             earlier.append(receipt)
             out.append(receipt)
         return tuple(out)

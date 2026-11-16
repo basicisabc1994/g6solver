@@ -139,7 +139,9 @@ def _bulk(target: Target, batch: Sequence[tuple[str, bytes]], verb: str,
         items = json.loads(reply.body)["items"]
         if len(items) != len(batch):
             raise ValueError("the reply does not answer every item")
-    except (outside.ServiceError, ValueError, KeyError, TypeError, UnicodeDecodeError, OSError) as exc:
+    except (outside.ServiceError, ValueError, KeyError, TypeError, UnicodeDecodeError, OSError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         return {ident: ("unknown", type(exc).__name__) for ident, _ in batch}
     states = {}
     for (ident, _), item in zip(batch, items, strict=True):

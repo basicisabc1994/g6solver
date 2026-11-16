@@ -230,7 +230,10 @@ def _content_digest(theories_doc: list[Any], artifacts_doc: list[Any], review_do
 
 
 def _load(path: Path, kind: type) -> Any:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     if not isinstance(value, kind):
         raise ValueError(f"G6_E_LEARNING_BUNDLE_INVALID: {path.name} is not a JSON {kind.__name__}")
     return value

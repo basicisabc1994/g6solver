@@ -124,7 +124,7 @@ def get_json(client: http.Client, url: str, read: list[dict[str, Any]]) -> Any:
     read.append(Source.of(reply.url, reply.body, provenance="fetched").model_dump())
     try:
         return json.loads(reply.body)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError, MemoryError):
         kind = reply.headers.get("content-type", "unknown")
         raise Failed("parse_failed", f"{url} answered {reply.status} with {kind}, not JSON") from None
 

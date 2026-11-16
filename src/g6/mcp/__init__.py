@@ -132,7 +132,10 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
 
     request_id = uuid.uuid4().hex[:12]
     try:
-        params = json.loads(params_json or "{}")
+        try:
+            params = json.loads(params_json or "{}")
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     except json.JSONDecodeError as exc:
         return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id)
     if not isinstance(params, dict):
@@ -260,7 +263,10 @@ def build_server(surface: Any = None) -> Any:
         from g6.mcp.composition import compose_reply
         from g6.core.door import blocked_reply
         try:
-            payload = json.loads(composition_json)
+            try:
+                payload = json.loads(composition_json)
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
         except json.JSONDecodeError:
             return blocked_reply("[G6_E_INPUT_VALIDATION] composition_json must be JSON")
         return compose_reply(payload, allow_sensitive=allowed_sensitive())
@@ -426,7 +432,10 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         Does not confirm or execute it. Below 30 held-out cases is exploration only."""
         from g6.core.door import blocked_reply
         try:
-            return mh.start(json.loads(specification_json))
+            try:
+                return mh.start(json.loads(specification_json))
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
         except json.JSONDecodeError:
             return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json must be JSON")
 
@@ -463,7 +472,9 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             if not isinstance(files, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in files.items()):
                 raise ValueError("files must map filenames to source strings")
             return mh.propose_code(workflow, files, hypothesis=hypothesis, session=session(ctx))
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             return blocked_reply(f"[G6_E_INPUT_VALIDATION] {exc}")
 
     def runs_code(op: str) -> dict | None:
@@ -500,7 +511,10 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         """A candidate profile (``profile_json``: acting fields only), or with none, the declared search space's
         candidates. A candidate changes nothing until it is evaluated, decided and approved by a person."""
         try:
-            profile = json.loads(profile_json) if profile_json else None
+            try:
+                profile = json.loads(profile_json) if profile_json else None
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
         except json.JSONDecodeError as exc:
             from g6.metaharness.api import _blocked
 
@@ -575,7 +589,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         authenticated. Runs no code."""
         from g6.mcp import behaviour
         return await behaviour.confirm(ctx, repo, task, candidates=candidates, review_job=review_job,
-                                       template_instances=template_instances)
+                                       template_instances=template_instances, origin=jobs.origin_inputs)
 
     async def g6_mission_create(repo: str, objective: str, ctx: Any, module: str = "", function: str = "",
                                 helpers: list[str] | None = None, risk: str = "R2", budget_cents: int = 0) -> dict:

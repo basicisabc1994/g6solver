@@ -243,7 +243,7 @@ class Coordination:
             if found["expires_at"] <= found["acquired_at"] or found.get("unreadable"):
                 raise ValueError("invalid lifetime")
             return found
-        except (OSError, ValueError, KeyError, TypeError, OverflowError, WorkspaceRefused):
+        except (OSError, ValueError, KeyError, TypeError, OverflowError, WorkspaceRefused, RecursionError, MemoryError):
             return {"path": rel or f"(unreadable lock {path.stem[:12]})", "claimed_holder": "",
                     "token_sha256": "", "acquired_at": 0, "expires_at": 0, "unreadable": True}
 
@@ -346,7 +346,7 @@ class Coordination:
                 continue
             try:
                 entry = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError, MemoryError):
                 unreadable += 1
                 continue
             if isinstance(entry, dict):

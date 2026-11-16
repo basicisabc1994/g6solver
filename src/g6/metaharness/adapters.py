@@ -20,7 +20,10 @@ from g6.metaharness.schema import Model, Suite, Workflow
 
 
 def _released(out: str) -> bool:
-    return json.loads(out).get("state") != "blocked-escalated"
+    try:
+        return json.loads(out).get("state") != "blocked-escalated"
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 RELEASED = Check("the bundle released a result", _released, check_id="bundle-released",

@@ -152,7 +152,7 @@ class Builder:
         for line in (llm.complete("Draft development examples. JSON lines only.", prompt) or "").splitlines():
             try:
                 row = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError, MemoryError):
                 continue
             if isinstance(row, dict) and isinstance(row.get("input"), str) and "expected" in row:
                 cases.append(SuiteCase(f"draft{len(cases)}", row["input"], row["expected"]))

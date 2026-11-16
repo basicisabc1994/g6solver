@@ -251,7 +251,9 @@ def read_json(text: str) -> Table:
         data = json.loads(text, object_pairs_hook=_once)
     except MLError:
         raise
-    except (ValueError, RecursionError) as exc:
+    except (ValueError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         raise MLError(INPUT_INVALID, f"the JSON text cannot be read: {exc}"[:300]) from None
     if not isinstance(data, list):
         raise MLError(INPUT_INVALID, "the JSON text must be an array of objects, one per row")
@@ -357,7 +359,10 @@ def profile(table: Table, key: list[str] | None = None) -> dict[str, Any]:
                 missing_key += 1
                 continue
             counts[json.dumps(parts)] += 1
-        twice = [(json.loads(k), n) for k, n in counts.most_common() if n > 1]
+        try:
+            twice = [(json.loads(k), n) for k, n in counts.most_common() if n > 1]
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
         keyed = {"columns": key, "rows_with_missing_key": missing_key, "repeated_values": len(twice),
                  "rows_sharing_a_key": sum(n for _, n in twice),
                  "examples": [{"key": k, "rows": n} for k, n in twice[:5]]}

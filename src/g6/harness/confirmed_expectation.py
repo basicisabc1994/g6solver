@@ -130,7 +130,7 @@ def _parsed(data: object, fields: Mapping[str, type], what: str) -> dict:
     try:
         record = json.loads(data)
         again = _canonical(record)
-    except (ValueError, RecursionError):   # not UTF-8, not JSON, or a value JSON cannot hold (NaN)
+    except (ValueError, RecursionError, MemoryError):   # not UTF-8, not JSON, or a value JSON cannot hold (NaN)
         raise ValueError(f"a {what} record that is not JSON is unreadable") from None
     if again != data:
         raise ValueError(f"a {what} record is held as its canonical JSON (sorted keys, no spaces, ASCII), and this "
@@ -170,7 +170,10 @@ class _Field:
     def __get__(self, obj: object, owner: type | None = None) -> Any:
         if obj is None:   # no class default: a field the caller gives
             raise AttributeError(self._name)
-        return self._read(obj) if self._read else json.loads(obj.record)[self._name]
+        try:
+            return self._read(obj) if self._read else json.loads(obj.record)[self._name]
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     def __set__(self, obj: object, value: Any) -> None:
         raise FrozenInstanceError(f"cannot assign to field {self._name!r}: a record is held as its bytes")
@@ -273,7 +276,10 @@ class Question(_Record):
                   "scope": scope, "cited": cited, "baseline_sha256": baseline_sha256, "intent": intent}
         _typed(record, QUESTION_FIELDS, "a question")   # the caller's values: each field's type, JSON data only
         data = _canonical(record)   # written once: from here nothing the caller holds is shared with the record
-        held = json.loads(data)
+        try:
+            held = json.loads(data)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
         _typed(held, QUESTION_FIELDS, "a question")   # and what was written, so a change in between is checked too
         _shown(held, _sha(data))
         object.__setattr__(self, "_record", data)
@@ -294,14 +300,23 @@ class Question(_Record):
 
     @property
     def options(self) -> list[str]:
-        return json.loads(self._record)["options"]
+        try:
+            return json.loads(self._record)["options"]
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     @property
     def options_sha256(self) -> str:
-        return _options_sha256(json.loads(self._record))
+        try:
+            return _options_sha256(json.loads(self._record))
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     def to_dict(self) -> dict:
-        return json.loads(self._record)
+        try:
+            return json.loads(self._record)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 @dataclass(frozen=True, eq=False, init=False)
@@ -386,7 +401,10 @@ class ConfirmedExpectation(_Record):
     @property
     def record(self) -> bytes:
         """The two records, as one canonical JSON object: ``question`` and ``answer``."""
-        return _canonical({"question": json.loads(self._question), "answer": json.loads(self._answer)})
+        try:
+            return _canonical({"question": json.loads(self._question), "answer": json.loads(self._answer)})
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     @property
     def question_sha256(self) -> str:
@@ -399,28 +417,46 @@ class ConfirmedExpectation(_Record):
     @property
     def option(self) -> str:
         """The option the person chose: the label of one of the question's outcomes."""
-        return json.loads(self._answer)["option"]
+        try:
+            return json.loads(self._answer)["option"]
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     @property
     def answered_by(self) -> str:
-        return json.loads(self._answer)["answered_by"]
+        try:
+            return json.loads(self._answer)["answered_by"]
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     @property
     def options_sha256(self) -> str:
-        return _options_sha256(json.loads(self._question))
+        try:
+            return _options_sha256(json.loads(self._question))
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     @property
     def artefact_sha256(self) -> str:
         """The digest of the artefact the question is asked about, read from the question's bytes."""
-        return json.loads(self._question)["baseline_sha256"]
+        try:
+            return json.loads(self._question)["baseline_sha256"]
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     @property
     def requirement_id(self) -> str:
-        return json.loads(self._question)["requirement_id"]
+        try:
+            return json.loads(self._question)["requirement_id"]
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     @property
     def scope(self) -> str:
-        return json.loads(self._question)["scope"]
+        try:
+            return json.loads(self._question)["scope"]
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     @property
     def provenance(self) -> str:
@@ -433,7 +469,10 @@ class ConfirmedExpectation(_Record):
     @property
     def instance(self) -> TemplateInstance:
         """What the answer means: the example.v1 check compiled from the question's bytes and the chosen option."""
-        return _compiled(json.loads(self._question), self.question_sha256, self.option)
+        try:
+            return _compiled(json.loads(self._question), self.question_sha256, self.option)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     @property
     def check_sha256(self) -> str:
@@ -442,10 +481,13 @@ class ConfirmedExpectation(_Record):
 
     def to_dict(self) -> dict:
         """The two records and what G6 derives from them, as JSON data."""
-        return {"question": json.loads(self._question), "answer": json.loads(self._answer),
-                "question_sha256": self.question_sha256, "answer_sha256": self.answer_sha256,
-                "expectation_id": self.expectation_id, "provenance": PERSON_CONFIRMED,
-                "instance": self.instance.model_dump(), "check_sha256": self.check_sha256}
+        try:
+            return {"question": json.loads(self._question), "answer": json.loads(self._answer),
+                    "question_sha256": self.question_sha256, "answer_sha256": self.answer_sha256,
+                    "expectation_id": self.expectation_id, "provenance": PERSON_CONFIRMED,
+                    "instance": self.instance.model_dump(), "check_sha256": self.check_sha256}
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     def for_question(self, question: Question) -> ConfirmedExpectation:
         """This expectation, when ``question`` is the one it answers, byte for byte; a ``ValueError`` for any other."""
@@ -477,7 +519,10 @@ def confirm(question: Question, answer: str, *, answered_by: str, text: str = ""
 
 def _scenario(one: ConfirmedExpectation) -> bytes:
     """What a case asks, without its answer, as canonical JSON: the function and its arguments."""
-    shown = json.loads(one._question)
+    try:
+        shown = json.loads(one._question)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     return _canonical({"function": shown["function"], "args": shown["args"], "kwargs": shown["kwargs"]})
 
 

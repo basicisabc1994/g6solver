@@ -223,7 +223,7 @@ def read_limits(argv: Sequence[str], *, timeout: float = ASK_TIMEOUT) -> dict[st
                     for line in told:
                         try:
                             found = json.loads(line)
-                        except ValueError:
+                        except (ValueError, RecursionError, MemoryError):
                             continue
                         if isinstance(found, dict) and found.get("id") == _ASKED[-1]["id"]:
                             answers.append(found)
