@@ -199,6 +199,15 @@ def _agents_update(target, block: str) -> tuple[bytes | None, bytes]:
     return data, data[:start] + written + data[ends[0].end():]
 
 
+def _seen(target) -> tuple[int, int, bytes] | None:
+    """The file's identity (device and file number) and bytes now; ``None`` when there is no file."""
+    try:
+        status = os.stat(target, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    return status.st_dev, status.st_ino, target.read_bytes()
+
+
 def _terminal() -> bool:
     try:
         return sys.stdin is not None and sys.stdin.isatty()
@@ -212,7 +221,13 @@ def codex_agents(ask: Ask, say: Say) -> None:
     A file G6 cannot change that way (a lone begin or end line, two blocks, not UTF-8, not a plain file, a link,
     read-only or unreadable), setup's own question with no terminal to answer it, anything but a yes, or a write that
     fails: the file stays byte for byte as it was, no temporary file is left, and the person is told why and shown
-    the block to add by hand. Setup goes on either way."""
+    the block to add by hand. Setup goes on either way.
+
+    The file may change while setup waits at its question (the person saves it in an editor, or another program
+    does). So after the yes, and once more just before the replace, G6 compares the file with what it read before
+    asking, by identity (device and file number) and bytes; a file that changed, or appeared, is left as it now is and
+    the person is shown the block to add by hand. What remains: a save that lands between that last comparison and the
+    rename is lost, a window of one rename, since no lock is taken on the person's file."""
     import tempfile
     from pathlib import Path
     from g6.mcp.instructions import agents_block
@@ -224,10 +239,18 @@ def codex_agents(ask: Ask, say: Say) -> None:
         say(f"G6 left {target} as it was: {why}. To give Codex G6's instructions, add this block to it yourself:"
             f"\n\n{block}\n")
 
+    changed = "it changed while setup waited, and G6 writes only over the file it showed you the change for"
     try:
         previous, updated = _agents_update(target, block)
+        seen = _seen(target)
     except _LeftAlone as why:
         by_hand(str(why))
+        return
+    except OSError as exc:
+        by_hand(f"it could not be read ({type(exc).__name__})")
+        return
+    if (seen[2] if seen else None) != previous:
+        by_hand(changed)
         return
     if updated == previous:
         return
@@ -245,6 +268,9 @@ def codex_agents(ask: Ask, say: Say) -> None:
         return
     name = None
     try:
+        if _seen(target) != seen:
+            by_hand(changed)
+            return
         target.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(dir=target.parent, prefix=".g6-agents-")
         with os.fdopen(fd, "wb") as stream:
@@ -252,6 +278,9 @@ def codex_agents(ask: Ask, say: Say) -> None:
         if previous is not None:
             import shutil
             shutil.copymode(target, name)
+        if _seen(target) != seen:           # the last comparison, just before the replace
+            by_hand(changed)
+            return
         os.replace(name, target)
     except OSError as exc:
         by_hand(f"writing it failed ({type(exc).__name__})")

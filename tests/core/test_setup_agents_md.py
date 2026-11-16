@@ -186,6 +186,61 @@ def test_a_failed_write_leaves_the_file_and_no_temporary_file(codex, monkeypatch
     _left_alone(codex, events, b"# Mine\n")
 
 
+def _changed_while_waiting(codex, events, now):
+    _left_alone(codex, events, now)
+    said = " ".join(text for kind, text in events if kind == "say")
+    assert "changed while setup waited" in said, said
+
+
+def test_an_edit_saved_while_setup_waits_at_its_question_is_kept(codex):
+    codex.parent.mkdir(parents=True)
+    codex.write_bytes(b"# My rules\nUse tabs.\n")
+    events = []
+
+    def ask(prompt):
+        with open(codex, "ab") as stream:       # the person saves the file in their editor, then answers yes
+            stream.write(b"Never push to main.\n")
+        return "y"
+    parser = argparse.ArgumentParser()
+    setup.add_arguments(parser)
+    args = parser.parse_args(["--client", "codex", "--refuse-unconfined"])
+    assert setup.main(args, ask=ask, say=lambda text: events.append(("say", text))) == 0
+    _changed_while_waiting(codex, events, b"# My rules\nUse tabs.\nNever push to main.\n")
+
+
+def test_a_file_made_while_setup_waits_at_its_question_is_kept(codex):
+    events = []
+
+    def ask(prompt):
+        codex.parent.mkdir(parents=True, exist_ok=True)
+        codex.write_bytes(b"# Made meanwhile\n")
+        return "y"
+    parser = argparse.ArgumentParser()
+    setup.add_arguments(parser)
+    args = parser.parse_args(["--client", "codex", "--refuse-unconfined"])
+    assert setup.main(args, ask=ask, say=lambda text: events.append(("say", text))) == 0
+    _changed_while_waiting(codex, events, b"# Made meanwhile\n")
+
+
+@pytest.mark.parametrize("existing", [True, False])
+def test_an_edit_saved_just_before_the_replace_is_kept(codex, monkeypatch, existing):
+    import tempfile
+
+    codex.parent.mkdir(parents=True)
+    if existing:
+        codex.write_bytes(b"# Mine\n")
+    real = tempfile.mkstemp
+
+    def mkstemp(*args, **kwargs):              # the person's save lands while G6 writes its temporary file
+        with open(codex, "ab") as stream:
+            stream.write(b"Saved meanwhile.\n")
+        return real(*args, **kwargs)
+    monkeypatch.setattr(tempfile, "mkstemp", mkstemp)
+    events = []
+    assert _setup("y", events) == 0
+    _changed_while_waiting(codex, events, (b"# Mine\n" if existing else b"") + b"Saved meanwhile.\n")
+
+
 @pytest.mark.parametrize("line", [
     f"Setup keeps its text between `{instructions.AGENTS_BEGIN}` and `{instructions.AGENTS_END}`.\n",
     f"G6's block starts at a line {instructions.AGENTS_BEGIN} alone.\n",
