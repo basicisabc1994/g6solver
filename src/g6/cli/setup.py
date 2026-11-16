@@ -156,7 +156,8 @@ def _agents_update(target, block: str) -> tuple[bytes | None, bytes]:
     """The file's bytes now (``None`` when there is no file) and with G6's block in place: the block written in the
     file's own newline style, as exactly one ``AGENTS_BEGIN ... AGENTS_END`` pair replaced, or appended where there is
     none; every other byte (newlines, a byte-order mark, trailing blank lines) as it was. ``_LeftAlone`` for a file
-    G6 cannot change that way."""
+    G6 cannot change that way. A marker counts only as a whole line of its own."""
+    import re
     from g6.mcp.instructions import AGENTS_BEGIN, AGENTS_END
 
     if target.is_symlink():
@@ -183,17 +184,19 @@ def _agents_update(target, block: str) -> tuple[bytes | None, bytes]:
     first = data.find(b"\n")
     newline = b"\r\n" if first > 0 and data[first - 1:first] == b"\r" else b"\n"
     written = block.encode("utf-8").replace(b"\n", newline)
-    begin, end = AGENTS_BEGIN.encode(), AGENTS_END.encode()
-    counts = data.count(begin), data.count(end)
-    if counts == (0, 0):
+    # a marker counts only as a whole line of its own (spaces or tabs around it allowed): one quoted inside a line is
+    # the person's text, not G6's block
+    begins, ends = ([*re.finditer(rb"(?m)^(?:\xef\xbb\xbf)?[ \t]*" + re.escape(marker.encode()) + rb"[ \t]*(?=\r?$)",
+                                  data)] for marker in (AGENTS_BEGIN, AGENTS_END))
+    if not begins and not ends:
         body = data[len(bom):]
         gap = b"" if not body or body.endswith(newline * 2) else newline if body.endswith(newline) else newline * 2
         return data, data + gap + written + newline
-    start, stop = data.find(begin), data.find(end)
-    if counts != (1, 1) or stop < start:
-        raise _LeftAlone(f"its g6:begin and g6:end lines do not make exactly one block ({counts[0]} begin, "
-                         f"{counts[1]} end)")
-    return data, data[:start] + written + data[stop + len(end):]
+    if len(begins) != 1 or len(ends) != 1 or ends[0].start() < begins[0].start():
+        raise _LeftAlone(f"its g6:begin and g6:end lines do not make exactly one block ({len(begins)} begin, "
+                         f"{len(ends)} end)")
+    start = begins[0].start() + (len(bom) if begins[0].start() == 0 else 0)
+    return data, data[:start] + written + data[ends[0].end():]
 
 
 def _terminal() -> bool:

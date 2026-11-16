@@ -186,6 +186,19 @@ def test_a_failed_write_leaves_the_file_and_no_temporary_file(codex, monkeypatch
     _left_alone(codex, events, b"# Mine\n")
 
 
+@pytest.mark.parametrize("line", [
+    f"Setup keeps its text between `{instructions.AGENTS_BEGIN}` and `{instructions.AGENTS_END}`.\n",
+    f"G6's block starts at a line {instructions.AGENTS_BEGIN} alone.\n",
+])
+def test_markers_quoted_inside_a_line_are_the_persons_text(codex, line):
+    codex.parent.mkdir(parents=True)
+    original = ("# My rules\n" + line + "Use tabs.\n").encode()
+    codex.write_bytes(original)
+    assert _setup("y", []) == 0
+    assert codex.read_bytes() == original + b"\n" + BLOCK.encode() + b"\n"     # the block appended, the line whole
+    assert _setup("y", []) == 0 and codex.read_bytes() == original + b"\n" + BLOCK.encode() + b"\n"
+
+
 def test_without_a_terminal_nothing_is_written_and_the_block_is_shown(codex, monkeypatch):
     import io
     import sys
