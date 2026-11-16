@@ -1,0 +1,12 @@
+{
+  "format": "g6.routing_moment_gates/1",
+  "cohort": "moment",
+  "min_positive_moment_hits": 0.6,
+  "min_positive_lower_bound": 0.35,
+  "max_negative_unnecessary": 0.125,
+  "max_malformed": 0.1,
+  "min_missing_tool_recovery": 0.75,
+  "interval": "wilson95",
+  "release_rule": "at_least_one_client_passes",
+  "comparison": "paired_exact_mcnemar_no_claim"
+}

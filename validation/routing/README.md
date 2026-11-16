@@ -147,3 +147,134 @@ either client's events, so a call counts as timely only when its whole session m
 2. The development cohort on each client (30 sessions each at ten routes), and skill revisions from it.
 3. The final cohort's tasks, written and frozen as above once the last route has merged.
 4. The final cohort on each client, once, then the two consistency repeats of its positive tasks.
+
+## Moment-of-need cohort
+
+Does G6's value reach a coding agent at the moment it needs it, when nobody asks for G6? The cohorts above measure
+prompted routing: most of their prompts say "Use G6". In this one no prompt names G6, its server or a tool, or asks for
+a review or a check (`score.NAMES_A_TOOL` refuses such a prompt). Each prompt reads like a person's request to a coding
+agent on a synthetic repository. It is run twice per client: the before arm on the tree as it is, and the after arm
+once the wiring has landed. The tasks were written by someone who builds none of the wiring.
+
+**State: `evidence_pending`.** No session has been run. Nothing here is a measured result.
+
+- `moment_tasks.json`: 24 tasks, run by each client. 12 are positive: 4 `before_done`, 4 `stuck` and 4
+  `after_refusal`. 8 are `negative` and 4 are `missing_tool`. Each task gives its prompt, its fixture, the calls that
+  count (any one of them, with the argument constraints that make a call well-formed), its moment rule, the host
+  permissions its server starts with, any withheld tools, the grants it starts with, and why it is fair. The list
+  binds no route, because the guidance changes between the arms. Each session records what guidance it had instead.
+- `moment_gates.json`: the bars. `moment_frozen.json` pins both files: the task list at
+  `1976b25f8d885fcb60086adbacd48d7f9bea0c85db79e88a159ab5f235933a75` and the bars at
+  `9aa0237097e7dd22f013664850d3008513ac750834f577d793cab6f28556de59`. Nothing runs and nothing is scored on a list or
+  bars that differ from these. A list may hold fewer tasks, so one task can be tried first. It may never hold a
+  changed one.
+- `moment_fixtures/ledger`: one more synthetic repository, kept out of `fixtures/` so that the development cohort's
+  bound digest of the fixtures does not move. Its four failing test files are the stuck tasks. Each holds a
+  constraint that the two natural first fixes miss. `tests/validation/test_routing_moment_fixture.py` shows that both
+  natural fixes fail and that a right fix passes.
+
+### What a hit is
+
+Each kind is read from the order of the session's steps: its MCP calls (with the `G6_E_*` code a reply carried), the
+files it changed, the test runs (and whether they failed) and its final message. That order is read from the kept event
+log only, as `reading` reads every other field.
+
+| Kind | Moment | Hit |
+|---|---|---|
+| `before_done` (`call_before_final`) | the last edit to a `.py` file | a well-formed `g6_review_patch` or `g6_review_until_clean` call on the repository after it, before the final message |
+| `stuck` (`stuck_call`) | the second failed test run | after it, before the final message, a well-formed call that addresses the failure: `g6_select` (phase `stuck` or `diagnose`), `g6_premortem`, `g6_review_patch` with `proposed_checks`, `g6_review_until_clean`, or `g6_invoke` on `swe_diagnostics` |
+| `after_refusal` (`call_after_refusal`) | the first review call refused with the task's code | the next call is the documented remedy (`g6_cloud_grant` for a withheld source), or the final message names what the person must allow (`patch_review.review`, or the withheld source) and the refused call is not retried |
+| `negative` | none | the session completes with no G6 call at all |
+| `missing_tool` | none | as in the cohorts above: the final message says a withheld tool is absent, or the agent falls back to `g6_find` |
+
+Two of the refusals are G6's own sensitive-operation refusal: the server allows no review. The other two are its
+consent refusal: the server allows the review, but the session starts without `host_configuration`, `jobs` or
+`completion_history` shared. `g6_select` is planned, not yet registered (`planned_tools`). In the before arm no
+call can name it.
+
+A positive task whose moment never came still counts as a miss: no Python change, fewer than two failed test runs, or
+no refusal. So a strong agent that was never stuck counts against the bar. The report gives `moment_reached` beside
+`moment_hits`, so that case can be seen. A hit is the call, not what the call returned.
+
+### The bars
+
+Pre-registered before any run. **The owner may tighten these bars before the first run.** To do so, retire
+`moment_gates.json` with its reason (`freeze.retire`), freeze the new bars and pin them in `moment_frozen.json`. A bar
+is never loosened after a run.
+
+| Bar | Value |
+|---|---|
+| Positive moment hits | at least 0.60, and the lower end of its 95% Wilson interval at least 0.35 |
+| Negative tasks with an unnecessary G6 call | at most 0.125 |
+| Tasks with a malformed call | at most 0.10 |
+| Recovery on missing-tool tasks | at least 0.75 |
+
+The release rule is that at least one client meets every bar. Each client is scored on its own and results are never
+pooled. The task is the unit, and every denominator is full. The before and after arms are reported per paired task:
+each kind and polarity gets its four cells and an exact McNemar p-value. The report makes no claim, because the cohort
+was not sized to decide a difference.
+
+### What each session starts with
+
+What ships, with as little else as the runner can manage:
+
+- **Claude Code arm.** The session loads the plugin this tree ships with `--plugin-dir` (its hooks and skills). The
+  plugin's `.mcp.json` is left out, because the trial server stands in its place. The `using-g6` skill sits where
+  `g6 setup --client claude` puts it, at the workspace's scope. The session may run the tests (`python -m pytest`,
+  `pytest`) and nothing else of the shell, the web or sub-agents.
+- **Codex arm.** The skill sits where `g6 setup --client codex` puts it, at the workspace's scope, in Codex's
+  `workspace-write` sandbox. Codex also reads what setup writes in the person's home (`~/.codex/AGENTS.md`, once the
+  wiring adds a block there). Run `g6 setup --client codex` and `g6 setup --client claude` from the tree under test
+  before each arm.
+- **Guidance record.** Every session's record names, as digests, the guidance it could read: the workspace's skill,
+  the plugin, what the servers show, and what `g6 setup` writes in the person's home for each client. An absent file
+  is "". The labels name no folder. The arms are compared on these. `run.py compare` prints both arms' `g6` package
+  and guidance.
+- **Server and G6 home.** Each server states its task's permissions, even when there are none, so a registration of
+  the person's own cannot add any. The client is given the session's G6 home, so the plugin's hooks use it. That home
+  holds no key file, so the completion loop stays off.
+- **Fresh start.** A session starts only while none of the list's `ungranted` sources is shared with the client's
+  provider. The component catalogue is one of them: it is not pre-seeded. Otherwise the session is `refused` with
+  `G6_E_ROUTING_NOT_FRESH` and nothing starts.
+
+### What is sent, and where
+
+Each session sends the same things as the cohorts above: the task's prompt, the fixture repository and G6's guidance,
+to the client's provider. The fixtures hold no user data. List what to grant, then grant each line in the client's own
+dialog (`g6_cloud_grant`). Each line is the client's environment, one fixture, or one workspace folder:
+
+    python validation/routing/run.py sources --client codex --cohort moment --out <folder>
+
+**Claude Code arm caveat.** Its file tools are not confined to the workspace, and the tests it runs, which the agent
+may edit, run with the person's own rights. Run it in an account or on a machine that holds nothing else.
+
+### How to run both arms
+
+    python validation/routing/run.py run --client codex --cohort moment --out <before folder>
+    python validation/routing/run.py score --client codex --cohort moment --out <before folder>
+    (the wiring lands; g6 setup again from the new tree)
+    python validation/routing/run.py run --client codex --cohort moment --out <after folder>
+    python validation/routing/run.py compare --client codex --out <before folder> --out <after folder>
+    python validation/routing/run.py release --cohort moment --out <after folder>
+
+A moment record is held to the pinned list and bars. It is not held to the tree that reads it, because its two arms ran
+on two trees. It must name the `g6` package it ran on, and its servers must have found that package. Malformed calls
+are read against the schemas of the tree that scores. Score each arm on its own tree, and compare once both arms exist.
+
+### Not yet observed
+
+The steps a session's log holds were read from each client's documented interface:
+
+- Claude Code: `Edit`, `Write` and `Bash` tool uses and their results, and the `result` event.
+- Codex: `file_change`, `command_execution` and `agent_message` items.
+
+The same holds for `--plugin-dir`. Before the first arm, run one moment task per client. Check the session's
+`timeline` against the raw log: every edit, test run and call it holds should be there, in order, and a failed test
+run should be marked failed.
+
+Further limits:
+
+- In this setup the review's reply is withheld by consent (see above), so the agent never sees a review's result.
+- The READMEs of the four development fixtures, which every moment task outside `ledger` uses, name "G6's routing
+  trials", a mild cue. They stay as they are so that the development cohort stays bound.
+- A trap may not stop a strong agent.
