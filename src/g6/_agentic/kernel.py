@@ -20,6 +20,9 @@ confined child (:mod:`g6._agentic._child`) where the part's functions ask the pa
 the metered model call (``MeteredCaller`` over the person's configured model through the consent guard), checks the
 value against the function's declared return type and the component's own validator, and only then answers. The final
 answer is re-checked by the checker the component declares, with nothing substituted, in a fresh confined run.
+Only a model whose every request the kernel can hold to the limits the question states is used (an Ollama or
+OpenAI-compatible endpoint, Anthropic's own SDK client, a Claude Code or Codex session, or a model on this machine:
+:func:`_kind`); any other is refused before the question (``G6_E_AGENTIC_CALLER_UNMETERED``).
 
 The reply holds the substitute's result and the original's answer beside it, the trigger, the part, the mode, the
 model, the digests of the part's source, each prompt and the question, the person's answer and the name they gave (not
@@ -37,6 +40,7 @@ import hashlib
 import inspect
 import json
 import re
+import sys
 import threading
 import time
 import traceback
@@ -70,6 +74,10 @@ MODEL_TOKENS = 2000
 CHILD_TIMEOUT_S = 24.0
 #: No child starts with less time left than this (or a tenth of the budget, when that is less).
 MIN_CHILD_S = 1.0
+#: A resend after a provider's rate-limit wait (``g6.core.llm``'s Retry-After path) carries the timeout its call's first
+#: request was given, which cannot be cut again: it is sent only within this many seconds of that first request, so no
+#: request runs longer than this past the deadline.
+RESEND_SLACK_S = 1.0
 #: All the text in a prompt that comes from the op's parameters (the parameters, the part's call arguments and the
 #: original's summary) is cut together to this many characters (:func:`_within`).
 PARAMETER_CHARS = 8000
@@ -77,6 +85,7 @@ REASON_CHARS = 300
 UNSUPPORTED = "G6_E_AGENTIC_UNSUPPORTED"
 MODE_UNAVAILABLE = "G6_E_AGENTIC_MODE_UNAVAILABLE"
 NO_MODEL = "G6_E_AGENTIC_NO_MODEL"
+CALLER_UNMETERED = "G6_E_AGENTIC_CALLER_UNMETERED"
 DIGEST_MISMATCH = "G6_E_AGENTIC_DIGEST_MISMATCH"
 SUBSTITUTE = "G6_E_AGENTIC_SUBSTITUTE"
 #: Codes a trust door gives: never a trigger, whatever a component declares (design 10.5).
@@ -360,6 +369,11 @@ def prepare(component: str, op: str, params: Any, *, part: str | None = None, mo
         return _refused(NO_MODEL, "no model is configured for G6 (G6_LLM_PROVIDER in the person's key file), so no "
                                   "part can be substituted; the original's answer stands", original=original,
                         request_id=request_id)
+    kind, why = _metering(caller)
+    if why:
+        return _refused(CALLER_UNMETERED, f"the model G6 would ask is {why}, so the limits an override states could "
+                                          "not be held at each request; nothing was asked and the original's answer "
+                                          "stands", original=original, request_id=request_id)
     budget = budget or DEFAULT_BUDGET
     functions = tuple(spec["functions"])
     model = _model_name(caller)
@@ -381,13 +395,9 @@ def prepare(component: str, op: str, params: Any, *, part: str | None = None, mo
                   f"{budget.max_wall_clock_s:g} seconds for the whole override, every model call and every run of the "
                   "operation (the final run and the re-check included): none starts with less than "
                   f"{min(MIN_CHILD_S, budget.max_wall_clock_s / 10):g} seconds left, each run at most "
-                  f"{CHILD_TIMEOUT_S:g} seconds and never longer than the time left, "
-                  + ("each model call is given the time left as its timeout" if _cut(caller) else
-                     "this model's caller takes no timeout, so a request already sent may run on at the provider "
-                     "after the deadline")
-                  + ", G6 stops waiting at the deadline, and a model reply that arrives after the deadline is not "
-                    "used; the operation runs again in an isolated child with no network that writes only its own "
-                    "folder",
+                  f"{CHILD_TIMEOUT_S:g} seconds and never longer than the time left; {_bound(kind, caller)}; G6 stops "
+                  "waiting at the deadline, and a model reply that arrives after the deadline is not used; the "
+                  "operation runs again in an isolated child with no network that writes only its own folder",
     }
     question_digest = digest({"binding": binding, "params": binding["Parameters digest"], "functions": list(functions),
                               "mode": mode, "trigger": trigger})
@@ -424,11 +434,6 @@ class _OutOfBudget(BudgetExhausted):
     """The envelope's own refusal of a send at its boundary, in G6's words."""
 
 
-def _timed(caller: Any) -> bool:
-    timeout = getattr(caller, "timeout", None)
-    return isinstance(timeout, int | float) and not isinstance(timeout, bool)
-
-
 def _raw(backend: Any) -> Any:
     """The backend that sends, under a guarded form ``consent_callers.guard`` made of it (guarded again by
     :class:`_Envelope`), or ``backend`` itself."""
@@ -447,15 +452,70 @@ def _backends(caller: Any, seen: frozenset[int] = frozenset()) -> Iterable[Any]:
         yield from _backends(one, seen | {id(caller)})
 
 
-def _cut(caller: Any) -> bool:
-    """Whether every request ``caller`` sends can be given the time left as its timeout."""
-    return all(_timed(_raw(backend)) for backend in _backends(caller))
+def _native_sdk(client: Any) -> bool:
+    """Whether ``client`` is Anthropic's own SDK client (its class exactly, as ``consent_callers`` reads it)."""
+    module = sys.modules.get("anthropic")
+    native = getattr(module, "Anthropic", None) if module is not None else None
+    return isinstance(native, type) and type(client) is native
 
 
-def _unretried(caller: Any, timed: list[Any], seen: frozenset[int] = frozenset()) -> Any:
+def _kind(backend: Any) -> tuple[str, str]:
+    """How the kernel holds each request of ``backend`` (a caller that sends, below every wrapper) to the override's
+    limits: ``endpoint`` (G6's urllib callers: the time left as each request's timeout, every Retry-After resend
+    through :meth:`_Envelope.resend`), ``sdk`` (Anthropic's own SDK client: the time left as each request's timeout,
+    its own retries off), ``host`` (a Claude Code or Codex session: started with the time left and ended, with its
+    processes, at the deadline), ``local`` (a model on this machine that is sent nothing over the network); or "" and
+    why it cannot be held, and then no override uses it."""
+    from g6.core import host_models, llm
+
+    raw = _raw(backend)
+    name = type(raw).__name__
+    if type(raw) is consent_callers._Unknown or not consent_callers.backend_supported(raw):
+        return "", f"{name}, a caller G6 does not know"
+    if consent_callers.caller_kind(raw) in ("process", "no-send"):
+        return "local", ""
+    if isinstance(raw, llm.OllamaCaller | llm.OpenAICompatibleCaller):
+        return "endpoint", ""
+    if isinstance(raw, llm.AnthropicCaller):
+        if _native_sdk(raw._client) or (raw._client is None and raw._api_key):
+            return "sdk", ""
+        return "", (f"{name} with a client that is not Anthropic's own SDK client, which takes no timeout per request "
+                    "and may send again on its own")
+    session = getattr(sys.modules.get("g6.harness.completion_loop"), "ToolSession", None)
+    if (isinstance(raw, host_models.ClaudeCodeCaller | host_models.CodexCaller)
+            and not (isinstance(session, type) and isinstance(raw, session))):
+        return "host", ""
+    return "", f"{name}, a caller G6 cannot hold to a limit at each request"
+
+
+def _metering(caller: Any) -> tuple[str, str]:
+    """The kind of the one model ``caller`` sends to (:func:`_kind`), or "" and why no override may use it."""
+    backends = list(_backends(caller))
+    if len(backends) != 1:
+        return "", f"a caller that sends to {len(backends)} models in turn, where an override names one model"
+    return _kind(backends[0])
+
+
+def _bound(kind: str, caller: Any) -> str:
+    """What the question says holds each request of a ``kind`` caller: only what :class:`_Envelope` enforces."""
+    if kind == "endpoint":
+        return ("each request to the model is sent with the time left as its timeout, and a resend after the provider "
+                f"asks G6 to wait passes the same count and is sent only within {RESEND_SLACK_S:g} second of its "
+                "call's first request")
+    if kind == "sdk":
+        return "each request to the model is sent with the time left as its timeout and the SDK's own retries off"
+    if kind == "host":
+        program = _raw(next(iter(_backends(caller)))).program.name
+        return (f"one model call is one session of {program}, which may make several requests to its model; each "
+                "session is given the time left and ended, with every process it started, at the deadline")
+    return "this model runs on this machine and is sent nothing over the network"
+
+
+def _unretried(caller: Any, timed: list[tuple[Any, Any]], seen: frozenset[int] = frozenset()) -> Any:
     """``caller`` as the kernel sends through it, built of copies so the person's own caller is never changed: every
     ``EmptyRetry`` taken out (the kernel asks again after an empty reply itself, counted, and never with more tokens),
-    every other wrapper G6 knows copied, and each backend that takes a timeout copied and listed in ``timed``."""
+    every other wrapper G6 knows copied, and the backend that sends copied and listed in ``timed`` with the SDK client
+    its per-request clients are made from (``None`` for a backend whose ``timeout`` is set)."""
     slot = consent_callers.wrapper_slot(caller)
     if slot and id(caller) not in seen:
         inner, seen = getattr(caller, slot), seen | {id(caller)}
@@ -465,12 +525,29 @@ def _unretried(caller: Any, timed: list[Any], seen: frozenset[int] = frozenset()
         setattr(clone, slot, tuple(_unretried(one, timed, seen) for one in inner) if slot == "_callers"
                 else _unretried(inner, timed, seen))
         return clone
-    raw = _raw(caller)
-    if not _timed(raw):
+    kind = _kind(caller)[0]
+    if kind not in ("endpoint", "sdk", "host"):
         return caller
-    own = copy.copy(raw)      # guarded again by the envelope; its timeout is set before each call
-    timed.append(own)
+    raw = _raw(caller)
+    own = copy.copy(raw)      # guarded again by the envelope; its limits are set before each request
+    base = None
+    if kind == "sdk":         # built here from the person's key when it was not built yet; the key stays in G6
+        base = raw._client if raw._client is not None else own._get_client()
+    timed.append((own, base))
     return own
+
+
+class _Resends(list):
+    """The waits record of one model call (``g6.core.llm.waits``' kind of record): ``g6.core.llm`` tells it once a
+    provider's rate-limit wait is over, right before it sends again (``woke``), and the resend passes
+    :meth:`_Envelope.resend`; what that raises keeps it in, and nothing is sent again."""
+
+    def __init__(self, envelope: _Envelope) -> None:
+        super().__init__()
+        self.envelope = envelope
+
+    def woke(self, wait: dict[str, Any]) -> None:
+        self.envelope.resend()
 
 
 def _code_in(text: str) -> str:
@@ -510,13 +587,16 @@ def _words(exc: BaseException) -> str:
 class _Envelope:
     """Every limit of one override in one place, enforced where the cost is spent (``budget_exhausted`` otherwise).
     Model calls: every request to the model is counted at the send itself, where its backend notes it before sending
-    (``g6.core.model_calls.counting``'s observer, :meth:`admit`), and the one past the budget is refused there, before
-    it is sent; the kernel's caller has no retry of its own (:func:`_unretried`): an empty reply is asked again by
-    :meth:`ask`, counted, with the same tokens. Characters of model replies: a reply longer than the characters left is
-    refused before it is used. One deadline for the whole override, every model call and every child run, the final
-    run and the re-check included: none starts with less than :meth:`floor` left; a child, and a model request whose
-    backend takes a timeout, gets the time left; G6 stops waiting for a model call at the deadline, and a reply or a
-    run that returns after it is not used."""
+    (``g6.core.model_calls.counting``'s observer, :meth:`admit`), and a resend after a provider's rate-limit wait where
+    ``g6.core.llm`` tells the call's waits record (:class:`_Resends`, :meth:`resend`); the one past the budget, or after
+    the override stopped waiting, is refused there, before it is sent. The kernel's caller has no retry of its own
+    (:func:`_unretried`; Anthropic's SDK client with its retries off): an empty reply is asked again by :meth:`ask`,
+    counted, with the same tokens. Characters of model replies: a reply longer than the characters left is refused
+    before it is used. One deadline for the whole override, every model call and every child run, the final run and
+    the re-check included: none starts with less than :meth:`floor` left; a child, and each request to the model, is
+    given the time left (:meth:`_cut`, set again at each request); a host client is started once per call; G6 stops
+    waiting for a model call at the deadline, and a reply or a run that returns after it is not used. Only callers
+    :func:`_kind` names can be held so; any other is refused before the question."""
 
     def __init__(self, caller: Any, budget: Budget) -> None:
         self.budget = budget
@@ -525,7 +605,10 @@ class _Envelope:
         self.calls = self.failed_calls = self.output_chars = 0
         self.closed = False
         self.refused = ""
-        self._timed: list[Any] = []
+        self.kind = _metering(caller)[0]
+        self._sent_at = 0.0     # when the current call's first request was let go
+        self._in_call = 0       # requests let go in the current call
+        self._timed: list[tuple[Any, Any]] = []
         self.caller = consent_callers.guard(_unretried(caller, self._timed))   # the guard checks each backend
 
     def elapsed_s(self) -> float:
@@ -541,19 +624,52 @@ class _Envelope:
         self.refused = why
         raise _OutOfBudget(f"G6_E_BUDGET_EXHAUSTED: {why}")
 
+    def _gate(self) -> float:
+        """The checks every request passes, under the lock: the time left, or the refusal."""
+        if self.closed:
+            self._refuse("the override stopped waiting for the model, so nothing more was sent")
+        if self.calls >= self.budget.max_model_calls:
+            self._refuse(f"max_model_calls: {self.calls} model calls were sent, the most the budget allows; no "
+                         "more was sent")
+        left = self.seconds_left()
+        if left < self.floor():
+            self._refuse(f"max_wall_clock_s: {max(left, 0.0):.2f}s of the {self.budget.max_wall_clock_s:g}s "
+                         "budget were left, too little for a model call; none was started")
+        return left
+
+    def _cut(self, left: float) -> None:
+        """Each request's own limit set to ``left`` seconds: the ``timeout`` of a urllib request or a host session, and
+        for Anthropic's SDK a client made with ``left`` as its timeout and its own retries off."""
+        for own, base in self._timed:
+            if base is None:
+                own.timeout = left
+            else:
+                own._client = base.with_options(max_retries=0, timeout=left)
+
     def admit(self) -> None:
-        """The observer at each send's boundary: count the request before it is sent, or refuse it (it is then neither
-        counted nor sent)."""
+        """The observer at each send's boundary: count the request before it is sent and give it the time left, or
+        refuse it (it is then neither counted nor sent). A host client is started once per call: a second start in
+        one call would have read its limit before this gate."""
         with self._lock:
-            if self.closed:
-                self._refuse("the override stopped waiting for the model, so nothing more was sent")
-            if self.calls >= self.budget.max_model_calls:
-                self._refuse(f"max_model_calls: {self.calls} model calls were sent, the most the budget allows; no "
-                             "more was sent")
-            left = self.seconds_left()
-            if left < self.floor():
-                self._refuse(f"max_wall_clock_s: {max(left, 0.0):.2f}s of the {self.budget.max_wall_clock_s:g}s "
-                             "budget were left, too little for a model call; none was started")
+            left = self._gate()
+            if self.kind == "host" and self._in_call:
+                self._refuse("a host client is started once per model call; it was not started again")
+            self.calls += 1
+            self._in_call += 1
+            self._sent_at = time.monotonic()
+            self._cut(left)
+
+    def resend(self) -> None:
+        """The gate of a resend after a provider's rate-limit wait (:class:`_Resends`): counted and refused as any
+        request, and refused when it comes more than :data:`RESEND_SLACK_S` after its call's first request, whose
+        timeout it carries and which cannot be cut again."""
+        with self._lock:
+            self._gate()
+            late = time.monotonic() - self._sent_at
+            if late > RESEND_SLACK_S:
+                self._refuse(f"a resend after the provider's rate-limit wait would go {late:.2f}s after its call's "
+                             "first request, with that request's timeout, past what the deadline allows; it was not "
+                             "sent")
             self.calls += 1
 
     def _took(self, text: str) -> str:
@@ -570,17 +686,23 @@ class _Envelope:
     def _once(self, system: str, user: str, left: float) -> str:
         """One call through the consent-guarded caller, every send it makes passing :meth:`admit`, waited for only
         until the deadline; its reply, or :class:`_Stop`."""
-        for own in self._timed:
-            own.timeout = left
+        from g6.core import llm
+
+        with self._lock:     # a backend that reads its limit before its send's gate reads the time left now
+            self._in_call = 0
+            self._cut(left)
         box: dict[str, Any] = {}
 
         def call() -> None:
             noted: Any = lambda: 0  # noqa: E731
+            waits = llm._WAITS.set((*llm._WAITS.get(), _Resends(self)))   # as g6.core.llm.waits, with the gate
             try:
                 with counting(before_call=self.admit) as noted:
                     box["text"] = self.caller.complete(system, user, max_tokens=MODEL_TOKENS)
             except BaseException as exc:  # noqa: BLE001 - reported to the waiting override, never lost
                 box["error"] = exc
+            finally:
+                llm._WAITS.reset(waits)
             with self._lock:
                 if "error" in box and noted():
                     self.failed_calls += 1

@@ -592,13 +592,13 @@ def test_the_question_states_only_the_model_call_bound_the_code_enforces(monkeyp
     from g6.core.llm import FakeLLM
 
     no_child(monkeypatch)
-    uncut = kernel.prepare("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=FakeLLM()).question
+    local = kernel.prepare("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=FakeLLM()).question
     cut = kernel.prepare("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=_ollama(monkeypatch, [], [])).question
-    for question in (uncut, cut):
+    for question in (local, cut):
         assert "retries included, each counted before it is sent" in question
         assert "a model reply that arrives after the deadline is not used" in question
-    assert "given the time left as its timeout" in cut and "given the time left as its timeout" not in uncut
-    assert "takes no timeout" in uncut
+    assert "sent with the time left as its timeout" in cut and "time left as its timeout" not in local
+    assert "sent nothing over the network" in local   # a caller that takes no timeout is refused (review 3, class A)
 
 
 # review 2, F3: a value no JSON holds (NaN, infinity) gets G6's envelope, never a raise

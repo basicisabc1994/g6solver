@@ -188,21 +188,29 @@ def test_a_validator_that_fails_on_the_childs_ask_leaves_the_original_standing_i
 
 
 def _cloud_model(sent: list) -> object:
-    """A cloud model behind G6's consent guard: an Anthropic caller whose SDK client is a test fake that records each
-    request (a ``SDKClient``, the published contract for a synthetic provider endpoint); nothing leaves the test."""
+    """A cloud model behind G6's consent guard: an Anthropic caller with Anthropic's own SDK client for Anthropic's
+    address (no proxy read), whose own connection pool records each request and answers it; nothing leaves the test.
+    (Review 3, class A: an SDK-shaped client that is not Anthropic's own takes no timeout per request, so overrides
+    refuse it.)"""
+    import sys
+
+    anthropic = pytest.importorskip("anthropic")
     from g6.core import consent_callers, llm
 
-    class SDK(consent_callers.SDKClient):
-        base_url = "https://api.anthropic.com"
+    client = anthropic.Anthropic(api_key="fixture-not-a-key", base_url="https://api.anthropic.com",
+                                 http_client=anthropic.DefaultHttpxClient(trust_env=False))
+    pool = client._client._transport._pool
+    core = sys.modules[type(pool).__module__.split(".")[0]]
+    message = {"id": "msg_fixture", "type": "message", "role": "assistant", "model": "fixture-model",
+               "content": [{"type": "text", "text": json.dumps({"value": [0.5]})}], "stop_reason": "end_turn",
+               "stop_sequence": None, "usage": {"input_tokens": 1, "output_tokens": 1}}
 
-        def __init__(self) -> None:
-            def create(**kwargs):
-                sent.append(kwargs)
-                return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps({"value": [0.5]}))],
-                                       stop_reason="end_turn")
-            self.messages = SimpleNamespace(create=create)
+    def handle(request):
+        sent.append(request)
+        return core.Response(200, headers=[(b"content-type", b"application/json")], content=json.dumps(message).encode())
 
-    return consent_callers.guard(llm.AnthropicCaller(client=SDK(), fallbacks=False))
+    pool.handle_request = handle      # this client's own pool only: no other test's client is touched
+    return consent_callers.guard(llm.AnthropicCaller("fixture-model", client=client, fallbacks=False))
 
 
 @pytest.mark.parametrize("granted", [True, False])
