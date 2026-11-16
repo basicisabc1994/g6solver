@@ -15,3 +15,21 @@ __g6_outside__ = ()
 __g6_extras__ = {"docs": ("pypdf",)}
 
 __all__ = ["SENSITIVE_OPS", "AdaptLibrarySynthesizerBlock", "AdaptLibrarySynthesizerInput"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_PAPER_FETCHED": "none",
+    "G6_E_PAPER_HOST": "person",
+    "G6_E_PAPER_PDF": "none",
+    "G6_E_PAPER_SIZE": "none",
+    "G6_E_PAPER_TYPE": "none",
+    "G6_E_SYNTH_INPUT": "input",
+    "G6_E_SYNTH_MODEL": "person",
+    "G6_E_SYNTH_NO_MODEL": ("tool:g6_select", "no_model"),
+    "G6_E_SYNTH_NO_ORACLE": "none",
+    "G6_E_SYNTH_ORACLE_FAILED": "none",
+    "G6_E_SYNTH_ORACLE_SOURCE": "none",
+    "G6_E_SYNTH_SPEC": "input",
+    "G6_E_SYNTH_SYNTAX": "input",
+}

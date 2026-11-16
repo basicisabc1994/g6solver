@@ -43,3 +43,21 @@ __g6_outside__ = (TESSERACT,)
 __g6_extras__: dict[str, tuple[str, ...]] = {"image": ("PIL",)}
 
 __all__ = ["SENSITIVE_OPS", "TESSERACT", "CtxVisionBlock", "CtxVisionInput", "images", "ocr"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_OUTSIDE_PROGRAM_MISSING": "person",
+    "G6_E_VISION_DESCRIBED": "none",
+    "G6_E_VISION_EXTRA_MISSING": "person",
+    "G6_E_VISION_FORMAT": "input",
+    "G6_E_VISION_INPUT": "input",
+    "G6_E_VISION_MODEL_FAILED": "person",
+    "G6_E_VISION_NO_IMAGES": "input",
+    "G6_E_VISION_NO_MODEL": ("tool:g6_select", "no_model"),
+    "G6_E_VISION_OCR_FAILED": "none",
+    "G6_E_VISION_OCR_ONLY": "none",
+    "G6_E_VISION_PARSE_FAILED": "none",
+    "G6_E_VISION_TOO_LARGE": "person",
+    "G6_E_VISION_UNDECODABLE": "none",
+}

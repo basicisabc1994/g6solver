@@ -122,3 +122,33 @@ __all__ = [
     "PromotionRefused", "ScorecardStore",
     "Diagnosis", "diagnose", "diagnose_audit",
 ]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_BENCHMARK_CASES": "none",
+    "G6_E_BENCHMARK_EXECUTOR": "none",
+    "G6_E_SCOPE_DELETION": "person",
+    "G6_E_SCOPE_EMPTY": "person",
+    "G6_E_SCOPE_NO_COMPONENT": "person",
+    "G6_E_SCOPE_OTHER_COMPONENT": "person",
+    "G6_E_SCOPE_OUTSIDE_REPO": "person",
+    "G6_E_SCOPE_PROTECTED": "person",
+    "G6_E_SCOPE_TEST_CONFIG": "person",
+    "G6_E_SELF_TRAINING_APPLIED_UNWITNESSED": "none",
+    "G6_E_SELF_TRAINING_APPLY_FAILED": "none",
+    "G6_E_SELF_TRAINING_CYCLE_FAILED": "none",
+    "G6_E_SELF_TRAINING_DECISION_MISMATCH": "none",
+    "G6_E_SELF_TRAINING_GATE_BLOCKED": "person",
+    "G6_E_SELF_TRAINING_GATE_REJECTED": "person",
+    "G6_E_SELF_TRAINING_LOOP_OFF": "none",
+    "G6_E_SELF_TRAINING_NO_PATCH": "none",
+    "G6_E_SELF_TRAINING_NO_ROLLBACK": "none",
+    "G6_E_SELF_TRAINING_PROPOSE_ONLY": "none",
+    "G6_E_SELF_TRAINING_REMEASURE_FAILED": "none",
+    "G6_E_SELF_TRAINING_REMEASURE_REQUIRED": "none",
+    "G6_E_SELF_TRAINING_REVIEW_REQUIRED": "person",
+    "G6_E_SELF_TRAINING_ROLLBACK_FAILED": "none",
+    "G6_E_SELF_TRAINING_ROLLED_BACK": "none",
+    "G6_E_SELF_TRAINING_SNAPSHOT_FAILED": "none",
+}

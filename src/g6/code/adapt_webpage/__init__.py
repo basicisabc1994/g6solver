@@ -15,3 +15,13 @@ __g6_outside__ = (BROWSER,)
 __g6_extras__ = {"web": ("tinycss2",), "render": ("playwright",)}
 
 __all__ = ["SENSITIVE_OPS", "AdaptWebpageBlock", "AdaptWebpageInput"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_WEB_CONTRAST": "none",
+    "G6_E_WEB_CSS": "none",
+    "G6_E_WEB_HTML": "none",
+    "G6_E_WEB_INPUT": "input",
+    "G6_E_WEB_RENDER": "none",
+}

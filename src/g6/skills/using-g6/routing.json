@@ -13,6 +13,7 @@
     "question": {"anchor": "**question.**", "detail": []},
     "review": {"anchor": "## Deliver a coding task with G6", "detail": ["skills/using-g6/references/lifecycle.md", "skills/using-g6/references/templates.md"]},
     "rules": {"anchor": "**rules.**", "detail": ["skills/using-g6/references/rules.md"]},
+    "select": {"anchor": "**select.**", "detail": []},
     "workflow": {"anchor": "**workflow.**", "detail": ["harness/workflow/skill/SKILL.md"]}
   },
   "entries": {
@@ -72,6 +73,7 @@
     "mcp:g6/g6_premortem": {"agent_facing": true, "route": "mission", "since": "0.3.0"},
     "mcp:g6/g6_review_patch": {"agent_facing": true, "route": "review", "since": "0.2.0"},
     "mcp:g6/g6_review_until_clean": {"agent_facing": true, "route": "review", "since": "0.3.0"},
+    "mcp:g6/g6_select": {"agent_facing": true, "route": "select", "since": "0.3.0"},
     "mcp:g6/g6_suggestion_decide": {"agent_facing": true, "route": "workflow", "since": "0.3.0"},
     "mcp:g6/g6_workflow_correct": {"agent_facing": true, "route": "workflow", "since": "0.3.0"},
     "mcp:g6/g6_workflow_delete": {"agent_facing": true, "route": "workflow", "since": "0.3.0"},

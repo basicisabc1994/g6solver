@@ -70,6 +70,10 @@ again, so a "thanks" spends nothing. On a new commit it is read again, even if t
 After a review that failed the next stop tries again. If a turn ends with nothing to test and the commit then moves, your
 next prompt starts on the new commit. Wherever a loop did not run, you get one line saying what did not run and why.
 
+When a G6 tool refuses a call and its reply's `repair` block says the agent can fix the call itself, a hook gives the
+agent one line saying so, once per refusal code in a session. A refusal only you can resolve gets no line: the reply
+tells the agent to ask you. Set `G6_HINTS=off` in Claude Code's environment to turn the line off.
+
 ## What the report says, and what it does not
 
 The report starts with how the run ended, in one word: `clean`, when a review of this patch reproduced nothing and no

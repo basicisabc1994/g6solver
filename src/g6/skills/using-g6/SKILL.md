@@ -13,6 +13,9 @@ the candidate's writable scope.
 A tool named here that your server does not list is absent: say so, use `g6_find`, and do not call it again. The
 sections below are routes too: Deliver (review), Find (discover), Compose and Fit.
 
+- **select.** Not sure which G6 step fits, or a call was refused? `g6_select` with the task, your phase and the
+  refusal returns checked calls with templates; nothing runs. When a G6 reply carries `repair`, follow its step; if
+  `by` is person, tell the person and stop.
 - **question.** Where the task may not decide a behaviour, `g6_confirm_behaviour` asks the person in the client's own
   dialog: one question per task by default, and the person may allow more or set none. Only the person answers; you
   never answer for them.
@@ -53,8 +56,8 @@ For a Python task, work in this order (each step in full: `references/lifecycle.
    the real interface; then unit tests, then code.
 5. **Review.** Call `g6_review_patch` with the folder, the task and the requirements, then poll `metaharness_job`.
    Add optional inputs (`intent`, `template_instances`, `proposed_checks`) only in the shapes the tool's description
-   gives; a refused call names the field to fix. It needs host permission `patch_review.review`, which the person
-   grants with `g6 setup`; never change permissions yourself. Show the reply's `assessment["report"]` verbatim.
+   gives; a refused call names the field to fix. If host permission `patch_review.review` is missing, tell the person
+   and stop; never change permissions yourself. Show the reply's `assessment["report"]` verbatim.
 6. **Repair.** Fix what G6 reproduced, add each reproduction as a stated check, and review again. Stop after 3
    rounds, when a round changes nothing, or when the report says only the person can decide.
 7. **Honesty.** Never call a patch `verified`, and never merge for the person. The result rests on your own tests:

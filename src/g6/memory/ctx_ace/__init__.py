@@ -44,3 +44,25 @@ __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["SENSITIVE_OPS", "Approval", "CtxAceBlock", "CtxAceInput", "Found", "MemoryRecord", "Receipt", "Store",
            "StoreError", "is_stale"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_MEMORY_APPROVED": "none",
+    "G6_E_MEMORY_FORGET_INCOMPLETE": "none",
+    "G6_E_MEMORY_FORGOTTEN": "none",
+    "G6_E_MEMORY_FOUND": "none",
+    "G6_E_MEMORY_FULL": "none",
+    "G6_E_MEMORY_INPUT": "input",
+    "G6_E_MEMORY_KEPT": "none",
+    "G6_E_MEMORY_NOT_A_PROPOSAL": "none",
+    "G6_E_MEMORY_NOT_FOUND": "none",
+    "G6_E_MEMORY_NO_FILTER": "input",
+    "G6_E_MEMORY_NO_QUERY": "input",
+    "G6_E_MEMORY_NO_REASON": "input",
+    "G6_E_MEMORY_NO_TEXT": "input",
+    "G6_E_MEMORY_NO_WRITER": "none",
+    "G6_E_MEMORY_REVIEWER": "none",
+    "G6_E_MEMORY_STATUS": "none",
+    "G6_E_MEMORY_STORE": "none",
+}

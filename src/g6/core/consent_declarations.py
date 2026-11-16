@@ -89,6 +89,7 @@ TOOLS = {
     'g6_review_until_clean': contract('client_request', 'client_repository', 'source:host_configuration',
                                      'source:completion_history'),
     'g6_premortem': contract('client_request', 'client_repository'),
+    'g6_select': contract('client_request', 'g6_operational'),
     'g6_mission_create': contract('client_request', 'client_repository', 'source:missions'),
     'g6_mission_submit': contract('client_request', 'client_repository', 'source:missions', 'source:host_configuration'),
     **{name: contract('client_request', 'source:missions') for name in (
@@ -138,6 +139,7 @@ TOOL_ARGUMENTS = {
                                  'repo tests sources base search import_roots proposed_checks template_instances'),
     'g6_review_until_clean': _arguments('task reason', 'repo session base'),
     'g6_premortem': _arguments('task intent', 'repo'),
+    'g6_select': _arguments('task phase last_outcome considering limit rerank'),
     'g6_mission_create': _arguments('objective function budget_cents risk', 'repo module helpers'),
     'g6_mission_clarify': _arguments('replay_semantics', 'mission_id'),
     'g6_mission_confirm': _arguments(pointer='mission_id'),

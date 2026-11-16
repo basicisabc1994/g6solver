@@ -38,3 +38,19 @@ __g6_extras__: dict[str, tuple[str, ...]] = {"docs": ("pypdf",)}
 
 __all__ = ["CONVERTERS", "SENSITIVE_OPS", "Converted", "Converter", "KnowledgeConverterBlock", "KnowledgeConverterInput",
            "convert", "convert_kept", "converters"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_KNOWLEDGE_CONVERSION_FAILED": "none",
+    "G6_E_KNOWLEDGE_CONVERSION_TIME_LIMIT": "person",
+    "G6_E_KNOWLEDGE_CONVERTED": "none",
+    "G6_E_KNOWLEDGE_CONVERTED_PARTLY": "none",
+    "G6_E_KNOWLEDGE_CONVERT_INPUT": "input",
+    "G6_E_KNOWLEDGE_EXTRA_MISSING": "person",
+    "G6_E_KNOWLEDGE_KEPT_ORIGIN": "none",
+    "G6_E_KNOWLEDGE_NOTHING_READABLE": "none",
+    "G6_E_KNOWLEDGE_NOT_KEPT": "none",
+    "G6_E_KNOWLEDGE_TYPES": "none",
+    "G6_E_KNOWLEDGE_UNSUPPORTED_TYPE": "person",
+}

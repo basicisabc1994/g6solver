@@ -43,3 +43,20 @@ __g6_index_backends__: tuple[str, ...] = ("colbert",)  # the family's registry i
 
 __all__ = ["COLBERT_WEIGHTS", "MINILM_WEIGHTS", "RUNGS", "SENSITIVE_OPS", "ColbertIndex", "CtxColbertBlock",
            "CtxColbertInput", "Ranked", "Rung", "Weights", "rank", "retrieve", "rungs"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_KNOWLEDGE_COLBERT_CANDIDATES": "none",
+    "G6_E_KNOWLEDGE_COLBERT_PIN": "none",
+    "G6_E_KNOWLEDGE_CORPUS_TOO_LARGE": "person",
+    "G6_E_KNOWLEDGE_DENSE_REQUIRED": "person",
+    "G6_E_KNOWLEDGE_NO_PASSAGES": "none",
+    "G6_E_KNOWLEDGE_RANKED": "none",
+    "G6_E_KNOWLEDGE_RANKED_FALLBACK": "none",
+    "G6_E_KNOWLEDGE_RANK_INPUT": "input",
+    "G6_E_KNOWLEDGE_RANK_NO_MATCH": "none",
+    "G6_E_KNOWLEDGE_RUNGS": "none",
+    "G6_E_KNOWLEDGE_RUNG_FAILED": "none",
+    "G6_E_KNOWLEDGE_RUNG_UNAVAILABLE": "person",
+}

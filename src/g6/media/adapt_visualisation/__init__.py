@@ -46,3 +46,11 @@ __g6_outside__: tuple = ()
 __g6_extras__: dict[str, tuple[str, ...]] = {"image": ("PIL",)}  # only for PNG; SVG and HTML need nothing
 
 __all__ = ["CHART_MISMATCH", "DATA_DROPPED", "AdaptVisualisationBlock", "ChartInput"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_MEDIA_CHART_DATA_DROPPED": "none",
+    "G6_E_MEDIA_CHART_MISMATCH": "none",
+    "G6_E_MEDIA_LOADS_EXTERNAL": "none",
+}

@@ -40,3 +40,19 @@ __g6_outside__: tuple = ()
 __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["SENSITIVE_OPS", "AdaptHealingBlock", "AdaptHealingInput", "cases", "heal"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_HEAL_BAD_TEST": "input",
+    "G6_E_HEAL_HELD_BACK_FAILED": "none",
+    "G6_E_HEAL_HELD_BACK_SHOWN": "none",
+    "G6_E_HEAL_INPUT": "input",
+    "G6_E_HEAL_MODEL_FAILED": "person",
+    "G6_E_HEAL_NEEDS_REVIEW": "none",
+    "G6_E_HEAL_NO_HELD_BACK": "none",
+    "G6_E_HEAL_NO_MODEL": ("tool:g6_select", "no_model"),
+    "G6_E_HEAL_PATCHED": "none",
+    "G6_E_HEAL_SHOWN_TESTS_FAIL": "none",
+    "G6_E_HEAL_TESTS_READ": "none",
+}

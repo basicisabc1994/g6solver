@@ -371,12 +371,14 @@ def test_the_repository_is_a_marketplace_for_the_plugin():
 
 def test_the_hooks_are_exec_form_with_no_shell_so_they_read_the_same_on_windows_and_linux():
     events = hooks()
-    assert set(events) == {"UserPromptSubmit", "Stop"}
+    assert set(events) == {"UserPromptSubmit", "Stop", "PostToolUse"}
     prompt = [one for entry in events["UserPromptSubmit"] for one in entry["hooks"]]
     assert [one["args"][2] for one in prompt] == ["g6.harness.completion_hook", "g6._allowance.hook"]
     assert prompt[1]["command"] == "python" and prompt[1]["args"] == ["-P", "-m", "g6._allowance.hook"]
     assert prompt[1]["timeout"] <= 2
-    for event, name in (("UserPromptSubmit", "prompt"), ("Stop", "stop")):
+    [after] = events["PostToolUse"]
+    assert re.fullmatch(after["matcher"], "mcp__g6__g6_select") and not re.fullmatch(after["matcher"], "Bash")
+    for event, name in (("UserPromptSubmit", "prompt"), ("Stop", "stop"), ("PostToolUse", "tool")):
         [[one]] = [entry["hooks"] for entry in completion_hooks(event)]
         assert (one["type"], one["command"]) == ("command", "python")
         assert one["args"] == ["-P", "-m", "g6.harness.completion_hook", name]
@@ -466,3 +468,43 @@ def test_the_plugins_text_makes_no_claim_it_may_not_and_names_no_private_path():
                 assert word not in text, f"{path.name}: {word}"
             assert not re.search(r"\bverified\b", text), path.name
             assert not re.search(r"[a-z]:\\users\\|/home/\w+/|/users/\w+/", text), path.name
+
+
+# -- the repair line: a G6 reply the agent can repair adds one line, once per code per session ----------------------
+def _refused(by: str = "agent", code: str = "G6_E_INPUT_VALIDATION") -> dict:
+    return {"ok": False, "completion_state": "blocked-escalated",
+            "repair": {"code": code, "fix_by": "input" if by == "agent" else "person", "by": by,
+                       "step": "Fix phase in your call to g6_select, then make it again, changed."}}
+
+
+def _tool(response: object, session: str = "s1", name: str = "mcp__g6__g6_select") -> dict:
+    return {"session_id": session, "hook_event_name": "PostToolUse", "tool_name": name, "tool_input": {},
+            "tool_response": response}
+
+
+@pytest.mark.parametrize("shape", ["reply", "content", "structured"])
+def test_a_g6_reply_the_agent_can_repair_adds_one_line_once_per_code_per_session(tmp_path, monkeypatch, capsys,
+                                                                                 shape):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "g6"))
+    monkeypatch.delenv("G6_HINTS", raising=False)
+    reply = _refused()
+    response = {"reply": reply, "content": [{"type": "text", "text": json.dumps(reply)}],
+                "structured": {"content": [], "structuredContent": reply}}[shape]
+    code, out, _ = hooked(monkeypatch, capsys, "tool", _tool(response))
+    said = json.loads(out)["hookSpecificOutput"]
+    assert code == 0 and said["hookEventName"] == "PostToolUse"
+    line = said["additionalContext"]
+    assert "\n" not in line and "G6_E_INPUT_VALIDATION" in line and "template g6_select" in line and len(line) <= 300
+    assert hook.on_tool(_tool(response)) == {}                                       # once per code per session
+    assert hook.on_tool(_tool(_refused(code="G6_E_UNKNOWN_OP"))) != {}               # another code
+    assert hook.on_tool(_tool(response, session="s2")) != {}                         # another session
+
+
+def test_no_line_for_the_persons_repair_another_server_or_with_hints_off(tmp_path, monkeypatch):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "g6"))
+    monkeypatch.delenv("G6_HINTS", raising=False)
+    assert hook.on_tool(_tool(_refused(by="person"))) == {}
+    assert hook.on_tool(_tool(_refused(), name="mcp__other__tool")) == {}
+    assert hook.on_tool(_tool({"ok": True, "completion_state": "qualified-draft"})) == {}
+    monkeypatch.setenv("G6_HINTS", "off")
+    assert hook.on_tool(_tool(_refused(code="G6_E_UNKNOWN_OP"), session="s9")) == {}

@@ -20,6 +20,7 @@ from mcp.shared.message import SessionMessage
 from g6.core import cloud_consent as policy
 from g6.core.ledger import digest
 from g6.core.llm import LLMError
+from g6.core.agent_guidance import WITHHELD
 
 _CONTROL = contextvars.ContextVar('g6_public_mcp_control', default=False)
 _OUTBOUND = contextvars.ContextVar('g6_mcp_source_ticket', default=None)
@@ -75,20 +76,20 @@ def prepare(session, request_id, result, sources, supplied=(), job=None, *, meta
                                     digest(body), controls['job'], controls['metadata'])
 
 
-def _refused(message, ticket, recipient='cloud:unknown'):
+def _refused(message, ticket, recipient='cloud:unknown', session=None):
     from g6.mcp.cloud_consent import withheld_reply
     root = message.message.root
     if isinstance(root, types.JSONRPCResponse):
         original = root.result.get('structuredContent', {})
         refused = withheld_reply(original, job=ticket.job if ticket else None,
                                  metadata=ticket.control if ticket else None,
-                                 provider=recipient, sources=ticket.sources if ticket else ())
+                                 provider=recipient, sources=ticket.sources if ticket else (), session=session)
         result = types.CallToolResult(content=[types.TextContent(type='text', text=json.dumps(refused))],
                                       structuredContent=refused)
         root = types.JSONRPCResponse(jsonrpc='2.0', id=root.id,
             result=result.model_dump(mode='json', by_alias=True, exclude_none=True))
         return SessionMessage(types.JSONRPCMessage(root), metadata=message.metadata)
-    raise LLMError(f'{policy.REQUIRED}: {policy.WITHHELD}')
+    raise LLMError(f'{policy.REQUIRED}: {WITHHELD}')
 
 
 class _Stream:
@@ -141,7 +142,7 @@ class _Stream:
                 with policy.admission(actual, ticket.sources, ticket.body_sha256, supplied=supplied):
                     anyio.from_thread.run(self.inner.send, packet)
             except LLMError:
-                anyio.from_thread.run(self.inner.send, _refused(packet, ticket, actual))
+                anyio.from_thread.run(self.inner.send, _refused(packet, ticket, actual, self.session))
         await anyio.to_thread.run_sync(handoff)
 
 
@@ -149,16 +150,21 @@ class _Session:
     async def _send_response(self, request_id, response):
         ticket = self._g6_tickets.pop(_request_key(request_id), None)
         if isinstance(response, types.ErrorData):
-            response = types.ErrorData(code=response.code, message=policy.WITHHELD)
+            response = types.ErrorData(code=response.code, message=WITHHELD)
             ticket = Ticket((), provider(self), frozenset(), digest(response.model_dump(exclude_none=True)))
         elif isinstance(response.root, types.CallToolResult) and response.root.isError:
             # Framework input errors precede the producer and have no source
             # ticket. Keep their protocol error status, but never echo arbitrary
             # exception text (which can contain an unshared value or host path).
-            response = types.ServerResult(types.CallToolResult(isError=True, content=[
-                types.TextContent(type='text', text='Invalid tool call; check the declared arguments.')]))
-            ticket = Ticket((), provider(self), frozenset(), digest(response.model_dump(
-                mode='json', by_alias=True, exclude_none=True)))
+            # G6's own public input envelope may keep its repair only under its
+            # exact, already prepared empty-source ticket. No source binding is
+            # dropped or inferred from an error's words/status.
+            if ticket is None or ticket.sources or ticket.body_sha256 != digest(response.root.model_dump(
+                    mode='json', by_alias=True, exclude_none=True)):
+                response = types.ServerResult(types.CallToolResult(isError=True, content=[
+                    types.TextContent(type='text', text='Invalid tool call; check the declared arguments.')]))
+                ticket = Ticket((), provider(self), frozenset(), digest(response.model_dump(
+                    mode='json', by_alias=True, exclude_none=True)))
         elif ticket is None and isinstance(response.root, (types.InitializeResult, types.ListToolsResult, types.EmptyResult)):
             ticket = Ticket((), provider(self), frozenset(), digest(response.model_dump(
                 mode='json', by_alias=True, exclude_none=True)))

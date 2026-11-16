@@ -38,3 +38,26 @@ __g6_outside__: tuple = ()
 __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["SENSITIVE_OPS", "CtxContexthubBlock", "CtxContexthubInput", "HubError", "hub"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_KNOWLEDGE_DOC_FOUND": "none",
+    "G6_E_KNOWLEDGE_DOC_NEEDS_LANGUAGE": "none",
+    "G6_E_KNOWLEDGE_DOC_NOT_KEPT": "none",
+    "G6_E_KNOWLEDGE_DOC_STALE": "person",
+    "G6_E_KNOWLEDGE_FETCH_REFUSED": "none",
+    "G6_E_KNOWLEDGE_HUB_INPUT": "input",
+    "G6_E_KNOWLEDGE_HUB_STORE": "none",
+    "G6_E_KNOWLEDGE_HUB_TOO_LARGE": "person",
+    "G6_E_KNOWLEDGE_NOTE_KEPT": "none",
+    "G6_E_KNOWLEDGE_NO_ENTRY": "none",
+    "G6_E_KNOWLEDGE_NO_REGISTRY": "none",
+    "G6_E_KNOWLEDGE_REGISTRIES": "none",
+    "G6_E_KNOWLEDGE_REGISTRY_NOT_SYNCED": "none",
+    "G6_E_KNOWLEDGE_REGISTRY_NO_MATCH": "none",
+    "G6_E_KNOWLEDGE_REGISTRY_SEARCHED": "none",
+    "G6_E_KNOWLEDGE_REGISTRY_SYNCED": "none",
+    "G6_E_KNOWLEDGE_REGISTRY_SYNCED_PARTIAL": "none",
+    "G6_E_KNOWLEDGE_REGISTRY_UNREADABLE": "none",
+}

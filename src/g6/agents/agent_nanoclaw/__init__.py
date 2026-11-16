@@ -48,3 +48,9 @@ __g6_introduces__: tuple[str, ...] = ("prompt_injection",)
 __g6_outside__: tuple = ()
 
 __all__ = ["AgentNanoclawBlock", "AgentNanoclawInput", "Mailbox"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_MAILBOX_REQUIRED": "input",
+}
