@@ -22,7 +22,7 @@ reasoning, supports learning and controls actions. The goal is to make existing 
 ### Which limits does it answer, and how?
 - **Making things up:** a claim can be checked against your sources by a word-level check: support means shared
   words, numbers and negations, not a reading of meaning. In G6's own test it found support for 91 of 100
-  near-verbatim claims but only 19 of 100 paraphrased ones. Every result returned over G6's MCP server is labelled
+  near-verbatim claims but only 19 of 100 paraphrased ones. Results of G6's checks and work tools returned over G6's MCP server are labelled
   for what its evidence supports. The command line prints the result alone.
 - **Forgetting, and short context:** each call gets just what it needs, marked with its source, and lessons from
   past runs are kept as hints you approve.

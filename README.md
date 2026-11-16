@@ -13,7 +13,8 @@ looks for signs that the tests were weakened, and returns a report your agent sh
 what G6 reproduces and asks again. Merging stays your decision. Patch review makes no model call unless the caller
 turns one on.
 
-Every result returned over G6's MCP server carries one of three labels, and G6 never upgrades a label it did not earn:
+Results of G6's checks and work tools returned over G6's MCP server carry one of three labels, and G6 never upgrades a label it did not earn.
+These replies carry `completion_state`; discovery replies such as `g6_components` and `g6_find` do not.
 
 | Label | Meaning |
 |---|---|
@@ -232,7 +233,7 @@ recommending a new release. 0.3.0 is in preparation, not published (no tag, noth
 
 | Capability | Label |
 |---|---|
-| Result labels and the envelope on every return, checked by `g6.invariants` | `implemented` |
+| Result labels and envelopes for results of checks and work tools returned over the MCP server, checked by `g6.invariants` | `implemented` |
 | Claim checking against your sources (`grounding.check_claim`) | `implemented`. Studied on one public dataset; the result is on the [Research](site/docs/research.md) page |
 | Action gating: allow, ask a person, or block (`action_gating`) | `implemented`. Studied on a public agent benchmark; the result, its miss included, is on the [Research](site/docs/research.md) page |
 | End-to-end harness: frozen checks, adjudication, memory of failed checks (`g6.harness`) | `implemented` |

@@ -131,8 +131,9 @@ def test_the_home_page_scopes_approval_labels_and_judging_to_what_the_code_does(
         assert overclaim not in home, overclaim
     assert "A new version goes live only when you say yes" in home
     assert "differs from the code you confirmed" in home
-    # Follow-up review 1 F5: MCP returns the labelled door envelope; the frozen CLI prints only its result field.
-    assert "A result a component returns through G6's MCP server carries one of three labels" in home
+    # Follow-up review 3 F5: only checks/work tools carry completion_state; discovery replies do not.
+    # Keep the MCP scope from review 1; the frozen command line still prints only its result field.
+    assert "Results of G6's checks and work tools returned over its MCP server carry one of three labels" in home
     assert "MCP server or CLI carries" not in home
     assert "An operation that fails while running is reported as a failure" in home
     assert "the meta-harness puts no new version live without your approval" in home
