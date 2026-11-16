@@ -80,6 +80,9 @@ g6_invoke("grounding", "coverage", {"text": "The limit is 42 units.", "sources":
 
 `sources` maps names to supplied text. These lexical checks do not establish factual truth.
 
+When a G6 op refuses with a limit it declares, `g6_agentic_run` can ask the person to let a model stand in for the
+named part; the result is labelled.
+
 ## Compose
 
 Use `g6_compose` with data-only stages. Connect downstream fields explicitly with `0.field` or `caller.field`.

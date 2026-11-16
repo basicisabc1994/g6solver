@@ -1,0 +1,148 @@
+# SPDX-License-Identifier: Apache-2.0
+"""``g6_agentic_run`` over MCP (design 10.1, 10.9): it needs ``agentic.run`` and the op's own allowance, runs the
+original first, asks the person in the client's own dialog before every override (bound to the question's digest),
+and runs the override as a job polled through ``metaharness_job``. A decline, a cancel, a client with no dialog or an
+empty name leaves the original's answer standing. The person is scripted; the model is a FakeLLM; the child is the
+in-process stand-in of ``tests/agentic/kit.py``."""
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+from types import SimpleNamespace
+
+import pytest
+
+fastmcp = pytest.importorskip("fastmcp")
+from fastmcp import Client  # noqa: E402
+from fastmcp.client.elicitation import ElicitResult  # noqa: E402
+
+from g6._agentic import kernel  # noqa: E402
+from g6.invariants import check_envelope  # noqa: E402
+from g6.mcp import build_server  # noqa: E402
+from tests.agentic.kit import FLOAT_PARAMS, INT_PARAMS, Model, cegis_in_process, in_process_child  # noqa: E402
+
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
+
+
+def data(reply) -> dict:
+    return reply.data if isinstance(reply.data, dict) else reply.structured_content
+
+
+async def finished(client, job: dict) -> dict:
+    if "job_id" not in job:
+        return job
+    for _ in range(3000):
+        got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"]}))
+        if got.get("status") == "completed":
+            return got["result"]
+        if got.get("status") == "failed":
+            return got
+        await asyncio.sleep(0.02)
+    raise AssertionError("the job did not finish")
+
+
+async def named(message, response_type, params, context):
+    return response_type(value="Ada")
+
+
+async def declined(message, response_type, params, context):
+    return ElicitResult(action="decline")
+
+
+async def cancelled(message, response_type, params, context):
+    return ElicitResult(action="cancel")
+
+
+async def nameless(message, response_type, params, context):
+    return response_type(value="   ")
+
+
+@pytest.fixture
+def rig(monkeypatch, tmp_path):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "agentic.run,cegis.synthesize")
+    model = Model([0.25, 0.5, 1.0])
+    monkeypatch.setattr(kernel, "person_caller", lambda: model.llm)
+    found = SimpleNamespace(model=model, served=in_process_child(monkeypatch), asked=[], server=build_server())
+
+    def client(handler=named):
+        async def seen(message, response_type, params, context):
+            found.asked.append(message)
+            return await handler(message, response_type, params, context)
+
+        return Client(found.server, elicitation_handler=seen) if handler else Client(found.server)
+
+    found.client = client
+    return found
+
+
+def call(rig, arguments: dict, handler=named) -> dict:
+    async def go():
+        async with rig.client(handler) as client:
+            return await finished(client, data(await client.call_tool("g6_agentic_run", arguments)))
+    return asyncio.run(go())
+
+
+FLOAT = {"component": "cegis", "op": "synthesize", "params_json": json.dumps(FLOAT_PARAMS)}
+
+
+def test_the_tool_is_listed_with_its_arguments(rig):
+    async def go():
+        async with rig.client() as client:
+            return {t.name: t for t in await client.list_tools()}
+    tools = asyncio.run(go())
+    assert set(tools["g6_agentic_run"].inputSchema["properties"]) == {
+        "component", "op", "params_json", "part", "mode", "reason"}
+
+
+def test_without_agentic_run_allowed_nothing_runs_and_nobody_is_asked(rig, monkeypatch):
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "cegis.synthesize")
+    reply = call(rig, FLOAT)
+    assert reply["warning_card"]["code"] == "G6_E_SENSITIVE_COMPONENT_DENIED" and "agentic.run" in reply["error"]
+    assert rig.asked == [] and rig.served == [] and rig.model.prompts == []
+
+
+def test_the_ops_own_allowance_is_needed_too(rig, monkeypatch):
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "agentic.run")
+    reply = call(rig, FLOAT)
+    assert reply["warning_card"]["code"] == "G6_E_SENSITIVE_COMPONENT_DENIED" and "cegis.synthesize" in reply["error"]
+    assert rig.asked == [] and rig.served == [] and rig.model.prompts == []
+
+
+def test_with_no_trigger_the_original_answer_comes_back_and_nobody_is_asked(rig, monkeypatch):
+    cegis_in_process(monkeypatch)
+    reply = call(rig, {"component": "cegis", "op": "synthesize", "params_json": json.dumps(INT_PARAMS)})
+    assert reply["ok"] is True and reply["result"]["program"] == "def f(x):\n    return x * 3 + 1\n"
+    assert "agentic" not in reply and rig.asked == [] and rig.served == [] and rig.model.prompts == []
+
+
+def test_code_mode_is_refused_before_anyone_is_asked(rig):
+    reply = call(rig, {**FLOAT, "mode": "code"})
+    assert reply["warning_card"]["code"] == "G6_E_AGENTIC_MODE_UNAVAILABLE" and rig.asked == []
+
+
+@pytest.mark.parametrize(("handler", "status"), [(declined, "declined"), (cancelled, "cancelled"),
+                                                  (None, "unavailable"), (nameless, "invalid")])
+def test_a_decline_cancel_missing_dialog_or_empty_name_leaves_the_original_answer(rig, handler, status):
+    reply = call(rig, {**FLOAT, "reason": "the table halves x"}, handler)
+    assert reply["warning_card"]["code"] == "G6_E_CEGIS_HOLE_UNSUPPORTED" and reply["ok"] is False
+    assert reply["agentic"]["outcome"] == "not_run" and reply["agentic"]["consent_status"] == status
+    assert check_envelope(reply) == [] and "result" not in reply
+    assert rig.served == [] and rig.model.prompts == []
+    assert len(rig.asked) == (0 if handler is None else 1)
+
+
+def test_an_accepted_override_runs_as_a_job_and_records_the_question_digest_and_the_name(rig):
+    reply = call(rig, {**FLOAT, "reason": "the table halves x"})
+    assert len(rig.asked) == 1
+    shown = re.search(r"Question digest: ([0-9a-f]{64})", rig.asked[0]).group(1)
+    assert '"the table halves x"' in rig.asked[0] and "g6.cegis.hole:float_grid" in rig.asked[0]
+    assert reply["ok"] is True and reply["completion_state"] == "qualified-draft" and check_envelope(reply) == []
+    assert reply["warning_card"]["code"] == "G6_E_AGENTIC_SUBSTITUTE"
+    assert reply["result"]["program"] == "def f(x):\n    return x * 0.5\n"
+    assert reply["original"]["warning_card"]["code"] == "G6_E_CEGIS_HOLE_UNSUPPORTED"
+    record = reply["agentic"]
+    assert record["digests"]["question"] == shown and record["outcome"] == "substituted"
+    assert record["person"] == {"answer": "accepted in the client's dialog", "name": "Ada", "authenticated": False}
+    assert record["rechecked"] is True and record["cost"]["model_calls"] == 1

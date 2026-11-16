@@ -654,6 +654,9 @@ OPERATIONAL_FACTORIES = {
     # design section 17: a bad argument's fixed refusal, and the fixed refusal while suggestions are not admitted
     'g6.mcp.workflow._refused',
     'g6.mcp.workflow.decide',
+    # the override kernel's tool: its fixed refusal while agentic.run is not allowed, and the door's refusal of a
+    # sensitive op the person has not allowed (as invoke_reply does), neither carrying source content
+    'g6.mcp.agentic.register.g6_agentic_run',
 }
 
 

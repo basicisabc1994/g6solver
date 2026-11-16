@@ -33,6 +33,7 @@
     "mcp:abstraction/save_state": {"agent_facing": true, "route": "abstraction", "since": "0.1.0"},
     "mcp:abstraction/self_debug": {"agent_facing": true, "route": "abstraction", "since": "0.1.0"},
     "mcp:abstraction/tighten_abstraction": {"agent_facing": true, "route": "abstraction", "since": "0.1.0"},
+    "mcp:g6/g6_agentic_run": {"agent_facing": true, "route": "discover", "since": "0.3.0"},
     "mcp:g6/g6_allowances": {"agent_facing": true, "route": "discover", "since": "0.3.0"},
     "mcp:g6/g6_cloud_grant": {"agent_facing": true, "route": "consent", "since": "0.3.0"},
     "mcp:g6/g6_cloud_grants": {"agent_facing": true, "route": "consent", "since": "0.3.0"},

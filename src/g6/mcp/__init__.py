@@ -718,6 +718,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         if "ctx" in tool.__annotations__:  # the real Context type, so the server injects it (annotations are strings)
             tool.__annotations__["ctx"] = context_type
         server.tool()(tool)
+    from g6.mcp import agentic
+    agentic.register(server, context_type, jobs)   # the override kernel's jobs are polled through metaharness_job
 
 
 def main() -> None:
