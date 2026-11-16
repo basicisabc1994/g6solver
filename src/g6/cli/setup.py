@@ -195,7 +195,8 @@ def _agents_update(data: bytes | None, block: str) -> bytes:
     newline style, as exactly one ``AGENTS_BEGIN ... AGENTS_END`` pair replaced, or appended where there is none;
     every other byte (newlines, a byte-order mark, trailing blank lines) as it was. ``_LeftAlone`` for a file G6
     cannot change that way. The newline style is the file's first line end of any kind (``\\r\\n``, ``\\n`` or a lone
-    ``\\r``), and a marker counts only as a whole line of its own, ended by any of them."""
+    ``\\r``), and a marker counts only at column zero with at most trailing spaces or tabs, ended by any of them.
+    Uncertain code-block shapes before or inside the block (anywhere when appending) refuse the edit."""
     import re
     from g6.mcp.instructions import AGENTS_BEGIN, AGENTS_END
 
@@ -205,27 +206,39 @@ def _agents_update(data: bytes | None, block: str) -> bytes:
     first = re.search(rb"\r\n|\r|\n", data)
     newline = first.group() if first else b"\n"
     written = block.encode("utf-8").replace(b"\n", newline)
-    # a marker counts only as a whole line of its own (spaces or tabs around it allowed) outside a fenced code block:
+    # A marker counts only at column zero outside a fenced code block:
     # one quoted inside a line, or shown in a fence (CommonMark's fence lines), is the person's text, not G6's block.
-    # A line ends at any line end, so a block an editor left in other line ends than the file's is still found, and a
-    # byte-order mark leading a line is not part of it.
+    # A line ends at any line end, so mixed line ends still work. The file's initial byte-order mark is its encoding
+    # signature, not part of the first line.
     parts = re.split(rb"(\r\n|\r|\n)", data[len(bom):])
     begins, ends, fence, start = [], [], None, len(bom)
+    uncertain, saw_list = [], False
     for line, end in zip(parts[::2], [*parts[1::2], b""]):
         stop = start + len(line)
-        line = line.removeprefix(b"\xef\xbb\xbf")
         opening = re.fullmatch(rb" {0,3}(`{3,}|~{3,})(.*)", line, re.S)
+        list_line = re.match(rb"[ \t]*(?:[-+*]|[0-9]+[.)])[ \t]+", line)
+        # Do not try to parse container Markdown. Even a later plain fence might belong to a list item;
+        # once a list has appeared, refuse such fences rather than guess where the item's scope ends.
+        container = re.match(rb"[ \t]*(?:[-+*][ \t]+|[0-9]+[.)][ \t]+|>)", line)
+        indented = re.match(rb"(?: *\t[ \t]*| {4,})(?:`{3,}|~{3,})", line)
+        if (indented or container and re.search(rb"`{3,}|~{3,}", line) or opening and saw_list):
+            uncertain.append(start)
+        if not fence and list_line:
+            saw_list = True
         if fence:
             closing = re.fullmatch(rb" {0,3}(`{3,}|~{3,})[ \t]*", line)
             if closing and closing.group(1)[:1] == fence[:1] and len(closing.group(1)) >= len(fence):
                 fence = None
         elif opening and not (opening.group(1)[:1] == b"`" and b"`" in opening.group(2)):
             fence = opening.group(1)
-        elif line.strip(b" \t") == AGENTS_BEGIN.encode():
+        elif line.rstrip(b" \t") == AGENTS_BEGIN.encode():
             begins.append((start, stop))
-        elif line.strip(b" \t") == AGENTS_END.encode():
+        elif line.rstrip(b" \t") == AGENTS_END.encode():
             ends.append((start, stop))
         start = stop + len(end)
+    boundary = ends[0][1] if len(begins) == len(ends) == 1 and ends[0][0] > begins[0][0] else len(data)
+    if any(position <= boundary for position in uncertain):
+        raise _LeftAlone("its code-block shape is uncertain, so G6 cannot safely locate or append its block")
     if not begins and not ends and fence:
         raise _LeftAlone("it ends inside an open code fence, so a block added at its end would be part of the fence")
     if not begins and not ends:
@@ -238,13 +251,17 @@ def _agents_update(data: bytes | None, block: str) -> bytes:
     return data[:begins[0][0]] + written + data[ends[0][1]:]
 
 
-def _remove(name: str, say: Say) -> None:
-    """Remove G6's temporary file, never raising: made writable first (a copied read-only mode would block the removal
-    on Windows), one attempt, and named to the person when it stays."""
+def _remove(name: str, say: Say, identity: tuple[int, int] | None = None) -> None:
+    """Unlink the temporary name, never raising; chmod only the recorded, single-link plain file before unlinking.
+    A replaced name or unknown identity gets only an unlink attempt, and is named to the person when it stays."""
     import stat
 
     try:
-        os.chmod(name, stat.S_IREAD | stat.S_IWRITE)
+        status = os.lstat(name)
+        if (identity == (status.st_dev, status.st_ino) and stat.S_ISREG(status.st_mode)
+                and not getattr(status, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                and status.st_nlink == 1):
+            os.chmod(name, stat.S_IREAD | stat.S_IWRITE)
     except OSError:
         pass
     try:
@@ -276,10 +293,11 @@ def codex_agents(ask: Ask, say: Say) -> None:
     check of its first read again (``_read``: kind, links, link count, write access, text) and compares identity
     (device and file number) and bytes with what it read before asking; any difference leaves the file as it now is
     and the person is shown the block to add by hand. The temporary file takes the file's mode only after the first of
-    those checks passes, and is always removed (made writable first) or named to the person. What remains: a change
-    that lands between that last check and the rename is lost or overwritten, a window of one rename, since no lock is
-    taken on the person's file. The file's mode is kept; Windows attributes (hidden, say) and ACLs are not, as the new
-    file replaces the old one."""
+    those checks passes, and is removed (made writable only when its identity still matches) or named to the person.
+    What remains: a change that lands between that last check and the rename is lost or overwritten, a window of one
+    rename, since no lock is
+    taken on the person's file. The file's mode is copied; Windows attributes (hidden, say), ACLs and NTFS alternate
+    data streams are not kept, as the new file replaces the old one."""
     import tempfile
     from pathlib import Path
     from g6.mcp.instructions import agents_block
@@ -306,13 +324,15 @@ def codex_agents(ask: Ask, say: Say) -> None:
     say(f"G6 can tell Codex when to call it with this block in {target}; the rest of the file stays as it is:\n\n"
         f"{block}\n")
     try:
-        reply = ask(f"Write this block to {target}? [y/N] ")
+        reply = ask(f"Write this block to {target}? Replacing the file does not keep Windows attributes, access rules "
+                    "or extra NTFS data streams attached to it. [y/N] ")
     except (EOFError, OSError):
         reply = ""
     if reply.strip().lower() not in ("y", "yes"):
         say(f"Nothing was written to {target}.")
         return
     name = None
+    identity = None
     try:
         if _read(target) != seen:
             by_hand(changed)
@@ -320,6 +340,8 @@ def codex_agents(ask: Ask, say: Say) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(dir=target.parent, prefix=".g6-agents-")
         with os.fdopen(fd, "wb") as stream:
+            status = os.fstat(stream.fileno())
+            identity = status.st_dev, status.st_ino
             stream.write(updated)
         if seen is not None:
             import shutil
@@ -337,7 +359,7 @@ def codex_agents(ask: Ask, say: Say) -> None:
         return
     finally:
         if name is not None:
-            _remove(name, say)
+            _remove(name, say, identity)
     say(f"Wrote G6's block to {target}.")
 
 

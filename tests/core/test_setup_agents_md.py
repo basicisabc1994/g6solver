@@ -451,12 +451,14 @@ def test_a_block_with_other_line_ends_than_the_file_is_still_one_block(codex, in
     assert codex.read_bytes() == before + BLOCK.encode().replace(b"\n", b"\r\n") + after
 
 
-def test_a_byte_order_mark_leading_a_later_marker_line_is_still_a_marker(codex):
+def test_a_byte_order_mark_leading_a_later_marker_line_is_the_persons_text(codex):
+    # Follow-up F1 supersedes repair 3: nothing may precede a marker at column zero, except the file's encoding BOM.
     codex.parent.mkdir(parents=True)
     bom = "﻿"
-    codex.write_bytes(f"# Mine\n{bom}{instructions.AGENTS_BEGIN}\nold\n{bom}{instructions.AGENTS_END}\ntail\n".encode())
+    original = f"# Mine\n{bom}{instructions.AGENTS_BEGIN}\nold\n{bom}{instructions.AGENTS_END}\ntail\n".encode()
+    codex.write_bytes(original)
     assert _setup("y", []) == 0
-    assert codex.read_bytes() == b"# Mine\n" + BLOCK.encode() + b"\ntail\n"
+    assert codex.read_bytes() == original + b"\n" + BLOCK.encode() + b"\n"
 
 
 def _args():
