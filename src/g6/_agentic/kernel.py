@@ -47,11 +47,11 @@ from typing import Any
 
 from g6._agentic import _child, decode, ledger, protected
 from g6.core import consent_callers
-from g6.core.consent_callers import CallerWrapper
 from g6.core.consent_registry import GuardedRegistry
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, door_reply, invoke_checked, is_allowed
 from g6.core.ledger import digest
-from g6.core.llm import DEFAULT_MAX_TOKENS
+from g6.core.llm import EmptyRetry
+from g6.core.model_calls import counting
 from g6.core.reliability_envelope import envelope_fields, warning_card
 from g6.reasoning.budget import Budget, BudgetExhausted
 
@@ -421,7 +421,7 @@ class _Stop(Exception):  # noqa: N818 - an override's stop, with the reason the 
 
 
 class _OutOfBudget(BudgetExhausted):
-    """The envelope's own refusal of a send, in G6's words (a ``BudgetExhausted``, so a retry does not swallow it)."""
+    """The envelope's own refusal of a send at its boundary, in G6's words."""
 
 
 def _timed(caller: Any) -> bool:
@@ -452,41 +452,25 @@ def _cut(caller: Any) -> bool:
     return all(_timed(_raw(backend)) for backend in _backends(caller))
 
 
-def _gated(caller: Any, envelope: _Envelope, seen: frozenset[int] = frozenset()) -> Any:
-    """``caller`` with each backend that sends behind :class:`_Send`, below every retry or fallback G6 knows: copies
-    of its wrappers, so the person's own caller is never changed."""
+def _unretried(caller: Any, timed: list[Any], seen: frozenset[int] = frozenset()) -> Any:
+    """``caller`` as the kernel sends through it, built of copies so the person's own caller is never changed: every
+    ``EmptyRetry`` taken out (the kernel asks again after an empty reply itself, counted, and never with more tokens),
+    every other wrapper G6 knows copied, and each backend that takes a timeout copied and listed in ``timed``."""
     slot = consent_callers.wrapper_slot(caller)
-    if not slot or id(caller) in seen:
-        return _Send(caller, envelope)
-    inner, clone, seen = getattr(caller, slot), copy.copy(caller), seen | {id(caller)}
-    setattr(clone, slot, tuple(_gated(one, envelope, seen) for one in inner) if slot == "_callers"
-            else _gated(inner, envelope, seen))
-    return clone
-
-
-class _Send(CallerWrapper):
-    """One request to the model, at the send itself: counted before it is sent (the envelope refuses the one past the
-    budget, and any once the time left is too little), never given more tokens than :data:`MODEL_TOKENS`, given the
-    time left as its timeout where its backend takes one, and its reply's characters counted. A ``CallerWrapper``, so
-    the consent guard still checks the backend below it at each send."""
-
-    def __init__(self, backend: Any, envelope: _Envelope) -> None:
-        raw = _raw(backend)
-        own = copy.copy(raw) if _timed(raw) else backend   # the timeout is set on G6's copy, never the person's
-        super().__init__(own)
-        self._timed = own if own is not backend else None
-        self._envelope = envelope
-
-    def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
-        left = self._envelope.admit()
-        if self._timed is not None:
-            self._timed.timeout = left
-        try:
-            text = self.inner.complete(system, user, max_tokens=min(max_tokens, MODEL_TOKENS))
-        except Exception:
-            self._envelope.failed()
-            raise
-        return self._envelope.took(text)
+    if slot and id(caller) not in seen:
+        inner, seen = getattr(caller, slot), seen | {id(caller)}
+        if type(caller) is EmptyRetry:
+            return _unretried(inner, timed, seen)
+        clone = copy.copy(caller)
+        setattr(clone, slot, tuple(_unretried(one, timed, seen) for one in inner) if slot == "_callers"
+                else _unretried(inner, timed, seen))
+        return clone
+    raw = _raw(caller)
+    if not _timed(raw):
+        return caller
+    own = copy.copy(raw)      # guarded again by the envelope; its timeout is set before each call
+    timed.append(own)
+    return own
 
 
 def _code_in(text: str) -> str:
@@ -525,12 +509,14 @@ def _words(exc: BaseException) -> str:
 
 class _Envelope:
     """Every limit of one override in one place, enforced where the cost is spent (``budget_exhausted`` otherwise).
-    Model calls: every request to the model is counted at the send itself (:class:`_Send`, below any retry), before
-    it is sent, and the one past the budget is refused. Characters of model replies: a reply longer than the
-    characters left is refused before it is used. One deadline for the whole override, every model call and every
-    child run, the final run and the re-check included: none starts with less than :meth:`floor` left; a child, and
-    a model request whose backend takes a timeout, gets the time left; G6 stops waiting for a model call at the
-    deadline, and a reply or a run that returns after it is not used."""
+    Model calls: every request to the model is counted at the send itself, where its backend notes it before sending
+    (``g6.core.model_calls.counting``'s observer, :meth:`admit`), and the one past the budget is refused there, before
+    it is sent; the kernel's caller has no retry of its own (:func:`_unretried`): an empty reply is asked again by
+    :meth:`ask`, counted, with the same tokens. Characters of model replies: a reply longer than the characters left is
+    refused before it is used. One deadline for the whole override, every model call and every child run, the final
+    run and the re-check included: none starts with less than :meth:`floor` left; a child, and a model request whose
+    backend takes a timeout, gets the time left; G6 stops waiting for a model call at the deadline, and a reply or a
+    run that returns after it is not used."""
 
     def __init__(self, caller: Any, budget: Budget) -> None:
         self.budget = budget
@@ -538,7 +524,9 @@ class _Envelope:
         self._start = time.monotonic()   # the override's one deadline starts now
         self.calls = self.failed_calls = self.output_chars = 0
         self.closed = False
-        self.caller = consent_callers.guard(_gated(caller, self))   # the guard checks each backend below the meter
+        self.refused = ""
+        self._timed: list[Any] = []
+        self.caller = consent_callers.guard(_unretried(caller, self._timed))   # the guard checks each backend
 
     def elapsed_s(self) -> float:
         return time.monotonic() - self._start
@@ -549,52 +537,55 @@ class _Envelope:
     def floor(self) -> float:
         return min(MIN_CHILD_S, self.budget.max_wall_clock_s / 10)
 
-    def admit(self) -> float:
-        """Count one request before it is sent: the seconds left, or :class:`_OutOfBudget`."""
+    def _refuse(self, why: str) -> None:
+        self.refused = why
+        raise _OutOfBudget(f"G6_E_BUDGET_EXHAUSTED: {why}")
+
+    def admit(self) -> None:
+        """The observer at each send's boundary: count the request before it is sent, or refuse it (it is then neither
+        counted nor sent)."""
         with self._lock:
             if self.closed:
-                raise _OutOfBudget("G6_E_BUDGET_EXHAUSTED: the override stopped waiting for the model, so nothing more "
-                                   "is sent")
+                self._refuse("the override stopped waiting for the model, so nothing more was sent")
             if self.calls >= self.budget.max_model_calls:
-                raise _OutOfBudget(f"G6_E_BUDGET_EXHAUSTED: max_model_calls: {self.calls} model calls were sent, the "
-                                   "most the budget allows; no more was sent")
+                self._refuse(f"max_model_calls: {self.calls} model calls were sent, the most the budget allows; no "
+                             "more was sent")
             left = self.seconds_left()
             if left < self.floor():
-                raise _OutOfBudget(f"G6_E_BUDGET_EXHAUSTED: max_wall_clock_s: {max(left, 0.0):.2f}s of the "
-                                   f"{self.budget.max_wall_clock_s:g}s budget were left, too little for a model call; "
-                                   "none was started")
+                self._refuse(f"max_wall_clock_s: {max(left, 0.0):.2f}s of the {self.budget.max_wall_clock_s:g}s "
+                             "budget were left, too little for a model call; none was started")
             self.calls += 1
-            return left
 
-    def failed(self) -> None:
-        with self._lock:
-            self.failed_calls += 1
-
-    def took(self, text: str) -> str:
-        """Count a reply's characters: ``text``, or :class:`_OutOfBudget` when it is longer than what was left."""
+    def _took(self, text: str) -> str:
+        """Count a reply's characters: ``text``, or :class:`_Stop` when it is longer than what was left."""
         size = len(text or "")
         with self._lock:
             left = self.budget.max_output_chars - self.output_chars
             self.output_chars += size
         if size > left:
-            raise _OutOfBudget(f"G6_E_BUDGET_EXHAUSTED: max_output_chars: the model's reply ({size} characters) is "
-                               f"longer than the {max(left, 0)} characters left of the budget, so it was not used")
+            raise _Stop("budget_exhausted", f"max_output_chars: the model's reply ({size} characters) is longer than "
+                                            f"the {max(left, 0)} characters left of the budget, so it was not used")
         return text
 
-    def ask(self, system: str, user: str) -> str:
-        """One model call through the metered, consent-guarded caller, waited for only until the deadline; or
-        :class:`_Stop`."""
-        left = self.seconds_left()
-        if left < self.floor():
-            raise _Stop("budget_exhausted", f"{max(left, 0.0):.2f}s of the {self.budget.max_wall_clock_s:g}s budget "
-                                            "were left, too little for a model call; none was started")
+    def _once(self, system: str, user: str, left: float) -> str:
+        """One call through the consent-guarded caller, every send it makes passing :meth:`admit`, waited for only
+        until the deadline; its reply, or :class:`_Stop`."""
+        for own in self._timed:
+            own.timeout = left
         box: dict[str, Any] = {}
 
         def call() -> None:
+            noted: Any = lambda: 0  # noqa: E731
             try:
-                box["text"] = self.caller.complete(system, user, max_tokens=MODEL_TOKENS)
+                with counting(before_call=self.admit) as noted:
+                    box["text"] = self.caller.complete(system, user, max_tokens=MODEL_TOKENS)
             except BaseException as exc:  # noqa: BLE001 - reported to the waiting override, never lost
                 box["error"] = exc
+            with self._lock:
+                if "error" in box and noted():
+                    self.failed_calls += 1
+                if "text" in box and not noted():
+                    self.calls += 1     # a caller that notes no send still made one call
 
         worker = threading.Thread(target=contextvars.copy_context().run, args=(call,), name="g6-agentic-model",
                                   daemon=True)
@@ -602,18 +593,33 @@ class _Envelope:
         worker.join(max(left, 0.0))
         if worker.is_alive():
             with self._lock:
-                self.closed = True   # an abandoned retry sends nothing more
+                self.closed = True   # an abandoned call sends nothing more
             raise _Stop("budget_exhausted", f"no model reply came within the {self.budget.max_wall_clock_s:g}s budget: "
                                             "G6 stopped waiting at the deadline, and a reply that arrives later is "
                                             "not used")
         error = box.get("error")
-        if isinstance(error, _OutOfBudget):
-            raise _Stop("budget_exhausted", str(error).removeprefix("G6_E_BUDGET_EXHAUSTED: ")[:REASON_CHARS])
+        if error is not None and (self.refused or isinstance(error, _OutOfBudget)):
+            raise _Stop("budget_exhausted", (self.refused or "the budget ran out")[:REASON_CHARS])
         if error is not None:
             raise _Stop("model_failed", _words(error)[:REASON_CHARS])
         if self.seconds_left() < 0:
             raise _Stop("budget_exhausted", "the model's reply came after the deadline, so it was not used")
-        return box["text"]
+        return self._took(box["text"])
+
+    def ask(self, system: str, user: str) -> str:
+        """The model's reply to one prompt, or :class:`_Stop`. An empty reply (a reasoning model that spent its tokens
+        thinking) is asked again, each time counted and with the same tokens, while the budget lasts."""
+        while True:
+            left = self.seconds_left()
+            if left < self.floor():
+                raise _Stop("budget_exhausted", f"{max(left, 0.0):.2f}s of the {self.budget.max_wall_clock_s:g}s "
+                                                "budget were left, too little for a model call; none was started")
+            if self.calls >= self.budget.max_model_calls:
+                raise _Stop("budget_exhausted", f"max_model_calls: {self.calls} model calls were sent, the most the "
+                                                "budget allows; no more was sent")
+            text = self._once(system, user, left)
+            if text.strip():
+                return text
 
     def child_timeout(self) -> float:
         left = self.seconds_left()
