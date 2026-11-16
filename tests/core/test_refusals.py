@@ -14,9 +14,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "g6"
 CODE = re.compile(r"G6_E_[A-Z0-9_]*[A-Z0-9](?![A-Z0-9_])")
-#: The declarations themselves are not writers; nor, until it reads the declarations, is the selector's own remedy
-#: table.
-NOT_WRITERS = {"core/refusals.py", "core/selector.py"}
+#: The declarations themselves are not writers.
+NOT_WRITERS = {"core/refusals.py"}
 
 
 def _skipped(tree: ast.AST) -> set[int]:

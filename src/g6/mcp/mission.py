@@ -63,7 +63,8 @@ IN_PLACE = ("G6 also reviews each patch in that folder itself: those runs are co
             "the folder and cannot write to it, and are refused where no boundary can confine them.")
 # COPY: Refused before anything is asked: a standard is frozen from a commit, before any change exists.
 DIRTY = ("G6 froze nothing: the repository has changes that are not committed ({files}). A standard is frozen from a "
-         "commit, before any change: commit or set them aside, then create the mission again.")
+         "commit, before any change: ask the person whether to commit or set aside their changes (never do it for "
+         "them), then create the mission again.")
 NOT_ASKED = ("Nothing was recorded. The person decided in the client's dialog, or no dialog could be shown: ask the "
              "person whether they want this before calling the tool again, and offer no other way to agree.")
 UNCONFIRMED = ("[G6_E_HUMAN_APPROVAL_REQUIRED] No person has confirmed what counts as done for this mission, so it takes "

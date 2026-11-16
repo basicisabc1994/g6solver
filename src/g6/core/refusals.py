@@ -637,7 +637,7 @@ LAYERS: dict[str, tuple[str, ...]] = {
     "G6_E_OUTSIDE_SERVICE_STATUS": ("person", "core"),
     "G6_E_OUTSIDE_SERVICE_TIMEOUT": ("person", "core"),
     "G6_E_OUTSIDE_SERVICE_TOO_LARGE": ("person", "core"),
-    "G6_E_PATCH_REVIEW": ("tool:g6_select", "harness",
+    "G6_E_PATCH_REVIEW": ("tool:g6_select", "core harness",
         "The code every review result carries: the outcome beside it (test_integrity_compromised, defect_detected, "
         "insufficient_evidence or supported_within_scope) says what to do. Pass that outcome back as last_outcome."),
     "G6_E_PATCH_REVIEW_INTERRUPTED": ("tool:g6_review_patch", "mcp", "The review was interrupted: start it again."),

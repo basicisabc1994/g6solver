@@ -37,11 +37,13 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
    ``BUDGET_UNITS``; otherwise the first candidate.
 5. ``reroute``: read only from G6's own reply (``_read``: the envelope's code, state, named outcome field and
    ``result`` component and op; in plain text, only a code that leads the first line), never from the content an
-   op worked on. Each refusal resolves to one class: a written remedy (``REMEDIES``, by exact code or outcome word;
-   ``g6.metaharness.recovery``'s remedies by component), fix your input (``G6_E_INPUT_VALIDATION`` or a reviewed
-   ``INPUT_CODES`` code: read the component's contract with ``g6_describe``), or tell the person (any wait on a
-   person, and any refusal not known to be one of the others). ``g6_cloud_grant`` is offered only for the consent
-   code itself. The op whose outcome ``last_outcome`` reports is never ``next`` again.
+   op worked on. Who repairs a refusal is declared where its code is written (``g6.core.refusals``; the corpus
+   carries the components' declarations), never in a table here: ``input`` (read the component's contract with
+   ``g6_describe``, or fix the field in your own call), ``tool:<name>`` (G6's own next call), ``retry`` (the same
+   call once more), or ``person``/``none`` (tell the person; any code its writer does not declare is the person's).
+   ``REMEDIES`` holds only what no code says: outcome words (``g6.metaharness.recovery``'s remedies by component
+   among them), a declared limit and a refusal with no code. ``g6_cloud_grant`` is offered only for the consent code
+   itself, whose dialog the person answers. The op whose outcome ``last_outcome`` reports is never ``next`` again.
 6. ``validation``: a tool template's keys are within its recorded schema and hold its required keys; an op template
    carries what the corpus recorded when it was built from shipped code: the door's own typed input check
    (``registry.build_typed_input``) and, for an op that computes over its input alone, a run of the template as
@@ -177,70 +179,11 @@ def _remedy(action: str, tool: str = "", arguments: dict[str, Any] | None = None
 CARRIES_OUTCOME = frozenset({"G6_E_PATCH_REVIEW"})
 _ASK = "Ask the person; offer no other way to agree, and never answer for them."
 _SHOW = "Show the reply's report to the person as it is."
-_WAIT = _remedy("A gate decision, an approval, a confirmation or an authority that only a person gives: tell the "
-                "person what the reply says. Never rework the act or its input until the gate stops refusing it.",
-                tell=True)
-#: Remedies by refusal code (exact: a code's family or spelling decides nothing), ``*_NO_MODEL`` (the codes in
-#: ``NO_MODEL_CODES``), outcome word, ``component_limit`` (a code a component declares in ``__g6_limits__``),
-#: ``component_input`` (a code in ``INPUT_CODES``, from the component it is listed for) or ``unknown_code`` (any
-#: other refusal: tell the person). Each names a registered tool or op, or tells the person; a test holds every code
-#: the MCP surface and the door emit to one.
+#: The remedies that are no refusal code's: an outcome word a reply names (a review's outcome, a loop's ending or
+#: action, a meta-harness cause), ``component_limit`` (a code a component declares in ``__g6_limits__``) and
+#: ``unknown_code`` (a refusal that carries no code). A code's remedy is never written here: it is declared where the
+#: code is written (``g6.core.refusals``), and :func:`remedy_for` reads that declaration.
 REMEDIES: dict[str, dict[str, Any]] = {
-    # consent and dialogs: g6_cloud_grant only for the consent code itself
-    CONSENT: _remedy(
-        "The reply was withheld until the person shares the source with your provider. Call g6_cloud_grant: the "
-        "person answers in the client's dialog. Never grant for the person; if they decline, go on with local work.",
-        "g6_cloud_grant", {"source": "<the source the refusal names>", "provider": "<your client's provider>"}),
-    "G6_E_CLOUD_CONSENT": _remedy("Read which sources are shared with which providers.", "g6_cloud_grants"),
-    "G6_E_CLOUD_CONSENT_INPUT": _remedy(
-        "The grant named a source or provider G6 does not take: ask the person which source and provider they "
-        "mean, as the refusal lists them. Never grant for the person.", tell=True),
-    "G6_E_CLOUD_CONSENT_STATE": _remedy(
-        "G6 could not read its sharing state, so nothing was shared. Tell the person.", tell=True),
-    **{code: _remedy("The person declined or cancelled, gave no name, or the client has no dialog. " + _ASK, tell=True)
-       for code in ("G6_E_CONSENT_CANCELLED", "G6_E_CONSENT_DECLINED", "G6_E_CONSENT_DIALOG_ONLY",
-                    "G6_E_CONSENT_NO_DIALOG", "G6_E_CONSENT_NO_NAME")},
-    # a component that waits on a person (the gate's own block among them)
-    **{code: _WAIT for code in ("G6_E_ACTION_GATING_BLOCKED", "G6_E_CONFIRMATION_REQUIRED",
-                                "G6_E_AUTHORITY_UNVERIFIED", "G6_E_OPERATOR_APPROVAL_REQUIRED",
-                                "G6_E_GOAL_APPROVAL_REQUIRED", "G6_E_COGNITIVE_APPROVAL_REQUIRED",
-                                "G6_E_PROTECTED_REVIEW_REQUIRED", "G6_E_HAT_AUTHORITY_ESCALATED")},
-    # the door and the registry beneath it
-    "G6_E_BLOCKED": _remedy("Read the warning card: it says why and what can be done. Tell the person.", tell=True),
-    "G6_E_INPUT_VALIDATION": _remedy(
-        "The input did not fit: the refusal names the field. For an op, read g6_describe; for a tool, its "
-        "description. Fix the field and call again.", "g6_describe", {"component": "<component>"}),
-    "G6_E_INVOKE_FAILED": _remedy("The op failed while it ran, which does not say the input was wrong: tell the "
-                                  "person what the refusal says.", tell=True),
-    "G6_E_RESOURCE_LIMIT": _remedy("The run was over a resource limit: tell the person; a narrower input may fit.",
-                                   tell=True),
-    "G6_E_UNKNOWN_COMPONENT": _remedy("No component has that name: find one by the task.", "g6_find",
-                                      {"query": "<the task>"}),
-    "G6_E_NO_BLOCK": _remedy("That component is a library with no block, so g6_invoke cannot run it: pick a runnable "
-                             "call for the task.", "g6_select", {"task": "<the task>"}),
-    "G6_E_SCREEN_RAW_FAILED": _remedy("The component's own input screen failed: tell the person; it is G6's fault.",
-                                      tell=True),
-    "G6_E_PROMOTION_LAW": _remedy("The result is held at qualified-draft: report it so, never as verified.",
-                                  tell=True),
-    "G6_E_QUALIFIED_DRAFT": _remedy("A proposal or draft: report it with its warning card; nothing in it is checked.",
-                                    tell=True),
-    "G6_E_SENSITIVE_COMPONENT_DENIED": _remedy(
-        "This op runs a program or changes the machine, and this server does not allow it. Only the person can, "
-        "where the server is registered: tell them the step, and what code it lets run. Never change it yourself.",
-        tell=True, setup="g6 setup --allow <component.op>"),
-    "G6_E_ISOLATION_UNAVAILABLE": _remedy(
-        "No operating-system boundary can confine the run here. Tell the person: g6 doctor says what this computer "
-        "needs. Never allow an unconfined run yourself.", tell=True, setup="g6 doctor"),
-    "G6_E_LLM_DISABLED": _remedy(
-        "No model is configured for G6. Do the step yourself, then ask for the op that checks it.", "g6_select",
-        {"task": "<the step you did yourself>", "phase": "verify"}),
-    "*_NO_MODEL": _remedy(
-        "No model is configured for this op. Do the step yourself, then ask for the op that checks it.", "g6_select",
-        {"task": "<the step you did yourself>", "phase": "verify"}),
-    "component_input": _remedy(
-        "The component refused its input. Read its input contract with g6_describe, fix the field its refusal "
-        "names, then call again; if it refuses again, tell the person what it says.", "g6_describe",
-        {"component": "<component>"}),
     "unknown_code": _remedy(
         "G6 has no remedy written for this refusal, so it is not known to be one you can fix: tell the person what "
         "it says. Never work around it.", tell=True),
@@ -248,144 +191,6 @@ REMEDIES: dict[str, dict[str, Any]] = {
         "The component refused at a limit it declares. The override kernel can try a substitute for that part, "
         "with the person's agreement, beside the original refusal.", "g6_agentic_run",
         {"component": "<component>", "op": "<op>", "params_json": "<the same parameters>"}),
-    # missions
-    "G6_E_GIT_COMMAND_FAILED": _remedy("git failed on the repository: tell the person what the refusal says.",
-                                       tell=True),
-    "G6_E_GIT_REPO_DIRTY": _remedy("A mission starts on a clean repository: commit or set aside the changes, then "
-                                   "start it again.", "g6_mission_create", {"repo": "<repo>", "objective": "<objective>"}),
-    "G6_E_HUMAN_APPROVAL_REQUIRED": _remedy("Only the person can approve this. " + _ASK, tell=True),
-    "G6_E_JOB_FAILED": _remedy("The job failed: read the mission's state and what it waits for.",
-                               "g6_mission_status", {"mission_id": "<mission_id>"}),
-    "G6_E_MISSION_NO_CHANGE": _remedy("Change the one permitted file in the working tree, then submit again.",
-                                      "g6_mission_submit", {"mission_id": "<mission_id>", "repo": "<repo>"}),
-    "G6_E_MISSION_OUT_OF_SCOPE": _remedy("Change only the permitted file, never a test, then submit again.",
-                                         "g6_mission_submit", {"mission_id": "<mission_id>", "repo": "<repo>"}),
-    "G6_E_MISSION_REFUSED": _remedy("The mission refused this step: tell the person what it says.", tell=True),
-    "G6_E_POLICY_BLOCKED": _remedy("A policy refused this step: only the person can change it. Tell them what the "
-                                   "refusal says; never change the policy yourself.", tell=True),
-    "G6_E_PENDING_APPROVAL": _remedy("The step waits for the person's approval. " + _ASK, tell=True),
-    "G6_E_PIPELINE_FEASIBILITY_RISKY_CONFIRMATION_REQUIRED": _remedy(
-        "The mission looks risky to carry out as asked and needs the person's confirmation. " + _ASK, tell=True),
-    "G6_E_MISSING_PARAM": _remedy("An input is missing: the refusal names it. Fill it in and call again; for an op, "
-                                  "g6_describe lists its fields.", "g6_describe", {"component": "<component>"}),
-    "G6_E_INVALID_PARAM": _remedy("An input has a value G6 does not take: the refusal names it. Fix it and call "
-                                  "again; for an op, g6_describe lists its fields.", "g6_describe",
-                                  {"component": "<component>"}),
-    "G6_E_CAPABILITY_UNAVAILABLE": _remedy("The step needs a capability this server does not offer: pick another "
-                                           "call for the task.", "g6_select", {"task": "<the task>"}),
-    "G6_E_DEPENDENCY_UNAVAILABLE": _remedy("A step this one depends on has no result yet: read the mission's state.",
-                                           "g6_mission_status", {"mission_id": "<mission_id>"}),
-    "G6_E_TASK_CONTRACT_UNVERIFIABLE": _remedy(
-        "The task's standard of done cannot be checked as it is stated: say what done means and how each part is "
-        "checked.", "g6_premortem", {"task": "<task>"}),
-    "G6_E_RESULT_NOT_VERIFIED": _remedy("The result did not pass its check: report it so, never as done. " + _SHOW,
-                                        tell=True),
-    "G6_E_WORK_LOOP_NO_PROGRESS": _remedy("The work loop made no progress. " + _SHOW, tell=True),
-    "G6_E_CONFIG_INVALID": _remedy("G6's configuration or the plan is not valid: tell the person what the refusal "
-                                   "says; g6 doctor checks the setup.", tell=True, setup="g6 doctor"),
-    **{code: _remedy("The step is over its cost budget or has no price: only the person raises a budget. Tell them.",
-                     tell=True) for code in ("G6_E_COST_GATE_GATED", "G6_E_COST_GATE_OVER_BUDGET")},
-    "G6_E_TIMEOUT": _remedy("The step ran out of time: tell the person; a narrower step may fit.", tell=True),
-    "G6_E_RETRY": _remedy("A tool failed for a passing reason: call the same step once more; if it fails again, "
-                          "tell the person.", tell=True),
-    "G6_E_INTERNAL": _remedy("G6 failed inside: tell the person; it is G6's fault.", tell=True),
-    "G6_E_DELIVERABLE_WITHHELD": _remedy("The result is withheld until the person resolves what it names: act on no "
-                                         "part of it. " + _SHOW, tell=True),
-    "G6_E_TESTS_DID_NOT_RUN": _remedy("The repository's tests did not run, so nothing was checked. " + _SHOW,
-                                      tell=True),
-    "G6_E_TEST_REPORT_UNKNOWN": _remedy("G6 could not read the test runner's report: tell the person; it is G6's "
-                                        "fault.", tell=True),
-    "G6_E_EXECUTION_ARTIFACT_UNAVAILABLE": _remedy(
-        "The copy G6 runs the tests in held something it cannot run with (a cache or an input it does not take). "
-        + _SHOW, tell=True),
-    # the repository and this machine
-    "G6_E_GIT_MISSING_BINARY": _remedy("git is not installed where G6 runs: tell the person; g6 doctor says what this "
-                                       "computer needs.", tell=True, setup="g6 doctor"),
-    "G6_E_GIT_REPO_INVALID": _remedy("Check that repo is the top folder of a git repository; if it is, tell the "
-                                     "person what the refusal says.", tell=True),
-    "G6_E_GIT_SUBMODULE_REFUSED": _remedy("The repository holds a submodule that was set up, which G6 does not run "
-                                          "tests in: tell the person.", tell=True),
-    "G6_E_REPO_PYTHON_INVALID": _remedy("The Python G6 is set to run the repository's tests with is not usable: only "
-                                        "the person changes that setting; g6 doctor checks it.", tell=True,
-                                        setup="g6 doctor"),
-    "G6_E_REPO_ENV_INVALID": _remedy("The environment G6 is set to run the repository's tests with is not valid: "
-                                     "only the person changes that setting; g6 doctor checks it.", tell=True,
-                                     setup="g6 doctor"),
-    # the Context Engine
-    "G6_E_KNOWLEDGE": _remedy("Read which sources are indexed and shared, then search again.", "g6_knowledge_sources"),
-    # the review and its loop
-    "G6_E_PATCH_REVIEW": _remedy(
-        "The code every review result carries: the outcome beside it (test_integrity_compromised, defect_detected, "
-        "insufficient_evidence or supported_within_scope) says what to do. Pass that outcome back as last_outcome.",
-        "g6_select", {"task": "<the task>", "last_outcome": "<the outcome beside the code>"}),
-    "G6_E_PATCH_STALE": _remedy(
-        "The working tree changed since the digest you passed: review it again as it stands now, without the old "
-        "expected_artifact_digest.", "g6_review_patch", {"repo": "<repo>", "task": "<task>"}),
-    "G6_E_PATCH_REVIEW_INTERRUPTED": _remedy("The review was interrupted: start it again.", "g6_review_patch",
-                                             {"repo": "<repo>", "task": "<task>"}),
-    "G6_E_NO_PYTHON_CHANGED": _remedy(
-        "No Python file changed against the base, so nothing was tested and no loop began: make the change, or "
-        "name the right base, then call again.", "g6_review_until_clean",
-        {"repo": "<repo>", "task": "<task>", "session": "<session>"}),
-    "G6_E_DEFECT_NOT_REPRODUCED": _remedy(
-        "The loop stopped on a defect the reviewer named and no test could show. " + _SHOW, tell=True),
-    "G6_E_LOOP_WAITING_ON_PERSON": _remedy(
-        "G6's review loop waits for the person's answer to the question that was asked. " + _ASK, tell=True),
-    "G6_E_REVIEW_UNTIL_CLEAN": _remedy(_SHOW, tell=True),
-    "G6_E_NO_CLEAN_REVIEW": _remedy("The loop stopped with no clean review. " + _SHOW, tell=True),
-    "G6_E_STOPPED": _remedy("The review stopped: " + _SHOW, tell=True),
-    "G6_E_LOOP_BUSY": _remedy("Another step of this session is running: wait for its result, then call again.",
-                              "metaharness_job", {"job_id": "<job_id>"}),
-    "G6_E_JOB_LIMIT": _remedy("Sixteen jobs are already pending: read one's result before starting another.",
-                              "metaharness_job", {"job_id": "<job_id>"}),
-    "G6_E_JOB_UNKNOWN": _remedy("No job is kept under that id (the server may have restarted): start the step again.",
-                                "g6_select", {"task": "<the step to start again>"}),
-    # the self-improvement loop
-    "G6_E_LOOP_NOT_ENROLLED": _remedy("No domain is enrolled: only the person enrols one, in the client's dialog.",
-                                      "g6_improve_enrol"),
-    "G6_E_LOOP_PAUSED": _remedy("The loop is paused: the person reads why and may lift it in the dialog.",
-                                "g6_improve_resume"),
-    "G6_E_LOOP_TERMS_CHANGED": _remedy(
-        "What the person read is no longer what would start, so nothing started: the person reads the terms as "
-        "they stand now. " + _ASK, tell=True),
-    "G6_E_LOOP_PERSON_REQUIRED": _remedy("Outside the loop's own workspace only a person accepts a change. " + _ASK,
-                                         tell=True),
-    # behaviour questions
-    "G6_E_QUESTION_CONFIRMED": _remedy("The person's answer is enforced on each later review of the task: review it.",
-                                       "g6_review_patch", {"repo": "<repo>", "task": "<task>"}),
-    "G6_E_QUESTION_REVIEW_NOT_BOUND": _remedy("The review job is not of this repository, task and working tree: run a "
-                                              "review of it first.", "g6_review_patch",
-                                              {"repo": "<repo>", "task": "<task>"}),
-    "G6_E_SCENARIO_UNAVAILABLE": _remedy("Give the question a concrete candidate with two competing outcomes.",
-                                         "g6_confirm_behaviour", {"repo": "<repo>", "task": "<task>"}),
-    # the meta-harness: a wait on the person tells the person; any other refusal reads the workflow's record
-    "G6_E_META_APPROVAL_REQUIRED": _remedy(
-        "No person approved, confirmed or asked for this: a name comes only from the client's dialog. " + _ASK,
-        tell=True),
-    "G6_E_META_APPROVER_IS_PROPOSER": _remedy(
-        "The person who accepts a change cannot be the one who proposed it: another person decides. " + _ASK,
-        tell=True),
-    "G6_E_META_NOT_CONFIRMED": _remedy(
-        "No person has confirmed this workflow, so nothing of it runs: only the person confirms it. " + _ASK,
-        tell=True),
-    "G6_E_META_STANDARD_CHANGED": _remedy(
-        "The workflow changed since the person confirmed it, so every earlier comparison is void: only the person "
-        "confirms the new one. " + _ASK, tell=True),
-    "G6_E_META_PROMOTION_REQUIRED": _remedy(
-        "Each step up needs its own held-out report and the person's approval. " + _ASK, tell=True),
-    "G6_E_META_PROMOTION_DISABLED": _remedy(
-        "No promotion policy was confirmed: only the person confirms one. " + _ASK, tell=True),
-    "G6_E_META_SCHEMA": _remedy("The workflow's specification did not fit: fix the field the refusal names.",
-                                "metaharness_start", {"specification_json": "<specification_json>"}),
-    "G6_E_META_BUSY": _remedy("Another operation of this workflow is running: read the workflow's record, then call "
-                              "again.", "metaharness_inspect", {"workflow": "<workflow>"}),
-    "G6_E_HARNESS_EXECUTOR_FAILED": _remedy("The workflow's version failed while it ran: read its record and recovery.",
-                                            "metaharness_inspect", {"workflow": "<workflow>"}),
-    # the workflow record
-    "G6_E_WORKFLOW_NOT_ADMITTED": _remedy("G6's workflow record is off or this call is not one it keeps: tell the "
-                                          "person, who may set G6_WORKFLOW_RECORD=on.", tell=True),
-    "G6_E_WORKFLOW_RECORD": _remedy("Look at what G6 recorded, in a file the person opens.", "g6_workflow_export",
-                                    {"repo": "<repo>"}),
     # patch-review outcomes
     "test_integrity_compromised": _remedy(
         "A sign the tests cannot be believed. Do not weaken a test to pass; " + _SHOW, tell=True),
@@ -408,8 +213,8 @@ REMEDIES: dict[str, dict[str, Any]] = {
                         {"repo": "<repo>", "task": "<task>", "session": "<session>"}),
     "wait": _remedy("Another step is running: read its result before calling again.", "metaharness_job",
                     {"job_id": "<job_id>"}),
-    "withheld": _remedy("The reply was withheld for consent: pass its code back (G6_E_CLOUD_CONSENT_REQUIRED), or ask "
-                        "the person whether to share the source. Never grant for the person.", tell=True),
+    "withheld": _remedy("The reply was withheld for consent: pass its code back as last_outcome, or ask the person "
+                        "whether to share the source. Never grant for the person.", tell=True),
     # the meta-harness recovery's causes
     "wrong_answer": _remedy("The workflow's answers are wrong: diagnose, then propose a candidate that uses one of "
                             "the components in recovery.", "metaharness_diagnose", {"workflow": "<workflow>"}),
@@ -427,65 +232,26 @@ REMEDIES: dict[str, dict[str, Any]] = {
     "held_out_spent": _remedy("The held-out split is spent: only the person freezes a fresh one.", tell=True),
     "needs_a_person": _remedy("Only the person can resolve this. " + _ASK, tell=True),
 }
-#: Every code G6 writes for "no model is configured for this op" (a test holds the list to the code).
-NO_MODEL_CODES = frozenset({
-    "G6_E_AGENT_AUTOGEN_NO_MODEL", "G6_E_AGENT_LANGGRAPH_NO_MODEL", "G6_E_AGENT_SMOLAGENTS_NO_MODEL",
-    "G6_E_EVIDENCE_NO_MODEL", "G6_E_GOAL_NO_MODEL", "G6_E_GPS_NO_MODEL", "G6_E_HEAL_NO_MODEL",
-    "G6_E_LANGEXTRACT_NO_MODEL", "G6_E_LEAN_NO_MODEL", "G6_E_NO_MODEL", "G6_E_OPERATOR_NO_MODEL",
-    "G6_E_ROUTER_NO_MODEL", "G6_E_SCAFFOLD_NO_MODEL", "G6_E_SYNTH_NO_MODEL", "G6_E_VISION_NO_MODEL"})
-#: The component codes known to mean "the input was missing or malformed", reviewed by hand from each component's
-#: own validator: code -> the components that write it (a test holds each to that component's code). Only these,
-#: from a reply whose ``component`` is one of them (or none named), send the agent to fix its input; a code that
-#: says too large, a policy, a program, a model, an approval or a store is left out and tells the person.
-INPUT_CODES: dict[str, tuple[str, ...]] = {
-    "G6_E_ACTION_GATING_ACTION_INVALID": ("action_gating",), "G6_E_ACTION_GATING_ACTION_REQUIRED": ("action_gating",),
-    "G6_E_OPERATION_INPUT_INVALID": ("action_gating",),
-    "G6_E_ACTION_LOGIC_FIELD_REQUIRED": ("action_logic",), "G6_E_ACTION_LOGIC_INVALID_FIELD": ("action_logic",),
-    "G6_E_ACTR_INPUT": ("cog_arch_actr",), "G6_E_ACTR_PRODUCTION_INVALID": ("cog_arch_actr",),
-    "G6_E_AIXI_INPUT": ("cog_arch_aixi",), "G6_E_GPS_INPUT": ("cog_arch_gps",),
-    "G6_E_AGENT_AUTOGEN_TEAM_REQUIRED": ("agent_autogen",), "G6_E_AGENT_CLAUDE_GOAL_REQUIRED": ("agent_claude",),
-    "G6_E_AGENT_CODEX_GOAL_REQUIRED": ("agent_codex",), "G6_E_AGENT_LANGGRAPH_SPEC_REQUIRED": ("agent_langgraph",),
-    "G6_E_AGENT_LANGGRAPH_THREAD_REQUIRED": ("agent_langgraph",),
-    "G6_E_AGENT_SMOLAGENTS_AGENT_REQUIRED": ("agent_smolagents",),
-    "G6_E_ALGO_INPUT_INVALID": ("algorithm_design",),
-    "G6_E_CAUSAL_GRAPH_INVALID": ("causal",), "G6_E_CAUSAL_INPUT_INVALID": ("causal",),
-    "G6_E_CODING_AGENT_GATE_TASK_REQUIRED": ("coding_agent_gate",),
-    "G6_E_COGNITIVE_BRIDGE_INPUT": ("cognitive_bridge",), "G6_E_COMPLEXITY_INPUT_INVALID": ("complexity",),
-    "G6_E_DATALOG_INPUT_INVALID": ("datalog",), "G6_E_DATALOG_PARSE_ERROR": ("datalog",),
-    "G6_E_DATALOG_SESSION_INPUT": ("datalog",), "G6_E_DB_INPUT_INVALID": ("database",),
-    "G6_E_DECISION_INPUT": ("decision_making",), "G6_E_DESIGN_INPUT": ("design_governance",),
-    "G6_E_DJANGO_INPUT": ("adapt_django",),
-    "G6_E_EPISTEMIC_INTEGRITY_EVIDENCE_INVALID": ("epistemic_integrity",),
-    "G6_E_EPISTEMIC_INTEGRITY_MESSAGE_REQUIRED": ("epistemic_integrity",), "G6_E_MARKER_INPUT": ("epistemic_integrity",),
-    "G6_E_FORMAL_INPUT_INVALID": ("formal",), "G6_E_FORMAL_PARSE_ERROR": ("formal",),
-    "G6_E_GEO_INPUT": ("ctx_geo",), "G6_E_GIT_INPUT": ("ctx_git",),
-    "G6_E_GOAL_EMPTY": ("goal_engine",), "G6_E_GOAL_INPUT_INVALID": ("goal_engine",),
-    "G6_E_GRAPH_REASONING_PARSE_ERROR": ("graph_reasoning",),
-    "G6_E_GROUNDING_CLAIM_REQUIRED": ("grounding",), "G6_E_GROUNDING_SOURCES_REQUIRED": ("grounding",),
-    "G6_E_HEAL_INPUT": ("adapt_healing",),
-    "G6_E_KNOWLEDGE_CHUNK_INPUT": ("knowledge_chunker",), "G6_E_KNOWLEDGE_NO_TEXT": ("knowledge_chunker",),
-    "G6_E_KNOWLEDGE_CONVERT_INPUT": ("knowledge_converter",), "G6_E_KNOWLEDGE_ELASTIC_INPUT": ("ctx_elastic",),
-    "G6_E_KNOWLEDGE_FETCH_INPUT": ("knowledge_fetcher",), "G6_E_KNOWLEDGE_HUB_INPUT": ("ctx_contexthub",),
-    "G6_E_KNOWLEDGE_INDEX_INPUT": ("knowledge_indexer",), "G6_E_KNOWLEDGE_RANK_INPUT": ("ctx_colbert",),
-    "G6_E_KNOWLEDGE_SEARCH_INPUT": ("ctx_search",),
-    "G6_E_LANGEXTRACT_INPUT": ("ctx_langextract",), "G6_E_LANGEXTRACT_PATTERN_INVALID": ("ctx_langextract",),
-    "G6_E_LIBRARY_INPUT": ("ctx_library_mapper",),
-    "G6_E_MEDIA_INPUT_INVALID": ("adapt_blender", "adapt_diagrams", "adapt_ffmpeg", "adapt_image"),
-    "G6_E_MEDIA_DIAGRAM_DOES_NOT_PARSE": ("adapt_diagrams",),
-    "G6_E_MEMORY_INPUT": ("ctx_ace",), "G6_E_MEMORY_NO_TEXT": ("ctx_ace", "ctx_cognee"),
-    "G6_E_ML_INPUT_INVALID": ("adapt_bayesian",), "G6_E_ML_SEED_MISSING": ("adapt_sklearn",),
-    "G6_E_OPTIM_INPUT_INVALID": ("optimisation",), "G6_E_OPTIM_MODEL_INVALID": ("optimisation",),
-    "G6_E_REPO_INPUT": ("swe_diagnostics",), "G6_E_ROUTER_INPUT_INVALID": ("llm_router",),
-    "G6_E_SCAFFOLD_INPUT": ("component_creator",), "G6_E_SCAFFOLD_SPEC_INVALID": ("component_creator",),
-    "G6_E_SCAFFOLD_SOURCE_INVALID": ("component_creator",),
-    "G6_E_SELF_MAINTENANCE_INPUT": ("self_maintenance",),
-    "G6_E_SYNTAX_INPUT": ("meta_programming",), "G6_E_SYNTAX_DOES_NOT_PARSE": ("meta_programming",),
-    "G6_E_SYNTH_INPUT": ("adapt_library_synthesizer",), "G6_E_VISION_INPUT": ("ctx_vision",),
-    "G6_E_WEB_INPUT": ("adapt_webpage",),
-}
 #: The outcome words a reply names (a review's outcome, a loop's ending or action, a meta-harness cause).
 OUTCOME_WORDS = frozenset(k for k in REMEDIES if re.fullmatch(r"[a-z][a-z_]*", k)) - {
-    "component_input", "component_limit", "unknown_code"}
+    "component_limit", "unknown_code"}
+
+
+def input_codes(data: dict[str, Any] | None = None) -> dict[str, tuple[str, ...]]:
+    """The component codes their writers declare ``input`` (``g6.core.refusals``): code -> the components that write
+    it. A view of the declarations, kept for callers that read it as ``INPUT_CODES``; nothing decides by it."""
+    found: dict[str, list[str]] = {}
+    for name, codes in (data or _corpus())["refusals"].items():
+        for code, row in codes.items():
+            if row[0] == "input":
+                found.setdefault(code, []).append(name)
+    return {code: tuple(sorted(names)) for code, names in sorted(found.items())}
+
+
+def __getattr__(name: str) -> Any:
+    if name == "INPUT_CODES":
+        return input_codes()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _corpus() -> dict[str, Any]:
@@ -601,20 +367,32 @@ def recovery_remedies(data: dict[str, Any] | None = None) -> list[dict[str, Any]
     return out
 
 
+def _template(data: dict[str, Any], name: str) -> dict[str, Any] | None:
+    """The corpus's call template for a tool, or for an op named ``component.op`` (a ``g6_invoke`` call)."""
+    key = f"op:{name}" if "." in name else f"tool:{name}"
+    entry = next((e for e in data["entries"] if e["id"] == key), None)
+    return copy.deepcopy(entry["call"]) if entry else None
+
+
 def remedy_for(outcome: str, data: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """The remedy for a refusal or an outcome, or ``None`` when G6 has none, from what ``_read`` finds in G6's own
-    reply. Every refusal resolves to one of three classes: a written remedy for G6's own tools, matched by exact
-    code (``REMEDIES``; a code in ``CARRIES_OUTCOME`` gives way to the reply's outcome word; ``NO_MODEL_CODES``;
-    a component's declared limit); fix your input (``G6_E_INPUT_VALIDATION``, the door's, or an ``INPUT_CODES``
-    code from a component it is listed for: read that component's contract with ``g6_describe``); or tell the
-    person (a wait on a person, and any refusal not known to be one of the others: ``unknown_code``). A reply that
-    was not refused and names no code or outcome G6 has a remedy for has none."""
+    reply. A refusal's code is resolved by its writer's declaration (``g6.core.refusals.resolve``: the component the
+    reply names, else the layers, else the components that declare it, when they agree; a code nothing declares is
+    the person's). The declaration's class decides: ``input``, read the component's contract with ``g6_describe`` (or,
+    with no component named, fix the field in your own call); ``tool:<name>``, that call; ``retry``, the same call once
+    more; ``person`` and ``none``, tell the person (the consent code alone opens its dialog, ``g6_cloud_grant``, where
+    the person decides). A code in ``CARRIES_OUTCOME`` gives way to the reply's outcome word, a component's declared
+    limit to ``component_limit``. A reply that was not refused has no remedy, unless its code's declaration names G6's
+    own next call or it names an outcome word."""
+    from g6.core import refusals
+
     data = data or _corpus()
     seen = _read(outcome)
     code, word, state = seen["code"], seen["word"], seen["state"]
     components = data["components"]
     named = seen["component"] if seen["component"] in components else ""
-    component, key = named, ""
+    refused = state not in ("verified", "qualified-draft")      # a bare code passed back counts as a refusal
+    key, found = "", None
     if code:
         limits = set(components[named].get("limits", ())) if named else {
             c for comp in components.values() for c in comp.get("limits", ())}
@@ -622,44 +400,55 @@ def remedy_for(outcome: str, data: dict[str, Any] | None = None) -> dict[str, An
             key = "component_limit"
         elif code in CARRIES_OUTCOME and word:
             key = word
-        elif code in REMEDIES:
-            key = code
-        elif code in NO_MODEL_CODES:
-            key = "*_NO_MODEL"
-        elif code in INPUT_CODES and (not seen["component"] or seen["component"] in INPUT_CODES[code]):
-            key = "component_input"
-            owners = [c for c in INPUT_CODES[code] if c in components]
-            component = named or (owners[0] if len(owners) == 1 else "")
-        elif word:
-            key = word                                  # the reply's own outcome beside a code G6 has no remedy for
-        elif state in ("verified", "qualified-draft"):
-            return None                                 # not a refusal: nothing to reroute
         else:
-            key = "unknown_code"
+            found = refusals.resolve(code, seen["component"], data["refusals"])
+            if found.declared and (refused or found.kind == "tool"):
+                key = "component_input" if found.kind == "input" and found.owner.startswith("component:") else code
+            elif word:
+                key, found = word, None                 # the reply's own outcome beside a code that does not reroute
+            elif not refused:
+                return None                             # not a refusal: nothing to reroute
+            else:
+                key, found = "unknown_code", None
     elif word:
         key = word
     elif state == "blocked-escalated":
         key = "unknown_code"
     else:
         return None
-    found = dict(REMEDIES[key])
-    arguments = dict(found["arguments"])
+    if found is None:
+        written = REMEDIES[key]
+        action, tool, tell, setup = written["action"], written["tool"], written["tell_person"], written["setup"]
+        arguments = dict(written["arguments"])
+        if "component" in arguments and named:
+            arguments["component"] = named
+        fix_by = "person" if tell else f"tool:{tool}" if tool else "none"
+    else:
+        action, setup, fix_by, tool, tell, arguments = found.words, found.setup, found.fix_by, "", False, {}
+        owners = found.owner.removeprefix("component:").split() if found.owner.startswith("component:") else []
+        component = named or (owners[0] if len(owners) == 1 and owners[0] in components else "")
+        if found.kind == "input":
+            tool, arguments = ("g6_describe", {"component": component}) if component else ("", {})
+            if state:
+                action += f" The outcome beside it: {state}."
+        elif found.kind == "tool":
+            tool = found.fix_by[5:]
+        elif found.kind in ("person", "none"):
+            tool, tell = refusals.DIALOG.get(code, ""), code not in refusals.DIALOG
     # the setup step names an op or a tool's allowance (patch_review.review) only when it leads the refusal and the
     # corpus knows it as sensitive; any other text the agent passed stays out of G6's words
     pair = seen["pair"] if seen["pair"] in _sensitive(data) else ""
-    if key == "component_input" and state:
-        found["action"] += f" The outcome beside it: {state}."
-    if "component" in arguments and component:
-        arguments["component"] = component
-    if found["setup"].endswith("<component.op>") and pair:
-        found["setup"] = found["setup"].replace("<component.op>", pair)
-    tool = found["tool"]
+    if setup.endswith("<component.op>") and pair:
+        setup = setup.replace("<component.op>", pair)
+    template = _template(data, tool) if tool else None
     available = bool(tool) and tool in _registered(data)
-    entry = next((e for e in data["entries"] if e["kind"] == "tool" and e["call"]["tool"] == tool), None)
-    call = ({"tool": tool, "arguments": {**(entry["call"]["arguments"] if entry else {}), **arguments}}
-            if tool else None)
-    out = {"key": key, "code": code or key, "action": found["action"], "tell_person": found["tell_person"],
-           "tool": tool, "call": call, "setup": found["setup"], "available": available if tool else True}
+    call = None
+    if tool and "." in tool:
+        call = template
+    elif tool:
+        call = {"tool": tool, "arguments": {**(template["arguments"] if template else {}), **arguments}}
+    out = {"key": key, "code": code or key, "fix_by": fix_by, "action": action, "tell_person": tell, "tool": tool,
+           "call": call, "setup": setup, "available": available if tool else True}
     if key == "wrong_answer":
         out["recovery"] = recovery_remedies(data)
     return copy.deepcopy(out)                       # nothing a caller changes reaches the corpus or REMEDIES
@@ -1078,11 +867,12 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         mechanisms.append({"stage": "reroute", "ran": True, "why": "G6 has no remedy for this outcome"})
     else:
         if remedy["call"] and remedy["available"] and not remedy["tell_person"]:
-            first = f"tool:{remedy['tool']}"
+            first = f"op:{remedy['tool']}" if "." in remedy["tool"] else f"tool:{remedy['tool']}"
         mechanisms.append({"stage": "reroute", "ran": True,
-                           "why": f"remedy {remedy['key']}: " + ("tell the person" if remedy["tell_person"] else
-                                                                  "call " + remedy["tool"] if first else
-                                                                  f"{remedy['tool']} is not registered on this server")})
+                           "why": f"remedy {remedy['key']} ({remedy['fix_by']}): " + (
+                               "tell the person" if remedy["tell_person"] else "call " + remedy["tool"] if first else
+                               f"{remedy['tool']} is not registered on this server" if remedy["tool"] else
+                               "change your own call")})
 
     # the remedy first, then the scheduler's pick and the calls you are considering, kept within the limit; the rest
     # by score, and all but the remedy in score order
@@ -1123,6 +913,10 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         say = remedy["action"] + (f" The step: {remedy['setup']}." if remedy["setup"] else "")
         nxt = {"id": None, "call": None, "tell_person": True, "say": say, "why": f"remedy {remedy['key']}",
                "fill": []}
+    elif remedy is not None and not first and remedy["fix_by"] in ("input", "retry"):
+        # fix the field in the call you made, or make it once more: your own call, which G6 does not name here
+        nxt = {"id": None, "call": None, "tell_person": False, "say": remedy["action"],
+               "why": f"remedy {remedy['key']}", "fill": []}
     elif open_:
         # a call that acts outside G6 is never next: the scheduler's pick only when it does not act
         pick = first or (scheduled if scheduled in open_ else "") or open_[0]

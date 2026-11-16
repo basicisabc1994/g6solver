@@ -601,10 +601,14 @@ def test_the_input_code_list_is_held_to_each_components_code() -> None:
             assert re.search(rf"\b{code}\b", text), (code, name)
 
 
-def test_the_no_model_code_list_is_every_no_model_code_g6_writes() -> None:
-    written = {c for p in SRC.rglob("*.py") if p.name != "selector.py"
+def test_every_no_model_code_g6_writes_says_do_the_step_yourself_then_check_it() -> None:
+    # was a list of the codes held to the code (NO_MODEL_CODES); each code's writer now declares it (g6.core.refusals)
+    written = {c for p in SRC.rglob("*.py") if p.name != "refusals.py"
                for c in CODE.findall(p.read_text(encoding="utf-8", errors="replace")) if c.endswith("_NO_MODEL")}
-    assert set(selector.NO_MODEL_CODES) == written, sorted(written ^ set(selector.NO_MODEL_CODES))
+    assert len(written) >= 15
+    for code in sorted(written):
+        remedy = selector.remedy_for(code)
+        assert remedy["fix_by"] == "tool:g6_select" and remedy["call"]["tool"] == "g6_select", (code, remedy)
     assert not any(k.endswith("_") for k in selector.REMEDIES), [k for k in selector.REMEDIES if k.endswith("_")]
 
 
@@ -809,3 +813,71 @@ def test_every_tool_template_fits_its_recorded_schema_and_every_op_template_its_
         elif entry["kind"] == "op":
             params = json.loads(entry["call"]["arguments"]["params_json"])
             assert set(params) <= set(entry["fields"]), entry["id"]
+
+
+# -- the remedy reads the refusal declarations (g6.core.refusals), never a table of its own ----------------------
+def _with_declaration(component: str, code: str, fix_by: str) -> dict:
+    data = json.loads(json.dumps(corpus.load()))
+    data["refusals"].setdefault(component, {})[code] = [fix_by, "words", ""]
+    return data
+
+
+def test_the_remedy_is_whatever_the_writers_declaration_says() -> None:
+    shaped = _reply("grounding", "check_claim", "G6_E_GROUNDING_EXAMPLE_REFUSAL")
+    as_input = selector.remedy_for(shaped, _with_declaration("grounding", "G6_E_GROUNDING_EXAMPLE_REFUSAL", "input"))
+    assert as_input["fix_by"] == "input" and as_input["call"] == {"tool": "g6_describe",
+                                                                  "arguments": {"component": "grounding"}}
+    as_person = selector.remedy_for(shaped, _with_declaration("grounding", "G6_E_GROUNDING_EXAMPLE_REFUSAL", "person"))
+    assert as_person["fix_by"] == "person" and as_person["tell_person"] is True and as_person["call"] is None
+
+
+def test_the_selector_keeps_no_table_of_codes() -> None:
+    from g6.core import refusals
+
+    assert not [key for key in selector.REMEDIES if key.startswith("G6_E_")]
+    declared = {code: sorted(name for name, codes in refusals.component_declarations().items()
+                             if codes.get(code) and codes[code].fix_by == "input")
+                for codes in refusals.component_declarations().values() for code in codes}
+    assert selector.INPUT_CODES == {code: tuple(names) for code, names in sorted(declared.items()) if names}
+
+
+def test_a_path_the_component_cannot_take_is_an_input_to_fix() -> None:
+    """Review 4, finding 1: design_governance's own remedy for G6_E_DESIGN_BAD_PATH is to give a relative path."""
+    from g6.mcp import invoke_reply
+
+    reply = invoke_reply("design_governance", "import_graph",
+                         json.dumps({"package": "shop", "files": {"../shop/cart.py": "x = 1\n"}}),
+                         allow_sensitive=frozenset())
+    assert reply["warning_card"]["code"] == "G6_E_DESIGN_BAD_PATH"
+    out = selector.select("map the import graph of my package", "diagnose", json.dumps(reply))
+    assert out["next"]["id"] == "tool:g6_describe" and out["remedy"]["fix_by"] == "input", out["remedy"]
+
+
+def test_a_dirty_repository_asks_the_person_and_never_steers_the_agent_to_their_changes() -> None:
+    """Review 4, finding 2: committing or setting aside the person's changes is the person's decision."""
+    from g6.core.door import blocked_reply
+    from g6.mcp.mission import DIRTY
+
+    assert "ask the person" in DIRTY
+    dirty = json.dumps(blocked_reply("[G6_E_GIT_REPO_DIRTY] " + DIRTY.format(files="src/app.py")))
+    out = selector.select("start a coding mission on my repo", "implement", dirty)
+    assert out["remedy"]["fix_by"] == "person" and out["next"]["tell_person"] is True and out["next"]["call"] is None
+    assert "ask the person" in out["remedy"]["action"]
+
+
+def test_a_failed_job_tells_the_person_and_is_not_sent_to_the_mission_tool() -> None:
+    """Review 4, finding 3."""
+    failed = json.dumps({"ok": False, "job_id": "j1", "status": "failed", "completion_state": "blocked-escalated",
+                         "warning_card": {"code": "G6_E_JOB_FAILED", "message": "the job failed"}})
+    out = selector.select("run my approved workflow on new input", "implement", failed)
+    assert out["next"]["tell_person"] is True and out["next"]["id"] != "tool:g6_mission_status", out["next"]
+
+
+def test_a_refused_proposal_is_an_input_to_fix_not_a_new_workflow() -> None:
+    """Review 4, finding 4: G6_E_META_SCHEMA from metaharness_propose names the field to fix."""
+    from g6.metaharness.api import _blocked
+
+    reply = _blocked("G6_E_META_SCHEMA", "profile_json is not JSON: Expecting value: line 1 column 1 (char 0)")
+    out = selector.select("propose a cheaper candidate for my workflow", "implement", json.dumps(reply))
+    assert out["remedy"]["fix_by"] == "input" and out["next"]["id"] != "tool:metaharness_start", out["next"]
+    assert out["next"]["tell_person"] is False
