@@ -26,6 +26,12 @@ SELF_ROOTED = {
     ("g6.sources.australian_legal_corpus.block", "_register"):
         "Validate a person-selected corpus file; its size and pinned digest authorize registration.",
 }
+ROOT_CAPTURES = {
+    ("g6.code._roots", "parse"): "Capture the declared folders after validating their names.",
+    ("g6.code._roots", "for_folder"): "Capture the installed folder at its explicit check.",
+    ("g6.code.component_creator.conformance", "check_component"):
+        "Capture installed package and nearby test folders before their walks and reads.",
+}
 
 
 def test_read_requires_declared_roots():
@@ -35,7 +41,8 @@ def test_read_requires_declared_roots():
 def _unchecked_calls(text, module):
     """Return calls missing roots; module is the file's dotted module name."""
     missing = []
-    targets = {"g6.code._roots.read_text": 3, "g6.core.storage.confined_path": 2}
+    targets = {"g6.code._roots.read_text": 3, "g6.core.storage.confined_path": 2,
+               "g6.code._roots.Roots": 0, "g6.code._roots.for_folder": 0}
     tree = ast.parse(text)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     aliases = {}
@@ -56,23 +63,52 @@ def _unchecked_calls(text, module):
             for alias in node.names:
                 aliases[alias.asname or alias.name.split(".")[0]] = alias.name if alias.asname else alias.name.split(".")[0]
 
+    bindings = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
+                if isinstance(target, ast.Name):
+                    bindings[target.id] = node.value
+
     def qualified(node):
         if isinstance(node, ast.Name):
             return aliases.get(node.id, node.id)
         if isinstance(node, ast.Attribute):
-            return f"{qualified(node.value)}.{node.attr}"
+            base = qualified(node.value)
+            return base if node.attr == "__call__" else f"{base}.{node.attr}"
+        if (isinstance(node, ast.Call) and qualified(node.func) == "importlib.import_module"
+                and node.args and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)):
+            return node.args[0].value
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr"
                 and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant)
                 and isinstance(node.args[1].value, str)):
             return f"{qualified(node.args[0])}.{node.args[1].value}"
         return ""
 
-    # Direct assignment aliases, including a saved getattr result.
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and qualified(node.value) in targets:
-                    aliases[target.id] = qualified(node.value)
+    # Resolve assignment and annotated aliases to a fixed point, including saved getattr results.
+    for _ in range(len(bindings) + 1):
+        changed = False
+        for target, value in bindings.items():
+            name = qualified(value)
+            if name in targets and aliases.get(target) != name:
+                aliases[target] = name
+                changed = True
+        if not changed:
+            break
+
+    def bound(node):
+        seen = set()
+        while isinstance(node, ast.Name) and node.id in bindings and node.id not in seen:
+            seen.add(node.id)
+            node = bindings[node.id]
+        return node
+
+    def owner_of(node):
+        owner = parents.get(node)
+        while owner is not None and not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            owner = parents.get(owner)
+        return module, owner.name if owner else ""
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -83,15 +119,26 @@ def _unchecked_calls(text, module):
         if name not in targets:
             continue
         required = targets[name]
+        if required == 0:
+            # Empty declarations contain nothing (inline and dry-run ops). Nonempty captures need a named check.
+            empty = (name.endswith(".Roots") and args and isinstance(args[0], (ast.Tuple, ast.List))
+                     and not args[0].elts)
+            ancestor = parents.get(node)
+            while ancestor is not None and not isinstance(ancestor, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if isinstance(ancestor, ast.Call) and qualified(ancestor.func) in targets:
+                    break
+                ancestor = parents.get(ancestor)
+            nested_read = (isinstance(ancestor, ast.Call) and targets.get(qualified(ancestor.func), 0) > 0)
+            if nested_read or not empty and owner_of(node) not in ROOT_CAPTURES:
+                missing.append(node.lineno)
+            continue
         value = next((k.value for k in node.keywords if k.arg == "roots"), None)
         if value is None and len(args) >= required:
             value = args[required - 1]
+        value = bound(value)
         invalid = value is None or isinstance(value, ast.Constant) and value.value is None
         if isinstance(value, (ast.Tuple, ast.List)):
-            owner = parents.get(node)
-            while owner is not None and not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                owner = parents.get(owner)
-            capture = (module, owner.name if owner else "") in SELF_ROOTED
+            capture = owner_of(node) in SELF_ROOTED
             invalid = (not value.elts or not capture or any(
                 isinstance(part, ast.Attribute) and part.attr in {"parent", "parents"}
                 for part in ast.walk(value)))
@@ -121,6 +168,20 @@ def test_no_source_call_omits_roots():
 ])
 def test_census_rejects_unchecked_roots_through_indirection(text):
     assert _unchecked_calls(text, "g6.code.x.probe"), "unchecked roots escaped the census"
+
+
+@pytest.mark.parametrize("text", [
+    'from g6.code import _roots\ndef f(p):\n return _roots.read_text(p, 10, roots=_roots.Roots((p.parent,), "x"))',
+    'from g6.code import _roots\ndef f(p):\n return _roots.read_text(p, 10, roots=_roots.for_folder(p.parent, "x"))',
+    'from g6.core.storage import confined_path\ndef f(p):\n bases = (p.parent,)\n return confined_path(p, bases)',
+    'from g6.code import _roots\nreader: object = _roots.read_text\nreader(p, 10, roots=None)',
+    'from g6.code import _roots\n_roots.read_text.__call__(p, 10, roots=None)',
+    'import importlib\nimportlib.import_module("g6.code._roots").read_text(p, 10, roots=None)',
+    'from g6.code._roots import Roots as R\ndef f(p):\n bases = R((p.parent,), "x")\n return read(p, bases)',
+    'from g6.code._roots import for_folder as capture\ndef f(p):\n bases = capture(p.parent, "x")',
+])
+def test_census_rejects_read_time_captures_and_dynamic_calls(text):
+    assert _unchecked_calls(text, "g6.code.x.probe"), "read-time roots escaped the census"
 
 
 @pytest.fixture
