@@ -99,8 +99,8 @@ def _carried(review_job: str, origin: Any) -> None:
         return
     recorded = review_reply.carried(review_job)
     read = (*(recorded if recorded is not None else (cloud.Source.text(
-        cloud.repository_source(g6_home() / "reviews"), "assessment-location",
-        str(state_path("reviews", f"{review_job}.json"))),)), *(origin(review_job) if origin is not None else ()))
+        cloud.repository_source(g6_home() / "reviews"), "assessment-location", review_job),)),
+            *(origin(review_job) if origin is not None else ()))
     cloud.record_sources(read)
     try:
         cloud.refuse_unshared(capture.client[0] if capture.client is not None else "cloud:unknown", read,
