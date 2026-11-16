@@ -13,7 +13,8 @@ fields never choose the operation, model, limits, validator or checker. prepare/
 and inspecting a preparation; run is the one-call Python API.
 
 There is no per-override dialog or typed name. The metered caller is rebuilt by G6. Host and endpoint calls use
-the existing provider consent check; process callers run under the Python code's allowance. Only owned host sign-in,
+the existing consent check: remote admission records provider consent, local admission records local model, and a
+refusal records refused by the consent check. Process callers record allowed in code. Only owned host sign-in,
 local models and loopback IP-literal endpoints qualify. An explicit Python own_function retains its responder by reference;
 G6 cannot see where that function sends anything or stop it. MCP and configuration cannot select that kind.
 
@@ -37,6 +38,7 @@ import sys
 import threading
 import time
 import traceback
+import types
 import uuid
 import weakref
 from collections.abc import Iterable, Mapping
@@ -99,7 +101,7 @@ NOTE = ("A substituted result is a model's proposal run through G6's code: it ne
 
 @dataclass(frozen=True)
 class Confirmation:
-    """Legacy digest check, optional. Names and answers are ignored; provider consent admits model calls."""
+    """Legacy digest check; names ignored. Calls record provider consent, local model, code allowance or consent refusal."""
 
     digest: str
     name: str
@@ -130,6 +132,7 @@ class Pending:
     budget: Budget
     request_id: str
     caller: Any = field(repr=False, compare=False)
+    _retained: Any = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -159,17 +162,90 @@ class _Execution(Pending):
     params_json: str = ""
     params_digest: str = ""
     original_summary: str = ""
+    pins: tuple[_CallablePin, ...] = field(default=(), repr=False, compare=False)
 
 
-# Weak identities avoid hashing Pending's caller-reachable fields. The immutable JSON text is the frozen data copy;
-# only the exact owned class and the explicit responder retain identities. No caller-supplied object is a key.
-_PREPARED: list[tuple[weakref.ReferenceType[Pending], str, _CallerSnapshot, str,
-                      tuple[tuple[str, Any], ...]]] = []
+@dataclass(frozen=True)
+class _CallablePin:
+    target: Any
+    function: Any
+    code: Any
+    defaults: Any
+    kwdefaults: Any
+    keywords: tuple[tuple[str, Any], ...]
+    cells: tuple[Any, ...]
+
+
+_EMPTY_CELL = object()
+
+
+def _callable_function(target: Any) -> Any:
+    if type(target) is types.MethodType:
+        return target.__func__
+    if type(target) is types.FunctionType or type(target) is types.BuiltinFunctionType:
+        return target
+    # Inspect the type without dispatching a responder object's attribute hooks.
+    return inspect.getattr_static(type(target), "__call__")
+
+
+def _pin(target: Any) -> _CallablePin:
+    function = _callable_function(target)
+    if type(function) is not types.FunctionType:
+        if type(target) is not types.BuiltinFunctionType:
+            raise TypeError("the responder has no inspectable Python call function")
+        return _CallablePin(target, function, None, None, None, (), ())
+    keywords = function.__kwdefaults__
+    if keywords is not None and type(keywords) is not dict:
+        raise TypeError("keyword defaults must be an exact dictionary")
+    if keywords is not None and any(type(key) is not str for key in keywords):
+        raise TypeError("keyword default names must be exact text")
+    cells = []
+    for cell in function.__closure__ or ():
+        try:
+            cells.append(cell.cell_contents)
+        except ValueError:
+            cells.append(_EMPTY_CELL)
+    return _CallablePin(target, function, function.__code__, function.__defaults__, function.__kwdefaults__,
+                        tuple((function.__kwdefaults__ or {}).items()), tuple(cells))
+
+
+def _pin_data(pin: _CallablePin) -> list[Any]:
+    return [id(pin.target), id(pin.function), id(pin.code), id(pin.defaults), id(pin.kwdefaults),
+            [[key, id(value)] for key, value in pin.keywords], [id(value) for value in pin.cells]]
+
+
+class _SealMismatch(Exception):
+    """A retained callable changed; no further prepared code may run."""
+
+
+def _check_pins(pins: tuple[_CallablePin, ...]) -> None:
+    for pin in pins:
+        try:
+            same = _pin_data(_pin(pin.target)) == _pin_data(pin)
+        except Exception:  # noqa: BLE001 - unreadable code is no longer the sealed code
+            same = False
+        if not same:
+            raise _SealMismatch("the prepared callable's code, defaults or closure changed")
+
+
+@dataclass(frozen=True)
+class _Retained:
+    text: str
+    snapshot: _CallerSnapshot
+    bound: str
+    owned: tuple[tuple[str, Any], ...]
+    pins: tuple[_CallablePin, ...]
+
+
+# Pending owns its retention object, so responder -> Pending cycles remain collectable. The table owns neither;
+# it authorizes one use only, and evicts oldest preparations beyond its bounded capacity.
+_PREPARED: list[tuple[weakref.ReferenceType[Pending], weakref.ReferenceType[_Retained]]] = []
+PREPARED_LIMIT = 256
 _PREPARED_LOCK = threading.RLock()
 # An endpoint's successful admission, scoped to this envelope and its current call. Hosts retain their own guard;
 # their live admission is observed at the counted send. Neither value authorizes a send.
-_MODEL_ADMISSION: contextvars.ContextVar[tuple[Any, str]] = contextvars.ContextVar(
-    "g6_agentic_admission", default=(None, ""))
+_MODEL_ADMISSION: contextvars.ContextVar[tuple[Any, str, str]] = contextvars.ContextVar(
+    "g6_agentic_admission", default=(None, "allowed in code", ""))
 JSON_CHARS = 1_000_000
 
 
@@ -256,17 +332,23 @@ def _seal(values: dict[str, Any], snapshot: _CallerSnapshot) -> Pending:
     package = _package(plain["component"])
     names = (*plain["functions"], plain["validator"], plain["checker"], plain["inside"])
     owned = tuple((name, _child.resolve(name, package)) for name in names if name)
+    pins = tuple(_pin(function) for _, function in owned)
+    if sealed_snapshot.responder is not None:
+        pins += (_pin(sealed_snapshot.responder),)
     text = _child.canonical(plain)
     bound = digest({"data": plain, "caller": _snapshot_data(snapshot),
-                    "code": [[name, id(function)] for name, function in owned]})
+                    "code": [[name, id(function)] for name, function in owned],
+                    "pins": [_pin_data(pin) for pin in pins]})
     summary = "Override execution details\n" + "\n".join(f"{key}: {value}" for key, value in plain["binding"].items())
     summary += (f"\nPreparation digest: {bound}\nThe substitute is not covered by that function's tests or any "
                 "certificate. It is qualified-draft at best, with the original answer beside it. "
                 "No per-override question is asked.")
+    retained = _Retained(text, sealed_snapshot, bound, owned, pins)
     pending = Pending(**{**plain, "functions": tuple(plain["functions"]), "budget": Budget(**plain["budget"]),
-                         "caller": snapshot, "digest": bound, "question": summary})
+                         "caller": snapshot, "digest": bound, "question": summary, "_retained": retained})
     with _PREPARED_LOCK:
-        _PREPARED.append((weakref.ref(pending, _forget_prepared), text, sealed_snapshot, bound, owned))
+        _PREPARED.append((weakref.ref(pending, _forget_prepared), weakref.ref(retained)))
+        del _PREPARED[:-PREPARED_LIMIT]
     return pending
 
 
@@ -596,8 +678,11 @@ def _prepare(component: str, op: str, params: Any, *, part: str | None, mode: st
             "Caller kind": kind,
             "Authority": ("allowed in code: the caller's Python allowance; no consent admission is performed"
                           if kind in ("own_function", "local") else
-                          "provider consent: the existing admission check for each call's provider; recorded only "
-                          "when observed at that call"),
+                          "local model (local:loopback) if admitted as local at send; no consent decision is taken"
+                          if kind == "endpoint" else
+                          "At each send: provider consent with its provider only after remote admission; local model "
+                          "after local admission; refused by the consent check on refusal; allowed in code when no "
+                          "consent-checked send was observed"),
             "Limits": f"{call_limit}; {budget.max_output_chars} characters of model replies in all (a longer reply is not used); "
                       f"{budget.max_wall_clock_s:g} seconds for the whole override, every model call and every run of the "
                       "operation (the final run and the re-check included): none starts with less than "
@@ -837,7 +922,7 @@ def _bound(kind: str, caller: _CallerSnapshot) -> str:
     return "this model runs on this machine and is sent nothing over the network"
 
 
-def _fresh(snapshot: _CallerSnapshot, timed: list[Any]) -> Any:
+def _fresh(snapshot: _CallerSnapshot, timed: list[Any], pins: tuple[_CallablePin, ...] = ()) -> Any:
     """Construct a new exact backend from plain inputs. No supplied object or wrapper is called or copied."""
     from g6.core import llm
 
@@ -857,7 +942,12 @@ def _fresh(snapshot: _CallerSnapshot, timed: list[Any]) -> Any:
         else:
             raise ValueError("unsupported endpoint snapshot")
     elif cls is llm.FakeLLM and kind in ("local", "own_function"):
-        own = cls(snapshot.responder, default=snapshot.default)
+        responder = snapshot.responder
+        if responder is not None:
+            def responder(system: str, user: str) -> str:
+                _check_pins(pins)
+                return snapshot.responder(system, user)
+        own = cls(responder, default=snapshot.default)
     elif kind == "local" and snapshot.weights:
         own = cls(snapshot.weights)
     elif kind == "local" and snapshot.adapter_dir:
@@ -932,7 +1022,7 @@ class _Envelope:
     waiting for a model call at the deadline, and a reply or a run that returns after it is not used. Only callers
     :func:`_kind` names can be held so; any other is refused before execution."""
 
-    def __init__(self, caller: _CallerSnapshot, budget: Budget) -> None:
+    def __init__(self, caller: _CallerSnapshot, budget: Budget, pins: tuple[_CallablePin, ...] = ()) -> None:
         self.budget = _plain_budget(budget)
         self._lock = threading.Lock()
         self._start = time.monotonic()   # the override's one deadline starts now
@@ -944,35 +1034,51 @@ class _Envelope:
         self._in_call = 0       # requests let go in the current call
         self._timed: list[Any] = []
         self._snapshot = caller
+        self._pins = pins
         self.caller: Any = None   # construction and guarding run inside the deadline worker
         self._outer_hold = cloud_consent._HELD.get()
-        self.providers: list[str] = []
-        self.code_calls = 0
+        self.sends: list[dict[str, str]] = []
 
     def _authority(self) -> None:
         """Observe an admission at this send, never infer one from a caller kind or an enclosing request."""
-        owner, provider = _MODEL_ADMISSION.get()
+        owner, answer, provider = _MODEL_ADMISSION.get()
         hold = cloud_consent._HELD.get()
+        if self.kind not in ("host", "endpoint"):
+            owner, answer, provider = self, "allowed in code", ""
         if owner is not self:
             provider = (hold.send[0] if hold is not None and hold is not self._outer_hold and hold.here() else "")
-        self._remember_authority(provider)
+            answer = "provider consent" if provider else "allowed in code"
+        self._remember_authority(answer, provider)
 
-    def _remember_authority(self, provider: Any) -> None:
-        if type(provider) is str and re.fullmatch(r"[A-Za-z0-9_.:/@+\-]{1,200}", provider):
-            self.providers.append(provider)
-        else:
-            self.code_calls += 1
+    def _remember_authority(self, answer: str, provider: Any) -> None:
+        if type(provider) is not str or not re.fullmatch(r"[A-Za-z0-9_.:/@+\-]{1,200}", provider):
+            provider = ""
+        self.sends.append({"answer": answer, "provider": provider})
+
+    def _consent_refused(self, error: BaseException) -> None:
+        """Observe the check's own refusal signal; process responders cannot manufacture consent authority."""
+        if self.kind not in ("host", "endpoint") or self.caller is None:
+            return
+        provider = consent_callers.destination(self.caller).provider
+        with self._lock:
+            if not self.closed:
+                self._remember_authority("refused by the consent check", provider)
 
     def authority(self) -> dict[str, Any]:
         """Plain historical metadata, frozen by the waiting thread before it writes the ledger."""
         with self._lock:
             self.closed = True
-            providers = set(self.providers)
-            provider = next(iter(providers)) if len(providers) == 1 and not self.code_calls else ""
-            return {"answer": "provider consent" if provider else "allowed in code", "provider": provider,
+            # Never let admitted sends hide a refusal or a call with no observed admission.
+            rank = {"local model": 0, "provider consent": 1, "allowed in code": 2,
+                    "refused by the consent check": 3}
+            answer = max((one["answer"] for one in self.sends), key=rank.__getitem__, default="allowed in code")
+            providers = {one["provider"] for one in self.sends if one["answer"] == answer}
+            provider = next(iter(providers)) if len(providers) == 1 else ""
+            return {"answer": answer, "provider": provider,
                     "name": "", "authenticated": False}
 
     def _complete(self, system: str, user: str, observed: dict[str, Any]) -> str:
+        _check_pins(self._pins)
         if self.kind != "endpoint":
             return self.caller.complete(system, user, max_tokens=MODEL_TOKENS)
         # The same endpoint admission used by consent_callers._Consent, on the fresh backend that actually sends.
@@ -982,9 +1088,11 @@ class _Envelope:
         with (consent_callers.admission(to.provider, consent_callers.model_sources(),
                                         digest({"system": system, "user": user}), local=to.local),
               consent_callers._sdk_call(getattr(self.caller, "_client", None), to.provider)):
-            observed["admitted_provider"] = to.provider
-            token = _MODEL_ADMISSION.set((self, to.provider))
+            answer = "local model" if to.local else "provider consent"
+            observed["admitted_authority"] = (answer, to.provider)
+            token = _MODEL_ADMISSION.set((self, answer, to.provider))
             try:
+                _check_pins(self._pins)
                 return self.caller.complete(system, user, max_tokens=MODEL_TOKENS)
             finally:
                 _MODEL_ADMISSION.reset(token)
@@ -1024,6 +1132,7 @@ class _Envelope:
         """The observer at each send's boundary: count the request before it is sent and give it the time left, or
         refuse it (it is then neither counted nor sent). A host client is started once per call: a second start in
         one call would have read its limit before this gate."""
+        _check_pins(self._pins)
         with self._lock:
             left = self._gate()
             if self.kind == "host" and self._in_call:
@@ -1038,6 +1147,7 @@ class _Envelope:
         """The gate of a resend after a provider's rate-limit wait (:class:`_Resends`): counted and refused as any
         request, and refused when it comes more than :data:`RESEND_SLACK_S` after its call's first request, whose
         timeout it carries and which cannot be cut again."""
+        _check_pins(self._pins)
         with self._lock:
             self._gate()
             late = time.monotonic() - self._sent_at
@@ -1081,9 +1191,10 @@ class _Envelope:
                     deadline = host_deadline(self._start + self.budget.max_wall_clock_s)
                 else:
                     deadline = nullcontext()
-                with deadline, counting(before_call=self.admit) as noted:
+                with deadline, cloud_consent.telling_refusals(self._consent_refused), counting(before_call=self.admit) as noted:
                     if self.caller is None:
-                        own = _fresh(self._snapshot, self._timed)
+                        _check_pins(self._pins)
+                        own = _fresh(self._snapshot, self._timed, self._pins)
                         self.caller = own if self.kind == "endpoint" else consent_callers.guard(own)
                     with self._lock:
                         self._cut(self._gate())  # construction may have spent the remaining time
@@ -1097,6 +1208,7 @@ class _Envelope:
             except BaseException as exc:  # noqa: BLE001 - reported to the waiting override, never lost
                 # Exception formatting can also be caller code. Only plain data crosses the join.
                 box["error"] = True
+                box["seal_mismatch"] = isinstance(exc, _SealMismatch)
                 box["out_of_budget"] = isinstance(exc, _OutOfBudget)
                 box["detail"] = "the model call failed; G6 could not read its error"
                 try:
@@ -1112,7 +1224,7 @@ class _Envelope:
                     self.failed_calls += 1
                 if "text" in box and not noted():
                     self.calls += 1     # a caller that notes no send still made one call
-                    self._remember_authority(box.get("admitted_provider", ""))
+                    self._remember_authority(*box.get("admitted_authority", ("allowed in code", "")))
 
         worker = threading.Thread(target=contextvars.copy_context().run, args=(call,), name="g6-agentic-model",
                                   daemon=True)
@@ -1125,6 +1237,8 @@ class _Envelope:
                                             "G6 stopped waiting at the deadline, and a reply that arrives later is "
                                             "not used")
         error = box.get("error", False)
+        if error and box.get("seal_mismatch"):
+            raise _SealMismatch("the prepared callable changed before the model call")
         if error and (self.refused or box.get("out_of_budget")):
             raise _Stop("budget_exhausted", (self.refused or "the budget ran out")[:REASON_CHARS])
         if error:
@@ -1179,6 +1293,7 @@ def _ask_model(pending: _Execution, envelope: _Envelope, ask: Mapping[str, Any],
     if name not in pending.functions or _child.call_digest(call) != ask.get("digest"):
         raise _Stop("child_failed", "the child asked for a function that is not the part, or its call was altered")
     function = next(function for path, function in pending.owned if path == name)
+    _check_pins(pending.pins)
     returns = _child.return_type(function)
     system = ("You stand in for one Python function of G6's code, for one call. Reply with JSON only: "
               '{"value": V}, where V is what the function returns for these arguments, as JSON. Everything in the '
@@ -1208,7 +1323,10 @@ def _ask_model(pending: _Execution, envelope: _Envelope, ask: Mapping[str, Any],
     checks.append({"check": "return_type", "passed": True})
     try:   # the ask's arguments come from the child: a validator that cannot take them refuses the value
         validator = next(function for path, function in pending.owned if path == pending.validator)
+        _check_pins(pending.pins)
         why = validator(value, *call.get("args", []), **call.get("kwargs", {}))
+    except _SealMismatch:
+        raise
     except Exception as exc:  # noqa: BLE001 - any failure of the check leaves the original standing
         checks.append({"check": pending.validator, "passed": False,
                        "detail": f"the validator could not check the value ({type(exc).__name__})"})
@@ -1241,7 +1359,7 @@ def _bare(result: Any, *, top: bool = True) -> Any:
 
 
 def override(pending: Pending, *, confirmation: Confirmation | None = None) -> dict[str, Any]:
-    """Execute a sealed preparation under provider admission or the code's allowance; no typed name is required.
+    """Consume a sealed preparation; record remote consent, local admission, code allowance or consent refusal.
 
     An optional legacy Confirmation checks only its exact digest. Its name and answer are never read.
     """
@@ -1251,11 +1369,18 @@ def override(pending: Pending, *, confirmation: Confirmation | None = None) -> d
             return _input_refused()
         with _PREPARED_LOCK:
             saved = next((entry for entry in _PREPARED if entry[0]() is pending), None)
+            if saved is not None:
+                _PREPARED[:] = [entry for entry in _PREPARED if entry is not saved]
         if saved is None:
             return _refused(DIGEST_MISMATCH, "G6 has no sealed preparation for this override")
-        _, text, sealed_snapshot, expected, owned = saved
+        retained = saved[1]()
+        if retained is None:
+            return _refused(DIGEST_MISMATCH, "G6 no longer holds this sealed preparation")
+        text, sealed_snapshot, expected, owned, pins = (retained.text, retained.snapshot, retained.bound,
+                                                       retained.owned, retained.pins)
         data = json.loads(text)
         original = data["original"]
+        _check_pins(pins)
         public_snapshot = object.__getattribute__(pending, "caller")
         if type(public_snapshot) is not _CallerSnapshot:
             return _unmetered("a replaced snapshot class", original, data["request_id"])
@@ -1280,7 +1405,8 @@ def override(pending: Pending, *, confirmation: Confirmation | None = None) -> d
             return _refused(DIGEST_MISMATCH, "the prepared component code identity changed", original=original,
                             request_id=data["request_id"])
         actual = digest({"data": data, "caller": _snapshot_data(snapshot),
-                         "code": [[name, id(function)] for name, function in current_code]})
+                         "code": [[name, id(function)] for name, function in current_code],
+                         "pins": [_pin_data(pin) for pin in pins]})
         supplied = expected
         if confirmation is not None:
             if type(confirmation) is not Confirmation:
@@ -1292,9 +1418,13 @@ def override(pending: Pending, *, confirmation: Confirmation | None = None) -> d
                             original=data["original"], request_id=data["request_id"])
         execution = _Execution(**{**data, "functions": tuple(data["functions"]), "budget": Budget(**data["budget"]),
                                   "caller": snapshot, "digest": expected, "question": "", "owned": owned,
+                                  "pins": pins,
                                   "params_json": _child.canonical(data["params"]),
                                   "params_digest": digest(data["params"]), "original_summary": _summary(original)})
         return _override(execution)
+    except _SealMismatch:
+        return _refused(DIGEST_MISMATCH, "the prepared callable changed; nothing was constructed or sent",
+                        original=original)
     except Exception:  # noqa: BLE001 - includes constructor failures before the execution envelope exists
         return _input_refused(original)
 
@@ -1308,7 +1438,7 @@ def _override(pending: _Execution) -> dict[str, Any]:
         return _refused(DIGEST_MISMATCH, "the prepared caller's bounds changed",
                         original=pending.original, request_id=pending.request_id)
     package = _package(pending.component)
-    envelope = _Envelope(pending.caller, pending.budget)
+    envelope = _Envelope(pending.caller, pending.budget, pending.pins)
     prompts: list[str] = []
     checks: list[dict] = []
     runs = 0
@@ -1324,6 +1454,10 @@ def _override(pending: _Execution) -> dict[str, Any]:
 
     def launch(request: dict[str, Any]) -> dict[str, Any]:
         nonlocal runs, isolation
+        _check_pins(pending.pins)
+        for name, function in pending.owned:
+            if _child.resolve(name, package) is not function:
+                raise _SealMismatch("the prepared component function was replaced")
         timeout_s = envelope.child_timeout()
         runs += 1
         try:
@@ -1384,6 +1518,10 @@ def _override(pending: _Execution) -> dict[str, Any]:
             record["recheck"] = ("not re-checked: the component declares no checker" if not pending.checker else
                                  "not re-checked: the substitute's own result is blocked-escalated")
         record.update(outcome="substituted", substituted=True)
+    except _SealMismatch:
+        record.update(outcome="degraded", reason="kernel_failed", code=DIGEST_MISMATCH,
+                      detail="the prepared callable changed; nothing further was run or substituted")
+        reply = None
     except _Stop as stop:
         record.update(outcome="degraded", reason=stop.reason, detail=stop.detail)
         reply = None
@@ -1396,6 +1534,10 @@ def _override(pending: _Execution) -> dict[str, Any]:
     record["digests"] = {"source": pending.source_digest, "prompts": prompts, "question": pending.digest,
                          "params": pending.params_digest, "result": digest(result) if result is not None else ""}
     record["person"] = envelope.authority()  # closes later admissions before historical counts are read
+    record["authority_sends"] = [dict(one) for one in envelope.sends]
+    person = record["person"]
+    record["summary"] = ("Authority: " + person["answer"]
+                         + (f" ({person['provider']})" if person["provider"] else ""))
     record["cost"] = {"model_calls": envelope.calls, "failed_model_calls": envelope.failed_calls,
                       "output_chars": envelope.output_chars, "child_runs": runs,
                       "seconds": round(envelope.elapsed_s(), 3)}
@@ -1411,6 +1553,10 @@ def _override(pending: _Execution) -> dict[str, Any]:
         record["ledger"] = {"entry": "", "error": type(exc).__name__}
     if record["outcome"] != "substituted" or reply is None:
         degraded = dict(pending.original)
+        if isinstance(degraded.get("warning_card"), Mapping):
+            card = dict(degraded["warning_card"])
+            card["message"] = str(card.get("message", "")) + "; " + record["summary"]
+            degraded["warning_card"] = card
         degraded["degradation_reason"] = f"agentic_{record.get('reason')}: {record.get('detail', '')}"[:REASON_CHARS]
         degraded["agentic"] = record
         return degraded
@@ -1433,7 +1579,9 @@ def _override(pending: _Execution) -> dict[str, Any]:
 
 
 def declined(pending: Pending, status: str) -> dict[str, Any]:
-    """Legacy caller cancellation helper. Provider consent, rather than an override dialog, admits calls."""
+    """Consume a cancellation. Calls otherwise record provider consent, local model, code allowance or consent refusal."""
+    with _PREPARED_LOCK:
+        _PREPARED[:] = [entry for entry in _PREPARED if entry[0]() is not pending]
     reply = dict(pending.original)
     reply["agentic"] = {"outcome": "not_run", "substituted": False, "consent_status": status,
                         "trigger": pending.trigger, "part": pending.part, "question_digest": pending.digest,

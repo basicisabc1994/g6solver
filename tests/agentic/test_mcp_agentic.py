@@ -156,7 +156,7 @@ def test_an_accepted_override_runs_as_a_job_and_records_the_question_digest_and_
     record = reply["agentic"]
     assert len(record["digests"]["question"]) == 64 and record["outcome"] == "substituted"
     assert record["model"] in reply["warning_card"]["message"]
-    assert record["person"] == {"answer": "provider consent", "provider": "local:loopback", "name": "",
+    assert record["person"] == {"answer": "local model", "provider": "local:loopback", "name": "",
                                 "authenticated": False}
     assert record["rechecked"] is True and record["cost"]["model_calls"] == 1
 

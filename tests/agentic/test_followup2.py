@@ -72,8 +72,8 @@ def test_endpoint_records_the_provider_of_the_actual_admission(monkeypatch, entr
                        llm=llm.OllamaCaller("fixture", "http://127.0.0.1:9"))
     assert reply["agentic"]["outcome"] == "substituted"
     assert entries[0]["person"] == {
-        "answer": "provider consent", "name": "", "authenticated": False, "provider": "local:loopback"}
-    assert "provider consent (local:loopback)" in reply["warning_card"]["message"]
+        "answer": "local model", "name": "", "authenticated": False, "provider": "local:loopback"}
+    assert "local model (local:loopback)" in reply["warning_card"]["message"]
 
 
 def test_host_label_without_an_admission_records_only_code_allowance(monkeypatch, entries):

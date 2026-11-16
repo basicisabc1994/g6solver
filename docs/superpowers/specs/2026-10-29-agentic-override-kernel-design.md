@@ -66,11 +66,20 @@ snapshot has its own private copy, retaining strong references to the responder 
 Pending's lifetime. Mutating public constructor metadata refuses before construction or sending; execution only uses
 the private copy. Class/kind/route admission repeats independently.
 
-The preparation digest covers the whole plain copy and retained class, responder and code identities. Override
-captures a private snapshot, validates exact field types, rechecks identities and recomputes the digest. Digest
+The preparation digest covers the whole plain copy and retained class, responder and code identities. Each retained
+callable pins its code, defaults, keyword defaults and closure contents by identity, including keyword default value
+identities. These are checked before calls and child launches; mutation refuses with the digest-mismatch code.
+Module globals read by a validator and its annotations cannot be pinned in process. Objects contained inside defaults
+or closure values are pinned by identity, not recursively frozen. A confined Linux child does not share the parent's
+objects. Non-Python responder wrappers without an inspectable call implementation are refused.
+Override captures a private snapshot, validates exact field types, rechecks identities and recomputes the digest. Digest
 operands must be exact strings before equality. Unknown callers refuse by class identity before vars or attribute
 reads. All class checks use identity, never equality, membership or class-keyed hash tables. Configured anonymous
 guards are remembered only from G6's factory by weak identity, with collection cleanup; ancestry enrols nothing.
+
+The preparation owns its retained objects; the module table holds only weak references, so a responder reaching its
+own preparation does not prevent collection. Override and cancellation consume the table entry once. At most 256
+entries remain live; the oldest is evicted and subsequently refuses with the digest-mismatch code.
 
 Names, digests, parameters and the execution copy are prepared before the deadline clock starts. Afterward the
 override thread uses only G6-owned plain values. Fresh construction, consent guarding, completion, reply conversion
@@ -97,8 +106,14 @@ a degradation reason: exhausted budget, model/child failure, invalid value, fail
 Every executed override is appended to the local hash-chained ledger, owned by the same user; it does not protect
 against that user's programs. Records keep names, codes, trigger, digests, counts and model, without parameter,
 result or exception text. Historical `digests.question` now stores the full preparation digest. The compatibility
-`person` field records `answer="provider consent"` with the observed `provider`, or `answer="allowed in code"`
-without an observed admission. Names stay empty and `authenticated=false`; no person approval is claimed.
+`person` field records `provider consent` with its provider only for an admitted remote send (grant or same-provider
+exemption); `local model` with its provider for a send admitted with `local=True`, taking no consent decision;
+`allowed in code` for process callers with no consent-checked send; or `refused by the consent check` when it refused.
+Names stay empty and `authenticated=false`; no person approval is claimed. Refusal leaves the outcome's reason
+`model_failed` with nothing substituted. The reply's `authority_sends` lists each send or refused attempt and
+`summary` gives the observed Authority line, also included in the warning card. For mixed runs, refusal dominates,
+then unobserved/code allowance, remote consent, then local admission, so observed consent never covers unchecked work.
+Multiple providers at the selected level leave the aggregate provider empty; per-send entries retain each provider.
 Endpoint completion enters the existing admission check on its fresh backend and observes successful entry at the
 counted send. Host sends observe their own live admission, excluding any enclosing request's admission. A caller
 kind alone never supplies authority. Historical entries without a provider stay readable.
