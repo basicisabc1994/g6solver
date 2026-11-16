@@ -919,3 +919,63 @@ def test_these_phrasings_are_safety_questions_and_next_never_acts(task: str) -> 
     assert "op:action_gating.evaluate" in _ids(out, 3), _ids(out, 5)
     acting = {c["id"] for c in out["candidates"] if c["acts"]}
     assert out["next"]["id"] not in acting and out["next"]["id"] != "tool:g6_cloud_grant", out["next"]
+
+# -- review 4, finding 7: g6_select imports no component at request time ------------------------------------------
+_PROBE = r"""
+import json, sys
+from g6.core import selector
+from g6.skills import corpus
+from g6.core.registry import get_registry
+data = corpus.load()
+selector.select("warm up", "plan")
+reg = get_registry()
+packages = {reg.refs[c].module.split(":", 1)[0]: c for c in data["components"] if c in reg.refs}
+before = {c for p, c in packages.items() if p in sys.modules}
+selector.select(**json.loads(sys.argv[1]))
+print(json.dumps(sorted({c for p, c in packages.items() if p in sys.modules} - before)))
+"""
+
+
+@pytest.mark.parametrize("arguments", [
+    {"task": "find why the test fails", "phase": "diagnose",
+     "considering": json.dumps([{"hypothesis": "the cache is stale", "predicts": "a rerun passes", "severity": "high"}])},
+    {"task": "the workflow answers wrong", "last_outcome": "wrong_answer"},
+])
+def test_a_selection_imports_no_component_in_a_fresh_interpreter(arguments: dict) -> None:
+    import os
+    import subprocess
+    import sys
+
+    root = SRC.parents[1]
+    env = {**os.environ, "PYTHONPATH": f"{root / 'src'}{os.pathsep}{root}"}
+    done = subprocess.run([sys.executable, "-X", "utf8", "-c", _PROBE, json.dumps(arguments)], capture_output=True,
+                          text=True, env=env, timeout=120, check=True)
+    assert json.loads(done.stdout.strip().splitlines()[-1]) == []
+
+
+@pytest.mark.parametrize("hypotheses", [
+    [("H1", "high", ""), ("H2", "low", "")],
+    [("H1", "medium", "g6_review_patch"), ("H2", "medium", "")],
+    [("H1", "low", "op:swe_diagnostics.test_analyze"), ("H2", "high", "g6_premortem")],
+])
+def test_the_scheduler_picks_what_next_experiment_picks(hypotheses: list) -> None:
+    from g6.complexity.ir import Hypothesis
+    from g6.harness.verification_controller import Experiment, ExperimentState, next_experiment
+
+    data = corpus.load()
+    entries = {e["id"]: e for e in corpus.entries(data)}
+    tools = {e["call"]["tool"]: e["id"] for e in data["entries"] if e["kind"] == "tool"}
+    rows = [{"id": i, "claim": "c", "severity": s, "predicts": "p",
+             "check": tools.get(c) or (c if c in entries else "")} for i, s, c in hypotheses]
+    mine, _ = selector._schedule(rows, entries)
+    named = {r["check"]: r["id"] for r in rows if r["check"]}
+    experiments = tuple(
+        Experiment(k, k, tuple(sorted((set(e.get("hypotheses", ())) & {r["id"] for r in rows})
+                                      | ({named[k]} if k in named else set()))), selector.COST_UNITS[e["cost"]],
+                   allowed=True)
+        for k, e in sorted(entries.items()) if e["kind"] != "route"
+        and ((set(e.get("hypotheses", ())) & {r["id"] for r in rows}) or k in named))
+    state = ExperimentState("s", "s", "s", tuple(Hypothesis(r["id"], r["claim"], r["severity"], r["predicts"])
+                                                 for r in rows), selector.BUDGET_UNITS)
+    chosen = next_experiment(state, experiments)
+    assert mine == (chosen.id if chosen else "")

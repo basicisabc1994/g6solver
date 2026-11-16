@@ -650,12 +650,27 @@ def build() -> dict[str, Any]:
         entry["text"] = " ".join(entry["text"].split())
     return {"format": FORMAT, "release": routing.load().release, "phases": list(PHASES), "costs": list(COSTS),
             "components": components, "refusals": refusals.as_data(refusals.component_declarations()),
-            "entries": entries}
+            "recovery": _recovery(), "entries": entries}
+
+
+def _recovery() -> list[dict[str, str]]:
+    """``g6.metaharness.recovery``'s remedies for wrong answers, once each by (component, action), as data, so the
+    selector names them without importing the meta-harness at request time."""
+    from g6.metaharness.recovery import WRONG_ANSWER_REMEDIES
+
+    out, seen = [], set()
+    for kind, remedies in sorted(WRONG_ANSWER_REMEDIES.items()):
+        for remedy in remedies:
+            if (remedy.component, remedy.action) not in seen:
+                seen.add((remedy.component, remedy.action))
+                out.append({"answer_kind": kind, "component": remedy.component, "action": remedy.action,
+                            "how": remedy.how, "who": remedy.who})
+    return out
 
 
 def dumps(data: dict[str, Any]) -> str:
     """The corpus as its file is written: one entry a line, sorted, so a change shows as the lines it changes."""
-    head = {k: v for k, v in data.items() if k not in ("components", "refusals", "entries")}
+    head = {k: v for k, v in data.items() if k not in ("components", "refusals", "recovery", "entries")}
     lines = ["{"]
     lines += [f"  {json.dumps(k)}: {json.dumps(v, ensure_ascii=False)}," for k, v in head.items()]
     for section in ("components", "refusals"):
@@ -663,6 +678,9 @@ def dumps(data: dict[str, Any]) -> str:
         lines.append(",\n".join(f"    {json.dumps(k)}: {json.dumps(v, ensure_ascii=False, sort_keys=True)}"
                                 for k, v in sorted(data[section].items())))
         lines.append("  },")
+    lines.append('  "recovery": [')
+    lines.append(",\n".join(f"    {json.dumps(r, ensure_ascii=False, sort_keys=True)}" for r in data["recovery"]))
+    lines.append("  ],")
     lines.append('  "entries": [')
     lines.append(",\n".join(f"    {json.dumps(e, ensure_ascii=False, sort_keys=True)}" for e in data["entries"]))
     lines.append("  ]")

@@ -364,22 +364,17 @@ def _read(outcome: str) -> dict[str, str]:
 def recovery_remedies(data: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """``g6.metaharness.recovery``'s remedies for wrong answers, mapped by the component each names: a runnable
     component through ``g6_invoke`` (its ops listed), any other inside a candidate (``metaharness_propose``), and a
-    remedy only a person can take to the person."""
-    from g6.metaharness.recovery import WRONG_ANSWER_REMEDIES
-
+    remedy only a person can take to the person. Read from the corpus (which records them when it is built), so the
+    meta-harness is not imported here."""
     data = data or _corpus()
-    out, seen = [], set()
-    for kind, remedies in sorted(WRONG_ANSWER_REMEDIES.items()):
-        for remedy in remedies:
-            if (remedy.component, remedy.action) in seen:
-                continue
-            seen.add((remedy.component, remedy.action))
-            ops = data["components"].get(remedy.component, {}).get("ops", [])
-            person = remedy.who == "person"
-            out.append({"answer_kind": kind, "component": remedy.component, "action": remedy.action,
-                        "how": remedy.how, "tell_person": person,
-                        "tool": "" if person else "g6_invoke" if ops else "metaharness_propose",
-                        "ops": [f"{remedy.component}.{op}" for op in ops]})
+    out = []
+    for remedy in data["recovery"]:
+        ops = data["components"].get(remedy["component"], {}).get("ops", [])
+        person = remedy["who"] == "person"
+        out.append({"answer_kind": remedy["answer_kind"], "component": remedy["component"],
+                    "action": remedy["action"], "how": remedy["how"], "tell_person": person,
+                    "tool": "" if person else "g6_invoke" if ops else "metaharness_propose",
+                    "ops": [f"{remedy['component']}.{op}" for op in ops]})
     return out
 
 
@@ -684,27 +679,30 @@ def _considered(items: list[Any], entries: dict[str, dict[str, Any]], tools: dic
     return out
 
 
-def _schedule(hypotheses: list[dict[str, Any]], entries: dict[str, dict[str, Any]]) -> tuple[str, str]:
-    """The next call by ``verification_controller.next_experiment``, or ``("", why)`` when none fits."""
-    from g6.complexity.ir import Hypothesis
-    from g6.harness.verification_controller import Experiment, ExperimentState, next_experiment
+#: ``verification_controller.next_experiment``'s severity weights.
+SEVERITY_WEIGHTS = {"low": 1, "medium": 3, "high": 9}
 
-    states = [Hypothesis(h["id"], h["claim"], h["severity"], h["predicts"]) for h in hypotheses]
+
+def _schedule(hypotheses: list[dict[str, Any]], entries: dict[str, dict[str, Any]]) -> tuple[str, str]:
+    """The next call by the rule of ``g6.harness.verification_controller.next_experiment`` (greedy: the most
+    severity-weighted open-hypothesis coverage per cost unit within the budget, the id breaking a tie), or
+    ``("", why)`` when none fits. The rule is applied here over the corpus rather than imported, since importing it
+    loads components at request time; a test holds the two to the same pick."""
     named = {h["check"]: h["id"] for h in hypotheses if h["check"]}
-    ids = {h.id for h in states}
+    weights = {h["id"]: SEVERITY_WEIGHTS[h["severity"]] for h in hypotheses}
     experiments = []
     for key, entry in sorted(entries.items()):
         if entry["kind"] == "route":
             continue
-        covers = sorted((set(entry.get("hypotheses", ())) & ids) | ({named[key]} if key in named else set()))
+        covers = sorted((set(entry.get("hypotheses", ())) & set(weights)) | ({named[key]} if key in named else set()))
         if covers:
-            experiments.append(Experiment(key, key, tuple(covers), COST_UNITS[entry["cost"]], allowed=True))
-    state = ExperimentState("selector", "selector", "selector", tuple(states), BUDGET_UNITS)
-    chosen = next_experiment(state, tuple(experiments))
-    if chosen is None:
+            experiments.append((key, covers, COST_UNITS[entry["cost"]]))
+    possible = [e for e in experiments if e[2] <= BUDGET_UNITS]
+    if not possible:
         return "", f"next_experiment found no call within {BUDGET_UNITS} units that addresses an open hypothesis"
-    return chosen.id, (f"next_experiment: the most severity-weighted open-hypothesis coverage per cost unit within "
-                       f"{BUDGET_UNITS} units ({', '.join(chosen.hypothesis_ids)}; {len(experiments)} calls compared)")
+    key, covers, _ = min(possible, key=lambda e: (-sum(weights[i] for i in e[1]) / e[2], e[0]))
+    return key, (f"next_experiment: the most severity-weighted open-hypothesis coverage per cost unit within "
+                 f"{BUDGET_UNITS} units ({', '.join(covers)}; {len(experiments)} calls compared)")
 
 
 #: What to put in a template whose op refuses it as given, where G6 can say it in one line; any other such template
