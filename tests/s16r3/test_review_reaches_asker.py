@@ -175,6 +175,45 @@ def test_a_persons_decision_on_the_input_still_wins(repo, decision):
         assert _withheld(reply, _input(repo)), reply
 
 
+@pytest.mark.parametrize('detail', ['compact', 'full'])
+@pytest.mark.parametrize('text', ['make add commutative', 'add adds'], ids=['task', 'requirement'])
+def test_a_persons_decision_on_any_input_the_poll_admits_still_wins(repo, detail, text):
+    # The poll admits every input of the submitting call (each string argument and the whole arguments), so the reply
+    # carries each of them: the person's "no" on the task's own text, or on a requirement's, withholds it.
+    _share((*NAMED, cloud.repository_source(repo)), CODEX)
+
+    async def decide():
+        cloud.revoke(cloud.input_source(text), CODEX)
+    reply = _review(repo, detail=detail, before_poll=decide)
+    assert _withheld(reply, cloud.input_source(text)), reply
+
+
+def test_a_revoke_of_the_task_input_after_a_delivered_poll_withholds_the_next_poll(repo):
+    _share((*NAMED, cloud.repository_source(repo)), CODEX)
+
+    async def revoke():
+        cloud.revoke(cloud.input_source('make add commutative'), CODEX)
+    first, second = _review(repo, again=revoke)
+    assert _delivered(first), first['result'].get('error')
+    assert _withheld(second, cloud.input_source('make add commutative')), second
+
+
+def test_a_job_with_no_origin_admits_no_input():
+    # control (passed before repair 1): a job submitted outside a client call has no origin, so its poll admits nothing
+    from g6.metaharness.jobs import Jobs
+
+    jobs = Jobs()
+    try:
+        handle = jobs.start(lambda: cloud.bind_output({'text': 'x'}, ()))['job_id']
+        jobs.close()
+        with cloud.collect_sources() as capture:
+            capture.client = CODEX, object()
+            jobs.status(handle)
+            assert not any(source.startswith('input:') for source in capture.supplied), capture.supplied
+    finally:
+        jobs.close()
+
+
 @pytest.mark.parametrize('damage', ['no-record', 'no-sources', 'reply-changed', 'other-version'])
 def test_a_saved_review_without_its_recorded_sources_is_the_folders(repo, monkeypatch, damage):
     _share((*NAMED, cloud.repository_source(repo)), CODEX)

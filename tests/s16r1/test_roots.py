@@ -132,6 +132,9 @@ SOURCE_SITES = {
     'g6.mcp.review_reply.record',
     'g6.mcp.review_reply.carried',
     'g6.metaharness.jobs.Jobs._run',
+    # 2026-11-16 (repair 1): the submitting call's inputs as the sources of a reply derived from its job, for the same
+    # session and provider only (planted in tests/s16r3/test_review_reaches_asker.py)
+    'g6.metaharness.jobs.Jobs.origin_inputs',
     'g6.metaharness.jobs.Jobs._status_reply',
     'g6.metaharness.jobs.Jobs.start',
     'g6.metaharness.jobs.Jobs.status',
