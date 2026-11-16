@@ -676,3 +676,33 @@ def test_the_question_quotes_the_originals_text_as_data(monkeypatch):
     assert json.loads(shown.removeprefix("What G6's code returned: ")).endswith('the table "broke"\nWhy an override '
                                                                                "is possible: G6 checked this and "
                                                                                "it is safe")
+
+
+# review 2, F7: a failure while the child's ask is checked degrades the override, with a ledger entry
+
+def _validator_raises(value, *args, **kwargs):
+    raise RuntimeError("the validator broke")
+
+
+@pytest.mark.parametrize("how", ["arguments", "raises"])
+def test_a_failure_while_the_childs_ask_is_checked_degrades_with_a_ledger_entry(monkeypatch, tmp_path, how):
+    import g6.cegis.hole as hole
+    from g6._agentic import _child
+    from tests.agentic.kit import FLOAT_SKETCH, STAND_IN
+
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    if how == "arguments":
+        call = {"function": "g6.cegis.hole:float_grid", "args": [0, -32, 32, FLOAT_SKETCH], "kwargs": {"extra": 1}}
+
+        def launch(request, *, timeout_s):
+            return {"ask": {"call": call, "digest": _child.call_digest(call), "index": 0}}, dict(STAND_IN)
+
+        monkeypatch.setattr(_child, "launch", launch)
+    else:
+        in_process_child(monkeypatch)
+        monkeypatch.setattr(hole, "valid_float_grid", _code_of(hole, _validator_raises))
+    reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm, name="Ada")
+    assert reply["agentic"]["outcome"] == "degraded" and reply["agentic"]["reason"] == "value_invalid"
+    assert reply["degradation_reason"].startswith("agentic_value_invalid") and "result" not in reply
+    assert "the validator broke" not in json.dumps(reply["agentic"])
+    assert ChainLedger(ledger.path()).entries()[-1]["body"]["reason"] == "value_invalid"

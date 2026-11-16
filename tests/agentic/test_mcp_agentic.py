@@ -170,3 +170,18 @@ def test_params_json_with_a_number_that_is_not_finite_is_invalid_input_and_nobod
     reply = call(rig, {**FLOAT, "params_json": params_json})
     assert reply["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and "finite" in reply["error"]
     assert check_envelope(reply) == [] and rig.asked == [] and rig.served == [] and rig.model.prompts == []
+
+
+def test_a_validator_that_fails_on_the_childs_ask_leaves_the_original_standing_in_a_completed_job(rig, monkeypatch):
+    import types
+
+    import g6.cegis.hole as hole
+
+    def broke(value, *args, **kwargs):
+        raise RuntimeError("the validator broke")
+
+    monkeypatch.setattr(hole, "valid_float_grid", types.FunctionType(broke.__code__, vars(hole), "valid_float_grid"))
+    reply = call(rig, FLOAT)
+    assert reply.get("status") != "failed" and reply["agentic"]["outcome"] == "degraded"
+    assert reply["degradation_reason"].startswith("agentic_value_invalid") and "result" not in reply
+    assert reply["warning_card"]["code"] == "G6_E_CEGIS_HOLE_UNSUPPORTED" and check_envelope(reply) == []

@@ -33,7 +33,7 @@ Name = Annotated[str, Field(pattern=_NAME)]
 Hex = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 #: Why an override ended without a substitute, as the kernel names it.
 Reason = Literal["", "budget_exhausted", "child_failed", "isolation_unavailable", "model_failed", "value_invalid",
-                 "substitute_failed", "recheck_failed", "ledger_failed"]
+                 "substitute_failed", "recheck_failed", "ledger_failed", "kernel_failed"]
 
 
 class _Closed(BaseModel):

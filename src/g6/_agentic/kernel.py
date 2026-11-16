@@ -646,7 +646,13 @@ def _ask_model(pending: Pending, envelope: _Envelope, ask: Mapping[str, Any], pa
         checks.append({"check": "return_type", "passed": False, "detail": str(exc)[:REASON_CHARS]})
         raise _Stop("value_invalid", f"the model's value is not a {returns}: {str(exc)[:200]}") from exc
     checks.append({"check": "return_type", "passed": True})
-    why = _child.resolve(pending.validator, package)(value, *call.get("args", []), **call.get("kwargs", {}))
+    try:   # the ask's arguments come from the child: a validator that cannot take them refuses the value
+        why = _child.resolve(pending.validator, package)(value, *call.get("args", []), **call.get("kwargs", {}))
+    except Exception as exc:  # noqa: BLE001 - any failure of the check leaves the original standing
+        checks.append({"check": pending.validator, "passed": False,
+                       "detail": f"the validator could not check the value ({type(exc).__name__})"})
+        raise _Stop("value_invalid", f"{pending.validator} could not check the model's value "
+                                     f"({type(exc).__name__})") from exc
     checks.append({"check": pending.validator, "passed": not why, **({"detail": str(why)[:REASON_CHARS]} if why else {})})
     if why:
         raise _Stop("value_invalid", f"{pending.validator}: {why}"[:REASON_CHARS])
@@ -749,6 +755,10 @@ def override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
         record.update(outcome="substituted", substituted=True)
     except _Stop as stop:
         record.update(outcome="degraded", reason=stop.reason, detail=stop.detail)
+        reply = None
+    except Exception as exc:  # noqa: BLE001 - any other failure on the way leaves the original standing, recorded
+        record.update(outcome="degraded", reason="kernel_failed",
+                      detail=f"the override failed with {type(exc).__name__}, so nothing was substituted")
         reply = None
     record["checks"] = checks
     record["isolation"] = isolation
