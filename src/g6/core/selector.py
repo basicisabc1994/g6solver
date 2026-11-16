@@ -291,7 +291,23 @@ REMEDIES: dict[str, dict[str, Any]] = {
     "G6_E_SCENARIO_UNAVAILABLE": _remedy("Give the question a concrete candidate with two competing outcomes.",
                                          "g6_confirm_behaviour", {"repo": "<repo>", "task": "<task>"}),
     "G6_E_QUESTION_": _remedy("The question is held, unanswered or over the person's budget. " + _ASK, tell=True),
-    # the meta-harness
+    # the meta-harness: a wait on the person tells the person; any other refusal reads the workflow's record
+    "G6_E_META_APPROVAL_REQUIRED": _remedy(
+        "No person approved, confirmed or asked for this: a name comes only from the client's dialog. " + _ASK,
+        tell=True),
+    "G6_E_META_APPROVER_IS_PROPOSER": _remedy(
+        "The person who accepts a change cannot be the one who proposed it: another person decides. " + _ASK,
+        tell=True),
+    "G6_E_META_NOT_CONFIRMED": _remedy(
+        "No person has confirmed this workflow, so nothing of it runs: only the person confirms it. " + _ASK,
+        tell=True),
+    "G6_E_META_STANDARD_CHANGED": _remedy(
+        "The workflow changed since the person confirmed it, so every earlier comparison is void: only the person "
+        "confirms the new one. " + _ASK, tell=True),
+    "G6_E_META_PROMOTION_REQUIRED": _remedy(
+        "Each step up needs its own held-out report and the person's approval. " + _ASK, tell=True),
+    "G6_E_META_PROMOTION_DISABLED": _remedy(
+        "No promotion policy was confirmed: only the person confirms one. " + _ASK, tell=True),
     "G6_E_META_SCHEMA": _remedy("The workflow's specification did not fit: fix the field the refusal names.",
                                 "metaharness_start", {"specification_json": "<specification_json>"}),
     "G6_E_META_": _remedy("Read the workflow's record and its recovery.", "metaharness_inspect",

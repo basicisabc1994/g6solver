@@ -499,6 +499,24 @@ def test_a_wait_on_the_person_tells_the_person(code: str) -> None:
     assert reply["next"]["id"] != "tool:g6_improve_status"
 
 
+@pytest.mark.parametrize("outcome", [
+    "[G6_E_META_APPROVAL_REQUIRED] no person approved: a name comes only from the client's dialog",
+    "[G6_E_META_APPROVAL_REQUIRED] no person confirmed: a name comes only from the client's dialog",
+    "G6_E_META_APPROVER_IS_PROPOSER", "[G6_E_META_NOT_CONFIRMED] a person has not confirmed the workflow",
+    "[G6_E_META_STANDARD_CHANGED] the workflow changed since it was confirmed",
+    "[G6_E_META_PROMOTION_REQUIRED] each upward step needs a person's approval",
+    "[G6_E_META_PROMOTION_DISABLED] no promotion policy was confirmed"])
+def test_a_meta_harness_wait_on_the_person_tells_the_person(outcome: str) -> None:
+    reply = selector.select("approve the recommended version", "verify", last_outcome=outcome)
+    assert reply["remedy"]["tell_person"] is True and reply["next"]["tell_person"] is True, reply["remedy"]
+    assert reply["next"]["call"] is None and reply["next"]["id"] is None
+
+
+def test_a_meta_harness_refusal_an_agent_resolves_still_reads_the_workflow() -> None:
+    reply = selector.select("evaluate my candidate", "verify", last_outcome="[G6_E_META_BUSY] another operation")
+    assert reply["next"]["call"]["tool"] == "metaharness_inspect"
+
+
 def test_a_declared_limit_code_points_at_the_override_tool_marked_unavailable_until_it_is_registered() -> None:
     data = json.loads(json.dumps(corpus.load()))
     data["components"]["grounding"]["limits"] = ["G6_E_GROUNDING_EXAMPLE_LIMIT"]
