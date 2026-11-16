@@ -185,3 +185,51 @@ def test_a_validator_that_fails_on_the_childs_ask_leaves_the_original_standing_i
     assert reply.get("status") != "failed" and reply["agentic"]["outcome"] == "degraded"
     assert reply["degradation_reason"].startswith("agentic_value_invalid") and "result" not in reply
     assert reply["warning_card"]["code"] == "G6_E_CEGIS_HOLE_UNSUPPORTED" and check_envelope(reply) == []
+
+
+def _cloud_model(sent: list) -> object:
+    """A cloud model behind G6's consent guard: an Anthropic caller whose SDK client is a test fake that records each
+    request (a ``SDKClient``, the published contract for a synthetic provider endpoint); nothing leaves the test."""
+    from g6.core import consent_callers, llm
+
+    class SDK(consent_callers.SDKClient):
+        base_url = "https://api.anthropic.com"
+
+        def __init__(self) -> None:
+            def create(**kwargs):
+                sent.append(kwargs)
+                return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps({"value": [0.5]}))],
+                                       stop_reason="end_turn")
+            self.messages = SimpleNamespace(create=create)
+
+    return consent_callers.guard(llm.AnthropicCaller(client=SDK(), fallbacks=False))
+
+
+@pytest.mark.parametrize("granted", [True, False])
+def test_a_person_who_shared_with_the_model_is_not_refused_in_the_overrides_threads(rig, monkeypatch, granted):
+    from g6.mcp.cloud_consent import request_grant
+    from tests.conftest import accepted_cloud_name, cloud_argument_sources
+
+    sent: list = []
+    cloud = _cloud_model(sent)
+    monkeypatch.setattr(kernel, "person_caller", lambda: cloud)
+
+    class Accepting:
+        async def elicit_form(self, **kwargs):
+            return SimpleNamespace(action="accept", content={"value": accepted_cloud_name(kwargs["message"])})
+
+    async def grant():
+        context = SimpleNamespace(session=Accepting(), request_id="fixture-dialog")
+        # the prompt holds the arguments, the original's answer (component_data) and the kernel's own text
+        for source in ("model_inputs", "component_data", *cloud_argument_sources(FLOAT)):
+            assert (await request_grant(context, source, "anthropic:api"))["status"] == "granted"
+
+    if granted:
+        asyncio.run(grant())
+    reply = call(rig, FLOAT)
+    if granted:
+        assert reply["agentic"]["outcome"] == "substituted", reply["agentic"].get("detail")
+        assert len(sent) == 1 and reply["result"]["program"] == "def f(x):\n    return x * 0.5\n"
+    else:
+        assert reply["agentic"]["reason"] == "model_failed" and "CONSENT" in reply["agentic"]["detail"]
+        assert sent == []

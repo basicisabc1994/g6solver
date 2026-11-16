@@ -162,7 +162,8 @@ def _model_name(caller: Any) -> str:
             break
         seen = inner
     model = getattr(seen, "model", "") or getattr(seen, "_model", "")
-    return type(seen).__name__ + (f":{model}" if isinstance(model, str) and model else "")
+    name = type(seen).__name__ + (f":{model}" if isinstance(model, str) and model else "")
+    return re.sub(r"[^A-Za-z0-9_.:/@+\-]", "_", name)[:200]   # the ledger's name pattern: any other character is _
 
 
 def _no_model(caller: Any) -> bool:

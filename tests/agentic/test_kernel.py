@@ -747,3 +747,16 @@ def test_a_child_refusal_is_named_by_its_code_only(monkeypatch, tmp_path):
     reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm, name="Ada")
     assert reply["agentic"]["reason"] == "child_failed" and "G6_E_AGENTIC_CHILD_FAILED" in reply["agentic"]["detail"]
     assert PLANTED not in json.dumps(reply)
+
+
+# review 2, also checked: a model name the ledger's pattern does not take is recorded in a safe form
+
+def test_a_model_name_outside_the_ledgers_pattern_is_recorded_normalised(monkeypatch, tmp_path):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    in_process_child(monkeypatch)
+    model = Model([0.5])
+    model.llm.model = "llama 3 (8b) é"
+    reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=model.llm, name="Ada")
+    assert reply["agentic"]["outcome"] == "substituted", reply["agentic"].get("detail")
+    entry = ChainLedger(ledger.path()).entries()[-1]["body"]
+    assert entry["model"] == reply["agentic"]["model"] == "FakeLLM:llama_3__8b___"
