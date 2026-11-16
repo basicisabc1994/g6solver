@@ -472,8 +472,9 @@ def test_a_sensitive_refusal_reroutes_to_the_person_with_the_setup_step() -> Non
     reply = selector.select("review my patch", phase="verify",
                             last_outcome="[G6_E_SENSITIVE_COMPONENT_DENIED] patch_review.review runs repository code")
     assert reply["remedy"]["tell_person"] is True
-    assert reply["remedy"]["setup"] == "g6 setup --allow patch_review.review"
-    assert reply["next"]["tell_person"] is True and "g6 setup --allow patch_review.review" in reply["next"]["say"]
+    assert reply["remedy"]["setup"] == ""
+    assert reply["next"]["tell_person"] is True and reply["next"]["call"] is None
+    assert "person" in reply["next"]["say"] and "g6 setup" not in reply["next"]["say"]
 
 
 @pytest.mark.parametrize("outcome,step", [
@@ -485,8 +486,9 @@ def test_a_sensitive_refusal_reroutes_to_the_person_with_the_setup_step() -> Non
 ])
 def test_the_setup_step_names_only_a_sensitive_op_the_corpus_knows(outcome: str, step: str) -> None:
     reply = selector.select("push my branch", "implement", last_outcome=outcome)
-    assert reply["remedy"]["setup"] == f"g6 setup --allow {step}"
-    assert reply["next"]["say"].endswith(f"The step: g6 setup --allow {step}."), reply["next"]["say"]
+    assert reply["remedy"]["setup"] == ""
+    assert reply["next"]["tell_person"] and reply["next"]["call"] is None
+    assert "person" in reply["next"]["say"] and "g6 setup" not in reply["next"]["say"]
 
 
 @pytest.mark.parametrize("outcome,tool", [

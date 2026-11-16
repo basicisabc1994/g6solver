@@ -26,7 +26,7 @@ def register(server: Any) -> None:
         (validated) and, if not, the fields to fill; next, the one call to make with those fields and what to put in
         them (or what to tell the person); and mechanisms, which stage ran and why. After a refusal it reroutes: a
         withheld reply to g6_cloud_grant (the person answers in their dialog; never grant for them), a sensitive
-        refusal to the person with the g6 setup step, an input refusal to g6_describe. Whether an op is allowed here, a
+        refusal to the person to decide themselves, an input refusal to g6_describe. Whether an op is allowed here, a
         grant exists or a model is configured is unknown until a call observes it: pass that refusal back. Ranking is
         fixed rules over G6's own text, no model; rerank is lexical (a semantic rerank is not offered here, and
         "colbert" is answered lexically). Runs nothing; qualified-draft. You choose, and the call you make is checked then."""

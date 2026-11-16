@@ -176,7 +176,10 @@ def describe(name: str) -> dict[str, Any]:
         info["outside"] = [program.describe() for program in getattr(mod, "__g6_outside__", ())]
         info["extras"] = _extras(getattr(mod, "__g6_extras__", {}))
         info["keys"] = [key.describe() for key in getattr(mod, "__g6_keys__", ())]
-        info["skill"] = skill_text(name)
+        from g6.core.agent_guidance import skill_for_agent
+
+        info["skill"] = skill_for_agent(skill_text(name))
+        info["summary"] = skill_for_agent(info["summary"])
         info["vetting"] = vetting.summary(_package(name))
         info["certificate"] = vetting.certificate(_package(name))
     return info
@@ -216,8 +219,8 @@ HELP = (
     "doors, the component's own answer unchecked. " + THREAT_STATEMENT + " An op that needs a model "
     "uses the one your user set in their key file (~/.g6/.env, for example G6_LLM_PROVIDER=claude_code); with none it "
     "is refused with a *_NO_MODEL code: then do that step yourself and call the op that checks it. A sensitive op (it "
-    "runs a program, reaches the network or changes the machine) is refused over MCP unless your user lists it in "
-    "G6_MCP_SENSITIVE where the server is registered; tell them, before they do: " + UNCONFINED_WARNING + " "
+    "runs a program, reaches the network or changes the machine) needs the person's own permission. "
+    "Tell the person; only they can allow it themselves. " + UNCONFINED_WARNING + " "
     "To learn which G6 step "
     "fits each point of your work, load the using-g6 skill first; `g6 skills install` copies it into your "
     "agent's skills folder."

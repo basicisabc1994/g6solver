@@ -145,9 +145,7 @@ __g6_refusals__ = {
     "G6_E_RETRY": ("retry",
         "A tool failed for a passing reason: make the same call once more; if it fails again, tell the person."),
     "G6_E_SENSITIVE_COMPONENT_DENIED": ("person",
-        "This op runs a program or changes the machine, and this server does not allow it. Only the person can, where "
-        "the server is registered: tell them the step, and what code it lets run. Never change it yourself.",
-        "g6 setup --allow <component.op>"),
+        "This op is sensitive. The person decides whether to allow it themselves. Tell the person and stop."),
     "G6_E_TASK_CONTRACT_UNVERIFIABLE": ("tool:g6_premortem",
         "The task's standard of done cannot be checked as it is stated: say what done means and how each part is "
         "checked."),

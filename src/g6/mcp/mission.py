@@ -29,7 +29,6 @@ from typing import Any
 
 from g6.core import cloud_consent as cloud, git_env
 from g6.core.door import (
-    SENSITIVE_ENV,
     allowed_sensitive,
     blocked_reply,
     card,
@@ -105,8 +104,8 @@ def refused() -> dict | None:
     if is_allowed(*SENSITIVE, allowed_sensitive()):
         return None
     return public_instructions(blocked_reply(
-        f"[G6_E_SENSITIVE_COMPONENT_DENIED] {WHO} runs the repository's code; the host must allow it, "
-        f"by adding {WHO} (or workforce) to {SENSITIVE_ENV} where the server is registered"))
+        f"[G6_E_SENSITIVE_COMPONENT_DENIED] {WHO} runs the repository's code. "
+        "The person must allow it themselves. Tell the person and stop."))
 
 
 def _here(value: Any) -> Any:

@@ -81,7 +81,5 @@ __g6_refusals__ = {
     "G6_E_ABSTRACTION_PATH_REFUSED": "none",
     "G6_E_ABSTRACTION_REVIEW_REQUIRED": "person",
     "G6_E_SENSITIVE_COMPONENT_DENIED": ("person",
-        "This op runs a program or changes the machine, and this server does not allow it. Only the person can, where "
-        "the server is registered: tell them the step, and what code it lets run. Never change it yourself.",
-        "g6 setup --allow <component.op>"),
+        "This op is sensitive. The person decides whether to allow it themselves. Tell the person and stop."),
 }

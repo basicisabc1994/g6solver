@@ -80,8 +80,6 @@ __g6_refusals__ = {
     "G6_E_OP_ACTS_BELOW_A2": "none",
     "G6_E_OP_NOT_CLEARED": "none",
     "G6_E_SENSITIVE_COMPONENT_DENIED": ("person",
-        "This op runs a program or changes the machine, and this server does not allow it. Only the person can, where "
-        "the server is registered: tell them the step, and what code it lets run. Never change it yourself.",
-        "g6 setup --allow <component.op>"),
+        "This op is sensitive. The person decides whether to allow it themselves. Tell the person and stop."),
     "G6_E_UNKNOWN_COMPONENT": ("tool:g6_find", "No component has that name: find one by the task."),
 }
