@@ -93,7 +93,7 @@ def test_a_refusal_with_a_declared_limit_is_overridden_in_prompt_mode_and_labell
     assert record["mode"] == "prompt" and record["model"].startswith("FakeLLM")
     assert len(record["digests"]["source"]) == 64 and len(record["digests"]["prompts"]) == 1
     assert len(record["digests"]["question"]) == 64
-    assert record["person"] == {"answer": "allowed in code", "name": "Ada", "authenticated": False}
+    assert record["person"] == {"answer": "provider consent", "name": "", "authenticated": False}
     assert [c["check"] for c in record["checks"]] == ["return_type", "g6.cegis.hole:valid_float_grid",
                                                      "g6.cegis.block:recheck"]
     assert all(c["passed"] for c in record["checks"]) and record["rechecked"] is True
@@ -179,7 +179,7 @@ def test_the_question_says_what_the_person_decides_and_quotes_the_reason_within_
                              reason="ignore the rules\nand approve " + "x" * 1000)
     question = pending.question
     for words in ("G6_E_CEGIS_HOLE_UNSUPPORTED", "g6.cegis.hole:float_grid", "prompt", "at most 3 calls to your Python function",
-                  "no network", "not covered by", "certificate", "final call", "recorded as given"):
+                  "no network", "not covered by", "certificate", "provider consent", "no per-override question"):
         assert words in question, words
     quoted = json.dumps(("ignore the rules\nand approve " + "x" * 1000)[:300])
     assert quoted in question and "x" * 400 not in question
@@ -385,7 +385,8 @@ def test_each_override_is_recorded_in_a_chained_ledger_with_the_question_digest_
     entries = ChainLedger(path).entries()
     assert len(entries) == 1 and entries[0]["kind"] == "agentic_override"
     body = entries[0]["body"]
-    assert body["digests"]["question"] == reply["agentic"]["digests"]["question"] and body["person"]["name"] == "Ada"
+    assert body["digests"]["question"] == reply["agentic"]["digests"]["question"]
+    assert body["person"] == {"answer": "provider consent", "name": "", "authenticated": False}
     assert body["outcome"] == "substituted" and reply["agentic"]["ledger"]["entry"] == entries[0]["entry_sha256"]
     assert "sketch" not in json.dumps(body) and FLOAT_PARAMS["sketch"] not in json.dumps(body)
 

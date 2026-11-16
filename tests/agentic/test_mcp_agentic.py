@@ -1,14 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""``g6_agentic_run`` over MCP (design 10.1, 10.9): it needs ``agentic.run`` and the op's own allowance, runs the
-original first, asks the person in the client's own dialog before every override (bound to the question's digest),
-and runs the override as a job polled through ``metaharness_job``. A decline, a cancel, a client with no dialog or an
-empty name leaves the original's answer standing. The person is scripted; the model is a FakeLLM; the child is the
-in-process stand-in of ``tests/agentic/kit.py``."""
+"""MCP overrides keep sensitive allowances and provider consent, original-first execution and confined jobs.
+The owner's 2026-11-17 ruling removes the separate override dialog and typed name.
+"""
 from __future__ import annotations
 
 import asyncio
 import json
-import re
 from types import SimpleNamespace
 
 import pytest
@@ -127,11 +124,11 @@ def test_code_mode_is_refused_before_anyone_is_asked(rig):
                                                   (None, "unavailable"), (nameless, "invalid")])
 def test_a_decline_cancel_missing_dialog_or_empty_name_leaves_the_original_answer(rig, handler, status):
     reply = call(rig, {**FLOAT, "reason": "the table halves x"}, handler)
-    assert reply["warning_card"]["code"] == "G6_E_CEGIS_HOLE_UNSUPPORTED" and reply["ok"] is False
-    assert reply["agentic"]["outcome"] == "not_run" and reply["agentic"]["consent_status"] == status
-    assert check_envelope(reply) == [] and "result" not in reply
-    assert rig.served == [] and rig.model.prompts == []
-    assert len(rig.asked) == (0 if handler is None else 1)
+    assert reply["warning_card"]["code"] == "G6_E_AGENTIC_SUBSTITUTE" and reply["ok"] is True
+    assert reply["agentic"]["outcome"] == "substituted" and reply["agentic"]["rechecked"] is True
+    assert check_envelope(reply) == [] and "result" in reply
+    assert reply["original"]["warning_card"]["code"] == "G6_E_CEGIS_HOLE_UNSUPPORTED"
+    assert rig.served and rig.model.prompts and rig.asked == []
 
 
 def test_params_json_nested_past_the_depth_is_invalid_input_and_nobody_is_asked(rig):
@@ -151,16 +148,15 @@ def test_a_deeply_nested_model_reply_leaves_the_original_answer_standing(rig, mo
 
 def test_an_accepted_override_runs_as_a_job_and_records_the_question_digest_and_the_name(rig):
     reply = call(rig, {**FLOAT, "reason": "the table halves x"})
-    assert len(rig.asked) == 1
-    shown = re.search(r"Question digest: ([0-9a-f]{64})", rig.asked[0]).group(1)
-    assert '"the table halves x"' in rig.asked[0] and "g6.cegis.hole:float_grid" in rig.asked[0]
+    assert rig.asked == []
     assert reply["ok"] is True and reply["completion_state"] == "qualified-draft" and check_envelope(reply) == []
     assert reply["warning_card"]["code"] == "G6_E_AGENTIC_SUBSTITUTE"
     assert reply["result"]["program"] == "def f(x):\n    return x * 0.5\n"
     assert reply["original"]["warning_card"]["code"] == "G6_E_CEGIS_HOLE_UNSUPPORTED"
     record = reply["agentic"]
-    assert record["digests"]["question"] == shown and record["outcome"] == "substituted"
-    assert record["person"] == {"answer": "accepted in the client's dialog", "name": "Ada", "authenticated": False}
+    assert len(record["digests"]["question"]) == 64 and record["outcome"] == "substituted"
+    assert record["model"] in reply["warning_card"]["message"]
+    assert record["person"] == {"answer": "provider consent", "name": "", "authenticated": False}
     assert record["rechecked"] is True and record["cost"]["model_calls"] == 1
 
 

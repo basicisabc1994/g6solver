@@ -4,9 +4,9 @@ ledger (``g6.core.ledger.ChainLedger``, used unchanged) at ``<G6 state folder>/a
 
 The file is owned by the same user as G6: it records what was done, it does not stop that user's own programs from
 writing it. An entry has a closed schema (:class:`Entry`): codes, names from G6's own declarations, digests, counts
-and the name the person gave (not authenticated), never text G6 did not write: no parameter, result, exception text,
-refusal detail or reason. The writer refuses any other field or any value outside its pattern, and then nothing is
-written. :func:`entry` keeps that much of an override's record. It may direct where the self-improvement loop looks
+and historical person metadata. New entries say provider consent, with an empty name; no override dialog is claimed.
+No parameter, result, exception text, refusal detail or reason is kept. The writer refuses any other field or value,
+and then nothing is written. :func:`entry` keeps that much of an override's record. It may direct where the loop looks
 next; it never counts as evidence that a change works (design 10.10)."""
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ class Trigger(_Closed):
 
 
 class Person(_Closed):
-    answer: Literal["accepted in the client's dialog", "allowed in code"]
+    answer: Literal["accepted in the client's dialog", "allowed in code", "provider consent"]
     name: str = Field(max_length=200)   # as the person gave it: the one free text an entry holds
     authenticated: Literal[False]
 

@@ -24,7 +24,9 @@ says exactly which domain it rests on.
   `coding_agent_gate`.
 - A small distilled function to check and test on held-out cases: use `distillation`.
 - A property to decide with no program to synthesise: use `formal`.
-- A floating-point constant: a `??f` hole has no candidate grid and refuses (`G6_E_CEGIS_HOLE_UNSUPPORTED`). Over MCP,`n  `g6_agentic_run` can ask the person to let a model propose the grid for that one call; its result is labelled.
+- A floating-point constant: a `??f` hole has no candidate grid and refuses (`G6_E_CEGIS_HOLE_UNSUPPORTED`). Over MCP,
+  `g6_agentic_run` can run a confined model proposal for that grid, covered by provider consent without a separate
+  override question. Show the model, warning card and original answer beside the substitute; it is qualified-draft at best.
 
 ## Ops
 

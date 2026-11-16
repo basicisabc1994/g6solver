@@ -1,38 +1,28 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The agentic override kernel, v1: prompt mode only (design ``2026-10-29-agentic-override-kernel-design.md``, sections
-1-11, with section 10's calls; owner ruling 2026-11-16).
+"""Agentic override kernel v1, prompt mode (owner ruling 2026-11-17).
 
-:func:`prepare` runs the original first, through the door every surface shares (``g6.core.door.invoke_checked``,
-with the guarded registry). With no trigger its reply is returned as it is: no model call, no child. A trigger is an
-exception raised in the component's own code (its innermost frame in the component's package and in no trust door;
-never a model call's refusal, nor a text carrying a code the component does not declare as a limit), or a reply
-carrying a code the component declares as a limit
-(``__g6_limits__``), or the caller naming a part after an answer the door let through; a trust door's code (isolation,
-a sensitive op not allowed, input validation, approval, budgets, consent) never counts. Only a pure-computation op a
-component lists in ``__g6_agentic_parts__`` can be overridden, only a part it lists there, and never a part in the
-protected set (:mod:`g6._agentic.protected`). Code mode is refused (``G6_E_AGENTIC_MODE_UNAVAILABLE``).
+The original runs first through the guarded door. Only opted-in pure computations and declared parts outside the
+protected set can be substituted. A component's own failure or declared limit, or an explicit request after a
+successful answer, is a trigger; trust-door refusals never are. Code mode is refused.
 
-With a trigger, :func:`prepare` returns a :class:`Pending` override: the question for the person (G6 writes it; the
-caller's reason appears only quoted and cut to 300 characters) and the digest it is bound to. :func:`override` runs it
-once a :class:`Confirmation` for that same digest is given: over MCP the person's answer in the client's dialog
-(``g6.mcp.agentic``), from Python the caller's own ``allow`` (:func:`run`). The operation runs again in a separate
-confined child (:mod:`g6._agentic._child`) where the part's functions ask the parent for each value; the parent makes
-the metered model call (``MeteredCaller`` over the person's configured model through the consent guard), checks the
-value against the function's declared return type and the component's own validator, and only then answers. The final
-answer is re-checked by the checker the component declares, with nothing substituted, in a fresh confined run.
-Only a model the kernel can end at the deadline is used (a Claude Code or Codex session, or a local model;
-loopback Ollama and OpenAI-compatible servers keep their per-request timeout):
-:func:`_kind`); any other model transport is refused before the question (``G6_E_AGENTIC_CALLER_UNMETERED``).
-Explicit Python input may instead name the person's own responder function (``own_function``): the question says G6
-cannot see where it sends anything or stop it. Configuration and MCP cannot select that kind.
+prepare returns public Pending metadata and retains a separate sealed plain execution copy. Exact finite budget
+numbers, bounded canonical JSON parameters, caller constructor inputs, component declarations, the original answer
+and all record fields are captured before override. Its digest covers the whole copy and retained identities.
+override checks that seal before construction or sending, then uses only a private working copy. Public Pending
+fields never choose the operation, model, limits, validator or checker. prepare/override remain useful for staging
+and inspecting a preparation; run is the one-call Python API.
 
-The reply holds the substitute's result and the original's answer beside it, the trigger, the part, the mode, the
-model, the digests of the part's source, each prompt and the question, the person's answer and the name they gave (not
-authenticated), the checks, the cost and the ledger entry. It is ``qualified-draft`` at best, never ``verified``, with
-a warning card that says a model's substitute made it, and no evidence: a substituted result never passes a
-requirement and is never evidence in another G6 check. Anything that fails on the way (an invalid value, an exhausted
-budget, a model or child failure, a failed re-check, no isolation) leaves the original's answer standing, marked with
-``degradation_reason``. Each override is recorded (:mod:`g6._agentic.ledger`).
+Overrides are covered by the existing provider consent check. There is no per-override dialog or typed name.
+The metered caller is rebuilt by G6 and passes the existing consent guard. Only owned host sign-in, local models
+and loopback IP-literal endpoints qualify. An explicit Python own_function retains its responder by reference;
+G6 cannot see where that function sends anything or stop it. MCP and configuration cannot select that kind.
+
+The operation runs in a confined child; each substituted value passes its return type and the declared validator.
+The final answer passes the declared checker in a fresh confined run. The result is qualified-draft at best, with
+a warning card, model name and the original answer beside it. Every override records its trigger, digests, checks,
+cost and model in the ledger. Failure leaves the original standing. A substitute never passes a requirement or
+becomes evidence in another G6 check. Construction, completion, reply normalization and error formatting stay in
+the deadline worker; late replies are unused. See the agentic override kernel design for retained v1 limits.
 """
 from __future__ import annotations
 
@@ -109,8 +99,7 @@ NOTE = ("A substituted result is a model's proposal run through G6's code: it ne
 
 @dataclass(frozen=True)
 class Confirmation:
-    """The person's agreement to one question: the digest it was bound to, the name they gave (recorded as given, not
-    authenticated) and how they answered."""
+    """Legacy digest check, optional. Names and answers are ignored; provider consent admits model calls."""
 
     digest: str
     name: str
@@ -119,7 +108,7 @@ class Confirmation:
 
 @dataclass(frozen=True)
 class Pending:
-    """An override with a trigger, waiting for the person's agreement to :attr:`question` (bound to :attr:`digest`)."""
+    """Public preparation metadata. Execution uses G6's separately sealed copy, never these public fields."""
 
     component: str
     op: str
@@ -145,7 +134,7 @@ class Pending:
 
 @dataclass(frozen=True)
 class _CallerSnapshot:
-    """Only constructor inputs, never an object the person can change after the question."""
+    """Exact constructor inputs; override checks the seal and captures a private copy before use."""
 
     cls: type
     kind: str
@@ -160,6 +149,117 @@ class _CallerSnapshot:
     adapter_dir: str = ""
     max_new_tokens: int = 32
     why: str = ""
+
+
+@dataclass(frozen=True)
+class _Execution(Pending):
+    """G6-owned working values decoded from the seal before the deadline starts."""
+
+    owned: tuple[tuple[str, Any], ...] = field(default=(), repr=False, compare=False)
+    params_json: str = ""
+    params_digest: str = ""
+    original_summary: str = ""
+
+
+# Weak identities avoid hashing Pending's caller-reachable fields. The immutable JSON text is the frozen data copy;
+# only the exact owned class and the explicit responder retain identities. No caller-supplied object is a key.
+_PREPARED: list[tuple[weakref.ReferenceType[Pending], str, _CallerSnapshot, str,
+                      tuple[tuple[str, Any], ...]]] = []
+_PREPARED_LOCK = threading.RLock()
+JSON_CHARS = 1_000_000
+
+
+def _forget_prepared(ref: weakref.ReferenceType[Pending]) -> None:
+    with _PREPARED_LOCK:
+        _PREPARED[:] = [entry for entry in _PREPARED if entry[0] is not ref]
+
+
+def _json_copy(value: Any) -> Any:
+    """Bounded exact JSON types, then a canonical round trip. No subclass methods or custom encoders."""
+    active: set[int] = set()
+    remaining = JSON_CHARS
+    nodes = 100_000
+
+    def check(one: Any, depth: int) -> None:
+        nonlocal remaining, nodes
+        nodes -= 1
+        if depth > decode.MAX_DEPTH or nodes < 0:
+            raise ValueError("JSON nesting or item limit")
+        cls = type(one)
+        if cls is str:
+            remaining -= len(one)
+        elif cls is float:
+            if not math.isfinite(one):
+                raise ValueError("nonfinite JSON number")
+        elif cls is int:
+            if one.bit_length() > 4096:
+                raise ValueError("JSON integer too large")
+        elif one is None or cls is bool:
+            pass
+        elif cls is dict or cls is list:
+            if id(one) in active:
+                raise ValueError("JSON cycle")
+            active.add(id(one))
+            if cls is dict:
+                for key, child in one.items():
+                    if type(key) is not str:
+                        raise TypeError("JSON keys must be exact text")
+                    check(key, depth + 1)
+                    check(child, depth + 1)
+            else:
+                for child in one:
+                    check(child, depth + 1)
+            active.remove(id(one))
+        else:
+            raise TypeError("only exact JSON types are allowed")
+        if remaining < 0:
+            raise ValueError("JSON character limit")
+
+    check(value, 0)
+    text = _child.canonical(value)
+    if len(text) > JSON_CHARS:
+        raise ValueError("JSON character limit")
+    return json.loads(text)
+
+
+def _plain_budget(value: Any) -> Budget:
+    if type(value) is not Budget:
+        raise TypeError("budget must be G6's Budget")
+    calls, chars, seconds = value.max_model_calls, value.max_output_chars, value.max_wall_clock_s
+    if type(calls) is not int or type(chars) is not int or not any(type(seconds) is cls for cls in (int, float)):
+        raise TypeError("budget limits must be exact numbers")
+    if calls < 1 or chars < 1 or not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError("budget limits must be finite and positive")
+    return Budget(max_model_calls=calls, max_output_chars=chars, max_wall_clock_s=float(seconds))
+
+
+def _snapshot_data(snapshot: _CallerSnapshot) -> dict[str, Any]:
+    """Only exact scalar fields and identity tokens enter the seal's digest."""
+    # _snapshot_kind checks every field's exact type before this helper is used.
+    return {"class_identity": id(snapshot.cls), "responder_identity": id(snapshot.responder),
+            "kind": snapshot.kind, "model": snapshot.model, "program": snapshot.program,
+            "base_url": snapshot.base_url, "route": list(snapshot.route) if snapshot.route is not None else None,
+            "timeout": snapshot.timeout, "default": snapshot.default, "weights": snapshot.weights,
+            "adapter_dir": snapshot.adapter_dir, "max_new_tokens": snapshot.max_new_tokens, "why": snapshot.why}
+
+
+def _seal(values: dict[str, Any], snapshot: _CallerSnapshot) -> Pending:
+    plain = _json_copy(values)
+    package = _package(plain["component"])
+    names = (*plain["functions"], plain["validator"], plain["checker"], plain["inside"])
+    owned = tuple((name, _child.resolve(name, package)) for name in names if name)
+    text = _child.canonical(plain)
+    bound = digest({"data": plain, "caller": _snapshot_data(snapshot),
+                    "code": [[name, id(function)] for name, function in owned]})
+    summary = "Override execution details\n" + "\n".join(f"{key}: {value}" for key, value in plain["binding"].items())
+    summary += (f"\nPreparation digest: {bound}\nThe substitute is not covered by that function's tests or any "
+                "certificate. It is qualified-draft at best, with the original answer beside it. "
+                "Model calls require provider consent; no per-override question is asked.")
+    pending = Pending(**{**plain, "functions": tuple(plain["functions"]), "budget": Budget(**plain["budget"]),
+                         "caller": snapshot, "digest": bound, "question": summary})
+    with _PREPARED_LOCK:
+        _PREPARED.append((weakref.ref(pending, _forget_prepared), text, snapshot, bound, owned))
+    return pending
 
 
 def person_caller() -> Any:
@@ -224,7 +324,7 @@ def _door(code: str) -> bool:
     return code in DOOR_CODES or any(word in code for word in DOOR_WORDS)
 
 
-def _model_name(caller: Any) -> str:
+def _model_name(caller: _CallerSnapshot) -> str:
     name = caller.cls.__name__ + (f":{caller.model}" if caller.model else "")
     return re.sub(r"[^A-Za-z0-9_.:/@+\-]", "_", name)[:200]   # the ledger's name pattern: any other character is _
 
@@ -373,11 +473,11 @@ def _source_digest(functions: Iterable[str], package: str) -> str:
 def prepare(component: str, op: str, params: Any, *, part: str | None = None, mode: str = "prompt", reason: str = "",
             allow: Iterable[str] = (), llm: Any = None, budget: Budget | None = None,
             request_id: str = "") -> dict[str, Any] | Pending:
-    """All input reads and question construction share one Exception-to-envelope boundary."""
+    """All input reads and sealing share one Exception-to-envelope boundary."""
     try:
         return _prepare(component, op, params, part=part, mode=mode, reason=reason, allow=allow, llm=llm,
                         budget=budget, request_id=request_id)
-    except Exception:  # noqa: BLE001 - no caller attribute or question builder may escape this API
+    except Exception:  # noqa: BLE001 - no caller attribute or summary builder may escape this API
         return _input_refused()
 
 
@@ -389,7 +489,10 @@ def _input_refused(original: Mapping[str, Any] | None = None) -> dict[str, Any]:
 def _prepare(component: str, op: str, params: Any, *, part: str | None, mode: str, reason: str,
              allow: Iterable[str], llm: Any, budget: Budget | None, request_id: str) -> dict[str, Any] | Pending:
     """Run the original and find the trigger: the reply to return (no trigger, or a refusal), or a :class:`Pending`
-    override and its question."""
+    override and its execution summary."""
+    if any(type(value) is not str for value in (component, op, mode, reason, request_id)) \
+            or (part is not None and type(part) is not str):
+        return _input_refused()
     request_id = request_id or uuid.uuid4().hex[:12]
     if mode == "code":
         return _refused(MODE_UNAVAILABLE, "code mode (a model's edit of the function, run confined) is not available in "
@@ -398,12 +501,11 @@ def _prepare(component: str, op: str, params: Any, *, part: str | None, mode: st
     if mode not in MODES:
         return _refused("G6_E_INPUT_VALIDATION", f"mode must be one of {list(MODES)}", request_id=request_id)
     try:   # digested and made canonical here, inside the reply's path: a value no JSON holds is refused, never raised
-        if not isinstance(params, Mapping):
+        if type(params) is not dict:
             return _refused("G6_E_INPUT_VALIDATION", "the op's parameters must be a JSON object", request_id=request_id)
+        params = _json_copy(params)
         params_digest = digest(params)
-        _child.canonical(params)
-        params = dict(params)
-        reason = str(reason)[:REASON_CHARS]
+        reason = reason[:REASON_CHARS]
     except Exception as exc:  # noqa: BLE001 - a host mapping or reason may fail with any Exception
         return _refused("G6_E_INPUT_VALIDATION", "the op's parameters must be JSON values: finite numbers, text, "
                                                  f"true, false, null, lists and objects with text keys "
@@ -464,7 +566,7 @@ def _prepare(component: str, op: str, params: Any, *, part: str | None, mode: st
         kind, why = _snapshot_kind(caller)
         if why:
             return _unmetered(why, original, request_id)
-        budget = budget or DEFAULT_BUDGET
+        budget = _plain_budget(DEFAULT_BUDGET if budget is None else budget)
         functions = tuple(spec["functions"])
         model = _model_name(caller)
         quoted = json.dumps(reason) if reason.strip() else "(none given)"
@@ -492,25 +594,15 @@ def _prepare(component: str, op: str, params: Any, *, part: str | None, mode: st
                       "waiting at the deadline, and a model reply that arrives after the deadline is not used; the "
                       "operation runs again in an isolated child with no network that writes only its own folder",
         }
-        question_digest = digest({"binding": binding, "params": binding["Parameters digest"], "functions": list(functions),
-                                  "mode": mode, "trigger": trigger})
-        from g6.mcp.consent import question
+        return _seal(dict(component=component, op=op, params=params, part=name, functions=list(functions),
+                          validator=spec["validator"], checker=getattr(module, "__g6_agentic_check__", "") or "",
+                          inside=getattr(module, "__g6_agentic_inside__", "") or "", mode=mode,
+                          reason=reason, trigger=trigger, original=original, binding=binding,
+                          source_digest=_source_digest(functions, package), model=model,
+                          budget={"max_model_calls": budget.max_model_calls, "max_output_chars": budget.max_output_chars,
+                                  "max_wall_clock_s": budget.max_wall_clock_s}, request_id=request_id), caller)
 
-        text = question(
-            "Let a model stand in for part of G6's code, for this one call?", {**binding, "Question digest": question_digest},
-            ["The substitute is not covered by that function's tests or by any certificate. The result is labelled "
-             "qualified-draft at best, never verified, with G6's own answer kept beside it.",
-             "You make the final call: G6 and the model only propose."],
-            close="Type your name to allow it; it is recorded as given, not authenticated. Decline, and G6's own answer "
-                  "stands.")
-        return Pending(component=component, op=op, params=params, part=name, functions=functions,
-                       validator=str(spec["validator"]), checker=str(getattr(module, "__g6_agentic_check__", "") or ""),
-                       inside=str(getattr(module, "__g6_agentic_inside__", "") or ""), mode=mode,
-                       reason=str(reason)[:REASON_CHARS], trigger=trigger, original=original, binding=binding,
-                       digest=question_digest, question=text, source_digest=_source_digest(functions, package),
-                       model=model, budget=budget, request_id=request_id, caller=caller)
-
-    except Exception:  # noqa: BLE001 - all snapshot reads and question construction are input validation
+    except Exception:  # noqa: BLE001 - all snapshot reads and summary construction are input validation
         return _input_refused(original)
 
 
@@ -532,12 +624,12 @@ class _OutOfBudget(BudgetExhausted):
 
 def _wrapper_slot(caller: Any) -> str | None:
     """Only exact G6 wrapper classes are walked; the published subclass contract is too broad for overrides."""
-    if "complete" in vars(caller):
-        return None
     for qualified, kind in consent_callers.CALLER_KINDS.items():
         module, _, name = qualified.rpartition(".")
         owner = sys.modules.get(module)
         if owner is not None and type(caller) is getattr(owner, name, None):
+            if "complete" in object.__getattribute__(caller, "__dict__"):
+                return None
             return kind.partition(":")[2] if kind.startswith("wrapper:") else None
     return None
 
@@ -633,7 +725,11 @@ def _snapshot(caller: Any, *, explicit: bool) -> _CallerSnapshot:
         return _CallerSnapshot(cls, "", why=f"{cls.__name__}, a modified caller")
     program = _host_program(cls)
     if program or any(cls is owned for owned in (llm.OllamaCaller, llm.OpenAICompatibleCaller)):
-        model, timeout = _plain(raw.model), float(raw.timeout)
+        model = _plain(raw.model)
+        timeout = raw.timeout
+        if not any(type(timeout) is number for number in (int, float)):
+            raise TypeError("timeout must be an exact number")
+        timeout = float(timeout)
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be finite and above zero")
         if program:
@@ -642,7 +738,7 @@ def _snapshot(caller: Any, *, explicit: bool) -> _CallerSnapshot:
         route = urlsplit(base_url)
         return _CallerSnapshot(cls, "endpoint", model=model, base_url=base_url, route=route, timeout=timeout)
     if cls is llm.FakeLLM:
-        named = getattr(raw, "model", "")   # a name only, for the question and the ledger; never used to send
+        named = getattr(raw, "model", "")   # a name only, for the execution summary and ledger; never used to send
         named = _plain(named) if isinstance(named, str) else ""
         responder = raw._responder
         if responder is not None:
@@ -659,8 +755,10 @@ def _snapshot(caller: Any, *, explicit: bool) -> _CallerSnapshot:
         return _CallerSnapshot(cls, "local", weights=_plain(raw.weights))
     owner = sys.modules.get("g6.metaharness.lora")
     if owner is not None and cls is owner.AdapterCaller:
+        if type(raw.max_new_tokens) is not int:
+            raise TypeError("max_new_tokens must be an exact integer")
         return _CallerSnapshot(cls, "local", model=_plain(raw.base_model), adapter_dir=_plain(raw.adapter_dir),
-                               max_new_tokens=int(raw.max_new_tokens))
+                               max_new_tokens=raw.max_new_tokens)
     why = ("Anthropic SDK (sdk), whose transport has no total deadline" if cls is llm.AnthropicCaller else
            f"{cls.__name__}, an unknown caller, subclass or wrapper")
     return _CallerSnapshot(cls, "", why=why)
@@ -709,7 +807,7 @@ def _unmetered(why: str, original: Mapping[str, Any], request_id: str) -> dict[s
 
 
 def _bound(kind: str, caller: _CallerSnapshot) -> str:
-    """What the question says holds each request of a ``kind`` caller: only what :class:`_Envelope` enforces."""
+    """What the execution summary says holds each request of a ``kind`` caller: only what :class:`_Envelope` enforces."""
     if kind == "endpoint":
         return ("this endpoint is a loopback server on this machine: a dripping reply is the person's own process, "
                 "and the timeout is per operation, not a total network deadline; "
@@ -820,10 +918,10 @@ class _Envelope:
     the re-check included: none starts with less than :meth:`floor` left; a child, and each request to the model, is
     given the time left (:meth:`_cut`, set again at each request); a host client is started once per call; G6 stops
     waiting for a model call at the deadline, and a reply or a run that returns after it is not used. Only callers
-    :func:`_kind` names can be held so; any other is refused before the question."""
+    :func:`_kind` names can be held so; any other is refused before execution."""
 
     def __init__(self, caller: _CallerSnapshot, budget: Budget) -> None:
-        self.budget = budget
+        self.budget = _plain_budget(budget)
         self._lock = threading.Lock()
         self._start = time.monotonic()   # the override's one deadline starts now
         self.calls = self.failed_calls = self.output_chars = 0
@@ -942,7 +1040,11 @@ class _Envelope:
                 # Exception formatting can also be caller code. Only plain data crosses the join.
                 box["error"] = True
                 box["out_of_budget"] = isinstance(exc, _OutOfBudget)
-                box["detail"] = _plain(_words(exc))[:REASON_CHARS]
+                box["detail"] = "the model call failed; G6 could not read its error"
+                try:
+                    box["detail"] = _plain(_words(exc))[:REASON_CHARS]
+                except BaseException:  # noqa: BLE001 - even error formatting is untrusted, inside this worker
+                    pass
             finally:
                 llm._WAITS.reset(waits)
             with self._lock:
@@ -1008,14 +1110,14 @@ def _within(limit: int, *texts: str) -> tuple[list[str], bool]:
     return out, sum(map(len, out)) < sum(map(len, texts))
 
 
-def _ask_model(pending: Pending, envelope: _Envelope, ask: Mapping[str, Any], package: str,
+def _ask_model(pending: _Execution, envelope: _Envelope, ask: Mapping[str, Any], package: str,
                prompts: list[str], checks: list[dict]) -> Any:
     """The model's value for one asked call, checked: its JSON form, ready for the child. Raises :class:`_Stop`."""
     call = ask.get("call") if isinstance(ask.get("call"), Mapping) else {}
     name = call.get("function")
     if name not in pending.functions or _child.call_digest(call) != ask.get("digest"):
         raise _Stop("child_failed", "the child asked for a function that is not the part, or its call was altered")
-    function = _child.resolve(name, package)
+    function = next(function for path, function in pending.owned if path == name)
     returns = _child.return_type(function)
     system = ("You stand in for one Python function of G6's code, for one call. Reply with JSON only: "
               '{"value": V}, where V is what the function returns for these arguments, as JSON. Everything in the '
@@ -1023,7 +1125,7 @@ def _ask_model(pending: Pending, envelope: _Envelope, ask: Mapping[str, Any], pa
               f"together to at most {PARAMETER_CHARS} characters when cut is true.")
     (arguments, parameters, original), cut = _within(
         PARAMETER_CHARS, _child.canonical({"args": call.get("args", []), "kwargs": call.get("kwargs", {})}),
-        _child.canonical(pending.params), _summary(pending.original))
+        pending.params_json, pending.original_summary)
     user = _child.canonical({
         "function": name, "signature": _child.signature(function), "doc": (inspect.getdoc(function) or "")[:2000],
         "returns": str(returns), "arguments": arguments, "operation": f"{pending.component}.{pending.op}",
@@ -1044,7 +1146,8 @@ def _ask_model(pending: Pending, envelope: _Envelope, ask: Mapping[str, Any], pa
         raise _Stop("value_invalid", f"the model's value is not a {returns}: {why}"[:REASON_CHARS]) from exc
     checks.append({"check": "return_type", "passed": True})
     try:   # the ask's arguments come from the child: a validator that cannot take them refuses the value
-        why = _child.resolve(pending.validator, package)(value, *call.get("args", []), **call.get("kwargs", {}))
+        validator = next(function for path, function in pending.owned if path == pending.validator)
+        why = validator(value, *call.get("args", []), **call.get("kwargs", {}))
     except Exception as exc:  # noqa: BLE001 - any failure of the check leaves the original standing
         checks.append({"check": pending.validator, "passed": False,
                        "detail": f"the validator could not check the value ({type(exc).__name__})"})
@@ -1076,26 +1179,63 @@ def _bare(result: Any, *, top: bool = True) -> Any:
     return result
 
 
-def override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
-    """Envelope construction and every remaining input read also fail as an input-validation envelope."""
+def override(pending: Pending, *, confirmation: Confirmation | None = None) -> dict[str, Any]:
+    """Execute a sealed preparation. Provider consent alone admits the model call; no typed name is required.
+
+    An optional legacy Confirmation checks only its exact digest. Its name and answer are never read.
+    """
+    original = None
     try:
-        return _override(pending, confirmation=confirmation)
+        if type(pending) is not Pending:
+            return _input_refused()
+        with _PREPARED_LOCK:
+            saved = next((entry for entry in _PREPARED if entry[0]() is pending), None)
+        if saved is None:
+            return _refused(DIGEST_MISMATCH, "G6 has no sealed preparation for this override")
+        _, text, public_snapshot, expected, owned = saved
+        data = json.loads(text)
+        original = data["original"]
+        if type(public_snapshot) is not _CallerSnapshot:
+            return _unmetered("a replaced snapshot class", original, data["request_id"])
+        # Capture every snapshot field first, without operating on any of their values. Validate this private copy
+        # before digesting or formatting it; subsequent public mutations cannot affect execution.
+        snapshot = _CallerSnapshot(**{name: object.__getattribute__(public_snapshot, name)
+                                      for name in _CallerSnapshot.__dataclass_fields__})
+        kind, why = _snapshot_kind(snapshot)
+        if why:
+            return _unmetered(why, data["original"], data["request_id"])
+        package = _package(data["component"])
+        current_code = tuple((name, _child.resolve(name, package)) for name, _ in owned)
+        if any(current is not prepared for (_, current), (_, prepared) in zip(current_code, owned, strict=True)):
+            return _refused(DIGEST_MISMATCH, "the prepared component code identity changed", original=original,
+                            request_id=data["request_id"])
+        actual = digest({"data": data, "caller": _snapshot_data(snapshot),
+                         "code": [[name, id(function)] for name, function in current_code]})
+        supplied = expected
+        if confirmation is not None:
+            if type(confirmation) is not Confirmation:
+                return _refused(DIGEST_MISMATCH, "the legacy digest is not plain text", original=data["original"])
+            supplied = confirmation.digest
+        if type(expected) is not str or type(actual) is not str or type(supplied) is not str \
+                or actual != expected or supplied != expected:
+            return _refused(DIGEST_MISMATCH, "the sealed override digest changed; nothing was constructed or sent",
+                            original=data["original"], request_id=data["request_id"])
+        execution = _Execution(**{**data, "functions": tuple(data["functions"]), "budget": Budget(**data["budget"]),
+                                  "caller": snapshot, "digest": expected, "question": "", "owned": owned,
+                                  "params_json": _child.canonical(data["params"]),
+                                  "params_digest": digest(data["params"]), "original_summary": _summary(original)})
+        return _override(execution)
     except Exception:  # noqa: BLE001 - includes constructor failures before the execution envelope exists
-        return _input_refused(pending.original if type(pending) is Pending and type(pending.original) is dict else None)
+        return _input_refused(original)
 
 
-def _override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
-    """Run ``pending`` once ``confirmation`` agrees to its question: the substitute's labelled reply, or the original's
-    answer marked degraded when anything on the way fails."""
-    if not isinstance(confirmation, Confirmation) or confirmation.digest != pending.digest:
-        return _refused(DIGEST_MISMATCH, "the answer is not for this question's digest, so it allows nothing; ask "
-                                         "the person again", original=pending.original, request_id=pending.request_id)
+def _override(pending: _Execution) -> dict[str, Any]:
+    """Run G6's private plain copy; every decision and recorded field comes from this copy."""
     kind, why = _snapshot_kind(pending.caller)
     if why:
         return _unmetered(why, pending.original, pending.request_id)
-    # An answer to a question for another allowed kind does not cover its different bounds either.
     if _bound(kind, pending.caller) not in pending.binding["Limits"]:
-        return _refused(DIGEST_MISMATCH, "the caller's bounds changed; ask the person again",
+        return _refused(DIGEST_MISMATCH, "the prepared caller's bounds changed",
                         original=pending.original, request_id=pending.request_id)
     package = _package(pending.component)
     envelope = _Envelope(pending.caller, pending.budget)
@@ -1107,7 +1247,7 @@ def _override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]
     record: dict[str, Any] = {
         "outcome": "", "substituted": False, "trigger": pending.trigger, "part": pending.part,
         "functions": list(pending.functions), "mode": pending.mode, "model": pending.model, "component": pending.component,
-        "op": pending.op, "person": {"answer": confirmation.answer, "name": str(confirmation.name)[:200], "authenticated": False},
+        "op": pending.op, "person": {"answer": "provider consent", "name": "", "authenticated": False},
         "budget": {"max_model_calls": pending.budget.max_model_calls, "max_output_chars": pending.budget.max_output_chars,
                    "max_wall_clock_s": pending.budget.max_wall_clock_s},
         "note": NOTE}
@@ -1184,7 +1324,7 @@ def _override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]
     record["checks"] = checks
     record["isolation"] = isolation
     record["digests"] = {"source": pending.source_digest, "prompts": prompts, "question": pending.digest,
-                         "params": digest(pending.params), "result": digest(result) if result is not None else ""}
+                         "params": pending.params_digest, "result": digest(result) if result is not None else ""}
     record["cost"] = {"model_calls": envelope.calls, "failed_model_calls": envelope.failed_calls,
                       "output_chars": envelope.output_chars, "child_runs": runs,
                       "seconds": round(envelope.elapsed_s(), 3)}
@@ -1210,7 +1350,7 @@ def _override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]
                         f"This result came from a model's substitute for {pending.part} ({', '.join(pending.functions)}) "
                         f"of {pending.component}.{pending.op}, for this call only: not G6's tested behaviour, and not "
                         f"covered by that function's tests or by any certificate; {recheck}. G6's own answer is in "
-                        "'original'.",
+                        f"'original'. Model used: {pending.model}; the original answer stands beside it.",
                         "Treat it as a proposal and check it before relying on it: it never passes a requirement and "
                         "is never evidence in another G6 check.")
     fields = envelope_fields(reliability_label=state, warning_card=card, evidence=[], request_id=pending.request_id,
@@ -1220,12 +1360,12 @@ def _override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]
 
 
 def declined(pending: Pending, status: str) -> dict[str, Any]:
-    """The original's answer, standing, when the person's dialog ended without their agreement (``status``)."""
+    """Legacy caller cancellation helper. Provider consent, rather than an override dialog, admits calls."""
     reply = dict(pending.original)
     reply["agentic"] = {"outcome": "not_run", "substituted": False, "consent_status": status,
                         "trigger": pending.trigger, "part": pending.part, "question_digest": pending.digest,
-                        "note": "Nothing was substituted: the person did not agree in the client's dialog, so G6's "
-                                "own answer stands. Ask the person; there is no other way to agree."}
+                        "note": "Nothing was substituted: the caller cancelled this prepared override, so the original "
+                                "answer stands beside the cancellation status."}
     return reply
 
 
@@ -1235,7 +1375,7 @@ def run(component: str, op: str, params: Any = None, *, part: str | None = None,
     """From Python: ``component.op`` on ``params`` through the door; with a trigger, the override, which your own
     ``allow`` agrees to. ``allow`` must name ``agentic.run`` (the kernel's allowance) and, for a sensitive op, the op
     (as ``g6.invoke`` takes it); ``G6_MCP_SENSITIVE`` counts too. ``llm`` is the model (default: the one the person
-    configured, through the consent guard); ``name`` is recorded as given."""
+    configured, through the consent guard). The legacy ``name`` argument is ignored; no name is required."""
     names = [allow] if isinstance(allow, str) else list(allow)
     granted = allowed_sensitive() | frozenset(p.strip() for n in names for p in str(n).split(",") if p.strip())
     prepared = prepare(component, op, {} if params is None else params, part=part, mode=mode, reason=reason,
@@ -1248,7 +1388,7 @@ def run(component: str, op: str, params: Any = None, *, part: str | None = None,
                         "part of it. Allow it in your own code with allow=('agentic.run', ...), or list agentic.run in "
                         f"{SENSITIVE_ENV} where you start G6.", original=prepared.original,
                         request_id=prepared.request_id)
-    return override(prepared, confirmation=Confirmation(prepared.digest, name, "allowed in code"))
+    return override(prepared)
 
 
 __all__ = ["ALLOWANCE", "Budget", "Confirmation", "DEFAULT_BUDGET", "DOOR_CODES", "MODES", "NOTE", "Pending",

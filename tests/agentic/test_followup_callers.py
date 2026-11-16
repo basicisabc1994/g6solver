@@ -60,7 +60,7 @@ def test_override_rechecks_caller_after_prepare(monkeypatch, replacement):
         # Repair ruling: the original object's mutation cannot change G6's prepared snapshot.
         assert reply["agentic"]["outcome"] == "degraded" and len(started) == 1
         return
-    assert reply["agentic"]["code"] == "G6_E_AGENTIC_CALLER_UNMETERED"
+    assert reply["agentic"]["code"] == kernel.DIGEST_MISMATCH  # a copied Pending has no issued seal
     assert started == []
 
 

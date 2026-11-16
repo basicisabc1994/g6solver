@@ -5,8 +5,8 @@
 ``g6_allowances`` for both providers' quota windows and advisory pacing (``g6.allowance``);
 ``g6_review_patch``, which assesses a Python patch against stated requirements in confined test runs, as a job;
 ``g6_review_until_clean``, one step of the completion loop for a client the plugin's hook cannot reach (``g6.mcp.review_loop``),
-as a job; ``g6_agentic_run``, which asks the person in the client's own dialog before a model stands in for one part a
-component declares, after that component refuses with a limit it declares, as a job (``g6.mcp.agentic``);
+as a job; ``g6_agentic_run``, which runs a confined model substitute for a declared part after the component refuses
+with a declared limit, covered by provider consent, with the original answer beside it (``g6.mcp.agentic``);
 ``g6_premortem`` and six ``g6_mission_*`` tools (``_create``, ``_clarify``, ``_confirm``, ``_submit``, ``_status``,
 ``_certificate``) for a coding mission (``g6.mcp.mission``), where what a person allows and confirms goes through the
 client's own dialog and nowhere else, and the check step is the patch review; ``g6_confirm_behaviour``, one behaviour

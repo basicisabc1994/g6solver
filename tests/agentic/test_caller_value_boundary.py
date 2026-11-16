@@ -238,16 +238,17 @@ def test_error_formatting_is_also_inside_the_deadline_worker(monkeypatch):
 
 def test_classification_ast_has_no_class_equality_membership_or_hash_tables():
     # This census is required by F1 in addition to the behavioral adversaries above.
-    names = {"_host_program", "_class_kind", "_snapshot", "_snapshot_kind", "_no_model", "_fresh",
-             "_check_seam", "_new_host"}
     found = []
     for module in (kernel, usage):
         tree = ast.parse(inspect.getsource(module))
-        for function in (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names):
+        for function in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
             # In usage kind is a class; in the kernel it is a plain string returned by classification.
-            class_names = {"cls", "base", "native", "host", "owned"}
-            if module is usage:
+            class_names = {"cls", "native", "owned"}
+            if function.name == "_host_program":
+                class_names.add("host")
+            if module is usage and function.name in {"_check_seam", "_new_host"}:
                 class_names.add("kind")
+                class_names.add("base")
             for node in ast.walk(function):
                 if isinstance(node, ast.Compare) and any(isinstance(op, (ast.Eq, ast.NotEq, ast.In, ast.NotIn))
                                                         for op in node.ops):
@@ -263,3 +264,70 @@ def test_classification_ast_has_no_class_equality_membership_or_hash_tables():
                         and any(isinstance(arg, ast.Name) and arg.id == "cls" for arg in node.args):
                     found.append((function.name, node.lineno))
     assert found == []
+    assert boundary_operations(ast.parse(inspect.getsource(kernel))) == []
+
+
+def boundary_operations(tree):
+    """Census every function, following caller parameters through attribute chains.
+
+    G6 snapshot/execution annotations declare the owned side of the boundary; self is an owned implementation.
+    Plain scalar locals are checked separately by the class census and the behavioral adversaries.
+    """
+    found = []
+    held_attributes = set()
+    for function in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
+        caller_args = {a.arg for a in function.args.args if a.arg != "self" and
+                       (a.annotation is None or ast.unparse(a.annotation) not in {"_CallerSnapshot", "_Execution"})}
+        for assignment in (n for n in ast.walk(function) if isinstance(n, ast.Assign)):
+            if isinstance(assignment.value, ast.Name) and assignment.value.id in caller_args:
+                held_attributes.update(ast.unparse(t) for t in assignment.targets if isinstance(t, ast.Attribute))
+    for function in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
+        untrusted = {a.arg for a in function.args.args if a.arg != "self" and
+                     (a.annotation is None or ast.unparse(a.annotation) not in {"_CallerSnapshot", "_Execution"})}
+        # A canonicalizer assignment creates a G6-owned value. The helper's own parameter is still scanned.
+        for assignment in (n for n in ast.walk(function) if isinstance(n, ast.Assign)):
+            if isinstance(assignment.value, ast.Call) and isinstance(assignment.value.func, ast.Name) \
+                    and assignment.value.func.id in {"_plain_budget", "_json_copy"}:
+                for target in assignment.targets:
+                    if isinstance(target, ast.Name):
+                        untrusted.discard(target.id)
+
+        def held(node):
+            if not isinstance(node, ast.Attribute):
+                return False
+            while isinstance(node, ast.Attribute):
+                if ast.unparse(node) in held_attributes:
+                    return True
+                node = node.value
+            return isinstance(node, ast.Name) and node.id in untrusted
+
+        for node in ast.walk(function):
+            if isinstance(node, ast.Compare) and any(isinstance(op, (ast.Eq, ast.NotEq, ast.In, ast.NotIn,
+                                                                     ast.Lt, ast.Gt, ast.LtE, ast.GtE))
+                                                     for op in node.ops):
+                values = (node.left, *node.comparators)
+                if any(held(v) for v in values):
+                    found.append((function.name, node.lineno, "caller attribute comparison"))
+                if any(isinstance(v, ast.Call) and isinstance(v.func, ast.Name) and v.func.id == "vars"
+                       for v in values):
+                    found.append((function.name, node.lineno, "vars membership"))
+            if isinstance(node, ast.BinOp) and any(held(v) for v in (node.left, node.right)):
+                found.append((function.name, node.lineno, "caller number arithmetic"))
+    return found
+
+
+def test_boundary_census_recognizes_review3_shapes_anywhere():
+    source = '''
+def previously_unlisted(x, y):
+    if "complete" in vars(x): pass
+    if x.attr != y: pass
+    return x.seconds - y
+class Other:
+    def __init__(self, budget):
+        self.budget = budget
+    def time_left(self, elapsed):
+        return self.budget.seconds - elapsed
+'''
+    # The module-wide census must also reject the current unsafe source, beyond its former eight-function list.
+    assert len(boundary_operations(ast.parse(source))) == 4
+    assert boundary_operations(ast.parse(inspect.getsource(kernel))) == []

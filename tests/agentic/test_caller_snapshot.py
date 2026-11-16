@@ -140,11 +140,9 @@ def test_unreadable_snapshot_is_input_envelope_without_private_text(monkeypatch,
     assert "private" not in json.dumps(reply)
 
 
-def test_question_build_failure_is_input_envelope(monkeypatch):
-    import g6.mcp.consent as consent
-
+def test_preparation_summary_build_failure_is_input_envelope(monkeypatch):
     no_child(monkeypatch)
-    monkeypatch.setattr(consent, "question", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("private question")))
+    monkeypatch.setattr(kernel, "_seal", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("private summary")))
     reply = prepare(llm.FakeLLM())
     assert isinstance(reply, dict) and reply["warning_card"]["code"] == "G6_E_INPUT_VALIDATION"
     assert "private" not in json.dumps(reply)
@@ -226,10 +224,11 @@ def test_override_rechecks_proxy_for_snapshot_route(monkeypatch):
 
 
 def test_foreign_caller_cannot_replace_the_snapshot(monkeypatch):
-    no_child(monkeypatch)
+    started = no_child(monkeypatch)
     pending = prepare(llm.FakeLLM())
     pending = dataclasses.replace(pending, caller=object())
-    assert finish(pending)["agentic"]["code"] == kernel.CALLER_UNMETERED
+    assert finish(pending)["agentic"]["code"] == kernel.DIGEST_MISMATCH
+    assert started == []   # dataclasses.replace did not issue a sealed preparation
 
 
 @pytest.mark.parametrize("native", [host_models.ClaudeCodeCaller, host_models.CodexCaller])
