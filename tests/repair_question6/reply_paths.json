@@ -799,6 +799,23 @@
       "None",
       "str(path)"
     ],
+    "record/branches": [
+      "except (OSError, ValueError, TypeError, AttributeError)"
+    ],
+    "record": [
+      "None"
+    ],
+    "carried/branches": [
+      "if not all((stat.S_ISREG(os.lstat(one).st_mode) for one in (path, side)))",
+      "if not isinstance(entry, dict) or entry.get('version') != SOURCES or entry.get('reply_sha256') != hashlib.sha256(path.read_bytes()).hexdigest() or (not isinstance(entry.get('sources'), list)) or (not entry['sources'])",
+      "except (OSError, ValueError, TypeError, KeyError, AttributeError)"
+    ],
+    "carried": [
+      "None",
+      "None",
+      "tuple((cloud.Source(one['source'], one['item'], one['content'], one['recorded']) for one in entry['sources']))",
+      "None"
+    ],
     "_shorten/branches": [
       "if isinstance(value, str)",
       "if len(value) <= chars",
@@ -828,7 +845,8 @@
     "finish/branches": [
       "if not isinstance(reply, dict) or not isinstance(reply.get('assessment'), dict)",
       "if refs is not None",
-      "if saved"
+      "if saved",
+      "if recorded is not None"
     ],
     "finish": [
       "reply",

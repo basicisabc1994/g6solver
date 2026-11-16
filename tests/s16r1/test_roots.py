@@ -127,6 +127,10 @@ SOURCE_SITES = {
     'g6.mcp.consent_transport._Stream.send.handoff',
     'g6.mcp.mission.reply',
     'g6.mcp.review_reply.finish',
+    # 2026-11-16: a saved review's sources, recorded beside it and read back by finish; a record that does not read
+    # back is the storage folder's source (planted in tests/s16r3/test_review_reaches_asker.py)
+    'g6.mcp.review_reply.record',
+    'g6.mcp.review_reply.carried',
     'g6.metaharness.jobs.Jobs._run',
     'g6.metaharness.jobs.Jobs._status_reply',
     'g6.metaharness.jobs.Jobs.start',
