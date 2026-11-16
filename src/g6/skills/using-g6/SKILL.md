@@ -56,8 +56,8 @@ For a Python task, work in this order (each step in full: `references/lifecycle.
    the real interface; then unit tests, then code.
 5. **Review.** Call `g6_review_patch` with the folder, the task and the requirements, then poll `metaharness_job`.
    Add optional inputs (`intent`, `template_instances`, `proposed_checks`) only in the shapes the tool's description
-   gives; a refused call names the field to fix. It needs host permission `patch_review.review`, which the person
-   grants with `g6 setup`; never change permissions yourself. Show the reply's `assessment["report"]` verbatim.
+   gives; a refused call names the field to fix. If host permission `patch_review.review` is missing, tell the person
+   and stop; never change permissions yourself. Show the reply's `assessment["report"]` verbatim.
 6. **Repair.** Fix what G6 reproduced, add each reproduction as a stated check, and review again. Stop after 3
    rounds, when a round changes nothing, or when the report says only the person can decide.
 7. **Honesty.** Never call a patch `verified`, and never merge for the person. The result rests on your own tests:

@@ -20,7 +20,7 @@ class Session:
 
 
 def test_agent_surface_census():
-    # Removing the safe route restriction or restoring component help text must fail here.
+    # Removing the safe route restriction or routing authority instructions must fail here.
     data = corpus.load()
     replies = [selector.select(task, "verify", considering=[
         {"component": "action_logic", "op": "assess_material_action", "args": {}},
@@ -34,9 +34,10 @@ def test_agent_surface_census():
     from g6.core import discovery, skills as component_skills
     from g6.core.agent_guidance import skill_for_agent
     from g6.core.registry import get_registry
-    from g6.mcp import describe_reply
+    from g6.mcp import describe_reply, invoke_reply
 
-    descriptions = [describe_reply(name) for name in ("workforce", "lean", "metaharness", "grounding")]
+    descriptions = [describe_reply(name) for name in get_registry().names()]
+    op_help = [invoke_reply(name, "help", "{}", allow_sensitive=frozenset()) for name in get_registry().names()]
     root = Path(__file__).resolve().parents[2]
     skills = [p.read_text(encoding="utf-8") for p in root.glob("**/using-g6/SKILL.md") if ".build" not in p.parts]
     skills += [skill_for_agent(component_skills.skill_text(name)) for name in get_registry().names()]
@@ -47,12 +48,14 @@ def test_agent_surface_census():
     tools = asyncio.run(build_server().get_tools())
     surfaces = {"corpus": data, "selection and next actions": replies, "repairs": blocks,
                 "denial and warning": denial, "hook context": lines, "agent skills": skills,
-                "descriptions": descriptions, "help": discovery.HELP,
+                "descriptions": descriptions, "help": [discovery.HELP, op_help],
                 "tool descriptions": [t.description for t in tools.values()]}
     from g6.mcp import mission, improve
 
     surfaces["mission and improvement denials"] = [mission.refused(), improve.refused()]
-    forbidden = r"allow\s*=|G6_MCP_SENSITIVE|allow_execution|\bconfirm\(|\bapprover\b|autonomous_low_risk|\bpromote\(|setup --allow|allow parameter"
+    forbidden = (r"allow\s*=|G6_MCP_SENSITIVE|G6_ALLOW_UNCONFINED|allow_execution|\ballow_sensitive\b|"
+                 r"\b(?:confirm|approve|grant|promote)\s*\(|\bapprover\b|autonomous_low_risk|"
+                 r"\bg6\s+setup\b|--allow|allow parameter")
     entries = {e["id"]: e for e in data["entries"] if e["kind"] == "op"}
     assert any(c["kind"] == "library" for r in replies for c in r["candidates"])
     for reply in replies:
@@ -69,8 +72,20 @@ def test_agent_surface_census():
                 entry = entries[f"op:{component}.{op}"]
                 assert not entry["sensitive"] and entry["validated"] and not entry["issues"]
                 assert params == json.loads(entry["call"]["arguments"]["params_json"])
-    bad = {name: sorted(set(re.findall(forbidden, json.dumps(value)))) for name, value in surfaces.items()
-           if re.search(forbidden, json.dumps(value))}
+    def strings(value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for key, child in value.items():
+                yield str(key)
+                yield from strings(child)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                yield from strings(child)
+
+    bad = {name: sorted({m.group() for text in strings(value) for m in re.finditer(forbidden, text, re.I)})
+           for name, value in surfaces.items()}
+    bad = {name: hits for name, hits in bad.items() if hits}
     assert not bad, bad
 
 

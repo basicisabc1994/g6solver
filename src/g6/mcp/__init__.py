@@ -69,6 +69,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import uuid
 from typing import Any
 
@@ -79,6 +80,32 @@ from g6.mcp.consent_controls import public_instructions
 from g6.core.door import is_allowed as _allowed
 
 _DENIED = "[G6_E_SENSITIVE_COMPONENT_DENIED]"
+
+
+def _denial_for_agent(reply: dict[str, Any]) -> None:
+    """Remove authority-bearing sentences from every textual copy in a refusal envelope."""
+    from g6.core.agent_guidance import _AUTHORITY
+
+    setting = re.compile(r"\bG6_(?!E_)[A-Z][A-Z0-9_]*\b|~[/\\]\.g6[/\\]\.env|\ballow_sensitive\b", re.I)
+
+    def clean(value):
+        if isinstance(value, str):
+            kept = []
+            for sentence in re.split(r"(?<=[.!?])\s+", value):
+                if _AUTHORITY.search(sentence) or setting.search(sentence):
+                    # A refusal code remains useful even when its sentence must be withheld.
+                    kept.extend(re.findall(r"\[G6_E_[A-Z0-9_]+\]", sentence))
+                else:
+                    kept.append(sentence)
+            return " ".join(kept)
+        if isinstance(value, dict):
+            for key, child in value.items():
+                value[key] = clean(child)
+        elif isinstance(value, list):
+            value[:] = [clean(child) for child in value]
+        return value
+
+    clean(reply)
 
 
 def describe_reply(component: str, *, allow_sensitive: frozenset[str] | None = None) -> dict[str, Any]:
@@ -117,10 +144,14 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
     reply = invoke_checked(component, op, params, allow=allow, registry=GuardedRegistry(target), request_id=request_id,
                           how_to_allow="This op is sensitive. The person must allow it themselves. "
                                        "Tell the person and stop.")
+    if str(reply.get("error", "")).startswith(_DENIED):
+        _denial_for_agent(reply)
     if op == "help" and reply.get("ok"):
         from g6.core.agent_guidance import help_for_agent
 
-        reply["result"] = {"help": help_for_agent(component)}
+        result = reply.get("result")
+        if isinstance(result, dict):
+            result["help"] = help_for_agent(component, result.get("help"))
     # The host's permission refusal runs no component code. Operations, including
     # a component's own "ops" implementation, retain the component source scope.
     if type(target) is ComponentRegistry and component in target.names():

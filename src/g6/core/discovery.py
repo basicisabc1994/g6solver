@@ -22,7 +22,6 @@ from collections import Counter
 from typing import Any
 
 from g6.core import vetting
-from g6.core.confine import UNCONFINED_WARNING
 from g6.core.door import THREAT_STATEMENT
 from g6.core.failure_modes import FailureModeRegistry, declared
 from g6.core.registry import get_registry
@@ -220,7 +219,7 @@ HELP = (
     "uses the one your user set in their key file (~/.g6/.env, for example G6_LLM_PROVIDER=claude_code); with none it "
     "is refused with a *_NO_MODEL code: then do that step yourself and call the op that checks it. A sensitive op (it "
     "runs a program, reaches the network or changes the machine) needs the person's own permission. "
-    "Tell the person; only they can allow it themselves. " + UNCONFINED_WARNING + " "
+    "Tell the person; only they can allow it themselves. "
     "To learn which G6 step "
     "fits each point of your work, load the using-g6 skill first; `g6 skills install` copies it into your "
     "agent's skills folder."
