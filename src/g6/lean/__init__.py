@@ -98,3 +98,9 @@ __g6_outside__ = (OutsideProgram(
 __all__ = ["LEAN_ENV", "LeanBlock", "LeanInput", "LeanResult", "Refusal", "SENSITIVE_OPS", "STANDARD_AXIOMS",
            "SearchResult", "check_proof", "declarations", "finish", "lean_output", "lean_version", "proof", "prove",
            "runner", "screen", "screen_statement", "search", "sketch"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_LEAN_NO_MODEL": ("tool:g6_select", "no_model"),
+}

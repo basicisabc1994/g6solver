@@ -58,3 +58,12 @@ __g6_introduces__: tuple[str, ...] = ()
 __all__ = ["SEVERITY", "CodingAgentGateBlock", "CodingAgentGateInput", "Evidence", "Finding", "GateDecision",
            "VerifierResult", "preflight", "scan_diff", "shortcut_hits", "stricter_of", "surface_state",
            "verify_answer", "PathExemption", "ProtectedPathsPolicy"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_CODING_AGENT_GATE_TASK_REQUIRED": "input",
+    "G6_E_PROTECTED_POLICY_FAILED": "person",
+    "G6_E_PROTECTED_POLICY_MISSING": "person",
+    "G6_E_PROTECTED_REVIEW_REQUIRED": ("person", "wait"),
+}

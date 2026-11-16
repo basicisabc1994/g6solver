@@ -19,7 +19,9 @@ and compares, so it cannot drift. It holds, as G6's own built-in text only:
   the fields the agent must supply: each its template holds as a placeholder or empty, and each the op's contract
   requires that the template leaves out (for an op that requires none, so that its empty template runs on defaults
   alone, the fields its help line's signature names). ``g6_select`` reads that and imports no component, so its reply never depends on what the host can
-  import; the build records no time, path or host value, so it is the same on every machine.
+  import; the build records no time, path or host value, so it is the same on every machine;
+* ``refusals``: who repairs each refusal each component writes, as its package declares it (``g6.core.refusals``,
+  read statically) or, for a bound package, ``refusals.OVERLAY``.
 
 The separate abstraction server is registered by the person alone, apart from ``g6-mcp`` (``SERVERS_NOT_SELECTED``).
 Apart from those runs, ``help`` and ``ops`` are each block's own description of itself.
@@ -637,6 +639,7 @@ def build() -> dict[str, Any]:
     """The corpus as the code stands. Imports each built-in component and asks its block for ``ops`` and ``help``,
     and runs each ``RUN_AT_BUILD`` op's template as given in a scratch G6 home; runs no other op, no model and no
     program."""
+    from g6.core import refusals
     from g6.skills import routing
 
     tools = _tools()
@@ -646,18 +649,20 @@ def build() -> dict[str, Any]:
     for entry in entries:
         entry["text"] = " ".join(entry["text"].split())
     return {"format": FORMAT, "release": routing.load().release, "phases": list(PHASES), "costs": list(COSTS),
-            "components": components, "entries": entries}
+            "components": components, "refusals": refusals.as_data(refusals.component_declarations()),
+            "entries": entries}
 
 
 def dumps(data: dict[str, Any]) -> str:
     """The corpus as its file is written: one entry a line, sorted, so a change shows as the lines it changes."""
-    head = {k: v for k, v in data.items() if k not in ("components", "entries")}
+    head = {k: v for k, v in data.items() if k not in ("components", "refusals", "entries")}
     lines = ["{"]
     lines += [f"  {json.dumps(k)}: {json.dumps(v, ensure_ascii=False)}," for k, v in head.items()]
-    lines.append('  "components": {')
-    lines.append(",\n".join(f"    {json.dumps(k)}: {json.dumps(v, ensure_ascii=False, sort_keys=True)}"
-                            for k, v in sorted(data["components"].items())))
-    lines.append("  },")
+    for section in ("components", "refusals"):
+        lines.append(f'  "{section}": {{')
+        lines.append(",\n".join(f"    {json.dumps(k)}: {json.dumps(v, ensure_ascii=False, sort_keys=True)}"
+                                for k, v in sorted(data[section].items())))
+        lines.append("  },")
     lines.append('  "entries": [')
     lines.append(",\n".join(f"    {json.dumps(e, ensure_ascii=False, sort_keys=True)}" for e in data["entries"]))
     lines.append("  ]")

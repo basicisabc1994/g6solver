@@ -51,3 +51,11 @@ __g6_outside__ = (GRAPHVIZ,)
 __g6_extras__: dict[str, tuple[str, ...]] = {"image": ("PIL",)}  # only to inspect a PNG; SVG and text need nothing
 
 __all__ = ["GRAPHVIZ", "SENSITIVE_OPS", "AdaptDiagramsBlock", "DiagramInput", "Edge", "Node", "TreeNode"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_MEDIA_DIAGRAM_DOES_NOT_PARSE": "none",
+    "G6_E_MEDIA_DIAGRAM_MISMATCH": "none",
+    "G6_E_MEDIA_LOADS_EXTERNAL": "none",
+}

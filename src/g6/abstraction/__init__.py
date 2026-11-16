@@ -74,3 +74,14 @@ __g6_requires__: tuple[str, ...] = ()
 __g6_mitigates__: tuple[str, ...] = ("blind_trial_and_error",)
 __g6_introduces__: tuple[str, ...] = ()
 __g6_extras__: dict[str, tuple[str, ...]] = {"abstraction": ("hypothesis", "numpy")}
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_ABSTRACTION_PATH_REFUSED": "none",
+    "G6_E_ABSTRACTION_REVIEW_REQUIRED": "person",
+    "G6_E_SENSITIVE_COMPONENT_DENIED": ("person",
+        "This op runs a program or changes the machine, and this server does not allow it. Only the person can, where "
+        "the server is registered: tell them the step, and what code it lets run. Never change it yourself.",
+        "g6 setup --allow <component.op>"),
+}

@@ -86,3 +86,21 @@ __g6_outside__ = (providers.OLLAMA,)
 __all__ = ["CognitiveTask", "CognitiveTaskRegistry", "LLMRouterBlock", "LLMRouterInput", "ModelProfile", "ModelTier",
            "OutcomeStore", "RouterResult", "SupervisionPolicy", "TaskRouter", "UseCase", "advice", "default_registry",
            "outcomes", "providers", "table"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_ROUTER_COMMITTED_TABLE": "none",
+    "G6_E_ROUTER_COST_ESTIMATE": "none",
+    "G6_E_ROUTER_INPUT_INVALID": "input",
+    "G6_E_ROUTER_LIVE_ANSWER": "none",
+    "G6_E_ROUTER_NO_MODEL": ("tool:g6_select", "no_model"),
+    "G6_E_ROUTER_NO_SUPERVISOR": "none",
+    "G6_E_ROUTER_PRICE_UNKNOWN": "none",
+    "G6_E_ROUTER_PROVIDER_ERROR": "person",
+    "G6_E_ROUTER_PROVIDER_UNREACHABLE": "person",
+    "G6_E_ROUTER_RECORDED_OUTCOMES": "none",
+    "G6_E_ROUTER_STALE_PRICE": "person",
+    "G6_E_ROUTER_STORE_FAILED": "none",
+    "G6_E_ROUTER_UNKNOWN_MODEL": "person",
+}

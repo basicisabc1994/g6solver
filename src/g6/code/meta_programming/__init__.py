@@ -40,3 +40,21 @@ __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["SENSITIVE_OPS", "MetaProgrammingBlock", "MetaProgrammingInput", "analyze", "edits", "extract", "runner",
            "scopes"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_CODE_RESOURCE_LIMIT": "person",
+    "G6_E_SYNTAX_ANALYSED": "none",
+    "G6_E_SYNTAX_DOES_NOT_PARSE": "input",
+    "G6_E_SYNTAX_EDITED": "none",
+    "G6_E_SYNTAX_EDIT_UNCHECKED": "none",
+    "G6_E_SYNTAX_EXTRACT_REFUSED": "none",
+    "G6_E_SYNTAX_INPUT": "input",
+    "G6_E_SYNTAX_PARSED": "none",
+    "G6_E_SYNTAX_RENAME_REFUSED": "none",
+    "G6_E_SYNTAX_TESTS_DID_NOT_RUN": "none",
+    "G6_E_SYNTAX_TESTS_FAILED": "none",
+    "G6_E_SYNTAX_TESTS_PASSED": "none",
+    "G6_E_SYNTAX_TEST_FORM_UNSUPPORTED": "person",
+}

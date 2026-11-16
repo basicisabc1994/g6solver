@@ -60,3 +60,18 @@ __g6_extras__: dict[str, tuple[str, ...]] = {"formal": ("z3",), "optim": ("numpy
 __all__ = ["CegisResult", "Control", "Counterexample", "Hole", "HoleKind", "Inconclusive", "InputDomain",
            "NoCounterexample", "Oracle", "Outcome", "Runner", "RunnerError", "RunnerTimeout", "SearchResult", "Sketch",
            "SubprocessRunner", "TableOracle", "TemplateFit", "Verifier", "Z3Verifier", "cegis", "fit_template"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_CEGIS_BUDGET_EXHAUSTED": "person",
+    "G6_E_CEGIS_DOMAIN_BOUNDED": "none",
+    "G6_E_CEGIS_INCONCLUSIVE": "none",
+    "G6_E_CEGIS_TEMPLATE_EXTRA": "person",
+    "G6_E_CEGIS_TEMPLATE_FAILED": "none",
+    "G6_E_CEGIS_TEMPLATE_INPUT": "input",
+    "G6_E_CEGIS_TEMPLATE_LEAK": "none",
+    "G6_E_CEGIS_TEMPLATE_TRAINING": "none",
+    "G6_E_CEGIS_TIMEOUT": "person",
+    "G6_E_CEGIS_UNSAT": "none",
+}

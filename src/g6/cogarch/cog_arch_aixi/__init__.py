@@ -43,3 +43,25 @@ __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["SENSITIVE_OPS", "CogArchAixiBlock", "CogArchAixiInput", "Environment", "agent", "ctw",
            "register_environment", "unregister_environment"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_AIXI_ACTED": "none",
+    "G6_E_AIXI_ACT_FIRST": "none",
+    "G6_E_AIXI_BEATS_RANDOM": "none",
+    "G6_E_AIXI_CAP": "none",
+    "G6_E_AIXI_CREATED": "none",
+    "G6_E_AIXI_DRY_RUN": "none",
+    "G6_E_AIXI_ENVIRONMENT": "none",
+    "G6_E_AIXI_EXISTS": "none",
+    "G6_E_AIXI_GATE": "person",
+    "G6_E_AIXI_INPUT": "input",
+    "G6_E_AIXI_NO_AGENT": "none",
+    "G6_E_AIXI_NO_BETTER_THAN_RANDOM": "none",
+    "G6_E_AIXI_NO_ENVIRONMENT": "none",
+    "G6_E_AIXI_OBSERVED": "none",
+    "G6_E_AIXI_OBSERVE_FIRST": "none",
+    "G6_E_AIXI_STORE": "none",
+    "G6_E_AIXI_STORE_BUSY": "retry",
+}

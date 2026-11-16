@@ -42,3 +42,16 @@ __g6_keys__ = (GOOGLE_KEY,)  # from the person's key file; a key there approves 
 
 __all__ = ["BACKENDS", "GOOGLE_KEY", "SENSITIVE_OPS", "CtxGeoBlock", "CtxGeoInput", "GeoAnswer", "GeoBackend",
            "GoogleBackend", "backends"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_GEO_ANSWERED": "none",
+    "G6_E_GEO_BACKENDS": "none",
+    "G6_E_GEO_DRY_RUN": "none",
+    "G6_E_GEO_HELD": "none",
+    "G6_E_GEO_INPUT": "input",
+    "G6_E_GEO_PARTIAL": "none",
+    "G6_E_GEO_UNKNOWN_BACKEND": "input",
+    "G6_E_GEO_ZERO_RESULTS": "none",
+}

@@ -56,3 +56,10 @@ __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["ATTRIBUTION", "DATASET", "PINNED", "SENSITIVE_OPS", "AustralianLegalCorpusBlock",
            "AustralianLegalCorpusInput", "Pin", "corpus", "store"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_LEGAL_CORPUS_INDEX_UNREADABLE": "none",
+    "G6_E_LEGAL_CORPUS_SEARCH_TOO_BROAD": "none",
+}

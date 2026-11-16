@@ -60,3 +60,26 @@ __g6_extras__: dict[str, tuple[str, ...]] = {"db": ("duckdb", "pg8000")}
 
 __all__ = ["BACKENDS", "ConnectionSettings", "Connections", "DatabaseBlock", "DatabaseInput", "DatabaseResult",
            "backends", "config", "ops", "register_backend", "sql"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_DB_COMMITTED": "none",
+    "G6_E_DB_CONFIG_INVALID": "person",
+    "G6_E_DB_CONNECT_FAILED": "none",
+    "G6_E_DB_DESTRUCTIVE_REFUSED": "none",
+    "G6_E_DB_DRY_RUN": "none",
+    "G6_E_DB_FILE_REFUSED": "none",
+    "G6_E_DB_GATE_ERROR": "person",
+    "G6_E_DB_GATE_HELD": "person",
+    "G6_E_DB_INPUT_INVALID": "input",
+    "G6_E_DB_LOCATION_IN_INPUT": "input",
+    "G6_E_DB_NOT_INSTALLED": "person",
+    "G6_E_DB_PLAN": "none",
+    "G6_E_DB_READ_ONLY_CONNECTION": "none",
+    "G6_E_DB_RESULT": "none",
+    "G6_E_DB_STATEMENT_FAILED": "none",
+    "G6_E_DB_STATEMENT_REFUSED": "none",
+    "G6_E_DB_UNKNOWN_CONNECTION": "person",
+    "G6_E_DB_UNKNOWN_TABLE": "input",
+}

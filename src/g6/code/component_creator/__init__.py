@@ -41,3 +41,23 @@ __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["SENSITIVE_OPS", "ComponentCreatorBlock", "ComponentCreatorInput", "ComponentSpec", "FieldSpec", "OpSpec",
            "conformance", "render", "spec"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_CODE_RESOURCE_LIMIT": "person",
+    "G6_E_CONFORMANCE_CHECKED": "none",
+    "G6_E_CONFORMANCE_NOT_A_PACKAGE": "none",
+    "G6_E_CONFORMANCE_PROBLEMS": "none",
+    "G6_E_CONFORMANCE_UNKNOWN_COMPONENT": "input",
+    "G6_E_SCAFFOLD_INPUT": "input",
+    "G6_E_SCAFFOLD_MODEL_FAILED": "person",
+    "G6_E_SCAFFOLD_NO_MODEL": ("tool:g6_select", "no_model"),
+    "G6_E_SCAFFOLD_RENDERED": "none",
+    "G6_E_SCAFFOLD_SOURCE_INVALID": "input",
+    "G6_E_SCAFFOLD_SPEC_DRAFTED": "none",
+    "G6_E_SCAFFOLD_SPEC_INVALID": "input",
+    "G6_E_SCAFFOLD_SPEC_READ": "none",
+    "G6_E_SCAFFOLD_WRITE_FAILED": "none",
+    "G6_E_SCAFFOLD_WRITTEN": "none",
+}

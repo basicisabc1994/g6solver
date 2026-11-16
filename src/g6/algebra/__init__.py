@@ -111,3 +111,9 @@ __all__ = ["INSTALL_CAS", "INSTALL_SAGE", "SAGE_ENV", "SENSITIVE_OPS", "AlgebraB
            "factor_integer", "finish", "gcd", "inputs", "integers", "integrate", "inverse", "is_prime", "language",
            "limit", "ops", "parse", "render", "runner", "sage", "sage_evaluate", "sage_version", "series", "simplify",
            "solve"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_ALGEBRA": "none",
+}

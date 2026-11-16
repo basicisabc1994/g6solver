@@ -59,3 +59,15 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = ["AgentAutoGenBlock", "AgentAutoGenInput", "AgentSpec", "AutoGenRuntime", "TeamSpec"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_AGENT_AUTOGEN_NOT_IN_A_RUN": "none",
+    "G6_E_AGENT_AUTOGEN_NO_MODEL": ("tool:g6_select", "no_model"),
+    "G6_E_AGENT_AUTOGEN_TEAM_CHECKED": "none",
+    "G6_E_AGENT_AUTOGEN_TEAM_REQUIRED": "input",
+    "G6_E_AGENT_AUTOGEN_UNCHECKED_TEAM": "none",
+    "G6_E_LLM_DISABLED": ("tool:g6_select",
+        "No model is configured for G6. Do the step yourself, then ask for the op that checks it."),
+}
