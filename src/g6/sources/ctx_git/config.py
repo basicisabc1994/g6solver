@@ -27,11 +27,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from g6.code import _roots
+from g6.code._types import CodeRefused
 from g6.core import http
 from g6.core.storage import confined_path, plain_file, state_path
 
@@ -46,6 +49,7 @@ REMOTE_REFUSED = "G6_E_GIT_REMOTE_REFUSED"
 #: How deep git follows alternates of alternates; a list nested deeper is refused.
 ALTERNATES_DEPTH = 5
 CONFIG_MAX_BYTES = 1024 * 1024
+METADATA_MAX_BYTES = 64 * 1024
 #: The address forms a network op may reach: an https URL, an ssh URL, or ssh's ``user@host:path`` form.
 _SCP = re.compile(r"^(?:(?P<user>[A-Za-z0-9._-]+)@)?(?P<host>[A-Za-z0-9.-]+):(?!//)(?P<path>[^\s]+)$")
 _HOST = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$")
@@ -121,7 +125,7 @@ def load(environ: Mapping[str, str] | None = None) -> GitConfig:
 def _confined(raw: str | Path, roots: tuple[Path, ...], what: str = "") -> Path:
     try:
         return confined_path(raw, roots)
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, MemoryError) as exc:
         code = OUTSIDE_ROOT if getattr(exc, "outside", False) else PATH_INVALID
         reason = ("the path is outside every declared root (a link out counts as outside)" if code == OUTSIDE_ROOT
                   else "the path could not be opened and checked")
@@ -145,12 +149,34 @@ def _how_to_declare() -> str:
             "ctx_git/config.json under G6's home, as {\"roots\": [\"<absolute folder>\"]}")
 
 
-def _metadata_text(path: Path, name: str) -> str:
-    """Read git metadata with a fixed relative label, never the OS error or an absolute path."""
+def _metadata_refusal(exc: Exception, name: str) -> GitRefused:
+    outside = isinstance(exc, CodeRefused) and exc.code == _roots.OUTSIDE_ROOT
+    return GitRefused(OUTSIDE_ROOT if outside else PATH_INVALID,
+                      f"{name}: the path is outside the checked root" if outside else
+                      f"{name} could not be checked or read, so git was not run")
+
+
+def _metadata_info(path: Path, name: str, roots: _roots.Roots) -> os.stat_result | None:
+    """Optional git metadata, checked root to leaf without following a component."""
     try:
-        return path.read_text(encoding="utf-8", errors="replace")
-    except (OSError, ValueError):
-        raise GitRefused(PATH_INVALID, f"{name} could not be read, so git was not run") from None
+        return _roots.path_info(path, roots=roots)
+    except (CodeRefused, OSError, ValueError, MemoryError) as exc:
+        raise _metadata_refusal(exc, name) from None
+
+
+def _metadata_text(path: Path, name: str, roots: _roots.Roots) -> str:
+    """Read metadata through the same checked, capped reader as repository content."""
+    try:
+        _roots.path_info(path, roots=roots)
+        return _roots.read_text(path, METADATA_MAX_BYTES, roots=roots)
+    except (CodeRefused, OSError, ValueError, MemoryError) as exc:
+        raise _metadata_refusal(exc, name) from None
+
+
+def _metadata_target(path: Path, name: str, roots: _roots.Roots) -> Path:
+    # The no-follow walk precedes even confined_path's preliminary name resolution.
+    _metadata_info(path, name, roots)
+    return _confined(path, roots.roots, name)
 
 
 def repository(raw: str, config: GitConfig) -> tuple[Path, Path]:
@@ -163,73 +189,84 @@ def repository(raw: str, config: GitConfig) -> tuple[Path, Path]:
     if raw.startswith("~") or not Path(raw).is_absolute():
         raise GitRefused(NOT_A_REPOSITORY, "repo is an absolute path (a relative one, or ~, is never resolved against "
                                            "the folder G6 runs in)")
-    real = _confined(raw, config.roots)
+    try:
+        roots = _roots.Roots(config.roots, "the declared git folders")
+        roots.refuse_if_empty("checked")
+    except (CodeRefused, OSError, ValueError, MemoryError) as exc:
+        raise _metadata_refusal(exc, "repo") from None
+    repo_info = _metadata_info(Path(raw), "repo", roots)
+    real = _metadata_target(Path(raw), "repo", roots)
     name = _name(real, config.roots)
     if not _under(real, config.roots):
         raise GitRefused(OUTSIDE_ROOT, f"{name} is not at or under a declared root (a link out of one counts as "
                                        f"outside): {_how_to_declare()}")
     dotgit = real / ".git"
-    if not real.is_dir() or not dotgit.exists():
+    dotgit_info = _metadata_info(dotgit, ".git", roots)
+    if repo_info is None or not stat.S_ISDIR(repo_info.st_mode) or dotgit_info is None:
         raise GitRefused(NOT_A_REPOSITORY, f"{name} is not the top folder of a git working copy (it has no .git)")
-    gitdir = _confined(dotgit, config.roots)
-    if dotgit.is_file():
-        line = _metadata_text(dotgit, ".git").strip()
+    gitdir = _metadata_target(dotgit, ".git", roots)
+    if stat.S_ISREG(dotgit_info.st_mode):
+        line = _metadata_text(dotgit, ".git", roots).strip()
         if not line.startswith("gitdir:"):
             raise GitRefused(NOT_A_REPOSITORY, f"{name}/.git is a file that names no git folder")
         named = Path(line.partition(":")[2].strip())
-        gitdir = _confined(named if named.is_absolute() else real / named, config.roots)
+        gitdir = _metadata_target(named if named.is_absolute() else real / named, ".git", roots)
     if not _under(gitdir, config.roots):
         raise GitRefused(OUTSIDE_ROOT, f"the git folder of {name} is outside every declared root (its .git "
                                        "links out of the root)")
-    if not gitdir.is_dir():
+    gitdir_info = _metadata_info(gitdir, ".git", roots)
+    if gitdir_info is None or not stat.S_ISDIR(gitdir_info.st_mode):
         raise GitRefused(NOT_A_REPOSITORY, f"the git folder of {name} is missing")
-    common = _common(gitdir, config)
+    common = _common(gitdir, roots)
     for name in ("objects", "refs"):
-        if (common / name).exists() and not _under(_confined(common / name, config.roots), config.roots):
-            raise GitRefused(OUTSIDE_ROOT, f"the {name} folder of the repository's git folder links outside every declared "
-                                           "root")
-    _alternates(common / "objects", config, 0)
+        info = _metadata_info(common / name, name, roots)
+        if info is not None and not stat.S_ISDIR(info.st_mode):
+            raise GitRefused(PATH_INVALID, f"{name} is not a git metadata folder")
+    _alternates(common / "objects", roots, 0)
     return real, gitdir
 
 
-def _common(gitdir: Path, config: GitConfig) -> Path:
+def _common(gitdir: Path, roots: _roots.Roots) -> Path:
     """The common git folder ``gitdir``'s ``commondir`` file names (``gitdir`` itself when there is none), resolved;
     :class:`GitRefused` when it is outside every root."""
     named = gitdir / "commondir"
-    if not named.exists():
+    info = _metadata_info(named, "commondir", roots)
+    if info is None:
         return gitdir
-    text = _metadata_text(named, "commondir").rstrip("\r\n") if named.is_file() else ""
+    text = _metadata_text(named, "commondir", roots).rstrip("\r\n") if stat.S_ISREG(info.st_mode) else ""
     if not text.strip():
         raise GitRefused(NOT_A_REPOSITORY, "commondir is not a file naming a git folder")
-    common = _confined(Path(text) if Path(text).is_absolute() else gitdir / text, config.roots, "commondir")
-    if not _under(common, config.roots):
+    common = _metadata_target(Path(text) if Path(text).is_absolute() else gitdir / text, "commondir", roots)
+    if not _under(common, roots.roots):
         raise GitRefused(OUTSIDE_ROOT, "commondir names a git folder outside every declared root")
-    if not common.is_dir():
+    common_info = _metadata_info(common, "commondir", roots)
+    if common_info is None or not stat.S_ISDIR(common_info.st_mode):
         raise GitRefused(NOT_A_REPOSITORY, "commondir names no existing git folder")
     return common
 
 
-def _alternates(objects: Path, config: GitConfig, depth: int) -> None:
+def _alternates(objects: Path, roots: _roots.Roots, depth: int) -> None:
     """:class:`GitRefused` unless every entry of ``objects/info/alternates`` (and of each alternate's own list)
     resolves inside a root. Comment lines are skipped, as git skips them; a quoted entry, or one with white space
     around it, is refused rather than read differently from git."""
     listed = objects / "info" / "alternates"
-    if not listed.exists():
+    info = _metadata_info(listed, "objects/info/alternates", roots)
+    if info is None:
         return
-    if depth >= ALTERNATES_DEPTH or not listed.is_file():
+    if depth >= ALTERNATES_DEPTH or not stat.S_ISREG(info.st_mode):
         raise GitRefused(PATH_INVALID, "objects/info/alternates nests deeper than git follows, or is not a file")
-    for line in _metadata_text(listed, "objects/info/alternates").split("\n"):
+    for line in _metadata_text(listed, "objects/info/alternates", roots).split("\n"):
         if not line or line.startswith("#"):
             continue
         if line.startswith('"') or line != line.strip():
             raise GitRefused(PATH_INVALID, "objects/info/alternates holds an entry that is quoted or has white space "
                                            "around it, which G6 does not read")
-        borrowed = _confined(Path(line) if Path(line).is_absolute() else objects / line, config.roots,
-                             "objects/info/alternates")
-        if not _under(borrowed, config.roots):
+        borrowed = _metadata_target(Path(line) if Path(line).is_absolute() else objects / line,
+                                    "objects/info/alternates", roots)
+        if not _under(borrowed, roots.roots):
             raise GitRefused(OUTSIDE_ROOT, "objects/info/alternates borrows objects from a folder outside every declared root "
                                            "(objects/info/alternates)")
-        _alternates(borrowed, config, depth + 1)
+        _alternates(borrowed, roots, depth + 1)
 
 
 def destination(raw: str, config: GitConfig) -> Path:

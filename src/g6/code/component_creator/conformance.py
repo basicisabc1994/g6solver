@@ -29,6 +29,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import re
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -300,10 +301,11 @@ def _tests_near(folder: Path, name: str, family: str, roots: _roots.Roots,
             break
         for candidate in (ancestor / "tests" / f"test_{name}.py", ancestor / "tests" / family / f"test_{name}.py"):
             try:
-                real = confined_path(candidate, roots.roots)
-                if real.is_file():
+                info = _roots.path_info(candidate, roots=roots)
+                if info is not None and stat.S_ISREG(info.st_mode):
+                    real = confined_path(candidate, roots.roots)
                     found.setdefault(real.as_posix(), _roots.read_text(candidate, MAX_FILE_BYTES, roots=roots))
-            except (ValueError, OSError, CodeRefused) as exc:
+            except (ValueError, OSError, MemoryError, CodeRefused) as exc:
                 reason = (f"[{exc.code}] {exc.reason}" if isinstance(exc, CodeRefused)
                           else "the test file could not be opened and checked")
                 problems.append(_problem("read", _roots._name(candidate, roots), f"test file was not read: {reason}"))
@@ -331,7 +333,8 @@ def _incomplete(out: dict[str, Any], walked: _roots.Walk) -> None:
 def check_folder(path: str, roots: _roots.Roots) -> dict[str, Any]:
     """A package folder under a declared root, checked as text."""
     folder = _roots.existing(path, roots, kind="folder")
-    if not (folder / "__init__.py").is_file():
+    init = _roots.path_info(folder / "__init__.py", roots=roots)
+    if init is None or not stat.S_ISREG(init.st_mode):
         raise CodeRefused(NOT_A_PACKAGE, f"{_roots._name(folder, roots)} holds no __init__.py, so it is not a package")
     files, walked = _files(folder, roots)
     package = _package_name(folder)

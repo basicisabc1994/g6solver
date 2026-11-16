@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from g6.code._types import CodeRefused
-from g6.core.storage import PathRefused, _text, confined_path, plain_file, state_path
+from g6.core.storage import PathRefused, _elsewhere, _gate, _text, confined_path, plain_file, state_path
 
 CONFIG_ENV = "G6_CODE_CONFIG"
 CONFIG_FILE = ("code", "config.json")
@@ -155,12 +155,16 @@ class Roots:
         object.__setattr__(self, "identities", tuple(identity for _, identity in captured))
         object.__setattr__(self, "unavailable", tuple(missing))
 
-    def refuse_if_empty(self, doing: str) -> None:
-        """No usable folder: NO_ROOT when none is declared, OUTSIDE_ROOT when the declared ones could not be opened."""
+    def refuse_if_empty(self, doing: str, path: object = None) -> None:
+        """No usable folder: NO_ROOT without a declaration; OUTSIDE_ROOT for a path under no declared folder at all;
+        PATH_INVALID for a path under an unavailable declared folder (or one that cannot be read lexically)."""
         if self.roots:
             return
         if self.unavailable:
-            raise CodeRefused(OUTSIDE_ROOT, "no declared folder could be opened when it was checked, so nothing is "
+            if _lexically_outside(path, self.unavailable):
+                raise CodeRefused(OUTSIDE_ROOT, f"the path is not at or under a declared root, so nothing is {doing}: "
+                                  + how_to_declare())
+            raise CodeRefused(PATH_INVALID, "no checked folder could be opened when it was checked, so nothing is "
                               f"{doing}")
         raise CodeRefused(NO_ROOT, f"no folder is declared for the code extensions, so nothing is {doing}: "
                           + how_to_declare())
@@ -252,6 +256,26 @@ def _refused_path(exc: ValueError | OSError, what: str) -> CodeRefused:
     return CodeRefused(OUTSIDE_ROOT if outside else PATH_INVALID, f"{what} {reason}")
 
 
+def _lexically_outside(path: object, roots: tuple[Path, ...]) -> bool:
+    """Whether an absolute ``path`` is, by its words alone, under none of ``roots``; False when it cannot be read so."""
+    try:
+        text = _text(path) if isinstance(path, str) else os.fspath(path) if isinstance(path, Path) else None
+        if not text or not Path(text).is_absolute():
+            return False
+        lexical = Path(os.path.normpath(text))
+        return not any(lexical == root or root in lexical.parents for root in roots)
+    except (OSError, ValueError, TypeError, CodeRefused):
+        return False
+
+
+def _refuse_unavailable(path: Path, roots: Roots) -> None:
+    """A missing declaration stays unavailable even when another declared folder is usable."""
+    lexical = Path(os.path.normpath(path))
+    if (any(lexical == root or root in lexical.parents for root in roots.unavailable)
+            and not any(lexical == root or root in lexical.parents for root in roots.roots)):
+        raise CodeRefused(PATH_INVALID, "the declared folder for this path could not be opened when it was checked")
+
+
 def under(path: Path, roots: tuple[Path, ...]) -> bool:
     """Compare final paths component by component, preserving the file system's own case."""
     return any(path.parts[:len(root.parts)] == root.parts for root in roots)
@@ -283,9 +307,10 @@ def _given(raw: str, what: str) -> Path:
 def existing(raw: str, roots: Roots, *, what: str = "path", kind: str = "any") -> Path:
     """The file or folder ``raw`` names, resolved; :class:`CodeRefused` unless it exists at or under a declared root.
     ``kind`` is ``file``, ``folder`` or ``any``."""
-    roots.refuse_if_empty("read")
+    roots.refuse_if_empty("read", raw)
     try:
         given = _given(raw, what)
+        _refuse_unavailable(given, roots)
         _check_roots(roots)
         real = confined_path(given, roots.roots)
         _check_roots(roots)
@@ -310,9 +335,10 @@ def existing(raw: str, roots: Roots, *, what: str = "path", kind: str = "any") -
 def destination(raw: str, roots: Roots, *, what: str = "dest") -> Path:
     """A folder an op may write into: an absolute path under a declared root (never a root itself) that does not exist
     yet or is an empty folder, whose parent folder exists."""
-    roots.refuse_if_empty("written")
+    roots.refuse_if_empty("written", raw)
     try:
         given = _given(raw, what)
+        _refuse_unavailable(given, roots)
         _check_roots(roots)
         real = confined_path(given, roots.roots)
         _check_roots(roots)
@@ -506,6 +532,73 @@ def _preopen_components(path: Path, roots: Roots) -> None:
     raise PathRefused("the read is outside the declared folders", outside=True)
 
 
+def path_info(path: Path, *, roots: Roots) -> os.stat_result | None:
+    """Check optional metadata without following any component; None only for a missing name.
+
+    Use the shared lexical gates before lstat, then walk from a captured root. Never resolve an unchecked
+    component, including a reparse point whose target might be a pipe or device. Refusing a reparse point
+    does not establish that its target is outside, so that refusal is PATH_INVALID.
+    """
+    roots.refuse_if_empty("checked", path)
+    name = "path"
+    try:
+        text = _text(path)
+        if _elsewhere(text):
+            raise CodeRefused(OUTSIDE_ROOT, "the metadata path is a network or device path")
+        given = _given(text, "path")
+        _refuse_unavailable(given, roots)
+        name = _name(given, roots)
+        lexical = Path(os.path.normpath(given))
+        for root, identity in zip(roots.roots, roots.identities, strict=True):
+            count = len(root.parts)
+            if tuple(map(os.path.normcase, given.parts[:count])) != tuple(map(os.path.normcase, root.parts)):
+                continue
+            if not (lexical == root or root in lexical.parents):
+                raise CodeRefused(OUTSIDE_ROOT, f"{name} is not at or under a checked root")
+            relative = given.parts[count:]
+            if _gate(*relative):
+                raise CodeRefused(PATH_INVALID, f"{name} is not a path G6 can check")
+            named_root = Path(*given.parts[:count])
+            if named_root.parts != root.parts:
+                # Case-insensitive lexical matching must not substitute another folder on a case-sensitive
+                # volume. Walk the caller's alternate spelling before querying its root identity.
+                for prefix in (*reversed(named_root.parents), named_root):
+                    info = os.lstat(prefix)
+                    if (not stat.S_ISDIR(info.st_mode)
+                            or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                        raise CodeRefused(PATH_INVALID, f"{name} has a linked or special root component")
+                if _identity(info) != identity:
+                    raise CodeRefused(OUTSIDE_ROOT, f"{name} names a different folder at the checked root")
+            current = root
+            for index, part in enumerate((None, *relative)):
+                if part is not None:
+                    current = current.parent if part == ".." else current / part
+                    if not (current == root or root in current.parents):
+                        raise CodeRefused(OUTSIDE_ROOT, f"{name} leaves the checked root")
+                try:
+                    info = os.lstat(current)
+                except FileNotFoundError:
+                    if index == 0:
+                        raise CodeRefused(PATH_INVALID, "the checked folder is no longer available") from None
+                    if ".." in relative[index:]:
+                        raise CodeRefused(PATH_INVALID, f"{name} has an unavailable parent before '..'") from None
+                    return None
+                if (stat.S_ISLNK(info.st_mode)
+                        or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                        or not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode))):
+                    raise CodeRefused(PATH_INVALID, f"{name} has a linked or special path component")
+                if index == 0 and _identity(info) != identity:
+                    raise CodeRefused(OUTSIDE_ROOT, "the folder changed since it was checked")
+                if index < len(relative) and not stat.S_ISDIR(info.st_mode):
+                    raise CodeRefused(PATH_INVALID, f"{name} has a parent that is not a folder")
+                # a second name for a regular file shows in st_nlink; read_text refuses it when content is read
+            _check_roots(roots)
+            return info
+        raise CodeRefused(OUTSIDE_ROOT, f"{name} is not at or under a checked root")
+    except (OSError, ValueError, MemoryError):
+        raise CodeRefused(PATH_INVALID, f"{name} could not be checked without following links") from None
+
+
 def _prepare_write_parent(parent: Path, base: Path, recorded: dict[Path, tuple[int, int]]) -> None:
     """Make folders and retain each lstat identity; recheck all of them immediately before the caller opens."""
     if not under(parent, (base,)):
@@ -541,10 +634,11 @@ def read_text(path: Path, max_bytes: int, *, roots: Roots) -> str:
     """
     if not isinstance(roots, Roots) or not (roots.roots or roots.unavailable):
         raise CodeRefused(NO_ROOT, "no checked folder was supplied for the read")
-    roots.refuse_if_empty("read")
+    roots.refuse_if_empty("read", path)
     name = "file"
     try:
         path = Path(_text(path))
+        _refuse_unavailable(path, roots)
         name = _name(path, roots)
         _check_roots(roots)
         path = confined_path(path, roots.roots)
@@ -587,5 +681,5 @@ def read_text(path: Path, max_bytes: int, *, roots: Roots) -> str:
 
 
 __all__ = ["CONFIG_ENV", "CONFIG_FILE", "CONFIG_INVALID", "NO_ROOT", "OUTSIDE_ROOT", "PATH_INVALID", "SKIP_DIRS",
-           "Roots", "Walk", "destination", "existing", "for_folder", "how_to_declare", "load", "parse", "read_text", "under",
+           "Roots", "Walk", "destination", "existing", "for_folder", "how_to_declare", "load", "parse", "path_info", "read_text", "under",
            "walk"]

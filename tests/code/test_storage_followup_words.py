@@ -55,10 +55,10 @@ def test_conformance_unreadable_test_does_not_repeat_system_words_or_paths(monke
     folder = Path(__file__).resolve().parent
     roots = _roots.for_folder(folder.parent, "test source folder")
 
-    def fail(*_):
+    def fail(*_, **kwargs):
         raise PermissionError("private-system-details")
 
-    monkeypatch.setattr(conformance, "confined_path", fail)
+    monkeypatch.setattr(conformance._roots, "path_info", fail)
     problems = []
     assert conformance._tests_near(folder, "sample", "", roots, problems) == {}
     assert problems

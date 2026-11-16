@@ -16,7 +16,7 @@ def test_unavailable_installed_package_is_a_refusal(monkeypatch):
     unavailable = _roots.Roots((HERE / "missing-package.zip" / "pkg",), "installed package")
     monkeypatch.setattr(conformance._roots, "for_folder", lambda *_: unavailable)
     out = ComponentCreatorBlock().infer(ComponentCreatorInput(op="check_conformance", component=COMPONENT)).unwrap()
-    assert out["code"] == _roots.OUTSIDE_ROOT
+    assert out["code"] == _roots.PATH_INVALID
 
 @pytest.mark.parametrize("operation", ["stat", "read"])
 def test_diagnostics_postcheck_errors_are_refused(operation, monkeypatch):

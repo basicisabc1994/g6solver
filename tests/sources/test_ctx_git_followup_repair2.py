@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Git metadata and audit failures never disclose OS text or escape as raw errors."""
 from pathlib import Path
+import stat
+from types import SimpleNamespace
 
 import pytest
 
 from g6.sources.ctx_git import block, config
+from g6.code import _roots
 
 
 @pytest.mark.parametrize("metadata", [".git", "commondir", "alternates"])
@@ -12,16 +15,18 @@ def test_git_metadata_read_failure_is_refused(metadata, monkeypatch):
     repo = Path(__file__).resolve().parent
     cfg = config.GitConfig((repo,), (), "test")
     monkeypatch.setattr(config, "_confined", lambda path, *a: Path(path))
-    monkeypatch.setattr(Path, "is_dir", lambda _: True)
-    monkeypatch.setattr(Path, "exists", lambda _: True)
-    monkeypatch.setattr(Path, "is_file", lambda _: True)
+    def info(path, **kwargs):
+        mode = stat.S_IFREG if path.name in {".git", "commondir", "alternates"} else stat.S_IFDIR
+        return SimpleNamespace(st_mode=mode)
 
-    def read(path, **kwargs):
+    monkeypatch.setattr(_roots, "path_info", info)
+
+    def read(path, cap, **kwargs):
         if path.name == metadata:
             raise PermissionError("private-system-details")
         return "gitdir: git-folder" if path.name == ".git" else "."
 
-    monkeypatch.setattr(Path, "read_text", read)
+    monkeypatch.setattr(_roots, "read_text", read)
     with pytest.raises(config.GitRefused) as refused:
         config.repository(str(repo), cfg)
     assert refused.value.code == config.PATH_INVALID
