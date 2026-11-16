@@ -54,6 +54,17 @@ def _source_function(fn):
                 try:
                     body, refs, metadata = policy.freeze_output(value)
                     value = json.loads(body)
+                    # Match the producer's receipt first, then enrich only the detached
+                    # snapshot. Evidence must not discard a receipt or erase UNKNOWN.
+                    if capture.model_calls and isinstance(value, dict):
+                        for field in ('evidence', 'limits'):
+                            prior = value.get(field)
+                            value[field] = prior if isinstance(prior, list) else [prior] if prior else []
+                        value['evidence'].extend(capture.model_calls)
+                        value['limits'].append(
+                            'The MCP client name is self-declared; model selection assumes same-user processes. '
+                            'Installation does not establish a working sign-in.')
+                        body = json.dumps(value, separators=(',', ':'), allow_nan=False)
                     content_hash = digest(value)
                 except (TypeError, ValueError):
                     # Unsupported serialization cannot establish source authority.
@@ -116,6 +127,9 @@ async def request_grant(ctx: Any, source: str, provider: str, *, description: st
             'What is sent cannot be recalled. You can revoke future sharing at any time with g6_cloud_revoke. '
             'Accept only if you want this sharing; your supplied name is an attribution, not authenticated identity.')
     if consent.status != 'accepted':
+        if consent.status == 'declined':
+            status = await anyio.to_thread.run_sync(policy._decline, scope, provider, revision)
+            return {'status': status, 'code': policy.REQUIRED}
         return {'status': consent.status, 'code': policy.REQUIRED}
     status = await anyio.to_thread.run_sync(policy._grant, scope, provider, revision, consent.answer)
     return {'status': status, 'source': scope, 'provider': provider}
@@ -158,7 +172,8 @@ def protect_reply(ctx: Any, result: dict, sources, *, supplied=(), job=None, rec
         result = json.loads(body)
         sources = policy.boundary_sources(sources, carried=known or ())
         payload = policy.sha256(body)
-        with policy.admission(client_provider(ctx), sources, payload, supplied=supplied, disclose=record):
+        with policy.admission(client_provider(ctx), sources, payload, supplied=supplied, disclose=record,
+                              calling_client=False):
             return result
     except LLMError:
         return withheld_reply(result, job=job, metadata=metadata,

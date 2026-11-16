@@ -4,14 +4,13 @@
 Every component that talks to a model takes an :class:`LLMCaller`. Nothing here bills,
 meters, phones home, or silently falls back to a paid provider (audit 009, RP-004/005/008:
 the archive's caller imported billing and Django, and sent unrecognised model names to
-OpenRouter). Pick a provider explicitly:
+OpenRouter). G6 uses the calling Claude Code / Codex sign-in by default:
 
     from g6.core.llm import provider_from_env, OllamaCaller, AnthropicCaller, OpenAICompatibleCaller
-    llm = provider_from_env()          # reads G6_LLM_PROVIDER: ollama | anthropic | openai | openrouter | none
-                                       # or claude_code | codex (the person's own sign-in, from the key file only)
+    llm = provider_from_env()          # auto: calling host, other installed host, then none
 
-or construct one directly. ``none`` (the default) raises :class:`LLMError` on use, so code that
-needs a model says so instead of guessing; a coding agent driving G6 can pass its own caller.
+or construct one directly. A key-file ``G6_LLM_PROVIDER=none`` opts out; a different provider asks first.
+With neither host installed, steps that need a model fail by name; plain-code steps continue.
 :data:`PROVIDERS` names the providers it builds; ``provider_from_env(env, provider=..., model=...)`` builds one of
 them for a model a component chose (a router), so the component never handles a key. Keys come only from the
 person's key file, ``$G6_HOME/.env`` (:mod:`g6.core.keys`; :data:`PROVIDER_KEYS` names them), never from the
@@ -19,9 +18,9 @@ environment: putting a key there is the person's approval for G6 to spend on it.
 (Anthropic, OpenRouter, or OpenAI at its own address) gives a caller that fails by name, says where the key goes and
 sends nothing.
 :data:`HOST_PROVIDERS` are the person's own Claude Code or Codex sign-in, run headless for one text completion with no
-tools (:mod:`g6.core.host_models`). The line ``G6_LLM_PROVIDER=claude_code`` (or ``codex``) in the key file is the
-person's approval to spend their subscription, as a key line is; named only in the environment or in ``env``, the
-caller built fails by name and starts nothing. Python code that passes ``provider=`` approves it itself.
+tools (:mod:`g6.core.host_models`). Built-in auto resolves them per call without an environment opt-in.
+An explicit host still needs a key-file line or Python provider argument; an environment-only host starts nothing.
+Python code that passes ``provider=`` chooses it itself; disclosure still takes the consent check.
 :class:`FallbackCaller` tries callers you list, in your order, and never adds one you did not.
 ``G6_DISABLE_LLM`` (any non-empty value) is a global kill switch.
 
@@ -100,13 +99,13 @@ REPLY_TOO_LARGE = "G6_E_LLM_REPLY_TOO_LARGE"
 REPLY_TIMEOUT = "G6_E_LLM_TIMEOUT"
 #: The providers :func:`provider_from_env` builds (besides ``none``), each from a key or a local server.
 PROVIDERS: tuple[str, ...] = ("ollama", "anthropic", "openai", "openrouter")
-#: The person's own coding agent, signed in as them, as G6's model (:mod:`g6.core.host_models`); honoured only when
-#: the key file names it, or when Python code passes ``provider=``.
+#: The person's coding hosts, resolved by auto, the key file or a Python ``provider=`` choice.
 HOST_PROVIDERS: tuple[str, ...] = ("claude_code", "codex")
 #: How a person gives G6 a model, for a refusal that has none.
-CONFIGURE_MODEL = ("add one line to your key file, ~/.g6/.env (.env in G6_HOME when that is set): "
-                   "G6_LLM_PROVIDER=claude_code (your Claude Code sign-in), G6_LLM_PROVIDER=codex (your Codex sign-in), "
-                   "G6_LLM_PROVIDER=ollama (a local model), or another provider with its key")
+CONFIGURE_MODEL = ("G6 uses the calling Claude Code / Codex sign-in by default when installed; "
+                   "G6_LLM_PROVIDER=none in your key file opts out. A different provider asks first. "
+                   "Install and sign in to a host yourself, or choose G6_LLM_PROVIDER=ollama (a local model) "
+                   "or another provider with its key in the key file")
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 NO_IMAGES = "G6_E_LLM_NO_IMAGES"
 _SIGNATURES: tuple[tuple[str, Callable[[bytes], bool]], ...] = (
@@ -334,10 +333,17 @@ def _caller_name(caller: LLMCaller) -> str:
 
 
 class NoModel:
-    """The default: no model configured. Using it is an explicit, named failure."""
+    """No installed host, an explicit opt-out, or the kill switch. Use fails by name."""
+
+    def __init__(self, reason: str = "") -> None:
+        self.reason = reason
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
-        raise LLMError("G6_E_NO_MODEL: no model configured; set G6_LLM_PROVIDER or pass an LLMCaller")
+        if self.reason:
+            raise LLMError(self.reason)
+        raise LLMError("G6_E_NO_MODEL: no model available; G6 uses the calling Claude Code / Codex sign-in by "
+                       "default when installed. Check the key-file opt-out G6_LLM_PROVIDER=none or pass an LLMCaller; "
+                       "a different provider asks first")
 
 
 def _retry_after(headers: object) -> float | None:
@@ -610,8 +616,11 @@ PROVIDER_KEYS = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "
 
 def provider_from_env(env: Mapping[str, str] | None = None, *, provider: str | None = None,
                       model: str | None = None, keys: Mapping[str, str] | None = None) -> LLMCaller:
-    """Build the caller named by ``G6_LLM_PROVIDER`` (default ``none``), or by ``provider`` and ``model`` when a
-    component chose them. Never guesses a paid one.
+    """Resolve built-in ``auto`` per call when no provider is named.
+
+    Auto prefers the calling Claude Code / Codex sign-in when installed, then the other
+    installed host, then none. A key-file ``G6_LLM_PROVIDER=none`` opts out; a different
+    provider asks first at admission. Availability checks never launch a program.
 
     Settings (``G6_LLM_PROVIDER``, ``G6_LLM_MODEL``, ``OLLAMA_BASE_URL``, ``OPENAI_BASE_URL``) are read from ``env``
     (default: the environment) over the person's key file, which may hold them too. Keys are read only from ``keys``
@@ -620,42 +629,82 @@ def provider_from_env(env: Mapping[str, str] | None = None, *, provider: str | N
     file goes only to the provider's own address or to the base URL written beside it in the file; an
     ``OPENAI_BASE_URL`` from ``env`` or the environment that differs is called without it.
 
-    A host provider (:data:`HOST_PROVIDERS`) is built only when the key file's own ``G6_LLM_PROVIDER`` line names it,
-    or when ``provider`` does: named only in ``env`` or the environment, the caller fails by name and starts
-    nothing."""
+    Explicit settings retain their existing precedence and validation. A host named
+    only in the environment is refused; it cannot select or fall back to a host."""
     filed = key_file.read()
     settings = {**filed, **(os.environ if env is None else env)}
     given = filed if keys is None else dict(keys)
-    name = (provider or settings.get("G6_LLM_PROVIDER") or "none").strip().lower()
+    name = (provider or settings.get("G6_LLM_PROVIDER") or "auto").strip().lower()
+    if provider is None and name == "auto":
+        # Auto is a default, never an environment override of an explicit file choice.
+        name = (filed.get("G6_LLM_PROVIDER") or "auto").strip().lower()
+    reason = "explicit_setting"
+    available = []
+
+    def selected(caller, chosen=name):
+        selection = {"kind": "model_selection", "provider": chosen, "reason": reason,
+                     "available_hosts": list(available)}
+        caller.model_selection = selection
+        if isinstance(caller, EmptyRetry):
+            caller._inner.model_selection = selection
+        return caller
+
+    if settings.get("G6_DISABLE_LLM") or os.environ.get("G6_DISABLE_LLM"):
+        reason = "disabled"
+        return selected(NoModel("G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM"), "none")
     model = model or settings.get("G6_LLM_MODEL") or ""
+    if name == "auto":
+        from g6.core import cloud_consent, host_models
+
+        capture = cloud_consent.calling_capture()
+        client = capture.client[0] if capture is not None and capture.client is not None else None
+        matching = {"anthropic:claude_code": "claude_code", "openai:codex": "codex"}.get(client)
+        order = (matching, *(host for host in HOST_PROVIDERS if host != matching)) if matching else HOST_PROVIDERS
+        callers = {}
+        for host in order:
+            candidate = host_models.CALLERS[host](model)
+            try:
+                candidate.locate()
+            except LLMError as exc:
+                if not str(exc).startswith("G6_E_OUTSIDE_PROGRAM_MISSING"):
+                    raise
+                continue
+            available.append(host)
+            callers[host] = candidate
+        if not available:
+            reason = "no_installed_host"
+            return selected(NoModel(), "none")
+        chosen = available[0]
+        reason = "calling_client" if chosen == matching else "installed_fallback"
+        return selected(EmptyRetry(callers[chosen]), chosen)
     key = given.get(PROVIDER_KEYS.get(name, ""))
     if name == "none":
-        return NoModel()
+        return selected(NoModel())
     if name in HOST_PROVIDERS:
         from g6.core import host_models   # imported only when asked for: it brings in the process-running code
 
         if provider is None and (filed.get("G6_LLM_PROVIDER") or "").strip().lower() != name:
-            return UnusableModel(host_models.not_approved(name))   # an agent's environment is not the person's approval
-        return EmptyRetry(host_models.CALLERS[name](model))
+            return selected(UnusableModel(host_models.not_approved(name)))
+        return selected(EmptyRetry(host_models.CALLERS[name](model)))
     if name == "ollama":
-        return EmptyRetry(OllamaCaller(model or DEFAULT_OLLAMA_MODEL, settings.get("OLLAMA_BASE_URL")))
+        return selected(EmptyRetry(OllamaCaller(model or DEFAULT_OLLAMA_MODEL, settings.get("OLLAMA_BASE_URL"))))
     if name == "anthropic":
         model = model or DEFAULT_ANTHROPIC_MODEL
         base = filed.get("ANTHROPIC_BASE_URL") or _ANTHROPIC_URL   # never the SDK's pick from the environment
-        return (EmptyRetry(AnthropicCaller(model, api_key=key, base_url=base)) if key
-                else _NoKey(PROVIDER_KEYS[name], name, model))
+        return selected(EmptyRetry(AnthropicCaller(model, api_key=key, base_url=base)) if key
+                        else _NoKey(PROVIDER_KEYS[name], name, model))
     if name == "openai":
         base = settings.get("OPENAI_BASE_URL") or _OPENAI_URL
         # agent_openai and agent_langchain (merged): an address the key was not written beside never receives it.
         paired = keys is not None or any(_same_address(base, own)
                                          for own in (_OPENAI_URL, filed.get("OPENAI_BASE_URL")))
         caller = EmptyRetry(OpenAICompatibleCaller(model, base_url=base, api_key=key if paired else None))
-        return _NoKey(PROVIDER_KEYS[name], name, model) if base == _OPENAI_URL and not key else caller
+        return selected(_NoKey(PROVIDER_KEYS[name], name, model) if base == _OPENAI_URL and not key else caller)
     if name == "openrouter":
         caller = EmptyRetry(OpenAICompatibleCaller(model, base_url=_OPENROUTER_URL, api_key=key))
-        return caller if key else _NoKey(PROVIDER_KEYS[name], name, model)
+        return selected(caller if key else _NoKey(PROVIDER_KEYS[name], name, model))
     raise LLMError(f"unknown G6_LLM_PROVIDER {name!r}; use ollama, anthropic, openai, openrouter, claude_code, codex "
-                   "or none")
+                   "auto or none")
 
 
 def _same_address(a: str | None, b: str | None) -> bool:

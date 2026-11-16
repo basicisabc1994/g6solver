@@ -338,7 +338,8 @@ def host_admission(caller: object, system: str, user: str) -> dict:
     covers), the model inputs, and the request's digest."""
     to = destination(caller)
     return {'provider': to.provider, 'sources': model_sources(),
-            'payload_sha256': digest({'system': system, 'user': user}), 'local': to.local}
+            'payload_sha256': digest({'system': system, 'user': user}), 'local': to.local,
+            'model_selection': getattr(caller, 'model_selection', None)}
 
 
 def session_admission(caller: object, stdin: str) -> dict:
@@ -421,6 +422,11 @@ class _Consent:
         to = destination(backend)
         with (admission(to.provider, model_sources(), digest({'system': system, 'user': user}), local=to.local),
               _sdk_call(getattr(backend, '_client', None), to.provider)):
+            from g6.core.cloud_consent import current_capture
+            capture = current_capture()
+            selection = getattr(backend, 'model_selection', None)
+            if capture is not None and selection is not None:
+                capture.model_calls.append(dict(selection, status='attempted'))
             return (super() if backend is self else backend).complete(system, user, max_tokens=max_tokens)
 
     def complete_with_images(self, system, user, images, *, max_tokens=llm.DEFAULT_MAX_TOKENS):

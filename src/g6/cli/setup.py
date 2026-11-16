@@ -114,6 +114,9 @@ def main(args: argparse.Namespace, *, ask: Ask = input, say: Say = print) -> int
         except (OSError, ValueError):
             say("Model preference could not be saved; no model call was made.")
             return 2
+    say("G6 uses the calling Claude Code / Codex sign-in by default when installed, then the other installed host, "
+        "then plain code. Put G6_LLM_PROVIDER=none in your key file to opt out; a different provider asks first. "
+        "G6_DISABLE_LLM stops model calls. Setup did not check a sign-in or make a model call.")
     clients = list(dict.fromkeys(getattr(args, "client", [])))
     if clients:
         code = register_clients(args, clients, say)

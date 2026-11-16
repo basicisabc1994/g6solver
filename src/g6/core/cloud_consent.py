@@ -180,6 +180,7 @@ class Capture:
     returned: tuple[object, str, tuple[Source, ...] | None, bool, dict] | None = None
     review_unsent: bool = False
     refused_provider: str = ''
+    model_calls: list[dict] = field(default_factory=list)
     parent: Capture | None = field(default=None, repr=False, compare=False)
 
 
@@ -197,6 +198,14 @@ def current_sources() -> tuple[Source, ...]:
 
 def current_capture() -> Capture | None:
     return _CAPTURE.get()
+
+
+def calling_capture() -> Capture | None:
+    """Find the nearest request owning a client, without copying its authority."""
+    capture = _CAPTURE.get()
+    while capture is not None and capture.client is None:
+        capture = capture.parent
+    return capture
 
 
 def boundary_sources(declared: Sequence[Source] = (), *, carried: Sequence[Source] = (),
@@ -386,6 +395,7 @@ def collect_sources() -> Iterator[Capture]:
         _CAPTURE.reset(token)
         if parent is not None:
             record_sources(capture.sources)
+            parent.model_calls.extend(capture.model_calls)
             for identity, stored in capture.outputs.items():
                 old = parent.outputs.get(identity)
                 if old is not None and old[0] is stored[0]:
@@ -431,7 +441,7 @@ def _validate(kind, ident, body, seen):
                     return ['invalid disclosure source']
                 if not _HASH.fullmatch(row['item_id']) or not _HASH.fullmatch(row['content_sha256']):
                     return ['invalid disclosure digests']
-                if row['basis'] not in ('client-supplied', 'grant'):
+                if row['basis'] not in ('client-supplied', 'grant', 'calling_client'):
                     return ['invalid disclosure basis']
     except (KeyError, TypeError, ValueError):
         return ['malformed consent record']
@@ -661,6 +671,15 @@ def revoke(source: str, provider: str) -> dict:
     return {'status': 'revoked', 'source': source_id(source), 'provider': provider}
 
 
+def _decline(source: str, provider: str, revision: str) -> str:
+    """Record an explicit dialog decline only if its preview is still current."""
+    with _locked() as ledger:
+        if _decision(ledger, source_id(source), provider)[1] != revision:
+            return 'stale'
+        _append(ledger, 'revoke', {'source': source_id(source), 'provider': provider, 'time': _time()})
+    return 'declined'
+
+
 def grants() -> list[dict]:
     with _locked() as ledger:
         return [row['body'] for row in _decisions(ledger).values() if row['kind'] == 'grant']
@@ -671,17 +690,29 @@ def disclosures() -> list[dict]:
         return [row['body'] for row in ledger.entries() if row['kind'] == 'disclosure']
 
 
-def _refuse_unshared(decisions: dict, provider: str, refs: Sequence[Source], supplied: Sequence[str]) -> None:
-    """Admission's one rule: every source of a send is shared with its recipient, or the send is refused."""
-    def allowed(source):
-        row = decisions.get((source.source_id, provider))
-        granted, revision = (row['kind'] == 'grant', row['entry_sha256']) if row is not None else (False, '')
-        # Supplied means these exact argument bytes, never content fetched
-        # through a path, repository or retained-record handle.
-        literal = (source.source_id in supplied and source.source_id.startswith('input:')
-                   and source.source_id == 'input:' + source.content_sha256)
-        return source.recorded and (granted or literal and not revision)
-    if provider == 'cloud:unknown' or not all(allowed(source) for source in refs):
+def _basis(decisions: dict, provider: str, source: Source, supplied: Sequence[str], calling_client: bool) -> str:
+    """The one admission rule and the disclosure basis it establishes for a source."""
+    if not source.recorded or provider == 'cloud:unknown':
+        return ''
+    row = decisions.get((source.source_id, provider))
+    if row is not None:
+        return 'grant' if row['kind'] == 'grant' else ''  # a recorded negative always wins
+    # Supplied means these exact argument bytes, never a path or repository handle.
+    if (source.source_id in supplied and source.source_id.startswith('input:')
+            and source.source_id == 'input:' + source.content_sha256):
+        return 'client-supplied'
+    capture = calling_capture() if calling_client else None
+    if (provider in ('anthropic:claude_code', 'openai:codex') and capture is not None
+            and capture.client is not None and capture.client[0] == provider):
+        return 'calling_client'
+    return ''
+
+
+def _refuse_unshared(decisions: dict, provider: str, refs: Sequence[Source], supplied: Sequence[str],
+                    calling_client: bool = True) -> None:
+    """Every source needs a basis at the same single send-time check."""
+    if provider == 'cloud:unknown' or not all(
+            _basis(decisions, provider, source, supplied, calling_client) for source in refs):
         capture = _CAPTURE.get()
         if capture is not None:
             capture.refused_provider = provider
@@ -704,11 +735,13 @@ def refuse_unshared(provider: str, sources: Sequence[Source], *, local: bool = F
 
 @contextmanager
 def admission(provider: str, sources: Sequence[Source], payload_sha256: str, *, local: bool = False,
-              supplied: Sequence[str] = (), disclose: bool = True) -> Iterator[None]:
+              supplied: Sequence[str] = (), disclose: bool = True, calling_client: bool = True,
+              model_selection: dict | None = None) -> Iterator[None]:
     """One check, at send time. Holding the lock through send gives revocation a single order.
 
     Disclosure is an attempt, durably logged first: a crash/transport error cannot say
     whether the recipient received it. Local computation needs no sharing state.
+    MCP egress sets ``calling_client=False``: model-send policy cannot authorise a reply.
     """
     refs = boundary_sources(sources, carried=prompt_sources()) or (UNKNOWN,)
     record_sources(refs)
@@ -721,7 +754,7 @@ def admission(provider: str, sources: Sequence[Source], payload_sha256: str, *, 
     try:
         with lock.guard:
             decisions = _decisions(lock.ledger)
-            _refuse_unshared(decisions, provider, refs, supplied)
+            _refuse_unshared(decisions, provider, refs, supplied, calling_client)
             # A check inside an admitted send of this context to the same recipient, of no source that send did not
             # disclose, is that send's own step (a host session's launch): it is checked, and disclosed once.
             enclosing = joined.send if joined is not None else None
@@ -731,8 +764,7 @@ def admission(provider: str, sources: Sequence[Source], payload_sha256: str, *, 
                 _append(lock.ledger, 'disclosure', {'provider': provider, 'time': _time(), 'status': 'attempted',
                     'payload_sha256': payload_sha256,
                     'sources': [{'source': s.source_id, 'item_id': s.item_id, 'content_sha256': s.content_sha256,
-                                 'basis': 'client-supplied' if s.source_id in supplied and
-                                     (s.source_id, provider) not in decisions else 'grant'} for s in refs]})
+                                 'basis': _basis(decisions, provider, s, supplied, calling_client)} for s in refs]})
             hold = _Hold(lock, (provider, frozenset(refs), disclose or repeated), carried_into_thread())
     except BaseException:
         _POLICY.reset(policy)
@@ -740,6 +772,9 @@ def admission(provider: str, sources: Sequence[Source], payload_sha256: str, *, 
         raise
     token = _HELD.set(hold)
     try:
+        capture = _CAPTURE.get()
+        if model_selection is not None and capture is not None:
+            capture.model_calls.append(dict(model_selection, status='attempted'))
         yield
     finally:
         _HELD.reset(token)

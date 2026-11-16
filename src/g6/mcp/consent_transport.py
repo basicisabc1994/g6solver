@@ -138,7 +138,8 @@ class _Stream:
             actual = provider(self.session)
             supplied = ticket.supplied if actual == ticket.provider else ()
             try:
-                with policy.admission(actual, ticket.sources, ticket.body_sha256, supplied=supplied):
+                with policy.admission(actual, ticket.sources, ticket.body_sha256, supplied=supplied,
+                                      calling_client=False):
                     anyio.from_thread.run(self.inner.send, packet)
             except LLMError:
                 anyio.from_thread.run(self.inner.send, _refused(packet, ticket, actual))

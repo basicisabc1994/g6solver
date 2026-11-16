@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """The person's own Claude Code or Codex sign-in as G6's model: one text completion, with no tools, run headless.
 
-The line ``G6_LLM_PROVIDER=claude_code`` (or ``codex``) in the person's key file, ``~/.g6/.env``, makes
-:func:`g6.core.llm.provider_from_env` build a caller from here, :class:`ClaudeCodeCaller` or :class:`CodexCaller`, each an
-``LLMCaller`` (``complete(system, user, *, max_tokens)``). Writing that line is the person's approval to spend their
-subscription, as writing a key is (owner ruling, 2026-10-21). Named only in the environment, or in an ``env`` mapping,
-it is not: the caller built then fails by name (:func:`not_approved`) and starts nothing, because an agent's
-environment is not the person's approval. Python code that builds a caller itself, or passes ``provider=``, approves
-it in its own code. G6 never installs either program, never signs in for the person and never passes either a key:
+G6 uses the calling Claude Code / Codex sign-in by default when installed, otherwise the other installed host,
+otherwise plain code. A key-file ``G6_LLM_PROVIDER=none`` opts out; a different provider asks first.
+An explicit ``claude_code`` or ``codex`` key-file line chooses that host. An agent's environment cannot choose a
+different provider. :func:`g6.core.llm.provider_from_env` builds :class:`ClaudeCodeCaller` or :class:`CodexCaller`,
+each an ``LLMCaller`` (``complete(system, user, *, max_tokens)``). Python code can choose a caller itself or pass
+``provider=``; each send still takes the consent check. G6 never installs either program, never signs in for the person and never passes either a key:
 each signs in on its own, as the person.
 
 Each call:
@@ -111,11 +110,11 @@ INSTALL_CODEX = ("Install OpenAI's Codex yourself (npm install -g @openai/codex,
                  "describes), then sign in with codex login; or set G6_CODEX to the codex program. G6 never installs "
                  "it, never signs in for you and never passes it a key.")
 CLAUDE = OutsideProgram(
-    name="Claude Code", purpose="G6's model when G6_LLM_PROVIDER=claude_code: the claude program you installed, signed "
+    name="Claude Code", purpose="G6's model by default or when G6_LLM_PROVIDER=claude_code: the claude program you installed, signed "
                                 "in with your account", install=INSTALL_CLAUDE,
     licence="proprietary: Anthropic's terms (never bundled)", command="claude", env="G6_CLAUDE", paid=True, online=True)
 CODEX = OutsideProgram(
-    name="Codex", purpose="G6's model when G6_LLM_PROVIDER=codex: the codex program you installed, signed in with your "
+    name="Codex", purpose="G6's model by default or when G6_LLM_PROVIDER=codex: the codex program you installed, signed in with your "
                           "account", install=INSTALL_CODEX, licence="Apache-2.0", command="codex", env="G6_CODEX",
     paid=True, online=True)
 _SAID = 300
@@ -128,8 +127,9 @@ _PLAIN_PATH = re.compile(r"[A-Za-z0-9 _\-.:\\/~()]+")
 def not_approved(provider: str) -> str:
     """Why a host provider named only in the environment, or in an ``env`` mapping, starts nothing."""
     program = {"claude_code": "Claude Code", "codex": "Codex"}.get(provider, provider)
-    return (f"G6_E_NO_MODEL: add the line G6_LLM_PROVIDER={provider} to {key_file.path()} to use your {program} sign-in "
-            f"as G6's model. Set only in the environment it is not your approval, so {program} was not started")
+    return (f"G6_E_NO_MODEL: an environment cannot select {program}. G6 uses the calling Claude Code / Codex sign-in "
+            f"by default; choose G6_LLM_PROVIDER={provider} in {key_file.path()} explicitly, or "
+            "G6_LLM_PROVIDER=none to opt out. A different provider asks first")
 
 
 def _never(name: str) -> bool:

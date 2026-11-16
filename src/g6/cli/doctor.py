@@ -107,39 +107,57 @@ def _keys() -> Check:
 
 
 def _host_model(provider: str, keys: dict[str, str]) -> Check:
-    """Claude Code or Codex, signed in as the person, as G6's model: found where (nothing is run), or how to install
-    it; and ignored when only the environment names it."""
+    """Explicit host availability only; no launch or sign-in check."""
     from g6.core import host_models
-    from g6.core.keys import path
     from g6.core.llm import LLMError
 
     caller = host_models.CALLERS[provider]
     program = caller.program
-    if (keys.get("G6_LLM_PROVIDER") or "").strip().lower() != provider:
-        return Check("AI model", "warn", f"G6_LLM_PROVIDER={provider} is set only in the environment, so G6 ignores it "
-                                         "and calls no model: an environment is not your approval",
-                     f"To use your {program.name} sign-in as G6's model, add the line G6_LLM_PROVIDER={provider} to "
-                     f"{path()}.")
     try:
         where = caller().locate()
     except LLMError:
         return Check("AI model", "fail", f"{provider} selected, but {program.name} is not found (no "
                                          f"{program.command} on PATH, and {program.env} names none)", program.install)
     shell = f"; {host_models.CODEX_SHELL_NOTE}" if provider == "codex" else ""
-    return Check("AI model", "ok", f"{provider} selected: {program.name} at {where}, signed in as you; not contacted "
-                                   f"by doctor{shell}")
+    return Check("AI model", "ok", f"{provider} selected: {program.name} at {where}; uses your local session when "
+                                   f"signed in as you; not contacted by doctor; sign-in was not checked{shell}",
+                 "Key-file G6_LLM_PROVIDER=none opts out; a different provider asks first.")
 
 
 def _model(env: dict[str, str], keys: dict[str, str]) -> Check:
     from g6.core.keys import path
-    from g6.core.llm import HOST_PROVIDERS, PROVIDER_KEYS
+    from g6.core.llm import HOST_PROVIDERS, PROVIDER_KEYS, LLMError
 
-    provider = (env.get("G6_LLM_PROVIDER") or "none").strip().lower()
+    provider = (env.get("G6_LLM_PROVIDER") or keys.get("G6_LLM_PROVIDER") or "auto").strip().lower()
+    if provider == "auto":
+        provider = (keys.get("G6_LLM_PROVIDER") or "auto").strip().lower()
+    guidance = ("Key-file G6_LLM_PROVIDER=none opts out; a different provider asks first. "
+                "G6_DISABLE_LLM stops model calls.")
+    if env.get("G6_DISABLE_LLM") or os.environ.get("G6_DISABLE_LLM"):
+        return Check("AI model", "ok", "Model calls disabled by G6_DISABLE_LLM", guidance)
+    if provider == "auto":
+        from g6.core import host_models
+        available = []
+        for host in HOST_PROVIDERS:
+            try:
+                host_models.CALLERS[host]().locate()
+            except LLMError as exc:
+                if not str(exc).startswith("G6_E_OUTSIDE_PROGRAM_MISSING"):
+                    return Check("AI model", "fail", f"{host} availability check failed: {exc}", guidance)
+                continue
+            available.append(host)
+        return Check("AI model", "ok", "no provider named: G6 will use the calling client's sign-in. "
+                     "G6 uses the calling Claude Code / Codex sign-in by default; installed hosts: "
+                     + (", ".join(available) or "none; plain code only")
+                     + ". Selection is per call; sign-in was not checked.", guidance)
     if provider == "none":
-        return Check("AI model", "ok", "none configured — everything that needs no model works",
-                     f"Optional: add G6_LLM_PROVIDER=claude_code (your Claude Code sign-in), codex, ollama (free, "
-                     f"local), or anthropic/openai/openrouter with its key, to {path()}.")
+        return Check("AI model", "ok", "Key-file opt-out: plain code only", guidance)
     if provider in HOST_PROVIDERS:
+        if (keys.get("G6_LLM_PROVIDER") or "").strip().lower() != provider:
+            return Check("AI model", "warn", f"{provider} named only in the environment is ignored; "
+                         "it cannot choose a host or trigger fallback. With no provider named: G6 will use the "
+                         "calling client's sign-in.",
+                         f"To choose this host explicitly, put G6_LLM_PROVIDER={provider} in {path()}. " + guidance)
         return _host_model(provider, keys)
     if provider == "ollama":
         return Check("AI model", "ok", f"Ollama at {env.get('OLLAMA_BASE_URL') or 'http://localhost:11434'} "

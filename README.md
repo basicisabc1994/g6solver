@@ -129,15 +129,20 @@ Not a programmer? Ready-made **bundles** (double-click apps) are described in th
 Long runs return job IDs; poll `metaharness_job`. A tool that runs code or starts the loop needs a permission given
 with `g6 setup --allow` (the loop's: `metaharness.improve`). [AGENT_GUIDE.md](AGENT_GUIDE.md) is written for the agent.
 
-**Consent.** No user data reaches a cloud model unless the person granted it, per source and per provider, in the
-client's own dialog (`g6_cloud_grant`); without a grant the work stays local or the result is withheld. One check
-covers G6's own model calls, `g6_invoke` and `g6 invoke`, the Python API `g6.invoke`, the cognitive bridge and the
-loop's Claude Code and Codex sessions.
+**Consent.** Model sends to the calling MCP client's own Claude Code or Codex provider need no dialog and are disclosed
+in the log. A recorded revoke or decline still wins. Other recipients, unknown clients and Python calls need the
+person's source/provider grant in the client's dialog (`g6_cloud_grant`); without it, work stays local or the result
+is withheld. Tool replies still require a grant or the current request's exact supplied bytes. The same admission
+check covers model calls, tool replies, the Python API, the cognitive bridge and host sessions.
 
-Most checks need no model. The few steps that do use the model you set in your key file, `~/.g6/.env`, whose values
-are local preferences under a trusted host: for example the line `G6_LLM_PROVIDER=claude_code` (your own Claude Code
-sign-in), `G6_LLM_PROVIDER=codex` (your Codex sign-in), `G6_LLM_PROVIDER=ollama` (a model on your computer), or a
-provider and its key. With none set, those steps say so and your agent can do them itself.
+G6 uses the calling Claude Code / Codex sign-in by default when installed. It resolves the host for each call,
+preferring the calling client, then the other installed host. With neither installed it uses plain code; steps
+that need a model say so. Put `G6_LLM_PROVIDER=none` in your key file to opt out; `G6_DISABLE_LLM` stops model calls.
+An explicit provider line keeps your choice, such as `claude_code`, `codex`, `ollama` or a provider with its key.
+An environment-only host choice starts nothing; explicit paid-provider settings retain their validation and need
+keys from the key file. A different provider asks first.
+Same-provider sends are logged with their basis; a recorded revoke or decline still wins. The MCP client name is
+self-declared, and this policy assumes same-user processes. Installation alone does not establish a working sign-in.
 
 **From the command line:**
 
@@ -243,7 +248,7 @@ recommending a new release. 0.3.0 is in preparation, not published (no tag, noth
 | G6 helps independent coding agents on held-out tasks | `aspirational`: protocol published, not run |
 | Meta-harness: tune G6 to your own recurring work (`g6.metaharness`) | `implemented`. The studies run with it are on the [Research](site/docs/research.md) page, as a worked example |
 | Completion loop (`g6_review_until_clean`) | `implemented`. Measured on seven training bugs only |
-| Consent before any cloud model (`g6_cloud_*`) | `implemented`; `g6.invoke` joins before the tag. Not yet measured in a real client's dialog |
+| Cloud sharing admission (`g6_cloud_*`) | `implemented`; calling-client exemption and source/provider grants, with revocation and disclosure. Not yet measured in a real client's dialog |
 | Self-improvement loop (`g6_improve_*`) | `implemented`. Not yet measured: an unattended week, adoption |
 | Allowances; behaviour questions | `implemented`. Not yet measured against real provider windows, or with real people |
 | Context Engine (`g6_knowledge_*`) | `implemented`, search by words. Retrieval quality not yet measured |

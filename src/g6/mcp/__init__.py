@@ -32,10 +32,10 @@ Install
 with ``pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"`` and register with ``claude mcp add g6 -- g6-mcp`` (or, for Codex,
 ``codex mcp add g6 -- g6-mcp``). There is no account, key or network service.
 
-An op that needs a model uses the one the person set in their key file (``G6_LLM_PROVIDER`` in ``~/.g6/.env``, for
-example ``claude_code``, their own Claude Code sign-in): ``g6_invoke`` builds it for each call and gives it only to a
-component that declares ``__g6_model__``. With none set, such an op says how to set one, and the agent can do that
-step itself and call the op that checks it.
+G6 uses the calling Claude Code / Codex sign-in by default when installed, then the other installed host, then
+plain code. A key-file ``G6_LLM_PROVIDER=none`` opts out; a different provider asks first.
+``g6_invoke`` resolves the model per call and gives it only to a component that declares ``__g6_model__``.
+With neither host installed, a model step says so; the agent can do that step and call its check.
 
 Ops a component marks sensitive (they run a program on your machine, reach the network or change it) are refused on
 this surface unless the person who runs the server lists them in ``G6_MCP_SENSITIVE``, a comma-separated list of
@@ -97,7 +97,7 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
     """The ``g6_invoke`` reply: the component's answer (or why there is none) inside the library envelope, through the
     checked call ``g6 invoke`` and ``g6.invoke`` share (``g6.core.door.invoke_checked``). A sensitive op runs only when
     ``allow_sensitive`` (by default ``G6_MCP_SENSITIVE``) lists it or its component. A component whose block takes a
-    model (``__g6_model__``) is given the one the person configured, built once for the call; with none configured,
+    model (``__g6_model__``) is given the calling host by default, resolved for this call; with no model available,
     nothing is passed."""
     from g6.core.door import blocked_reply, invoke_checked
 
@@ -280,7 +280,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         no requirement, and reads vacuous when the patch could not have broken it. Optional search: {"templates":
         false} runs free-form checks only; {"test_adequacy": true} also mutates the changed lines and reports how many
         mutants each requirement's stated checks killed and how many survived, which changes no outcome.
-        {"propose": true} has G6 ask the model you configured for G6 (G6_LLM_PROVIDER; none, no call) for checks:
+        {"propose": true} has G6 ask its resolved model (calling host by default; G6_LLM_PROVIDER=none opts out) for checks:
         "proposer": "templates_first" (the default: template by template, then scenarios as questions, then free-form
         tests where no template applied) or "free_form" (free-form tests only), within "max_model_calls" (default
         10), "max_input_chars", "max_output_tokens" and "max_context_chars" per call, each holding for every request

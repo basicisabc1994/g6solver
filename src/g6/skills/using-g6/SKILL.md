@@ -10,17 +10,17 @@ the candidate's writable scope.
 
 ## Routes
 
-A tool named here that your server does not list is absent: say so, use `g6_find`, and do not call it again. The
-sections below are routes too: Deliver (review), Find (discover), Compose and Fit.
+A tool named here that your server does not list is absent: say so, use `g6_find`, and do not call it again.
 
 - **question.** Where the task may not decide a behaviour, `g6_confirm_behaviour` asks the person in the client's own
   dialog: one question per task by default, and the person may allow more or set none. Only the person answers; you
   never answer for them.
 - **mission.** A standard of done, fixed before the work and confirmed by the person: `g6_premortem`, then the
   `g6_mission_*` tools (`references/lifecycle.md`).
-- **consent.** Nothing of the person's reaches a cloud model without their grant; without one, results are withheld
-  and local work goes on. `g6_cloud_grant` asks them in the client's dialog; `g6_cloud_revoke`, `g6_cloud_grants`
-  and `g6_disclosures` withdraw, list and read what was attempted. Never grant for the person.
+- **consent.** G6 uses the calling Claude Code / Codex sign-in by default; key-file `G6_LLM_PROVIDER=none` opts out;
+  a different provider asks first. Same-provider model sends are logged; revoke or decline wins. Client names are
+  self-declared. `g6_cloud_grant` asks in the client's dialog; `g6_cloud_revoke`, `g6_cloud_grants` and `g6_disclosures`
+  withdraw, list and read attempts. Never grant for them.
 - **context.** The person's own documents, indexed on their machine from folders under the roots they list in
   `G6_KNOWLEDGE_ROOTS`: `g6_knowledge_add` (they accept a preview in the client's dialog), then `g6_knowledge_search`
   or `g6_knowledge_context`. Passages are cited and untrusted. Other tools: `references/context.md`.
