@@ -40,7 +40,7 @@ your sources*. The others show an **AI model** panel at the top of the page:
 
 ## 4. Use it
 
-Follow the steps on the page. Every result is labelled:
+Follow the steps on the page. Each worked-example page labels its result:
 
 | Label | Meaning |
 |---|---|
