@@ -453,6 +453,43 @@ def test_a_sentence_that_merely_holds_an_outcome_word_is_not_read_as_it() -> Non
     assert "C:/private" not in json.dumps(reply["mechanisms"]) and reply["remedy"] is None
 
 
+GATE_REFUSAL = json.dumps({
+    "ok": False, "error": "[G6_E_ACTION_GATING_ACTION_REQUIRED] evaluate: action is required",
+    "completion_state": "blocked-escalated",
+    "warning_card": {"code": "G6_E_ACTION_GATING_ACTION_REQUIRED", "message": "evaluate: action is required"}})
+
+
+@pytest.mark.parametrize("outcome,component", [
+    ("G6_E_ACTION_GATING_ACTION_REQUIRED evaluate: action is required", "action_gating"),
+    (GATE_REFUSAL, "action_gating"),
+    ('{"ok": false, "result": {"component": "datalog", "op": "query", "code": "G6_E_DATALOG_PARSE_ERROR"}, '
+     '"completion_state": "blocked-escalated"}', "datalog"),
+    ("[G6_E_ALGO_INPUT_INVALID] [ALGORITHM_DESIGN_ERROR] estimate refused", "algorithm_design"),
+])
+def test_a_component_code_with_no_remedy_of_its_own_reads_the_components_input_contract(
+        outcome: str, component: str) -> None:
+    remedy = selector.remedy_for(outcome)
+    assert remedy is not None and remedy["key"] == "component_code" and remedy["tool"] == "g6_describe", remedy
+    assert remedy["call"] == {"tool": "g6_describe", "arguments": {"component": component}}
+    assert "no remedy written for this code" in remedy["action"]
+    if "blocked-escalated" in outcome:
+        assert remedy["action"].endswith("The outcome beside it: blocked-escalated.")
+
+
+def test_a_code_that_names_no_component_still_has_no_remedy() -> None:
+    assert selector.remedy_for("[G6_E_SOMETHING_G6_HAS_NO_REMEDY_FOR] it failed") is None
+
+
+def test_the_call_last_outcome_reports_refused_is_never_next_again() -> None:
+    first = selector.select("is it safe to run this git push")["next"]
+    assert first["id"] == "op:action_gating.evaluate"
+    again = selector.select("is it safe to run this git push", last_outcome=GATE_REFUSAL)
+    assert again["next"]["call"] != first["call"] and again["next"]["id"] == "tool:g6_describe", again["next"]
+    plain = selector.select("is it safe to run this git push", last_outcome="action_gating.evaluate refused it")
+    assert plain["remedy"] is None and plain["next"]["id"] not in (None, "op:action_gating.evaluate"), plain["next"]
+    assert "not the call last_outcome reports" in plain["next"]["why"]
+
+
 def test_isolation_names_the_doctor() -> None:
     assert selector.remedy_for("G6_E_ISOLATION_UNAVAILABLE")["setup"] == "g6 doctor"
 

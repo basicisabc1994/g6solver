@@ -32,7 +32,9 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
 4. ``next_action``: with open hypotheses in ``considering``, ``verification_controller.next_experiment`` picks the
    call with the most severity-weighted open-hypothesis coverage per cost unit (``COST_UNITS``) within
    ``BUDGET_UNITS``; otherwise the first candidate.
-5. ``reroute``: ``REMEDIES`` by refusal code or outcome, and ``g6.metaharness.recovery``'s remedies by component.
+5. ``reroute``: ``REMEDIES`` by refusal code or outcome, and ``g6.metaharness.recovery``'s remedies by component;
+   a code a component gave itself with no remedy of its own reads that component's input contract
+   (``g6_describe``). The op whose outcome ``last_outcome`` reports is never ``next`` again.
 6. ``validation``: a tool template's keys are within its recorded schema and hold its required keys; an op template
    carries the door's own typed input check (``registry.build_typed_input``), made when the corpus was built from
    shipped code, and an op call in ``considering`` is checked against the fields the corpus recorded. No component
@@ -135,8 +137,9 @@ def _remedy(action: str, tool: str = "", arguments: dict[str, Any] | None = None
 CARRIES_OUTCOME = frozenset({"G6_E_PATCH_REVIEW"})
 _ASK = "Ask the person; offer no other way to agree, and never answer for them."
 _SHOW = "Show the reply's report to the person as it is."
-#: Remedies by refusal code (exact), code family (a key ending ``_``), ``*_NO_MODEL``, outcome word, or
-#: ``component_limit`` (a code a component declares in ``__g6_limits__``). Each names a registered tool or op, or
+#: Remedies by refusal code (exact), code family (a key ending ``_``), ``*_NO_MODEL``, outcome word,
+#: ``component_limit`` (a code a component declares in ``__g6_limits__``) or ``component_code`` (any other code a
+#: component gave itself, which has no remedy of its own). Each names a registered tool or op, or
 #: tells the person; a test holds every code the MCP surface and the door emit to one.
 REMEDIES: dict[str, dict[str, Any]] = {
     # consent and dialogs
@@ -184,6 +187,10 @@ REMEDIES: dict[str, dict[str, Any]] = {
     "*_NO_MODEL": _remedy(
         "No model is configured for this op. Do the step yourself, then ask for the op that checks it.", "g6_select",
         {"task": "<the step you did yourself>", "phase": "verify"}),
+    "component_code": _remedy(
+        "G6 has no remedy written for this code, which the component gave itself. Read the component's input "
+        "contract with g6_describe, fix the field its refusal names, then call again; if it refuses again, tell the "
+        "person what it says.", "g6_describe", {"component": "<component>"}),
     "component_limit": _remedy(
         "The component refused at a limit it declares. The override kernel can try a substitute for that part, "
         "with the person's agreement, beside the original refusal.", "g6_agentic_run",
@@ -403,6 +410,43 @@ def _sensitive(data: dict[str, Any]) -> set[str]:
         e["needs"]["sensitive"] for e in data["entries"] if e["kind"] == "tool" and e["needs"]["sensitive"]}
 
 
+_JSON_FIELD = re.compile(r'"(component|op)"\s*:\s*"([a-z][a-z0-9_]*)"')
+
+
+def _component_of(text: str, code: str, pairs: list[str], data: dict[str, Any]) -> str:
+    """The component a refusal names: its ``[NAME_ERROR]`` tag, the ``component`` field of a reply passed back as
+    JSON, the component whose name begins its ``G6_E_*`` code, or the first ``component.op`` it names."""
+    components = data["components"]
+    tag = _COMPONENT_CODE.search(text)
+    if tag and tag.group(1).lower() in components:
+        return tag.group(1).lower()
+    field = next((v for k, v in _JSON_FIELD.findall(text) if k == "component" and v in components), "")
+    if field:
+        return field
+    if code:
+        prefixed = [c for c in components if code.startswith(f"G6_E_{c.upper()}_")]
+        if prefixed:
+            return max(prefixed, key=len)
+    return next((p.split(".")[0] for p in pairs if p.split(".")[0] in components), "")
+
+
+def _named_op(text: str, data: dict[str, Any]) -> str:
+    """The op id (``op:component.op``) whose outcome ``text`` reports, or "": a ``component.op`` it names, the
+    ``component`` and ``op`` fields of a reply passed back as JSON, or the component its code or tag names with the
+    op its message begins with (``evaluate: action is required``)."""
+    ops = {e["id"] for e in data["entries"] if e["kind"] == "op"}
+    pairs = [f"{c}.{o}" for c, o in _PAIR.findall(text)]
+    named = next((f"op:{p}" for p in pairs if f"op:{p}" in ops), "")
+    if named:
+        return named
+    component = _component_of(text, _code(text), pairs, data)
+    if not component:
+        return ""
+    fields = dict(reversed(_JSON_FIELD.findall(text)))           # the first of each
+    said = [fields["op"]] if "op" in fields else re.findall(r"\b([a-z][a-z0-9_]*): ", text)
+    return next((f"op:{component}.{op}" for op in said if f"op:{component}.{op}" in ops), "")
+
+
 def _code(outcome: str) -> str:
     found = _CODE.search(outcome or "")
     return found.group(0) if found else ""
@@ -448,10 +492,14 @@ def remedy_for(outcome: str, data: dict[str, Any] | None = None) -> dict[str, An
     """The remedy for a refusal or an outcome, or ``None`` when G6 has none. A ``G6_E_*`` code is read first: a
     component's declared limit; a code in ``CARRIES_OUTCOME`` gives way to the outcome word beside it; then the code
     itself, ``*_NO_MODEL``, the outcome word beside a code G6 has no remedy for, then the code's longest family
-    prefix. With no code, the outcome word. Its call is filled from the refusal's own text where that names it."""
+    prefix, then, for a code a component gave itself (``_component_of`` names the component), ``component_code``:
+    read that component's input contract with ``g6_describe``, the outcome beside the code said with it. With no
+    code, the outcome word. Its call is filled from the refusal's own text where that names it."""
     data = data or _corpus()
     text, code = outcome or "", _code(outcome or "")
     word = _outcome_word(text)
+    pairs = [f"{c}.{o}" for c, o in _PAIR.findall(text)]
+    component = _component_of(text, code, pairs, data)
     key = ""
     if code:
         limits = {c for component in data["components"].values() for c in component.get("limits", ())}
@@ -469,19 +517,20 @@ def remedy_for(outcome: str, data: dict[str, Any] | None = None) -> dict[str, An
             key = max((k for k in REMEDIES if k.endswith("_") and code.startswith(k)), key=len, default="")
             if not key:
                 key = max((k for k in REMEDIES if k.startswith("G6_E_") and code.startswith(k)), key=len, default="")
+            if not key and component:
+                key = "component_code"                  # a component's own code: read its input contract
     else:
         key = word
     if not key:
         return None
     found = dict(REMEDIES[key])
     arguments = dict(found["arguments"])
-    pairs = [f"{c}.{o}" for c, o in _PAIR.findall(text)]
     # the setup step names an op or a tool's allowance (patch_review.review) only when the corpus knows it as
     # sensitive; any other text the agent passed stays out of G6's words, and the step stays generic
     pair = next((p for p in pairs if p in _sensitive(data)), "")
-    named = _COMPONENT_CODE.search(text)
-    component = named.group(1).lower() if named and named.group(1).lower() in data["components"] else next(
-        (p.split(".")[0] for p in pairs if p.split(".")[0] in data["components"]), "")
+    if key == "component_code":
+        state = next((s for s in ("blocked-escalated", "qualified-draft") if s in text), "")
+        found["action"] += f" The outcome beside it: {state}." if state else ""
     if "component" in arguments and component:
         arguments["component"] = component
     if found["setup"].endswith("<component.op>") and pair:
@@ -902,20 +951,24 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
                        "why": "tool templates against their recorded schemas; op templates by the door's typed input "
                               "check, made when the corpus was built from shipped code"})
 
+    # the op whose outcome last_outcome reports is never next again: its template is the call just made
+    reported = _named_op(last_outcome, data) if last_outcome.strip() else ""
+    open_ = [c["id"] for c in candidates if not c["acts"] and c["id"] != reported]
     if remedy is not None and remedy["tell_person"]:
         say = remedy["action"] + (f" The step: {remedy['setup']}." if remedy["setup"] else "")
         nxt = {"id": None, "call": None, "tell_person": True, "say": say, "why": f"remedy {remedy['key']}"}
-    elif any(not c["acts"] for c in candidates):
+    elif open_:
         # a call that acts outside G6 is never next: the scheduler's pick only when it does not act
-        pick = first or (scheduled if scheduled and not acting[scheduled] else "") or next(
-            c["id"] for c in candidates if not c["acts"])
+        pick = first or (scheduled if scheduled in open_ else "") or open_[0]
         found = next(c for c in candidates if c["id"] == pick)
         nxt = {"id": pick, "call": found["call"], "tell_person": False, "say": "",
                "why": "remedy " + remedy["key"] if pick == first else why if pick == scheduled else
-               "the first candidate that does not act outside G6"}
+               "the first candidate that does not act outside G6"
+               + (", and is not the call last_outcome reports" if reported else "")}
     elif candidates:
-        nxt = {"id": None, "call": None, "tell_person": True, "why": "every candidate acts outside G6",
-               "say": "Every call offered here acts outside G6's checks: ask the person before any of them."}
+        nxt = {"id": None, "call": None, "tell_person": True, "why": "every candidate acts outside G6 or was just made",
+               "say": "Every call offered here acts outside G6's checks or is the one just made: ask the person "
+                      "before any of them."}
     else:
         nxt = {"id": None, "call": None, "tell_person": False, "say": "Nothing matched: describe the task in other "
                "words, or call g6_find.", "why": "no candidate"}
