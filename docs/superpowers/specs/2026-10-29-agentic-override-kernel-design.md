@@ -1,7 +1,8 @@
 # Agentic override kernel v1
 
 Owner ruling, 2026-11-17: overrides are covered by consent. The person is not asked per override. The model call
-proceeds only when admitted by the existing consent check for its provider in `core/cloud_consent.py`. A separate
+uses the existing consent check for its provider in `core/cloud_consent.py` for hosts and endpoints. Process callers
+run under the caller's Python allowance, recorded as `allowed in code`. A separate
 change owns the same-provider exemption. This kernel changes no provider permission or bound file. This ruling
 replaces the earlier question and typed-name design.
 
@@ -25,8 +26,9 @@ inside-child seam. Running an opted-in operation again repeats no side effect.
 
 ## Interfaces and consent
 
-Python has one call: `g6.agentic.run(component, op, params, *, part=None, mode="prompt", reason="", allow=(),
-llm=None, name="", budget=None)`. It requires `agentic.run` and the operation's sensitive allowance. The legacy
+Python uses `from g6._agentic.kernel import run`, then
+`run(component, op, params, part=None, mode="prompt", reason="", allow=(), llm=None, name="", budget=None)`.
+It requires `agentic.run` and the operation's sensitive allowance. The legacy
 `name` is ignored. Explicit Python FakeLLM responders select `own_function`; configuration and MCP cannot select it.
 
 `prepare` and `override` remain useful for inspecting and staging execution. `prepare` runs the original and either
@@ -36,8 +38,8 @@ as an informational execution summary and never sent as a consent dialog.
 
 MCP exposes `g6_agentic_run(component, op, params_json="{}", part="", mode="prompt", reason="")`. It checks
 sensitive allowances, decodes bounded JSON and runs the original. With a trigger it starts a job, polled through
-`metaharness_job`. It never calls `request_consent` for the override. Each actual model call still passes the
-existing provider consent guard. There is no new grant, provider switch or terminal fallback.
+`metaharness_job`. It never calls `request_consent` for the override. Hosts and endpoints pass the existing provider
+consent guard. Process callers use the code's allowance. There is no new grant, provider switch or terminal fallback.
 
 ## Prepared value boundary
 
@@ -46,7 +48,8 @@ copy of everything execution uses:
 
 - Budgets require exact int call/character limits and exact int or float seconds, finite and positive. Booleans,
   subclasses and custom numeric conversions refuse. G6 builds its own Budget with float seconds.
-- Parameters accept only exact JSON types: dict/list/str/int/float/bool/None, exact string keys and finite numbers.
+- Parameters accept exact dict/list/tuple/str/int/float/bool/None, exact string keys and finite numbers. Tuples,
+  including nested tuples, become JSON lists in the canonical round trip.
   Cycles, excessive depth, item count, integer size and more than 1,000,000 serialized characters refuse before the
   original. A canonical JSON round trip removes all aliases to caller containers.
 - The caller snapshot has an owned exact class, exact model/program/URL strings, plain parsed route and finite
@@ -59,8 +62,9 @@ copy of everything execution uses:
 G6 keeps sealed data under the weak identity of the issued Pending, without hashing its caller-reachable fields.
 A copied or fabricated Pending has no seal. Public metadata cannot select the operation, parameters, model,
 limits, recipient, validator, checker or duration. A declared checker always remains declared. The frozen caller
-snapshot is also digest-covered; mutations of its constructor fields or identities refuse before construction or
-sending. Class/kind/route admission repeats independently.
+snapshot has its own private copy, retaining strong references to the responder and every retained callable for the
+Pending's lifetime. Mutating public constructor metadata refuses before construction or sending; execution only uses
+the private copy. Class/kind/route admission repeats independently.
 
 The preparation digest covers the whole plain copy and retained class, responder and code identities. Override
 captures a private snapshot, validates exact field types, rechecks identities and recomputes the digest. Digest
@@ -93,8 +97,12 @@ a degradation reason: exhausted budget, model/child failure, invalid value, fail
 Every executed override is appended to the local hash-chained ledger, owned by the same user; it does not protect
 against that user's programs. Records keep names, codes, trigger, digests, counts and model, without parameter,
 result or exception text. Historical `digests.question` now stores the full preparation digest. The compatibility
-`person` field has `answer="provider consent"`, an empty name and `authenticated=false`; it makes no claim of an
-override dialog. Historical entries stay readable. The log can direct the self-improvement loop's attention but
+`person` field records `answer="provider consent"` with the observed `provider`, or `answer="allowed in code"`
+without an observed admission. Names stay empty and `authenticated=false`; no person approval is claimed.
+Endpoint completion enters the existing admission check on its fresh backend and observes successful entry at the
+counted send. Host sends observe their own live admission, excluding any enclosing request's admission. A caller
+kind alone never supplies authority. Historical entries without a provider stay readable.
+The log can direct the self-improvement loop's attention but
 cannot count as evidence. Jobs share one worker.
 
 ## Caller admission and budgets

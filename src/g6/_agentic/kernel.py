@@ -12,9 +12,9 @@ override checks that seal before construction or sending, then uses only a priva
 fields never choose the operation, model, limits, validator or checker. prepare/override remain useful for staging
 and inspecting a preparation; run is the one-call Python API.
 
-Overrides are covered by the existing provider consent check. There is no per-override dialog or typed name.
-The metered caller is rebuilt by G6 and passes the existing consent guard. Only owned host sign-in, local models
-and loopback IP-literal endpoints qualify. An explicit Python own_function retains its responder by reference;
+There is no per-override dialog or typed name. The metered caller is rebuilt by G6. Host and endpoint calls use
+the existing provider consent check; process callers run under the Python code's allowance. Only owned host sign-in,
+local models and loopback IP-literal endpoints qualify. An explicit Python own_function retains its responder by reference;
 G6 cannot see where that function sends anything or stop it. MCP and configuration cannot select that kind.
 
 The operation runs in a confined child; each substituted value passes its return type and the declared validator.
@@ -45,7 +45,7 @@ from typing import Any
 from urllib.parse import SplitResult, urlsplit
 
 from g6._agentic import _child, decode, ledger, protected
-from g6.core import consent_callers
+from g6.core import cloud_consent, consent_callers
 from g6.core.consent_registry import GuardedRegistry
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, door_reply, invoke_checked, is_allowed
 from g6.core.ledger import digest
@@ -166,6 +166,10 @@ class _Execution(Pending):
 _PREPARED: list[tuple[weakref.ReferenceType[Pending], str, _CallerSnapshot, str,
                       tuple[tuple[str, Any], ...]]] = []
 _PREPARED_LOCK = threading.RLock()
+# An endpoint's successful admission, scoped to this envelope and its current call. Hosts retain their own guard;
+# their live admission is observed at the counted send. Neither value authorizes a send.
+_MODEL_ADMISSION: contextvars.ContextVar[tuple[Any, str]] = contextvars.ContextVar(
+    "g6_agentic_admission", default=(None, ""))
 JSON_CHARS = 1_000_000
 
 
@@ -196,7 +200,7 @@ def _json_copy(value: Any) -> Any:
                 raise ValueError("JSON integer too large")
         elif one is None or cls is bool:
             pass
-        elif cls is dict or cls is list:
+        elif cls is dict or cls is list or cls is tuple:
             if id(one) in active:
                 raise ValueError("JSON cycle")
             active.add(id(one))
@@ -245,6 +249,10 @@ def _snapshot_data(snapshot: _CallerSnapshot) -> dict[str, Any]:
 
 def _seal(values: dict[str, Any], snapshot: _CallerSnapshot) -> Pending:
     plain = _json_copy(values)
+    # Public metadata must never own the seal's last reference to a callable. In particular, replacing the public
+    # responder cannot free the sealed one and let another function reuse its identity token.
+    sealed_snapshot = _CallerSnapshot(**{name: object.__getattribute__(snapshot, name)
+                                         for name in _CallerSnapshot.__dataclass_fields__})
     package = _package(plain["component"])
     names = (*plain["functions"], plain["validator"], plain["checker"], plain["inside"])
     owned = tuple((name, _child.resolve(name, package)) for name in names if name)
@@ -254,11 +262,11 @@ def _seal(values: dict[str, Any], snapshot: _CallerSnapshot) -> Pending:
     summary = "Override execution details\n" + "\n".join(f"{key}: {value}" for key, value in plain["binding"].items())
     summary += (f"\nPreparation digest: {bound}\nThe substitute is not covered by that function's tests or any "
                 "certificate. It is qualified-draft at best, with the original answer beside it. "
-                "Model calls require provider consent; no per-override question is asked.")
+                "No per-override question is asked.")
     pending = Pending(**{**plain, "functions": tuple(plain["functions"]), "budget": Budget(**plain["budget"]),
                          "caller": snapshot, "digest": bound, "question": summary})
     with _PREPARED_LOCK:
-        _PREPARED.append((weakref.ref(pending, _forget_prepared), text, snapshot, bound, owned))
+        _PREPARED.append((weakref.ref(pending, _forget_prepared), text, sealed_snapshot, bound, owned))
     return pending
 
 
@@ -586,6 +594,10 @@ def _prepare(component: str, op: str, params: Any, *, part: str | None, mode: st
                    f"return type and {spec['validator']} before it is used",
             "Model": model,
             "Caller kind": kind,
+            "Authority": ("allowed in code: the caller's Python allowance; no consent admission is performed"
+                          if kind in ("own_function", "local") else
+                          "provider consent: the existing admission check for each call's provider; recorded only "
+                          "when observed at that call"),
             "Limits": f"{call_limit}; {budget.max_output_chars} characters of model replies in all (a longer reply is not used); "
                       f"{budget.max_wall_clock_s:g} seconds for the whole override, every model call and every run of the "
                       "operation (the final run and the re-check included): none starts with less than "
@@ -933,6 +945,49 @@ class _Envelope:
         self._timed: list[Any] = []
         self._snapshot = caller
         self.caller: Any = None   # construction and guarding run inside the deadline worker
+        self._outer_hold = cloud_consent._HELD.get()
+        self.providers: list[str] = []
+        self.code_calls = 0
+
+    def _authority(self) -> None:
+        """Observe an admission at this send, never infer one from a caller kind or an enclosing request."""
+        owner, provider = _MODEL_ADMISSION.get()
+        hold = cloud_consent._HELD.get()
+        if owner is not self:
+            provider = (hold.send[0] if hold is not None and hold is not self._outer_hold and hold.here() else "")
+        self._remember_authority(provider)
+
+    def _remember_authority(self, provider: Any) -> None:
+        if type(provider) is str and re.fullmatch(r"[A-Za-z0-9_.:/@+\-]{1,200}", provider):
+            self.providers.append(provider)
+        else:
+            self.code_calls += 1
+
+    def authority(self) -> dict[str, Any]:
+        """Plain historical metadata, frozen by the waiting thread before it writes the ledger."""
+        with self._lock:
+            self.closed = True
+            providers = set(self.providers)
+            provider = next(iter(providers)) if len(providers) == 1 and not self.code_calls else ""
+            return {"answer": "provider consent" if provider else "allowed in code", "provider": provider,
+                    "name": "", "authenticated": False}
+
+    def _complete(self, system: str, user: str, observed: dict[str, Any]) -> str:
+        if self.kind != "endpoint":
+            return self.caller.complete(system, user, max_tokens=MODEL_TOKENS)
+        # The same endpoint admission used by consent_callers._Consent, on the fresh backend that actually sends.
+        # Keep it here so successful entry can be observed, including the local branch which retains no cloud hold.
+        # Hosts keep their admission at their own launch; process callers acquire no admission here.
+        to = consent_callers.destination(self.caller)
+        with (consent_callers.admission(to.provider, consent_callers.model_sources(),
+                                        digest({"system": system, "user": user}), local=to.local),
+              consent_callers._sdk_call(getattr(self.caller, "_client", None), to.provider)):
+            observed["admitted_provider"] = to.provider
+            token = _MODEL_ADMISSION.set((self, to.provider))
+            try:
+                return self.caller.complete(system, user, max_tokens=MODEL_TOKENS)
+            finally:
+                _MODEL_ADMISSION.reset(token)
 
     def elapsed_s(self) -> float:
         return time.monotonic() - self._start
@@ -974,6 +1029,7 @@ class _Envelope:
             if self.kind == "host" and self._in_call:
                 self._refuse("a host client is started once per model call; it was not started again")
             self.calls += 1
+            self._authority()
             self._in_call += 1
             self._sent_at = time.monotonic()
             self._cut(left)
@@ -990,6 +1046,7 @@ class _Envelope:
                              "first request, with that request's timeout, past what the deadline allows; it was not "
                              "sent")
             self.calls += 1
+            self._authority()
 
     def _took(self, text: str) -> str:
         """Count a reply's characters: ``text``, or :class:`_Stop` when it is longer than what was left."""
@@ -1026,10 +1083,11 @@ class _Envelope:
                     deadline = nullcontext()
                 with deadline, counting(before_call=self.admit) as noted:
                     if self.caller is None:
-                        self.caller = consent_callers.guard(_fresh(self._snapshot, self._timed))
+                        own = _fresh(self._snapshot, self._timed)
+                        self.caller = own if self.kind == "endpoint" else consent_callers.guard(own)
                     with self._lock:
                         self._cut(self._gate())  # construction may have spent the remaining time
-                    reply = self.caller.complete(system, user, max_tokens=MODEL_TOKENS)
+                    reply = self._complete(system, user, box)
                     if type(reply) is str:
                         box["text"] = reply
                     elif isinstance(reply, str):
@@ -1048,10 +1106,13 @@ class _Envelope:
             finally:
                 llm._WAITS.reset(waits)
             with self._lock:
+                if self.closed:
+                    return
                 if "error" in box and noted():
                     self.failed_calls += 1
                 if "text" in box and not noted():
                     self.calls += 1     # a caller that notes no send still made one call
+                    self._remember_authority(box.get("admitted_provider", ""))
 
         worker = threading.Thread(target=contextvars.copy_context().run, args=(call,), name="g6-agentic-model",
                                   daemon=True)
@@ -1180,7 +1241,7 @@ def _bare(result: Any, *, top: bool = True) -> Any:
 
 
 def override(pending: Pending, *, confirmation: Confirmation | None = None) -> dict[str, Any]:
-    """Execute a sealed preparation. Provider consent alone admits the model call; no typed name is required.
+    """Execute a sealed preparation under provider admission or the code's allowance; no typed name is required.
 
     An optional legacy Confirmation checks only its exact digest. Its name and answer are never read.
     """
@@ -1192,18 +1253,27 @@ def override(pending: Pending, *, confirmation: Confirmation | None = None) -> d
             saved = next((entry for entry in _PREPARED if entry[0]() is pending), None)
         if saved is None:
             return _refused(DIGEST_MISMATCH, "G6 has no sealed preparation for this override")
-        _, text, public_snapshot, expected, owned = saved
+        _, text, sealed_snapshot, expected, owned = saved
         data = json.loads(text)
         original = data["original"]
+        public_snapshot = object.__getattribute__(pending, "caller")
         if type(public_snapshot) is not _CallerSnapshot:
             return _unmetered("a replaced snapshot class", original, data["request_id"])
         # Capture every snapshot field first, without operating on any of their values. Validate this private copy
         # before digesting or formatting it; subsequent public mutations cannot affect execution.
-        snapshot = _CallerSnapshot(**{name: object.__getattribute__(public_snapshot, name)
+        public_copy = _CallerSnapshot(**{name: object.__getattribute__(public_snapshot, name)
+                                        for name in _CallerSnapshot.__dataclass_fields__})
+        _, why = _snapshot_kind(public_copy)
+        if why:
+            return _unmetered(why, data["original"], data["request_id"])
+        snapshot = _CallerSnapshot(**{name: object.__getattribute__(sealed_snapshot, name)
                                       for name in _CallerSnapshot.__dataclass_fields__})
         kind, why = _snapshot_kind(snapshot)
         if why:
-            return _unmetered(why, data["original"], data["request_id"])
+            return _unmetered(why, original, data["request_id"])
+        if _snapshot_data(public_copy) != _snapshot_data(snapshot):
+            return _refused(DIGEST_MISMATCH, "the public caller metadata changed; nothing was constructed or sent",
+                            original=original, request_id=data["request_id"])
         package = _package(data["component"])
         current_code = tuple((name, _child.resolve(name, package)) for name, _ in owned)
         if any(current is not prepared for (_, current), (_, prepared) in zip(current_code, owned, strict=True)):
@@ -1247,7 +1317,7 @@ def _override(pending: _Execution) -> dict[str, Any]:
     record: dict[str, Any] = {
         "outcome": "", "substituted": False, "trigger": pending.trigger, "part": pending.part,
         "functions": list(pending.functions), "mode": pending.mode, "model": pending.model, "component": pending.component,
-        "op": pending.op, "person": {"answer": "provider consent", "name": "", "authenticated": False},
+        "op": pending.op, "person": {"answer": "allowed in code", "provider": "", "name": "", "authenticated": False},
         "budget": {"max_model_calls": pending.budget.max_model_calls, "max_output_chars": pending.budget.max_output_chars,
                    "max_wall_clock_s": pending.budget.max_wall_clock_s},
         "note": NOTE}
@@ -1325,6 +1395,7 @@ def _override(pending: _Execution) -> dict[str, Any]:
     record["isolation"] = isolation
     record["digests"] = {"source": pending.source_digest, "prompts": prompts, "question": pending.digest,
                          "params": pending.params_digest, "result": digest(result) if result is not None else ""}
+    record["person"] = envelope.authority()  # closes later admissions before historical counts are read
     record["cost"] = {"model_calls": envelope.calls, "failed_model_calls": envelope.failed_calls,
                       "output_chars": envelope.output_chars, "child_runs": runs,
                       "seconds": round(envelope.elapsed_s(), 3)}
@@ -1350,7 +1421,9 @@ def _override(pending: _Execution) -> dict[str, Any]:
                         f"This result came from a model's substitute for {pending.part} ({', '.join(pending.functions)}) "
                         f"of {pending.component}.{pending.op}, for this call only: not G6's tested behaviour, and not "
                         f"covered by that function's tests or by any certificate; {recheck}. G6's own answer is in "
-                        f"'original'. Model used: {pending.model}; the original answer stands beside it.",
+                        f"'original'. Model used: {pending.model}; authority: {record['person']['answer']}"
+                        + (f" ({record['person']['provider']})" if record['person']['provider'] else "")
+                        + "; the original answer stands beside it.",
                         "Treat it as a proposal and check it before relying on it: it never passes a requirement and "
                         "is never evidence in another G6 check.")
     fields = envelope_fields(reliability_label=state, warning_card=card, evidence=[], request_id=pending.request_id,
