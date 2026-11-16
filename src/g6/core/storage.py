@@ -11,11 +11,14 @@ device paths refused before anything is resolved, and a file to be read kept und
 """
 from __future__ import annotations
 
+import functools
 import os
 import sqlite3
 import stat
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 #: Names Windows keeps for devices in every folder (``CON``, ``nul.txt``, ``COM¹``): a path naming one is never a plain
 #: file.
@@ -38,10 +41,29 @@ def g6_home() -> Path:
     return Path(raw).expanduser() if raw else Path.home() / ".g6"
 
 
+def _in_g6s_words(start: str = "") -> Callable[[Callable[..., Path]], Callable[..., Path]]:
+    """An entry point whose every ``OSError`` or ``ValueError`` (a ``UnicodeError`` too) raised while it decides is a
+    :class:`PathRefused` in G6's words, starting ``start``, not as outside (nothing decided that): no raw exception, and
+    neither Python's nor the system's words, nor a path, reach a caller."""
+    def wrap(decide: Callable[..., Path]) -> Callable[..., Path]:
+        @functools.wraps(decide)
+        def entry(*args: Any, **kwargs: Any) -> Path:
+            try:
+                return decide(*args, **kwargs)
+            except PathRefused:
+                raise
+            except (OSError, ValueError):
+                raise PathRefused(f"{start}the file system could not answer about a name or a folder on the path, so "
+                                  "G6 cannot check it") from None
+        return entry
+    return wrap
+
+
 def confined_path(raw: str | os.PathLike[str], roots: tuple[Path, ...]) -> Path:
     """Where an absolute ``raw`` really is, when that is inside one of ``roots``: :func:`contained` over several
     trusted, absolute roots, so every refusal is its own. :class:`PathRefused` (a ``ValueError``) when ``raw`` is
-    relative or lies in none of them; filesystem errors propagate. A concurrent change to a link can still race it."""
+    relative or lies in none of them, or when the file system could not answer about it (as :func:`contained`). A
+    concurrent change to a link can still race it."""
     text = os.fspath(raw)
     if not isinstance(text, str) or not Path(text).is_absolute():
         raise PathRefused("an absolute local path is required")
@@ -56,8 +78,10 @@ def confined_path(raw: str | os.PathLike[str], roots: tuple[Path, ...]) -> Path:
     raise refused
 
 
+@_in_g6s_words("state path under G6_HOME: ")
 def state_path(*parts: str) -> Path:
-    """A path under the state root. Relative parts may not escape it, nor hold a name :func:`_gate` refuses."""
+    """A path under the state root. Relative parts may not escape it, nor hold a name :func:`_gate` refuses; a
+    :class:`PathRefused` (a ``ValueError``) says why."""
     if why := _gate(*parts):
         raise PathRefused(f"state path escapes G6_HOME: {why}")
     root = g6_home().resolve()
@@ -67,7 +91,7 @@ def state_path(*parts: str) -> Path:
         # file outside the home; then the words joined onto the home are the answer, when no link is on them
         p = _opened_inside(root, p) or _opened_inside(root, root.joinpath(*parts))
     if p is None or p != root and root not in p.parents:
-        raise ValueError(f"state path escapes G6_HOME: {'/'.join(parts)}")
+        raise PathRefused(f"state path escapes G6_HOME: {'/'.join(parts)}", outside=True)
     return p
 
 
@@ -175,8 +199,9 @@ def _opened_inside(root: Path, path: Path) -> Path | None:
     """Windows: ``path`` as a caller's open reads its words (a local ``\\\\?\\X:\\`` prefix dropped, ``..`` taken, a
     trailing dot dropped), when the file system says it is ``root`` or inside it, every name of it below ``root``
     passes :func:`_gate` (so a name lstat cannot find is a plain one, below a folder that was found), and lstat finds no
-    symbolic link, junction or other reparse point on any existing part of it below ``root``; None otherwise. :class:`PathRefused` (not outside) for a name Windows cannot hold, or a folder on the
-    path it cannot read now.
+    symbolic link, junction or other reparse point on any existing part of it below ``root``; None otherwise.
+    :class:`PathRefused` (not outside) for a name Windows cannot hold, or a folder on the path it cannot read now; any
+    other error the file system raises goes to the entry point, which refuses the path in its own words, not as outside.
 
     Inside is decided by file identity, not by words: pathlib compares Windows paths ignoring case, but in a
     case-sensitive folder (a per-folder flag any user may set) ``HOME`` is not ``home``. So the part of the value at the
@@ -195,29 +220,27 @@ def _opened_inside(root: Path, path: Path) -> Path | None:
     plain = Path(os.path.abspath(text))
     if plain != root and root not in plain.parents or _gate(*plain.parts[len(root.parts):]):
         return None
-    try:
-        known = root                                 # the root, or the deepest folder above it that is there now
-        while (want := _lstat(known)) is None and known != known.parent:
-            known = known.parent
-        at = len(known.parts)
-        if want is None or plain.parts[at:len(root.parts)] != root.parts[at:]:
-            return None
-        if plain.parts[:at] != known.parts:
-            found = _lstat(Path(*plain.parts[:at]))
-            if found is None or not want.st_ino or (found.st_dev, found.st_ino) != (want.st_dev, want.st_ino):
-                return None
-        for depth in range(at + 1, len(plain.parts) + 1):
-            found = _lstat(Path(*plain.parts[:depth]))   # the value's own words, as open reads them
-            if found is None:
-                return plain
-            if stat.S_ISLNK(found.st_mode) or (getattr(found, "st_file_attributes", 0)
-                                               & stat.FILE_ATTRIBUTE_REPARSE_POINT):
-                return None
-    except OSError:
+    known = root                                 # the root, or the deepest folder above it that is there now
+    while (want := _lstat(known)) is None and known != known.parent:
+        known = known.parent
+    at = len(known.parts)
+    if want is None or plain.parts[at:len(root.parts)] != root.parts[at:]:
         return None
+    if plain.parts[:at] != known.parts:
+        found = _lstat(Path(*plain.parts[:at]))
+        if found is None or not want.st_ino or (found.st_dev, found.st_ino) != (want.st_dev, want.st_ino):
+            return None
+    for depth in range(at + 1, len(plain.parts) + 1):
+        found = _lstat(Path(*plain.parts[:depth]))   # the value's own words, as open reads them
+        if found is None:
+            return plain
+        if stat.S_ISLNK(found.st_mode) or (getattr(found, "st_file_attributes", 0)
+                                           & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+            return None
     return plain
 
 
+@_in_g6s_words()
 def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refuse_links: bool = False) -> Path:
     """Where ``raw`` really is, when that is ``root`` or inside it; :class:`PathRefused` otherwise.
 
@@ -233,7 +256,8 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
     absolute path), a control character, half of a UTF-16 character, a device's name, or a name ending in a space or a
     dot, each of which Windows reads two ways. With ``refuse_links=True``, every existing path component is checked with lstat
     before resolution (on Windows each as open goes through it); symbolic links and reparse points are refused. On
-    Windows a folder on the path that cannot be read now is refused, not as outside. It reads no file's content:
+    Windows a folder on the path that cannot be read now is refused, not as outside, and so is a path the file system
+    raises any other error about (in G6's words, never the system's). It reads no file's content:
     :func:`plain_file` checks a file to be read."""
     text = os.fspath(raw)
     if not isinstance(text, str) or not text.strip():

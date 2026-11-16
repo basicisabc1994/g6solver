@@ -385,3 +385,25 @@ def test_a_name_read_two_ways_is_refused_before_the_file_system_is_asked(home: P
         assert str(home) not in refused.value.reason and name not in refused.value.reason, refused.value.reason
     assert asked == []
 
+
+@pytest.mark.parametrize("where", ["lstat", "resolve"])
+@pytest.mark.parametrize("error", [OSError(22, "zz-os-words", None, 87), ValueError("zz-python-words"),
+                                   UnicodeEncodeError("utf-16-le", "\udc80", 0, 1, "zz-codec-words")],
+                         ids=["oserror", "valueerror", "unicodeerror"])
+def test_an_error_while_deciding_is_refused_in_g6s_words(home: Path, where: str, error: Exception,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    from g6.core.storage import PathRefused
+
+    def fails(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise error
+
+    with monkeypatch.context() as patch:
+        patch.setattr(*((os, "lstat") if where == "lstat" else (Path, "resolve")), fails)
+        try:
+            state_path("churn", "x.json")
+        except Exception as raw:  # noqa: BLE001
+            caught = raw
+        else:
+            caught = AssertionError("nothing refused")
+    assert type(caught) is PathRefused, f"state_path let out {type(caught).__name__}: {caught}"
+    assert caught.outside is False and "zz-" not in caught.reason and "G6_HOME" in caught.reason, caught.reason

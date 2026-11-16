@@ -434,3 +434,38 @@ def test_a_stream_name_on_a_one_letter_junction_out_of_the_root_is_refused(root:
     finally:
         os.rmdir(base / "j")
 
+
+#: What an entry point may meet while it decides: an OS error (WinError 87, a stream name lstat cannot take), a
+#: ValueError (a NUL) and a UnicodeError (half of a UTF-16 character encoded for Windows).
+ERRORS = [OSError(22, "zz-os-words", None, 87), ValueError("zz-python-words"),
+          UnicodeEncodeError("utf-16-le", "\udc80", 0, 1, "zz-codec-words")]
+
+
+@pytest.mark.parametrize("where", ["lstat", "resolve"])
+@pytest.mark.parametrize("error", ERRORS, ids=["oserror", "valueerror", "unicodeerror"])
+@pytest.mark.parametrize("call", ["contained", "refuse_links", "confined_path"])
+def test_an_error_while_deciding_is_refused_in_g6s_words(root: Path, where: str, error: Exception, call: str,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    # no raw OSError, ValueError or UnicodeError reaches a caller: a PathRefused in G6's words, not as outside (nothing
+    # decided that the path is outside)
+    base = root.resolve()
+    (base / "sub").mkdir()
+
+    def fails(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise error
+
+    with monkeypatch.context() as patch:
+        patch.setattr(*((os, "lstat") if where == "lstat" else (Path, "resolve")), fails)
+        try:
+            if call == "confined_path":
+                storage.confined_path(str(base / "sub" / "x.json"), (base,))
+            else:
+                contained(base, "sub/x.json", refuse_links=call == "refuse_links")
+        except PathRefused as refused:
+            caught: Exception = refused
+        except Exception as raw:  # noqa: BLE001
+            caught = raw
+        else:
+            caught = AssertionError("nothing refused")
+    assert type(caught) is PathRefused, f"{call} let out {type(caught).__name__}: {caught}"
+    assert caught.outside is False and "zz-" not in caught.reason, caught.reason
