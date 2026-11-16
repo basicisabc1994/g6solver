@@ -28,6 +28,7 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
 """
 from __future__ import annotations
 
+import copy
 import json
 import math
 import re
@@ -335,7 +336,7 @@ def remedy_for(outcome: str, data: dict[str, Any] | None = None) -> dict[str, An
            "tool": tool, "call": call, "setup": found["setup"], "available": available if tool else True}
     if key == "wrong_answer":
         out["recovery"] = recovery_remedies(data)
-    return out
+    return copy.deepcopy(out)                       # nothing a caller changes reaches the corpus or REMEDIES
 
 
 # -- stage helpers ----------------------------------------------------------------------------------------------
@@ -701,10 +702,12 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
                         "reroute.")
     evidence = [{"kind": "selection", "corpus_entries": len(entries), "corpus_release": data.get("release", ""),
                  "stages_run": [m["stage"] for m in mechanisms if m["ran"]]}]
-    return {"ok": True, "phase": phase, "candidates": candidates, "next": nxt, "remedy": remedy,
-            "considering": considered, "mechanisms": mechanisms, "unknown_until_observed": list(UNKNOWN_UNTIL_OBSERVED),
-            **envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
-                              request_id=request_id, run_id=run_id)}
+    # a deep copy: candidates hold the cached corpus's own objects, which a caller filling in a template must not change
+    return copy.deepcopy({
+        "ok": True, "phase": phase, "candidates": candidates, "next": nxt, "remedy": remedy,
+        "considering": considered, "mechanisms": mechanisms, "unknown_until_observed": list(UNKNOWN_UNTIL_OBSERVED),
+        **envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
+                          request_id=request_id, run_id=run_id)})
 
 
 __all__ = ["BUDGET_UNITS", "COST_UNITS", "MAX_CANDIDATES", "PENDING_TOOLS", "PRIORS", "REMEDIES", "STAGES",

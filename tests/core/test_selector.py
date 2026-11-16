@@ -102,6 +102,24 @@ def test_no_host_fact_reaches_a_reply(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert "allowed" in unknown and "grant" in unknown and "model" in unknown
 
 
+def test_a_caller_that_changes_a_reply_changes_no_later_reply() -> None:
+    def stable(reply: dict) -> str:
+        return json.dumps({k: v for k, v in reply.items() if k not in ("request_id", "run_id")}, sort_keys=True)
+
+    args = ("review my patch before I say it is done", "verify", "G6_E_CLOUD_CONSENT_REQUIRED")
+    before = stable(selector.select(*args))
+    first = selector.select(*args)
+    try:
+        for candidate in first["candidates"]:                 # the agent fills in the templates it was given
+            candidate["call"].setdefault("arguments", {})["repo"] = "/the/callers/repo"
+            candidate["needs"]["confined"] = "changed"
+        first["remedy"]["call"]["arguments"]["source"] = "changed"
+        selector.remedy_for("G6_E_CLOUD_CONSENT_REQUIRED")["call"]["arguments"]["provider"] = "changed"
+        assert stable(selector.select(*args)) == before
+    finally:
+        corpus._loaded.cache_clear()
+
+
 def test_considering_entries_are_validated() -> None:
     reply = selector.select("review my patch", phase="verify", considering=[
         {"tool": "g6_review_patch", "arguments": {"repo": "/r", "task": "t"}},
