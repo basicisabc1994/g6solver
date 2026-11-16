@@ -28,6 +28,7 @@ the deadline worker; late replies are unused. See the agentic override kernel de
 from __future__ import annotations
 
 import contextvars
+import functools
 import hashlib
 import inspect
 import ipaddress
@@ -132,7 +133,6 @@ class Pending:
     budget: Budget
     request_id: str
     caller: Any = field(repr=False, compare=False)
-    _retained: Any = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -172,46 +172,85 @@ class _CallablePin:
     code: Any
     defaults: Any
     kwdefaults: Any
-    keywords: tuple[tuple[str, Any], ...]
-    cells: tuple[Any, ...]
-
-
-_EMPTY_CELL = object()
+    args: Any
+    keywords: Any
+    follows: tuple[Any, ...]
 
 
 def _callable_function(target: Any) -> Any:
     if type(target) is types.MethodType:
         return target.__func__
+    if type(target) is functools.partial:
+        return target.func
     if type(target) is types.FunctionType or type(target) is types.BuiltinFunctionType:
         return target
     # Inspect the type without dispatching a responder object's attribute hooks.
-    return inspect.getattr_static(type(target), "__call__")
+    function = inspect.getattr_static(type(target), "__call__", None)
+    if type(function) is staticmethod or type(function) is classmethod:
+        function = function.__func__
+    return function
+
+
+def _code_reference(value: Any) -> bool:
+    """Only callable edges, never attributes or container contents of caller data."""
+    if any(type(value) is cls for cls in (types.FunctionType, types.MethodType, types.BuiltinFunctionType,
+                                         functools.partial)):
+        return True
+    return type(_callable_function(value)) is types.FunctionType
 
 
 def _pin(target: Any) -> _CallablePin:
     function = _callable_function(target)
+    wrapped = inspect.getattr_static(target, "__wrapped__", None)
+    follows_wrapped = (wrapped,) if _code_reference(wrapped) else ()
+    if type(target) is functools.partial:
+        return _CallablePin(target, function, None, None, None, target.args, target.keywords,
+                            (function, *follows_wrapped))
+    if type(target) is types.FunctionType:
+        keywords = target.__kwdefaults__
+        if keywords is not None and type(keywords) is not dict:
+            raise TypeError("keyword defaults must be an exact dictionary")
+        if keywords is not None and any(type(key) is not str for key in keywords):
+            raise TypeError("keyword default names must be exact text")
+        follows = list(follows_wrapped)
+        for cell in target.__closure__ or ():
+            try:
+                value = cell.cell_contents
+            except ValueError:
+                continue
+            if _code_reference(value):
+                follows.append(value)
+        return _CallablePin(target, target, target.__code__, target.__defaults__, target.__kwdefaults__,
+                            None, None, tuple(follows))
+    if type(target) is types.BuiltinFunctionType:
+        return _CallablePin(target, target, None, None, None, None, None, ())
     if type(function) is not types.FunctionType:
-        if type(target) is not types.BuiltinFunctionType:
-            raise TypeError("the responder has no inspectable Python call function")
-        return _CallablePin(target, function, None, None, None, (), ())
-    keywords = function.__kwdefaults__
-    if keywords is not None and type(keywords) is not dict:
-        raise TypeError("keyword defaults must be an exact dictionary")
-    if keywords is not None and any(type(key) is not str for key in keywords):
-        raise TypeError("keyword default names must be exact text")
-    cells = []
-    for cell in function.__closure__ or ():
-        try:
-            cells.append(cell.cell_contents)
-        except ValueError:
-            cells.append(_EMPTY_CELL)
-    return _CallablePin(target, function, function.__code__, function.__defaults__, function.__kwdefaults__,
-                        tuple((function.__kwdefaults__ or {}).items()), tuple(cells))
+        raise TypeError("the responder has no inspectable Python call function")
+    return _CallablePin(target, function, None, None, None, None, None, (function, *follows_wrapped))
+
+
+def _pins(targets: Iterable[Any]) -> tuple[_CallablePin, ...]:
+    """Retain the callable graph by identity; cycles terminate and excessive graphs refuse."""
+    todo = list(targets)
+    seen: set[int] = set()
+    pins = []
+    while todo:
+        target = todo.pop()
+        if id(target) in seen:
+            continue
+        if len(seen) >= 4096:
+            raise ValueError("the callable graph is too large")
+        seen.add(id(target))
+        pin = _pin(target)
+        pins.append(pin)
+        todo.extend(reversed(pin.follows))
+    return tuple(pins)
 
 
 def _pin_data(pin: _CallablePin) -> list[Any]:
+    """Digest tokens for strongly held objects only; never an identity comparison."""
     return [id(pin.target), id(pin.function), id(pin.code), id(pin.defaults), id(pin.kwdefaults),
-            [[key, id(value)] for key, value in pin.keywords], [id(value) for value in pin.cells]]
+            id(pin.args), id(pin.keywords), [id(value) for value in pin.follows]]
 
 
 class _SealMismatch(Exception):
@@ -221,11 +260,15 @@ class _SealMismatch(Exception):
 def _check_pins(pins: tuple[_CallablePin, ...]) -> None:
     for pin in pins:
         try:
-            same = _pin_data(_pin(pin.target)) == _pin_data(pin)
+            current = _pin(pin.target)
+            same = all(getattr(current, name) is getattr(pin, name)
+                       for name in ("target", "function", "code", "defaults", "kwdefaults", "args", "keywords"))
+            same = same and len(current.follows) == len(pin.follows) and all(
+                now is held for now, held in zip(current.follows, pin.follows, strict=True))
         except Exception:  # noqa: BLE001 - unreadable code is no longer the sealed code
             same = False
         if not same:
-            raise _SealMismatch("the prepared callable's code, defaults or closure changed")
+            raise _SealMismatch("the prepared callable's code, defaults or callable bindings changed")
 
 
 @dataclass(frozen=True)
@@ -237,9 +280,10 @@ class _Retained:
     pins: tuple[_CallablePin, ...]
 
 
-# Pending owns its retention object, so responder -> Pending cycles remain collectable. The table owns neither;
-# it authorizes one use only, and evicts oldest preparations beyond its bounded capacity.
-_PREPARED: list[tuple[weakref.ReferenceType[Pending], weakref.ReferenceType[_Retained]]] = []
+# Only this private table owns seals. A responder -> Pending cycle can keep an abandoned entry alive until eviction;
+# capacity bounds that retention. Consumed entries retain their objects until collection or eviction but authorize
+# no further use. This prevents a public replacement from freeing a sealed identity while its Pending still lives.
+_PREPARED: list[tuple[weakref.ReferenceType[Pending], _Retained, bool]] = []
 PREPARED_LIMIT = 256
 _PREPARED_LOCK = threading.RLock()
 # An endpoint's successful admission, scoped to this envelope and its current call. Hosts retain their own guard;
@@ -332,9 +376,10 @@ def _seal(values: dict[str, Any], snapshot: _CallerSnapshot) -> Pending:
     package = _package(plain["component"])
     names = (*plain["functions"], plain["validator"], plain["checker"], plain["inside"])
     owned = tuple((name, _child.resolve(name, package)) for name in names if name)
-    pins = tuple(_pin(function) for _, function in owned)
+    targets = [function for _, function in owned]
     if sealed_snapshot.responder is not None:
-        pins += (_pin(sealed_snapshot.responder),)
+        targets.append(sealed_snapshot.responder)
+    pins = _pins(targets)
     text = _child.canonical(plain)
     bound = digest({"data": plain, "caller": _snapshot_data(snapshot),
                     "code": [[name, id(function)] for name, function in owned],
@@ -345,9 +390,9 @@ def _seal(values: dict[str, Any], snapshot: _CallerSnapshot) -> Pending:
                 "No per-override question is asked.")
     retained = _Retained(text, sealed_snapshot, bound, owned, pins)
     pending = Pending(**{**plain, "functions": tuple(plain["functions"]), "budget": Budget(**plain["budget"]),
-                         "caller": snapshot, "digest": bound, "question": summary, "_retained": retained})
+                         "caller": snapshot, "digest": bound, "question": summary})
     with _PREPARED_LOCK:
-        _PREPARED.append((weakref.ref(pending, _forget_prepared), weakref.ref(retained)))
+        _PREPARED.append((weakref.ref(pending, _forget_prepared), retained, False))
         del _PREPARED[:-PREPARED_LIMIT]
     return pending
 
@@ -1361,7 +1406,8 @@ def _bare(result: Any, *, top: bool = True) -> Any:
 def override(pending: Pending, *, confirmation: Confirmation | None = None) -> dict[str, Any]:
     """Consume a sealed preparation; record remote consent, local admission, code allowance or consent refusal.
 
-    An optional legacy Confirmation checks only its exact digest. Its name and answer are never read.
+    An optional legacy Confirmation checks only its exact digest; failure leaves the preparation available.
+    Its name and answer are never read.
     """
     original = None
     try:
@@ -1369,13 +1415,19 @@ def override(pending: Pending, *, confirmation: Confirmation | None = None) -> d
             return _input_refused()
         with _PREPARED_LOCK:
             saved = next((entry for entry in _PREPARED if entry[0]() is pending), None)
-            if saved is not None:
-                _PREPARED[:] = [entry for entry in _PREPARED if entry is not saved]
-        if saved is None:
-            return _refused(DIGEST_MISMATCH, "G6 has no sealed preparation for this override")
-        retained = saved[1]()
-        if retained is None:
-            return _refused(DIGEST_MISMATCH, "G6 no longer holds this sealed preparation")
+            if saved is None or saved[2]:
+                return _refused(DIGEST_MISMATCH, "G6 has no sealed preparation for this override")
+            retained = saved[1]
+            # Invalid legacy input is retryable. Check before consuming, under the same lock as the identity lookup.
+            # Exact types precede equality, so caller-controlled comparison methods never run.
+            if confirmation is not None:
+                supplied = (object.__getattribute__(confirmation, "digest")
+                            if type(confirmation) is Confirmation else None)
+                if type(supplied) is not str or type(retained.bound) is not str or supplied != retained.bound:
+                    data = json.loads(retained.text)
+                    return _refused(DIGEST_MISMATCH, "the legacy digest does not match the sealed preparation",
+                                    original=data["original"], request_id=data["request_id"])
+            _PREPARED[:] = [(entry[0], entry[1], True) if entry is saved else entry for entry in _PREPARED]
         text, sealed_snapshot, expected, owned, pins = (retained.text, retained.snapshot, retained.bound,
                                                        retained.owned, retained.pins)
         data = json.loads(text)
@@ -1396,7 +1448,10 @@ def override(pending: Pending, *, confirmation: Confirmation | None = None) -> d
         kind, why = _snapshot_kind(snapshot)
         if why:
             return _unmetered(why, original, data["request_id"])
-        if _snapshot_data(public_copy) != _snapshot_data(snapshot):
+        same_identity = public_copy.cls is snapshot.cls and public_copy.responder is snapshot.responder
+        same_metadata = all(object.__getattribute__(public_copy, name) == object.__getattribute__(snapshot, name)
+                            for name in _CallerSnapshot.__dataclass_fields__ if name not in ("cls", "responder"))
+        if not same_identity or not same_metadata:
             return _refused(DIGEST_MISMATCH, "the public caller metadata changed; nothing was constructed or sent",
                             original=original, request_id=data["request_id"])
         package = _package(data["component"])
@@ -1407,11 +1462,7 @@ def override(pending: Pending, *, confirmation: Confirmation | None = None) -> d
         actual = digest({"data": data, "caller": _snapshot_data(snapshot),
                          "code": [[name, id(function)] for name, function in current_code],
                          "pins": [_pin_data(pin) for pin in pins]})
-        supplied = expected
-        if confirmation is not None:
-            if type(confirmation) is not Confirmation:
-                return _refused(DIGEST_MISMATCH, "the legacy digest is not plain text", original=data["original"])
-            supplied = confirmation.digest
+        supplied = object.__getattribute__(pending, "digest")
         if type(expected) is not str or type(actual) is not str or type(supplied) is not str \
                 or actual != expected or supplied != expected:
             return _refused(DIGEST_MISMATCH, "the sealed override digest changed; nothing was constructed or sent",
@@ -1581,7 +1632,7 @@ def _override(pending: _Execution) -> dict[str, Any]:
 def declined(pending: Pending, status: str) -> dict[str, Any]:
     """Consume a cancellation. Calls otherwise record provider consent, local model, code allowance or consent refusal."""
     with _PREPARED_LOCK:
-        _PREPARED[:] = [entry for entry in _PREPARED if entry[0]() is not pending]
+        _PREPARED[:] = [(entry[0], entry[1], True) if entry[0]() is pending else entry for entry in _PREPARED]
     reply = dict(pending.original)
     reply["agentic"] = {"outcome": "not_run", "substituted": False, "consent_status": status,
                         "trigger": pending.trigger, "part": pending.part, "question_digest": pending.digest,

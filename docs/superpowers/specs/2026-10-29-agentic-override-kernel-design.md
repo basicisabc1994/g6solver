@@ -34,7 +34,8 @@ It requires `agentic.run` and the operation's sensitive allowance. The legacy
 `prepare` and `override` remain useful for inspecting and staging execution. `prepare` runs the original and either
 returns its reply/refusal or issues a `Pending`. `override(pending)` needs no confirmation or name. Optional legacy
 `Confirmation` checks only its exact-string digest; its name and answer are ignored. `Pending.question` is retained
-as an informational execution summary and never sent as a consent dialog.
+as an informational execution summary and never sent as a consent dialog. A failed legacy digest check leaves the
+preparation available for a corrected attempt.
 
 MCP exposes `g6_agentic_run(component, op, params_json="{}", part="", mode="prompt", reason="")`. It checks
 sensitive allowances, decodes bounded JSON and runs the original. With a trigger it starts a job, polled through
@@ -59,27 +60,39 @@ copy of everything execution uses:
   digest, request ID and record fields are retained in immutable canonical JSON text. G6-owned code objects are
   retained by identity, including the validator and checker. Rebinding them before execution refuses.
 
-G6 keeps sealed data under the weak identity of the issued Pending, without hashing its caller-reachable fields.
+G6 keeps sealed inputs, pins and digest only in its private module table under the weak identity of the issued Pending,
+without hashing its caller-reachable fields. The Pending never holds its seal.
 A copied or fabricated Pending has no seal. Public metadata cannot select the operation, parameters, model,
 limits, recipient, validator, checker or duration. A declared checker always remains declared. The frozen caller
-snapshot has its own private copy, retaining strong references to the responder and every retained callable for the
-Pending's lifetime. Mutating public constructor metadata refuses before construction or sending; execution only uses
-the private copy. Class/kind/route admission repeats independently.
+snapshot has its own private copy, retaining strong references to the responder and every retained callable until
+Pending collection or eviction, including after consumption. Mutating public constructor metadata refuses before
+construction or sending; execution only uses the private copy. Class/kind/route admission repeats independently.
 
-The preparation digest covers the whole plain copy and retained class, responder and code identities. Each retained
-callable pins its code, defaults, keyword defaults and closure contents by identity, including keyword default value
-identities. These are checked before calls and child launches; mutation refuses with the digest-mismatch code.
-Module globals read by a validator and its annotations cannot be pinned in process. Objects contained inside defaults
-or closure values are pinned by identity, not recursively frozen. A confined Linux child does not share the parent's
+The preparation digest covers the whole plain copy and retained class, responder and code identities. Pins follow
+callable code recursively through closure cells, `__wrapped__`, bound methods' `__func__`, partials' `func`, and
+callable instances' type-level `__call__`. Each function pins its code and the identities of its defaults and keyword
+defaults; each partial also pins its args and keywords containers by identity. Every identity comparison uses `is`
+against the strongly held object, including followed functions, code, binding containers, snapshot class and responder.
+Integer identity tokens enter the digest only; they never decide whether a current object is the held one.
+Callable cycles are visited once;
+graphs exceeding 4,096 callables refuse. These are checked before calls, sends and child launches; a changed code
+object or callable binding refuses with the digest-mismatch code. Plain data in closure cells is not pinned: a
+nonlocal counter can change normally. Module globals read by a validator and its annotations cannot be pinned in
+process. Bound-method `__self__` data, instance data attributes, and in-place changes of containers in closures,
+defaults or partial arguments/keywords remain caller-state limits. A confined Linux child does not share the parent's
 objects. Non-Python responder wrappers without an inspectable call implementation are refused.
-Override captures a private snapshot, validates exact field types, rechecks identities and recomputes the digest. Digest
+Override captures a private snapshot, validates exact field types, rechecks identities and recomputes the digest from
+the sealed inputs. Both the recomputed digest and the Pending's public digest must equal the sealed digest. Digest
 operands must be exact strings before equality. Unknown callers refuse by class identity before vars or attribute
 reads. All class checks use identity, never equality, membership or class-keyed hash tables. Configured anonymous
 guards are remembered only from G6's factory by weak identity, with collection cleanup; ancestry enrols nothing.
 
-The preparation owns its retained objects; the module table holds only weak references, so a responder reaching its
-own preparation does not prevent collection. Override and cancellation consume the table entry once. At most 256
-entries remain live; the oldest is evicted and subsequently refuses with the digest-mismatch code.
+The module table owns retained objects strongly and references the Pending weakly. A responder reaching its own
+preparation can create a cycle through that table; this is acceptable only because the 256-entry bound caps it.
+Ordinary abandoned preparations have weak-reference cleanup. Override and cancellation mark the table entry consumed
+once, retaining its seal but refusing reuse (an invalid legacy Confirmation does not consume it).
+Consumed entries count toward the same bound. The oldest entry is evicted at capacity and its Pending then
+refuses with the digest-mismatch code. Eviction releases the seal's references, so abandoned cycles can collect.
 
 Names, digests, parameters and the execution copy are prepared before the deadline clock starts. Afterward the
 override thread uses only G6-owned plain values. Fresh construction, consent guarding, completion, reply conversion
@@ -110,7 +123,7 @@ result or exception text. Historical `digests.question` now stores the full prep
 exemption); `local model` with its provider for a send admitted with `local=True`, taking no consent decision;
 `allowed in code` for process callers with no consent-checked send; or `refused by the consent check` when it refused.
 Names stay empty and `authenticated=false`; no person approval is claimed. Refusal leaves the outcome's reason
-`model_failed` with nothing substituted. The reply's `authority_sends` lists each send or refused attempt and
+`model_failed` with nothing substituted. The reply and ledger's `authority_sends` list each send or refused attempt and
 `summary` gives the observed Authority line, also included in the warning card. For mixed runs, refusal dominates,
 then unobserved/code allowance, remote consent, then local admission, so observed consent never covers unchecked work.
 Multiple providers at the selected level leave the aggregate provider empty; per-send entries retain each provider.
