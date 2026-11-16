@@ -6,8 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import threading
-import warnings
 from pathlib import Path
 
 
@@ -127,7 +125,7 @@ def _doctor_report(args: argparse.Namespace) -> int:
     return 1 if built["completion_state"] == "blocked-escalated" or written["code"] == E_WRITE_FAILED else 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def _parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="g6", description="Open-source harness engineering for AI agents.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("init", help="create the local state folder ($G6_HOME, default ~/.g6)")
@@ -149,11 +147,14 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("--limit", type=int, default=5)
     d = sub.add_parser("describe", help="maturity, ops and dependencies of a component")
     d.add_argument("component")
-    i = sub.add_parser("invoke", help="run one op of a component")
+    i = sub.add_parser("invoke", help="run one op of a component", description=(
+        "Run one op. G6 captures Python output until process exit and reports counts only. "
+        "Writes below Python (os.write on fd 1/2, C extensions and child processes) are outside this capture. "
+        "See docs/cli-output.md."))
     i.add_argument("component")
     i.add_argument("op")
     i.add_argument("params", nargs="?", default="{}", help="JSON object of op parameters")
-    i.add_argument("--json", action="store_true", help="report an invocation failure as JSON")
+    i.add_argument("--json", action="store_true", help="print one JSON reply envelope")
     st = sub.add_parser("state", help="snapshot, list, roll back or export the state folder")
     st_sub = st.add_subparsers(dest="state_cmd", required=True)
     st_sub.add_parser("ls", help="list snapshots")
@@ -188,7 +189,12 @@ def main(argv: list[str] | None = None) -> int:
     si.add_argument("--user", action="store_true", help="into ~/.claude/skills, for every project")
     si.add_argument("--client", choices=("claude", "codex"), default="claude", help="client skill directory")
     si.add_argument("--force", action="store_true", help="replace a skill folder that is already there")
-    args = ap.parse_args(argv)
+    return ap.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run a CLI call, restoring any capture it installs before returning."""
+    args = _parse_arguments(argv)
 
     if args.cmd == "workflow":
         from g6.metaharness.surface import Surface, dialog_only
@@ -198,6 +204,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if result.get("completion_state") == "blocked-escalated" else 0
 
     if args.cmd == "setup":
+        from g6.cli import setup
+
         return setup.main(args)
     if args.cmd == "bundle":
         return _bundle(args)
@@ -213,6 +221,12 @@ def main(argv: list[str] | None = None) -> int:
         checks = run_checks()
         print(json.dumps(report(checks), indent=2) if args.json else render(checks))
         return 1 if report(checks)["status"] == "fail" else 0
+
+    if args.cmd == "invoke":
+        from g6.cli._capture import capture_invocation
+
+        with capture_invocation() as capture:
+            return _invoke(args, capture)
 
     from g6.core import discovery
     from g6.core.registry import get_registry
@@ -236,6 +250,9 @@ def main(argv: list[str] | None = None) -> int:
         info = discovery.describe(args.component)
         _print(info)
         return 0 if info.get("available") else 1
+
+
+def _invoke(args, capture) -> int:
     from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, invoke_checked
     from g6.core.consent_registry import GuardedRegistry
     from uuid import uuid4
@@ -245,32 +262,7 @@ def main(argv: list[str] | None = None) -> int:
     name = f"{args.component}.{args.op}"
     request_id = uuid4().hex[:12]
 
-    def diagnostic(text: str) -> None:
-        if sys.stderr is None:
-            return
-        try:
-            print(text, file=sys.stderr)
-            sys.stderr.flush()
-        except KeyboardInterrupt:
-            raise
-        except BaseException:  # noqa: BLE001 - a diagnostic stream must not expose its own failures
-            sys.stderr = None
-
-    def output(text: str) -> bool:
-        try:
-            if sys.stdout is None:
-                diagnostic("[G6_E_INVOKE_FAILED] G6: output could not be written.")
-                return False
-            print(text)
-            sys.stdout.flush()
-        except KeyboardInterrupt:
-            raise
-        except BaseException:  # noqa: BLE001 - an output stream may run its own code
-            # Python flushes stdout again at shutdown; a failed stream must not leak then or replace exit 1.
-            sys.stdout = None
-            diagnostic("[G6_E_INVOKE_FAILED] G6: output could not be written.")
-            return False
-        return True
+    diagnostic, output = capture.diagnostic, capture.output
 
     def failed(message: str, door_reply: dict | None = None, *, code: str = "G6_E_INVOKE_FAILED",
                exit_code: int = 1) -> int:
@@ -291,41 +283,20 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, RecursionError):
         return failed("G6: params must be valid JSON.", code="G6_E_INVALID_PARAMS", exit_code=2)
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        previous_thread_hook = threading.excepthook
-        thread_reported = False
-        thread_lock = threading.Lock()
-
-        def thread_failed(_args) -> None:
-            nonlocal thread_reported
-            with thread_lock:
-                if not thread_reported:
-                    thread_reported = True
-                    diagnostic("[G6_E_INVOKE_FAILED] G6: a thread failed while the operation was running.")
-
-        try:
-            threading.excepthook = thread_failed
-            reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(), registry=GuardedRegistry(),
-                                   request_id=request_id,
-                                   how_to_allow=f"Only the person who runs G6 can allow it, by listing {name} (or "
-                                                f"{args.component}) in {SENSITIVE_ENV} where they run g6.")
-        except KeyboardInterrupt:
-            raise
-        except BaseException:  # noqa: BLE001 - op failures must not expose library or exception text
-            return failed(f"G6: component {args.component!r}, op {args.op!r} failed while running.")
-        finally:
-            threading.excepthook = previous_thread_hook
-            if caught:
-                diagnostic(f"G6: {len(caught)} warnings captured while the operation was running.")
-    if "result" not in reply:
-        if args.json:
-            output(json.dumps(reply, indent=2, default=str))
-        else:
-            diagnostic(reply["error"])
+    try:
+        reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(), registry=GuardedRegistry(),
+                               request_id=request_id,
+                               how_to_allow=f"Only the person who runs G6 can allow it, by listing {name} (or "
+                                            f"{args.component}) in {SENSITIVE_ENV} where they run g6.")
+    except KeyboardInterrupt:
+        raise
+    except BaseException:  # noqa: BLE001 - op failures must not expose library or exception text
+        return failed(f"G6: component {args.component!r}, op {args.op!r} failed while running.")
+    if "result" not in reply and not args.json:
+        diagnostic(reply["error"])
         return 1
     try:
-        encoded = json.dumps(reply["result"], indent=2, default=str)
+        encoded = json.dumps(reply if args.json else reply["result"], indent=2, default=str)
     except KeyboardInterrupt:
         raise
     except BaseException:  # noqa: BLE001 - JSON encoding may run a result object's own code
@@ -335,5 +306,30 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if reply["ok"] else 1
 
 
+def entrypoint(argv: list[str] | None = None) -> int:
+    """Console ownership continues after main returns, through interpreter shutdown."""
+    # Parse before capturing so argparse's help and usage errors keep their streams.
+    args = _parse_arguments(argv)
+    if args.cmd != "invoke":
+        return main(argv)
+
+    import atexit
+    from g6.cli._capture import InvokeCapture, current_capture
+
+    capture = current_capture()
+    owns_capture = capture is None
+    if owns_capture:
+        capture = InvokeCapture()
+        # Registered before resolving the op, so the op's exit callbacks run first.
+        atexit.register(capture.report_late)
+    try:
+        return main(argv)
+    except KeyboardInterrupt:
+        if owns_capture:
+            atexit.unregister(capture.report_late)
+            capture.restore()
+        raise
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(entrypoint())

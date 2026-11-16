@@ -128,7 +128,7 @@ dev =["pytest>=8", "ruff>=0.6", "import-linter>=2.1"]
 all = ["g6[mcp,abstraction,anthropic,formal,optim,cas,db,image,procedural,audio]"]
 
 [project.scripts]
-g6 = "g6.cli:main"
+g6 = "g6.cli:entrypoint"
 g6-mcp = "g6.mcp:main"
 
 [project.urls]
