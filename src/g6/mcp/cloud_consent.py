@@ -57,9 +57,11 @@ def _source_function(fn):
                     # A refused reply gains its repair block (g6.mcp.repair: G6's own words, codes and templates)
                     # on the frozen snapshot, so the sources it carries are exactly the snapshot's.
                     repaired = _repaired(fn.__name__, arguments, value, capture)
-                    if repaired is not value:
-                        value = repaired
-                        body = json.dumps(value, separators=(',', ':'), allow_nan=False)
+                    from g6.core.agent_guidance import reply_for_agent
+                    value = reply_for_agent(repaired)
+                    # Keep all original source refs. Filtering gives no source a
+                    # grant, and the ticket must bind the filtered bytes.
+                    body = json.dumps(value, separators=(',', ':'), allow_nan=False)
                     content_hash = digest(value)
                 except (TypeError, ValueError):
                     # Unsupported serialization cannot establish source authority.
@@ -112,7 +114,8 @@ def input_refusal(tool: str, fields, *, arguments=None, session=None) -> dict:
     reply = observe(tool, arguments, reply, session)
     if reply.get('repair') is not None and reply['repair']['by'] == 'agent':
         reply['repair']['fill'] = sorted(fields)
-    return reply
+    from g6.core.agent_guidance import reply_for_agent
+    return reply_for_agent(reply)
 
 
 def input_error_result(tool: str, fields, *, arguments=None, session=None):

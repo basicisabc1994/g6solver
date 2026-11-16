@@ -69,7 +69,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import uuid
 from typing import Any
 
@@ -83,29 +82,10 @@ _DENIED = "[G6_E_SENSITIVE_COMPONENT_DENIED]"
 
 
 def _denial_for_agent(reply: dict[str, Any]) -> None:
-    """Remove authority-bearing sentences from every textual copy in a refusal envelope."""
-    from g6.core.agent_guidance import _AUTHORITY
+    """Compatibility entry point; every reply uses the same agent filter."""
+    from g6.core.agent_guidance import reply_for_agent
 
-    setting = re.compile(r"\bG6_(?!E_)[A-Z][A-Z0-9_]*\b|~[/\\]\.g6[/\\]\.env|\ballow_sensitive\b", re.I)
-
-    def clean(value):
-        if isinstance(value, str):
-            kept = []
-            for sentence in re.split(r"(?<=[.!?])\s+", value):
-                if _AUTHORITY.search(sentence) or setting.search(sentence):
-                    # A refusal code remains useful even when its sentence must be withheld.
-                    kept.extend(re.findall(r"\[G6_E_[A-Z0-9_]+\]", sentence))
-                else:
-                    kept.append(sentence)
-            return " ".join(kept)
-        if isinstance(value, dict):
-            for key, child in value.items():
-                value[key] = clean(child)
-        elif isinstance(value, list):
-            value[:] = [clean(child) for child in value]
-        return value
-
-    clean(reply)
+    reply.update(reply_for_agent(reply))
 
 
 def describe_reply(component: str, *, allow_sensitive: frozenset[str] | None = None) -> dict[str, Any]:
@@ -118,7 +98,8 @@ def describe_reply(component: str, *, allow_sensitive: frozenset[str] | None = N
     if sensitive:
         allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
         info["sensitive_ops_allowed_here"] = [op for op in sensitive if _allowed(component, op, allow)]
-    return info
+    from g6.core.agent_guidance import reply_for_agent
+    return reply_for_agent(info)
 
 
 def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: Any = None,
@@ -129,14 +110,15 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
     model (``__g6_model__``) is given the one the person configured, built once for the call; with none configured,
     nothing is passed."""
     from g6.core.door import blocked_reply, invoke_checked
+    from g6.core.agent_guidance import reply_for_agent
 
     request_id = uuid.uuid4().hex[:12]
     try:
         params = json.loads(params_json or "{}")
     except json.JSONDecodeError as exc:
-        return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id)
+        return reply_for_agent(blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id))
     if not isinstance(params, dict):
-        return blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id)
+        return reply_for_agent(blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id))
     allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
     from g6.core.consent_registry import GuardedRegistry
     from g6.core.registry import ComponentRegistry, get_registry
@@ -144,14 +126,13 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
     reply = invoke_checked(component, op, params, allow=allow, registry=GuardedRegistry(target), request_id=request_id,
                           how_to_allow="This op is sensitive. The person must allow it themselves. "
                                        "Tell the person and stop.")
-    if str(reply.get("error", "")).startswith(_DENIED):
-        _denial_for_agent(reply)
     if op == "help" and reply.get("ok"):
         from g6.core.agent_guidance import help_for_agent
 
         result = reply.get("result")
         if isinstance(result, dict):
             result["help"] = help_for_agent(component, result.get("help"))
+    _denial_for_agent(reply)
     # The host's permission refusal runs no component code. Operations, including
     # a component's own "ops" implementation, retain the component source scope.
     if type(target) is ComponentRegistry and component in target.names():

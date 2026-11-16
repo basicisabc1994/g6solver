@@ -19,7 +19,7 @@ class Session:
     pass
 
 
-def test_agent_surface_census():
+def test_agent_surface_census(monkeypatch):
     # Removing the safe route restriction or routing authority instructions must fail here.
     data = corpus.load()
     replies = [selector.select(task, "verify", considering=[
@@ -53,9 +53,22 @@ def test_agent_surface_census():
     from g6.mcp import mission, improve
 
     surfaces["mission and improvement denials"] = [mission.refused(), improve.refused()]
+    # A component can return the library door's own refusal, or isolation's
+    # bound text. Route both through the MCP reply path, not a code-specific helper.
+    import g6
+    from g6.core import confine, door
+
+    library_denial = g6.invoke("lean", "check_proof", {})
+    assert "G6_E_SENSITIVE_COMPONENT_DENIED" in json.dumps(library_denial)
+    isolation_denial = door.blocked_reply(confine.refusal(confine.Plan(None, "synthetic unavailable boundary")))
+    with monkeypatch.context() as patch:
+        patch.setattr(door, "invoke_checked", lambda *a, **k: isolation_denial)
+        surfaces["isolation refusal"] = invoke_reply("synthetic", "check", registry=object())
+        patch.setattr(door, "invoke_checked", lambda *a, **k: {"ok": False, "result": library_denial})
+        surfaces["library-route denial"] = invoke_reply("synthetic", "check", registry=object())
     forbidden = (r"allow\s*=|G6_MCP_SENSITIVE|G6_ALLOW_UNCONFINED|allow_execution|\ballow_sensitive\b|"
                  r"\b(?:confirm|approve|grant|promote)\s*\(|\bapprover\b|autonomous_low_risk|"
-                 r"\bg6\s+setup\b|--allow|allow parameter")
+                 r"\bg6\s+setup\b|--allow|allow parameter|\bicacls\b|/grant\b|\bchmod\b|\bsetfacl\b")
     entries = {e["id"]: e for e in data["entries"] if e["kind"] == "op"}
     assert any(c["kind"] == "library" for r in replies for c in r["candidates"])
     for reply in replies:
