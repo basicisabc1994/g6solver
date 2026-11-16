@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
+import warnings
 from pathlib import Path
 
 
@@ -243,14 +245,30 @@ def main(argv: list[str] | None = None) -> int:
     name = f"{args.component}.{args.op}"
     request_id = uuid4().hex[:12]
 
+    def diagnostic(text: str) -> None:
+        if sys.stderr is None:
+            return
+        try:
+            print(text, file=sys.stderr)
+            sys.stderr.flush()
+        except KeyboardInterrupt:
+            raise
+        except BaseException:  # noqa: BLE001 - a diagnostic stream must not expose its own failures
+            sys.stderr = None
+
     def output(text: str) -> bool:
         try:
+            if sys.stdout is None:
+                diagnostic("[G6_E_INVOKE_FAILED] G6: output could not be written.")
+                return False
             print(text)
             sys.stdout.flush()
-        except (OSError, ValueError):
+        except KeyboardInterrupt:
+            raise
+        except BaseException:  # noqa: BLE001 - an output stream may run its own code
             # Python flushes stdout again at shutdown; a failed stream must not leak then or replace exit 1.
             sys.stdout = None
-            print("[G6_E_INVOKE_FAILED] G6: output could not be written.", file=sys.stderr)
+            diagnostic("[G6_E_INVOKE_FAILED] G6: output could not be written.")
             return False
         return True
 
@@ -265,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
             if not output(json.dumps(failure, indent=2, default=str)):
                 return 1
         else:
-            print(f"{error} completion_state: blocked-escalated", file=sys.stderr)
+            diagnostic(f"{error} completion_state: blocked-escalated")
         return exit_code
 
     try:
@@ -273,24 +291,44 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, RecursionError):
         return failed("G6: params must be valid JSON.", code="G6_E_INVALID_PARAMS", exit_code=2)
 
-    try:
-        reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(), registry=GuardedRegistry(),
-                               request_id=request_id,
-                               how_to_allow=f"Only the person who runs G6 can allow it, by listing {name} (or "
-                                            f"{args.component}) in {SENSITIVE_ENV} where they run g6.")
-    except KeyboardInterrupt:
-        raise
-    except BaseException:  # noqa: BLE001 - op failures must not expose library or exception text
-        return failed(f"G6: component {args.component!r}, op {args.op!r} failed while running.")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        previous_thread_hook = threading.excepthook
+        thread_reported = False
+        thread_lock = threading.Lock()
+
+        def thread_failed(_args) -> None:
+            nonlocal thread_reported
+            with thread_lock:
+                if not thread_reported:
+                    thread_reported = True
+                    diagnostic("[G6_E_INVOKE_FAILED] G6: a thread failed while the operation was running.")
+
+        try:
+            threading.excepthook = thread_failed
+            reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(), registry=GuardedRegistry(),
+                                   request_id=request_id,
+                                   how_to_allow=f"Only the person who runs G6 can allow it, by listing {name} (or "
+                                                f"{args.component}) in {SENSITIVE_ENV} where they run g6.")
+        except KeyboardInterrupt:
+            raise
+        except BaseException:  # noqa: BLE001 - op failures must not expose library or exception text
+            return failed(f"G6: component {args.component!r}, op {args.op!r} failed while running.")
+        finally:
+            threading.excepthook = previous_thread_hook
+            if caught:
+                diagnostic(f"G6: {len(caught)} warnings captured while the operation was running.")
     if "result" not in reply:
         if args.json:
             output(json.dumps(reply, indent=2, default=str))
         else:
-            print(reply["error"], file=sys.stderr)
+            diagnostic(reply["error"])
         return 1
     try:
         encoded = json.dumps(reply["result"], indent=2, default=str)
-    except (Exception, SystemExit):  # noqa: BLE001 - JSON encoding may run a result object's own code
+    except KeyboardInterrupt:
+        raise
+    except BaseException:  # noqa: BLE001 - JSON encoding may run a result object's own code
         return failed(f"G6: component {args.component!r}, op {args.op!r}: the result could not be written as JSON.", reply)
     if not output(encoded):
         return 1

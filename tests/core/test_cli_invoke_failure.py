@@ -6,6 +6,8 @@ import json
 import asyncio
 import sys
 import subprocess
+import threading
+import warnings
 
 import pytest
 
@@ -14,6 +16,111 @@ from g6.cli import main
 
 class LibraryAbort(BaseException):
     pass
+
+
+@pytest.mark.parametrize("error", [LibraryAbort, GeneratorExit, asyncio.CancelledError, KeyboardInterrupt])
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_result_encoder_aborts_are_masked_except_interrupt(monkeypatch, capsys, registry_reset, error, json_mode):
+    from g6.core.registry import get_registry
+    from g6.core.result import Result
+
+    class Value:
+        def __str__(self):
+            raise error("private encoder detail")
+
+    monkeypatch.setattr(get_registry().get_class("grounding"), "infer",
+                        lambda self, data: Result.ok({"answer": Value(), "run_id": "encoder-run"}))
+    argv = ["invoke", "grounding", "check_claim", "{}", *(["--json"] if json_mode else [])]
+    if error is KeyboardInterrupt:
+        with pytest.raises(KeyboardInterrupt):
+            main(argv)
+        return
+    assert main(argv) == 1
+    out = capsys.readouterr()
+    assert "private" not in out.out + out.err and "G6_E_INVOKE_FAILED" in out.out + out.err
+    if json_mode:
+        reply = json.loads(out.out)
+        assert reply["request_id"] and reply["run_id"] == "encoder-run"
+        assert reply["completion_state"] == "blocked-escalated"
+        assert reply["warning_card"]["code"] == "G6_E_INVOKE_FAILED"
+
+
+@pytest.mark.parametrize("missing", ["stdout", "stderr", "both"])
+@pytest.mark.parametrize("json_mode", [False, True])
+@pytest.mark.parametrize("scenario", ["result", "refusal", "params", "op_error", "encoding"])
+def test_absent_streams_do_not_raise(monkeypatch, capsys, registry_reset, missing, json_mode, scenario):
+    from g6.core.registry import get_registry
+    from g6.core.result import Result
+
+    def infer(self, data):
+        if scenario == "op_error":
+            raise LibraryAbort("private detail")
+        return Result.ok({("tuple",): "private detail"} if scenario == "encoding" else {"answer": 42})
+
+    monkeypatch.setattr(get_registry().get_class("grounding"), "infer", infer)
+    with monkeypatch.context() as patch:
+        for stream in ("stdout", "stderr") if missing == "both" else (missing,):
+            patch.setattr(sys, stream, None)
+        component = "missing_component" if scenario == "refusal" else "grounding"
+        params = "{private" if scenario == "params" else "{}"
+        code = main(["invoke", component, "check_claim", params, *(["--json"] if json_mode else [])])
+    out = capsys.readouterr()
+    writing_stdout = scenario == "result" or json_mode
+    expected = 1 if writing_stdout and missing != "stderr" else (0 if scenario == "result" else
+                                                               2 if scenario == "params" else 1)
+    assert code == expected
+    assert "private" not in out.out + out.err and "Traceback" not in out.out + out.err
+    if missing != "stdout":
+        assert out.err == ""
+    if missing == "stderr" and not writing_stdout:
+        assert out.out == ""  # print(file=None) must not fall back to stdout.
+    if missing == "stdout":
+        assert len(out.err.splitlines()) == 1 and "G6" in out.err
+
+
+@pytest.mark.parametrize("outcome", ["success", "failure", "interrupt"])
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_op_warnings_and_thread_failures_are_masked_and_hooks_restored(
+        monkeypatch, capsys, registry_reset, outcome, json_mode):
+    from g6.core.registry import get_registry
+    from g6.core.result import Result
+
+    old_hook, old_showwarning = threading.excepthook, warnings.showwarning
+    old_filters = warnings.filters[:]
+
+    def infer(self, data):
+        warnings.warn("private warning detail", RuntimeWarning)
+        warnings.warn("private warning detail", RuntimeWarning)
+
+        def fail():
+            raise RuntimeError("private thread detail")
+
+        for _ in range(3):
+            worker = threading.Thread(target=fail)
+            worker.start()
+            worker.join()
+        if outcome == "failure":
+            raise LibraryAbort("private op detail")
+        if outcome == "interrupt":
+            raise KeyboardInterrupt
+        return Result.ok({"answer": 42})
+
+    monkeypatch.setattr(get_registry().get_class("grounding"), "infer", infer)
+    argv = ["invoke", "grounding", "check_claim", "{}", *(["--json"] if json_mode else [])]
+    if outcome == "interrupt":
+        with pytest.raises(KeyboardInterrupt):
+            main(argv)
+    else:
+        assert main(argv) == (0 if outcome == "success" else 1)
+    out = capsys.readouterr()
+    assert "private" not in out.out + out.err and "Traceback" not in out.out + out.err
+    lines = out.err.splitlines()
+    assert sum("thread" in line.lower() for line in lines) == 1
+    assert sum("2 warnings" in line.lower() for line in lines) == 1
+    assert threading.excepthook is old_hook and warnings.showwarning is old_showwarning
+    assert warnings.filters == old_filters
+    if json_mode and outcome != "interrupt":
+        assert isinstance(json.loads(out.out), dict)
 
 
 @pytest.mark.parametrize("error", [asyncio.CancelledError, GeneratorExit, LibraryAbort])
