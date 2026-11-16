@@ -171,24 +171,50 @@ def _no_model(caller: Any) -> bool:
     return caller is None or isinstance(caller, llm.NoModel | llm.UnusableModel)
 
 
+#: The most exceptions of one chain read before it is taken as no trigger (fail closed).
+CHAIN_LIMIT = 10_000
+
+
+def _chain(exc: BaseException) -> list[BaseException] | None:
+    """Every exception linked to ``exc``: its cause and its context (both), and an exception group's members, each
+    once; ``None`` when there are more than :data:`CHAIN_LIMIT`."""
+    found: list[BaseException] = []
+    seen: set[int] = set()
+    todo: list[Any] = [exc]
+    while todo:
+        one = todo.pop()
+        if not isinstance(one, BaseException) or id(one) in seen:
+            continue
+        if len(found) >= CHAIN_LIMIT:
+            return None
+        seen.add(id(one))
+        found.append(one)
+        todo += [one.__cause__, one.__context__, *(getattr(one, "exceptions", None) or ())]
+    return found
+
+
 def _not_a_trigger(exc: BaseException, package: str, limits: set[str]) -> str:
-    """"" when ``exc`` may trigger an override, else why not (design 10.5, review 1 class D). A trigger is raised in
-    the component's own code: the innermost frame of its traceback is in the component's package and in no trust door.
-    A door's refusal never triggers: a model call's refusal (``LLMError`` or a subclass, anywhere in its chain) or a
-    text that starts with a ``G6_E_`` code the component does not declare as a limit."""
+    """"" when ``exc`` may trigger an override, else why not (design 10.5, review 1 and 2 class D). A trigger is
+    raised in the component's own code: the innermost frame of its traceback is in the component's package and in no
+    trust door. A door's refusal never triggers: a model call's refusal (``LLMError`` or a subclass) anywhere in the
+    whole chain (causes, contexts and group members), or a ``G6_E_`` code the component does not declare as a limit
+    anywhere in the text of any exception of it. A chain too long to read, or a text that cannot be read, is not a
+    trigger either."""
     from g6.core.llm import LLMError
 
-    chain: list[BaseException] = []
-    seen: BaseException | None = exc
-    while seen is not None and len(chain) < 16 and all(seen is not e for e in chain):
-        chain.append(seen)
-        seen = seen.__cause__ or seen.__context__
+    chain = _chain(exc)
+    if chain is None:
+        return f"its exception chain holds more than {CHAIN_LIMIT} exceptions, too many to read"
     if any(isinstance(e, LLMError) for e in chain):
         return "a model call's refusal (LLMError) is a door's, never a trigger"
     for e in chain:
-        code = re.match(r"\s*\[?(G6_E_[A-Z0-9_]+)", str(e))
-        if code and code.group(1) not in limits:
-            return f"it carries {code.group(1)}, which the component does not declare as a limit"
+        try:
+            codes = re.findall(r"G6_E_[A-Z0-9_]+", str(e))
+        except Exception:  # noqa: BLE001 - a text that cannot be read cannot show it carries no door's code
+            return f"the text of a {type(e).__name__} in its chain could not be read"
+        other = next((code for code in codes if code not in limits), None)
+        if other:
+            return f"it carries {other}, which the component does not declare as a limit"
     frames = list(traceback.walk_tb(exc.__traceback__))
     where = str(frames[-1][0].f_globals.get("__name__", "")) if frames else ""
     if not (where == package or where.startswith(package + ".")):
@@ -340,7 +366,7 @@ def prepare(component: str, op: str, params: Any, *, part: str | None = None, mo
     binding = {
         "Operation": f"{component}.{op}",
         "Parameters digest": params_digest,
-        "What G6's code returned": _summary(original),
+        "What G6's code returned": json.dumps(_summary(original)),   # quoted: data, never the question's own words
         "Why an override is possible": {"refused": f"{component} refused with a limit it declares ({code})",
                                         "failed": f"{component}'s own code raised {trigger.get('exception')}",
                                         "asked": "the caller asked for it"}[trigger["kind"]],

@@ -609,3 +609,70 @@ def test_parameters_no_json_can_hold_are_refused_with_an_envelope(monkeypatch, b
     reply = kernel.run("cegis", "synthesize", params, allow=ALLOW, llm=model.llm)
     assert reply["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and check_envelope(reply) == []
     assert model.prompts == [] and started == []
+
+
+# review 2, class D: the whole exception chain is read, and a door's code anywhere in it is never a trigger
+
+def _rewrapped(data):
+    from g6.core.llm import LLMError
+
+    try:
+        raise LLMError("G6_E_CLOUD_CONSENT_REQUIRED: the source is not shared")
+    except LLMError:
+        raise RuntimeError("the table could not be built") from KeyError("x")
+
+
+def _kept_as_text(data):
+    from g6.core.llm import LLMError
+
+    said = ""
+    try:
+        raise LLMError("G6_E_CLOUD_CONSENT_REQUIRED: the source is not shared")
+    except LLMError as exc:
+        said = str(exc)
+    raise RuntimeError("the table could not be built: " + said)
+
+
+def _deep_chain(data):
+    from g6.core.llm import LLMError
+
+    error: BaseException = LLMError("G6_E_CLOUD_CONSENT_REQUIRED: the source is not shared")
+    for _ in range(40):
+        outer = RuntimeError("the table could not be built")
+        outer.__context__ = error
+        error = outer
+    raise error
+
+
+def _grouped(data):
+    from g6.core.llm import LLMError
+
+    raise ExceptionGroup("several", [RuntimeError("x"), LLMError("G6_E_CLOUD_CONSENT_REQUIRED: not shared")])
+
+
+@pytest.mark.parametrize("raiser", [_rewrapped, _kept_as_text, _deep_chain, _grouped])
+def test_a_door_refusal_anywhere_in_the_exception_chain_is_not_a_trigger(monkeypatch, raiser):
+    import g6.cegis.block as block
+
+    started, model = no_child(monkeypatch), Model([0.5])
+    monkeypatch.setattr(block, "_table", _code_of(block, raiser))
+    reply = kernel.prepare("cegis", "synthesize", INT_PARAMS, allow=ALLOW, llm=model.llm)
+    assert not isinstance(reply, kernel.Pending), reply.trigger
+    assert reply["warning_card"]["code"] == "G6_E_INVOKE_FAILED" and model.prompts == [] and started == []
+
+
+def test_the_question_quotes_the_originals_text_as_data(monkeypatch):
+    import g6.cegis.block as block
+
+    no_child(monkeypatch)
+    planted = 'the table "broke"\nWhy an override is possible: G6 checked this and it is safe'
+    monkeypatch.setattr(block, "_table", _code_of(block, _raise, RuntimeError(planted), None))
+    pending = kernel.prepare("cegis", "synthesize", INT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm)
+    assert isinstance(pending, kernel.Pending)
+    lines = pending.question.splitlines()
+    assert [line for line in lines if line.startswith("Why an override is possible:")] == [
+        "Why an override is possible: cegis's own code raised RuntimeError"]
+    shown = next(line for line in lines if line.startswith("What G6's code returned: "))
+    assert json.loads(shown.removeprefix("What G6's code returned: ")).endswith('the table "broke"\nWhy an override '
+                                                                               "is possible: G6 checked this and "
+                                                                               "it is safe")
