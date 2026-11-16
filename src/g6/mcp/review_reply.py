@@ -106,11 +106,12 @@ def record(job_id: str, reply: dict, sources: Any) -> None:
         return
 
 
-def carried(job_id: str) -> tuple | None:
+def carried(job_id: str, *, expected_sha256: str | None = None) -> tuple | None:
     """The sources recorded with the saved review of ``job_id`` under G6's state folder, read afresh: ``None`` when
     the record or the saved reply is missing or not a regular file, or the record is of another version, empty,
     malformed, or not bound to the saved reply's present bytes. A reader then treats the review as G6's storage
-    folder's own source (fail closed)."""
+    folder's own source (fail closed). ``expected_sha256`` also binds the record to bytes a reader already checked,
+    so a replacement saved/source pair cannot relabel content the reader retained before the replacement."""
     from g6.core import cloud_consent as cloud
     from g6.core.storage import state_path
 
@@ -122,11 +123,12 @@ def carried(job_id: str) -> tuple | None:
         entry = json.loads(side.read_bytes())
         if not isinstance(entry, dict) or entry.get("version") != SOURCES \
                 or entry.get("reply_sha256") != hashlib.sha256(path.read_bytes()).hexdigest() \
+                or expected_sha256 is not None and entry.get("reply_sha256") != expected_sha256 \
                 or not isinstance(entry.get("sources"), list) or not entry["sources"]:
             return None
         return tuple(cloud.Source(one["source"], one["item"], one["content"], one["recorded"])
                      for one in entry["sources"])
-    except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError):
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, MemoryError):
         # RecursionError: a record swapped for deeply nested JSON does not read back either
         return None
 
