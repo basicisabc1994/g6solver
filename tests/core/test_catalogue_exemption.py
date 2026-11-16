@@ -89,6 +89,46 @@ def test_a_granted_extension_is_recorded_as_a_disclosure(extension):
                for row in cloud.disclosures())
 
 
+DROPIN = "zqxdropinpackage"
+
+
+@pytest.fixture
+def dropin(tmp_path, monkeypatch, registry_reset):
+    """A package put into G6's own namespace (as a third-party wheel shipping g6/<name>/ would be), simulated by a
+    folder added to g6.__path__; nothing is installed."""
+    import g6
+
+    folder = tmp_path / "ns"
+    (folder / DROPIN).mkdir(parents=True)
+    (folder / DROPIN / "__init__.py").write_text(f'"""{DROPIN} third-party private text."""\n', encoding="utf-8")
+    monkeypatch.setattr(g6, "__path__", [*g6.__path__, str(folder)])
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    return DROPIN
+
+
+@pytest.mark.parametrize("granted", [False, True])
+def test_a_package_dropped_into_g6s_namespace_is_an_extension(dropin, granted):
+    from g6.core.registry import get_registry
+    from g6.mcp import catalogue
+
+    assert dropin in get_registry().names()                    # the registry finds it under g6.__path__ ...
+    assert not catalogue.built_in(dropin) and catalogue.extension(dropin)   # ... but G6 did not ship it
+    if granted:
+        _grant("component_catalogue")
+    listed, found = _calls([("g6_components", {}), ("g6_find", {"query": f"{dropin} third-party private"})])
+    assert (dropin in listed) is granted and (dropin in found) is granted
+
+
+def test_the_shipped_list_is_every_built_in_component_g6_ships():
+    from g6.core.registry import get_registry
+    from g6.mcp import catalogue
+
+    assert catalogue.shipped() == {name: ref.module for name, ref in get_registry().refs.items()
+                                   if ref.source == "builtin"}, "run: python -P -m g6.mcp.catalogue --write"
+    assert catalogue.PATH.read_text(encoding="utf-8") == catalogue.dumps(catalogue.build())
+    assert all(catalogue.built_in(name) for name in catalogue.shipped())
+
+
 def test_the_built_in_catalogue_tools_declare_no_retained_source():
     from g6.core.consent_declarations import TOOLS
 

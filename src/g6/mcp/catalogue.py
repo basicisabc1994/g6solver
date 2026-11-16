@@ -3,24 +3,60 @@
 revision 8, A+E).
 
 G6's built-in catalogue is G6's own text and public, so those three tools declare no source for it
-(``g6.core.consent_declarations``). An installed entry-point extension's name and text are the person's: a reply over
-MCP names one only where the person shared ``EXTENSION_SOURCE`` with the client's provider, and then carries that
-source, so admission checks the grant again as it sends and records the disclosure. Outside an MCP call (Python, the
-command line) nothing is sent and every component is named.
+(``g6.core.consent_declarations``). Built-in means shipped by G6: named, with its module, in ``built_in.json`` beside
+this file, which :func:`build` writes from the code and a test checks, not merely found under ``g6.__path__``, where
+another package's files can also sit. Every other installed component (an entry-point extension, or a package put
+into G6's namespace) is the person's: a reply over MCP names one only where the person shared ``EXTENSION_SOURCE``
+with the client's provider, and then carries that source, so admission checks the grant again as it sends and records
+the disclosure. Outside an MCP call (Python, the command line) nothing is sent and every component is named.
+
+    python -P -m g6.mcp.catalogue --write     # after a built-in component is added, renamed or removed
+    python -P -m g6.mcp.catalogue --check     # exit 1 when the file is stale
 """
 from __future__ import annotations
+
+import json
+import sys
+from functools import lru_cache
+from pathlib import Path
 
 from g6.core import cloud_consent as policy
 from g6.core import registry
 
 #: The source an installed extension's own text stays under.
 EXTENSION_SOURCE = "component_catalogue"
+#: The components G6 ships, each with its module.
+PATH = Path(__file__).resolve().with_name("built_in.json")
+FORMAT = "g6.built_in/1"
+
+
+def build() -> dict[str, str]:
+    """Each built-in component the registry finds in this source tree, with its module."""
+    return {name: ref.module for name, ref in sorted(registry.get_registry().refs.items()) if ref.source == "builtin"}
+
+
+def dumps(components: dict[str, str]) -> str:
+    """``built_in.json`` as it is written: one component a line, sorted."""
+    rows = ",\n".join(f"    {json.dumps(name)}: {json.dumps(module)}" for name, module in sorted(components.items()))
+    return f'{{\n  "format": "{FORMAT}",\n  "components": {{\n{rows}\n  }}\n}}\n'
+
+
+@lru_cache(maxsize=1)
+def shipped() -> dict[str, str]:
+    """The checked-in list of the components G6 ships (read once)."""
+    return dict(json.loads(PATH.read_text(encoding="utf-8"))["components"])
+
+
+def built_in(name: str) -> bool:
+    """Whether ``name`` is installed as G6 shipped it: in the shipped list, from the module the list names."""
+    ref = registry.get_registry().refs.get(name)
+    return ref is not None and shipped().get(name) == ref.module
 
 
 def extension(name: str) -> bool:
-    """Whether ``name`` is an installed entry-point extension, not one of G6's built-in components."""
-    ref = registry.get_registry().refs.get(name)
-    return ref is not None and ref.source == "extension"
+    """Whether ``name`` is an installed component G6 did not ship (an entry-point extension, or a package put into
+    G6's namespace)."""
+    return name in registry.get_registry().refs and not built_in(name)
 
 
 def carry(name: str) -> None:
@@ -43,4 +79,23 @@ def shown_components() -> list[str]:
     return shown
 
 
-__all__ = ["EXTENSION_SOURCE", "carry", "extension", "shown_components"]
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    text = dumps(build())
+    if args == ["--write"]:
+        PATH.write_text(text, encoding="utf-8", newline="\n")
+        return 0
+    if args == ["--check"]:
+        if PATH.read_text(encoding="utf-8") != text:
+            print("built_in.json is stale: run python -P -m g6.mcp.catalogue --write", file=sys.stderr)
+            return 1
+        return 0
+    print("usage: python -P -m g6.mcp.catalogue --write | --check", file=sys.stderr)
+    return 2
+
+
+__all__ = ["EXTENSION_SOURCE", "PATH", "build", "built_in", "carry", "dumps", "extension", "shipped",
+           "shown_components"]
+
+if __name__ == "__main__":
+    raise SystemExit(main())
