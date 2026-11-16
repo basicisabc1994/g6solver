@@ -90,9 +90,36 @@ def test_a_safety_question_in_other_words_raises_the_action_gate(task: str) -> N
     assert "action_safety" in next(m for m in reply["mechanisms"] if m["stage"] == "candidates")["intents"]
 
 
+@pytest.mark.parametrize("task", [
+    "pushing my branch to origin now", "deleting the user table", "dropped the table by mistake, redo it",
+    "merging into main", "committing the secrets file", "deploying to staging", "sending the newsletter",
+    "paying the invoice", "resetting the repo", "overwriting the config files", "safely remove the old branch",
+    "wipe the staging database", "erase the disk", "truncate the events table", "destroy the terraform stack",
+    "terminate the cloud instances", "remove the users table", "upload the dataset to the public bucket",
+    "email the customer list to the partner", "transfer 500 dollars to the vendor", "should we ship this",
+    "release v2 to the app store", "can I go ahead with it"])
+@pytest.mark.parametrize("phase", ["", "implement"])
+def test_a_safety_question_in_any_word_form_raises_the_action_gate(task: str, phase: str) -> None:
+    reply = selector.select(task, phase, limit=5)
+    assert "op:action_gating.evaluate" in _ids(reply, 3), _ids(reply, 5)
+    assert reply["next"]["id"] != "tool:g6_cloud_grant", reply["next"]
+
+
+@pytest.mark.parametrize("task", ["share my notes with the cloud provider", "terminate the cloud instances",
+                                  "a reply was withheld for consent"])
+def test_cloud_grant_is_never_next_without_the_consent_code(task: str) -> None:
+    for phase in ("", "stuck"):
+        assert selector.select(task, phase)["next"]["id"] != "tool:g6_cloud_grant", (task, phase)
+    assert selector.select(task, "", CONSENT_TEXT)["next"]["id"] == "tool:g6_cloud_grant"
+
+
+CONSENT_TEXT = "[G6_E_CLOUD_CONSENT_REQUIRED] Results were withheld from a source not shared with this provider."
+
+
 def test_the_safety_words_are_fixed_data_the_docstring_lists() -> None:
     assert {"overwrite", "commit", "merge", "rm", "reset", "live", "dangerous", "fine to", "okay to",
-            "is it ok"} <= set(selector.SAFETY_WORDS)
+            "is it ok", "wipe", "erase", "truncate", "destroy", "terminate", "remove", "upload", "email",
+            "transfer", "ship", "release", "should we", "can i"} <= set(selector.SAFETY_WORDS)
     listed = " ".join(selector.__doc__.split())
     assert all(f'"{word}"' in listed for word in selector.SAFETY_WORDS), [
         w for w in selector.SAFETY_WORDS if f'"{w}"' not in listed]

@@ -22,11 +22,14 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
    a share of a full match, times ``LEXICAL_WEIGHT`` (``ROUTE_WEIGHT`` more for a route), plus the fixed phase priors ``PRIORS`` (and ``PHASE_TAG_BONUS`` for a matched entry
    tagged with the phase) and the fixed intent priors ``INTENTS`` (a safety question raises the action gate; an
    agent that keeps failing, the meta-harness). A safety question is a task holding one of ``SAFETY_WORDS``, fixed
-   and reviewed: "safe", "should i", "risky", "dangerous", "allowed", "okay to", "fine to", "is it ok",
+   and reviewed, a verb among them in any of its word forms (pushing, deleted, dropping; "safely"): "safe",
+   "should i", "should we", "can i", "risky", "dangerous", "allowed", "okay to", "fine to", "is it ok",
    "production", "prod", "live", "delete", "rm", "overwrite", "reset", "push", "commit", "merge", "pay", "migrate",
-   "drop", "deploy", "send", "publish". Every reply, whatever its words: a call that acts outside G6
+   "drop", "deploy", "send", "publish", "wipe", "erase", "truncate", "destroy", "terminate", "remove", "upload",
+   "email", "transfer", "ship", "release". Every reply, whatever its words: a call that acts outside G6
    (``_acts``: an op its component lists as sensitive, or whose name holds an ``OUTWARD_WORDS`` word) ranks below
-   every call that does not, and is never ``next``. Where the rankers disagree it is listed. A semantic rerank (the local ColBERT rung) is
+   every call that does not, and is never ``next``; ``g6_cloud_grant`` is ``next`` only as the remedy for the
+   consent code. Where the rankers disagree it is listed. A semantic rerank (the local ColBERT rung) is
    deferred: it would make the reply depend on what the host has installed and cached, so ``rerank="colbert"`` is
    kept for compatibility and answered lexically (``NOT_OFFERED``).
 4. ``next_action``: with open hypotheses in ``considering``, ``verification_controller.next_experiment`` picks the
@@ -98,10 +101,29 @@ PRIORS: dict[str, dict[str, float]] = {
 }
 #: The words and phrases that make a task a safety question (``action_safety``): it asks whether an action is safe,
 #: should be done or is risky, or names an outward or destructive act. Fixed, reviewed data, listed in the module
-#: docstring; each is matched as whole words in the task, lower-cased.
-SAFETY_WORDS = ("safe", "should i", "risky", "dangerous", "allowed", "okay to", "fine to", "is it ok", "production",
-                "prod", "live", "delete", "rm", "overwrite", "reset", "push", "commit", "merge", "pay", "migrate",
-                "drop", "deploy", "send", "publish")
+#: docstring; each is matched as whole words in the task, lower-cased, and a verb in ``SAFETY_VERBS`` in its word
+#: forms too (``_forms``: pushes, pushed, pushing; deleting; dropping; and "safely").
+SAFETY_WORDS = ("safe", "should i", "should we", "can i", "risky", "dangerous", "allowed", "okay to", "fine to",
+                "is it ok", "production", "prod", "live", "delete", "rm", "overwrite", "reset", "push", "commit",
+                "merge", "pay", "migrate", "drop", "deploy", "send", "publish", "wipe", "erase", "truncate", "destroy",
+                "terminate", "remove", "upload", "email", "transfer", "ship", "release")
+SAFETY_VERBS = frozenset({"delete", "overwrite", "reset", "push", "commit", "merge", "pay", "migrate", "drop",
+                          "deploy", "send", "publish", "wipe", "erase", "truncate", "destroy", "terminate", "remove",
+                          "upload", "email", "transfer", "ship", "release"})
+_IRREGULAR = {"pay": ("paid",), "send": ("sent",), "safe": ("safely",)}
+
+
+def _forms(word: str) -> set[str]:
+    """``word`` and, for a verb in ``SAFETY_VERBS``, its regular forms: -s, -es, -ed/-d, -ing (a final e dropped, a
+    final consonant after a single vowel doubled), with ``_IRREGULAR``'s."""
+    out = {word, *_IRREGULAR.get(word, ())}
+    if word in SAFETY_VERBS:
+        out |= {word + "s", word + "es", word + "ed", word + "ing"}
+        if word.endswith("e"):
+            out |= {word + "d", word[:-1] + "ing"}
+        if re.fullmatch(r"[a-z]*[^aeiou][aeiou][bdgmnprt]", word):
+            out |= {word + word[-1] + "ing", word + word[-1] + "ed"}
+    return out
 #: Fixed, documented intent priors, read by a reviewer: name -> (a pattern over the task's words, {phase, or "*" for
 #: every phase: {entry id: bonus}}). ``action_safety`` is the task holding a ``SAFETY_WORDS`` word or phrase: the
 #: action gate that decides allow, confirm, review or block is raised first, and the premortem with it while
@@ -110,7 +132,8 @@ SAFETY_WORDS = ("safe", "should i", "risky", "dangerous", "allowed", "okay to", 
 #: id in the corpus.
 INTENTS: dict[str, tuple[re.Pattern[str], dict[str, dict[str, float]]]] = {
     "action_safety": (
-        re.compile(r"\b(" + "|".join(re.escape(w) for w in SAFETY_WORDS) + r")\b"),
+        re.compile(r"\b(" + "|".join(sorted((re.escape(f) for w in SAFETY_WORDS for f in _forms(w)), key=len,
+                                            reverse=True)) + r")\b"),
         {"*": {"op:action_gating.evaluate": GATE_BONUS}, "plan": {"tool:g6_premortem": 2.0}}),
     "workflow_improvement": (
         re.compile(r"\b(tune|improve|keeps failing|make my agent better)\b"),
@@ -1071,7 +1094,9 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
 
     # the op whose outcome last_outcome reports (the reply's own component and op) is never next again
     reported = f"op:{seen['component']}.{seen['op']}" if seen["component"] and seen["op"] else ""
-    open_ = [c["id"] for c in candidates if not c["acts"] and c["id"] != reported]
+    # g6_cloud_grant asks the person to share data: next only as the remedy for the consent code itself
+    open_ = [c["id"] for c in candidates if not c["acts"] and c["id"] != reported
+             and (c["id"] != "tool:g6_cloud_grant" or c["id"] == first)]
     if remedy is not None and remedy["tell_person"]:
         say = remedy["action"] + (f" The step: {remedy['setup']}." if remedy["setup"] else "")
         nxt = {"id": None, "call": None, "tell_person": True, "say": say, "why": f"remedy {remedy['key']}",
