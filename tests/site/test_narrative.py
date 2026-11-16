@@ -104,3 +104,17 @@ def test_no_page_calls_a_result_a_proof_of_concept(client):
     for path in public_paths():
         text = _text(client.get(path).content.decode()).lower()
         assert "proof of concept" not in text and "proof-of-concept" not in text, path
+
+
+def test_the_home_and_research_pages_claim_no_more_than_the_code_does(client):
+    # plan revision 8, E (review 2 of the entry branch): the home page's answers say what the FAQ says
+    answers = {limit["key"]: limit["answer"] for limit in narrative.LIMITS}
+    assert "checks each claim against your sources" not in answers["hallucination"]
+    assert "word by word" in answers["hallucination"] and "not a reading of meaning" in answers["hallucination"]
+    assert "forgets nothing" not in answers["learning"] and "rolled back" in answers["learning"]
+    assert "gates every action" not in answers["safety"] and "actions that go through it" in answers["safety"]
+    assert "answers each limit" not in narrative.__doc__
+    home = _text(client.get("/").content.decode())
+    assert "Every action gated" not in home and "Actions that go through G6 are gated" in home
+    research = _text(client.get("/research/").content.decode())
+    assert "when G6 engineers the harness" not in research and "Larger models engineer the harness" not in research

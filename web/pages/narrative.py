@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Why G6 exists, as the home page tells it (owner, 2026-10-20): language models already hold the right kind of general
-intelligence, and their limits come from how they are built, not from what they know. So G6 keeps the model and
-answers each limit in the harness around it. Each limit names the core components that answer it (the home page's
-lattice lights them as the limit scrolls past) and the essay that goes deeper, so a test can hold the copy to the
-registry and the page table."""
+intelligence, and their limits come from how they are built, not from what they know. So G6 keeps the model and works
+on each limit from the harness around it; each answer says what G6's code does about it, and no more. Each limit names
+the core components that work on it (the home page's lattice lights them as the limit scrolls past) and the essay that
+goes deeper, so a test can hold the copy to the registry and the page table."""
 from __future__ import annotations
 
 # (key, the limit, why it happens, what G6 does, the core components that do it, the essay's URL name or None)
@@ -12,7 +12,8 @@ LIMITS: tuple[dict, ...] = tuple(
     for key, title, cause, answer, parts, essay in (
         ("hallucination", "They make things up",
          "A model writes the likeliest words, true or not.",
-         "G6 checks each claim against your sources and labels every result for what the evidence supports.",
+         "G6 can check a claim against your sources word by word (shared words, numbers and negations, not a reading of "
+         "meaning), and labels each of its results for what the evidence supports.",
          ("grounding", "epistemic_integrity", "evidence"), "hallucination_is_design"),
         ("memory", "They forget, and read only so much",
          "Nothing carries over between conversations, and the context window is finite.",
@@ -20,7 +21,8 @@ LIMITS: tuple[dict, ...] = tuple(
          ("context", "learning"), "context_window_is_not_memory"),
         ("learning", "They cannot learn on the job",
          "What a model knows is fixed in its weights, and retraining can erase it.",
-         "G6 learns in the harness instead, so your model never changes and forgets nothing.",
+         "G6 learns in the harness instead, where each change can be read, tested and rolled back; your model's "
+         "weights stay as they are.",
          ("metaharness", "learning", "self_training"), "learning_without_forgetting"),
         ("reasoning", "They slip on logic and exact work",
          "Matching patterns makes a wrong sum read as right.",
@@ -44,7 +46,8 @@ LIMITS: tuple[dict, ...] = tuple(
          ("coding_agent_gate", "workforce", "safety_engine"), None),
         ("safety", "They are unsafe to let act, or improve themselves",
          "A model has no brakes, and could rewrite its own checks.",
-         "G6 gates every action, keeps a stop switch, and puts no change live without evidence and your approval.",
+         "G6 gates the actions that go through it, keeps a stop switch that halts new work, and puts no change live "
+         "without evidence and your approval.",
          ("action_gating", "safety_engine", "guards", "self_training"), "self_improvement_safety"),
         ("cost", "The best models cost the most",
          "Frontier models charge for every call, and most work repeats.",
