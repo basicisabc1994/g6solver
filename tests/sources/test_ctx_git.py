@@ -194,9 +194,11 @@ def test_p1_git02_paths_are_confined_to_the_declared_roots(home: Path, block: Ct
     assert call(block, "status", repo=str(repo / ".." / ".." / "elsewhere"))["code"] == cfg.OUTSIDE_ROOT
     assert call(block, "status", repo=str(home / "root"))["code"] == cfg.NOT_A_REPOSITORY
     (home / "outside.txt").write_text("secret\n", encoding="utf-8")
-    for bad in ("../../outside.txt", str(home / "outside.txt"), ".git/config", "--output=x"):
+    # Outside is reserved for containment; an option or protected .git path is invalid inside the repository.
+    for bad, code in (("../../outside.txt", cfg.OUTSIDE_ROOT), (str(home / "outside.txt"), cfg.OUTSIDE_ROOT),
+                      (".git/config", cfg.PATH_INVALID), ("--output=x", cfg.PATH_INVALID)):
         out = call(block, "diff", repo=str(repo), paths=[bad])
-        assert out["code"] == cfg.OUTSIDE_ROOT, bad
+        assert out["code"] == code, bad
     assert call(block, "blame", repo=str(repo), file="../../outside.txt")["code"] == cfg.OUTSIDE_ROOT
     nothing = CtxGitBlock(config=cfg.GitConfig((), (), "none"))
     assert call(nothing, "status", repo=str(repo))["code"] == cfg.NO_ROOT
@@ -269,7 +271,9 @@ def test_p1_git02_objects_borrowed_from_outside_the_root_are_refused(home: Path,
         ("show", {"rev": theirs}), ("branch_create", {"name": "theirs", "rev": theirs}))}
     assert "theirs" not in refs_of(repo) and refs_of(elsewhere) == before
     for op, out in replies.items():
-        assert out["code"] == cfg.OUTSIDE_ROOT and "alternates" in out["reason"], (op, out["code"])
+        # A quoted entry is invalid syntax; the unquoted entries here actually resolve outside.
+        code = cfg.PATH_INVALID if form == "a quoted entry" else cfg.OUTSIDE_ROOT
+        assert out["code"] == code and "alternates" in out["reason"], (op, out["code"])
 
 
 def test_p1_git02_an_alternate_inside_the_root_is_used(home: Path, block: CtxGitBlock, repo: Path) -> None:
