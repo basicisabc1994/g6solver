@@ -494,7 +494,7 @@ def test_a_g6_reply_the_agent_can_repair_adds_one_line_once_per_code_per_session
     said = json.loads(out)["hookSpecificOutput"]
     assert code == 0 and said["hookEventName"] == "PostToolUse"
     line = said["additionalContext"]
-    assert "\n" not in line and "G6_E_INPUT_VALIDATION" in line and "Fix phase" in line and len(line) <= 300
+    assert "\n" not in line and "G6_E_INPUT_VALIDATION" in line and "template g6_select" in line and len(line) <= 300
     assert hook.on_tool(_tool(response)) == {}                                       # once per code per session
     assert hook.on_tool(_tool(_refused(code="G6_E_UNKNOWN_OP"))) != {}               # another code
     assert hook.on_tool(_tool(response, session="s2")) != {}                         # another session

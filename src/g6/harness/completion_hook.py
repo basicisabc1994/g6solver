@@ -256,6 +256,39 @@ def on_stop(event: dict) -> dict:
 #: Set to ``off`` where Claude Code runs to keep G6's repair line out of the agent's context.
 HINTS = "G6_HINTS"
 _REPAIR_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
+#: Exact MCP identities; hooks.json is checked against tool_matcher().
+G6_SERVER_PREFIXES = ("mcp__g6__", "mcp__plugin_g6_g6__")
+
+
+def tool_matcher() -> str:
+    """Only the two G6 servers and the tool names in G6's shipped corpus."""
+    from g6.skills import corpus
+
+    tools = sorted(e["call"]["tool"] for e in corpus.load()["entries"] if e["kind"] == "tool")
+    # Unlike $, this end assertion cannot match before a trailing newline (Python and JavaScript regexes).
+    return "^(?:" + "|".join(map(re.escape, G6_SERVER_PREFIXES)) + ")(?:" + "|".join(tools) + r")(?![\s\S])"
+
+
+def repair_line(name: str, repair: dict) -> str:
+    """Guidance from G6's declaration and corpus only; no reply words are repeated."""
+    from g6.core import refusals
+    from g6.skills import corpus
+
+    if not re.fullmatch(tool_matcher(), name) or repair.get("by") != "agent":
+        return ""
+    code = repair.get("code")
+    if not isinstance(code, str) or not _REPAIR_CODE.fullmatch(code):
+        return ""
+    data = corpus.load()
+    row = refusals.resolve(code, declared=data["refusals"])
+    if not row.declared or row.kind in ("person", "none"):
+        return ""
+    tool = next(name[len(prefix):] for prefix in G6_SERVER_PREFIXES if name.startswith(prefix))
+    template = row.fix_by[5:] if row.kind == "tool" else tool
+    key = ("op:" if "." in template else "tool:") + template
+    if not any(e["id"] == key for e in data["entries"]):
+        return ""
+    return f"G6 refused ({code}; {row.fix_by}); template {template}: {row.words}"[:300]
 
 
 def _repair(response: object) -> dict | None:
@@ -287,25 +320,29 @@ def on_tool(event: dict) -> dict:
     """``PostToolUse``: when a G6 reply carries a repair the agent makes itself (``repair.by`` is ``agent``), one short
     line of ``additionalContext`` with its code and step, once per code in a session; nothing for any other reply,
     another server's tool, or with ``G6_HINTS=off``."""
-    name = str(event.get("tool_name") or "")
-    if os.environ.get(HINTS, "").strip().lower() == "off" or not re.fullmatch(r"mcp__.*g6.*__\w+", name):
-        return {}
-    repair = _repair(event.get("tool_response"))
-    code = str((repair or {}).get("code") or "")
-    if not repair or repair.get("by") != "agent" or not _REPAIR_CODE.fullmatch(code):
-        return {}
-    seen = folder(event["session_id"]) / "repair_hints.json"
     try:
-        codes = set(json.loads(seen.read_text(encoding="utf-8")))
-    except (OSError, ValueError, TypeError):
-        codes = set()
-    if code in codes:
+        name = str(event.get("tool_name") or "")
+        session = event.get("session_id")
+        if os.environ.get(HINTS, "").strip().lower() == "off" or not isinstance(session, str) or not session \
+                or not re.fullmatch(tool_matcher(), name):
+            return {}
+        repair = _repair(event.get("tool_response"))
+        line = repair_line(name, repair) if repair else ""
+        if not line:
+            return {}
+        code = repair["code"]
+        seen = folder(session) / "repair_hints.json"
+        try:
+            codes = set(json.loads(seen.read_text(encoding="utf-8")))
+        except (OSError, ValueError, TypeError):
+            codes = set()
+        if code in codes:
+            return {}
+        seen.parent.mkdir(parents=True, exist_ok=True)
+        seen.write_text(json.dumps(sorted(codes | {code})), encoding="utf-8")
+        return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": line}}
+    except Exception:  # noqa: BLE001 - optional context must never fail a tool hook, including recursion errors
         return {}
-    seen.parent.mkdir(parents=True, exist_ok=True)
-    seen.write_text(json.dumps(sorted(codes | {code})), encoding="utf-8")
-    step = " ".join(str(repair.get("step") or "").split())
-    line = f"G6 refused that call ({code}); repair it yourself as its reply's repair block says: {step}"
-    return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": line[:300]}}
 
 
 HOOKS = {"prompt": on_prompt, "stop": on_stop, "tool": on_tool}
@@ -318,6 +355,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         said = HOOKS[args[0]](json.loads(sys.stdin.buffer.read().decode("utf-8")))
     except Exception as exc:  # noqa: BLE001 - whatever went wrong, the person's turn ends
+        if args[0] == "tool":
+            return 0                 # this optional hint has no completion-loop verdict
         why = " ".join(f"{type(exc).__name__}: {exc}".split())
         print(f"G6's completion loop stopped, so this work is not tested: {why}"[:300], file=sys.stderr)
         return 1

@@ -27,7 +27,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__.*g6.*__.*",
+        "matcher": "^(?:mcp__g6__|mcp__plugin_g6_g6__)(?:g6_allowances|g6_cloud_grant|g6_cloud_grants|g6_cloud_revoke|g6_components|g6_compose|g6_confirm_behaviour|g6_describe|g6_disclosures|g6_feedback|g6_find|g6_help|g6_improve_demote|g6_improve_enrol|g6_improve_resume|g6_improve_start|g6_improve_status|g6_improve_stop|g6_invoke|g6_knowledge_add|g6_knowledge_context|g6_knowledge_count|g6_knowledge_delete|g6_knowledge_job|g6_knowledge_passage|g6_knowledge_paths|g6_knowledge_refresh|g6_knowledge_revoke|g6_knowledge_search|g6_knowledge_sources|g6_mission_certificate|g6_mission_clarify|g6_mission_confirm|g6_mission_create|g6_mission_status|g6_mission_submit|g6_premortem|g6_review_patch|g6_review_until_clean|g6_select|g6_suggestion_decide|g6_workflow_correct|g6_workflow_delete|g6_workflow_export|metaharness_approve|metaharness_confirm|metaharness_decide|metaharness_diagnose|metaharness_evaluate|metaharness_evaluate_start|metaharness_inspect|metaharness_job|metaharness_propose|metaharness_propose_code|metaharness_rollback|metaharness_run|metaharness_start)(?![\\s\\S])",
         "hooks": [
           {
             "type": "command",
