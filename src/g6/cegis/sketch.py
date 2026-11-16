@@ -15,7 +15,7 @@ Control = dict[int, Any]
 
 
 def _literal(value: Any) -> str:
-    return repr(value)  # bool, int and str only (checked by Hole.accepts): their repr is their source
+    return repr(value)  # bool, int, finite float and str only (checked by Hole.accepts): their repr is their source
 
 
 def _default(hole: Hole) -> Any:

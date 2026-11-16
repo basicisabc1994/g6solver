@@ -326,6 +326,7 @@
     "op:causal/estimate_effect": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
     "op:causal/identify": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
     "op:causal/instruments": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
+    "op:cegis/synthesize": {"agent_facing": true, "route": "discover", "since": "0.3.0"},
     "op:coding_agent_gate/preflight": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
     "op:coding_agent_gate/verify_answer": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
     "op:cog_arch_actr/add_chunk": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
