@@ -15,8 +15,8 @@ from g6.mcp import build_server, improve, mission, review_loop, review_reply
 # An independent scope oracle: positive captures must not grant whatever a
 # potentially wrong declaration happens to request.
 EXPECTED_SCOPES = {
-    'g6_components': ('component_catalogue',),
-    **{n: ('component_catalogue',) for n in ('g6_find', 'g6_describe')},
+    # g6_components, g6_find and g6_describe declare no source: G6's built-in catalogue is public (owner, 2026-11-16),
+    # and an extension's text stays behind component_catalogue (tests/core/test_catalogue_exemption.py).
     **{n: ('component_data',) for n in ('g6_invoke', 'g6_compose')},
     'g6_review_patch': ('host_configuration',),
     'g6_review_until_clean': ('host_configuration', 'completion_history'),
@@ -190,7 +190,9 @@ def test_request_and_operational_tools_never_read_other_scopes(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize('granted', [False, True])
-def test_actual_catalogue_file_is_not_operational_text(tmp_path, monkeypatch, accepted_cloud_dialog, granted):
+def test_a_built_in_components_catalogue_file_is_public(tmp_path, monkeypatch, accepted_cloud_dialog, granted):
+    # The owner, 2026-11-16: G6's own catalogue is exempt from the sharing grant; a built-in component's skill is G6's
+    # text, shown with or without it. An extension's stays behind it (tests/core/test_catalogue_exemption.py).
     from g6.core import discovery
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
     path = tmp_path / 'skill.txt'
@@ -201,7 +203,7 @@ def test_actual_catalogue_file_is_not_operational_text(tmp_path, monkeypatch, ac
     async def run():
         async with Client(build_server(), client_info=Implementation(name='codex', version='test')) as client:
             return str(await client.call_tool('g6_describe', {'component': 'algorithm_design'}))
-    assert ('PLANTED_CATALOGUE_FILE' in asyncio.run(run())) is granted
+    assert 'PLANTED_CATALOGUE_FILE' in asyncio.run(run())
 
 
 def test_repository_only_premortem_does_not_read_retained_scopes(tmp_path, monkeypatch):

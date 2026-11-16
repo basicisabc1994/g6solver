@@ -12,7 +12,9 @@ Optional ``weights`` (``{source label or lineage: number}``) are the caller's ow
 claim beside the sources they name, as the caller's claim, and no status or label depends on them.
 
 The best state is ``qualified-draft``, every claim covered; otherwise ``blocked-escalated`` with the worst code among
-the claims: ``G6_E_GROUNDING_CONTESTED`` (a source contradicts a claim), ``G6_E_GROUNDING_UNSUPPORTED`` (no source
+the claims: ``G6_E_GROUNDING_CONTESTED`` (a source sentence differs from a claim in a negation or a number, a lexical
+sign, not a reading of meaning; with a ``judge`` passed, or the judge reads one as contradicting it, and the card
+says so), ``G6_E_GROUNDING_UNSUPPORTED`` (no source
 supports one), ``G6_E_GROUNDING_THIN_SOURCES`` (one rests on a single lineage). Support is lexical, as in
 ``check_claim``, so coverage is a proxy and never ``verified``.
 
@@ -46,12 +48,16 @@ MAX_CLAIMS = 200
 MAX_PASSAGES = 5_000
 #: Worst first: the corroboration status, the code it gives a draft, and what to do about it.
 _WORST = (
-    ("CONTESTED", CONTESTED, "contradicted by a source", "Resolve the contradiction from the sources before the draft "
-                                                          "goes out, or say the point is disputed."),
+    ("CONTESTED", CONTESTED, "where a source sentence differs in a negation or a number (a lexical sign, not a reading "
+                             "of meaning)", "Read each such source sentence beside its claim, and settle the difference "
+                                            "before the draft goes out, or say the point is disputed."),
     ("UNVERIFIABLE", UNSUPPORTED, "supported by no source", "Find a source for each unsupported claim, or take it out."),
     ("ASSERTED", THIN_SOURCES, "resting on a single source lineage", "Find a second, independent source for each "
                                                                       "thin claim, or say it rests on one."),
 )
+#: What a CONTESTED claim means when the caller passed a judge, which can make one with no lexical sign at all.
+_JUDGED = ("where a source sentence differs in a negation or a number (a lexical sign), or the judge you passed reads "
+           "one as contradicting it (its reading, not a check by G6)")
 
 
 @dataclass(frozen=True)
@@ -110,6 +116,7 @@ def coverage(text: str, sources: Retriever | list[Passage], *, top_k: int = 5, j
     else:
         for status, code, what, action in _WORST:
             if status in statuses:
+                what = _JUDGED if status == "CONTESTED" and judge is not None else what
                 card = warning_card(code, f"{statuses.count(status)} of {len(claims)} claim(s) {what}", action)
                 break
     evidence = {

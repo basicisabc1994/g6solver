@@ -48,7 +48,7 @@ server reads it from its own environment. The meta-harness tools that run a work
 a workflow runs only once a person confirmed it, which G6 records under its state folder, so a confirmation a
 project's files carry does not count. The mission tools that run a repository's code ask for ``workforce.mission``
 (``workforce`` for all), and ``g6_improve_start`` for ``metaharness.improve`` (``metaharness`` covers it too).
-``g6_describe`` says which sensitive ops this server allows. Before you list
+``g6_describe`` says which sensitive ops this server allows once the person shares host_configuration. Before you list
 one, know this (the refusal says it too): Where no operating-system boundary can confine it (macOS, Linux without
 bubblewrap, and Windows before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a
 generated script, a repository's tests) unless you allow it once with g6 setup. Code you allow then has your own
@@ -192,9 +192,9 @@ def build_server(surface: Any = None) -> Any:
         raise SystemExit("g6-mcp needs the MCP extra: pip install 'g6[mcp] @ git+https://github.com/basicisabc1994/g6solver'") from exc
 
     from g6.core import discovery
-    from g6.core.registry import get_registry
+    from g6.mcp.instructions import TEXT
 
-    server = FastMCP("g6")
+    server = FastMCP("g6", instructions=TEXT)     # when to call G6, before any skill is read
     from g6.mcp.cloud_consent import install, public_tool, register
     install(server)
     register(server, Context)
@@ -222,21 +222,30 @@ def build_server(surface: Any = None) -> Any:
 
         return report(useful_parallel_work=useful_parallel_work)
 
+    from g6.mcp.catalogue import host_facts, shown_components, unloadable, unshipped_reply
+
     @server.tool()
     def g6_components() -> list[str]:
-        """Every installed G6 component."""
-        return get_registry().names()
+        """Every installed G6 component (an installed extension only once the person shares component_catalogue)."""
+        return shown_components()
 
     @server.tool()
     def g6_find(query: str, limit: int = 5) -> list[dict]:
         """Rank components for a task description; empty list means nothing matched."""
-        return discovery.find(query, limit)
+        return discovery.find(query, limit, names=shown_components())
 
     @server.tool()
     def g6_describe(component: str) -> dict:
-        """Maturity, ops and declared dependencies of one component, and which of its sensitive ops this server
-        allows."""
-        return describe_reply(component)
+        """Maturity, ops and declared dependencies of one component, and, once the person shares host_configuration,
+        this computer's facts about it: which of its sensitive ops this server allows, which extras are installed."""
+        hidden = unshipped_reply(component)     # a name G6 did not ship, before the person shares component_catalogue
+        if hidden is not None:
+            return hidden
+        try:
+            info = describe_reply(component)
+        except Exception as exc:    # a built-in that fails to load: G6's words, not the error's text (paths)
+            return unloadable(component, exc)
+        return host_facts(info)    # this computer's facts only with host_configuration shared
 
     @server.tool()
     def g6_invoke(component: str, op: str, params_json: str = "{}") -> dict:

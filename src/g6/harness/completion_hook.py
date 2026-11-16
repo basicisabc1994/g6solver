@@ -8,7 +8,9 @@ so a commit the agent makes later cannot move it. With ``G6_LOOP_SCOUTS=before_f
 prompt also runs the scouts (``completion_loop.prepare``) and gives the agent what they found as ``additionalContext``.
 Nothing heavy is imported until a hook has work to do. A prompt after a loop has ended arms a new one (``_again``), so one
 ended loop does not leave the rest of a session unreviewed. Its base is HEAD at that prompt, and it has a folder of its own
-(``current``). A session's prompts take turns (``_one_prompt``).
+(``current``). A session's prompts take turns (``_one_prompt``). When a task starts (a session's first prompt, or one that
+arms a new loop) the agent is also told, after anything the scouts found, which G6 calls may fit the task and when to call
+G6 (``_hint``): at most 60 words, never the prompt's own, off where the person's key file says ``G6_HINTS=off``.
 
 ``stop``: ``completion_loop.advance``, for a session with a task; with none, because no prompt hook saw it, the task is read
 from the transcript and HEAD is the base. ``{"decision": "block", "reason": ...}`` hands the repair text back to the agent;
@@ -47,6 +49,8 @@ NO_REPOSITORY = ("G6's completion loop did not run: this folder is not a git rep
 PROMPT_WAIT = 30.0
 #: A file in a run's folder: a turn ended there with no loop run, which nothing in its state can say (``on_stop``).
 TURN_ENDED = ".turn_ended"
+#: The line in the person's key file that turns off the hint a task starts with: ``G6_HINTS=off``.
+HINTS_LINE = "G6_HINTS"
 
 
 def folder(session_id: str) -> Path:
@@ -109,7 +113,7 @@ def _task(session: Path) -> dict:
         raise ValueError(f'{cloud.REQUIRED}: {cloud.WITHHELD}') from None
 
 
-def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
+def _again(event: dict, asked: dict, ended: dict, task: str) -> bool:
     """A new loop after one that ended, or after a turn that ran none on a commit that has since moved: a commit nobody is on
     is no base. Its base is HEAD now, and its task this prompt, with the earlier task if that base is the same, as the patch
     still holds that work. On that same base its state names the patch the last review read, so a
@@ -117,7 +121,7 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
     patch. Nor does it after a loop that ended with a stable code: that came to no result, so the next stop may try again. The
     scouts do not run here, as they do at a session's first prompt: this may be any prompt at all. A row the ended loop still
     owes is tried first, and if the log keeps it out it stays owed: the new loop's calls reach it by its mark, as they no
-    longer reach that loop's folder. Outside a repository nothing moves, and the stop says so."""
+    longer reach that loop's folder. Outside a repository nothing moves, and the stop says so. Whether it armed one."""
     session_id, session = event["session_id"], folder(event["session_id"])
     if "row_due" in ended:
         from g6.harness import completion_loop as loop
@@ -125,7 +129,7 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
         loop.settle()
     here = _here(event["cwd"])
     if here is None:
-        return
+        return False
     repo, base, reviews = str(here[0]), here[1], ended.get("reviews") or []
     same, read_last = (repo, base) == (asked["repo"], asked["base"]), reviews[-1]["patch"] if reviews else ended.get("reviewed")
     fresh = {"repo": repo, "task": f"{asked['task']}\n\n{task}" if same else task, "base": base,
@@ -139,6 +143,7 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
         cloud.Source.text(cloud.input_source(task), 'task', task)))
     loop._save(run, read, sources=refs)
     cloud.write_retained(session / 'task.json', json.dumps(fresh).encode('utf-8'))
+    return True
 
 
 def _moved(event: dict, asked: dict) -> bool:
@@ -199,11 +204,34 @@ def _model(event: dict) -> str:
     return next((one for one in named if isinstance(one, str) and one and not one.startswith("<")), "")
 
 
+def _hint(task: str) -> str:
+    """At a task's start, which G6 calls may fit it and when to call G6 (``g6.core.selector.hint``: lexical, no model,
+    never the prompt's words); "" where the person's key file says ``HINTS_LINE=off``, or if it cannot be made, as a
+    hint never holds a prompt (a key file that cannot be read among them: then no hint)."""
+    try:
+        from g6.core import keys
+
+        if (keys.get(HINTS_LINE) or "").strip().lower() == "off":
+            return ""
+        from g6.core import selector
+
+        return selector.hint(task)
+    except Exception:  # noqa: BLE001 - a hint is a convenience; the prompt goes ahead without it
+        return ""
+
+
+def _context(found: str, task: str) -> dict:
+    """What the agent is told as a task starts: what the scouts found, then the hint."""
+    said = "\n\n".join(part for part in (found, _hint(task)) if part)
+    return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": said}} if said else {}
+
+
 def on_prompt(event: dict) -> dict:
     session = folder(event["session_id"])
     task, known = str(event.get("prompt") or "").strip(), session / "task.json"
     if not task:
         return {}
+    armed = False
     with _one_prompt(session):
         if known.exists():
             from g6.harness import completion_loop as loop
@@ -212,17 +240,20 @@ def on_prompt(event: dict) -> dict:
             state = loop._load(run)
             idle = "started" not in state and (run / TURN_ENDED).exists() and _moved(event, asked)
             if state.get("done") or idle:
-                _again(event, asked, state, task)
+                armed = _again(event, asked, state, task)
             elif "started" not in state:
                 cloud.write_retained(known, json.dumps({**asked, "task": f"{asked['task']}\n\n{task}"}).encode('utf-8'))
-            return {}
-        asked = _record(session, event["cwd"], task)
+            if not armed:
+                return {}
+        else:
+            asked = _record(session, event["cwd"], task)
+    if armed:
+        return _context("", task)      # a new loop's task starts here; its scouts do not run (``_again``)
     if asked is None:
         return {}
     from g6.harness import completion_loop as loop
 
-    context = loop.prepare(asked["repo"], task, asked["base"], session)
-    return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}} if context else {}
+    return _context(loop.prepare(asked["repo"], task, asked["base"], session), task)
 
 
 def on_stop(event: dict) -> dict:

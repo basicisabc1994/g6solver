@@ -131,6 +131,8 @@ class EpistemicIntegrityBlock(AIBlock[EpistemicIntegrityInput, dict, dict]):
         payload = result.to_dict()
         payload["component"] = self.name
         payload["llm_used"] = False
+        payload["confidence_meaning"] = ("an upper bound set by the evidence grade (E0 0.2, E1 0.5, E2 0.8, E3 1.0; "
+                                         "contested 0.5), not a probability")
         return Result.ok(payload)
 
 

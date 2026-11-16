@@ -204,3 +204,22 @@ def test_fallback_text_is_not_shared_across_routes() -> None:
     fallback = re.compile(r"terminal command|relay the", re.IGNORECASE)
     relays = {route for route in routing.load().routes if fallback.search(_route_section(route))}
     assert relays == set(), relays
+
+
+def _section(heading: str) -> str:
+    return " ".join(TEXT.split(heading, 1)[1].split("\n## ", 1)[0].split())
+
+
+def test_deliver_names_the_model_proposed_checks_and_the_loop():
+    """Plan revision 8, A: the verification proposer and the loop were missing from the skill."""
+    section = _section("## Deliver a coding task with G6")
+    assert '`search: {"propose": true}`' in section
+    assert "never passes a requirement" in section and "at most insufficient evidence" in section
+    assert "Stop hook" in section and "`g6_review_until_clean`" in section
+
+
+def test_find_says_what_needs_a_grant_and_that_select_needs_none():
+    section = _section("## Find")
+    assert "without any sharing grant for G6's built-in components" in section
+    assert "extension" in section and "the person's own data" in section
+    assert "`g6_select` needs no grant" in section

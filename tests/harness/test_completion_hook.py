@@ -33,6 +33,10 @@ def git(root: Path, *args: str) -> str:
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
     monkeypatch.setenv("G6_HOME", str(tmp_path / "g6"))
+    # These tests pin what the loop itself says at a prompt; the task-start hint is off here and tested on its own
+    # (the hint tests take this line out).
+    (tmp_path / "g6").mkdir()
+    (tmp_path / "g6" / ".env").write_text("G6_HINTS=off\n", encoding="utf-8")
     root = tmp_path / "repo"
     (root / "pkg").mkdir(parents=True)
     (root / "pkg" / "mod.py").write_text("x = 1\n", encoding="utf-8")
@@ -163,6 +167,87 @@ def test_a_repository_with_no_commit_records_nothing(tmp_path, monkeypatch, caps
     git(tmp_path / "empty", "init", "-q")
     assert hooked(monkeypatch, capsys, "prompt", prompt(tmp_path / "empty"))[0] == 0
     assert not (hook.folder("s1") / "task.json").exists()
+
+
+def hints_on(repo: Path) -> None:
+    (repo.parent / "g6" / ".env").unlink()
+
+
+def context_of(out: str) -> str:
+    return json.loads(out)["hookSpecificOutput"]["additionalContext"] if out else ""
+
+
+def test_a_task_starts_with_a_short_hint_that_never_repeats_the_prompt(repo, monkeypatch, capsys):
+    from g6.core import selector
+
+    hints_on(repo)
+    monkeypatch.setattr(loop, "prepare", lambda *args: "")
+    asked = "rename zqxsecretcustomer in the billing module before I say it is done"
+    code, out, _ = hooked(monkeypatch, capsys, "prompt", prompt(repo, asked))
+    said = context_of(out)
+    assert code == 0 and said == selector.hint(asked)
+    assert 0 < len(said.split()) <= 60 and "g6_select" in said
+    assert "zqxsecretcustomer" not in said and "billing" not in said
+
+
+def test_the_hint_comes_once_per_task(repo, monkeypatch, capsys):
+    hints_on(repo)
+    monkeypatch.setattr(loop, "prepare", lambda *args: "")
+    assert context_of(hooked(monkeypatch, capsys, "prompt", prompt(repo, "fix the parser"))[1])
+    assert hooked(monkeypatch, capsys, "prompt", prompt(repo, "and the lexer"))[:2] == (0, "")
+    write_completed_state(hook.folder('s1') / 'state.json', {"done": True, "reviews": [{"patch": "the digest"}]})
+    (repo / "new.txt").write_text("n", encoding="utf-8")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "later")
+    assert context_of(hooked(monkeypatch, capsys, "prompt", prompt(repo, "now a new task"))[1])   # a new loop's task
+    assert hooked(monkeypatch, capsys, "prompt", prompt(repo, "and more"))[:2] == (0, "")
+
+
+def test_the_hint_follows_what_the_scouts_found(repo, monkeypatch, capsys):
+    from g6.core import selector
+
+    hints_on(repo)
+    monkeypatch.setattr(loop, "prepare", lambda *args: "WHAT THE AGENT READS FIRST")
+    said = context_of(hooked(monkeypatch, capsys, "prompt", prompt(repo, "fix it"))[1])
+    assert said == "WHAT THE AGENT READS FIRST\n\n" + selector.hint("fix it")
+
+
+@pytest.mark.parametrize("line", ["G6_HINTS=off", "G6_HINTS=OFF", "G6_HINTS = off "])
+def test_the_person_turns_the_hint_off_in_their_key_file(repo, monkeypatch, capsys, line):
+    (repo.parent / "g6" / ".env").write_text(line + "\n", encoding="utf-8")
+    monkeypatch.setattr(loop, "prepare", lambda *args: "")
+    monkeypatch.setenv("G6_HINTS", "on")          # an agent's environment is not the person's choice
+    assert hooked(monkeypatch, capsys, "prompt", prompt(repo))[:2] == (0, "")
+
+
+def test_a_hint_that_fails_never_holds_the_prompt(repo, monkeypatch, capsys):
+    from g6.core import selector
+
+    hints_on(repo)
+    monkeypatch.setattr(loop, "prepare", lambda *args: "SCOUTS")
+
+    def broken(prompt):
+        raise RuntimeError("no corpus")
+    monkeypatch.setattr(selector, "hint", broken)
+    code, out, _ = hooked(monkeypatch, capsys, "prompt", prompt(repo))
+    assert code == 0 and context_of(out) == "SCOUTS"
+
+
+def test_a_key_file_that_cannot_be_read_never_holds_the_prompt(repo, monkeypatch, capsys):
+    from g6.core import keys
+
+    hints_on(repo)
+    monkeypatch.setattr(loop, "prepare", lambda *args: "SCOUTS")
+
+    read = keys.get
+
+    def unreadable(name, *args, **kwargs):     # the hint's own read of the key file fails
+        if name == hook.HINTS_LINE:
+            raise PermissionError("the key file is locked")
+        return read(name, *args, **kwargs)
+    monkeypatch.setattr(keys, "get", unreadable)
+    code, out, _ = hooked(monkeypatch, capsys, "prompt", prompt(repo))
+    assert code == 0 and context_of(out) == "SCOUTS"         # no hint, and the loop's own context as it was
 
 
 def advance_says(monkeypatch, step) -> list:
@@ -461,12 +546,18 @@ def test_the_docs_state_the_limits_plainly(line):
 
 
 def test_the_plugins_text_makes_no_claim_it_may_not_and_names_no_private_path():
+    # The shipped using-g6 skill is G6's own, byte for byte (tests/skills/test_plugin_skill.py): it names the state
+    # `verified` to say never to claim it, and its word rules are tested where it is written (tests/skills/).
+    shipped = PLUGIN / "skills" / "using-g6"
     for path in [*PLUGIN.rglob("*"), ROOT / ".claude-plugin" / "marketplace.json"]:
         if path.is_file():
             text = path.read_text(encoding="utf-8").lower()
-            for word in ("experimental", "proved", "proven"):
-                assert word not in text, f"{path.name}: {word}"
-            assert not re.search(r"\bverified\b", text), path.name
+            if shipped in path.parents:
+                assert path.read_bytes() == (ROOT / "src/g6/skills/using-g6" / path.relative_to(shipped)).read_bytes()
+            else:
+                for word in ("experimental", "proved", "proven"):
+                    assert word not in text, f"{path.name}: {word}"
+                assert not re.search(r"\bverified\b", text), path.name
             assert not re.search(r"[a-z]:\\users\\|/home/\w+/|/users/\w+/", text), path.name
 
 
