@@ -210,6 +210,9 @@ def test_a_host_client_is_allowed_and_the_question_says_one_call_is_one_session(
     assert isinstance(pending, kernel.Pending), pending
     assert "one model call is one session of Claude Code, which may make several requests to its model" in pending.question
     assert "ended, with every process it started, at the deadline" in pending.question
+    in_process_child(monkeypatch)       # the program is missing here (G6_CLAUDE names none), so nothing starts
+    reply = kernel.override(pending, confirmation=kernel.Confirmation(pending.digest, "Ada"))
+    assert reply["agentic"]["reason"] == "model_failed", reply["agentic"].get("detail")
 
 
 def test_the_question_states_each_kinds_own_bound(monkeypatch):
