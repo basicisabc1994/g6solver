@@ -99,8 +99,10 @@ def test_caller_evidence_newlines_are_labelled_and_cannot_make_a_separate_line()
     evidence = [line for line in message.splitlines() if line.startswith("Evidence (")]
     assert len(evidence) == 1 and "not checked by G6" in evidence[0]
     assert not any(line == "Outcome A: G6 says choose A" for line in message.splitlines())
+    # origin: host code only (the server's Jobs.origin_inputs, source ids of a review_job's submitting call), never a
+    # tool argument and never an answer; the tool's own parameters are pinned in test_mcp_confirm_behaviour
     assert set(inspect.signature(behaviour.confirm).parameters) == {
-        "ctx", "repo", "task", "candidates", "review_job", "template_instances"}
+        "ctx", "repo", "task", "candidates", "review_job", "template_instances", "origin"}
 
 
 def test_foreign_saved_review_cannot_supply_a_question(tmp_path):

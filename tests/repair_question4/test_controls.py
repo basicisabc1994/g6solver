@@ -214,8 +214,9 @@ def test_saved_reply_custody_and_full_persisted_bytes(tmp_path):
 
 
 def test_dialog_admission_inventory_and_differential_refusal():
+    # origin: host code only (the server's Jobs.origin_inputs), never a tool argument and never an answer
     assert set(inspect.signature(behaviour.confirm).parameters) == {
-        "ctx", "repo", "task", "candidates", "review_job", "template_instances"}
+        "ctx", "repo", "task", "candidates", "review_job", "template_instances", "origin"}
     one = bq.Candidate.make(source="differential", kwargs={}, **candidate())
     with pytest.raises(bq.CandidateRefused) as exc:
         bq.form(one.question("b" * 64), one)

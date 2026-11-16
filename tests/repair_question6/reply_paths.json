@@ -808,7 +808,7 @@
     "carried/branches": [
       "if not all((stat.S_ISREG(os.lstat(one).st_mode) for one in (path, side)))",
       "if not isinstance(entry, dict) or entry.get('version') != SOURCES or entry.get('reply_sha256') != hashlib.sha256(path.read_bytes()).hexdigest() or (not isinstance(entry.get('sources'), list)) or (not entry['sources'])",
-      "except (OSError, ValueError, TypeError, KeyError, AttributeError)"
+      "except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError)"
     ],
     "carried": [
       "None",
@@ -844,6 +844,7 @@
     ],
     "finish/branches": [
       "if not isinstance(reply, dict) or not isinstance(reply.get('assessment'), dict)",
+      "if callable(custody)",
       "if refs is not None",
       "if saved",
       "if recorded is not None"
