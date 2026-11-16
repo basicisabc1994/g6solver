@@ -4,7 +4,9 @@
 
 :func:`prepare` runs the original first, through the door every surface shares (``g6.core.door.invoke_checked``,
 with the guarded registry). With no trigger its reply is returned as it is: no model call, no child. A trigger is an
-exception inside the component's own code, or a reply carrying a code the component declares as a limit
+exception raised in the component's own code (its innermost frame in the component's package and in no trust door;
+never a model call's refusal, nor a text carrying a code the component does not declare as a limit), or a reply
+carrying a code the component declares as a limit
 (``__g6_limits__``), or the caller naming a part after an answer the door let through; a trust door's code (isolation,
 a sensitive op not allowed, input validation, approval, budgets, consent) never counts. Only a pure-computation op a
 component lists in ``__g6_agentic_parts__`` can be overridden, only a part it lists there, and never a part in the
@@ -32,6 +34,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import re
 import traceback
 import uuid
 from collections.abc import Iterable, Mapping
@@ -158,13 +161,31 @@ def _no_model(caller: Any) -> bool:
     return caller is None or isinstance(caller, llm.NoModel | llm.UnusableModel)
 
 
-def _inside(exc: BaseException, package: str) -> bool:
-    """Whether ``exc`` was raised inside the component's own package (a frame of it on the traceback)."""
-    for frame, _ in traceback.walk_tb(exc.__traceback__):
-        name = str(frame.f_globals.get("__name__", ""))
-        if name == package or name.startswith(package + "."):
-            return True
-    return False
+def _not_a_trigger(exc: BaseException, package: str, limits: set[str]) -> str:
+    """"" when ``exc`` may trigger an override, else why not (design 10.5, review 1 class D). A trigger is raised in
+    the component's own code: the innermost frame of its traceback is in the component's package and in no trust door.
+    A door's refusal never triggers: a model call's refusal (``LLMError`` or a subclass, anywhere in its chain) or a
+    text that starts with a ``G6_E_`` code the component does not declare as a limit."""
+    from g6.core.llm import LLMError
+
+    chain: list[BaseException] = []
+    seen: BaseException | None = exc
+    while seen is not None and len(chain) < 16 and all(seen is not e for e in chain):
+        chain.append(seen)
+        seen = seen.__cause__ or seen.__context__
+    if any(isinstance(e, LLMError) for e in chain):
+        return "a model call's refusal (LLMError) is a door's, never a trigger"
+    for e in chain:
+        code = re.match(r"\s*\[?(G6_E_[A-Z0-9_]+)", str(e))
+        if code and code.group(1) not in limits:
+            return f"it carries {code.group(1)}, which the component does not declare as a limit"
+    frames = list(traceback.walk_tb(exc.__traceback__))
+    where = str(frames[-1][0].f_globals.get("__name__", "")) if frames else ""
+    if not (where == package or where.startswith(package + ".")):
+        return f"it was raised in {where or 'no frame'}, not in the component's own code"
+    if any(where == door or where.startswith(door + ".") for door in protected.TRUST_DOORS):
+        return f"it was raised in a trust door ({where})"
+    return ""
 
 
 def _summary(reply: Mapping[str, Any]) -> str:
@@ -264,6 +285,7 @@ def prepare(component: str, op: str, params: Any, *, part: str | None = None, mo
         code = said[1:said.index("]")]
         return _refused(code, said[said.index("]") + 2:], request_id=request_id)
     params = dict(params)
+    limits = {c for c in getattr(module, "__g6_limits__", ()) if isinstance(c, str) and not _door(c)}
     # the original first, through the door every surface shares
     try:
         original = invoke_checked(component, op, params, allow=frozenset(allow), registry=GuardedRegistry(),
@@ -273,14 +295,14 @@ def prepare(component: str, op: str, params: Any, *, part: str | None = None, mo
                                                "their own code.")
         raised = None
     except Exception as exc:  # noqa: BLE001 - a failure of the original is a trigger only inside the component's code
-        if not _inside(exc, package):
-            return blocked_reply(f"[G6_E_INVOKE_FAILED] {component}.{op} failed outside its own code: "
-                                 f"{type(exc).__name__}", request_id=request_id)
+        why = _not_a_trigger(exc, package, limits)
+        if why:
+            return blocked_reply(f"[G6_E_INVOKE_FAILED] {component}.{op} failed with {type(exc).__name__}, and it is "
+                                 f"not a trigger: {why}", request_id=request_id)
         raised = exc
         original = blocked_reply(f"[G6_E_INVOKE_FAILED] {component}.{op} raised {type(exc).__name__}: {exc}"[:2000],
                                  request_id=request_id)
     code = _code(original)
-    limits = {c for c in getattr(module, "__g6_limits__", ()) if isinstance(c, str) and not _door(c)}
     if raised is not None:
         trigger = {"kind": "failed", "exception": type(raised).__name__, "message": str(raised)[:REASON_CHARS]}
     elif code in limits:

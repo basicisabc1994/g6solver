@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import threading
+import types
 
 import pytest
 
@@ -12,7 +13,9 @@ import g6
 import g6.cegis as cegis_package
 from g6._agentic import kernel, ledger
 from g6.core.ledger import ChainLedger
+from g6.core.llm import LLMError
 from g6.invariants import check_envelope
+from g6.reasoning.budget import BudgetExhausted
 from tests.agentic.kit import (
     ALLOW, FLOAT_PARAMS, INT_PARAMS, TWO_FLOATS, CASES, Model, cegis_in_process, in_process_child, no_child)
 
@@ -441,16 +444,62 @@ def test_a_deeply_nested_model_reply_is_an_invalid_value_and_the_original_stands
     assert ChainLedger(ledger.path()).entries()[-1]["body"]["reason"] == "value_invalid"
 
 
+def _code_of(module, function, *defaults):
+    """``function``'s code as if it were written in ``module``: its frames carry that module's name, as a fault in the
+    module's own code would."""
+    return types.FunctionType(function.__code__, vars(module), function.__name__, defaults or None)
+
+
+def _raise(data, exc=None, cause=None):
+    raise exc from cause
+
+
+def _call(data, inner=None):
+    return inner(data)
+
+
 def test_an_exception_inside_the_components_own_code_is_a_trigger(monkeypatch):
     import g6.cegis.block as block
 
     no_child(monkeypatch)
-
-    def broken(data):
-        raise ZeroDivisionError("a fault in cegis's own code")
-
-    monkeypatch.setattr(block, "_synthesize", broken)
-    pending = kernel.prepare("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm)
+    monkeypatch.setattr(block, "cegis", None)   # cegis's own _synthesize then fails in its own frame
+    pending = kernel.prepare("cegis", "synthesize", INT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm)
     assert isinstance(pending, kernel.Pending)
-    assert pending.trigger["kind"] == "failed" and pending.trigger["exception"] == "ZeroDivisionError"
+    assert pending.trigger["kind"] == "failed" and pending.trigger["exception"] == "TypeError"
     assert pending.original["ok"] is False
+    declared = _code_of(block, _raise, RuntimeError("[G6_E_CEGIS_HOLE_UNSUPPORTED] hole 0 has no grid"), None)
+    monkeypatch.setattr(block, "_table", declared)
+    monkeypatch.setattr(block, "cegis", cegis_package.cegis)
+    pending = kernel.prepare("cegis", "synthesize", INT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm)
+    assert isinstance(pending, kernel.Pending) and pending.trigger["exception"] == "RuntimeError"
+
+
+def test_an_exception_whose_innermost_frame_is_outside_the_package_or_in_a_trust_door_is_not_a_trigger(monkeypatch):
+    import g6.cegis.block as block
+    from g6.core import door
+
+    started, model = no_child(monkeypatch), Model([0.5])
+    in_door = _code_of(door, _raise, RuntimeError("a fault inside a trust door"), None)
+    for raised in (_code_of(block, _call, in_door), _code_of(json, _raise, RuntimeError("a fault in json"), None)):
+        monkeypatch.setattr(block, "_table", raised)
+        reply = kernel.prepare("cegis", "synthesize", INT_PARAMS, allow=ALLOW, llm=model.llm)
+        assert not isinstance(reply, kernel.Pending) and reply["ok"] is False
+        assert reply["warning_card"]["code"] == "G6_E_INVOKE_FAILED" and "not a trigger" in reply["error"]
+    assert model.prompts == [] and started == []
+
+
+@pytest.mark.parametrize(("exc", "cause"), [
+    (LLMError("G6_E_LLM_DISABLED: no model is configured"), None),
+    (BudgetExhausted("G6_E_BUDGET_EXHAUSTED: max_model_calls"), None),
+    (RuntimeError("the judge did not answer"), LLMError("G6_E_CLOUD_CONSENT_REQUIRED: the source is not shared")),
+    (RuntimeError("G6_E_SOMETHING_CEGIS_DOES_NOT_DECLARE: a refusal"), None),
+    (RuntimeError("[G6_E_ISOLATION_UNAVAILABLE] no boundary here"), None),
+])
+def test_a_door_refusal_raised_in_the_components_own_code_is_not_a_trigger(monkeypatch, exc, cause):
+    import g6.cegis.block as block
+
+    started, model = no_child(monkeypatch), Model([0.5])
+    monkeypatch.setattr(block, "_table", _code_of(block, _raise, exc, cause))
+    reply = kernel.prepare("cegis", "synthesize", INT_PARAMS, allow=ALLOW, llm=model.llm)
+    assert not isinstance(reply, kernel.Pending) and reply["warning_card"]["code"] == "G6_E_INVOKE_FAILED"
+    assert model.prompts == [] and started == []
