@@ -133,6 +133,9 @@ def _modules(d: ComponentCreatorInput, roots: _roots.Roots) -> tuple[dict[str, s
         if any(p.startswith("_") or not p.isidentifier() for p in parts):
             continue
         modules[".".join([package, *parts])] = _roots.read_text(file, MAX_MODULE_BYTES)
+    if not modules and walked.skipped_hard_links:
+        raise CodeRefused(SOURCE_INVALID, f"{found}: no module was read: {walked.hard_links_said()} (a second name "
+                                          "for a file kept elsewhere, which G6 does not read)")
     if not modules:
         raise CodeRefused(SOURCE_INVALID, f"{found} holds no public Python module")
     return modules, package, {"kind": "ast_read", "from": str(found), "modules": len(modules), **walked.describe(),

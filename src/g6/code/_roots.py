@@ -39,6 +39,8 @@ PATH_INVALID = "G6_E_CODE_PATH_INVALID"
 SKIP_DIRS = frozenset({".git", ".hg", ".svn", "node_modules", "__pycache__", ".tox", ".nox", "venv", ".venv",
                        ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build", ".eggs", "site-packages",
                        ".next", ".nyc_output", "coverage"})
+#: How many hard-linked files a walk names (it counts them all).
+HARD_LINK_NAMES = 10
 
 
 @dataclass(frozen=True)
@@ -163,11 +165,23 @@ class Walk:
     entries: int = 0
     skipped_unreadable: int = 0
     truncated_reason: str = ""
+    #: The hard-linked files skipped (also counted in ``skipped_links``), and the first of their names, relative to the
+    #: folder walked.
+    skipped_hard_links: int = 0
+    hard_links: list[str] = field(default_factory=list)
 
     def describe(self) -> dict[str, object]:
         return {"files": len(self.files), "bytes": self.total_bytes, "skipped_links": self.skipped_links,
                 "skipped_large": self.skipped_large, "skipped_unreadable": self.skipped_unreadable,
-                "entries": self.entries, "truncated": self.truncated, "truncated_reason": self.truncated_reason}
+                "entries": self.entries, "truncated": self.truncated, "truncated_reason": self.truncated_reason,
+                "skipped_hard_links": self.skipped_hard_links, "hard_links": list(self.hard_links)}
+
+    def hard_links_said(self) -> str:
+        """The hard-linked files skipped, in words a person reads: how many, and the first of their names."""
+        count, more = self.skipped_hard_links, self.skipped_hard_links - len(self.hard_links)
+        return (f"{count} module{'s' if count != 1 else ''} skipped because "
+                f"{'they are hard links' if count != 1 else 'it is a hard link'}: {', '.join(self.hard_links)}"
+                + (f" and {more} more" if more else ""))
 
 
 def _is_link(path: Path) -> bool:
@@ -179,7 +193,8 @@ def walk(folder: Path, roots: Roots, *, max_files: int, max_file_bytes: int, suf
     """The files under ``folder`` (already confined by :func:`existing`), each with a suffix in ``suffixes`` (any when
     empty), at most ``max_files`` of them and none larger than ``max_file_bytes``. A link or junction is never
     followed; a file whose resolved path leaves the roots, and a hard-linked file (:func:`read_text` refuses it), is
-    skipped and counted in ``skipped_links``."""
+    skipped and counted in ``skipped_links``; a hard-linked file is also counted in ``skipped_hard_links`` and named
+    (the first :data:`HARD_LINK_NAMES`) in ``hard_links``."""
     found = Walk()
     deadline = time.monotonic() + timeout_s
     for path in _files(folder, skip_dirs, found, max_entries, deadline):
@@ -193,8 +208,11 @@ def walk(folder: Path, roots: Roots, *, max_files: int, max_file_bytes: int, suf
         except OSError:
             found.skipped_unreadable += 1
             continue
-        if info.st_nlink > 1:               # a hard link, which read_text refuses: skipped and counted as a link
+        if info.st_nlink > 1:               # a hard link, which read_text refuses: skipped, counted as a link and named
             found.skipped_links += 1
+            found.skipped_hard_links += 1
+            if len(found.hard_links) < HARD_LINK_NAMES:
+                found.hard_links.append(path.relative_to(folder).as_posix())
             continue
         size = info.st_size
         if size > max_file_bytes:

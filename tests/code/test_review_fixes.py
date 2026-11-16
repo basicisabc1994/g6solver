@@ -358,6 +358,54 @@ def test_a_walk_skips_a_hard_linked_file_as_a_link_so_a_package_with_one_is_stil
         _roots.read_text(root / "pkg" / "b.py", 1000, roots=roots)
 
 
+def test_a_walk_names_the_hard_linked_files_it_skips_and_a_refusal_says_so(tmp_path):
+    # a hard-linked file is counted on its own and named (relative to the folder walked), and an op that is left
+    # with nothing to read says which files were skipped as hard links, not that the package holds no module
+    import os
+    import types
+
+    from g6.code._types import CodeRefused
+    from g6.code.component_creator import block, conformance
+    root, outside = tmp_path.resolve() / "root", tmp_path.resolve() / "outside.py"
+    (root / "pkg" / "sub").mkdir(parents=True)
+    outside.write_text("def a():\n    return 1\n", encoding="utf-8")
+    try:
+        for name in ("__init__.py", "a.py", "sub/__init__.py"):
+            os.link(outside, root / "pkg" / name)
+    except OSError:
+        pytest.skip("hard links cannot be made here")
+    roots = _roots.Roots((root,), "test")
+    walked = _roots.walk(root / "pkg", roots, max_files=100, max_file_bytes=10_000, suffixes=(".py",))
+    assert not walked.files and walked.skipped_links == 3 and walked.skipped_hard_links == 3
+    assert walked.hard_links == ["__init__.py", "a.py", "sub/__init__.py"]
+    assert walked.describe()["skipped_hard_links"] == 3
+    with pytest.raises(CodeRefused) as refused:
+        block._modules(types.SimpleNamespace(source="", path=str(root / "pkg"), module=""), roots)
+    words = str(refused.value)
+    assert "no public Python module" not in words
+    assert "3 modules skipped because they are hard links: __init__.py, a.py, sub/__init__.py" in words, words
+    checked = conformance.check_folder(str(root / "pkg"), roots)
+    assert any("3 modules skipped because they are hard links: __init__.py, a.py, sub/__init__.py" in p["message"]
+               for p in checked["problems"]), checked["problems"]
+
+
+def test_a_walk_names_at_most_ten_hard_linked_files(tmp_path):
+    import os
+
+    root, outside = tmp_path.resolve() / "root", tmp_path.resolve() / "outside.py"
+    root.mkdir()
+    outside.write_text("x = 1\n", encoding="utf-8")
+    try:
+        for i in range(12):
+            os.link(outside, root / f"m{i:02}.py")
+    except OSError:
+        pytest.skip("hard links cannot be made here")
+    walked = _roots.walk(root, _roots.Roots((root,), "test"), max_files=100, max_file_bytes=10_000, suffixes=(".py",))
+    assert walked.skipped_hard_links == 12 and walked.hard_links == [f"m{i:02}.py" for i in range(10)]
+    assert walked.hard_links_said().startswith("12 modules skipped because they are hard links: m00.py, ")
+    assert walked.hard_links_said().endswith("m09.py and 2 more")
+
+
 def test_pattern_scan_linear_budget():
     import time
     from g6.code.swe_diagnostics.read import code_summarize

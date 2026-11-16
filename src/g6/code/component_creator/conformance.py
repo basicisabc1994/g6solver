@@ -319,6 +319,8 @@ def _incomplete(out: dict[str, Any], walked: _roots.Walk) -> None:
     skipped = walked.truncated or walked.skipped_links or walked.skipped_large or walked.skipped_unreadable
     if skipped:
         out["problems"].append(_problem("read", ".", f"package walk was incomplete: {walked.describe()}"))
+    if walked.skipped_hard_links:
+        out["problems"].append(_problem("read", ".", walked.hard_links_said()))
     out["complete"] = not skipped and not any(
         p["check"] == "read" or "parse" in p["message"] for p in out["problems"])
 
