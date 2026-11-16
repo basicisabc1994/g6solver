@@ -169,6 +169,52 @@ def test_a_folder_named_as_the_root_but_for_case_is_outside_it(tmp_path: Path, m
         shutil.rmtree(parent)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows delete-pending folders")
+@pytest.mark.parametrize("refuse_links", [False, True])
+def test_a_folder_kept_delete_pending_holds_nothing_and_is_answered_at_once(root: Path, refuse_links: bool) -> None:
+    # every lstat below a folder marked for delete answers access denied while another program's handle keeps it.
+    # Windows marks only an empty folder and makes nothing in a marked one, so nothing is below it: the path is inside
+    # (never OUTSIDE_ROOT, never the raw PermissionError), answered without waiting
+    import time
+
+    from tests.core.test_storage_state_path import delete_pending
+
+    base = root.resolve()
+    with delete_pending(base / "dp"):
+        started = time.perf_counter()
+        given = contained(root, "dp/x.json", refuse_links=refuse_links)
+        took = time.perf_counter() - started
+        assert storage.confined_path(str(base / "dp" / "x.json"), (root,)) == base / "dp" / "x.json"
+    assert given == base / "dp" / "x.json"
+    assert took < 0.05, f"contained waited {took * 1000:.0f} ms"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows access-denied answers")
+@pytest.mark.parametrize("refuse_links", [False, True])
+def test_a_folder_that_cannot_be_read_is_refused_soon_as_input_not_as_outside(root: Path, refuse_links: bool,
+                                                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    # a folder G6 may not read (it is not being deleted) could hide a link: after a brief second ask the path is refused
+    # as one G6 cannot read now (a workspace says INPUT_INVALID), never as outside, never with the raw PermissionError
+    import time
+
+    base = root.resolve()
+    (base / "locked").mkdir()
+    real_lstat = os.lstat
+
+    def denied(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if str(base / "locked") + "\\" in str(path):
+            raise OSError(13, "Access is denied", str(path), 5)
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "lstat", denied)
+    started = time.perf_counter()
+    with pytest.raises(PathRefused, match="'locked' cannot be read now") as refused:
+        contained(root, "locked/x.json", refuse_links=refuse_links)
+    took = time.perf_counter() - started
+    assert refused.value.outside is False
+    assert took < 0.05, f"contained waited {took * 1000:.0f} ms"
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows drops a trailing space or dot from a name")
 @pytest.mark.parametrize("raw", ["a.", "a ", "sub./x.txt", "sub /x.txt", "x.txt.", "sub\\x.txt ", "sub\\...\\x"])
 def test_a_part_ending_in_a_space_or_a_dot_is_refused_as_input(root: Path, raw: str) -> None:

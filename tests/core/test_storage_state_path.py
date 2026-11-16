@@ -7,11 +7,13 @@ The churn test makes that happen many times; the others pin what must still be r
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -98,6 +100,32 @@ def case_sensitive(tmp_path: Path) -> Iterator[Path]:
     make_case_sensitive(folder)
     yield folder
     shutil.rmtree(folder)
+
+
+@contextlib.contextmanager
+def delete_pending(folder: Path) -> Iterator[None]:
+    """``folder`` (made here) marked for delete while a handle, standing for another program's, keeps it open: until
+    the handle closes, Windows answers access denied (5) for it and for every path below it. It goes at the end."""
+    import ctypes
+    from ctypes import wintypes
+
+    folder.mkdir()
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                     wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel32.SetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    # DELETE | FILE_READ_ATTRIBUTES, share all, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS
+    handle = kernel32.CreateFileW(str(folder), 0x00010000 | 0x80, 7, None, 3, 0x02000000, None)
+    if handle in (None, wintypes.HANDLE(-1).value):
+        raise OSError(ctypes.get_last_error(), "open for delete")
+    try:
+        flag = ctypes.c_byte(1)
+        if not kernel32.SetFileInformationByHandle(handle, 4, ctypes.byref(flag), 1):   # FileDispositionInfo
+            raise OSError(ctypes.get_last_error(), "mark for delete")
+        yield
+    finally:
+        kernel32.CloseHandle(wintypes.HANDLE(handle))
 
 
 def test_files_and_folders_being_made_and_removed_are_never_refused_as_escaping(home: Path) -> None:
@@ -273,6 +301,43 @@ def test_a_folder_named_as_the_home_but_for_case_is_outside_it(case_sensitive: P
             state_path(*parts)
     assert sorted(os.listdir(case_sensitive)) == [name for name, there in (("HOME", made), ("home", home_made)) if there]
     assert state_path("made", "kept.json") == (case_sensitive / "home").resolve() / "made" / "kept.json"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows delete-pending folders")
+def test_a_folder_kept_delete_pending_holds_nothing_and_is_answered_at_once(home: Path) -> None:
+    # a folder marked for delete stays while another program's handle is open, and every lstat below it answers access
+    # denied for as long (a folder being removed does so too, for tens of ms here). Windows marks only an empty folder
+    # and makes nothing in a marked one, so nothing is below it: the path is inside, answered without waiting
+    root = home.resolve()
+    with delete_pending(root / "dp"):
+        started = time.perf_counter()
+        given = state_path("dp", "x.json")
+        took = time.perf_counter() - started
+    assert given == root / "dp" / "x.json"
+    assert took < 0.05, f"state_path waited {took * 1000:.0f} ms"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows access-denied answers")
+def test_a_folder_that_cannot_be_read_is_refused_soon_as_unreadable_not_as_escaping(
+        home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # a folder G6 may not read (it is not being deleted) could hide a link: after a brief second ask it is refused, as
+    # a path G6 cannot read now, not as one escaping the home
+    root = home.resolve()
+    (root / "locked").mkdir()
+    real_lstat = os.lstat
+
+    def denied(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if str(root / "locked") + "\\" in str(path):
+            raise OSError(13, "Access is denied", str(path), 5)
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "lstat", denied)
+    started = time.perf_counter()
+    with pytest.raises(ValueError, match="'locked' cannot be read now") as refused:
+        state_path("locked", "x.json")
+    took = time.perf_counter() - started
+    assert "escapes" not in str(refused.value)
+    assert took < 0.05, f"state_path waited {took * 1000:.0f} ms"
 
 
 def test_a_link_inside_the_home_to_inside_it_resolves_to_its_target(home: Path) -> None:

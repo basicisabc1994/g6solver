@@ -88,31 +88,73 @@ def _verbatim(path: Path) -> str:
 
 
 def _lstat(path: Path) -> os.stat_result | None:
-    """Windows: lstat of ``path`` (absolute, as open reads it) in its ``\\\\?\\`` form, so it asks about the very name
-    open goes through (plain lstat of ``a `` would ask about ``a``); None when nothing is there. :class:`PathRefused`
-    (not outside) for a name Windows cannot hold; any other error is raised."""
-    for _ in range(50):
+    """lstat of ``path``; None when nothing is there. On Windows ``path`` (absolute, as open reads it) is asked about in
+    its ``\\\\?\\`` form, so lstat sees the very name open goes through (plain lstat of ``a `` would ask about ``a``);
+    None too below a folder marked for delete, and :class:`PathRefused` (not outside) answers a name Windows cannot
+    hold, or a folder it cannot read now. Any other error is raised."""
+    deadline: float | None = None
+    while True:
         try:
-            return os.lstat(_verbatim(path))
+            return os.lstat(_verbatim(path) if os.name == "nt" else path)
         except FileNotFoundError:
             return None
         except OSError as error:
             if getattr(error, "winerror", None) in (123, 161, 206):  # an invalid name, path, or a name too long
                 raise PathRefused(f"{path.name!r} is not a name Windows can hold") from None
-            # in a folder being deleted just now lstat answers access denied (5) or a sharing violation (32) until it
-            # is gone (a few ms): ask again, for up to about 50 ms. Any other error is no such race.
-            if getattr(error, "winerror", None) not in (5, 32):
+            if getattr(error, "winerror", None) not in (5, 32):     # access denied, a sharing violation
                 raise
-            last = error
+            # below a folder marked for delete lstat answers access denied until the folder is gone: a few ms, tens of
+            # ms while another program (a virus scanner) holds it, or for as long as a program keeps it. Windows marks
+            # only an empty folder and makes nothing in a marked one, so nothing is there; nor once it is gone.
+            if _holds_nothing(path.parent):
+                return None
+            # any other refusal could hide a link: ask again for about 10 ms from the first refusal (at least once: the
+            # folder may have been removed and made again just now), then refuse the path as one that cannot be read
+            # now (it is not outside)
+            if deadline is None:
+                deadline = time.perf_counter() + 0.01
+            elif time.perf_counter() > deadline:
+                raise PathRefused(f"{path.parent.name!r} cannot be read now: access is denied, or another program "
+                                  "holds it; try again") from None
             time.sleep(0.001)
-    raise last
+
+
+def _holds_nothing(folder: Path) -> bool:
+    """Windows: whether the file system answers an open of ``folder`` with STATUS_DELETE_PENDING (it is marked for
+    delete), or finds no such name or path (it is gone). Win32 reports a marked folder only as access denied, the same
+    as a permission refused, so ``NtOpenFile`` asks."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Name(ctypes.Structure):
+        _fields_ = [("Length", wintypes.USHORT), ("MaximumLength", wintypes.USHORT), ("Buffer", wintypes.LPWSTR)]
+
+    class Attributes(ctypes.Structure):
+        _fields_ = [("Length", wintypes.ULONG), ("RootDirectory", wintypes.HANDLE),
+                    ("ObjectName", ctypes.POINTER(Name)), ("Attributes", wintypes.ULONG),
+                    ("SecurityDescriptor", wintypes.LPVOID), ("SecurityQualityOfService", wintypes.LPVOID)]
+
+    text = "\\??\\" + _verbatim(folder)[4:]                  # the NT name of the \\?\ path: \??\C:\... or \??\UNC\...
+    size = len(text.encode("utf-16-le"))
+    name = Name(size, size, text)
+    attributes = Attributes(ctypes.sizeof(Attributes), None, ctypes.pointer(name), 0x40, None, None)  # case-insensitive
+    ntdll = ctypes.WinDLL("ntdll")
+    ntdll.NtOpenFile.restype = ctypes.c_ulong
+    handle, io_status = wintypes.HANDLE(), (ctypes.c_void_p * 2)()
+    # SYNCHRONIZE | FILE_READ_ATTRIBUTES, share all, FILE_OPEN_REPARSE_POINT
+    status = ntdll.NtOpenFile(ctypes.byref(handle), 0x00100080, ctypes.byref(attributes), io_status, 7, 0x00200000)
+    if status == 0:
+        ntdll.NtClose(handle)
+    # STATUS_DELETE_PENDING, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND
+    return status in (0xC0000056, 0xC0000034, 0xC000003A)
 
 
 def _opened_inside(root: Path, path: Path) -> Path | None:
     """Windows: ``path`` as a caller's open reads its words (a local ``\\\\?\\X:\\`` prefix dropped, ``..`` taken, a
     trailing dot dropped), when the file system says it is ``root`` or inside it, no part of it below ``root`` ends in
     a space or a dot, and lstat finds no symbolic link, junction or other reparse point on any existing part of it below
-    ``root``; None otherwise. :class:`PathRefused` (not outside) for a name Windows cannot hold.
+    ``root``; None otherwise. :class:`PathRefused` (not outside) for a name Windows cannot hold, or a folder on the
+    path it cannot read now.
 
     Inside is decided by file identity, not by words: pathlib compares Windows paths ignoring case, but in a
     case-sensitive folder (a per-folder flag any user may set) ``HOME`` is not ``home``. So the part of the value at the
@@ -161,12 +203,13 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
     Both are resolved, ``..`` and every symbolic link and junction followed, so a link out of the folder counts as
     outside; on Windows the answer is checked as open reads it, inside only when the file system reaches ``root`` on it
     (by file identity, not by words, so a folder named as ``root`` but for case is outside), and a link resolving could
-    not follow counts as outside too. Refused before anything is resolved: an empty path; a control character; a network or device path
-    (``\\\\host\\share``, ``//host/share``, ``\\\\?\\``, ``\\\\.\\``), because resolving one on Windows opens it over the
-    network; a ``:`` in a relative path (a drive, or a file's alternate stream, on Windows); a part named for a
-    Windows device (``CON``, ``nul.txt``); and, on Windows, a part whose name ends in a space or a dot, which Windows
-    reads two ways. With ``refuse_links=True``, every existing path component is checked with lstat before resolution
-    (on Windows each as open goes through it); symbolic links and reparse points are refused. It reads no file's content:
+    not follow counts as outside too. Refused before anything is resolved: an empty path; a control character; a network
+    or device path (``\\\\host\\share``, ``//host/share``, ``\\\\?\\``, ``\\\\.\\``), because resolving one on Windows
+    opens it over the network; a ``:`` in a relative path (a drive, or a file's alternate stream, on Windows); a part
+    named for a Windows device (``CON``, ``nul.txt``); and, on Windows, a part whose name ends in a space or a dot,
+    which Windows reads two ways. With ``refuse_links=True``, every existing path component is checked with lstat
+    before resolution (on Windows each as open goes through it); symbolic links and reparse points are refused. On
+    Windows a folder on the path that cannot be read now is refused, not as outside. It reads no file's content:
     :func:`plain_file` checks a file to be read."""
     text = os.fspath(raw)
     if not isinstance(text, str) or not text.strip():
@@ -189,9 +232,7 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
         if os.name == "nt":                 # each part as open goes through it ('..' taken, then the words as they are)
             candidate = Path(os.path.abspath(candidate))
         for ancestor in (*reversed(candidate.parents), candidate):
-            try:
-                found = os.lstat(_verbatim(ancestor) if os.name == "nt" else ancestor)
-            except FileNotFoundError:
+            if (found := _lstat(ancestor)) is None:
                 continue
             if stat.S_ISLNK(found.st_mode) or (getattr(found, "st_file_attributes", 0)
                                              & stat.FILE_ATTRIBUTE_REPARSE_POINT):
