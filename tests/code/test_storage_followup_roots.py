@@ -132,7 +132,8 @@ def _unchecked_calls(text, module):
                "g6.code._roots.walk": 2}
     io_methods = {"read_text", "read_bytes", "open", "exists", "is_file", "is_dir", "stat",
                   "isfile", "isdir", "getsize", "realpath", "resolve", "access", "samefile",
-                  "iterdir", "scandir", "listdir", "glob", "rglob"}
+                  "iterdir", "scandir", "listdir", "glob", "rglob", "walk", "fwalk", "iglob",
+                  "getmtime", "ismount", "is_mount", "owner", "copyfile", "copy", "copy2", "copytree"}
     recaptures = {"dataclasses.replace", "__roots_class__", "object.__setattr__", "builtins.setattr", "setattr"}
     tree = ast.parse(text)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
@@ -165,8 +166,12 @@ def _unchecked_calls(text, module):
         if isinstance(node, ast.Name):
             return aliases.get(node.id, node.id)
         if isinstance(node, ast.Attribute):
+            if node.attr == "__dict__":
+                return "__roots_dict__"
             base = qualified(node.value)
             return base if node.attr == "__call__" else f"{base}.{node.attr}"
+        if isinstance(node, ast.Call) and qualified(node.func) in {"vars", "builtins.vars"}:
+            return "__roots_dict__"
         if isinstance(node, ast.Call) and qualified(node.func) in {"type", "builtins.type"}:
             return "__roots_class__"
         if (isinstance(node, ast.Call) and qualified(node.func) == "importlib.import_module"
@@ -184,7 +189,8 @@ def _unchecked_calls(text, module):
         changed = False
         for target, value in bindings.items():
             name = qualified(value)
-            if (name in targets or name in recaptures or name.endswith(".__class__")
+            if (name in targets or name in recaptures or name == "__roots_dict__"
+                    or name.startswith("__roots_dict__.") or name.endswith((".__class__", ".__new__"))
                     or name.rpartition(".")[2] in io_methods) and aliases.get(target) != name:
                 aliases[target] = name
                 changed = True
@@ -205,24 +211,31 @@ def _unchecked_calls(text, module):
         return module, owner.name if owner else ""
 
     for node in ast.walk(tree):
+        scoped = module.startswith(("g6.code.", "g6.sources.ctx_git."))
+        if (scoped and isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del))
+                and qualified(node.value) == "__roots_dict__"):
+            missing.append(node.lineno)
         if not isinstance(node, ast.Call):
             continue
         name, args = qualified(node.func), node.args
         if name == "functools.partial" and args:
             name, args = qualified(args[0]), args[1:]
-        scoped = module.startswith(("g6.code.", "g6.sources.ctx_git."))
         if scoped:
             method = name.rpartition(".")[2]
-            plain = method in io_methods and name not in targets
+            # ast.walk and local recursive walk functions visit syntax trees, not folders.
+            plain = (method in io_methods and name not in targets and name != "ast.walk"
+                     and not (method == "walk" and "." not in name))
             if plain and (*owner_of(node), ast.unparse(node.func)) not in PLAIN_IO:
                 missing.append(node.lineno)
             rebuilt = (name == "dataclasses.replace" and (any(k.arg == "roots" for k in node.keywords)
                        or args and isinstance(args[0], ast.Name) and "roots" in args[0].id)
                        or name == "__roots_class__" or name.endswith(".__class__")
+                       or name == "g6.code._roots.Roots.__new__"
                        or isinstance(node.func, ast.Call) and qualified(node.func.func) in {"type", "builtins.type"})
             mutated = (name in {"object.__setattr__", "builtins.setattr", "setattr"}
-                       and len(args) >= 2 and isinstance(args[1], ast.Constant)
-                       and args[1].value in {"roots", "identities", "unavailable"})
+                       and len(args) >= 2 and (not isinstance(bound(args[1]), ast.Constant)
+                       or bound(args[1]).value in {"roots", "identities", "unavailable"})
+                       or name.startswith("__roots_dict__."))
             if rebuilt or mutated and (*owner_of(node), ast.unparse(node.func)) not in PLAIN_IO:
                 missing.append(node.lineno)
         if name not in targets:
@@ -338,6 +351,31 @@ def test_census_accepts_conformance_files_checked_delegation():
     # _files delegates its folder read to _roots.walk with the captured Roots, then uses read_text.
     text = "from g6.code import _roots\n" + inspect.getsource(conformance._files)
     assert not _unchecked_calls(text, conformance.__name__)
+
+
+@pytest.mark.parametrize("text", [
+    'import os\ndef f(p):\n return list(os.walk(p))',
+    'def f(p):\n return list(p.walk())',
+    'import os\ndef f(p):\n return list(os.fwalk(p))',
+    'import glob\ndef f(p):\n return list(glob.iglob(str(p)))',
+    'import os\ndef f(p):\n return os.path.getmtime(p)',
+    'import os\ndef f(p):\n return os.path.ismount(p)',
+    'def f(p):\n return p.is_mount()',
+    'def f(p):\n return p.owner()',
+    *[f'import shutil\ndef f(p, q):\n return shutil.{method}(p, q)'
+      for method in ('copyfile', 'copy', 'copy2', 'copytree')],
+    'def f(p, roots):\n roots.__dict__["roots"] = (p,)',
+    'def f(p, roots):\n vars(roots)["identities"] = ()',
+    'def f(p, roots):\n roots.__dict__.update(roots=(p,))',
+    'def f(p, roots, field):\n object.__setattr__(roots, field, (p,))',
+    'from g6.code._roots import Roots\ndef f():\n return Roots.__new__(Roots)',
+    'def f(p, roots):\n fields = vars(roots)\n fields["roots"] = (p,)',
+    'def f(p, roots):\n fields = roots.__dict__\n fields.update(roots=(p,))',
+    'def f(p, roots):\n put = object.__setattr__\n field = "roots"\n put(roots, field, (p,))',
+])
+@pytest.mark.parametrize("module", ["g6.code.x.probe", "g6.sources.ctx_git.probe"])
+def test_census_repair1_reads_and_root_rewrites(text, module):
+    assert _unchecked_calls(text, module), "folder read, query, copy or Roots rewrite escaped the census"
 
 
 @pytest.fixture
