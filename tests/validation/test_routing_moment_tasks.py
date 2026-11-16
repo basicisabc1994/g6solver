@@ -129,15 +129,45 @@ def test_a_moment_list_with_a_changed_task_is_refused(tmp_path: Path) -> None:
 
 
 def test_what_a_person_grants_for_the_moment_cohort_is_listed(tmp_path: Path) -> None:
-    tasks = run.load_moment()
+    """Beside the client's environment, each fixture and each workspace, the person grants the three sources a
+    review's reply reads, so that a review can answer where the task is not about consent. The catalogue and its data
+    are still never granted."""
+    tasks, withheld = run.load_moment(), run.load_withheld()
     rows = run.sources(tasks, tmp_path, "codex", "moment")
     assert {row["provider"] for row in rows} == {"openai:codex"}
     named = {row["source"] for row in rows}
     fixtures = {task["fixture"] for task in tasks["tasks"]}
-    assert named == {"agent_environment", *(f"routing-fixture.{name}" for name in fixtures),
+    assert named == {"agent_environment", "completion_history", "host_configuration", "jobs",
+                     *(f"routing-fixture.{name}" for name in fixtures),
                      *(row["source"] for row in rows if row["source"].startswith("repository:"))}
     assert sum(source.startswith("repository:") for source in named) == len(fixtures)
-    assert not named & set(tasks["ungranted"])
+    assert set(withheld["granted"]) == {"completion_history", "host_configuration", "jobs"}
+    assert not named & (set(tasks["ungranted"]) - set(withheld["granted"]))
+    assert {"component_catalogue", "component_data"} <= set(tasks["ungranted"]) - named
+
+
+def test_only_the_consent_refusal_tasks_start_without_the_sources_a_review_reads() -> None:
+    """The per-task withheld sources are their own frozen file, pinned beside the list, so the frozen list is
+    untouched: exactly the tasks whose refusal under test is the consent refusal withhold the three sources."""
+    tasks, withheld = run.load_moment(), run.load_withheld()
+    assert run.moment_pins()["withheld_digest"] == freeze.file_digest(run.MOMENT_WITHHELD)
+    assert freeze.freeze(run.MOMENT_WITHHELD, withheld) == run.moment_pins()["withheld_digest"]
+    readme = " ".join((HERE / "README.md").read_text(encoding="utf-8").split())
+    assert run.moment_pins()["withheld_digest"] in readme and "G6_E_ROUTING_NOT_GRANTED" in readme
+    consent = sorted(t["id"] for t in tasks["tasks"] if t["kind"] == "after_refusal"
+                     and t["completion"]["refusal"]["codes"] == [CONSENT])
+    assert consent == ["moment.after_refusal.3", "moment.after_refusal.4"]
+    assert withheld["withheld"] == {task_id: sorted(withheld["granted"]) for task_id in consent}
+    assert set(withheld["granted"]) <= set(tasks["ungranted"])
+    for task_id in consent:
+        task = next(t for t in tasks["tasks"] if t["id"] == task_id)
+        assert set(task["completion"]["tell_any"]) <= set(withheld["withheld"][task_id])
+    # a withheld file that withholds a source the person is not asked to grant, or names no task, is refused
+    for bad in (dict(withheld, withheld={"moment.after_refusal.3": ["component_catalogue"]}),
+                dict(withheld, withheld={"moment.nowhere.1": ["jobs"]}),
+                dict(withheld, granted={**withheld["granted"], "input:x": "an exact input"})):
+        with pytest.raises(score.TaskError):
+            score.validate_moment_withheld(bad, tasks)
 
 
 # --- a moment arm, run by a fake client --------------------------------------------------------------------------
@@ -228,7 +258,7 @@ def test_a_claude_code_session_runs_with_the_shipped_plugin_and_may_run_tests(ar
     rows = [json.loads(line) for line in (arm.tmp / "before" / "transcripts-claude_code-moment.jsonl").read_text(
         encoding="utf-8").splitlines()]
     record = rows[0]["session"]
-    assert set(record) == {"run", "bound", "served", "guidance", "final_diff_sha256"}
+    assert set(record) == {"run", "bound", "served", "guidance", "final_diff_sha256", "withheld_sources"}
     assert record["bound"]["tasks"] == run.moment_pins()["tasks_digest"]
     assert record["bound"]["bars"] == run.moment_pins()["bars_digest"]
     guidance = record["guidance"]
@@ -258,11 +288,145 @@ def test_a_moment_session_starts_only_without_the_sources_it_must_lack(arm: Simp
                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
     from g6.core import cloud_consent as cloud
 
-    assert cloud._grant("host_configuration", "openai:codex", cloud.preview("host_configuration", "openai:codex")[1],
+    assert cloud._grant("component_catalogue", "openai:codex", cloud.preview("component_catalogue", "openai:codex")[1],
                         "the test's stand-in person") == "granted"
     seen = _fake(monkeypatch, lambda prompt: QUIET)
     done = run.run(arm.path, arm.tmp / "before", client="codex", cohort="moment")
     assert seen == [] and {(t.state, t.code) for t in done} == {("refused", run.NOT_FRESH)}
+
+
+CONSENT_KEPT = ("moment.before_done.1", "moment.after_refusal.3")
+
+
+def _ledger(home: Path) -> list[dict[str, Any]]:
+    """The rows of the sharing decisions in a G6 home, read through G6's own reader with their checkpoint."""
+    from g6.core import cloud_consent as cloud
+    from g6.core.ledger import ChainLedger
+
+    folder = home / "cloud_consent"
+    if not (folder / "events.jsonl").is_file():
+        return []
+    head = (folder / "head").read_text(encoding="ascii")
+    ledger = ChainLedger(folder / "events.jsonl", expect_head=head, validate=cloud._validate)
+    assert not ledger.verify()
+    return ledger.entries()
+
+
+def _shared(home: Path, provider: str) -> set[str]:
+    from g6.core import cloud_consent as cloud
+    from g6.core.ledger import ChainLedger
+
+    rows = _ledger(home)
+    if not rows:
+        return set()
+    folder = home / "cloud_consent"
+    ledger = ChainLedger(folder / "events.jsonl", expect_head=(folder / "head").read_text(encoding="ascii"),
+                         validate=cloud._validate)
+    return {source for (source, given), row in cloud._decisions(ledger).items()
+            if given == provider and row["kind"] == "grant"}
+
+
+def test_a_sessions_copy_of_the_decisions_only_loses_the_sharing_its_task_withholds(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The overlay removes the withheld sources' grants and revokes from the session's copy and nothing else: every
+    other row is the person's own, with its own body; nothing is added; the person's decisions are untouched."""
+    from g6.core import cloud_consent as cloud
+
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    for source, provider in (("jobs", "openai:codex"), ("host_configuration", "openai:codex"),
+                             ("host_configuration", "anthropic:claude_code"), ("agent_environment", "openai:codex")):
+        assert cloud._grant(source, provider, cloud.preview(source, provider)[1], "the stand-in person") == "granted"
+    cloud.revoke("jobs", "openai:codex")
+    person = (tmp_path / "home" / "cloud_consent" / "events.jsonl").read_bytes()
+    rows = _ledger(tmp_path / "home")
+    plain = run.trial_home(tmp_path / "out", "moment.before_done.1.0")
+    assert _ledger(plain) == rows                                        # nothing withheld: the copy is the person's
+    home = run.trial_home(tmp_path / "out", "moment.after_refusal.3.0",
+                          withhold=("completion_history", "host_configuration", "jobs"))
+    left = _ledger(home)
+    gone = [r for r in rows if r["kind"] in ("grant", "revoke")
+            and r["body"]["source"] in ("completion_history", "host_configuration", "jobs")]
+    assert len(gone) == 4
+    assert [(r["kind"], r["id"], r["body"]) for r in left] == [(r["kind"], r["id"], r["body"]) for r in rows
+                                                              if r not in gone]
+    assert _shared(home, "openai:codex") == {"agent_environment"}
+    assert _shared(home, "anthropic:claude_code") == set()
+    # completion_history was never granted: withholding it adds nothing, and the person's own file is as it was
+    assert (tmp_path / "home" / "cloud_consent" / "events.jsonl").read_bytes() == person
+    with pytest.raises(ValueError):
+        run.trial_home(tmp_path / "out", "moment.after_refusal.4.0", withhold=("input:" + "0" * 64,))
+
+
+@pytest.fixture()
+def consent_arm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """A non-consent task and a consent-refusal task, with every grant ``sources`` lists given by a stand-in person."""
+    from g6.core import cloud_consent as cloud
+
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("G6_STOP", raising=False)
+    monkeypatch.delenv("G6_DISABLE_LLM", raising=False)
+    monkeypatch.setattr(run, "user_home", lambda: tmp_path / "person")
+    tasks = run.load_moment()
+    path = tmp_path / "consent.json"
+    path.write_text(json.dumps(dict(tasks, tasks=[t for t in tasks["tasks"] if t["id"] in CONSENT_KEPT])),
+                    encoding="utf-8")
+    rows = run.sources(run.load_moment(path), tmp_path / "before", "codex", "moment")
+    by_prompt = {task["prompt"]: task["id"] for task in tasks["tasks"]}
+    return SimpleNamespace(path=path, tmp=tmp_path, rows=rows, by_prompt=by_prompt,
+                           grant=lambda row: cloud._grant(row["source"], row["provider"],
+                                                          cloud.preview(row["source"], row["provider"])[1],
+                                                          "the test's stand-in person"))
+
+
+def test_a_consent_task_starts_without_the_three_sources_and_every_other_task_with_them(
+        consent_arm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
+    for row in consent_arm.rows:
+        assert consent_arm.grant(row) == "granted"
+    person = (consent_arm.tmp / "home" / "cloud_consent" / "events.jsonl").read_bytes()
+    seen = _fake(monkeypatch, lambda prompt: QUIET)
+    shared: dict[str, set[str]] = {}
+    from g6.agents._runtime import cli
+
+    fake = cli.CliAgentRunner
+
+    class Looking(fake):                                   # the fake above, reading the copy while its session runs
+        def run(self, argv: list[str], *, prompt: str, cwd: Path, seconds: float, scratch: Path,
+                stop: Any = None) -> Any:
+            shared[consent_arm.by_prompt[prompt]] = _shared(Path(self.environment(scratch)["G6_HOME"]), "openai:codex")
+            return super().run(argv, prompt=prompt, cwd=cwd, seconds=seconds, scratch=scratch, stop=stop)
+
+    monkeypatch.setattr(cli, "CliAgentRunner", Looking)
+    done = run.run(consent_arm.path, consent_arm.tmp / "before", client="codex", cohort="moment")
+    assert len(seen) == 2
+    assert {(t.task_id, t.state) for t in done} == {(task_id, "completed") for task_id in CONSENT_KEPT}
+    three = {"completion_history", "host_configuration", "jobs"}
+    assert three <= shared["moment.before_done.1"]
+    assert not three & shared["moment.after_refusal.3"]
+    assert shared["moment.before_done.1"] - three == shared["moment.after_refusal.3"]
+    rows = {r["task_id"]: r for r in map(json.loads, (consent_arm.tmp / "before" / "transcripts-codex-moment.jsonl")
+                                         .read_text(encoding="utf-8").splitlines())}
+    assert rows["moment.before_done.1"]["session"]["withheld_sources"] == []
+    assert rows["moment.after_refusal.3"]["session"]["withheld_sources"] == sorted(three)
+    assert (consent_arm.tmp / "home" / "cloud_consent" / "events.jsonl").read_bytes() == person
+    # a row whose record does not name the sources its task withholds is no evidence
+    log = consent_arm.tmp / "before" / "transcripts-codex-moment.jsonl"
+    changed = [dict(r, session=dict(r["session"], withheld_sources=[])) for r in rows.values()]
+    log.write_text("".join(json.dumps(r) + "\n" for r in changed), encoding="utf-8")
+    assert set(run.moment_reading(consent_arm.tmp / "before", client="codex")["evidence"]["unevidenced"]) == {
+        "moment.after_refusal.3"}
+
+
+def test_a_task_that_needs_a_source_the_person_has_not_granted_is_refused_before_it_starts(
+        consent_arm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
+    for row in consent_arm.rows:
+        if row["source"] != "jobs":
+            assert consent_arm.grant(row) == "granted"
+    seen = _fake(monkeypatch, lambda prompt: QUIET)
+    done = {t.task_id: t for t in run.run(consent_arm.path, consent_arm.tmp / "before", client="codex",
+                                          cohort="moment")}
+    assert (done["moment.before_done.1"].state, done["moment.before_done.1"].code) == ("refused", run.NOT_GRANTED)
+    assert done["moment.after_refusal.3"].state == "completed"          # it starts without jobs anyway
+    assert [consent_arm.by_prompt[s["prompt"]] for s in seen] == ["moment.after_refusal.3"]
 
 
 def test_both_arms_are_read_again_from_their_kept_logs_and_paired(arm: SimpleNamespace,

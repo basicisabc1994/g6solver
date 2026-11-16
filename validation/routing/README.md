@@ -167,7 +167,13 @@ once the wiring has landed. The tasks were written by someone who builds none of
   `1976b25f8d885fcb60086adbacd48d7f9bea0c85db79e88a159ab5f235933a75` and the bars at
   `9aa0237097e7dd22f013664850d3008513ac750834f577d793cab6f28556de59`. Nothing runs and nothing is scored on a list or
   bars that differ from these. A list may hold fewer tasks, so one task can be tried first. It may never hold a
-  changed one. It also pins the outcome arm's bar and held-out checks (see "Outcome arm").
+  changed one. It also pins the outcome arm's bar and held-out checks (see "Outcome arm"), and the withheld file.
+- `moment_withheld.json`: the sources the person grants for every session beyond the fixtures
+  (`host_configuration`, `jobs` and `completion_history`, which a review's reply carries), and, per task, those its
+  session starts without. Only the two consent-refusal tasks (`moment.after_refusal.3` and `.4`) withhold them. It is a
+  file of its own so the frozen task list did not change, and it is pinned at
+  `9c031f4cfab260cd8101a1ff9efcc975f7c831b1eeae375c5da5661dfdb8e4a2`. The lead set it before any arm ran, so that a
+  review can return a result where the task is not about consent.
 - `moment_fixtures/ledger`: one more synthetic repository, kept out of `fixtures/` so that the development cohort's
   bound digest of the fixtures does not move. Its four failing test files are the stuck tasks. Each holds a
   constraint that the two natural first fixes miss. `tests/validation/test_routing_moment_fixture.py` shows that both
@@ -189,7 +195,8 @@ log only, as `reading` reads every other field.
 
 Two of the refusals are G6's own sensitive-operation refusal: the server allows no review. The other two are its
 consent refusal: the server allows the review, but the session starts without `host_configuration`, `jobs` or
-`completion_history` shared. `g6_select` is planned, not yet registered (`planned_tools`). In the before arm no
+`completion_history` shared. Only these two sessions start without them (`moment_withheld.json`); every other session
+starts with them, so its review can answer. `g6_select` is planned, not yet registered (`planned_tools`). In the before arm no
 call can name it.
 
 A positive task whose moment never came still counts as a miss: no Python change, fewer than two failed test runs, or
@@ -236,17 +243,43 @@ What ships, with as little else as the runner can manage:
 - **Server and G6 home.** Each server states its task's permissions, even when there are none, so a registration of
   the person's own cannot add any. The client is given the session's G6 home, so the plugin's hooks use it. That home
   holds no key file, so the completion loop stays off.
-- **Fresh start.** A session starts only while none of the list's `ungranted` sources is shared with the client's
-  provider. The component catalogue is one of them: it is not pre-seeded. Otherwise the session is `refused` with
-  `G6_E_ROUTING_NOT_FRESH` and nothing starts.
+- **Fresh start.** A session starts only while none of the list's `ungranted` sources that the person is not asked
+  to grant is shared with the client's provider. The component catalogue and its data are such sources: they are not
+  pre-seeded. Otherwise the session is `refused` with `G6_E_ROUTING_NOT_FRESH` and nothing starts.
+- **Granted sources.** A session starts only while the person shares with the client's provider every source
+  `moment_withheld.json` grants that its task does not withhold. Otherwise it is `refused` with
+  `G6_E_ROUTING_NOT_GRANTED` and nothing starts.
+- **Withheld sources.** For a task that withholds sources, the session's G6 home gets the person's sharing decisions
+  less every grant and revoke of those sources. This overlay can only remove sharing. The copy holds the person's own
+  rows, each with its own body and in their order, chained again in the session's home. No row is ever added, and
+  the person's own decisions are only read. The session truly lacks those sources: its servers and the plugin's hooks
+  read the copy through G6's own reader, and the runner reads the copy back before anything starts. A grant the
+  person makes in the client's dialog during the session is written to the copy as usual. The session's record names
+  the sources its task withholds (`withheld_sources`). A row whose record names other ones is read as no evidence.
 
 ### What is sent, and where
 
 Each session sends the same things as the cohorts above: the task's prompt, the fixture repository and G6's guidance,
 to the client's provider. The fixtures hold no user data. List what to grant, then grant each line in the client's own
-dialog (`g6_cloud_grant`). Each line is the client's environment, one fixture, or one workspace folder:
+dialog (`g6_cloud_grant`). Each line is the client's environment, one fixture, one workspace folder, or one of the
+three sources a review's reply carries:
 
     python validation/routing/run.py sources --client codex --cohort moment --out <folder>
+
+For each client, 14 lines: `agent_environment`, the five fixtures (`routing-fixture.classify`, `.ledger`, `.notes`,
+`.rules`, `.shop`), the five workspace folders (`repository:<digest>`, one per fixture, under `<folder>/work`), and
+these six, three per client:
+
+    completion_history   anthropic:claude_code
+    host_configuration   anthropic:claude_code
+    jobs                 anthropic:claude_code
+    completion_history   openai:codex
+    host_configuration   openai:codex
+    jobs                 openai:codex
+
+Those three hold the session's own trial state, not the person's data: each session's G6 home is the runner's, and it
+holds the trial's own records and a copy of the person's sharing decisions. The component catalogue and its data are
+never on the list.
 
 **Claude Code arm caveat.** Its file tools are not confined to the workspace, and the tests it runs, which the agent
 may edit, run with the person's own rights. Run it in an account or on a machine that holds nothing else.
@@ -329,8 +362,8 @@ Limits of the outcome arm:
   breaks a tie by a set's order could then read differently from run to run.
 - Harm is read per file, so a damaging edit inside a file the task asked to change is not harm. The checks catch it in a
   positive task. In a negative task it is not caught.
-- In this setup a review's reply is withheld by consent (see "Not yet observed"), so an agent cannot use what a review
-  found. The arm measures the wiring as it stands.
+- In the two consent-refusal tasks a review's reply is withheld by consent, by design, so there an agent cannot use
+  what a review found. In every other task the person has granted what a review's reply carries, so it can.
 
 ### Not yet observed
 
@@ -345,7 +378,8 @@ run should be marked failed.
 
 Further limits:
 
-- In this setup the review's reply is withheld by consent (see above), so the agent never sees a review's result.
+- Outside the two consent-refusal tasks, a review answers only once the person has granted the six lines above. No
+  session has yet shown a review's reply reaching an agent in this setup.
 - The READMEs of the four development fixtures, which every moment task outside `ledger` uses, name "G6's routing
   trials", a mild cue. They stay as they are so that the development cohort stays bound.
 - A trap may not stop a strong agent.

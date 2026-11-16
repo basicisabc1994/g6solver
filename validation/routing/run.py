@@ -82,7 +82,10 @@ MOMENT_FIXTURES = HERE / "moment_fixtures"
 #: The moment cohort's outcome arm: the held-out checks (one folder per task id, never copied where a session reads)
 #: and the outcome bar, both pinned in ``moment_frozen.json`` beside the list and the moment bars.
 OUTCOME, OUTCOME_GATES = HERE / "moment_outcome", HERE / "moment_outcome_gates.json"
-MOMENT_PIN_KEYS = ("bars_digest", "tasks_digest", "outcome_bars_digest", "checks_digest")
+#: The sources the person grants for every moment session beyond the fixtures, and those a task's session starts
+#: without (its own frozen file, so the frozen task list is untouched), pinned beside the list.
+MOMENT_WITHHELD = HERE / "moment_withheld.json"
+MOMENT_PIN_KEYS = ("bars_digest", "tasks_digest", "outcome_bars_digest", "checks_digest", "withheld_digest")
 #: What a session's final diff leaves out: what the interpreter and pytest write as they run.
 UNKEPT = (":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/.pytest_cache/**", ":(exclude,glob)**/*.pyc")
 #: The Claude Code plugin this tree ships (hooks and skills): a moment session of Claude Code loads it.
@@ -91,6 +94,8 @@ PLUGIN = HERE.parents[1] / "plugins" / "g6"
 TEST_RUNS = ("Bash(python -m pytest:*)", "Bash(pytest:*)")
 #: A moment session is not started while the person's decisions share a source the cohort says a session lacks.
 NOT_FRESH = "G6_E_ROUTING_NOT_FRESH"
+#: A moment session is not started while the person's decisions do not share a source its task needs.
+NOT_GRANTED = "G6_E_ROUTING_NOT_GRANTED"
 
 
 def _load(name: str, path: Path) -> Any:
@@ -289,6 +294,13 @@ def load_outcome_gates() -> dict[str, Any]:
                                                      what="the outcome bar"))
 
 
+def load_withheld() -> dict[str, Any]:
+    """The moment cohort's per-task withheld sources (``moment_withheld.json``), when they are the pinned ones, checked
+    against the frozen moment list."""
+    return score.validate_moment_withheld(freeze.bound(MOMENT_WITHHELD, moment_pins()["withheld_digest"],
+                                                       what="the moment cohort's withheld sources"), load_moment())
+
+
 def outcome_checks() -> str:
     """The digest of the held-out checks as they stand, when it is the pinned one: a check changed after the freeze
     scores nothing."""
@@ -351,14 +363,19 @@ def _plugin(scratch: Path) -> Path | None:
     return target
 
 
-def _fresh(tasks: Mapping[str, Any], provider: str) -> None:
+def _fresh(tasks: Mapping[str, Any], provider: str, withheld: Mapping[str, Any], task_id: str) -> None:
     """Refuse a moment session, before anything starts, while the person's decisions share with ``provider`` a source
-    the cohort says a session starts without (the component catalogue included: it is not pre-seeded)."""
+    the cohort says a session starts without and the person is not asked to grant (the component catalogue included:
+    it is not pre-seeded), or do not share a granted source the task needs (``withheld``: every granted source but
+    those the task withholds; a withheld one is taken out of the session's copy by ``trial_home``)."""
     from g6.agents._runtime.model import AgentRefusal
     from g6.core import cloud_consent as cloud
 
+    lacks = [source for source in tasks["ungranted"] if source not in withheld["granted"]]
+    needs = [source for source in withheld["granted"] if source not in withheld["withheld"].get(task_id, ())]
     try:
-        held = [source for source in tasks["ungranted"] if cloud.preview(source, provider)[0]]
+        held = [source for source in lacks if cloud.preview(source, provider)[0]]
+        missing = [source for source in needs if not cloud.preview(source, provider)[0]]
     except (cloud.LLMError, OSError, ValueError) as exc:
         raise AgentRefusal(cloud.STATE_UNAVAILABLE, "the person's sharing decisions could not be read "
                                                     f"({type(exc).__name__})", detail={"started": False}) from None
@@ -366,6 +383,10 @@ def _fresh(tasks: Mapping[str, Any], provider: str) -> None:
         raise AgentRefusal(NOT_FRESH, f"{', '.join(held)} {'is' if len(held) == 1 else 'are'} shared with {provider}, "
                                       "and a moment session starts without it: revoke it (g6_cloud_revoke) for the "
                                       "run, or run where it is not shared", detail={"started": False})
+    if missing:
+        raise AgentRefusal(NOT_GRANTED, f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} not shared "
+                                        f"with {provider}, and this task's session starts with it: grant it in the "
+                                        "client's own dialog (run.py sources lists it)", detail={"started": False})
 
 
 @contextlib.contextmanager
@@ -712,15 +733,25 @@ def mcp_config(task: Mapping[str, Any], python: str = sys.executable, home: Path
                            for name in task.get("servers", ["g6"])}}
 
 
-def trial_home(out_dir: Path, session: str = "") -> Path:
+def trial_home(out_dir: Path, session: str = "", *, withhold: Sequence[str] = ()) -> Path:
     """A G6 home for a trial's servers: ``<out>/g6_home``, or, for one session, ``<out>/g6_homes/<session>``, made
     empty. It holds the person's sharing decisions (so a granted source is not withheld from the session) and nothing
     else of theirs. The decisions are read as G6 reads them (``cloud_consent``'s own locked reader, which checks the
     chain and its checkpoint), written with their checkpoint, and the copy is read back through G6's ledger reader
-    before anything uses it."""
+    before anything uses it.
+
+    ``withhold`` (plain source names) is the trial's one overlay, and it can only remove sharing: the copy is the
+    person's rows, each with its own kind, id and body, in their order, less every grant and revoke of a withheld
+    source, chained again in the session's home. A withheld source then has no decision in the copy, which reads as
+    not shared everywhere the session's G6 reads it (its servers and the plugin's hooks); a row is never added, and
+    a grant the person makes during the session is appended to the copy as usual. The person's own decisions are
+    only read."""
     from g6.core import cloud_consent as cloud
     from g6.core.ledger import ChainLedger
 
+    withhold = sorted(set(withhold))
+    if not all(re.fullmatch(r"[a-z0-9_]+", source) for source in withhold):
+        raise ValueError("a withheld source is a plain source name")
     home = Path(out_dir).resolve() / "g6_home"
     if session:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", session):
@@ -731,16 +762,26 @@ def trial_home(out_dir: Path, session: str = "") -> Path:
     with cloud._locked() as ledger:
         head = ledger.head()
         data = ledger.path.read_bytes() if ledger.path.is_file() else b""
+        rows = ledger.entries()
     home.mkdir(parents=True, exist_ok=True)
     if data:
         folder = home / "cloud_consent"
         folder.mkdir(exist_ok=True)
-        (folder / "events.jsonl").write_bytes(data)
+        kept = [row for row in rows if not (row["kind"] in ("grant", "revoke") and row["body"]["source"] in withhold)]
+        if len(kept) == len(rows):
+            (folder / "events.jsonl").write_bytes(data)
+        else:
+            copy = ChainLedger(folder / "events.jsonl", validate=cloud._validate)
+            for row in kept:
+                copy.append(row["kind"], row["id"], row["body"])
+            head = copy.head()
         (folder / "head").write_text(head, encoding="ascii", newline="\n")
         copy = ChainLedger(folder / "events.jsonl", expect_head=head, validate=cloud._validate)
-        if copy.head() != head or copy.verify():
+        own = [(row["kind"], row["id"], row["body"]) for row in kept]
+        if copy.head() != head or copy.verify() or [(r["kind"], r["id"], r["body"]) for r in copy.entries()] != own \
+                or any(source in withhold for source, _ in cloud._decisions(copy)):
             raise cloud.LLMError(f"{cloud.STATE_UNAVAILABLE}: the trial's copy of the sharing decisions does not "
-                                 "read as the person's own; nothing was started")
+                                 "read as the person's own less the withheld sources; nothing was started")
     return home
 
 
@@ -815,11 +856,13 @@ def fixture_sources(task: Mapping[str, Any]) -> tuple[Any, ...]:
 
 def sources(tasks: Mapping[str, Any], out_dir: Path, client: str, cohort: str) -> list[dict[str, str]]:
     """What a person grants before a run, per provider: the client's own environment, each fixture, and each
-    workspace folder the agent can read."""
+    workspace folder the agent can read; for the moment cohort also each source ``moment_withheld.json`` grants."""
     from g6.core import cloud_consent as cloud
 
     provider = CLIENTS[client].provider
     wanted = {"agent_environment": "the client's own configuration and whatever else it reads"}
+    if cohort == score.MOMENT:
+        wanted.update(load_withheld()["granted"])
     for task in tasks["tasks"]:
         if task["cohort"] == cohort:
             wanted[f"routing-fixture.{task['fixture']}"] = f"the synthetic fixture {task['fixture']} and its prompts"
@@ -925,7 +968,10 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
     Claude Code session loads the plugin this tree ships and may run the tests, and its record names the digests of
     the guidance it could read (``guidance``) and the digest of its final diff (``final_diff_sha256``: the workspace as
     the session left it against the fixture commit, kept as ``<out_dir>/events/<sha256>.diff`` before the next session
-    on that fixture wipes the folder; "" when no workspace was made)."""
+    on that fixture wipes the folder; "" when no workspace was made). A moment session also starts only while the
+    person shares every source ``moment_withheld.json`` grants that its task does not withhold (``NOT_GRANTED``); the
+    ones its task withholds are taken out of its home's copy of the decisions (``trial_home``), and its record names
+    them (``withheld_sources``)."""
     from g6.agents._runtime import cli
     from g6.agents._runtime.consent import consent_run
     from g6.agents._runtime.model import AgentRefusal
@@ -935,9 +981,11 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
 
     spec = CLIENTS[client]
     moment = cohort == score.MOMENT
+    withheld: dict[str, Any] = {}
     if moment:
         tasks = load_moment(Path(tasks_path))
         load_moment_gates()
+        withheld = load_withheld()
         listed, bars = moment_pins()["tasks_digest"], moment_pins()["bars_digest"]
     else:
         tasks = load_tasks(Path(tasks_path), cohort=cohort)
@@ -974,6 +1022,9 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
         said = {"task_id": task["id"], "client": client, "repeat": repeat,
                 "produced": "" if real else f"stand-in:{type(runner).__name__}"}
         session: dict[str, Any] = {"run": run_id, "bound": {**bound, "task": freeze.digest(task)}, "served": {}}
+        withhold = list(withheld["withheld"].get(task["id"], [])) if moment else []
+        if moment:
+            session["withheld_sources"] = withhold
         ended: dict[str, Any] = {"state": "interrupted", "code": UNFINISHED}     # until the session says otherwise
         data, exit_code, seconds, home, workspace, base = None, None, 0.0, None, None, ""
         try:
@@ -981,9 +1032,9 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
             if real:
                 said["produced"] = _produced(program, runner.require(stop=core_stop.engaged), programs)
             if moment:
-                _fresh(tasks, spec.provider)
+                _fresh(tasks, spec.provider, withheld, task["id"])
             try:
-                home = trial_home(out_dir, f"{task['id']}.{repeat}")
+                home = trial_home(out_dir, f"{task['id']}.{repeat}", withhold=withhold)
             except (cloud.LLMError, OSError, ValueError) as exc:
                 raise AgentRefusal(cloud.STATE_UNAVAILABLE, "the person's sharing decisions could not be read for "
                                                             f"the session's G6 home ({type(exc).__name__})") from None
@@ -1082,11 +1133,13 @@ def read_sessions(out_dir: Path, client: str, cohort: str, tasks: Mapping[str, A
     cohort, is not of the run recorded beside the gate file, is a fault.
 
     A moment record is held to the pinned moment list and bars, and not to this tree's ``g6`` package: its two arms
-    run on two trees. It must name the package it ran on, and its servers must have found that one."""
+    run on two trees. It must name the package it ran on, and its servers must have found that one. It must name the
+    sources its task withholds (``withheld_sources``), as the pinned withheld file says."""
     moment = cohort == score.MOMENT
     by_id = {task["id"]: task for task in tasks["tasks"]} if tasks is not None else {}
     want = ({"tasks": moment_pins()["tasks_digest"], "bars": moment_pins()["bars_digest"]} if moment else
             {"tasks": freeze.digest(tasks), "bars": pins()["bars_digest"], "g6": package_digest()}) if tasks else {}
+    withheld = load_withheld()["withheld"] if moment and tasks else {}
     out = []
     for row in _rows(out_dir, client, cohort):
         typed = Transcript.from_json(row)
@@ -1106,6 +1159,8 @@ def read_sessions(out_dir: Path, client: str, cohort: str, tasks: Mapping[str, A
             ran_on = bound.get("g6") if moment else want["g6"]
             if moment and not re.fullmatch(r"[0-9a-f]{64}", str(ran_on or "")):
                 fault = fault or "the row's record names no digest of the g6 package the session ran on"
+            if moment and record.get("withheld_sources") != withheld.get(typed.task_id, []):
+                fault = fault or "the row's record does not name the sources its task withholds"
             served = record.get("served") if isinstance(record.get("served"), dict) else {}
             if any(not isinstance(found, dict) or found.get("g6") != ran_on or found.get("serves") is not True
                    for found in served.values()):

@@ -1,0 +1,21 @@
+{
+  "format": "g6.routing_moment_withheld/1",
+  "cohort": "moment",
+  "granted": {
+    "completion_history": "G6's completion records of the session, kept in its own trial G6 home, which a review's reply carries; that home holds the trial's own state and a copy of the person's sharing decisions, no other data of the person's",
+    "host_configuration": "the trial server's host settings (which sensitive operations it allows, as the runner sets them for the task), which a review's reply carries",
+    "jobs": "G6's job records of the session, kept in its own trial G6 home: a review runs as a job, and its poll reads it"
+  },
+  "withheld": {
+    "moment.after_refusal.3": [
+      "completion_history",
+      "host_configuration",
+      "jobs"
+    ],
+    "moment.after_refusal.4": [
+      "completion_history",
+      "host_configuration",
+      "jobs"
+    ]
+  }
+}

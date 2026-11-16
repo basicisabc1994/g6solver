@@ -158,8 +158,9 @@ def test_each_moment_session_keeps_its_final_diff_before_the_next_session_wipes_
         assert score.changed_paths(data) == ["shop/prices.py"], task_id
         # each diff is its own session's work, kept before the next session on the fixture wiped the workspace
         assert (b"total_with_tax" in data) == (task_id == "moment.after_refusal.1"), task_id
-    # a moment record names its final diff beside what it named before, and nothing else is added
-    assert all(set(row["session"]) == {"run", "bound", "served", "guidance", "final_diff_sha256"} for row in rows.values())
+    # a moment record names its final diff and the sources its task withholds beside what it named before
+    assert all(set(row["session"]) == {"run", "bound", "served", "guidance", "final_diff_sha256", "withheld_sources"}
+               for row in rows.values())
 
 
 def test_a_session_that_changed_nothing_keeps_an_empty_diff(arm: SimpleNamespace,
@@ -348,7 +349,8 @@ def test_the_outcome_bar_and_the_checks_are_frozen_and_pinned() -> None:
     pins = json.loads(run.MOMENT_PINS.read_text(encoding="utf-8"))
     assert pins == {"tasks_digest": freeze.file_digest(run.MOMENT_TASKS), "bars_digest": freeze.file_digest(run.MOMENT_GATES),
                     "outcome_bars_digest": freeze.file_digest(run.OUTCOME_GATES),
-                    "checks_digest": freeze.tree_digest(run.OUTCOME)}
+                    "checks_digest": freeze.tree_digest(run.OUTCOME),
+                    "withheld_digest": freeze.file_digest(run.MOMENT_WITHHELD)}
     gates = run.load_outcome_gates()
     assert freeze.freeze(run.OUTCOME_GATES, gates) == pins["outcome_bars_digest"]   # written as freeze writes
     assert gates == {"format": score.FORMAT_OUTCOME_GATES, "cohort": "moment", "min_net_positive": 1,

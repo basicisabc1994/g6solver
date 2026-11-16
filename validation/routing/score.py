@@ -475,6 +475,7 @@ def release(reports: Sequence[Mapping[str, Any]], *, bars_digest: str | None = N
 FORMAT_MOMENT_TASKS = "g6.routing_moment_tasks/1"
 FORMAT_MOMENT_GATES = "g6.routing_moment_gates/1"
 FORMAT_MOMENT_REPORT = "g6.routing_moment_report/1"
+FORMAT_MOMENT_WITHHELD = "g6.routing_moment_withheld/1"
 MOMENT = "moment"
 #: Each kind of moment task: its polarity and, for a positive kind, its completion kind.
 MOMENT_KINDS = {"before_done": ("positive", "call_before_final"), "stuck": ("positive", "stuck_call"),
@@ -482,7 +483,8 @@ MOMENT_KINDS = {"before_done": ("positive", "call_before_final"), "stuck": ("pos
                 "missing_tool": ("missing_tool", None)}
 MOMENT_BARS = ("min_positive_moment_hits", "min_positive_lower_bound", "max_negative_unnecessary", "max_malformed",
                "min_missing_tool_recovery")
-#: What a session may start with: the client's own environment, the fixture and its workspace folder. Nothing else.
+#: What a session may start with: the client's own environment, the fixture and its workspace folder; beyond these,
+#: only the sources ``moment_withheld.json`` has the person grant, less those it withholds from the session's task.
 GRANTS = ("agent_environment", "fixture", "workspace")
 #: Words a moment prompt may not hold: naming G6, its server or a tool, or asking for a review or a check, would turn
 #: an unprompted moment into an instruction.
@@ -583,6 +585,26 @@ def validate_moment_gates(data: Any) -> dict[str, Any]:
     _need(all(isinstance(data[bar], float) and 0.0 <= data[bar] <= 1.0 for bar in MOMENT_BARS), "each bar is a share")
     _need(data["interval"] == "wilson95" and data["release_rule"] == "at_least_one_client_passes"
           and data["comparison"] == "paired_exact_mcnemar_no_claim", "interval, release rule and comparison")
+    return data
+
+
+def validate_moment_withheld(data: Any, tasks: Mapping[str, Any]) -> dict[str, Any]:
+    """The moment cohort's per-task withheld sources when they are inside their format: ``granted`` names each source
+    the person grants for every client beyond the fixtures (a plain name, one the list's ``ungranted`` holds, with
+    what it is), and ``withheld`` names, for a task of ``tasks``, the granted sources its session starts without."""
+    _need(isinstance(data, dict) and set(data) == {"format", "cohort", "granted", "withheld"},
+          "a withheld file is {format, cohort, granted, withheld}")
+    _need(data["format"] == FORMAT_MOMENT_WITHHELD and data["cohort"] == MOMENT, f"format is not {FORMAT_MOMENT_WITHHELD}")
+    granted, withheld = data["granted"], data["withheld"]
+    _need(isinstance(granted, dict) and all(isinstance(k, str) and re.fullmatch(r"[a-z0-9_]+", k) and _text(v)
+                                            for k, v in granted.items()),
+          "granted maps each source's plain name to what it is")
+    _need(set(granted) <= set(tasks["ungranted"]), "a granted source is one the list's sessions start without")
+    ids = {task["id"] for task in tasks["tasks"]}
+    _need(isinstance(withheld, dict) and all(
+        task_id in ids and isinstance(names, list) and names and names == sorted(set(names)) and set(names) <= set(granted)
+        for task_id, names in withheld.items()),
+        "withheld maps a task of the list to the granted sources its session starts without, sorted, once each")
     return data
 
 
