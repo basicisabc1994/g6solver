@@ -82,8 +82,8 @@ def contract(*classes):
 
 TOOLS = {
     'g6_help': contract('g6_operational'),
-    'g6_components': contract('source:component_catalogue'),
-    **{name: contract('client_request', 'source:component_catalogue') for name in ('g6_find', 'g6_describe')},
+    'g6_components': contract('g6_operational'),
+    **{name: contract('client_request', 'g6_operational') for name in ('g6_find', 'g6_describe')},
     **{name: contract('client_request', 'source:component_data') for name in ('g6_invoke', 'g6_compose')},
     'g6_review_patch': contract('client_request', 'client_repository', 'source:host_configuration'),
     'g6_review_until_clean': contract('client_request', 'client_repository', 'source:host_configuration',

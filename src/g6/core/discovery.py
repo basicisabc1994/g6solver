@@ -125,14 +125,15 @@ def _extras(extras: dict[str, tuple[str, ...]]) -> list[dict[str, Any]]:
             for extra, names in extras.items()]
 
 
-def find(query: str, limit: int = 5) -> list[dict[str, Any]]:
+def find(query: str, limit: int = 5, *, names: list[str] | None = None) -> list[dict[str, Any]]:
     """Components ranked by overlap with ``query``. Returns ``[]`` when nothing matches. Each hit says whether it can
     run (``runnable``: it names a block) and through what (``via``: ``g6_invoke``, or ``python`` for a library with no
-    block, which ``g6_invoke`` refuses)."""
+    block, which ``g6_invoke`` refuses). ``names`` ranks only those components (by default every registered one), so
+    a component left out does not weigh in the scores either."""
     q = Counter(_tokens(query))
     if not q:
         return []
-    names = get_registry().names()
+    names = get_registry().names() if names is None else names
     docs = {n: Counter(_tokens(_profile(n))) for n in names}
     df = Counter(t for d in docs.values() for t in set(d))
     n_docs = max(1, len(docs))

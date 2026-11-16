@@ -157,7 +157,6 @@ def build_server(surface: Any = None) -> Any:
         raise SystemExit("g6-mcp needs the MCP extra: pip install 'g6[mcp] @ git+https://github.com/basicisabc1994/g6solver'") from exc
 
     from g6.core import discovery
-    from g6.core.registry import get_registry
 
     server = FastMCP("g6")
     from g6.mcp.cloud_consent import install, public_tool, register
@@ -187,20 +186,24 @@ def build_server(surface: Any = None) -> Any:
 
         return report(useful_parallel_work=useful_parallel_work)
 
+    from g6.mcp.catalogue import carry, extension, shown_components
+
     @server.tool()
     def g6_components() -> list[str]:
-        """Every installed G6 component."""
-        return get_registry().names()
+        """Every installed G6 component (an installed extension only once the person shares component_catalogue)."""
+        return shown_components()
 
     @server.tool()
     def g6_find(query: str, limit: int = 5) -> list[dict]:
         """Rank components for a task description; empty list means nothing matched."""
-        return discovery.find(query, limit)
+        return discovery.find(query, limit, names=shown_components())
 
     @server.tool()
     def g6_describe(component: str) -> dict:
         """Maturity, ops and declared dependencies of one component, and which of its sensitive ops this server
         allows."""
+        if extension(component):
+            carry(component)     # withheld unless the person shared component_catalogue
         return describe_reply(component)
 
     @server.tool()

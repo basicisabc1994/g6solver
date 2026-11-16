@@ -186,6 +186,10 @@ SOURCE_SITES = {
     'g6.mcp.workflow._noted',
     'g6.mcp.workflow._reply',
     'g6.mcp.workflow.attach',
+    # The owner's decision 1 (2026-11-16): G6's built-in catalogue is public, and an installed extension's text carries
+    # component_catalogue. Planted cases: tests/core/test_catalogue_exemption.py (without the grant an extension is
+    # left out of g6_components and g6_find and g6_describe of it is withheld; with it, shown and disclosed).
+    'g6.mcp.catalogue.carry',
 }
 
 
@@ -596,8 +600,9 @@ def test_local_sdk_can_use_new_unknown_sources():
 
 def test_operational_declarations_match_package_only_producers():
     operational = {name for name, contract in declarations.TOOLS.items() if contract.classes == ('g6_operational',)}
-    assert operational == {'g6_help', 'g6_cloud_grant', 'g6_cloud_revoke'}
-    # Read the actual producer bodies: fixed HELP, dialog adapter, ledger revocation.
+    # g6_components: G6's built-in catalogue is public (owner, 2026-11-16); an extension stays behind its grant.
+    assert operational == {'g6_help', 'g6_cloud_grant', 'g6_cloud_revoke', 'g6_components'}
+    # Read the actual producer bodies: fixed HELP, dialog adapter, ledger revocation, gated listing.
     bodies = {}
     for rel in ('src/g6/mcp/__init__.py', 'src/g6/mcp/cloud_consent.py'):
         for node in ast.walk(ast.parse((ROOT / rel).read_text(encoding='utf-8'))):
@@ -607,7 +612,7 @@ def test_operational_declarations_match_package_only_producers():
     assert 'discovery.HELP' in bodies['g6_help']
     assert 'request_grant' in bodies['g6_cloud_grant']
     assert 'revoke' in bodies['g6_cloud_revoke']
-    assert 'source:component_catalogue' in declarations.TOOLS['g6_components'].classes
+    assert 'shown_components()' in bodies['g6_components']
 
 
 def operational_factories():
