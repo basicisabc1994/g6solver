@@ -245,9 +245,13 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
         raise PathRefused(f"{text!r} is outside the folder (a '..' or a link out of it counts as outside)",
                           outside=True)
     base = Path(root).resolve()
-    real: Path | None = (given if given.is_absolute() else base / given).resolve()
+    joined = given if given.is_absolute() else base / given
+    real: Path | None = joined.resolve()
     if os.name == "nt":
-        real = _opened_inside(base, real)  # refuses a link resolving could not follow
+        # refuses a link resolving could not follow. Resolving while another thread removes or makes a folder on the
+        # path can name a $Extend\$Deleted file outside the folder: then the caller's words joined onto it are the
+        # answer, when the same check passes them (as in state_path)
+        real = _opened_inside(base, real) or _opened_inside(base, joined)
     if real is None or real != base and base not in real.parents:
         raise PathRefused(f"{text!r} is outside the folder (a '..' or a link out of it counts as outside)",
                           outside=True)

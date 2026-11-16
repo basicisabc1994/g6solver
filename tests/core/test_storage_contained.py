@@ -215,6 +215,50 @@ def test_a_folder_that_cannot_be_read_is_refused_soon_as_input_not_as_outside(ro
     assert took < 0.05, f"contained waited {took * 1000:.0f} ms"
 
 
+@pytest.mark.parametrize("refuse_links", [False, True])
+def test_paths_inside_are_never_refused_while_folders_on_them_are_removed_and_made(root: Path,
+                                                                                 refuse_links: bool) -> None:
+    # on Windows resolving a path while another thread removes and makes the folders on it can name a $Extend\$Deleted
+    # file or come back with \\?\: the path is inside all the same, so contained looks again at the caller's words
+    # joined onto the root, through the same check (state_path does the same)
+    import threading
+
+    base = root.resolve()
+    stop = threading.Event()
+    refused: list[str] = []
+
+    def write(number: int) -> None:
+        while not stop.is_set():
+            try:
+                shutil.rmtree(base / f"d{number}", ignore_errors=True)
+                (base / f"d{number}" / "a" / "b").mkdir(parents=True, exist_ok=True)
+                (base / f"d{number}" / "a" / "b" / "x.json").write_text("{}", encoding="utf-8")
+            except OSError:                               # Windows: another thread holds the folder just now
+                pass
+
+    def ask(number: int) -> None:
+        for _ in range(1000):
+            raw = f"d{number}/a/b/x.json"
+            try:
+                found = contained(root, raw, refuse_links=refuse_links)
+            except (PathRefused, OSError) as error:
+                refused.append(f"{type(error).__name__}: {error}")
+                continue
+            if found != base / raw:
+                refused.append(f"gave {found}")
+
+    writers = [threading.Thread(target=write, args=(n,)) for n in range(2)]
+    askers = [threading.Thread(target=ask, args=(n,)) for n in range(2)]
+    for thread in writers + askers:
+        thread.start()
+    for thread in askers:
+        thread.join()
+    stop.set()
+    for thread in writers:
+        thread.join()
+    assert (len(refused), refused[:3]) == (0, [])
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows drops a trailing space or dot from a name")
 @pytest.mark.parametrize("raw", ["a.", "a ", "sub./x.txt", "sub /x.txt", "x.txt.", "sub\\x.txt ", "sub\\...\\x"])
 def test_a_part_ending_in_a_space_or_a_dot_is_refused_as_input(root: Path, raw: str) -> None:
