@@ -25,8 +25,9 @@ says exactly which domain it rests on.
 - A small distilled function to check and test on held-out cases: use `distillation`.
 - A property to decide with no program to synthesise: use `formal`.
 - A floating-point constant: a `??f` hole has no candidate grid and refuses (`G6_E_CEGIS_HOLE_UNSUPPORTED`). Over MCP,
-  `g6_agentic_run` can run a confined model proposal for that grid, covered by provider consent without a separate
-  override question. Show the model, warning card and original answer beside the substitute; it is qualified-draft at best.
+  `g6_agentic_run` can run a confined model proposal for that grid without a separate override question. Remote
+  admission records provider consent; local admission records local model; refusal records refused by the consent check.
+  Show the model, warning card and original answer beside the substitute; it is qualified-draft at best.
   Naming the part also permits replacing a successful answer. Process callers use the code's allowance.
 
 ## Ops

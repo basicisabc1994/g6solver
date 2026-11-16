@@ -71,7 +71,9 @@ def float_grid(hole: int, lo: int, hi: int, sketch: str) -> tuple[float, ...]:
     checks it before cegis uses it."""
     raise HoleUnsupported(f"[{HOLE_UNSUPPORTED}] hole {hole} is a floating-point hole (??f) and cegis has no candidate "
                           f"grid for it in [{lo}, {hi}]; use an integer, boolean or string hole, or run a confined "
-                          "model proposal under the provider's consent (g6_agentic_run), keeping the original answer beside it")
+                          "model proposal (g6_agentic_run), recording provider consent for remote admission, local model "
+                          "for local admission, allowed in code for process callers, or refused by the consent check; "
+                          "keep the original answer beside it")
 
 
 def valid_float_grid(value: Any, hole: int, lo: int, hi: int, sketch: str) -> str:
