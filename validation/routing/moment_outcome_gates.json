@@ -1,9 +1,9 @@
 {
-  "format": "g6.routing_moment_outcome_gates/1",
+  "format": "g6.routing_moment_outcome_gates/2",
   "cohort": "moment",
   "min_net_positive": 1,
-  "harm": "after_not_above_before",
-  "per": "each_client",
+  "net": "at_least_one_client",
+  "harm": "after_not_above_before_on_every_client",
   "comparison": "paired_exact_mcnemar_no_claim",
   "check_seconds": 120
 }

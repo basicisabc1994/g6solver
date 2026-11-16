@@ -28,6 +28,7 @@ session was started when this was built, so neither has been observed: README.md
     python validation/routing/run.py run --client codex --cohort development --out <folder>
     python validation/routing/run.py score --client codex --cohort development --out <folder>
     python validation/routing/run.py release --out <codex's final folder> --out <claude's final folder>
+    python validation/routing/run.py outcome --out <moment before folder> --out <moment after folder>
 """
 from __future__ import annotations
 
@@ -1263,6 +1264,20 @@ def compare(before: Path, after: Path, *, client: str) -> dict[str, Any]:
             "arms": {"before": first["arm"], "after": second["arm"]}}
 
 
+def outcome_release(pairs: Sequence[tuple[Path, Path]]) -> dict[str, Any]:
+    """The outcome bar read across the clients (``score.outcome_bar``): each (before folder, after folder) pair is
+    compared for every client with a moment log in both, and a client found in two pairs is refused. ``clients`` holds
+    each client's paired outcome; a client in no pair is ``unread``. It claims nothing."""
+    gates, found = load_outcome_gates(), {}
+    for before, after in pairs:
+        for client in sorted(CLIENTS):
+            if _log(Path(before), client, score.MOMENT).is_file() and _log(Path(after), client, score.MOMENT).is_file():
+                if client in found:
+                    raise score.TaskError(f"{client}'s arms are in two pairs of folders: an arm is read once")
+                found[client] = compare(Path(before), Path(after), client=client)["outcome"]
+    return {"clients": found, "bar": score.outcome_bar(found, gates, clients=sorted(CLIENTS)), "claim": None}
+
+
 def release(out_dirs: Sequence[Path], cohort: str = "final") -> dict[str, Any]:
     """The release reading, made here because the pins are here: each client's final report is made again from the
     kept event logs of its folder (a report file is never read), then read by ``score.release`` against the pinned
@@ -1286,7 +1301,7 @@ def schemas() -> dict[str, dict[str, Any]]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("command", choices=("sources", "run", "score", "release", "compare"))
+    parser.add_argument("command", choices=("sources", "run", "score", "release", "compare", "outcome"))
     parser.add_argument("--client", choices=sorted(CLIENTS))
     parser.add_argument("--cohort", choices=(*score.COHORTS, score.MOMENT), default="development")
     parser.add_argument("--out", type=Path, action="append", required=True)
@@ -1300,6 +1315,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.client is None or len(args.out) != 2:
             parser.error("compare takes --client and two --out: the before arm's folder, then the after arm's")
         print(json.dumps(compare(args.out[0], args.out[1], client=args.client), indent=2))
+        return 0
+    if args.command == "outcome":
+        if len(args.out) % 2:
+            parser.error("outcome takes --out in pairs: a before arm's folder, then its after arm's")
+        print(json.dumps(outcome_release(list(zip(args.out[::2], args.out[1::2]))), indent=2))
         return 0
     if args.client is None or len(args.out) != 1:
         parser.error(f"{args.command} takes --client and one --out")

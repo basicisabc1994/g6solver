@@ -41,6 +41,7 @@ freeze = _load("g6_validation_freeze", ROOT / "validation" / "freeze.py")
 checks = _load("g6_validation_routing_outcome_checks", Path(__file__).with_name("test_routing_moment_outcome_checks.py"))
 TASKS = {task["id"]: task for task in json.loads(run.MOMENT_TASKS.read_text(encoding="utf-8"))["tasks"]}
 PLAIN = score.PlainRunner
+CLIENTS = sorted(run.CLIENTS)
 
 
 def _git_copy(tmp_path: Path, fixture: Path, name: str = "work") -> tuple[Path, str]:
@@ -261,7 +262,7 @@ def test_both_arms_carry_their_outcome_and_compare_pairs_it_beside_the_moment_hi
     assert paired["wins"] == 2 and paired["losses"] == 0 and paired["ties"] == {"both_pass": 0, "both_fail": 10}
     assert paired["net"] == 2 and paired["p_exact"] == score.mcnemar_exact(0, 2) == 0.5
     assert paired["harm"] == {"before": 0, "after": 1}
-    assert paired["bar"] == {"min_net": 1, "net_met": True, "harm_met": False, "met": False}
+    assert paired["bar"] == {"min_net": 1, "net_met": True, "harm_met": False}
     pair = {p["task_id"]: p for p in paired["pairs"]}
     assert pair["moment.before_done.1"] == {"task_id": "moment.before_done.1", "kind": "before_done", "before": False,
                                             "after": True, "moment_hit": {"before": False, "after": False}}
@@ -269,13 +270,20 @@ def test_both_arms_carry_their_outcome_and_compare_pairs_it_beside_the_moment_hi
     assert run.main(["compare", "--client", "codex", "--out", str(arm.tmp / "before"), "--out",
                      str(arm.tmp / "after")]) == 0
     assert json.loads(capsys.readouterr().out)["outcome"]["net"] == 2
+    # the bar is read across the clients: Codex alone leaves Claude Code's harm unread, so it is not met
+    assert run.main(["outcome", "--out", str(arm.tmp / "before"), "--out", str(arm.tmp / "after")]) == 0
+    read = json.loads(capsys.readouterr().out)
+    assert set(read["clients"]) == {"codex"} and read["clients"]["codex"]["net"] == 2
+    assert read["bar"]["unread"] == ["claude_code"] and read["bar"]["met"] is False and read["claim"] is None
+    assert read == run.outcome_release([(arm.tmp / "before", arm.tmp / "after")])
 
 
-def _report(passed: dict[str, bool], harm: set[str], hits: set[str] = frozenset(), digest: str = "a" * 64) -> dict:
+def _report(passed: dict[str, bool], harm: set[str], hits: set[str] = frozenset(), digest: str = "a" * 64,
+            client: str = "codex") -> dict:
     rows = [{"task_id": task_id, "kind": task["kind"], "polarity": task["polarity"],
              "passed": passed.get(task_id, False) if task["polarity"] == "positive" else None,
              "harm": task_id in harm, "why": "", "changed": []} for task_id, task in TASKS.items()]
-    return {"client": "codex", "tasks_digest": "t", "bars_digest": "b",
+    return {"client": client, "tasks_digest": "t", "bars_digest": "b",
             "tasks": [{"task_id": task_id, "kind": task["kind"], "polarity": task["polarity"],
                        "moment_hit": task_id in hits} for task_id, task in TASKS.items() if task["polarity"] == "positive"],
             "outcome": score.outcome_report(rows, digest)}
@@ -291,17 +299,47 @@ def test_the_outcome_comparison_counts_wins_losses_ties_and_harm_and_claims_noth
     assert (found["wins"], found["losses"], found["ties"], found["net"]) == (2, 1, {"both_pass": 1, "both_fail": 8}, 1)
     assert found["p_exact"] == score.mcnemar_exact(1, 2) == 1.0
     assert found["harm"] == {"before": 1, "after": 1} and found["moment_hits"] == {"before": 1, "after": 2}
-    assert found["bar"] == {"min_net": 1, "net_met": True, "harm_met": True, "met": True} and found["claim"] is None
+    assert found["bar"] == {"min_net": 1, "net_met": True, "harm_met": True} and found["claim"] is None
     words = json.dumps(found).lower()
     assert not re.search(r"better|improv|benefit|significan|proved|verified|superior", words)
-    # one more loss and the net is under the bar; more harm after than before and the bar is not met either
+    # one more loss and the net is under the bar; more harm after than before and the harm part is not met either
     assert score.compare_outcome(before, _report({positive[2]: True, positive[3]: True}, harm=set()),
                                  gates)["bar"]["net_met"] is False
     assert score.compare_outcome(before, _report({positive[2]: True, positive[3]: True, positive[4]: True},
                                                  harm={"moment.negative.1", "moment.negative.2"}),
-                                 gates)["bar"] == {"min_net": 1, "net_met": True, "harm_met": False, "met": False}
+                                 gates)["bar"] == {"min_net": 1, "net_met": True, "harm_met": False}
     with pytest.raises(score.TaskError, match="not a pair"):
         score.compare_outcome(before, _report({}, set(), digest="b" * 64), gates)
+
+
+def test_the_outcome_bar_is_one_client_net_up_and_no_client_with_more_harm() -> None:
+    """The lead's ruling before any arm ran: at least one client has net at least +1 on the positive tasks, and on
+    no client is the after arm's harm above the before arm's. Both clients are read; one not compared is unread."""
+    gates = run.load_outcome_gates()
+    positive = [task_id for task_id, task in TASKS.items() if task["polarity"] == "positive"]
+
+    def pair(client: str, wins: int, harm_before: int, harm_after: int) -> dict:
+        negatives = [task_id for task_id, task in TASKS.items() if task["polarity"] == "negative"]
+        return score.compare_outcome(
+            _report({}, harm=set(negatives[:harm_before]), client=client),
+            _report({task_id: True for task_id in positive[:wins]}, harm=set(negatives[:harm_after]), client=client),
+            gates)
+
+    up, flat, harmed = pair("codex", 1, 1, 1), pair("claude_code", 0, 0, 0), pair("claude_code", 0, 0, 1)
+    met = score.outcome_bar({"codex": up, "claude_code": flat}, gates, clients=CLIENTS)
+    assert met == {"min_net": 1, "net": "at_least_one_client", "harm": "after_not_above_before_on_every_client",
+                   "net_met_by": ["codex"], "harm_above_before_on": [], "unread": [], "met": True}
+    # Codex alone carries the net, and more harm after on Claude Code fails the bar for both
+    found = score.outcome_bar({"codex": up, "claude_code": harmed}, gates, clients=CLIENTS)
+    assert found["harm_above_before_on"] == ["claude_code"] and found["met"] is False
+    # no client up by one: not met
+    none_up = {"codex": pair("codex", 0, 0, 0), "claude_code": flat}
+    assert score.outcome_bar(none_up, gates, clients=CLIENTS)["met"] is False
+    # a client not compared leaves its harm unread: not met
+    alone = score.outcome_bar({"codex": up}, gates, clients=CLIENTS)
+    assert alone["unread"] == ["claude_code"] and alone["met"] is False
+    with pytest.raises(score.TaskError, match="another client"):
+        score.outcome_bar({"claude_code": up}, gates, clients=CLIENTS)
 
 
 # --- frozen and pinned --------------------------------------------------------------------------------------------------
@@ -314,14 +352,19 @@ def test_the_outcome_bar_and_the_checks_are_frozen_and_pinned() -> None:
     gates = run.load_outcome_gates()
     assert freeze.freeze(run.OUTCOME_GATES, gates) == pins["outcome_bars_digest"]   # written as freeze writes
     assert gates == {"format": score.FORMAT_OUTCOME_GATES, "cohort": "moment", "min_net_positive": 1,
-                     "harm": "after_not_above_before", "per": "each_client",
+                     "net": "at_least_one_client", "harm": "after_not_above_before_on_every_client",
                      "comparison": "paired_exact_mcnemar_no_claim", "check_seconds": 120}
+    # the per-client bar it replaced is kept beside it, retired with the lead's reason, before any arm ran
+    retired = [freeze.read(path) for path in HERE.glob("moment_outcome_gates.retired-*.json")]
+    assert [r["retired"]["per"] for r in retired] == ["each_client"]
+    assert "before any arm ran" in retired[0]["reason"] and "moment bars" in retired[0]["reason"]
     assert gates["check_seconds"] == score.CHECK_SECONDS                # the time a check run gets is the frozen one
     assert run.outcome_checks() == pins["checks_digest"]
     readme = " ".join((HERE / "README.md").read_text(encoding="utf-8").split())
     assert "### Outcome arm" in (HERE / "README.md").read_text(encoding="utf-8")
     assert pins["outcome_bars_digest"] in readme and pins["checks_digest"] in readme
     assert "functional and provides some kind of benefit" in readme and "held out" in readme
+    assert "at least one client" in readme and "on no client" in readme
 
 
 def test_a_changed_check_or_bar_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

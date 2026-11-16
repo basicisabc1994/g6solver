@@ -294,22 +294,30 @@ their rows are not scored.
   apply, a session that did not complete or whose record does not bind, and a run out of time all count as fail. The
   checks run inside an operating-system boundary (`g6.core.confine`) where a backend can confine them and a probe check
   passes there. Otherwise they run in a plain subprocess with the timeout. Each row's `ran` says which, and why.
-- **The bar** (`moment_outcome_gates.json`): for each client on its own, the after arm's net on the positive tasks is
-  at least +1, where the net is wins (passed after only) minus losses (passed before only). The after arm's harm must
-  not be above the before arm's. `compare` prints, per client, the paired table (wins, losses, ties), the net, the
-  exact McNemar p-value of the discordant pairs, the harm of each arm, and each pair's moment hit beside its outcome.
-  It makes no claim (`claim` is `null`). Twelve positive pairs cannot decide a difference: the bar reads a direction.
+- **The bar** (`moment_outcome_gates.json`): at least one client has an after-arm net of at least +1 on the positive
+  tasks, where the net is wins (passed after only) minus losses (passed before only), and on no client is the after
+  arm's harm above the before arm's. This matches the moment bars (at least one client meets every bar) and the
+  owner's "some kind of benefit". Both clients are read: a client whose arms were not compared leaves its harm
+  unread, and the bar is then not met. `compare` prints, per client, the paired table (wins, losses, ties), the net,
+  the exact McNemar p-value of the discordant pairs, the harm of each arm, each pair's moment hit beside its outcome,
+  and that client's two parts of the bar. `outcome` reads the bar across both clients. Neither makes a claim (`claim`
+  is `null`). Twelve positive pairs cannot decide a difference: the bar reads a direction.
+- **The bar before it.** The first frozen bar asked the net of each client on its own. The lead retired it before any
+  arm ran, to match the owner's ruling and the moment bars. It is kept, with that reason, as
+  `moment_outcome_gates.retired-bc825f3fb4a2.json`.
 - **Pins.** `moment_frozen.json` pins the outcome bar at
-  `bc825f3fb4a20f76452f66beba3929024522501479b4ca8f1a98d246a3ee2684` and the held-out checks (the whole
+  `bbdb333860ee44545b5b337213319e0780572f1fbd3fa24b8bc6abfe837dd1f8` and the held-out checks (the whole
   `moment_outcome/` folder) at `6787d535ad8440824a72c81a25c75f8538e1f9141c5ff9c7f7d82ea2fcba05be`. A changed check or
   bar scores nothing. To change either before the first arm, retire the old file with its reason (`freeze.retire`),
   freeze the new one and pin it.
 
 How to run: nothing extra. `run` keeps each diff; `score` writes the outcome block in each arm's report; `compare`
-prints the paired outcome beside the moment hits:
+prints one client's paired outcome beside the moment hits; `outcome` takes each client's before and after folders, in
+pairs, and reads the bar across both clients:
 
     python validation/routing/run.py score --client codex --cohort moment --out <before folder>
     python validation/routing/run.py compare --client codex --out <before folder> --out <after folder>
+    python validation/routing/run.py outcome --out <before folder> --out <after folder>
 
 Limits of the outcome arm:
 

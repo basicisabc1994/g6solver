@@ -1,0 +1,13 @@
+{
+  "retired": {
+    "format": "g6.routing_moment_outcome_gates/1",
+    "cohort": "moment",
+    "min_net_positive": 1,
+    "harm": "after_not_above_before",
+    "per": "each_client",
+    "comparison": "paired_exact_mcnemar_no_claim",
+    "check_seconds": 120
+  },
+  "reason": "Set by the lead before any arm ran, to match the owner's ruling (0.3.0 is beta when it provides some kind of benefit) and the moment bars (at least one client meets every bar): the net bar is met by at least one client, and harm after is not above before on any client. Only one-task pilots had run, and their rows are not scored.",
+  "digest": "bc825f3fb4a20f76452f66beba3929024522501479b4ca8f1a98d246a3ee2684"
+}

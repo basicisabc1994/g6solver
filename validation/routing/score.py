@@ -761,7 +761,7 @@ def release_moment(reports: Sequence[Mapping[str, Any]], *, bars_digest: str) ->
 # kept final diff applied to a fresh copy of its fixture. A negative or missing-tool task's outcome is whether the
 # session changed a file it was not asked to change (``protected.json``), so a detour that damages work shows as harm.
 
-FORMAT_OUTCOME_GATES = "g6.routing_moment_outcome_gates/1"
+FORMAT_OUTCOME_GATES = "g6.routing_moment_outcome_gates/2"
 #: In a negative or missing-tool task's outcome folder: the fixture files the session was not asked to change.
 PROTECTED = "protected.json"
 #: How long one run of a task's held-out checks may take before it fails.
@@ -871,22 +871,24 @@ def outcome_report(rows: Sequence[Mapping[str, Any]], checks_digest: str) -> dic
 
 
 def validate_outcome_gates(data: Any) -> dict[str, Any]:
-    """The outcome bar when it is inside its format."""
-    fields = {"format", "cohort", "min_net_positive", "harm", "per", "comparison", "check_seconds"}
+    """The outcome bar when it is inside its format: at least one client's net reaches ``min_net_positive``, and on
+    no client is the after arm's harm above the before arm's."""
+    fields = {"format", "cohort", "min_net_positive", "net", "harm", "comparison", "check_seconds"}
     _need(isinstance(data, dict) and set(data) == fields, f"an outcome gate file has exactly {sorted(fields)}")
     _need(data["format"] == FORMAT_OUTCOME_GATES and data["cohort"] == MOMENT, f"format is not {FORMAT_OUTCOME_GATES}")
     _need(type(data["min_net_positive"]) is int and type(data["check_seconds"]) is int and data["check_seconds"] > 0,
           "the net and the check time are whole numbers")
-    _need(data["harm"] == "after_not_above_before" and data["per"] == "each_client"
-          and data["comparison"] == "paired_exact_mcnemar_no_claim", "harm rule, per and comparison")
+    _need(data["net"] == "at_least_one_client" and data["harm"] == "after_not_above_before_on_every_client"
+          and data["comparison"] == "paired_exact_mcnemar_no_claim", "net rule, harm rule and comparison")
     return data
 
 
 def compare_outcome(before: Mapping[str, Any], after: Mapping[str, Any], gates: Mapping[str, Any]) -> dict[str, Any]:
     """The two arms' outcomes for one client, paired by positive task: wins (passed after only), losses (passed before
     only), ties, the net (wins minus losses), the exact McNemar p-value of the discordant pairs, the harm of each arm,
-    and each pair's moment hit beside it. ``bar`` reads the pre-registered bar (net at least ``min_net_positive``, and
-    no more harm after than before); ``claim`` is ``None``: the cohort was not sized to decide a difference."""
+    and each pair's moment hit beside it. ``bar`` holds this client's two parts of the pre-registered bar (net at least
+    ``min_net_positive``; no more harm after than before), which ``outcome_bar`` reads across the clients; ``claim``
+    is ``None``: the cohort was not sized to decide a difference."""
     validate_outcome_gates(dict(gates))
     first, second = before["outcome"], after["outcome"]
     _need(before.get("client") == after.get("client") and first["checks_digest"] == second["checks_digest"],
@@ -908,5 +910,20 @@ def compare_outcome(before: Mapping[str, Any], after: Mapping[str, Any], gates: 
                                        "both_fail": sum(not p["before"] and not p["after"] for p in pairs)},
             "net": net, "p_exact": mcnemar_exact(losses, wins), "harm": harm,
             "moment_hits": {name: sum(p["moment_hit"][name] for p in pairs) for name in ("before", "after")},
-            "ran": {"before": first["ran"], "after": second["ran"]},
-            "bar": {**bar, "met": bar["net_met"] and bar["harm_met"]}, "claim": None}
+            "ran": {"before": first["ran"], "after": second["ran"]}, "bar": bar, "claim": None}
+
+
+def outcome_bar(comparisons: Mapping[str, Mapping[str, Any]], gates: Mapping[str, Any], *,
+                clients: Sequence[str]) -> dict[str, Any]:
+    """The pre-registered outcome bar, read across ``clients`` from each client's ``compare_outcome``: met when at
+    least one client's net reaches the bar and on no client is the after arm's harm above the before arm's. Every
+    client is read: one not compared (``unread``) leaves its harm unknown, and the bar is then not met."""
+    validate_outcome_gates(dict(gates))
+    for client, found in comparisons.items():
+        _need(client in clients and found.get("client") == client,
+              f"the comparison given for {client} is another client's")
+    net_by = sorted(client for client, found in comparisons.items() if found["bar"]["net_met"])
+    harmed = sorted(client for client, found in comparisons.items() if not found["bar"]["harm_met"])
+    unread = sorted(set(clients) - set(comparisons))
+    return {"min_net": gates["min_net_positive"], "net": gates["net"], "harm": gates["harm"], "net_met_by": net_by,
+            "harm_above_before_on": harmed, "unread": unread, "met": bool(net_by) and not harmed and not unread}
