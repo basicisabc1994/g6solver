@@ -91,6 +91,18 @@ def test_the_door_fields_a_refusal_names_are_filled_into_the_template() -> None:
     assert "sql" in json.loads(query["call"]["arguments"]["params_json"]) and query["validated"] is True
 
 
+def test_entries_are_copies_so_a_caller_that_fills_a_template_changes_no_later_entry() -> None:
+    before = json.dumps(corpus.entries(), sort_keys=True)
+    try:
+        for entry in corpus.entries():
+            entry["call"].setdefault("arguments", {})["filled"] = "by the caller"
+            entry["needs"]["consent"] = ["changed"]
+            entry.get("phases", []).append("changed")
+        assert json.dumps(corpus.entries(), sort_keys=True) == before
+    finally:
+        corpus._loaded.cache_clear()
+
+
 def test_the_corpus_is_sorted_and_written_one_way() -> None:
     data = json.loads(corpus.PATH.read_text(encoding="utf-8"))
     ids = [entry["id"] for entry in data["entries"]]

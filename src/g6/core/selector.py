@@ -659,7 +659,7 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     """The selection for the agent's situation (module docstring). ``corpus`` stands in for the shipped corpus in
     tests."""
     from g6.core.reliability_envelope import envelope_fields, warning_card
-    from g6.skills.corpus import PHASES, entries as expanded
+    from g6.skills.corpus import PHASES, _expanded as expanded     # the reply is deep-copied at the end
 
     if not isinstance(task, str) or not task.strip():
         return _refuse("task says what you are doing", request_id, run_id)

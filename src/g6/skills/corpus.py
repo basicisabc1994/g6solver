@@ -24,6 +24,7 @@ Nothing here runs an op: ``help`` and ``ops`` are each block's own description o
 from __future__ import annotations
 
 import ast
+import copy
 import json
 import re
 import sys
@@ -481,8 +482,14 @@ def _components_and_ops() -> tuple[dict[str, Any], list[dict[str, Any]]]:
 def entries(data: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Every entry in full: an op's entry joined with what its component shares (what it establishes, from the
     contract's guarantees or its help line; what it does not, from ``bad_at``; its needs, the failure modes it
-    addresses as hypothesis ids, and its typed input's fields)."""
-    data = load() if data is None else data
+    addresses as hypothesis ids, and its typed input's fields). Deep copies: a caller that fills in a template it
+    read here changes nothing a later call returns."""
+    return copy.deepcopy(_expanded(load() if data is None else data))
+
+
+def _expanded(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """``entries`` without the copy, for a caller that copies its own reply (``g6.core.selector.select``); it holds
+    the cached corpus's own objects, so nothing may change what it returns."""
     out = []
     for entry in data["entries"]:
         if entry["kind"] != "op":
