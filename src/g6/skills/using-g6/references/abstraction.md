@@ -26,3 +26,8 @@ names. You can set neither.
 
 The status "checked" means the gate's own checks passed on the recorded trace. It is not a claim that the
 abstraction holds on configurations nobody evaluated.
+
+## Abstraction route
+
+- **abstraction.** Only where the person registered the separate server, `python -P -m g6.abstraction.server`: its
+  tools search a design space for abstractions that hold up (`references/abstraction.md`).

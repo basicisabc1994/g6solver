@@ -31,3 +31,8 @@ Experta is retired with no engine port: G6 ships no second rule engine. Work tha
 rule engine goes to a `datalog` session, backward chaining to `prolog`, and rules over uncertain graph facts to
 `graph_reasoning`. A `datalog` session keeps facts over a fixed session program; it is not a record of rules that ran
 anywhere else.
+
+## Rules route
+
+- **rules.** What follows from facts and rules: `datalog` (sessions keep facts over a fixed program), `prolog` and
+  `graph_reasoning`, through `g6_invoke` (`references/rules.md`).

@@ -94,3 +94,8 @@ has been measured on seven training bugs only.
    on the cases you looked at is not a gain.
 5. **When G6 has no component for a need, say so.** Do it with ordinary tools and keep the same discipline. Note the
    gap; it may be an extension worth building.
+
+## Mission route
+
+- **mission.** A standard of done, fixed before the work and confirmed by the person: `g6_premortem`, then the
+  `g6_mission_*` tools (`references/lifecycle.md`).

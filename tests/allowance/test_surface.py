@@ -62,7 +62,7 @@ def test_skill_codex_guidance_and_plugin_route_to_shipped_tool():
     assert "g6_allowances" in skill and "before optional fan-out" in skill
     from g6.core.skills import MAX_WORDS
 
-    assert len(skill.split("---", 2)[2].split()) <= MAX_WORDS     # the repository's one skill cap (1,800 words)
+    assert len(skill.split("---", 2)[2].split()) <= min(MAX_WORDS, 1000)  # owner: disclose detail progressively
     assert "g6_allowances" in (root / "AGENTS.md").read_text(encoding="utf-8")
     hooks = json.loads((root / "plugins/g6/hooks/hooks.json").read_text(encoding="utf-8"))
     assert "g6._allowance.hook" in json.dumps(hooks["hooks"]["UserPromptSubmit"])
