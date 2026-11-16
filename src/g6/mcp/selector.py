@@ -14,12 +14,12 @@ from typing import Any
 def register(server: Any) -> None:
     from g6.core.consent_declarations import TOOLS
 
-    def g6_select(task: str, phase: str = "", last_outcome: str = "", considering: list | str = "", limit: int = 5,
-                  rerank: str = "lexical") -> dict:
+    def g6_select(task: str, phase: str = "", last_outcome: str = "", considering: list | dict | str = "",
+                  limit: int = 5, rerank: str = "lexical") -> dict:
         """What to do next with G6. Give your task, the phase you are in (plan, implement, verify, diagnose or stuck),
         and last_outcome: a refusal's text or G6_E_* code, or an outcome such as defect_detected, from your last G6
-        call. Optional considering: calls or hypotheses you are weighing, as tool or component.op names,
-        {tool, arguments}, {component, op, args}, {hypothesis, id, severity, predicts, check} or a requirement
+        call. Optional considering, a list or one entry: calls or hypotheses you are weighing, as tool or component.op
+        names, {tool, arguments}, {component, op, args}, {hypothesis, id, severity, predicts, check} or a requirement
         {id, text, checks}; each is validated. Returns at most min(limit, 8) candidates, each with its exact call
         template, what it establishes and does not, its static needs (a sensitive allowance, consent classes, a model,
         a confined run), its cost, which rankers put it there, whether its template ran as given when G6 was built

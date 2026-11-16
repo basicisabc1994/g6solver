@@ -146,3 +146,12 @@ def test_it_takes_no_repository_argument() -> None:
     properties = asyncio.run(schema())["properties"]
     assert set(properties) == {"task", "phase", "last_outcome", "considering", "limit", "rerank"}
     assert "repo" not in properties
+
+
+def test_one_object_as_considering_gets_the_envelope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review 4, finding 9: the docstring offers a considering entry as one object; over MCP one object is taken as
+    it is, never refused by the framework with a bare tool error."""
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "fresh-home"))
+    one = {"tool": "g6_review_patch", "arguments": {"repo": "C:/r", "task": "t"}}
+    reply = _call({"task": "review my patch", "phase": "verify", "considering": one})
+    assert reply["completion_state"] == "qualified-draft" and reply["considering"][0]["kind"] == "call", reply
