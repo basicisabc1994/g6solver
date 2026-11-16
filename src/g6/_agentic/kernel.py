@@ -488,6 +488,31 @@ class _Send(CallerWrapper):
         return self._envelope.took(text)
 
 
+def _code_in(text: str) -> str:
+    """The first stable code in ``text``, or ""."""
+    found = re.search(r"G6_E_[A-Z0-9_]{1,80}", text)
+    return found.group() if found else ""
+
+
+def _invalid(exc: BaseException) -> str:
+    """Why a model's value was refused, in G6's words: the decode's own refusal, or each type error's kind and where
+    it is (list positions; a key is shown as <key>), never the value or any text of it."""
+    from pydantic import ValidationError
+
+    if isinstance(exc, ValidationError):
+        errors = exc.errors(include_url=False, include_context=False, include_input=False)
+        shown = []
+        for error in errors[:5]:
+            kind = error.get("type", "")
+            where = "".join(f"[{p}]" if isinstance(p, int) else "[<key>]" for p in error.get("loc", ()))
+            shown.append((kind if re.fullmatch(r"[a-z_]{1,60}", str(kind)) else "invalid") + (f" at {where}"
+                                                                                             if where else ""))
+        return f"{len(errors)} type error(s): " + "; ".join(shown)
+    if isinstance(exc, decode.Undecodable):
+        return str(exc)[:REASON_CHARS]   # decode's own words: sizes, depths and the JSON decoder's position
+    return f"not decoded ({type(exc).__name__})"
+
+
 def _words(exc: BaseException) -> str:
     """A failed model call in G6's words: its type and the first stable code in its text, never the text itself."""
     try:
@@ -640,11 +665,12 @@ def _ask_model(pending: Pending, envelope: _Envelope, ask: Mapping[str, Any], pa
     try:   # bounded in size and depth before it is decoded (decode.Undecodable is a ValueError)
         said = decode.extract(text, max_chars=pending.budget.max_output_chars)
         if not isinstance(said, dict) or set(said) != {"value"}:
-            raise ValueError('the reply is not {"value": ...}')
+            raise decode.Undecodable('the reply is not {"value": ...}')
         value = adapter.validate_json(_child.canonical(said["value"]), strict=True)
     except (ValueError, ValidationError, RecursionError, TypeError, MemoryError) as exc:
-        checks.append({"check": "return_type", "passed": False, "detail": str(exc)[:REASON_CHARS]})
-        raise _Stop("value_invalid", f"the model's value is not a {returns}: {str(exc)[:200]}") from exc
+        why = _invalid(exc)
+        checks.append({"check": "return_type", "passed": False, "detail": why})
+        raise _Stop("value_invalid", f"the model's value is not a {returns}: {why}"[:REASON_CHARS]) from exc
     checks.append({"check": "return_type", "passed": True})
     try:   # the ask's arguments come from the child: a validator that cannot take them refuses the value
         why = _child.resolve(pending.validator, package)(value, *call.get("args", []), **call.get("kwargs", {}))
@@ -707,10 +733,12 @@ def override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
         try:
             reply, isolation = _child.launch(request, timeout_s=timeout_s)
         except _child.Refused as exc:
-            text = str(exc)
+            code = _code_in(str(exc)[:120]) or "G6_E_AGENTIC_CHILD_FAILED"
             isolation = exc.isolation or isolation
-            raise _Stop("isolation_unavailable" if "G6_E_ISOLATION_UNAVAILABLE" in text[:40] else "child_failed",
-                        text[:REASON_CHARS]) from exc
+            if code == "G6_E_ISOLATION_UNAVAILABLE":
+                raise _Stop("isolation_unavailable", f"[{code}] no operating-system boundary can confine the "
+                                                     "kernel's child here, so nothing was run; run g6 doctor") from exc
+            raise _Stop("child_failed", f"[{code}] a run of the operation in the child gave no answer") from exc
         envelope.after_child()
         return reply
 
@@ -726,7 +754,10 @@ def override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
                 continue
             done = said.get("done") if isinstance(said.get("done"), Mapping) else {}
             if "ok" not in done:
-                raise _Stop("substitute_failed", str(done.get("failure") or done.get("raised") or said)[:REASON_CHARS])
+                how = "raised" if "raised" in done else "refused" if "failure" in done else "gave no answer"
+                code = _code_in(str(done.get("failure") or "")[:120])
+                raise _Stop("substitute_failed", f"the operation, run with the substitute, {how}"
+                                                 + (f" ({code})" if code else ""))
             result = done["ok"]
             break
         else:
@@ -743,11 +774,15 @@ def override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
             done = said.get("done") if isinstance(said.get("done"), Mapping) else {}
             verdict = done.get("ok") if isinstance(done.get("ok"), Mapping) else {}
             passed = verdict.get("passed") is True
-            checks.append({"check": pending.checker, "passed": passed, "detail": dict(verdict)})
-            record["rechecked"], record["recheck"] = True, dict(verdict)
+            status = verdict.get("status")
+            status = status if isinstance(status, str) and re.fullmatch(r"[a-z_]{1,80}", status) else "other"
+            # the checker's verdict in G6's words: its status and counts, never its reason's text
+            kept = {"passed": passed, "status": status, **{k: verdict[k] for k in ("compared", "skipped")
+                                                           if type(verdict.get(k)) is int}}
+            checks.append({"check": pending.checker, "passed": passed, "detail": kept})
+            record["rechecked"], record["recheck"] = True, kept
             if not passed:
-                raise _Stop("recheck_failed", f"{pending.checker} did not agree: {verdict.get('status')} "
-                                              f"{verdict.get('reason', '')}"[:REASON_CHARS])
+                raise _Stop("recheck_failed", f"{pending.checker} did not agree: {status}")
         else:
             record["rechecked"] = False
             record["recheck"] = ("not re-checked: the component declares no checker" if not pending.checker else
