@@ -78,6 +78,9 @@ UNFINISHED = "G6_E_ROUTING_SESSION_UNFINISHED"
 #: ``fixtures/`` so the development cohort's bound digest of the fixtures does not move).
 MOMENT_TASKS, MOMENT_GATES, MOMENT_PINS = HERE / "moment_tasks.json", HERE / "moment_gates.json", HERE / "moment_frozen.json"
 MOMENT_FIXTURES = HERE / "moment_fixtures"
+#: The moment cohort's outcome arm: the held-out checks (one folder per task id, never copied where a session reads)
+#: and the outcome bar, both pinned in ``moment_frozen.json`` beside the list and the moment bars.
+OUTCOME, OUTCOME_GATES = HERE / "moment_outcome", HERE / "moment_outcome_gates.json"
 #: What a session's final diff leaves out: what the interpreter and pytest write as they run.
 UNKEPT = (":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/.pytest_cache/**", ":(exclude,glob)**/*.pyc")
 #: The Claude Code plugin this tree ships (hooks and skills): a moment session of Claude Code loads it.

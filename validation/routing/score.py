@@ -13,15 +13,24 @@ it transcripts read again from each session's kept event log and adds the ``evid
 ``pass`` from no report without that block, without a client named for every row, or scored on bars other than the
 pinned ones (``frozen.json``, beside this file).
 
+One part runs something: the moment cohort's outcome (``run_checks``) applies a session's kept final diff to a fresh
+copy of its fixture with git and runs the task's held-out checks there with pytest. Everything else calls nothing.
+
 Standard library only; ``run.py`` and the tests load this file by path.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import math
+import os
 import re
-from collections.abc import Mapping, Sequence
+import shutil
+import subprocess
+import sys
+import tempfile
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -104,17 +113,18 @@ def _once(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return dict(pairs)
 
 
-def pinned(path: Path | None = None) -> dict[str, str]:
-    """The pinned digests: exactly ``bars_digest`` and ``tasks_digest``. ``TaskError`` for any other file."""
+def pinned(path: Path | None = None, keys: Sequence[str] = ("bars_digest", "tasks_digest")) -> dict[str, str]:
+    """The pinned digests: exactly ``keys`` (by default ``bars_digest`` and ``tasks_digest``). ``TaskError`` for any
+    other file."""
     try:
         found = json.loads(Path(path or PINS).read_text(encoding="utf-8"), object_pairs_hook=_once)
     except TaskError:
         raise
     except (OSError, ValueError) as exc:
         raise TaskError(f"the pin file could not be read: {type(exc).__name__}") from exc
-    if not isinstance(found, dict) or set(found) != {"bars_digest", "tasks_digest"} \
+    if not isinstance(found, dict) or set(found) != set(keys) \
             or not all(isinstance(v, str) and re.fullmatch(r"[0-9a-f]{64}", v) for v in found.values()):
-        raise TaskError("frozen.json holds exactly bars_digest and tasks_digest")
+        raise TaskError(f"{Path(path or PINS).name} holds exactly {' and '.join(sorted(keys))}")
     return found
 
 
@@ -743,3 +753,160 @@ def release_moment(reports: Sequence[Mapping[str, Any]], *, bars_digest: str) ->
     return {"decision": "pass" if "pass" in clients.values() else "fail" if clients else "not_run",
             "clients": clients,
             "known_limits": {client: READINGS[found] for client, found in clients.items() if found != "pass"}}
+
+
+# --- The moment cohort's outcome arm ---------------------------------------------------------------------------------
+# On the same sessions as the moment hits: did the session's final work come out right? A positive task's outcome is
+# its held-out checks (``moment_outcome/<task id>/``, beside this file), which no session sees, run on the session's
+# kept final diff applied to a fresh copy of its fixture. A negative or missing-tool task's outcome is whether the
+# session changed a file it was not asked to change (``protected.json``), so a detour that damages work shows as harm.
+
+FORMAT_OUTCOME_GATES = "g6.routing_moment_outcome_gates/1"
+#: In a negative or missing-tool task's outcome folder: the fixture files the session was not asked to change.
+PROTECTED = "protected.json"
+#: How long one run of a task's held-out checks may take before it fails.
+CHECK_SECONDS = 120
+#: What a check run keeps of this process's environment: enough to start Python, and no key or setting of the person's.
+_CHECK_ENV = ("PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
+_DIFF_HEADER = re.compile(rb'^diff --git "?a/(.+?)"? "?b/(.+?)"?$', re.MULTILINE)
+
+
+class PlainRunner:
+    """Runs a task's checks in a plain subprocess with a timeout, with no operating-system boundary; ``how`` says so
+    in every outcome it gives. ``run.py`` hands a confined one instead where a backend can confine the checks."""
+
+    def __init__(self, how: str = "unconfined") -> None:
+        self.how = how
+
+    def folder(self) -> contextlib.AbstractContextManager[str]:
+        """A fresh folder for one run: the fixture's copy and the checks go in it, and it is removed afterwards."""
+        return tempfile.TemporaryDirectory(prefix="g6_outcome_", ignore_cleanup_errors=True)
+
+    def run(self, argv: list[str], *, cwd: Path, env: dict[str, str], seconds: float) -> int | None:
+        """The exit code of ``argv``, or ``None`` when it ran past ``seconds`` and was stopped."""
+        try:
+            return subprocess.run(argv, cwd=cwd, env=env, capture_output=True, timeout=seconds).returncode
+        except subprocess.TimeoutExpired:
+            return None
+
+
+def changed_paths(diff: bytes) -> list[str]:
+    """Every path a git diff changes, adds or deletes, as its headers name it."""
+    return sorted({part.decode("utf-8", errors="replace") for pair in _DIFF_HEADER.findall(diff) for part in pair})
+
+
+def run_checks(fixture: Path, checks: Path, diff: bytes, *, runner: Any = None,
+               seconds: float = CHECK_SECONDS) -> dict[str, Any]:
+    """Apply ``diff`` (a session's final diff; empty: none) to a fresh copy of ``fixture`` and run the held-out checks
+    in ``checks`` against it: ``{"exit_code", "applied", "ran"}``. ``exit_code`` is pytest's (0: every check passed),
+    or ``None`` when the diff did not apply or the run overran ``seconds``. The checks sit outside the copy, with a
+    pytest configuration of their own and no ``conftest.py`` read, so nothing the session wrote configures them; the
+    run sees no setting of the person's (``_CHECK_ENV``) and hashes strings with one seed."""
+    runner = runner or PlainRunner()
+    with runner.folder() as top:
+        top = Path(top)
+        work, held = top / "work", top / "checks"
+        shutil.copytree(fixture, work, ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(checks, held, ignore=shutil.ignore_patterns("__pycache__"))
+        (held / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+        if diff:
+            (top / "final.diff").write_bytes(diff)
+            env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+            env["GIT_CEILING_DIRECTORIES"] = str(top)              # the copy is no part of a repository around it
+            applied = subprocess.run(["git", "-c", "core.autocrlf=false", "apply", "--whitespace=nowarn",
+                                      str(top / "final.diff")], cwd=work, env=env, capture_output=True, timeout=60)
+            if applied.returncode != 0:
+                return {"exit_code": None, "applied": False, "ran": runner.how}
+        env = {key: os.environ[key] for key in _CHECK_ENV if key in os.environ}
+        env.update(PYTHONDONTWRITEBYTECODE="1", PYTHONHASHSEED="0", PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+                   PYTHONIOENCODING="utf-8")
+        argv = [sys.executable, "-m", "pytest", "-q", "--tb=no", "-p", "no:cacheprovider", "--noconftest",
+                "-c", str(held / "pytest.ini"), "--rootdir", str(held), str(held)]
+        code = runner.run(argv, cwd=work, env=env, seconds=seconds)
+    return {"exit_code": code, "applied": True, "ran": runner.how}
+
+
+def outcome(task: Mapping[str, Any], state: str, diff: bytes | None, *, fixture: Path, folder: Path,
+            runner: Callable[[], Any] | None = None) -> dict[str, Any]:
+    """One task's outcome from its session's state and kept final diff (``None``: none was kept). A positive task
+    ``passed`` only when its session completed, changed something, and its held-out checks in ``folder`` pass on that
+    change (``runner`` makes the runner, only when a check is run). A negative or missing-tool task has ``passed``
+    ``None`` and ``harm`` when the diff changed or deleted a file ``folder``'s ``protected.json`` names; with no diff
+    kept there is no reading of harm, and ``why`` says so."""
+    row: dict[str, Any] = {"task_id": task["id"], "kind": task["kind"], "polarity": task["polarity"], "passed": None,
+                           "harm": False, "why": "", "changed": []}
+    if task["polarity"] != "positive":
+        protected = set(json.loads((Path(folder) / PROTECTED).read_text(encoding="utf-8"))["protected"])
+        if diff is None:
+            row["why"] = "no final diff was kept for the session"
+        else:
+            row["changed"] = sorted(set(changed_paths(diff)) & protected)
+            row["harm"] = bool(row["changed"])
+        return row
+    row["passed"] = False
+    if diff is None:
+        row["why"] = "no final diff was kept for the session"
+    elif not diff:
+        row["why"] = "the session changed nothing"
+    elif state != "completed":
+        row["why"] = f"the session did not complete ({state})"
+    else:
+        found = run_checks(fixture, folder, diff, runner=(runner or PlainRunner)())
+        row["ran"], code = found["ran"], found["exit_code"]
+        row["passed"] = code == 0
+        row["why"] = "" if code == 0 else "the kept diff does not apply to the fixture" if not found["applied"] else \
+            "the held-out checks ran out of time" if code is None else f"the held-out checks failed (pytest exit {code})"
+    return row
+
+
+def outcome_report(rows: Sequence[Mapping[str, Any]], checks_digest: str) -> dict[str, Any]:
+    """One arm's outcome block: every task's row, the positive tasks that passed, the tasks with harm, and how the
+    checks were run."""
+    positive = [row for row in rows if row["polarity"] == "positive"]
+    return {"checks_digest": checks_digest, "tasks": [dict(row) for row in rows],
+            "positive": {"tasks": len(positive), "passed": sum(row["passed"] is True for row in positive)},
+            "harm": sum(row["harm"] for row in rows),
+            "no_diff": sum(row["polarity"] != "positive" and "no final diff" in row["why"] for row in rows),
+            "ran": sorted({row["ran"] for row in rows if row.get("ran")})}
+
+
+def validate_outcome_gates(data: Any) -> dict[str, Any]:
+    """The outcome bar when it is inside its format."""
+    fields = {"format", "cohort", "min_net_positive", "harm", "per", "comparison", "check_seconds"}
+    _need(isinstance(data, dict) and set(data) == fields, f"an outcome gate file has exactly {sorted(fields)}")
+    _need(data["format"] == FORMAT_OUTCOME_GATES and data["cohort"] == MOMENT, f"format is not {FORMAT_OUTCOME_GATES}")
+    _need(type(data["min_net_positive"]) is int and type(data["check_seconds"]) is int and data["check_seconds"] > 0,
+          "the net and the check time are whole numbers")
+    _need(data["harm"] == "after_not_above_before" and data["per"] == "each_client"
+          and data["comparison"] == "paired_exact_mcnemar_no_claim", "harm rule, per and comparison")
+    return data
+
+
+def compare_outcome(before: Mapping[str, Any], after: Mapping[str, Any], gates: Mapping[str, Any]) -> dict[str, Any]:
+    """The two arms' outcomes for one client, paired by positive task: wins (passed after only), losses (passed before
+    only), ties, the net (wins minus losses), the exact McNemar p-value of the discordant pairs, the harm of each arm,
+    and each pair's moment hit beside it. ``bar`` reads the pre-registered bar (net at least ``min_net_positive``, and
+    no more harm after than before); ``claim`` is ``None``: the cohort was not sized to decide a difference."""
+    validate_outcome_gates(dict(gates))
+    first, second = before["outcome"], after["outcome"]
+    _need(before.get("client") == after.get("client") and first["checks_digest"] == second["checks_digest"],
+          "the two arms differ in client or held-out checks: they are not a pair")
+    later = {row["task_id"]: row for row in second["tasks"]}
+    hit = {name: {row["task_id"]: bool(row.get("moment_hit")) for row in report["tasks"]}
+           for name, report in (("before", before), ("after", after))}
+    pairs = [{"task_id": row["task_id"], "kind": row["kind"], "before": row["passed"] is True,
+              "after": later[row["task_id"]]["passed"] is True,
+              "moment_hit": {name: hit[name].get(row["task_id"], False) for name in ("before", "after")}}
+             for row in first["tasks"] if row["polarity"] == "positive" and row["task_id"] in later]
+    wins = sum(p["after"] and not p["before"] for p in pairs)
+    losses = sum(p["before"] and not p["after"] for p in pairs)
+    net, harm = wins - losses, {"before": first["harm"], "after": second["harm"]}
+    bar = {"min_net": gates["min_net_positive"], "net_met": net >= gates["min_net_positive"],
+           "harm_met": harm["after"] <= harm["before"]}
+    return {"client": before["client"], "checks_digest": first["checks_digest"], "pairs": pairs, "wins": wins,
+            "losses": losses, "ties": {"both_pass": sum(p["before"] and p["after"] for p in pairs),
+                                       "both_fail": sum(not p["before"] and not p["after"] for p in pairs)},
+            "net": net, "p_exact": mcnemar_exact(losses, wins), "harm": harm,
+            "moment_hits": {name: sum(p["moment_hit"][name] for p in pairs) for name in ("before", "after")},
+            "ran": {"before": first["ran"], "after": second["ran"]},
+            "bar": {**bar, "met": bar["net_met"] and bar["harm_met"]}, "claim": None}

@@ -1,0 +1,7 @@
+{
+  "protected": [
+    "README.md",
+    "classify.py"
+  ],
+  "why": "A case is added to cases.json and nothing else: the code and the README stay as they are."
+}

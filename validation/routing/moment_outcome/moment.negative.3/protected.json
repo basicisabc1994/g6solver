@@ -1,0 +1,9 @@
+{
+  "protected": [
+    "README.md",
+    "shop/__init__.py",
+    "shop/prices.py",
+    "tests/test_prices.py"
+  ],
+  "why": "A question to answer while the files are left as they are: every fixture file stays as it is."
+}

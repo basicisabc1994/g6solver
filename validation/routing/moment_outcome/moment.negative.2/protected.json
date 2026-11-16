@@ -1,0 +1,8 @@
+{
+  "protected": [
+    "README.md",
+    "cases.json",
+    "classify.py"
+  ],
+  "why": "A question to answer without changing any file: every fixture file stays as it is."
+}
