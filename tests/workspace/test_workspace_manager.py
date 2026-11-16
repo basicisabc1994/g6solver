@@ -9,6 +9,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -123,6 +124,29 @@ def test_d1_a_junction_named_with_a_trailing_space_is_never_read_or_written_thro
         os.rmdir(link)
     assert sorted(p.name for p in outside.iterdir()) == ["secret.txt"]
     assert (outside / "secret.txt").read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junctions and stream names")
+def test_d1_a_stream_name_is_never_read_or_written_through_and_never_lets_a_raw_error_out(home, outside) -> None:
+    # open reads '<ws>\j::$INDEX_ALLOCATION\secret.txt' as '<ws>\j\secret.txt', through the junction 'j'; a file's
+    # index stream ('notes.txt::$INDEX_ALLOCATION') made resolving raise a raw NotADirectoryError. Both are refused as
+    # input G6 does not take, with an absolute path or a relative one
+    ws = _task(home)
+    made = subprocess.run(["cmd", "/c", "mklink", "/J", str(ws.root / "j"), str(outside.resolve())],
+                          capture_output=True, text=True, check=False)
+    if made.returncode:
+        pytest.skip("no junction can be made here")
+    try:
+        for raw in ("j::$INDEX_ALLOCATION/secret.txt", "j:$I30:$INDEX_ALLOCATION/made/x.txt",
+                    "notes.txt::$INDEX_ALLOCATION", "notes.txt:s:$INDEX_ALLOCATION/x.txt"):
+            for given in (raw, f"{ws.root}\\{raw}"):
+                with pytest.raises(E.WorkspaceRefused) as refused:
+                    ws.read(given)
+                assert refused.value.code == E.INPUT_INVALID, given
+                assert ops.write("t1", given, "written", dry_run=False).code == E.INPUT_INVALID, given
+    finally:
+        os.rmdir(ws.root / "j")
+    assert sorted(p.name for p in outside.iterdir()) == ["secret.txt"]
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows' per-folder case-sensitive flag")

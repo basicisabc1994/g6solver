@@ -17,9 +17,10 @@ import stat
 import time
 from pathlib import Path
 
-#: Names Windows keeps for devices in every folder (``CON``, ``nul.txt``): a path naming one is never a plain file.
-_DEVICES = frozenset({"con", "prn", "aux", "nul", "conin$", "conout$", *(f"com{i}" for i in range(10)),
-                      *(f"lpt{i}" for i in range(10))})
+#: Names Windows keeps for devices in every folder (``CON``, ``nul.txt``, ``COM¹``): a path naming one is never a plain
+#: file.
+_DEVICES = frozenset({"con", "prn", "aux", "nul", "conin$", "conout$", *(f"com{i}" for i in [*range(10), *"¹²³"]),
+                      *(f"lpt{i}" for i in [*range(10), *"¹²³"])})
 
 
 class PathRefused(ValueError):
@@ -56,10 +57,10 @@ def confined_path(raw: str | os.PathLike[str], roots: tuple[Path, ...]) -> Path:
 
 
 def state_path(*parts: str) -> Path:
-    """A path under the state root. Relative parts may not escape it."""
+    """A path under the state root. Relative parts may not escape it, nor hold a name :func:`_gate` refuses."""
+    if why := _gate(*parts):
+        raise PathRefused(f"state path escapes G6_HOME: {why}")
     root = g6_home().resolve()
-    if os.name == "nt" and (named := _read_two_ways(Path(*parts).parts)):
-        raise ValueError(f"state path escapes G6_HOME: {'/'.join(parts)} ({_TWO_WAYS.format(named)})")
     p: Path | None = root.joinpath(*parts).resolve()
     if os.name == "nt":
         # resolving while another thread deletes or makes a file or folder on the path can name a $Extend\$Deleted
@@ -70,14 +71,35 @@ def state_path(*parts: str) -> Path:
     return p
 
 
-#: Why a name ending in a space or a dot is refused (Windows only).
-_TWO_WAYS = ("{!r} ends in a space or a dot, which Windows drops from the last part of a path but keeps (a space) on "
-             "a part before it, so the name is read two ways")
+def _gate(*texts: str | os.PathLike[str]) -> str | None:
+    """The input gate: why G6 refuses a path, from the first name in ``texts`` (each split at every separator) that a
+    check and open could read two ways; None when every name is plain. Each entry point runs it on the caller's words
+    before anything is resolved, joined or asked about, and :func:`_opened_inside` on every name below the root.
 
-
-def _read_two_ways(parts: tuple[str, ...]) -> str | None:
-    """The first of ``parts`` whose name ends in a space or a dot (Windows reads it two ways), or None."""
-    return next((part for part in parts if part not in (".", "..") and part != part.rstrip(" .")), None)
+    On Windows it refuses a name holding a NUL or another control character; a ``:`` (open reads ``j::$INDEX_ALLOCATION``
+    as the folder ``j``, a file's stream, where pathlib reads the drive ``J:``); half of a UTF-16 character (a
+    surrogate); a name Windows keeps for a device, with or without an extension (``CON``, ``nul.txt``, ``COM¹``); and a
+    name ending in a space or a dot, which Windows drops from the last part of a path but keeps (a space) on a part
+    before it. On Linux and macOS it refuses only a NUL: a POSIX name may hold every other character, and open reads it
+    as written. The reason is G6's own words for the kind, never the name or the path."""
+    for text in texts:
+        for name in os.fspath(text).replace("\\" if os.name == "nt" else "/", "/").split("/"):
+            if "\0" in name:
+                return "a name in the path holds a NUL character"
+            if os.name != "nt" or name in (".", ".."):
+                continue
+            if any(ord(ch) < 32 for ch in name):
+                return "a name in the path holds a control character"
+            if ":" in name:
+                return "a name in the path holds ':', which Windows reads as a drive or a file's stream"
+            if any(0xD800 <= ord(ch) <= 0xDFFF for ch in name):
+                return "a name in the path holds half of a UTF-16 character (a surrogate)"
+            if name.split(".", 1)[0].rstrip(" ").lower() in _DEVICES:
+                return "a name in the path is one Windows keeps for a device"
+            if name != name.rstrip(" ."):
+                return ("a name in the path ends in a space or a dot, which Windows drops from the last part of a path "
+                        "but keeps (a space) on a part before it, so the name is read two ways")
+    return None
 
 
 def _verbatim(path: Path) -> str:
@@ -151,9 +173,9 @@ def _holds_nothing(folder: Path) -> bool:
 
 def _opened_inside(root: Path, path: Path) -> Path | None:
     """Windows: ``path`` as a caller's open reads its words (a local ``\\\\?\\X:\\`` prefix dropped, ``..`` taken, a
-    trailing dot dropped), when the file system says it is ``root`` or inside it, no part of it below ``root`` ends in
-    a space or a dot, and lstat finds no symbolic link, junction or other reparse point on any existing part of it below
-    ``root``; None otherwise. :class:`PathRefused` (not outside) for a name Windows cannot hold, or a folder on the
+    trailing dot dropped), when the file system says it is ``root`` or inside it, every name of it below ``root``
+    passes :func:`_gate` (so a name lstat cannot find is a plain one, below a folder that was found), and lstat finds no
+    symbolic link, junction or other reparse point on any existing part of it below ``root``; None otherwise. :class:`PathRefused` (not outside) for a name Windows cannot hold, or a folder on the
     path it cannot read now.
 
     Inside is decided by file identity, not by words: pathlib compares Windows paths ignoring case, but in a
@@ -171,7 +193,7 @@ def _opened_inside(root: Path, path: Path) -> Path | None:
     if text.startswith("\\\\?\\") and text[5:7] == ":\\":
         text = text[4:]
     plain = Path(os.path.abspath(text))
-    if plain != root and root not in plain.parents or _read_two_ways(plain.parts[len(root.parts):]):
+    if plain != root and root not in plain.parents or _gate(*plain.parts[len(root.parts):]):
         return None
     try:
         known = root                                 # the root, or the deepest folder above it that is there now
@@ -205,9 +227,11 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
     (by file identity, not by words, so a folder named as ``root`` but for case is outside), and a link resolving could
     not follow counts as outside too. Refused before anything is resolved: an empty path; a control character; a network
     or device path (``\\\\host\\share``, ``//host/share``, ``\\\\?\\``, ``\\\\.\\``), because resolving one on Windows
-    opens it over the network; a ``:`` in a relative path (a drive, or a file's alternate stream, on Windows); a part
-    named for a Windows device (``CON``, ``nul.txt``); and, on Windows, a part whose name ends in a space or a dot,
-    which Windows reads two ways. With ``refuse_links=True``, every existing path component is checked with lstat
+    opens it over the network; an absolute path on another drive or not under ``root`` (outside); a ``:`` in a relative
+    path (a drive, or a file's alternate stream, on Windows); a part named for a Windows device (``CON``, ``nul.txt``);
+    and any name below ``root`` that the input gate (:func:`_gate`) refuses: on Windows a ``:`` (a stream, even in an
+    absolute path), a control character, half of a UTF-16 character, a device's name, or a name ending in a space or a
+    dot, each of which Windows reads two ways. With ``refuse_links=True``, every existing path component is checked with lstat
     before resolution (on Windows each as open goes through it); symbolic links and reparse points are refused. On
     Windows a folder on the path that cannot be read now is refused, not as outside. It reads no file's content:
     :func:`plain_file` checks a file to be read."""
@@ -219,13 +243,25 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
     if text[:2] in ("\\\\", "//", "\\/", "/\\"):
         raise PathRefused(f"{text!r} is a network or device path, which G6 never resolves", outside=True)
     given = Path(text)
+    # On the words first, before anything is resolved or asked about: resolving a path outside the folder could follow
+    # a link out of it (a junction to a network share is opened by resolving it). An absolute path on another drive,
+    # or not under the root, is outside; the input gate then asks about the names below the root (a relative path's
+    # every name)
+    anchor = Path(os.path.normpath(Path(root).absolute()))
+    lexical = Path(os.path.normpath(given if given.is_absolute() else anchor / given))
+    outside = PathRefused(f"{text!r} is outside the folder (a '..' or a link out of it counts as outside)",
+                          outside=True)
+    if given.is_absolute() and lexical != anchor and anchor not in lexical.parents:
+        raise outside
+    if why := _gate(*(lexical.parts[len(anchor.parts):] if given.is_absolute() else (text,))):
+        raise PathRefused(why)
     if not given.is_absolute() and ":" in text:
         raise PathRefused(f"{text!r} names a drive or a file's stream (':'); give a path inside the folder")
     for part in given.parts[1 if given.anchor else 0:]:
         if part.split(".", 1)[0].rstrip(" ").lower() in _DEVICES:
             raise PathRefused(f"{part!r} is a name Windows keeps for a device")
-    if os.name == "nt" and (named := _read_two_ways(given.parts)):
-        raise PathRefused(_TWO_WAYS.format(named))
+    if lexical != anchor and anchor not in lexical.parents:
+        raise outside
     if refuse_links:
         # Bookkeeping must not traverse even a link whose target remains inside the root.
         candidate = given if given.is_absolute() else Path(root).absolute() / given
@@ -237,13 +273,6 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
             if stat.S_ISLNK(found.st_mode) or (getattr(found, "st_file_attributes", 0)
                                              & stat.FILE_ATTRIBUTE_REPARSE_POINT):
                 raise PathRefused(f"{ancestor.name!r} is a linked path component", outside=True)
-    # On the words first, before anything is resolved: resolving a path outside the folder could follow a link out of
-    # it (a junction to a network share is opened by resolving it)
-    anchor = Path(os.path.normpath(Path(root).absolute()))
-    lexical = Path(os.path.normpath(given if given.is_absolute() else anchor / given))
-    if lexical != anchor and anchor not in lexical.parents:
-        raise PathRefused(f"{text!r} is outside the folder (a '..' or a link out of it counts as outside)",
-                          outside=True)
     base = Path(root).resolve()
     joined = given if given.is_absolute() else base / given
     real: Path | None = joined.resolve()

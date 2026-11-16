@@ -368,3 +368,69 @@ def test_a_symbolic_link_is_not_a_plain_file(root: Path) -> None:
 def test_state_path_still_refuses_an_escape_from_the_g6_home() -> None:
     with pytest.raises(ValueError, match="escapes"):
         storage.state_path("..", "elsewhere")
+
+
+#: Names a check and open could read two ways on Windows: a stream (open reads 'j::$INDEX_ALLOCATION' as the folder
+#: 'j', pathlib as the drive 'J:'), a control character, half of a UTF-16 character, a device, a trailing space or dot.
+TWO_WAYS = ["j::$INDEX_ALLOCATION", "f.txt:s:$DATA", "a\x01b", "dp\udc80", "con.txt", "COM¹", "nul", "x.", "x "]
+
+
+def _asked_nothing(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record every lstat and resolve; the input gate must refuse before either is asked."""
+    asked: list[str] = []
+    real_lstat, real_resolve = os.lstat, Path.resolve
+    monkeypatch.setattr(os, "lstat", lambda p, *a, **k: asked.append(f"lstat {p}") or real_lstat(p, *a, **k))
+    monkeypatch.setattr(Path, "resolve", lambda self, strict=False: asked.append(f"resolve {self}")
+                        or real_resolve(self, strict))
+    return asked
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="names Windows reads two ways")
+@pytest.mark.parametrize("name", TWO_WAYS)
+def test_a_name_read_two_ways_is_refused_before_the_file_system_is_asked(root: Path, name: str,
+                                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    # one input gate in every entry point, on the caller's words, before any resolve or lstat: G6's own reason, never a
+    # path, never refused as outside
+    base = root.resolve()
+    asked = _asked_nothing(monkeypatch)
+    calls = [lambda: contained(root, f"{name}/x.json"), lambda: contained(root, f"{name}/x.json", refuse_links=True),
+             lambda: contained(root, f"{base}\\{name}\\x.json"),
+             lambda: contained(root, f"{base}\\{name}\\x.json", refuse_links=True),
+             lambda: storage.confined_path(f"{base}\\{name}\\x.json", (root,))]
+    for call in calls:
+        with pytest.raises(PathRefused) as refused:
+            call()
+        assert refused.value.outside is False
+        assert str(base) not in refused.value.reason and name not in refused.value.reason, refused.value.reason
+    assert asked == []
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows drive letters")
+@pytest.mark.parametrize("refuse_links", [False, True])
+def test_an_absolute_path_on_another_drive_is_outside_before_the_file_system_is_asked(
+        root: Path, refuse_links: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    base = root.resolve()
+    other = "Q:" if base.drive.upper() != "Q:" else "R:"
+    asked = _asked_nothing(monkeypatch)
+    with pytest.raises(PathRefused) as refused:
+        contained(root, other + str(base)[2:] + "\\x.json", refuse_links=refuse_links)
+    assert (refused.value.outside, asked) == (True, [])
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junctions and stream names")
+@pytest.mark.parametrize("stream", ["j::$INDEX_ALLOCATION", "j:$I30:$INDEX_ALLOCATION"])
+def test_a_stream_name_on_a_one_letter_junction_out_of_the_root_is_refused(root: Path, stream: str) -> None:
+    # open reads '<root>\j::$INDEX_ALLOCATION\secret.txt' as '<root>\j\secret.txt' and goes through the junction;
+    # pathlib reads the part as the drive 'J:', so a walk over pathlib's parts never saw the junction
+    base = root.resolve()
+    if not _junction(base / "j", root.parent / "outside"):
+        pytest.skip("junctions cannot be made here")
+    try:
+        raw = f"{base}\\{stream}\\secret.txt"
+        for call in (lambda: contained(root, raw), lambda: contained(root, raw, refuse_links=True),
+                     lambda: storage.confined_path(raw, (root,))):
+            with pytest.raises(PathRefused):
+                call()
+    finally:
+        os.rmdir(base / "j")
+

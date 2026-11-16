@@ -360,3 +360,28 @@ def test_a_home_reached_through_a_link_is_its_target(tmp_path: Path, monkeypatch
     assert state_path("a", "b.json") == real / "a" / "b.json"
     with pytest.raises(ValueError, match="escapes"):
         state_path("..", "x")
+
+
+#: Names a check and open could read two ways on Windows (see test_storage_contained's TWO_WAYS); a NUL everywhere.
+TWO_WAYS = ["a\x00b"] + (["j::$INDEX_ALLOCATION", "f.txt:s:$DATA", "a\x01b", "dp\udc80", "con.txt", "COM\u00b9", "nul",
+                          "x.", "x ", "C:\\elsewhere"] if sys.platform == "win32" else [])
+
+
+@pytest.mark.parametrize("name", TWO_WAYS)
+def test_a_name_read_two_ways_is_refused_before_the_file_system_is_asked(home: Path, name: str,
+                                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    # the input gate refuses before any resolve or lstat, in G6's words (never Python's), naming no path
+    from g6.core.storage import PathRefused
+
+    asked: list[str] = []
+    real_lstat, real_resolve = os.lstat, Path.resolve
+    monkeypatch.setattr(os, "lstat", lambda p, *a, **k: asked.append(f"lstat {p}") or real_lstat(p, *a, **k))
+    monkeypatch.setattr(Path, "resolve", lambda self, strict=False: asked.append(f"resolve {self}")
+                        or real_resolve(self, strict))
+    for parts in ((name, "x.json"), ("churn", name), (f"churn/{name}/x.json",)):
+        with pytest.raises(PathRefused, match="G6_HOME") as refused:
+            state_path(*parts)
+        assert refused.value.outside is False
+        assert str(home) not in refused.value.reason and name not in refused.value.reason, refused.value.reason
+    assert asked == []
+
