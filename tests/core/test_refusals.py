@@ -16,6 +16,44 @@ SRC = ROOT / "src" / "g6"
 CODE = re.compile(r"G6_E_[A-Z0-9_]*[A-Z0-9](?![A-Z0-9_])")
 #: The declarations themselves are not writers.
 NOT_WRITERS = {"core/refusals.py"}
+#: The scaffold generator emits extension source, not G6 replies. Its complete symbolic family;
+#: every generated package declares all four concrete codes. No runtime writer has an exception.
+DYNAMIC_FAMILIES = {"code/component_creator/render.py": {
+    "G6_E_{}_NOT_IMPLEMENTED", "G6_E_{}_INPUT", "G6_E_{}_CALL_FAILED", "G6_E_{}_CALLED"}}
+
+
+def dynamic_builders(source: str) -> set[str]:
+    """Code-building concatenations and f-strings, distinct from messages containing whole codes."""
+    tree = ast.parse(source)
+
+    def parts(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.JoinedStr):
+            return "".join(parts(v) for v in node.values)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return parts(node.left) + parts(node.right)
+        return "{}"
+
+    out = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.JoinedStr, ast.BinOp)):
+            continue
+        text = parts(node)
+        if text.startswith("G6_E_") and "{}" in text and re.fullmatch(r"[A-Z0-9_{}]+", text):
+            out.add(text)
+    return out
+
+
+def test_runtime_code_builders_have_a_declared_full_family():
+    unexpected = {}
+    for path in sorted((ROOT / "src").rglob("*.py")):
+        family = dynamic_builders(path.read_text(encoding="utf-8"))
+        rel = path.relative_to(SRC).as_posix()
+        unknown = family - DYNAMIC_FAMILIES.get(rel, set())
+        if unknown:
+            unexpected[rel] = sorted(unknown)
+    assert not unexpected, unexpected
 
 
 def _skipped(tree: ast.AST) -> set[int]:

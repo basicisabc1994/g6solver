@@ -64,6 +64,10 @@ def __getattr__(name: str) -> Any:
 #: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
 #: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
 __g6_refusals__ = {
+    "G6_E_PIPELINE_FEASIBILITY_INFEASIBLE": "person",
+    "G6_E_PIPELINE_FEASIBILITY_BLOCKED_MISSING_ACCESS": "person",
+    "G6_E_PIPELINE_FEASIBILITY_BLOCKED_UNCLEAR_SUCCESS": "person",
+    "G6_E_PIPELINE_FEASIBILITY_BLOCKED_MISSING_CONTEXT": "person",
     "G6_E_PIPELINE_CLARIFICATION_REQUIRED": "person",
     "G6_E_PIPELINE_FEASIBILITY_RISKY_CONFIRMATION_REQUIRED": ("person",
         "The task looks risky to carry out as asked and needs the person's confirmation. Ask the person; offer no "

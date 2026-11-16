@@ -62,6 +62,15 @@ __all__ = ["SEVERITY", "CodingAgentGateBlock", "CodingAgentGateInput", "Evidence
 #: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
 #: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
 __g6_refusals__ = {
+    "G6_E_CODING_AGENT_GATE_PASS": "none",
+    "G6_E_CODING_AGENT_GATE_PROCEED_WITH_CAUTION": "person",
+    "G6_E_CODING_AGENT_GATE_REVISE": ("input", "Fix the findings with every check still active; attach the evidence "
+                                          "and call the gate again. Never weaken a gate to obtain permission."),
+    "G6_E_CODING_AGENT_GATE_NEEDS_EVIDENCE": ("input", "Supply the missing evidence before acting, then call the "
+                                                  "gate again. Its answer does not grant permission."),
+    "G6_E_CODING_AGENT_GATE_BLOCK": ("person", "wait"),
+    "G6_E_CODING_AGENT_GATE_NEEDS_REVIEW": ("person", "wait"),
+    "G6_E_CODING_AGENT_GATE_UNKNOWN_VERDICT": "person",
     "G6_E_CODING_AGENT_GATE_TASK_REQUIRED": "input",
     "G6_E_PROTECTED_POLICY_FAILED": "person",
     "G6_E_PROTECTED_POLICY_MISSING": "person",

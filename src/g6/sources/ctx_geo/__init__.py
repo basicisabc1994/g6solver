@@ -46,6 +46,18 @@ __all__ = ["BACKENDS", "GOOGLE_KEY", "SENSITIVE_OPS", "CtxGeoBlock", "CtxGeoInpu
 #: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
 #: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
 __g6_refusals__ = {
+    "G6_E_GEO_AUTH_FAILED": "person",
+    "G6_E_GEO_QUOTA_EXCEEDED": "person",
+    "G6_E_GEO_REJECTED": "input",
+    "G6_E_GEO_NOT_FOUND": "input",
+    "G6_E_GEO_SERVER_ERROR": "person",
+    "G6_E_GEO_PARSE_FAILED": "none",
+    "G6_E_GEO_UNREACHABLE": "person",
+    "G6_E_GEO_REFUSED": "person",
+    "G6_E_GEO_TOO_LARGE": "person",
+    "G6_E_GEO_HTTP_ERROR": "person",
+    "G6_E_GEO_UNSUPPORTED": "input",
+    "G6_E_GEO_UNKNOWN_OUTCOME": "person",
     "G6_E_GEO_ANSWERED": "none",
     "G6_E_GEO_BACKENDS": "none",
     "G6_E_GEO_DRY_RUN": "none",
