@@ -62,4 +62,5 @@ __g6_refusals__ = {
     "G6_E_SELF_MAINTENANCE_INPUT": "input",
     "G6_E_SELF_MAINTENANCE_LIVE_AGENT_OFF": "none",
     "G6_E_SELF_MAINTENANCE_PLAN": "none",
+    "G6_E_OPERATOR_APPROVAL_MISMATCH": "person",
 }

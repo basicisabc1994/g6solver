@@ -58,4 +58,5 @@ __g6_refusals__ = {
     "G6_E_MEDIA_DIAGRAM_DOES_NOT_PARSE": "none",
     "G6_E_MEDIA_DIAGRAM_MISMATCH": "none",
     "G6_E_MEDIA_LOADS_EXTERNAL": "none",
+    "G6_E_OUTSIDE_PROGRAM_MISSING": "person",
 }

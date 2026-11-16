@@ -61,6 +61,12 @@ BOUND_COMPONENTS = ("action_gating", "action_logic", "adapt_automl", "adapt_baye
 UNDECLARED = ("G6 has no declaration for this refusal, so it is not known to be one you can fix: tell the person "
               "what it says. Never work around it.")
 
+# Open suffixes cannot be enumerated. Each writer declares the whole family and its repair class.
+FAMILIES: dict[tuple[str, str], tuple[str, str]] = {
+    ("algorithm_design/autonomous.py", "G6_E_ALGO_{}"): ("person", "component:algorithm_design"),
+    ("agents/agent_nanoclaw/mailbox.py", "G6_E_MAILBOX_{}"): ("person", "layer:agents"),
+}
+
 
 @dataclass(frozen=True)
 class Refusal:
@@ -177,6 +183,13 @@ def resolve(code: str, component: str = "", declared: dict[str, dict[str, list[s
         rows = {name: codes[code] for name, codes in sorted(declared.items()) if code in codes}
         if rows and len({row[0] for row in rows.values()}) == 1:
             return Refusal(code, *next(iter(rows.values())), owner="component:" + " ".join(rows))
+    for (_, pattern), (fix_by, owner) in FAMILIES.items():
+        prefix, suffix = pattern.split("{}")
+        middle = code[len(prefix):len(code) - len(suffix) if suffix else None]
+        if code.startswith(prefix) and code.endswith(suffix) and middle and all(
+                c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" for c in middle) and (
+                not component or owner == f"component:{component}"):
+            return parse(code, fix_by, owner)
     return Refusal(code, "person", UNDECLARED)
 
 
@@ -669,9 +682,7 @@ LAYERS: dict[str, tuple[str, ...]] = {
     "G6_E_SCREEN_RAW_FAILED": ("none", "core",
         "The component's own input screen failed: tell the person; it is G6's fault."),
     "G6_E_SENSITIVE_COMPONENT_DENIED": ("person", "agents core mcp",
-        "This op runs a program or changes the machine, and this server does not allow it. Only the person can, where "
-        "the server is registered: tell them the step, and what code it lets run. Never change it yourself.",
-        "g6 setup --allow <component.op>"),
+        "This op is sensitive. The person decides whether to allow it themselves. Tell the person and stop."),
     "G6_E_SOURCE_INSTRUCTIONS": ("none", "bundles"),
     "G6_E_STOPPED": ("none", "core operator", "The review stopped: Show the reply's report to the person as it is."),
     "G6_E_STRUCTURED_CALL_FAILED": ("none", "core"),
@@ -709,4 +720,45 @@ LAYERS: dict[str, tuple[str, ...]] = {
     "G6_E_WORKSPACE_RESTORED": ("none", "workspace"),
     "G6_E_WORKSPACE_STALE_WRITE": ("person", "workspace"),
     "G6_E_WORKSPACE_WRITTEN": ("none", "workspace"),
+    "G6_E_AGENT_BAD_EVENT": ("person", "agents"),
+    "G6_E_AGENT_CALL_REQUIRED": ("person", "agents"),
+    "G6_E_AGENT_CALL_REUSED": ("person", "agents"),
+    "G6_E_AGENT_CIRCUIT_OPEN": ("person", "agents"),
+    "G6_E_AGENT_CLEANUP_UNCONFIRMED": ("person", "agents"),
+    "G6_E_AGENT_DEADLINE": ("person", "agents"),
+    "G6_E_AGENT_DECIDED": ("person", "agents"),
+    "G6_E_AGENT_DRY_RUN": ("person", "agents"),
+    "G6_E_AGENT_EXIT_FAILED": ("person", "agents"),
+    "G6_E_AGENT_FAILED": ("person", "agents"),
+    "G6_E_AGENT_GATE_BLOCKED": ("person", "agents"),
+    "G6_E_AGENT_GATE_ERROR": ("person", "agents"),
+    "G6_E_AGENT_NOT_A_RUNTIME": ("person", "agents"),
+    "G6_E_AGENT_NOT_VERSIONED": ("person", "agents"),
+    "G6_E_AGENT_NO_OUTCOME": ("person", "agents"),
+    "G6_E_AGENT_OUTPUT_TOO_LARGE": ("person", "agents"),
+    "G6_E_AGENT_OUTSIDE_WORKSPACE": ("person", "agents"),
+    "G6_E_AGENT_PATHS_REQUIRED": ("person", "agents"),
+    "G6_E_AGENT_PERMISSION": ("person", "agents"),
+    "G6_E_AGENT_POLICY_BLOCKED": ("person", "agents"),
+    "G6_E_AGENT_SELF_CALL": ("person", "agents"),
+    "G6_E_AGENT_SELF_REPORTED": ("person", "agents"),
+    "G6_E_AGENT_START_FAILED": ("person", "agents"),
+    "G6_E_AGENT_STEP_LIMIT": ("person", "agents"),
+    "G6_E_AGENT_TASK_CHECKED": ("person", "agents"),
+    "G6_E_AGENT_TASK_REQUIRED": ("person", "agents"),
+    "G6_E_AGENT_TOOL_ALLOWED": ("person", "agents"),
+    "G6_E_AGENT_TOOL_FAILED": ("person", "agents"),
+    "G6_E_AGENT_TOOL_LIMIT": ("person", "agents"),
+    "G6_E_AGENT_TOOL_UNDECLARED": ("person", "agents"),
+    "G6_E_AGENT_UNGATED_TOOL": ("person", "agents"),
+    "G6_E_AGENT_WORKSPACE": ("person", "agents"),
+    "G6_E_COMPOSITION_CONTRACT_CHANGED": ("person", "core"),
+    "G6_E_COMPOSITION_EVIDENCE_MISMATCH": ("person", "core"),
+    "G6_E_COMPOSITION_INVALID_MAPPING": ("input", "core"),
+    "G6_E_COMPOSITION_NO_CONTRACT": ("person", "core"),
+    "G6_E_COMPOSITION_OUTPUT_MISSING": ("person", "core"),
+    "G6_E_COMPOSITION_PRECONDITION_FAILED": ("person", "core"),
+    "G6_E_COMPOSITION_STOP_CONDITION": ("person", "core"),
+    "G6_E_COMPOSITION_UNMET_INPUT": ("input", "core"),
+    "G6_E_EVIDENCE_BINDING_UNREADABLE": ("person", "research"),
 }

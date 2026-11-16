@@ -23,26 +23,10 @@ DYNAMIC_FAMILIES = {"code/component_creator/render.py": {
 
 
 def dynamic_builders(source: str) -> set[str]:
-    """Code-building concatenations and f-strings, distinct from messages containing whole codes."""
-    tree = ast.parse(source)
+    """Code builders, including static/imported prefixes and bracketed messages."""
+    from tests.core.refusal_scan import builders
 
-    def parts(node):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            return node.value
-        if isinstance(node, ast.JoinedStr):
-            return "".join(parts(v) for v in node.values)
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-            return parts(node.left) + parts(node.right)
-        return "{}"
-
-    out = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.JoinedStr, ast.BinOp)):
-            continue
-        text = parts(node)
-        if text.startswith("G6_E_") and "{}" in text and re.fullmatch(r"[A-Z0-9_{}]+", text):
-            out.add(text)
-    return out
+    return builders(source)
 
 
 def test_runtime_code_builders_have_a_declared_full_family():
@@ -50,7 +34,10 @@ def test_runtime_code_builders_have_a_declared_full_family():
     for path in sorted((ROOT / "src").rglob("*.py")):
         family = dynamic_builders(path.read_text(encoding="utf-8"))
         rel = path.relative_to(SRC).as_posix()
-        unknown = family - DYNAMIC_FAMILIES.get(rel, set())
+        from g6.core import refusals
+
+        unknown = {code for code in family - written(path) - DYNAMIC_FAMILIES.get(rel, set())
+                   if (rel, code) not in refusals.FAMILIES}
         if unknown:
             unexpected[rel] = sorted(unknown)
     assert not unexpected, unexpected
@@ -74,10 +61,15 @@ def written(path: Path) -> set[str]:
     or a comparison (``code == "G6_E_X"``, ``"G6_E_X" in text``) only reads one. A family prefix (``G6_E_LOOP_``) is
     no code."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    from tests.core.refusal_scan import constants, expressions, parts
+
+    names = constants(tree, path)
     skip = _skipped(tree)
-    return {m.group(0) for node in ast.walk(tree)
+    literal = {m.group(0) for node in ast.walk(tree)
             if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip
             for m in CODE.finditer(node.value)}
+    return literal | {m.group(0) for node in expressions(tree) if id(node) not in skip
+                      for m in CODE.finditer(parts(node, names))}
 
 
 def _packages() -> dict[Path, str]:
@@ -185,6 +177,10 @@ def test_every_declaration_is_one_class_or_a_tool_g6_offers() -> None:
         assert row.fix_by in refusals.CLASSES or (
             row.fix_by.startswith("tool:") and row.fix_by[5:] in tools | ops), (row.code, row.fix_by)
         assert row.words.strip() and row.words == " ".join(row.words.split()), row.code
+    for (writer, pattern), (fix_by, owner) in refusals.FAMILIES.items():
+        assert fix_by in refusals.CLASSES and pattern.count("{}") == 1
+        assert pattern in dynamic_builders((SRC / writer).read_text(encoding="utf-8"))
+        assert owner.startswith(("component:", "layer:"))
 
 
 def test_a_declaration_with_a_code_twice_is_refused(tmp_path) -> None:

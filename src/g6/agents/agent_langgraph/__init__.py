@@ -67,4 +67,7 @@ __g6_refusals__ = {
     "G6_E_AGENT_LANGGRAPH_TOO_LARGE": "person",
     "G6_E_LLM_DISABLED": ("tool:g6_select",
         "No model is configured for G6. Do the step yourself, then ask for the op that checks it."),
+    "G6_E_AGENT_LANGGRAPH_INPUT_UNDECLARED": "person",
+    "G6_E_AGENT_LANGGRAPH_MODEL_FAILED": "person",
+    "G6_E_AGENT_LANGGRAPH_NOT_INSTALLED": "person",
 }

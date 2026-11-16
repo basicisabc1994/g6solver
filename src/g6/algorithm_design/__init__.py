@@ -53,4 +53,7 @@ __g6_refusals__ = {
     "G6_E_ALGO_PROPOSAL": "none",
     "G6_E_ALGO_UNKNOWN_CANDIDATE": "input",
     "G6_E_OPERATOR_APPROVAL_REQUIRED": ("person", "wait"),
+    "G6_E_ALGO_LEDGER_CONFLICT": "person",
+    "G6_E_ALGO_NO_ENGINEER": "person",
+    "G6_E_OPERATOR_APPROVAL_MISMATCH": "person",
 }

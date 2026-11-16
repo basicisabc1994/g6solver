@@ -60,10 +60,8 @@ def test_sensitive_library_candidates_are_person_steps_without_calls():
     reply = selector.select("check my lean proof, then check the claims", "verify", considering=[
         {"component": "lean", "op": "check_proof", "args": {}},
         {"component": "grounding", "op": "check_claims", "args": {"claims": [], "sources": {}}}])
-    [candidate] = [c for c in reply["candidates"] if c["id"] == "library:compose"]
-    assert candidate["by"] == "person" and candidate["call"] is None
-    assert "sensitive" in candidate["step"] and "person decides" in candidate["step"]
-    assert not re.search(r"allow\s*=", json.dumps(candidate))
+    assert not [c for c in reply["candidates"] if c["id"] == "library:compose"]
+    assert not re.search(r"allow\s*=", json.dumps(reply))
     assert selector.invoke_sketch(["lean.check_proof"]) == ""
 
 
@@ -91,9 +89,9 @@ def test_stats_skips_recursion_and_other_decoder_exceptions(monkeypatch):
     from g6.core import repair_log
 
     class Lines:
-        def read_text(self, **kwargs):
-            return 'boom\n' + '[' * 100000 + '\n' + json.dumps({
-                "event": "refused", "code": "G6_E_INPUT_VALIDATION"})
+        def read_bytes(self):
+            return ('boom\n' + '[' * 100000 + '\n' + json.dumps({
+                "event": "refused", "code": "G6_E_INPUT_VALIDATION"})).encode("utf-8")
 
     loads = json.loads
 
@@ -127,7 +125,10 @@ def test_error_transport_preserves_only_the_exact_public_input_envelope(authorit
     from g6.mcp.cloud_consent import input_error_result
     from g6.mcp.consent_transport import Ticket, _Session
 
-    result = input_error_result("g6_select", ["task", "phase", "limit"]).to_mcp_result()
+    class Session:
+        pass
+
+    result = input_error_result("g6_select", ["task", "phase", "limit"], session=Session()).to_mcp_result()
     assert result.isError and result.structuredContent["repair"]["fix_by"] == "input"
     body = result.model_dump(mode="json", by_alias=True, exclude_none=True)
     ticket = Ticket((policy.UNKNOWN,) if authority == "source" else (), "cloud:unknown", frozenset(),

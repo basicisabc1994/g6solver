@@ -71,4 +71,6 @@ __g6_refusals__ = {
     "G6_E_AGENT_SMOLAGENTS_TOOL_MISSING": "none",
     "G6_E_LLM_DISABLED": ("tool:g6_select",
         "No model is configured for G6. Do the step yourself, then ask for the op that checks it."),
+    "G6_E_AGENT_SMOLAGENTS_AGENT_FAILED": "person",
+    "G6_E_AGENT_SMOLAGENTS_NOT_INSTALLED": "person",
 }

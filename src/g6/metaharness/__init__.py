@@ -290,4 +290,6 @@ __g6_refusals__ = {
     "G6_E_PIPELINE_FEASIBILITY_RISKY_CONFIRMATION_REQUIRED": ("person",
         "The task looks risky to carry out as asked and needs the person's confirmation. Ask the person; offer no "
         "other way to agree, and never answer for them."),
+    "G6_E_LOOP_ENROLMENT_CHANGED": "person",
+    "G6_E_LOOP_TICK_BUDGET_SPENT": "person",
 }

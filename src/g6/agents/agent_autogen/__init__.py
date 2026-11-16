@@ -70,4 +70,7 @@ __g6_refusals__ = {
     "G6_E_AGENT_AUTOGEN_UNCHECKED_TEAM": "none",
     "G6_E_LLM_DISABLED": ("tool:g6_select",
         "No model is configured for G6. Do the step yourself, then ask for the op that checks it."),
+    "G6_E_AGENT_AUTOGEN_NOT_INSTALLED": "person",
+    "G6_E_AGENT_AUTOGEN_TEAM_FAILED": "person",
+    "G6_E_AGENT_AUTOGEN_WORKER_ALIVE": "person",
 }
