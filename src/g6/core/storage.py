@@ -58,6 +58,8 @@ def confined_path(raw: str | os.PathLike[str], roots: tuple[Path, ...]) -> Path:
 def state_path(*parts: str) -> Path:
     """A path under the state root. Relative parts may not escape it."""
     root = g6_home().resolve()
+    if os.name == "nt" and (named := _read_two_ways(Path(*parts).parts)):
+        raise ValueError(f"state path escapes G6_HOME: {'/'.join(parts)} ({_TWO_WAYS.format(named)})")
     p: Path | None = root.joinpath(*parts).resolve()
     if os.name == "nt":
         # resolving while another thread deletes or makes a file or folder on the path can name a $Extend\$Deleted
@@ -68,34 +70,57 @@ def state_path(*parts: str) -> Path:
     return p
 
 
+#: Why a name ending in a space or a dot is refused (Windows only).
+_TWO_WAYS = ("{!r} ends in a space or a dot, which Windows drops from the last part of a path but keeps (a space) on "
+             "a part before it, so the name is read two ways")
+
+
+def _read_two_ways(parts: tuple[str, ...]) -> str | None:
+    """The first of ``parts`` whose name ends in a space or a dot (Windows reads it two ways), or None."""
+    return next((part for part in parts if part not in (".", "..") and part != part.rstrip(" .")), None)
+
+
+def _verbatim(path: Path) -> str:
+    """``path`` (absolute, as open reads it) in its ``\\\\?\\`` form: its words reach the file system as they are, so a
+    trailing space or dot on its last part is not dropped."""
+    text = str(path)
+    return "\\\\?\\UNC\\" + text[2:] if text.startswith("\\\\") else "\\\\?\\" + text
+
+
 def _opened_inside(root: Path, path: Path) -> Path | None:
     """Windows: ``path`` as a caller's open reads its words (a local ``\\\\?\\X:\\`` prefix dropped, ``..`` taken, a
-    trailing dot dropped), when that is ``root`` or inside it and lstat finds no symbolic link, junction or other
-    reparse point on any existing part of it below ``root``; None otherwise.
+    trailing dot dropped), when that is ``root`` or inside it, no part of it below ``root`` ends in a space or a dot,
+    and lstat finds no symbolic link, junction or other reparse point on any existing part of it below ``root``; None
+    otherwise. :class:`PathRefused` (not outside) for a name Windows cannot hold.
 
     ``Path.resolve`` follows every link it can, but a link whose target names no path yet, or none as written, stops
     it: it gives the link's words joined with the rest, and open reads them again, perhaps out of ``root`` (``..``),
     through a link (``sub.`` opens ``sub``) or into a folder a caller makes beyond a link on the way. A path resolving
-    followed to the end holds no link, so a link still on the answer is refused."""
+    followed to the end holds no link, so a link still on the answer is refused. Each part is asked about in its
+    ``\\\\?\\`` form, exactly as open goes through it: plain lstat of ``a `` would ask about ``a``."""
     text = str(path)
     if text.startswith("\\\\?\\") and text[5:7] == ":\\":
         text = text[4:]
     plain = Path(os.path.abspath(text))
-    if plain != root and root not in plain.parents:
+    if plain != root and root not in plain.parents or _read_two_ways(plain.parts[len(root.parts):]):
         return None
     step = root
     for part in plain.parts[len(root.parts):]:
         step = step / part
-        # in a folder being deleted just now lstat answers access denied until it is gone (a few ms): ask again, for
-        # up to about 50 ms, then refuse
+        # in a folder being deleted just now lstat answers access denied (5) or a sharing violation (32) until it is
+        # gone (a few ms): ask again, for up to about 50 ms, then refuse. Any other error is no such race.
         found: os.stat_result | None = None
         for _ in range(50):
             try:
-                found = os.lstat(step)
+                found = os.lstat(_verbatim(step))
                 break
             except FileNotFoundError:
                 return plain
-            except OSError:
+            except OSError as error:
+                if getattr(error, "winerror", None) in (123, 161, 206):  # an invalid name, path, or a name too long
+                    raise PathRefused(f"{part!r} is not a name Windows can hold") from None
+                if getattr(error, "winerror", None) not in (5, 32):
+                    return None
                 time.sleep(0.001)
         if found is None or stat.S_ISLNK(found.st_mode) or (getattr(found, "st_file_attributes", 0)
                                                             & stat.FILE_ATTRIBUTE_REPARSE_POINT):
@@ -111,9 +136,10 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
     outside; on Windows the answer is checked as open reads it, and a link resolving could not follow counts as outside
     too. Refused before anything is resolved: an empty path; a control character; a network or device path
     (``\\\\host\\share``, ``//host/share``, ``\\\\?\\``, ``\\\\.\\``), because resolving one on Windows opens it over the
-    network; a ``:`` in a relative path (a drive, or a file's alternate stream, on Windows); and a part named for a
-    Windows device (``CON``, ``nul.txt``). With ``refuse_links=True``, every existing path component is checked with
-    lstat before resolution; symbolic links and reparse points are refused. It reads no file's content:
+    network; a ``:`` in a relative path (a drive, or a file's alternate stream, on Windows); a part named for a
+    Windows device (``CON``, ``nul.txt``); and, on Windows, a part whose name ends in a space or a dot, which Windows
+    reads two ways. With ``refuse_links=True``, every existing path component is checked with lstat before resolution
+    (on Windows each as open goes through it); symbolic links and reparse points are refused. It reads no file's content:
     :func:`plain_file` checks a file to be read."""
     text = os.fspath(raw)
     if not isinstance(text, str) or not text.strip():
@@ -128,12 +154,16 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
     for part in given.parts[1 if given.anchor else 0:]:
         if part.split(".", 1)[0].rstrip(" ").lower() in _DEVICES:
             raise PathRefused(f"{part!r} is a name Windows keeps for a device")
+    if os.name == "nt" and (named := _read_two_ways(given.parts)):
+        raise PathRefused(_TWO_WAYS.format(named))
     if refuse_links:
         # Bookkeeping must not traverse even a link whose target remains inside the root.
         candidate = given if given.is_absolute() else Path(root).absolute() / given
+        if os.name == "nt":                 # each part as open goes through it ('..' taken, then the words as they are)
+            candidate = Path(os.path.abspath(candidate))
         for ancestor in (*reversed(candidate.parents), candidate):
             try:
-                found = os.lstat(ancestor)
+                found = os.lstat(_verbatim(ancestor) if os.name == "nt" else ancestor)
             except FileNotFoundError:
                 continue
             if stat.S_ISLNK(found.st_mode) or (getattr(found, "st_file_attributes", 0)

@@ -201,6 +201,31 @@ def test_a_junction_windows_cannot_follow_is_refused(home: Path, tmp_path: Path,
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows junctions and \\\\?\\ paths")
+def test_a_junction_named_with_a_trailing_space_is_refused(home: Path, tmp_path: Path) -> None:
+    # Windows drops a trailing space from the last part of a path but keeps it on a part before it: a walk that asks
+    # about '<home>\a ' as a last part asks about '<home>\a' (not there), while opening '<home>\a \secret.txt' goes
+    # through the junction 'a ' (made through \\?\, which keeps the space)
+    root = home.resolve()
+    link = Path("\\\\?\\" + str(root / "a "))
+    verbatim_junction(link, "\\??\\" + str(tmp_path.resolve() / "outside"))
+    try:
+        for parts in (("a ", "secret.txt"), ("a ", "new", "kept.json"), ("a /secret.txt",)):
+            with pytest.raises(ValueError, match="escapes"):
+                state_path(*parts)
+    finally:
+        os.rmdir(link)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows drops a trailing space or dot from a name")
+@pytest.mark.parametrize("parts", [("churn.", "a.json"), ("churn ", "a.json"), ("churn", "a.json."),
+                                   ("churn", "a.json "), ("churn. /a.json",)])
+def test_a_part_ending_in_a_space_or_a_dot_is_refused(home: Path, parts: tuple[str, ...]) -> None:
+    # Windows reads such a name one way as the last part of a path and another way before it, so G6 refuses it
+    with pytest.raises(ValueError, match="space or a dot"):
+        state_path(*parts)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junctions and \\\\?\\ paths")
 def test_a_junction_windows_cannot_follow_whose_words_stay_inside_gives_the_words_as_open_reads_them(
         home: Path) -> None:
     # the value is what open reads: '..' taken, no \\?\ prefix, and no link on it, so opening it stays inside
