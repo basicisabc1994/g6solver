@@ -13,6 +13,8 @@ the candidate's writable scope.
 A tool named here that your server does not list is absent: say so, use `g6_find`, and do not call it again. The
 sections below are routes too: Deliver (review), Find (discover), Compose and Fit.
 
+- **select.** Not sure which G6 step fits now, or a call was refused? `g6_select` with the task, your phase and the
+  refusal returns a few checked calls with their templates; nothing runs.
 - **question.** Where the task may not decide a behaviour, `g6_confirm_behaviour` asks the person in the client's own
   dialog: one question per task by default, and the person may allow more or set none. Only the person answers; you
   never answer for them.

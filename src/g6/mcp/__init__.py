@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """g6-mcp — a stdio MCP server exposing G6's progressive discovery surface.
 
-56 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
+57 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
+``g6_select``, the staged selector: checked next calls for the agent's situation, and a reroute after a refusal
+(``g6.mcp.selector``);
 ``g6_allowances`` for both providers' quota windows and advisory pacing (``g6.allowance``);
 ``g6_review_patch``, which assesses a Python patch against stated requirements in confined test runs, as a job;
 ``g6_review_until_clean``, one step of the completion loop for a client the plugin's hook cannot reach (``g6.mcp.review_loop``),
@@ -220,6 +222,8 @@ def build_server(surface: Any = None) -> Any:
         return compose_reply(payload, allow_sensitive=allowed_sensitive())
 
     _metaharness_tools(server, surface, Context)
+    from g6.mcp import selector
+    selector.register(server)            # g6_select: the staged selector over G6's own corpus; reads no repository
     from g6.mcp import workflow
     workflow.register(server, Context)   # after the consent egress above: it stays the last thing to touch a reply
     return server
