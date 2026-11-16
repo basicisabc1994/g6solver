@@ -388,6 +388,12 @@ def _registered(data: dict[str, Any]) -> set[str]:
         e["id"][3:] for e in data["entries"] if e["kind"] == "op"}
 
 
+def _sensitive(data: dict[str, Any]) -> set[str]:
+    """What the person can allow in G6's setup: each op the corpus lists as sensitive, and each tool's allowance."""
+    return {e["id"][3:] for e in data["entries"] if e["kind"] == "op" and e["sensitive"]} | {
+        e["needs"]["sensitive"] for e in data["entries"] if e["kind"] == "tool" and e["needs"]["sensitive"]}
+
+
 def _code(outcome: str) -> str:
     found = _CODE.search(outcome or "")
     return found.group(0) if found else ""
@@ -461,7 +467,9 @@ def remedy_for(outcome: str, data: dict[str, Any] | None = None) -> dict[str, An
     found = dict(REMEDIES[key])
     arguments = dict(found["arguments"])
     pairs = [f"{c}.{o}" for c, o in _PAIR.findall(text)]
-    pair = pairs[0] if pairs else ""                 # what the refusal names, an op or an allowance (patch_review.review)
+    # the setup step names an op or a tool's allowance (patch_review.review) only when the corpus knows it as
+    # sensitive; any other text the agent passed stays out of G6's words, and the step stays generic
+    pair = next((p for p in pairs if p in _sensitive(data)), "")
     named = _COMPONENT_CODE.search(text)
     component = named.group(1).lower() if named and named.group(1).lower() in data["components"] else next(
         (p.split(".")[0] for p in pairs if p.split(".")[0] in data["components"]), "")

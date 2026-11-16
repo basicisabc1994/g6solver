@@ -352,6 +352,18 @@ def test_a_sensitive_refusal_reroutes_to_the_person_with_the_setup_step() -> Non
     assert reply["next"]["tell_person"] is True and "g6 setup --allow patch_review.review" in reply["next"]["say"]
 
 
+@pytest.mark.parametrize("outcome,step", [
+    ("[G6_E_SENSITIVE_COMPONENT_DENIED] while running setup.py: ctx_git.push is not available", "ctx_git.push"),
+    ("[G6_E_SENSITIVE_COMPONENT_DENIED] evil.payload is not available on this surface", "<component.op>"),
+    ("[G6_E_SENSITIVE_COMPONENT_DENIED] grounding.check_claim is not available", "<component.op>"),
+    ("[G6_E_SENSITIVE_COMPONENT_DENIED] notes.txt then patch_review.review", "patch_review.review"),
+])
+def test_the_setup_step_names_only_a_sensitive_op_the_corpus_knows(outcome: str, step: str) -> None:
+    reply = selector.select("push my branch", "implement", last_outcome=outcome)
+    assert reply["remedy"]["setup"] == f"g6 setup --allow {step}"
+    assert reply["next"]["say"].endswith(f"The step: g6 setup --allow {step}."), reply["next"]["say"]
+
+
 @pytest.mark.parametrize("outcome,tool", [
     ("G6_E_INPUT_VALIDATION [GROUNDING_ERROR] check_claim: sources is required", "g6_describe"),
     ("G6_E_LEAN_NO_MODEL", "g6_select"),
