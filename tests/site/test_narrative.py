@@ -131,5 +131,7 @@ def test_the_home_page_scopes_approval_labels_and_judging_to_what_the_code_does(
         assert overclaim not in home, overclaim
     assert "A new version goes live only when you say yes" in home
     assert "differs from the code you confirmed" in home
-    assert "called through G6's MCP server or CLI carries one of three labels" in home
+    # Review 4 F5: only returned results carry labels; a runtime exception is reported as a failure (MCP masks it).
+    assert "A result a component returns through G6's MCP server or CLI carries one of three labels" in home
+    assert "An operation that fails while running is reported as a failure" in home
     assert "the meta-harness puts no new version live without your approval" in home
