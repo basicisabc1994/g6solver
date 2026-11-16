@@ -39,6 +39,40 @@ ROOT_CAPTURES = {
 # These retain existing state I/O, low-level implementations, checked callers and exclusive writers. The bound
 # preliminary resolution limitations and same-user replacement windows remain listed in the repair report.
 PLAIN_IO = {
+    ("g6.code._roots", "__post_init__", "object.__setattr__"):
+        "Initial capture of frozen Roots fields; never used to rebind checked Roots at read time.",
+    ("g6.code._roots", "_final_path", "os.path.realpath"):
+        "Read the already-open descriptor's /proc name, not the caller's original path.",
+    ("g6.code._roots", "_folder_state", "folder.resolve"):
+        "Fallback final name must match the opened folder's identity before capture.",
+    ("g6.code._roots", "walk", "path.resolve"):
+        "Walk classification after link exclusion; each content read checks the captured Roots again.",
+    ("g6.code._roots", "destination", "real.iterdir"):
+        "Shared destination admission checks emptiness after confinement, before the checked exclusive writer.",
+    ("g6.code._roots", "_files", "os.scandir"):
+        "Shared bounded walk excludes links and checks children before content reads.",
+    ("g6.sources.ctx_git.config", "destination", "real.iterdir"):
+        "Clone destination emptiness after confinement, before git writes.",
+    ("g6.code._build", "write_files", "output.resolve"):
+        "Writer's preliminary containment check; retained parent identities checked again before exclusive open.",
+    ("g6.code._build", "write_files", "target.resolve"):
+        "Captured destination's preliminary check; retained parent identities checked before exclusive open.",
+    ("g6.code.component_creator.render", "write", "(dest / rel).resolve"):
+        "Writer rejects links and rechecks retained parent identities before exclusive open.",
+    ("g6.code.adapt_webpage.checks", "html_script", "root.rglob"):
+        "Child checker enumerates generated artefacts inside its sandbox.",
+    ("g6.code.adapt_webpage.checks", "css_script", "root.rglob"):
+        "Child checker enumerates generated artefacts inside its sandbox.",
+    ("g6.code.adapt_webpage.checks", "route_local", "(root / unquote(url.path.lstrip('/'))).resolve"):
+        "Child checker resolves generated artefacts then checks containment before serving.",
+    ("g6.code.adapt_webpage.checks", "render_script", "root.rglob"):
+        "Child checker enumerates generated HTML inside its sandbox.",
+    ("g6.code.meta_programming.edits", "_target", "scopes.resolve"):
+        "AST lexical binding lookup, not a file-system query.",
+    ("g6.code.meta_programming.edits", "rename", "scopes.resolve"):
+        "AST lexical binding lookup, not a file-system query.",
+    ("g6.code.meta_programming.extract", "_boundary", "scopes.resolve"):
+        "AST lexical binding lookup, not a file-system query.",
     ("g6.code._roots", "_folder_handle", "os.open"): "Open a declared folder to capture its identity.",
     ("g6.code._roots", "load", "file.exists"): "Trusted state_path configuration, bounded below.",
     ("g6.code._roots", "load", "file.open"): "Trusted state_path config, plain_file and 1 MiB read cap.",
@@ -94,8 +128,12 @@ def _unchecked_calls(text, module):
     """Flag unchecked roots, recaptures, plain content I/O and following metadata queries."""
     missing = []
     targets = {"g6.code._roots.read_text": 3, "g6.core.storage.confined_path": 2,
-               "g6.code._roots.Roots": 0, "g6.code._roots.for_folder": 0, "g6.code._roots.path_info": 2}
-    io_methods = {"read_text", "read_bytes", "open", "exists", "is_file", "is_dir", "stat"}
+               "g6.code._roots.Roots": 0, "g6.code._roots.for_folder": 0, "g6.code._roots.path_info": 2,
+               "g6.code._roots.walk": 2}
+    io_methods = {"read_text", "read_bytes", "open", "exists", "is_file", "is_dir", "stat",
+                  "isfile", "isdir", "getsize", "realpath", "resolve", "access", "samefile",
+                  "iterdir", "scandir", "listdir", "glob", "rglob"}
+    recaptures = {"dataclasses.replace", "__roots_class__", "object.__setattr__", "builtins.setattr", "setattr"}
     tree = ast.parse(text)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     aliases = {}
@@ -129,6 +167,8 @@ def _unchecked_calls(text, module):
         if isinstance(node, ast.Attribute):
             base = qualified(node.value)
             return base if node.attr == "__call__" else f"{base}.{node.attr}"
+        if isinstance(node, ast.Call) and qualified(node.func) in {"type", "builtins.type"}:
+            return "__roots_class__"
         if (isinstance(node, ast.Call) and qualified(node.func) == "importlib.import_module"
                 and node.args and isinstance(node.args[0], ast.Constant)
                 and isinstance(node.args[0].value, str)):
@@ -144,7 +184,8 @@ def _unchecked_calls(text, module):
         changed = False
         for target, value in bindings.items():
             name = qualified(value)
-            if (name in targets or name == "dataclasses.replace" or name.rpartition(".")[2] in io_methods) and aliases.get(target) != name:
+            if (name in targets or name in recaptures or name.endswith(".__class__")
+                    or name.rpartition(".")[2] in io_methods) and aliases.get(target) != name:
                 aliases[target] = name
                 changed = True
         if not changed:
@@ -177,9 +218,12 @@ def _unchecked_calls(text, module):
                 missing.append(node.lineno)
             rebuilt = (name == "dataclasses.replace" and (any(k.arg == "roots" for k in node.keywords)
                        or args and isinstance(args[0], ast.Name) and "roots" in args[0].id)
-                       or isinstance(node.func, ast.Attribute) and node.func.attr == "__class__"
+                       or name == "__roots_class__" or name.endswith(".__class__")
                        or isinstance(node.func, ast.Call) and qualified(node.func.func) in {"type", "builtins.type"})
-            if rebuilt:
+            mutated = (name in {"object.__setattr__", "builtins.setattr", "setattr"}
+                       and len(args) >= 2 and isinstance(args[1], ast.Constant)
+                       and args[1].value in {"roots", "identities", "unavailable"})
+            if rebuilt or mutated and (*owner_of(node), ast.unparse(node.func)) not in PLAIN_IO:
                 missing.append(node.lineno)
         if name not in targets:
             continue
@@ -272,6 +316,28 @@ def test_census_rejects_read_time_captures_and_dynamic_calls(text):
 @pytest.mark.parametrize("module", ["g6.code.x.probe", "g6.sources.ctx_git.probe"])
 def test_census_rejects_plain_io_following_checks_and_rebuilt_roots(text, module):
     assert _unchecked_calls(text, module), "metadata I/O or rebuilt roots escaped the census"
+
+
+@pytest.mark.parametrize("text", [
+    'import os\ndef f(p):\n return os.path.exists(p)',
+    'def f(p):\n return list(p.rglob("*"))',
+    'from os.path import realpath as check\ndef f(p):\n return check(p)',
+    'import os\ndef f(p):\n scan = os.scandir\n return list(scan(p))',
+    'def f(p):\n scan = p.rglob\n return list(scan("*"))',
+    'def f(p, roots):\n cls = type(roots)\n saved = cls\n return saved((p.parent,), "x")',
+    'def f(p, roots):\n cls = roots.__class__\n return cls((p.parent,), "x")',
+    'import copy\ndef f(p, roots):\n r = copy.deepcopy(roots)\n setattr(r, "roots", (p.parent,))',
+    'def f(p, roots):\n mutate = object.__setattr__\n mutate(roots, "identities", ())',
+])
+@pytest.mark.parametrize("module", ["g6.code.x.probe", "g6.sources.ctx_git.probe"])
+def test_census_followup2_queries_aliases_and_root_mutation(text, module):
+    assert _unchecked_calls(text, module), "following query, folder read or Roots mutation escaped the census"
+
+
+def test_census_accepts_conformance_files_checked_delegation():
+    # _files delegates its folder read to _roots.walk with the captured Roots, then uses read_text.
+    text = "from g6.code import _roots\n" + inspect.getsource(conformance._files)
+    assert not _unchecked_calls(text, conformance.__name__)
 
 
 @pytest.fixture
