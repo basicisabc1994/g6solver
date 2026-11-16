@@ -56,6 +56,28 @@ def test_its_reply_is_the_selectors_own(tmp_path: Path, monkeypatch: pytest.Monk
     assert over_mcp == direct and over_mcp["candidates"]
 
 
+@pytest.mark.parametrize("considering", [
+    [{"hypothesis": "a lone \ud800 surrogate", "predicts": "x", "id": "\udfff"}],
+    '[{"hypothesis": "a lone \\ud800 surrogate", "predicts": "x"}]',
+    [{"requirement": "r", "id": "\ud800"}, {"tool": "g6_\udc00"}],
+])
+def test_agent_text_that_cannot_be_written_as_utf8_still_gets_the_envelope(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, considering: object) -> None:
+    """A lone surrogate the client sent (a legal JSON escape) is replaced before the reply leaves, so the client gets
+    G6's envelope, not a bare tool error."""
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "fresh-home"))
+
+    async def run() -> tuple[bool, object]:
+        async with Client(build_server(), client_info=Implementation(name="codex", version="test")) as session:
+            result = await session.call_tool("g6_select", {"task": "review my patch", "considering": considering},
+                                             raise_on_error=False)
+            return result.is_error, result.structured_content or result.content[0].text
+    is_error, reply = asyncio.run(run())
+    assert not is_error, reply
+    assert reply["completion_state"] == "qualified-draft" and reply["request_id"]
+    assert "�" in json.dumps(reply["considering"], ensure_ascii=False)
+
+
 def test_it_takes_no_repository_argument() -> None:
     async def schema() -> dict:
         return (await build_server().get_tools())["g6_select"].parameters

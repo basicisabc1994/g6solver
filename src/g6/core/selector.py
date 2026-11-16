@@ -700,6 +700,21 @@ class _Refusal(ValueError):
     """A refusal of the agent's input, in G6's own fixed words: no exception's or codec's text is ever passed on."""
 
 
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _serialisable(value: Any) -> Any:
+    """``value`` with every lone surrogate in its text (a legal JSON escape a client may send, which UTF-8 cannot
+    write) replaced by U+FFFD, so a reply that echoes agent text can always be sent."""
+    if isinstance(value, str):
+        return _SURROGATE.sub("�", value)
+    if isinstance(value, dict):
+        return {_serialisable(k): _serialisable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_serialisable(v) for v in value]
+    return value
+
+
 def _size(text: str) -> int:
     """``text``'s UTF-8 size; a lone surrogate counts as its three bytes instead of raising."""
     return len(text.encode("utf-8", "surrogatepass"))
@@ -1126,8 +1141,9 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
                         "reroute.")
     evidence = [{"kind": "selection", "corpus_entries": len(entries), "corpus_release": data.get("release", ""),
                  "stages_run": [m["stage"] for m in mechanisms if m["ran"]]}]
-    # a deep copy: candidates hold the cached corpus's own objects, which a caller filling in a template must not change
-    reply = copy.deepcopy({
+    # a deep copy: candidates hold the cached corpus's own objects, which a caller filling in a template must not
+    # change; and any agent text it echoes made writable as UTF-8
+    reply = _serialisable({
         "ok": True, "phase": phase, "candidates": candidates, "next": nxt, "remedy": remedy,
         "considering": considered, "mechanisms": mechanisms, "unknown_until_observed": list(UNKNOWN_UNTIL_OBSERVED),
         **envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
