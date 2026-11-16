@@ -251,6 +251,38 @@ def test_a_session_gets_only_its_tasks_servers_through_the_trial_server() -> Non
     assert f'mcp_servers.g6.env.{run.WITHHOLD_ENV}="g6_find,g6_describe"' in codex
 
 
+def test_a_replys_code_is_its_own_envelopes_not_a_code_its_text_mentions() -> None:
+    """The moment pilot (2026-11-16) read g6_help's answer as refused with G6_E_PROMOTION_LAW, a code its help text
+    only names. A code is the reply's own: the envelope's warning card, or an error that leads with it."""
+    help_text = "Build agents from parts you can check.\nA promotion is refused with G6_E_PROMOTION_LAW when ..."
+    assert run._code([{"type": "text", "text": help_text}]) == ""
+    refused = json.dumps({"ok": False, "completion_state": "blocked-escalated",
+                          "warning_card": {"code": "G6_E_CLOUD_CONSENT_REQUIRED", "message": "see G6_E_OTHER"}})
+    assert run._code([{"type": "text", "text": refused}]) == "G6_E_CLOUD_CONSENT_REQUIRED"
+    job = json.dumps({"ok": True, "job_id": "b5", "status": "completed",
+                      "result": {"ok": False, "error": "[G6_E_CLOUD_CONSENT_REQUIRED] Results were withheld ...",
+                                 "warning_card": {"code": "G6_E_CLOUD_CONSENT_REQUIRED"}}})
+    assert run._code([{"type": "text", "text": job}]) == "G6_E_CLOUD_CONSENT_REQUIRED"      # the pilot's real shape
+    pending = json.dumps({"ok": True, "job_id": "b5", "status": "pending", "completion_state": "qualified-draft"})
+    assert run._code([{"type": "text", "text": pending}]) == ""
+    led = json.dumps({"ok": False, "error": "[G6_E_SENSITIVE_COMPONENT_DENIED] patch_review.review runs ..."})
+    assert run._code([{"type": "text", "text": led}]) == "G6_E_SENSITIVE_COMPONENT_DENIED"
+    answered = json.dumps({"ok": True, "completion_state": "qualified-draft", "result": {"note": "G6_E_X is a code"}})
+    assert run._code([{"type": "text", "text": answered}]) == ""
+    assert run._code("[G6_E_SENSITIVE_COMPONENT_DENIED] patch_review.review is not allowed") == \
+        "G6_E_SENSITIVE_COMPONENT_DENIED"
+    assert run._code({"message": "Error calling tool 'g6_review_patch': [G6_E_INPUT_VALIDATION] bad repo"}) == \
+        "G6_E_INPUT_VALIDATION"
+
+
+def test_a_command_that_only_names_a_pytest_file_is_no_test_run() -> None:
+    assert not run.TEST_COMMAND.search("powershell -Command \"rg --files -g pytest.ini -g setup.cfg\"")
+    assert not run.TEST_COMMAND.search("Get-Content pytest-plugins.txt")
+    for command in ("python -m pytest tests/test_money.py -q", "pytest -q", "python -B -m pytest -p no:cacheprovider",
+                    "cd x && pytest", "python -m unittest discover"):
+        assert run.TEST_COMMAND.search(command), command
+
+
 def test_a_codex_session_lets_its_trial_servers_tools_run_without_an_approval_nobody_can_give() -> None:
     """`codex exec` asks no one: with no setting, every MCP call fails "requires approval, but approval policy is
     never" (seen in the moment pilot, 2026-11-16). Each trial server's tools are approved, as a person who always

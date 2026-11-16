@@ -481,9 +481,12 @@ def finished_codex(text: str) -> bool:
 
 
 #: A shell command that runs tests, and what a test run's output says when it failed.
-TEST_COMMAND = re.compile(r"\bpytest\b|\bunittest\b")
+#: Only a whole command word counts: a command that names ``pytest.ini`` or ``pytest-plugins.txt`` runs no tests.
+TEST_COMMAND = re.compile(r"(?<![\w.-])(?:pytest|unittest)(?![\w.-])")
 _FAILED = re.compile(r"\b\d+ (?:failed|errors?)\b|\bExit code [1-9]")
 _G6_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
+#: An error a client reports for a refused call leads with its code, after at most an "Error ...:" preamble.
+_LEADING_CODE = re.compile(r"\s*(?:[^\[\n]*?:\s*)?\[?(G6_E_[A-Z0-9_]+)\]?")
 #: Claude Code's file tools, and the argument that names the file each one changes.
 EDIT_TOOLS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 
@@ -501,9 +504,26 @@ def _said(content: Any) -> str:
 
 
 def _code(content: Any) -> str:
-    """The first ``G6_E_*`` code a reply carries: how a refused call is told from an answered one."""
-    found = _G6_CODE.search(_said(content))
-    return found.group(0) if found else ""
+    """The ``G6_E_*`` code a reply carries as its own: how a refused call is told from an answered one. A JSON reply's
+    code is its envelope's (``warning_card.code``, else a top-level or ``error`` code); a text reply's is the code an
+    error leads with. A code the reply's text only mentions (help text, a note) is not the reply's code."""
+    text = _said(content)
+    try:
+        value = json.loads(text)
+    except ValueError:
+        value = None
+    if isinstance(value, dict) and "job_id" in value and isinstance(value.get("result"), dict):
+        value = value["result"]          # a finished job (metaharness_job) wraps the reply it ran: that reply's code
+    if isinstance(value, dict):
+        for holder in (value.get("warning_card"), value, value.get("error")):
+            code = holder.get("code") if isinstance(holder, dict) else None
+            if isinstance(code, str) and _G6_CODE.fullmatch(code):
+                return code
+        error = value.get("error")
+        found = _LEADING_CODE.match(error.split("\n", 1)[0]) if isinstance(error, str) else None
+        return found.group(1) if found else ""
+    found = _LEADING_CODE.match(text.split("\n", 1)[0])
+    return found.group(1) if found else ""
 
 
 def _step_call(server: Any, tool: Any, args: Any, valid: Any, state: str = "", code: str = "") -> dict[str, Any]:
