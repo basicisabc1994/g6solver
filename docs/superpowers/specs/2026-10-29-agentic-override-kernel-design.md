@@ -295,6 +295,27 @@ cached models, tokenizers, decoding objects, endpoint API keys and other state o
 Fresh endpoint callers use their default decoding options. A responder function is deliberately retained only for
 explicit Python own_function input, with the question's stated uncertainty about its behavior.
 
+### Caller operations (follow-up repair 2 ruling, 2026-11-16)
+
+Every class check uses identity. Class membership, equality, class-keyed dictionaries and sets are not identity
+checks: a metaclass can supply their hashing or equality. Host selection and owned construction use tuples of
+class/value pairs searched with `is`; configured guard classes use weak references searched and removed by identity,
+with their entries removed on collection. The host seam also checks each base by identity.
+
+At override the kernel derives the kind again from the snapshot's exact class and responder presence. An unknown
+class or a kind that differs from the recorded kind is refused with `G6_E_AGENTIC_CALLER_UNMETERED`, before any child
+or constructor runs. The same check protects fresh construction; an allowed label never authorizes an arbitrary
+class. The class-selected host program and plain constructor inputs are checked again as well.
+
+Fresh caller construction and consent guarding run inside the worker covered by the override deadline, before the
+model call. After construction the remaining budget is checked before calling it. Construction cannot hold the
+waiting thread past its deadline. This does not make an in-process constructor or own_function interruptible.
+
+Every kind's reply is converted inside that worker to a plain `str`: an exact string is kept; a string subclass is
+copied with `str.__str__`; any other value is refused as non-text without formatting it. Character counting, strip,
+decode and the ledger's output count use only that plain string. Error formatting also stays inside the worker, so
+only G6-built error text and flags cross the join. A reply or error description completed after the deadline is unused.
+
 ### V1 limits kept after this repair
 
 - A proxy variable introduced between the last first-hop check and the bound llm._post_json opener construction is

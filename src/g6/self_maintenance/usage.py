@@ -1443,11 +1443,11 @@ class WatchedCodex(_Watched, ConsentCodex):
 _WATCHED = ((host_models.ClaudeCodeCaller, WatchedClaude), (host_models.CodexCaller, WatchedCodex))
 
 # Stable exact identities for G6's own construction wrappers. Custom host subclasses never enter this table.
-_OWNED_HOST_CLASSES = {
-    kind: type(kind.__name__, (observer, kind), {})
+_OWNED_HOST_CLASSES = tuple(
+    (kind, type(kind.__name__, (observer, kind), {}))
     for kind, observer in ((host_models.ClaudeCodeCaller, WatchedClaude), (host_models.CodexCaller, WatchedCodex),
                            (ConsentClaude, WatchedClaude), (ConsentCodex, WatchedCodex))
-}
+)
 
 
 def _check_seam(kind: type) -> None:
@@ -1457,10 +1457,10 @@ def _check_seam(kind: type) -> None:
     module-owned launch, which starts the program directly. A further subclass may customize only pre-admission hooks.
     """
     # consent's guarded hosts are bases of the two watched classes: their completion is shadowed by ``_Watched``'s
-    owned = {_Watched, WatchedClaude, WatchedCodex, host_models._HostCaller, _Consent, ConsentClaude, ConsentCodex,
-             host_models.ClaudeCodeCaller, host_models.CodexCaller, OpenAICompatibleCaller, AnthropicCaller, object}
+    owned = (_Watched, WatchedClaude, WatchedCodex, host_models._HostCaller, _Consent, ConsentClaude, ConsentCodex,
+             host_models.ClaudeCodeCaller, host_models.CodexCaller, OpenAICompatibleCaller, AnthropicCaller, object)
     for base in kind.__mro__:
-        if base in owned:
+        if any(base is one for one in owned):
             continue
         methods = _FINAL_HOST_METHODS.intersection(base.__dict__)
         session_module = sys.modules.get("g6.harness.completion_loop")
@@ -1479,8 +1479,8 @@ def _new_host(kind: type, *args: Any, **kwargs: Any) -> Any:
     dormant = not issubclass(kind, _Watched)
     if dormant:
         observer = next(wrapper for host, wrapper in _WATCHED if issubclass(kind, host))
-        kind = (_OWNED_HOST_CLASSES[kind] if any(kind is owned for owned in _OWNED_HOST_CLASSES)
-                else type(kind.__name__, (observer, kind), {}))
+        own = next((owned for native, owned in _OWNED_HOST_CLASSES if kind is native), None)
+        kind = own if own is not None else type(kind.__name__, (observer, kind), {})
     caller = object.__new__(kind)
     object.__setattr__(caller, "_observe_stops", not dormant)
     _remember_host(caller)

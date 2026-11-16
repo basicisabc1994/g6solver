@@ -169,8 +169,13 @@ def person_caller() -> Any:
     return caller
 
 
-_CONFIGURED_GUARDS: weakref.WeakKeyDictionary[type, Any] = weakref.WeakKeyDictionary()
-_GUARD_LOCK = threading.Lock()
+_CONFIGURED_GUARDS: list[tuple[weakref.ReferenceType[type], Any]] = []
+_GUARD_LOCK = threading.RLock()   # collection while updating the table can re-enter its weakref cleanup
+
+
+def _forget_guard(ref: weakref.ReferenceType[type]) -> None:
+    with _GUARD_LOCK:
+        _CONFIGURED_GUARDS[:] = [(one, raw) for one, raw in _CONFIGURED_GUARDS if one is not ref]
 
 
 def _remember_configured(caller: Any, seen: frozenset[int] = frozenset()) -> None:
@@ -190,12 +195,15 @@ def _remember_configured(caller: Any, seen: frozenset[int] = frozenset()) -> Non
         raw = getattr(type(caller), "_guards", None)
         if raw is not None:
             with _GUARD_LOCK:
-                _CONFIGURED_GUARDS[type(caller)] = raw
+                # WeakKeyDictionary hashes and compares its class keys through their metaclasses.
+                _CONFIGURED_GUARDS[:] = [(ref, value) for ref, value in _CONFIGURED_GUARDS
+                                         if ref() is not None and ref() is not type(caller)]
+                _CONFIGURED_GUARDS.append((weakref.ref(type(caller), _forget_guard), raw))
 
 
 def _raw(caller: Any) -> Any:
     with _GUARD_LOCK:
-        return next((raw for kind, raw in _CONFIGURED_GUARDS.items() if type(caller) is kind), caller)
+        return next((raw for ref, raw in _CONFIGURED_GUARDS if type(caller) is ref()), caller)
 
 
 def _refused(code: str, message: str, *, original: Mapping[str, Any] | None = None, request_id: str = "",
@@ -224,7 +232,7 @@ def _model_name(caller: Any) -> str:
 def _no_model(caller: Any) -> bool:
     from g6.core import llm
 
-    return caller is None or type(caller) in (llm.NoModel, llm.UnusableModel, llm._NoKey)
+    return caller is None or any(type(caller) is cls for cls in (llm.NoModel, llm.UnusableModel, llm._NoKey))
 
 
 #: The most exceptions of one chain read before it is taken as no trigger (fail closed).
@@ -554,13 +562,32 @@ def _plain(value: Any) -> str:
 def _host_program(cls: type) -> str:
     from g6.core import host_models
 
-    hosts = {host_models.ClaudeCodeCaller: "Claude Code", host_models.CodexCaller: "Codex",
-             consent_callers.ConsentClaude: "Claude Code", consent_callers.ConsentCodex: "Codex"}
+    hosts = ((host_models.ClaudeCodeCaller, "Claude Code"), (host_models.CodexCaller, "Codex"),
+             (consent_callers.ConsentClaude, "Claude Code"), (consent_callers.ConsentCodex, "Codex"))
     usage = sys.modules.get("g6.self_maintenance.usage")
     if usage is not None:
-        hosts.update({usage.WatchedClaude: "Claude Code", usage.WatchedCodex: "Codex"})
-        hosts.update({owned: hosts[native] for native, owned in usage._OWNED_HOST_CLASSES.items()})
-    return hosts.get(cls, "")
+        hosts += ((usage.WatchedClaude, "Claude Code"), (usage.WatchedCodex, "Codex"))
+        hosts += tuple((owned, program) for native, owned in usage._OWNED_HOST_CLASSES
+                       for host, program in hosts if native is host)
+    return next((program for host, program in hosts if cls is host), "")
+
+
+def _class_kind(cls: type, responder: Any = None) -> str:
+    """Re-derive admission from G6's class identities, never a snapshot's label or a metaclass operation."""
+    from g6.core import llm
+
+    if any(cls is owned for owned in (_host_usage.WatchedClaude, _host_usage.WatchedCodex,
+                                      *(owned for _, owned in _host_usage._OWNED_HOST_CLASSES))):
+        return "host"
+    if any(cls is owned for owned in (llm.OllamaCaller, llm.OpenAICompatibleCaller)):
+        return "endpoint"
+    if cls is llm.FakeLLM:
+        return "local" if responder is None else "own_function"
+    for module, name in (("g6.grounding.judges.nli", "LocalNLICaller"), ("g6.metaharness.lora", "AdapterCaller")):
+        owner = sys.modules.get(module)
+        if owner is not None and cls is getattr(owner, name, None):
+            return "local"
+    return ""
 
 
 def _endpoint_why(snapshot: _CallerSnapshot) -> str:
@@ -596,14 +623,16 @@ def _snapshot(caller: Any, *, explicit: bool) -> _CallerSnapshot:
     cls = type(raw)
     if _no_model(raw):
         return _CallerSnapshot(cls, "no_model")
+    if not _class_kind(cls):
+        why = ("a legacy native host without the owned deadline launch path; construct a new caller after importing "
+               "the agentic kernel" if _host_program(cls) else
+               "Anthropic SDK (sdk), whose transport has no total deadline" if cls is llm.AnthropicCaller else
+               "an unknown caller, subclass or wrapper")
+        return _CallerSnapshot(cls, "", why=why)
     if not consent_callers.backend_supported(raw):
         return _CallerSnapshot(cls, "", why=f"{cls.__name__}, a modified caller")
     program = _host_program(cls)
-    if program or cls in (llm.OllamaCaller, llm.OpenAICompatibleCaller):
-        if program and cls not in (_host_usage.WatchedClaude, _host_usage.WatchedCodex,
-                                   *_host_usage._OWNED_HOST_CLASSES.values()):
-            return _CallerSnapshot(cls, "", why="a legacy native host without the owned deadline launch path; "
-                                   "construct a new caller after importing the agentic kernel")
+    if program or any(cls is owned for owned in (llm.OllamaCaller, llm.OpenAICompatibleCaller)):
         model, timeout = _plain(raw.model), float(raw.timeout)
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be finite and above zero")
@@ -640,6 +669,23 @@ def _snapshot(caller: Any, *, explicit: bool) -> _CallerSnapshot:
 def _snapshot_kind(snapshot: _CallerSnapshot) -> tuple[str, str]:
     if type(snapshot) is not _CallerSnapshot:
         return "", "a caller without G6's prepared snapshot"
+    # Frozen dataclasses are still mutable through object.__setattr__ in the Python API.
+    # Do not let a replaced label, class or constructor input supply caller methods at override.
+    strings = (snapshot.kind, snapshot.model, snapshot.program, snapshot.base_url, snapshot.default,
+               snapshot.weights, snapshot.adapter_dir, snapshot.why)
+    if any(type(value) is not str for value in strings) or type(snapshot.timeout) is not float \
+            or type(snapshot.max_new_tokens) is not int:
+        return "", "a snapshot whose plain constructor inputs changed"
+    kind = _class_kind(snapshot.cls, snapshot.responder)
+    if not kind or kind != snapshot.kind:
+        return "", snapshot.why or "a snapshot whose exact caller class does not match its prepared kind"
+    if kind == "host" and snapshot.program != _host_program(snapshot.cls):
+        return "", "a snapshot whose class-selected host program changed"
+    if kind == "endpoint":
+        route = urlsplit(snapshot.base_url)
+        if type(snapshot.route) is not SplitResult or any(type(part) is not str for part in snapshot.route) \
+                or route != snapshot.route:
+            return "", "a snapshot whose endpoint route changed"
     why = _endpoint_why(snapshot) if snapshot.kind == "endpoint" else snapshot.why
     return ("", why) if why else (snapshot.kind, "")
 
@@ -685,27 +731,32 @@ def _fresh(snapshot: _CallerSnapshot, timed: list[Any]) -> Any:
     """Construct a new exact backend from plain inputs. No supplied object or wrapper is called or copied."""
     from g6.core import llm
 
+    kind, why = _snapshot_kind(snapshot)
+    if why:
+        raise ValueError(f"{CALLER_UNMETERED}: {why}")
     cls = snapshot.cls
-    if snapshot.kind == "host":
+    if _class_kind(cls, snapshot.responder) != kind:
+        raise ValueError(f"{CALLER_UNMETERED}: the caller class changed before construction")
+    if kind == "host":
         own = cls(snapshot.model, timeout=snapshot.timeout)
-    elif snapshot.kind == "endpoint":
+    elif kind == "endpoint":
         if cls is llm.OllamaCaller:
             own = cls(snapshot.model, base_url=snapshot.base_url, timeout=snapshot.timeout)
         elif cls is llm.OpenAICompatibleCaller:
             own = cls(snapshot.model, base_url=snapshot.base_url, api_key=None, timeout=snapshot.timeout)
         else:
             raise ValueError("unsupported endpoint snapshot")
-    elif cls is llm.FakeLLM and snapshot.kind in ("local", "own_function"):
+    elif cls is llm.FakeLLM and kind in ("local", "own_function"):
         own = cls(snapshot.responder, default=snapshot.default)
-    elif snapshot.kind == "local" and snapshot.weights:
+    elif kind == "local" and snapshot.weights:
         own = cls(snapshot.weights)
-    elif snapshot.kind == "local" and snapshot.adapter_dir:
+    elif kind == "local" and snapshot.adapter_dir:
         own = cls(snapshot.model, snapshot.adapter_dir, max_new_tokens=snapshot.max_new_tokens)
     else:
         raise ValueError("unsupported caller snapshot")
     if type(own) is not cls:
         raise ValueError("constructor changed the exact caller class")
-    if snapshot.kind in ("host", "endpoint"):
+    if kind in ("host", "endpoint"):
         timed.append(own)
     return own
 
@@ -782,7 +833,8 @@ class _Envelope:
         self._sent_at = 0.0     # when the current call's first request was let go
         self._in_call = 0       # requests let go in the current call
         self._timed: list[Any] = []
-        self.caller = consent_callers.guard(_fresh(caller, self._timed))   # the guard checks each backend
+        self._snapshot = caller
+        self.caller: Any = None   # construction and guarding run inside the deadline worker
 
     def elapsed_s(self) -> float:
         return time.monotonic() - self._start
@@ -875,9 +927,22 @@ class _Envelope:
                 else:
                     deadline = nullcontext()
                 with deadline, counting(before_call=self.admit) as noted:
-                    box["text"] = self.caller.complete(system, user, max_tokens=MODEL_TOKENS)
+                    if self.caller is None:
+                        self.caller = consent_callers.guard(_fresh(self._snapshot, self._timed))
+                    with self._lock:
+                        self._cut(self._gate())  # construction may have spent the remaining time
+                    reply = self.caller.complete(system, user, max_tokens=MODEL_TOKENS)
+                    if type(reply) is str:
+                        box["text"] = reply
+                    elif isinstance(reply, str):
+                        box["text"] = str.__str__(reply)
+                    else:
+                        raise TypeError("the model reply is not text")
             except BaseException as exc:  # noqa: BLE001 - reported to the waiting override, never lost
-                box["error"] = exc
+                # Exception formatting can also be caller code. Only plain data crosses the join.
+                box["error"] = True
+                box["out_of_budget"] = isinstance(exc, _OutOfBudget)
+                box["detail"] = _plain(_words(exc))[:REASON_CHARS]
             finally:
                 llm._WAITS.reset(waits)
             with self._lock:
@@ -889,18 +954,18 @@ class _Envelope:
         worker = threading.Thread(target=contextvars.copy_context().run, args=(call,), name="g6-agentic-model",
                                   daemon=True)
         worker.start()
-        worker.join(max(left, 0.0))
+        worker.join(max(self.seconds_left(), 0.0))
         if worker.is_alive():
             with self._lock:
                 self.closed = True   # an abandoned call sends nothing more
             raise _Stop("budget_exhausted", f"no model reply came within the {self.budget.max_wall_clock_s:g}s budget: "
                                             "G6 stopped waiting at the deadline, and a reply that arrives later is "
                                             "not used")
-        error = box.get("error")
-        if error is not None and (self.refused or isinstance(error, _OutOfBudget)):
+        error = box.get("error", False)
+        if error and (self.refused or box.get("out_of_budget")):
             raise _Stop("budget_exhausted", (self.refused or "the budget ran out")[:REASON_CHARS])
-        if error is not None:
-            raise _Stop("model_failed", _words(error)[:REASON_CHARS])
+        if error:
+            raise _Stop("model_failed", box["detail"])
         if self.seconds_left() < 0:
             raise _Stop("budget_exhausted", "the model's reply came after the deadline, so it was not used")
         return self._took(box["text"])
