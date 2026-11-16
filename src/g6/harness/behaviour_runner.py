@@ -172,7 +172,7 @@ def read_probes(path: Path, data: bytes) -> dict[str, str]:
         return value["probes"]
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
-    except (OSError, ValueError, TypeError, KeyError, RecursionError):
+    except (OSError, ValueError, TypeError, KeyError, RecursionError, MemoryError):
         return {}
 
 
