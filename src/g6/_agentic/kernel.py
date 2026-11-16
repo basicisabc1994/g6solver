@@ -185,9 +185,21 @@ def _no_model(caller: Any) -> bool:
 CHAIN_LIMIT = 10_000
 
 
+def _links(one: BaseException) -> list[Any]:
+    """The exceptions ``one`` links to: its cause, its context and, for a real exception group only, its members (a
+    tuple); an ``exceptions`` attribute of anything else is not read."""
+    links = [one.__cause__, one.__context__]
+    if isinstance(one, BaseExceptionGroup):
+        members = one.exceptions
+        if not isinstance(members, tuple):
+            raise TypeError("an exception group's members are not a tuple")
+        links += members
+    return links
+
+
 def _chain(exc: BaseException) -> list[BaseException] | None:
     """Every exception linked to ``exc``: its cause and its context (both), and an exception group's members, each
-    once; ``None`` when there are more than :data:`CHAIN_LIMIT`."""
+    once; ``None`` when there are more than :data:`CHAIN_LIMIT`, or when reading any link fails (fail closed)."""
     found: list[BaseException] = []
     seen: set[int] = set()
     todo: list[Any] = [exc]
@@ -199,7 +211,10 @@ def _chain(exc: BaseException) -> list[BaseException] | None:
             return None
         seen.add(id(one))
         found.append(one)
-        todo += [one.__cause__, one.__context__, *(getattr(one, "exceptions", None) or ())]
+        try:
+            todo += _links(one)
+        except Exception:  # noqa: BLE001 - a link that cannot be read cannot show it carries no door's refusal
+            return None
     return found
 
 
@@ -214,7 +229,8 @@ def _not_a_trigger(exc: BaseException, package: str, limits: set[str]) -> str:
 
     chain = _chain(exc)
     if chain is None:
-        return f"its exception chain holds more than {CHAIN_LIMIT} exceptions, too many to read"
+        return (f"its exception chain could not be read (a link failed, or it holds more than {CHAIN_LIMIT} "
+                "exceptions)")
     if any(isinstance(e, LLMError) for e in chain):
         return "a model call's refusal (LLMError) is a door's, never a trigger"
     for e in chain:
@@ -348,16 +364,20 @@ def prepare(component: str, op: str, params: Any, *, part: str | None = None, mo
                                                "their own code.")
         raised = None
     except Exception as exc:  # noqa: BLE001 - a failure of the original is a trigger only inside the component's code
-        why = _not_a_trigger(exc, package, limits)
+        try:
+            why = _not_a_trigger(exc, package, limits)
+            said = str(exc)
+        except Exception:  # noqa: BLE001 - an exception that cannot be read is no trigger, and prepare never raises
+            why = "the exception could not be read"
         if why:
             return blocked_reply(f"[G6_E_INVOKE_FAILED] {component}.{op} failed with {type(exc).__name__}, and it is "
                                  f"not a trigger: {why}", request_id=request_id)
         raised = exc
-        original = blocked_reply(f"[G6_E_INVOKE_FAILED] {component}.{op} raised {type(exc).__name__}: {exc}"[:2000],
+        original = blocked_reply(f"[G6_E_INVOKE_FAILED] {component}.{op} raised {type(exc).__name__}: {said}"[:2000],
                                  request_id=request_id)
     code = _code(original)
     if raised is not None:
-        trigger = {"kind": "failed", "exception": type(raised).__name__, "message": str(raised)[:REASON_CHARS]}
+        trigger = {"kind": "failed", "exception": type(raised).__name__, "message": said[:REASON_CHARS]}
     elif code in limits:
         trigger = {"kind": "refused", "code": code, "message": _summary(original)}
     elif part and original.get("ok") is True:   # an answer the door let through: no door refused anything

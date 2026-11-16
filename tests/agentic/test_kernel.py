@@ -811,3 +811,57 @@ def test_a_degraded_override_whose_ledger_fails_keeps_its_own_reason(monkeypatch
     _plant_deep_ledger_line()
     reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model(raw="no json").llm, name="Ada")
     assert reply["agentic"]["reason"] == "value_invalid" and reply["agentic"]["ledger"]["error"] == "ValueError"
+
+
+# review 3, F5: an exception's chain is read defensively, and prepare never raises
+
+class _OddCount(RuntimeError):
+    exceptions = 5
+
+
+class _OddProperty(RuntimeError):
+    @property
+    def exceptions(self):
+        raise LookupError("no members")
+
+
+class _BrokenGroup(ExceptionGroup):
+    @property
+    def exceptions(self):
+        raise LookupError("no members")
+
+
+class _BrokenCause(RuntimeError):
+    @property
+    def __cause__(self):
+        raise LookupError("no cause")
+
+
+def _raising(exc):
+    import g6.cegis.block as block
+
+    def _raise(data, exc=None):
+        raise exc
+
+    return types.FunctionType(_raise.__code__, vars(block), "_table", (exc,))
+
+
+@pytest.mark.parametrize("exc", [_OddCount("the table could not be built"), _OddProperty("the table could not be built")])
+def test_an_exceptions_attribute_on_an_exception_that_is_not_a_group_is_not_read(monkeypatch, exc):
+    import g6.cegis.block as block
+
+    no_child(monkeypatch)
+    monkeypatch.setattr(block, "_table", _raising(exc))
+    reply = kernel.prepare("cegis", "synthesize", INT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm)
+    assert isinstance(reply, kernel.Pending) and reply.trigger["kind"] == "failed"
+
+
+@pytest.mark.parametrize("exc", [_BrokenGroup("several", [RuntimeError("a")]), _BrokenCause("the table")])
+def test_a_chain_that_cannot_be_read_is_no_trigger(monkeypatch, exc):
+    import g6.cegis.block as block
+
+    started, model = no_child(monkeypatch), Model([0.5])
+    monkeypatch.setattr(block, "_table", _raising(exc))
+    reply = kernel.prepare("cegis", "synthesize", INT_PARAMS, allow=ALLOW, llm=model.llm)
+    assert not isinstance(reply, kernel.Pending) and reply["warning_card"]["code"] == "G6_E_INVOKE_FAILED"
+    assert "could not be read" in reply["error"] and model.prompts == [] and started == []
