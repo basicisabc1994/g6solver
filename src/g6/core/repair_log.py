@@ -10,7 +10,10 @@ yet.
 """
 from __future__ import annotations
 
+import atexit
 import json
+import os
+import queue
 import threading
 import time
 from contextlib import contextmanager
@@ -20,16 +23,16 @@ from typing import Any
 LOG = ("repairs", "repairs.jsonl")
 #: The only fields a row may hold.
 FIELDS = frozenset({"event", "id", "session", "tool", "code", "fix_by", "by", "outcome"})
-_LOCK = threading.Lock()
-#: How long one writer waits for the other servers' turns before its row is given up (Windows; flock waits).
+#: Maximum number of waiting rows per process; overflow never waits for disk.
+QUEUE_CAPACITY = 10_000
+#: How long one writer waits for another server's lock on either platform.
 LOCK_WAIT_S = 120.0
+LOCK_RETRY_S = 0.01
 
 
 @contextmanager
 def _process_lock(path: Path):
     """All writers of this log share one OS lock, released if the process exits."""
-    import os
-
     with path.open("a+b") as lock:
         if os.name == "nt":
             import msvcrt
@@ -37,55 +40,131 @@ def _process_lock(path: Path):
             if lock.seek(0, 2) == 0:
                 lock.write(b"\0")
                 lock.flush()
-            lock.seek(0)
-            # LK_LOCK gives up after ten one-second tries and raises; a busy log is waited for, within LOCK_WAIT_S
-            deadline = time.monotonic() + LOCK_WAIT_S
-            while True:
-                try:
-                    msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
-                    break
-                except OSError:
-                    if time.monotonic() >= deadline:
-                        raise
-                    lock.seek(0)
-            try:
-                yield
-            finally:
+            def acquire():
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+
+            def release():
                 lock.seek(0)
                 msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
         else:
             import fcntl
 
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
+            def acquire():
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            def release():
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+        deadline = time.monotonic() + LOCK_WAIT_S
+        while True:
+            try:
+                acquire()
+                break
+            except OSError:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise
+                time.sleep(min(LOCK_RETRY_S, left))
+        try:
+            yield
+        finally:
+            release()
+
+
+class _Writer:
+    """One lazy daemon writer per process; no producer takes the file lock."""
+
+    def __init__(self):
+        self.rows: queue.Queue[tuple[Path, str]] = queue.Queue(QUEUE_CAPACITY)
+        self.dropped = 0
+        self._guard = threading.Lock()
+        self._thread: threading.Thread | None = None
+
+    def drop(self):
+        with self._guard:
+            self.dropped += 1
+
+    def submit(self, home: Path, line: str):
+        with self._guard:
+            if self._thread is None:
+                thread = threading.Thread(target=self._run, name="g6-repair-log", daemon=True)
+                thread.start()
+                self._thread = thread
+        try:
+            self.rows.put_nowait((home, line))
+        except queue.Full:
+            self.drop()
+
+    def _run(self):
+        from g6.core.storage import contained
+
+        while True:
+            home, line = self.rows.get()
+            try:
+                # Validate the captured home with the same storage boundary; never read a later G6_HOME.
+                path = contained(home, Path(*LOG))
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with _process_lock(path.with_suffix(".lock")):
+                    with path.open("a", encoding="utf-8", newline="\n") as out:
+                        out.write(line)
+            except Exception:  # noqa: BLE001 - bookkeeping must not kill the writer or hold a reply
+                pass
+            finally:
+                self.rows.task_done()
+
+
+_writer = _Writer()
+
+
+def _after_fork():
+    global _writer
+    _writer = _Writer()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork)
 
 
 def append(row: dict[str, Any]) -> None:
-    """Append one row of codes and ids (fields outside ``FIELDS`` are dropped); a failure to write is ignored, so the
-    log never touches the call it records."""
-    from g6.core.storage import state_path
+    """Queue a snapshot of codes and ids without disk I/O; count overflow, retain best-effort disk writes."""
+    from g6.core.storage import g6_home
 
     try:
-        path = state_path(*LOG)
-        path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps({k: v for k, v in row.items() if k in FIELDS}, sort_keys=True) + "\n"
-        with _LOCK, _process_lock(path.with_suffix(".lock")):
-            with path.open("a", encoding="utf-8", newline="\n") as out:
-                out.write(line)
-    except (OSError, ValueError):
+        _writer.submit(g6_home().absolute(), line)
+    except (OSError, ValueError, TypeError, RuntimeError):
         pass
 
 
-def repair_stats(path: Path | None = None) -> dict[str, dict[str, Any]]:
+def flush(timeout: float | None = None) -> bool:
+    """Drain accepted rows for shutdown or an explicit reader, within a bounded wait. Replies never call this."""
+    deadline = time.monotonic() + (LOCK_WAIT_S + 5.0 if timeout is None else max(0.0, timeout))
+    rows = _writer.rows
+    with rows.all_tasks_done:
+        while rows.unfinished_tasks:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return False
+            rows.all_tasks_done.wait(left)
+    return True
+
+
+atexit.register(flush)
+
+
+def repair_stats(path: Path | None = None) -> dict[str, Any]:
     """Resolution by code: refused, resolved, not, person, and the rate resolved / (resolved + not), ``None`` before
-    any repair the agent made has ended."""
+    any repair the agent made has ended. A nonzero ``dropped`` field counts this process's queue overflows;
+    absence means zero. This reads a snapshot and never waits for the writer."""
     from g6.core.storage import state_path
 
     path = path or state_path(*LOG)
-    out: dict[str, dict[str, Any]] = {}
+    out: dict[str, Any] = {}
+    with _writer._guard:
+        dropped = _writer.dropped
+    if dropped:
+        out["dropped"] = dropped
     try:
         lines = path.read_bytes().splitlines()
     except (OSError, UnicodeError):
@@ -102,10 +181,12 @@ def repair_stats(path: Path | None = None) -> dict[str, dict[str, Any]]:
                 stats[row["outcome"]] += 1
         except Exception:  # noqa: BLE001 - one malformed row, including recursion errors, never stops the reader
             continue
-    for stats in out.values():
+    for code, stats in out.items():
+        if code == "dropped":
+            continue
         ended = stats["resolved"] + stats["not"]
         stats["rate"] = round(stats["resolved"] / ended, 3) if ended else None
     return dict(sorted(out.items()))
 
 
-__all__ = ["FIELDS", "LOG", "append", "repair_stats"]
+__all__ = ["FIELDS", "LOG", "append", "flush", "repair_stats"]

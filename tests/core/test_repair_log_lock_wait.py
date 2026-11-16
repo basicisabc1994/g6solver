@@ -23,12 +23,14 @@ def test_a_lock_wait_past_lk_locks_retries_still_writes_the_row(tmp_path: Path,
     real, busy = msvcrt.locking, {"left": 2}
 
     def locking(fd: int, mode: int, n: int) -> None:
-        if mode == msvcrt.LK_LOCK and busy["left"]:
+        if mode == msvcrt.LK_NBLCK and busy["left"]:
             busy["left"] -= 1
-            raise OSError(36, "Resource deadlock avoided")      # what LK_LOCK raises after its ten tries
+            raise OSError(36, "Resource deadlock avoided")
         real(fd, mode, n)
 
     monkeypatch.setattr(msvcrt, "locking", locking)
     repair_log.append({"event": "refused", "id": "a:1", "code": "G6_E_INPUT_VALIDATION", "tool": "g6_select"})
+    assert repair_log.flush(5)
+    assert busy["left"] == 0
     rows = (tmp_path / "home/repairs/repairs.jsonl").read_text(encoding="utf-8").splitlines()
     assert [json.loads(r)["id"] for r in rows] == ["a:1"]

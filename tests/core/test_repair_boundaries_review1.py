@@ -51,10 +51,11 @@ def test_cross_process_log_appends_keep_all_twelve_thousand_rows(tmp_path, monke
     monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
     code = '''
 import sys
-from g6.core.repair_log import append
+from g6.core.repair_log import append, flush
 for index in range(1500):
     append({"event": "refused", "id": "%s:%s" % (sys.argv[1], index),
             "code": "G6_E_INPUT_VALIDATION", "tool": "g6_select"})
+assert flush(110)
 '''
     processes = []
     try:
