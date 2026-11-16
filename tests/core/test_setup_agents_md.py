@@ -393,6 +393,22 @@ def test_a_read_only_temporary_file_is_removed(codex, monkeypatch):
             os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
 
 
+@pytest.mark.parametrize("newline", [b"\r", b"\r\n", b"\n"])
+def test_the_newline_style_is_the_files_first_line_end(codex, newline):
+    codex.parent.mkdir(parents=True)
+    head = b"# Mine" + newline + b"line two" + newline
+    codex.write_bytes(head)
+    assert _setup("y", []) == 0
+    after = codex.read_bytes()
+    written = BLOCK.encode().replace(b"\n", newline)
+    assert after == head + newline + written + newline
+    assert _setup("y", []) == 0 and codex.read_bytes() == after
+    stale = head + (instructions.AGENTS_BEGIN + "\nold\n" + instructions.AGENTS_END).encode().replace(b"\n", newline)
+    codex.write_bytes(stale + newline + b"tail" + newline)
+    assert _setup("y", []) == 0
+    assert codex.read_bytes() == head + written + newline + b"tail" + newline
+
+
 def _args():
     parser = argparse.ArgumentParser()
     setup.add_arguments(parser)
