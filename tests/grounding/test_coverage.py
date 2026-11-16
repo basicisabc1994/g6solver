@@ -53,6 +53,17 @@ def test_a_contradicting_source_makes_the_claim_contested_and_names_the_worst_co
     assert report.warning_card["code"] == "G6_E_GROUNDING_CONTESTED"
 
 
+def test_a_contested_card_says_the_difference_is_lexical_not_a_contradiction_read() -> None:
+    # plan revision 8, E: CONTESTED comes from a word-level negation or number difference, not a reading of meaning
+    sources = TextRetriever.from_texts({"https://shop.example/help": DRAFT, "https://consumer-rights.example/a": DRAFT,
+                                        "https://forum.example/t/1": "Refunds are issued within 30 days of a return."})
+    card = coverage(DRAFT, sources).warning_card
+    said = json.dumps(card)
+    assert "differs in a negation or a number (a lexical sign, not a reading of meaning)" in said
+    assert "contradict" not in said.lower()
+    assert card["code"] == "G6_E_GROUNDING_CONTESTED"
+
+
 def test_a_claim_with_no_source_is_unsupported() -> None:
     report = coverage(f"{REFUND} Shipping is free to every country.", TextRetriever.from_texts(ONE_HOST))
     assert [c["status"] for c in report.claims] == ["ASSERTED", "UNVERIFIABLE"] and report.unsupported == 1
