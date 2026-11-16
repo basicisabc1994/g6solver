@@ -42,7 +42,8 @@ SENSITIVE, CONSENT = "G6_E_SENSITIVE_COMPONENT_DENIED", "G6_E_CLOUD_CONSENT_REQU
 def test_the_moment_list_and_bars_are_frozen_and_pinned() -> None:
     tasks, gates = run.load_moment(), run.load_moment_gates()
     pins = json.loads(run.MOMENT_PINS.read_text(encoding="utf-8"))
-    assert pins == {"tasks_digest": freeze.file_digest(run.MOMENT_TASKS), "bars_digest": freeze.file_digest(run.MOMENT_GATES)}
+    assert {key: pins[key] for key in ("tasks_digest", "bars_digest")} == {
+        "tasks_digest": freeze.file_digest(run.MOMENT_TASKS), "bars_digest": freeze.file_digest(run.MOMENT_GATES)}
     assert freeze.freeze(run.MOMENT_TASKS, tasks) == pins["tasks_digest"]     # written as freeze writes, unchanged
     assert freeze.freeze(run.MOMENT_GATES, gates) == pins["bars_digest"]
     readme = " ".join((HERE / "README.md").read_text(encoding="utf-8").split())

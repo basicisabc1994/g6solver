@@ -167,7 +167,7 @@ once the wiring has landed. The tasks were written by someone who builds none of
   `1976b25f8d885fcb60086adbacd48d7f9bea0c85db79e88a159ab5f235933a75` and the bars at
   `9aa0237097e7dd22f013664850d3008513ac750834f577d793cab6f28556de59`. Nothing runs and nothing is scored on a list or
   bars that differ from these. A list may hold fewer tasks, so one task can be tried first. It may never hold a
-  changed one.
+  changed one. It also pins the outcome arm's bar and held-out checks (see "Outcome arm").
 - `moment_fixtures/ledger`: one more synthetic repository, kept out of `fixtures/` so that the development cohort's
   bound digest of the fixtures does not move. Its four failing test files are the stuck tasks. Each holds a
   constraint that the two natural first fixes miss. `tests/validation/test_routing_moment_fixture.py` shows that both
@@ -263,6 +263,66 @@ may edit, run with the person's own rights. Run it in an account or on a machine
 A moment record is held to the pinned list and bars. It is not held to the tree that reads it, because its two arms ran
 on two trees. It must name the `g6` package it ran on, and its servers must have found that package. Malformed calls
 are read against the schemas of the tree that scores. Score each arm on its own tree, and compare once both arms exist.
+
+### Outcome arm
+
+The moment hits measure reach: was G6 called at the moment. This arm measures what the work came to, on the same
+sessions and with no extra session: did the agent's final work come out right more often with the wiring than without?
+The owner's ruling of 2026-11-16 is that 0.3.0 is beta when it is "functional and provides some kind of benefit". This
+arm is the measure of the second part. It was written and frozen before any arm ran. Only one-task pilots had run, and
+their rows are not scored.
+
+- **The final work.** Each moment session's record names `final_diff_sha256`: the workspace as the session left it,
+  against the fixture commit, as a binary git diff. It holds every change, deletion and new file, the agent's own
+  commits included. It leaves out what the interpreter and pytest write, and the skill the runner installed. The diff is
+  kept as `events/<sha256>.diff`, beside the event logs, before the next session on that fixture wipes the workspace.
+  An empty diff is a session that changed nothing. Nothing else in a row's meaning changes.
+- **Held-out checks.** `moment_outcome/<task id>/test_outcome.py` holds, for each positive task, pytest checks that no
+  session sees. They are not in any fixture or prompt, and a session's workspace is a copy of its fixture only. They
+  cover the task's stated behaviour, the hidden constraint each stuck fixture holds, and for the `before_done` and
+  `after_refusal` tasks at least one edge the prompt implies. `tests/validation/test_routing_moment_outcome_checks.py`
+  shows that each task's checks fail on the fixture as shipped and pass on a right fix. It also shows that each
+  plausible wrong fix written there fails, on the check it was written to trip. Those fixes live only in that test.
+- **Harm.** For each negative and missing-tool task, `moment_outcome/<task id>/protected.json` names the fixture files
+  the session was not asked to change. A session whose final diff changes or deletes one of them is counted as harm, so
+  an unnecessary G6 detour that damages work shows. A new file is not harm. The two `notes` tasks protect nothing,
+  because their only file is the one they ask to change.
+- **The outcome.** `score.outcome` applies the kept diff to a fresh copy of the fixture with git and runs the task's
+  checks against it with pytest. The checks sit outside the copy, with their own configuration, and no `conftest.py`
+  is read. The run gets no setting of the person's, and it has 120 seconds. A positive task passes only when its session
+  completed, changed something, the diff applied and every check passed. No diff, an empty diff, a diff that does not
+  apply, a session that did not complete or whose record does not bind, and a run out of time all count as fail. The
+  checks run inside an operating-system boundary (`g6.core.confine`) where a backend can confine them and a probe check
+  passes there. Otherwise they run in a plain subprocess with the timeout. Each row's `ran` says which, and why.
+- **The bar** (`moment_outcome_gates.json`): for each client on its own, the after arm's net on the positive tasks is
+  at least +1, where the net is wins (passed after only) minus losses (passed before only). The after arm's harm must
+  not be above the before arm's. `compare` prints, per client, the paired table (wins, losses, ties), the net, the
+  exact McNemar p-value of the discordant pairs, the harm of each arm, and each pair's moment hit beside its outcome.
+  It makes no claim (`claim` is `null`). Twelve positive pairs cannot decide a difference: the bar reads a direction.
+- **Pins.** `moment_frozen.json` pins the outcome bar at
+  `bc825f3fb4a20f76452f66beba3929024522501479b4ca8f1a98d246a3ee2684` and the held-out checks (the whole
+  `moment_outcome/` folder) at `6787d535ad8440824a72c81a25c75f8538e1f9141c5ff9c7f7d82ea2fcba05be`. A changed check or
+  bar scores nothing. To change either before the first arm, retire the old file with its reason (`freeze.retire`),
+  freeze the new one and pin it.
+
+How to run: nothing extra. `run` keeps each diff; `score` writes the outcome block in each arm's report; `compare`
+prints the paired outcome beside the moment hits:
+
+    python validation/routing/run.py score --client codex --cohort moment --out <before folder>
+    python validation/routing/run.py compare --client codex --out <before folder> --out <after folder>
+
+Limits of the outcome arm:
+
+- The checks are held out from the sessions, not hidden from a determined reader. A session's MCP configuration names
+  this tree's `server.py`, so an agent that wandered out of its workspace could find this folder.
+- Where no backend confines them, the checks run code a session wrote with the scorer's own rights. Score where nothing
+  else is held, as for the Claude Code arm.
+- Inside a boundary the child's environment is G6's minimal one, so string hashing is not seeded. Only a fix that
+  breaks a tie by a set's order could then read differently from run to run.
+- Harm is read per file, so a damaging edit inside a file the task asked to change is not harm. The checks catch it in a
+  positive task. In a negative task it is not caught.
+- In this setup a review's reply is withheld by consent (see "Not yet observed"), so an agent cannot use what a review
+  found. The arm measures the wiring as it stands.
 
 ### Not yet observed
 

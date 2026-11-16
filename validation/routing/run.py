@@ -81,6 +81,7 @@ MOMENT_FIXTURES = HERE / "moment_fixtures"
 #: The moment cohort's outcome arm: the held-out checks (one folder per task id, never copied where a session reads)
 #: and the outcome bar, both pinned in ``moment_frozen.json`` beside the list and the moment bars.
 OUTCOME, OUTCOME_GATES = HERE / "moment_outcome", HERE / "moment_outcome_gates.json"
+MOMENT_PIN_KEYS = ("bars_digest", "tasks_digest", "outcome_bars_digest", "checks_digest")
 #: What a session's final diff leaves out: what the interpreter and pytest write as they run.
 UNKEPT = (":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/.pytest_cache/**", ":(exclude,glob)**/*.pyc")
 #: The Claude Code plugin this tree ships (hooks and skills): a moment session of Claude Code loads it.
@@ -268,9 +269,10 @@ def load_tasks(path: Path = TASKS, *, cohort: str = "development") -> dict[str, 
 
 
 def moment_pins() -> dict[str, str]:
-    """The pinned digests of the moment bars and the moment task list (``moment_frozen.json``)."""
+    """The pinned digests of the moment bars, the moment task list, the outcome bar and the held-out checks
+    (``moment_frozen.json``)."""
     try:
-        return score.pinned(MOMENT_PINS)
+        return score.pinned(MOMENT_PINS, MOMENT_PIN_KEYS)
     except score.TaskError as exc:
         raise freeze.FrozenError(str(exc)) from exc
 
@@ -278,6 +280,22 @@ def moment_pins() -> dict[str, str]:
 def load_moment_gates() -> dict[str, Any]:
     """The moment bars, when they are the pinned ones."""
     return score.validate_moment_gates(freeze.bound(MOMENT_GATES, moment_pins()["bars_digest"], what="the moment bars"))
+
+
+def load_outcome_gates() -> dict[str, Any]:
+    """The outcome bar, when it is the pinned one."""
+    return score.validate_outcome_gates(freeze.bound(OUTCOME_GATES, moment_pins()["outcome_bars_digest"],
+                                                     what="the outcome bar"))
+
+
+def outcome_checks() -> str:
+    """The digest of the held-out checks as they stand, when it is the pinned one: a check changed after the freeze
+    scores nothing."""
+    found = freeze.tree_digest(OUTCOME)
+    if found != moment_pins()["checks_digest"]:
+        raise freeze.FrozenError(f"the held-out checks ({OUTCOME.name}) have digest {found}, and "
+                                 f"{moment_pins()['checks_digest']} is the one pinned")
+    return found
 
 
 def load_moment(path: Path = MOMENT_TASKS) -> dict[str, Any]:
@@ -1150,14 +1168,99 @@ def moment_reading(out_dir: Path, *, client: str) -> dict[str, Any]:
                      "guidance": list({freeze.digest(g): g for g in seen}.values())}
     if report["decision"] == "pass" and report["evidence"]["unevidenced"]:
         report["decision"] = "unevidenced"
+    report["outcome"] = outcome_reading(out_dir, tasks, gate)
     return report
+
+
+def outcome_reading(out_dir: Path, tasks: Mapping[str, Any], gate: Sequence[Session]) -> dict[str, Any]:
+    """The arm's outcome block (``score.outcome_report``): each scheduled task's outcome, from its gate session's state
+    and the final diff its record names, read from the run's folder and held to its digest, against the pinned
+    held-out checks. A task with no session, or whose record names no kept diff, has none: a positive one fails. A
+    session whose record does not bind (its ``fault``) cannot pass. The checks runner is made once, when a check is
+    first run (``check_runner``)."""
+    digest, runner = outcome_checks(), functools.cache(check_runner)
+    by_id = {session.transcript.task_id: session for session in gate}
+    rows = []
+    for task in tasks["tasks"]:
+        found, args = by_id.get(task["id"]), {"fixture": fixture_dir(task["fixture"]), "folder": OUTCOME / task["id"]}
+        if found is None:
+            row = score.outcome(task, "unavailable", None, **args)
+            row["why"] = "no session was run for the task, so no final diff was kept"
+        else:
+            data, why = kept(out_dir, str(found.record.get("final_diff_sha256", "")), ".diff")
+            state = "unevidenced" if found.fault else found.transcript.state
+            row = score.outcome(task, state, data, runner=runner, **args)
+            if data is None:
+                row["why"] = f"no final diff was kept: {why}"
+        rows.append(row)
+    return score.outcome_report(rows, digest)
+
+
+class _Confined(score.PlainRunner):
+    """Runs a task's checks inside the operating-system boundary ``g6.core.confine`` gives a child of this interpreter:
+    the run's own folder is all it may write, and it reaches no network."""
+
+    def __init__(self, backend: str) -> None:
+        super().__init__(f"confined: {backend}")
+
+    def folder(self) -> Any:
+        from g6.core import confine
+
+        return confine.run_folder(prefix="g6_outcome_", ignore_cleanup_errors=True)
+
+    def run(self, argv: list[str], *, cwd: Path, env: dict[str, str], seconds: float) -> int | None:
+        from g6.core import component_process, confine
+
+        plan = confine.plan(confine.Confinement(read_write=(str(Path(cwd).parent),),
+                                                read_only=confine.interpreter_paths(sys.executable)), sys.executable)
+        try:
+            if plan.backend is None:
+                raise score.TaskError(f"the held-out checks could not be confined here ({plan.why}); nothing was run")
+            with component_process.window(seconds):
+                return component_process.run_contained(argv, env=env, cwd=cwd, confined=plan).returncode
+        except component_process.ExecutionInterrupted:
+            return None
+        finally:
+            plan.release()
+
+
+def _probe(runner: Any) -> bool:
+    """Whether ``runner`` runs a check that passes: a check of nothing, in an empty repository. A runner that cannot
+    start or confine the run answers no."""
+    with tempfile.TemporaryDirectory(prefix="g6_outcome_probe_", ignore_cleanup_errors=True) as tmp:
+        fixture, checks = Path(tmp) / "fixture", Path(tmp) / "checks"
+        fixture.mkdir()
+        checks.mkdir()
+        (checks / "test_probe.py").write_text("def test_probe():\n    assert True\n", encoding="utf-8")
+        try:
+            return score.run_checks(fixture, checks, b"", runner=runner)["exit_code"] == 0
+        except (score.TaskError, OSError):
+            return False
+
+
+def check_runner() -> Any:
+    """What runs the held-out checks: inside an operating-system boundary where a backend can confine a child of this
+    interpreter and a probe check passes in it, otherwise a plain subprocess with a timeout. Its ``how`` says which, and
+    why, in every outcome row that ran a check."""
+    from g6.core import confine
+
+    name, why = confine.backend(sys.executable)
+    if name is None:
+        return score.PlainRunner(f"unconfined: {why}")
+    runner = _Confined(name)
+    if _probe(runner):
+        return runner
+    return score.PlainRunner(f"unconfined: the {name} backend could not run a probe check here")
 
 
 def compare(before: Path, after: Path, *, client: str) -> dict[str, Any]:
     """The before and after arms of one client, each read again from its own folder's kept logs, paired by task
-    (``score.compare``: an exact McNemar test per kind, and no claim), with what each arm ran on."""
+    (``score.compare``: an exact McNemar test per kind, and no claim), with what each arm ran on, and the outcome of
+    the work paired by positive task beside the moment hits (``score.compare_outcome``, against the pinned outcome
+    bar, with no claim)."""
     first, second = moment_reading(Path(before), client=client), moment_reading(Path(after), client=client)
-    return {**score.compare(first, second), "arms": {"before": first["arm"], "after": second["arm"]}}
+    return {**score.compare(first, second), "outcome": score.compare_outcome(first, second, load_outcome_gates()),
+            "arms": {"before": first["arm"], "after": second["arm"]}}
 
 
 def release(out_dirs: Sequence[Path], cohort: str = "final") -> dict[str, Any]:
