@@ -48,7 +48,7 @@ server reads it from its own environment. The meta-harness tools that run a work
 a workflow runs only once a person confirmed it, which G6 records under its state folder, so a confirmation a
 project's files carry does not count. The mission tools that run a repository's code ask for ``workforce.mission``
 (``workforce`` for all), and ``g6_improve_start`` for ``metaharness.improve`` (``metaharness`` covers it too).
-``g6_describe`` says which sensitive ops this server allows. Before you list
+``g6_describe`` says which sensitive ops this server allows once the person shares host_configuration. Before you list
 one, know this (the refusal says it too): Where no operating-system boundary can confine it (macOS, Linux without
 bubblewrap, and Windows before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a
 generated script, a repository's tests) unless you allow it once with g6 setup. Code you allow then has your own
@@ -187,7 +187,7 @@ def build_server(surface: Any = None) -> Any:
 
         return report(useful_parallel_work=useful_parallel_work)
 
-    from g6.mcp.catalogue import shown_components, unshipped_reply
+    from g6.mcp.catalogue import host_facts, shown_components, unshipped_reply
 
     @server.tool()
     def g6_components() -> list[str]:
@@ -201,12 +201,12 @@ def build_server(surface: Any = None) -> Any:
 
     @server.tool()
     def g6_describe(component: str) -> dict:
-        """Maturity, ops and declared dependencies of one component, and which of its sensitive ops this server
-        allows."""
+        """Maturity, ops and declared dependencies of one component, and, once the person shares host_configuration,
+        this computer's facts about it: which of its sensitive ops this server allows, which extras are installed."""
         hidden = unshipped_reply(component)     # a name G6 did not ship, before the person shares component_catalogue
         if hidden is not None:
             return hidden
-        return describe_reply(component)
+        return host_facts(describe_reply(component))    # this computer's facts only with host_configuration shared
 
     @server.tool()
     def g6_invoke(component: str, op: str, params_json: str = "{}") -> dict:

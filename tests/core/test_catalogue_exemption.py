@@ -130,6 +130,39 @@ def test_the_shipped_list_is_every_built_in_component_g6_ships():
     assert all(catalogue.built_in(name) for name in catalogue.shipped())
 
 
+HOMEMARK = "zqxpersonhomemarker"
+
+
+@pytest.mark.parametrize("granted", [False, True])
+def test_a_built_in_description_holds_this_computers_facts_only_with_host_configuration(tmp_path, monkeypatch,
+                                                                                         registry_reset, granted):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / HOMEMARK / ".g6"))
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "lean")
+    if granted:
+        _grant("host_configuration")
+    keyed, extras, lean = _calls([("g6_describe", {"component": "ctx_search"}),
+                                  ("g6_describe", {"component": "grounding"}),
+                                  ("g6_describe", {"component": "lean"})])
+    for reply in (keyed, extras, lean):
+        assert "G6_E_CLOUD_CONSENT_REQUIRED" not in reply and "'available': True" in reply, reply[:300]
+    assert "'keys': [{" in keyed and "'extras': [{" in extras and "check_proof" in lean   # the catalogue text stays
+    assert (HOMEMARK in keyed) is granted                                # the key file's path
+    assert ("'installed'" in extras) is granted                          # which extras this computer has
+    assert ("sensitive_ops_allowed_here" in lean) is granted             # the server's own setting
+    if granted:
+        from g6.core import cloud_consent as cloud
+        assert any(row.get("provider") == "openai:codex" and "host_configuration" in json.dumps(row)
+                   for row in cloud.disclosures())
+
+
+def test_outside_an_mcp_call_a_description_keeps_this_computers_facts(tmp_path, monkeypatch, registry_reset):
+    from g6.mcp import describe_reply
+
+    monkeypatch.setenv("G6_HOME", str(tmp_path / HOMEMARK / ".g6"))
+    info = describe_reply("ctx_search")
+    assert HOMEMARK in json.dumps(info)
+
+
 def test_the_built_in_catalogue_tools_declare_no_retained_source():
     from g6.core.consent_declarations import TOOLS
 

@@ -41,8 +41,8 @@ family; its best state is `qualified-draft`.
 Alone over MCP: `g6_invoke("database", "query", '{"connection": "shop", "sql": "SELECT count(*) FROM items"}')`.
 With one connection declared, `connection` may be left out. `execute` is refused over MCP
 (`G6_E_SENSITIVE_COMPONENT_DENIED`) unless the person who runs the server lists `database.execute` in
-`G6_MCP_SENSITIVE`; `g6_describe("database")` shows whether it is allowed. Never change that setting yourself: ask the
-person. From Python: `from g6.integrations.database import config, ops`.
+`G6_MCP_SENSITIVE`; `g6_describe("database")` shows whether it is allowed, once the person shares
+host_configuration. Never change that setting yourself: ask the person. From Python: `from g6.integrations.database import config, ops`.
 
 How it is guarded:
 

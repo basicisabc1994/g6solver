@@ -59,9 +59,39 @@ def extension(name: str) -> bool:
     return name in registry.get_registry().refs and not built_in(name)
 
 
-def carry(name: str) -> None:
-    """The reply now holds the extension's text: it goes out only where the person shared ``EXTENSION_SOURCE``."""
-    policy.record_sources((policy.Source.text(EXTENSION_SOURCE, "extension:" + name, name),))
+def carry(name: str, source: str = EXTENSION_SOURCE) -> None:
+    """The reply now holds the extension's text (or, with ``HOST_SOURCE``, this computer's facts about a component):
+    it goes out only where the person shared that source."""
+    item = ("extension:" if source == EXTENSION_SOURCE else "host:") + name
+    policy.record_sources((policy.Source.text(source, item, name),))
+
+
+#: The source a description's facts about this computer stay under.
+HOST_SOURCE = "host_configuration"
+#: What a description over MCP says in their place without ``HOST_SOURCE`` shared.
+HOST_FACTS_LEFT_OUT = ("left out: this computer's facts (the key file's path, which extras are installed, and which "
+                       "sensitive operations this server allows) are given once the person shares "
+                       f"{HOST_SOURCE} with this client (g6_cloud_grant)")
+
+
+def host_facts(info: dict) -> dict:
+    """``g6_describe``'s reply over MCP: G6's catalogue text as it is, and this computer's facts in it (each key's
+    ``file``, each extra's ``installed``, ``sensitive_ops_allowed_here``) only where the person shared ``HOST_SOURCE``
+    with the client's provider, the reply then carrying that source; otherwise they are left out and
+    ``host_facts`` says so. Outside an MCP call nothing is sent and ``info`` is returned whole."""
+    capture = policy.current_capture()
+    if capture is None or not info.get("available"):
+        return info
+    if policy.is_granted(HOST_SOURCE, _provider(capture)):
+        carry(str(info.get("name", "")), HOST_SOURCE)
+        return info
+    info = {k: v for k, v in info.items() if k != "sensitive_ops_allowed_here"}
+    if isinstance(info.get("keys"), list):
+        info["keys"] = [{k: v for k, v in key.items() if k != "file"} for key in info["keys"]]
+    if isinstance(info.get("extras"), list):
+        info["extras"] = [{k: v for k, v in extra.items() if k != "installed"} for extra in info["extras"]]
+    info["host_facts"] = HOST_FACTS_LEFT_OUT
+    return info
 
 
 def _provider(capture: policy.Capture) -> str:
@@ -117,8 +147,8 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-__all__ = ["EXTENSION_SOURCE", "PATH", "UNSHIPPED", "build", "built_in", "carry", "dumps", "extension", "shipped",
-           "shown_components", "unshipped_reply"]
+__all__ = ["EXTENSION_SOURCE", "HOST_FACTS_LEFT_OUT", "HOST_SOURCE", "PATH", "UNSHIPPED", "build", "built_in", "carry",
+           "dumps", "extension", "host_facts", "shipped", "shown_components", "unshipped_reply"]
 
 if __name__ == "__main__":
     raise SystemExit(main())
