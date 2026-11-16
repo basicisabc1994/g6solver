@@ -537,10 +537,16 @@ def test_supplied_pointer_and_mismatched_input_bytes_cannot_grant(tmp_path):
         pass
 
 
-def test_retained_literal_is_not_supplied_again_by_polling_a_handle():
+@pytest.mark.parametrize('poller', ['same-session', 'other-session', 'other-provider'])
+def test_retained_literal_is_not_supplied_again_by_polling_a_handle(poller):
+    # Ruling of 2026-11-16: a job's own literal goes back to the session and provider that submitted it (it discloses
+    # nothing new); polling the handle from any other session or provider supplies nothing.
     from g6.metaharness.jobs import Jobs
-    from g6.mcp.cloud_consent import protect_reply
+    from g6.mcp.cloud_consent import client_provider, protect_reply
     session = SimpleNamespace(client_params=SimpleNamespace(clientInfo=SimpleNamespace(name='codex')))
+    other = SimpleNamespace(client_params=SimpleNamespace(clientInfo=SimpleNamespace(
+        name='claude-code' if poller == 'other-provider' else 'codex')))
+    polling = session if poller == 'same-session' else other
     literal = cloud.Source.text(cloud.input_source('PRIVATE_EARLIER_ARGUMENT'), 'argument', 'PRIVATE_EARLIER_ARGUMENT')
     jobs = Jobs()
     try:
@@ -550,12 +556,16 @@ def test_retained_literal_is_not_supplied_again_by_polling_a_handle():
             started = jobs.start(lambda: cloud.bind_output({'text': 'PRIVATE_EARLIER_ARGUMENT'}, (literal,)))
         jobs.close()
         with cloud.collect_sources() as capture:
-            capture.client = 'openai:codex', session
+            capture.client = client_provider(SimpleNamespace(session=polling)), polling
             reply = jobs.status(started['job_id'])
-            refused = protect_reply(SimpleNamespace(session=session), reply, cloud.output_sources(reply),
-                                    supplied=capture.supplied)
-            assert 'PRIVATE_EARLIER_ARGUMENT' not in str(refused)
-            assert literal.source_id not in capture.supplied
+            shown = protect_reply(SimpleNamespace(session=polling), reply, cloud.output_sources(reply),
+                                  supplied=capture.supplied)
+            if poller == 'same-session':
+                assert shown['result'] == {'text': 'PRIVATE_EARLIER_ARGUMENT'}
+                assert capture.supplied == {literal.source_id}
+            else:
+                assert 'PRIVATE_EARLIER_ARGUMENT' not in str(shown)
+                assert literal.source_id not in capture.supplied
         fresh = Jobs()
         try:
             assert fresh.status(started['job_id'])['ok'] is False
