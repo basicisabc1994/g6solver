@@ -58,13 +58,26 @@ def _in_g6s_words(start: str = "") -> Callable[[Callable[..., Path]], Callable[.
     return wrap
 
 
+def _text(value: object, what: str = "the path") -> str:
+    """``value`` as a ``str`` (a ``str``, or a path object that gives one); :class:`PathRefused` (not outside) for
+    anything else (``None``, bytes, a number), in G6's words, so no raw ``TypeError`` reaches a caller. An interrupt
+    raised while it is read is not caught."""
+    try:
+        text = os.fspath(value)
+    except TypeError:
+        text = None
+    if not isinstance(text, str):
+        raise PathRefused(f"{what} is not text (a str or a path object)")
+    return text
+
+
 def confined_path(raw: str | os.PathLike[str], roots: tuple[Path, ...]) -> Path:
     """Where an absolute ``raw`` really is, when that is inside one of ``roots``: :func:`contained` over several
     trusted, absolute roots, so every refusal is its own. :class:`PathRefused` (a ``ValueError``) when ``raw`` is
     relative or lies in none of them, or when the file system could not answer about it (as :func:`contained`). A
     concurrent change to a link can still race it."""
-    text = os.fspath(raw)
-    if not isinstance(text, str) or not Path(text).is_absolute():
+    text = _text(raw)
+    if not Path(text).is_absolute():
         raise PathRefused("an absolute local path is required")
     refused = PathRefused("no root is declared", outside=True)
     for root in roots:
@@ -95,9 +108,9 @@ def state_path(*parts: str) -> Path:
     """A path under the state root. Each part is one name below it, or a relative path of names: a part that is a
     network or device path (:func:`_elsewhere`), absolute, rooted (``\\x``), drive-qualified (``C:``, ``C:x``) or that
     splits into an empty, ``.`` or ``..`` name is refused as outside on its words, before anything is joined or resolved;
-    a name :func:`_gate` refuses is refused too. A :class:`PathRefused` (a ``ValueError``) says why, in G6's words."""
-    for part in parts:
-        text = os.fspath(part)
+    a part that is not text (``None``, bytes) or holds a name :func:`_gate` refuses is refused too, not as outside. A :class:`PathRefused` (a ``ValueError``) says why, in G6's words."""
+    parts = tuple(_text(part, "state path under G6_HOME: a part") for part in parts)
+    for text in parts:
         names = set(text.replace("\\" if os.name == "nt" else "/", "/").split("/"))
         why = _elsewhere(text)
         if why is None and (Path(text).anchor or names & {"", ".", ".."}):
@@ -282,8 +295,8 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
     Windows a folder on the path that cannot be read now is refused, not as outside, and so is a path the file system
     raises any other error about (in G6's words, never the system's). It reads no file's content:
     :func:`plain_file` checks a file to be read."""
-    text = os.fspath(raw)
-    if not isinstance(text, str) or not text.strip():
+    text = _text(raw)
+    if not text.strip():
         raise PathRefused("the path is empty")
     if any(ord(ch) < 32 or ord(ch) == 127 for ch in text):
         raise PathRefused("the path holds a control character")

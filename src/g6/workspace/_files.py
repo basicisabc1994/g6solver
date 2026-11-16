@@ -245,7 +245,10 @@ class Workspace:
     def contained(self, path: str | os.PathLike[str]) -> Path:
         """Where ``path`` really is, resolved against the folder; :class:`WorkspaceRefused` when it leaves the folder
         (``OUTSIDE_ROOT``), names G6's bookkeeping (``RESERVED``) or is not a path G6 resolves (``INPUT_INVALID``)."""
-        raw_parts = os.fspath(path).replace("\\", "/").split("/")
+        try:
+            raw_parts = os.fspath(path).replace("\\", "/").split("/")
+        except TypeError:                                   # None, bytes, a number: not a path G6 takes
+            raise WorkspaceRefused(INPUT_INVALID, "the path is not text (a str or a path object)") from None
         if any(part.lower().startswith(".partial-") for part in raw_parts):
             raise WorkspaceRefused(RESERVED, "the .partial- prefix is reserved for G6 temporary files")
         try:

@@ -452,6 +452,24 @@ def test_a_device_part_is_refused_as_outside_and_never_opened(home: Path, pipe: 
     assert not opened(), "state_path opened the pipe while it decided"
 
 
+class _Interrupted(os.PathLike):
+    def __fspath__(self) -> str:
+        raise KeyboardInterrupt
+
+
+@pytest.mark.parametrize("value", [None, b"x.json", 1], ids=["none", "bytes", "int"])
+def test_a_part_that_is_not_text_is_refused_in_g6s_words(home: Path, value: object) -> None:
+    # not a raw TypeError; an interrupt while a part is read is not caught
+    from g6.core.storage import PathRefused
+
+    for parts in ((value,), ("churn", value)):
+        with pytest.raises(PathRefused, match="not text") as refused:
+            state_path(*parts)
+        assert refused.value.outside is False and "G6_HOME" in refused.value.reason
+    with pytest.raises(KeyboardInterrupt):
+        state_path("churn", _Interrupted())
+
+
 @pytest.mark.parametrize("where", ["lstat", "resolve"])
 @pytest.mark.parametrize("error", [OSError(22, "zz-os-words", None, 87), ValueError("zz-python-words"),
                                    UnicodeEncodeError("utf-16-le", "\udc80", 0, 1, "zz-codec-words")],

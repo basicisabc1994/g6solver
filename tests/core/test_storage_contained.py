@@ -442,6 +442,25 @@ def test_a_stream_name_on_a_one_letter_junction_out_of_the_root_is_refused(root:
         os.rmdir(base / "j")
 
 
+class _Interrupted(os.PathLike):
+    def __fspath__(self) -> str:
+        raise KeyboardInterrupt
+
+
+@pytest.mark.parametrize("value", [None, b"x.json", 1], ids=["none", "bytes", "int"])
+@pytest.mark.parametrize("call", ["contained", "refuse_links", "confined_path"])
+def test_a_value_that_is_not_text_is_refused_in_g6s_words(root: Path, value: object, call: str) -> None:
+    # a caller that hands None, bytes or a number gets a refusal in G6's words, not a raw TypeError (nor, for bytes,
+    # "the path is empty"); an interrupt while the value is read is not caught
+    calls = {"contained": lambda v: contained(root, v), "refuse_links": lambda v: contained(root, v, refuse_links=True),
+             "confined_path": lambda v: storage.confined_path(v, (root,))}
+    with pytest.raises(PathRefused, match="not text") as refused:
+        calls[call](value)
+    assert refused.value.outside is False
+    with pytest.raises(KeyboardInterrupt):
+        calls[call](_Interrupted())
+
+
 #: What an entry point may meet while it decides: an OS error (WinError 87, a stream name lstat cannot take), a
 #: ValueError (a NUL) and a UnicodeError (half of a UTF-16 character encoded for Windows).
 ERRORS = [OSError(22, "zz-os-words", None, 87), ValueError("zz-python-words"),
