@@ -28,6 +28,8 @@ QUEUE_CAPACITY = 10_000
 #: How long one writer waits for another server's lock on either platform.
 LOCK_WAIT_S = 120.0
 LOCK_RETRY_S = 0.01
+#: Windows: the byte locked, beyond the file's contents, so reading the lock file never meets a locked region.
+LOCK_OFFSET = 0x7FFFFFFF
 
 
 @contextmanager
@@ -37,15 +39,13 @@ def _process_lock(path: Path):
         if os.name == "nt":
             import msvcrt
 
-            if lock.seek(0, 2) == 0:
-                lock.write(b"\0")
-                lock.flush()
+            # The locked byte lies past anything written, so a reader of the lock file never meets the lock.
             def acquire():
-                lock.seek(0)
+                lock.seek(LOCK_OFFSET)
                 msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
 
             def release():
-                lock.seek(0)
+                lock.seek(LOCK_OFFSET)
                 msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
         else:
             import fcntl
@@ -150,7 +150,24 @@ def flush(timeout: float | None = None) -> bool:
     return True
 
 
-atexit.register(flush)
+#: How long a process waits at exit with no queued row written; past it the daemon writer ends with the process.
+EXIT_FLUSH_S = 2.0
+
+
+def _flush_at_exit() -> None:
+    """Drain at exit while rows are being written; never hold an exit for another server's lock. Rows still queued
+    after EXIT_FLUSH_S with none written (or after LOCK_WAIT_S in all) are lost, a stated limit."""
+    rows = _writer.rows
+    end = time.monotonic() + LOCK_WAIT_S
+    with rows.all_tasks_done:
+        while rows.unfinished_tasks:
+            before = rows.unfinished_tasks
+            rows.all_tasks_done.wait(min(EXIT_FLUSH_S, max(0.0, end - time.monotonic())))
+            if rows.unfinished_tasks >= before or time.monotonic() >= end:
+                return
+
+
+atexit.register(_flush_at_exit)
 
 
 def repair_stats(path: Path | None = None) -> dict[str, Any]:
