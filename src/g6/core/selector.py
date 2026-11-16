@@ -16,8 +16,9 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
    ``g6_confirm_behaviour`` are raised (``RAISE_BONUS``); each ``considering`` entry is validated.
 3. ``candidates``: a log-IDF word overlap over the corpus (``discovery._tokens``, the scoring ``g6_find`` uses), as
    a share of a full match, times ``LEXICAL_WEIGHT`` (``ROUTE_WEIGHT`` more for a route), plus the fixed phase priors ``PRIORS`` (and ``PHASE_TAG_BONUS`` for a matched entry
-   tagged with the phase); with ``rerank="colbert"``, the local ColBERT rung reorders the first ``RERANK_POOL`` when
-   its weights are present, and is reported skipped otherwise. Where the rankers disagree it is listed.
+   tagged with the phase). Where the rankers disagree it is listed. A semantic rerank (the local ColBERT rung) is
+   deferred: it would make the reply depend on what the host has installed and cached, so ``rerank="colbert"`` is
+   kept for compatibility and answered lexically (``NOT_OFFERED``).
 4. ``next_action``: with open hypotheses in ``considering``, ``verification_controller.next_experiment`` picks the
    call with the most severity-weighted open-hypothesis coverage per cost unit (``COST_UNITS``) within
    ``BUDGET_UNITS``; otherwise the first candidate.
@@ -36,14 +37,16 @@ from typing import Any
 from g6.core.discovery import _tokens
 
 STAGES = ("facts", "model_check", "candidates", "next_action", "reroute", "validation")
+#: ``lexical`` only ranks; ``colbert`` is kept so a call that names it is not broken, and is answered lexically.
 RERANKS = ("lexical", "colbert")
+NOT_OFFERED = ("not offered here: a semantic rerank would depend on what this machine has installed and cached, "
+               "which this reply never says; ranked lexically")
 MAX_CANDIDATES = 8
 LEXICAL_WEIGHT = 6.0        # an entry holding every query word the corpus has scores this much; others in proportion
 ROUTE_WEIGHT = 0.5          # a route is an instruction to read, so its words count half beside the calls it names
 PHASE_TAG_BONUS = 0.5       # a matched entry tagged with the phase
 RAISE_BONUS = 1.0           # stage 2's raise
 CONSIDERED_BONUS = 2.0      # a call the agent is considering, once it validates
-RERANK_POOL = 24
 COST_UNITS = {"low": 1, "medium": 2, "high": 4}
 BUDGET_UNITS = 4
 RAISED = ("tool:g6_premortem", "tool:g6_confirm_behaviour")
@@ -511,10 +514,10 @@ def _validate(entry: dict[str, Any], call: dict[str, Any]) -> tuple[bool, list[s
 
 
 def select(task: str, phase: str = "", last_outcome: str = "", considering: Any = "", limit: int = 5,
-           rerank: str = "lexical", *, corpus: dict[str, Any] | None = None, rungs: Any = None,
+           rerank: str = "lexical", *, corpus: dict[str, Any] | None = None,
            request_id: str = "", run_id: str = "") -> dict[str, Any]:
-    """The selection for the agent's situation (module docstring). ``corpus`` and ``rungs`` stand in for the shipped
-    corpus and the ColBERT rungs in tests."""
+    """The selection for the agent's situation (module docstring). ``corpus`` stands in for the shipped corpus in
+    tests."""
     from g6.core.reliability_envelope import envelope_fields, warning_card
     from g6.skills.corpus import PHASES, entries as expanded
 
@@ -523,7 +526,8 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     if phase not in ("", *PHASES):
         return _refuse(f"phase is one of {', '.join(PHASES)}, or empty", request_id, run_id)
     if rerank not in RERANKS:
-        return _refuse(f"rerank is one of {', '.join(RERANKS)}", request_id, run_id)
+        return _refuse("rerank is lexical: a semantic rerank is not offered here (it would depend on what this "
+                       "machine has installed)", request_id, run_id)
     if not isinstance(limit, int) or isinstance(limit, bool):
         return _refuse("limit is a whole number", request_id, run_id)
     if not isinstance(last_outcome, str):
@@ -586,31 +590,12 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     lexical_order = sorted(lexical, key=lambda k: (-lexical[k], k))
     stage: dict[str, Any] = {"stage": "candidates", "ran": True, "rankers": ["lexical"] + (["phase_prior"] if phase
                                                                                         else [])}
-    dense_order: list[str] = []
-    if rerank == "colbert":
-        if rungs is None:
-            from g6.knowledge.ctx_colbert.rungs import RUNGS as rungs
-        rung = rungs.get("colbert")
-        if rung is None or rung.ready():
-            stage["rerank"] = "skipped: the colbert rung is not ready on this machine (its extra or weights are absent)"
-        else:
-            pool = order[:RERANK_POOL]
-            dense = dict(zip(pool, rung.score(task, [documents[k] for k in pool])))
-            dense_order = sorted(pool, key=lambda k: (-dense[k], k))
-            order = dense_order + order[RERANK_POOL:]
-            for key in pool:
-                ranked_by[key].append("dense")
-            stage["rerank"] = "colbert ran"
-            stage["rankers"].append("colbert")
-    else:
-        stage["rerank"] = "not asked (rerank=lexical)"
+    stage["rerank"] = NOT_OFFERED if rerank == "colbert" else "not asked (rerank=lexical)"
     top = order[:limit]
     disagreements = []
-    for key in sorted(set(top) | set(lexical_order[:limit]) | set(dense_order[:limit])):
+    for key in sorted(set(top) | set(lexical_order[:limit])):
         ranks = {"lexical": lexical_order.index(key) + 1 if key in lexical_order[:limit] else None,
                  "final": top.index(key) + 1 if key in top else None}
-        if dense_order:
-            ranks["colbert"] = dense_order.index(key) + 1 if key in dense_order[:limit] else None
         if len(set(ranks.values())) > 1:
             disagreements.append({"id": key, **ranks})
     stage["disagreements"] = disagreements

@@ -281,34 +281,19 @@ def test_metaharness_recovery_remedies_are_mapped_by_component() -> None:
         assert remedy["tool"] in {"g6_invoke", "metaharness_propose"} or remedy["tell_person"], remedy
 
 
-def test_the_colbert_rerank_runs_only_when_its_rung_is_ready() -> None:
-    class Rung:
-        def __init__(self, why: str) -> None:
-            self.why = why
+def test_a_semantic_rerank_is_not_offered_and_the_colbert_value_is_answered_lexically(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rerank would depend on what the host has installed and cached, which a reply admitted with no grant must not
+    say: rerank="colbert" (kept for compatibility) ranks lexically, and the ColBERT rungs are never imported."""
+    import sys
 
-        def ready(self) -> str:
-            return self.why
-
-        def score(self, query: str, texts: list[str]) -> list[float]:
-            return [float(len(text) % 7) for text in texts]
-
-    class Rungs:
-        def __init__(self, rung: Rung) -> None:
-            self.rung = rung
-
-        def get(self, name: str) -> Rung | None:
-            return self.rung if name == "colbert" else None
-
+    monkeypatch.setitem(sys.modules, "g6.knowledge.ctx_colbert.rungs", None)     # an import of it would raise
     task = "check that the summary's claims are supported by the sources"
-    skipped = selector.select(task, rerank="colbert", rungs=Rungs(Rung("weights not cached at C:/somewhere")))
-    stage = next(m for m in skipped["mechanisms"] if m["stage"] == "candidates")
-    assert "skipped" in stage["rerank"] and "C:/somewhere" not in json.dumps(skipped)
-    ran = selector.select(task, rerank="colbert", rungs=Rungs(Rung("")))
-    stage = next(m for m in ran["mechanisms"] if m["stage"] == "candidates")
-    assert stage["rerank"] == "colbert ran" and any("dense" in c["ranked_by"] for c in ran["candidates"])
-    assert "disagreements" in stage
-    lexical = next(m for m in selector.select(task)["mechanisms"] if m["stage"] == "candidates")
-    assert "not asked" in lexical["rerank"]
+    lexical, colbert = selector.select(task, "verify"), selector.select(task, "verify", rerank="colbert")
+    assert colbert["ok"] is True and colbert["candidates"] == lexical["candidates"]
+    stage = next(m for m in colbert["mechanisms"] if m["stage"] == "candidates")
+    assert "not offered" in stage["rerank"] and stage["rankers"] == ["lexical", "phase_prior"]
+    assert not any("dense" in c["ranked_by"] for c in colbert["candidates"])
 
 
 def test_every_prior_names_an_entry_of_the_corpus() -> None:
