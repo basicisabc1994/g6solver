@@ -97,6 +97,8 @@ def test_every_framework_ticket_producer_uses_the_native_protocol_id():
                  if (calls := ticket_producers(p.read_text(encoding='utf-8')))}
     # FastMCP's convenience Context.request_id property stringifies native ids.
     # The lower request_context retains their protocol type and value.
-    assert producers == {'mcp/cloud_consent.py': ['ctx.request_context.request_id', 'ctx.request_context.request_id']}
+    # Three producers: the call's own reply, the withheld reply, and (wire-repair repair 1, F6) G6's envelope for a call
+    # refused for an undeclared argument, so even that refusal is a consent-checked, ticketed reply.
+    assert producers == {'mcp/cloud_consent.py': ['ctx.request_context.request_id'] * 3}
     assert ticket_producers('from g6.mcp.consent_transport import prepare as ticket\n'
                             'def producer():\n    ticket(session, ctx.request_id, result, refs)\n') == ['ctx.request_id']

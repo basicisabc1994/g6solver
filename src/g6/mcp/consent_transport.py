@@ -155,10 +155,15 @@ class _Session:
             # Framework input errors precede the producer and have no source
             # ticket. Keep their protocol error status, but never echo arbitrary
             # exception text (which can contain an unshared value or host path).
-            response = types.ServerResult(types.CallToolResult(isError=True, content=[
-                types.TextContent(type='text', text='Invalid tool call; check the declared arguments.')]))
-            ticket = Ticket((), provider(self), frozenset(), digest(response.model_dump(
-                mode='json', by_alias=True, exclude_none=True)))
+            # G6's own public input envelope may keep its repair only under its
+            # exact, already prepared empty-source ticket. No source binding is
+            # dropped or inferred from an error's words/status.
+            if ticket is None or ticket.sources or ticket.body_sha256 != digest(response.root.model_dump(
+                    mode='json', by_alias=True, exclude_none=True)):
+                response = types.ServerResult(types.CallToolResult(isError=True, content=[
+                    types.TextContent(type='text', text='Invalid tool call; check the declared arguments.')]))
+                ticket = Ticket((), provider(self), frozenset(), digest(response.model_dump(
+                    mode='json', by_alias=True, exclude_none=True)))
         elif ticket is None and isinstance(response.root, (types.InitializeResult, types.ListToolsResult, types.EmptyResult)):
             ticket = Ticket((), provider(self), frozenset(), digest(response.model_dump(
                 mode='json', by_alias=True, exclude_none=True)))

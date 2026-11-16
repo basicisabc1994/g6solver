@@ -98,6 +98,33 @@ def _repaired(tool, arguments, value, capture):
         return value
 
 
+def input_refusal(tool: str, fields) -> dict:
+    """An undeclared argument is refused before executing or admitting any source.
+
+    Only published field names and G6's program text are returned; no argument value is read back.
+    """
+    from g6.core.door import blocked_reply
+    from g6.mcp.repair import block
+
+    reply = blocked_reply('[G6_E_INPUT_VALIDATION] Undeclared tool argument; use only the declared arguments.')
+    repair = block(tool, reply)
+    if repair is not None:
+        repair['fill'] = sorted(fields)
+    return {**reply, 'repair': repair}
+
+
+def input_error_result(tool: str, fields):
+    """G6's public validation envelope, retaining the MCP protocol's error status."""
+    from fastmcp.tools.tool import ToolResult
+    from mcp import types
+
+    class InputErrorResult(ToolResult):
+        def to_mcp_result(self):
+            return types.CallToolResult(content=self.content, structuredContent=self.structured_content, isError=True)
+
+    return InputErrorResult(structured_content=input_refusal(tool, fields))
+
+
 def client_provider(ctx: Any) -> str:
     try:
         name = ctx.session.client_params.clientInfo.name.strip().lower()
@@ -241,8 +268,10 @@ def install(server) -> None:
                 # them, including an agent's purported answer to a dialog.
                 # Enforce the published argument names before that conversion.
                 if set(args) - tool.parameters.get('properties', {}).keys():
-                    from fastmcp.exceptions import ToolError
-                    raise ToolError('Undeclared tool argument; use only the declared arguments.')
+                    result = input_error_result(context.message.name, tool.parameters.get('properties', {}))
+                    wire = result.to_mcp_result().model_dump(mode='json', by_alias=True, exclude_none=True)
+                    prepare(session, ctx.request_context.request_id, result, (), body=wire)
+                    return result
                 capture.expected_tool = getattr(getattr(tool, 'fn', None), '_g6_tool_identity', None)
                 capture.client = client_provider(ctx), session
                 def inputs(value):
