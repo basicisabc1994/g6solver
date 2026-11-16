@@ -113,6 +113,33 @@ def test_a_colbert_rerank_says_nothing_of_this_computers_extras(tmp_path: Path, 
     assert strip.sub("", absent) == strip.sub("", present)
 
 
+SECRET = "zqxdropinsecret"
+
+
+def test_a_dropin_under_a_shipped_name_reaches_no_fresh_reply(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                             registry_reset: object) -> None:
+    """Ported from wire-entry review 2, finding 7: a package dropped into G6's namespace under a shipped family
+    member's name (adapt_audio) is never imported or run by g6_select, and none of its text reaches a fresh reply:
+    candidates and their validation come from the corpus built from shipped code."""
+    import sys
+
+    import g6
+
+    folder = tmp_path / "ns"
+    (folder / "adapt_audio").mkdir(parents=True)
+    (folder / "adapt_audio" / "__init__.py").write_text(
+        f'"""{SECRET} third-party text."""\nraise ImportError("{SECRET}: the person\'s private config text")\n',
+        encoding="utf-8")
+    monkeypatch.setattr(g6, "__path__", [*g6.__path__, str(folder)])
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    try:
+        selected, = _texts([("g6_select", {"task": "normalise the loudness of an audio file with adapt_audio",
+                                           "phase": "implement", "considering": ["adapt_audio.normalise"]})])
+        assert SECRET not in selected and "g6.adapt_audio" not in sys.modules, selected[:400]
+    finally:
+        sys.modules.pop("g6.adapt_audio", None)
+
+
 def test_it_takes_no_repository_argument() -> None:
     async def schema() -> dict:
         return (await build_server().get_tools())["g6_select"].parameters
