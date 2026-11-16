@@ -23,8 +23,12 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
    call with the most severity-weighted open-hypothesis coverage per cost unit (``COST_UNITS``) within
    ``BUDGET_UNITS``; otherwise the first candidate.
 5. ``reroute``: ``REMEDIES`` by refusal code or outcome, and ``g6.metaharness.recovery``'s remedies by component.
-6. ``validation``: a tool template's keys are within its recorded schema and hold its required keys; an op call
-   goes through ``g6.navigator.check_plan``. Every issue is attached to its candidate.
+6. ``validation``: a tool template's keys are within its recorded schema and hold its required keys; an op template
+   carries the door's own typed input check (``registry.build_typed_input``), made when the corpus was built from
+   shipped code, and an op call in ``considering`` is checked against the fields the corpus recorded. No component
+   is imported here, so a reply never depends on what the host can import. ``validated`` says only that the door
+   takes the call's shape; ``allowed_by_default`` is false for a call with a sensitive allowance, which the person
+   grants where the server is registered. Every issue is attached to its candidate.
 """
 from __future__ import annotations
 
@@ -76,10 +80,6 @@ UNKNOWN_UNTIL_OBSERVED = (
     "whether a model is configured for G6: only a *_NO_MODEL or G6_E_LLM_DISABLED refusal says it is not",
     "whether this machine can confine a run: only G6_E_ISOLATION_UNAVAILABLE says it cannot",
 )
-#: Check-plan codes that concern a plan navigator runs on its own, not a direct ``g6_invoke`` the agent makes: kept
-#: in a candidate's issues, they do not make it invalid. A sensitive op's allowance is in its needs.
-_PLAN_ONLY = frozenset({"G6_E_OP_NOT_CLEARED", "G6_E_OP_ACTS_BELOW_A2", "G6_E_NAV_EFFECT_OVER_BUDGET",
-                        "G6_E_SENSITIVE_COMPONENT_DENIED"})
 _CODE = re.compile(r"G6_E_[A-Z0-9_]+")
 _PAIR = re.compile(r"(?<![\w.])([a-z][a-z0-9_]*)\.([a-z][a-z0-9_]*)(?![\w.])")
 _COMPONENT_CODE = re.compile(r"\[([A-Z][A-Z0-9_]*)_ERROR\]")
@@ -502,27 +502,19 @@ def _check_tool(entry: dict[str, Any], arguments: Any) -> list[str]:
 
 
 def _check_op(entry: dict[str, Any], args: Any) -> tuple[bool, list[str]]:
-    """``navigator.check_plan`` on the one call, and its keys against the op's typed input. Structural problems make
-    it invalid; a plan-only code is kept as an issue and says so."""
-    from g6.navigator.plan import check_plan
-
+    """An op call the agent wrote, against what the corpus recorded of the op's typed input: no field it does not
+    take, and each field its template holds. G6's own words; no component is imported."""
     if not isinstance(args, dict):
         return False, ["args is a JSON object of the op's parameters"]
     component, op = entry["id"][3:].split(".", 1)
-    report = check_plan([{"component": component, "op": op, "args": args}])
-    issues, valid = [], True
-    for issue in report.issues:
-        if issue.code in _PLAN_ONLY:
-            issues.append(f"[{issue.code}] {issue.message} (this concerns a plan navigator runs, not a direct "
-                          "g6_invoke; a sensitive op's allowance is in needs)")
-        else:
-            valid = False
-            issues.append(f"[{issue.code}] {issue.message}")
+    issues = []
     unknown = sorted(set(args) - set(entry.get("fields", ())))
     if unknown:
-        valid = False
         issues.append(f"{component}.{op}'s typed input takes no field {', '.join(unknown)}")
-    return valid, issues
+    missing = sorted(set(json.loads(entry["call"]["arguments"]["params_json"])) - set(args))
+    if missing:
+        issues.append(f"{component}.{op} needs the field {', '.join(missing)}")
+    return not issues, issues
 
 
 def _considered(items: list[Any], entries: dict[str, dict[str, Any]], tools: dict[str, str]) -> list[dict[str, Any]]:
@@ -610,9 +602,11 @@ def _validate(entry: dict[str, Any], call: dict[str, Any]) -> tuple[bool, list[s
         issues = _check_tool(entry, call.get("arguments", {}))
         return not issues, issues
     if entry["kind"] == "op":
+        if call == entry["call"]:                   # the template: the door's own check, made when the corpus was built
+            return bool(entry["validated"]), list(entry["issues"])
         try:
             params = json.loads(call["arguments"].get("params_json", "{}"))
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError, TypeError):
             return False, ["params_json is not JSON"]
         return _check_op(entry, params)
     from g6.mcp.registrations import package_root
@@ -759,12 +753,14 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         valid, issues = _validate(entry, call)
         candidate = {"id": key, "kind": entry["kind"], "call": call, "establishes": entry["establishes"],
                      "not_established": entry["not_established"], "needs": entry["needs"], "cost": entry["cost"],
-                     "ranked_by": by, "score": round(scores.get(key, 0.0), 3), "validated": valid, "issues": issues}
+                     "ranked_by": by, "score": round(scores.get(key, 0.0), 3), "validated": valid, "issues": issues,
+                     "allowed_by_default": not entry["needs"]["sensitive"]}
         if entry["kind"] == "op":
             candidate["component"] = entry["component"]
         candidates.append(candidate)
     mechanisms.append({"stage": "validation", "ran": bool(candidates),
-                       "why": "tool templates against their recorded schemas; op calls through navigator.check_plan"})
+                       "why": "tool templates against their recorded schemas; op templates by the door's typed input "
+                              "check, made when the corpus was built from shipped code"})
 
     if remedy is not None and remedy["tell_person"]:
         say = remedy["action"] + (f" The step: {remedy['setup']}." if remedy["setup"] else "")

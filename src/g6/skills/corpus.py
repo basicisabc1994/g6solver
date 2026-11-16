@@ -10,7 +10,10 @@ and compares, so it cannot drift. It holds, as G6's own built-in text only:
 * each route of the using-g6 skill (``g6.skills.routing``), with its section's text;
 * each runnable op of a built-in component (a package under ``g6``; an entry-point extension never), with a template
   from its typed input and the text of its block's ``help`` and ``BlockContract``. A component with no block has no
-  op and so no entry: ``g6_invoke`` cannot run it.
+  op and so no entry: ``g6_invoke`` cannot run it. Each template is put through the door's own typed input check
+  here, when the corpus is built from shipped code (``_door_check``): ``validated`` says whether the door takes the
+  call's shape, and ``issues`` why not. ``g6_select`` reads that and imports no component, so its reply never
+  depends on what the host can import.
 
 The separate abstraction server is registered by the person alone, apart from ``g6-mcp`` (``SERVERS_NOT_SELECTED``).
 Nothing here runs an op: ``help`` and ``ops`` are each block's own description of itself.
@@ -379,6 +382,38 @@ def _confines(package: str) -> bool:
     return False
 
 
+#: How many times a refused template gains the fields its refusal names before it is recorded as refused.
+FILL_ROUNDS = 4
+_PATHLIKE = re.compile(r"[A-Za-z]:[\\/]|\\\\|/(?:home|Users|tmp|var|private)/")
+
+
+def _door_check(instance: Any, name: str, op: str, params: dict[str, Any],
+                fields: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """The template as the door's own typed input check (``registry.build_typed_input``, what ``g6_invoke`` runs
+    before the op) takes it: a refused template gains a typed placeholder for each field its refusal names and is
+    checked again, up to ``FILL_ROUNDS`` times. Returns the template and, when the door still refuses it, why, in
+    the door's words (a refusal that holds anything like a path is put in G6's fixed words instead)."""
+    from g6.core.registry import build_typed_input
+
+    code = f"[{name.upper()}_ERROR]"
+    error: str | None = None
+    for _ in range(FILL_ROUNDS):
+        _, error = build_typed_input(instance, {**params, "op": op}, code=code, op=op)
+        if error is None:
+            return params, []
+        said = error.split(f"{op}: ", 1)[-1]
+        named = sorted(f for f in fields if f not in params and f not in ("op", "operation")
+                       and re.search(rf"\b{re.escape(f)}\b", said))
+        if not named:
+            break
+        params = {**params, **{f: _placeholder(f, _annotation_kind(fields[f].annotation)) for f in named}}
+    said = (error or "").split(f"{op}: ", 1)[-1]
+    if _PATHLIKE.search(said):
+        said = "a field holds a value the door does not take"
+    return params, [f"[G6_E_INPUT_VALIDATION] {code} {op}: the door refuses this template as it stands ({said}); "
+                    f"fill it in from g6_describe {name}"]
+
+
 def _components_and_ops() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     from g6.core import discovery
     from g6.core.consent_declarations import TOOLS
@@ -396,7 +431,8 @@ def _components_and_ops() -> tuple[dict[str, Any], list[dict[str, Any]]]:
         if ref.source != "builtin" or not listed:
             continue                                        # an extension, or no block: never offered
         module, block = registry.get_module(name), registry.get_class(name)
-        contract = block().contract
+        instance = block()
+        contract = instance.contract
         hints = typing.get_type_hints(block.infer)
         model = next((v for k, v in hints.items() if k != "return"), None)
         fields = getattr(model, "model_fields", {})
@@ -428,6 +464,7 @@ def _components_and_ops() -> tuple[dict[str, Any], list[dict[str, Any]]]:
             required |= {k for k, f in fields.items() if f.is_required() and k not in ("op", "operation")}
             params = {k: _placeholder(k, _annotation_kind(fields[k].annotation) if k in fields else "string")
                       for k in sorted(required)}
+            params, issues = _door_check(instance, name, op, params, fields)
             words = re.findall(r"[a-z]+", op)
             phases = sorted({p for w in words for p in _OP_PHASES.get(w, ())}, key=PHASES.index)
             cost = "high" if has_model else "medium" if (op in sensitive or outside or confined) else "low"
@@ -436,6 +473,7 @@ def _components_and_ops() -> tuple[dict[str, Any], list[dict[str, Any]]]:
                 "call": {"tool": "g6_invoke", "arguments": {"component": name, "op": op,
                                                             "params_json": json.dumps(params, sort_keys=True)}},
                 "text": line or op.replace("_", " "), "sensitive": op in sensitive, "cost": cost, "phases": phases,
+                "validated": not issues, "issues": issues,
             })
     return components, ops
 

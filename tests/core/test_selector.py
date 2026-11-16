@@ -168,6 +168,48 @@ def test_considering_entries_are_validated() -> None:
     assert {c["id"] for c in considered} >= {"tool:g6_review_patch", "op:grounding.check_claim"}
 
 
+def test_a_selection_imports_no_component_and_runs_no_plan_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Whether a component loads on this machine is a host fact: select reads the corpus's door check, made from
+    shipped code when the corpus was built, so a reply is the same whatever the host can import."""
+    import sys
+
+    from g6.core.registry import ComponentRegistry
+
+    task, considering = ("check that the claims in my summary are supported by the sources",
+                         [{"component": "grounding", "op": "check_claim", "args": {"claim": "c", "sources": {"a": "b"}}}])
+    healthy = selector.select(task, "verify", considering=considering, limit=8)
+
+    def refuse(self: object, name: str) -> None:
+        raise AssertionError(f"select imported the component {name}")
+
+    monkeypatch.setattr(ComponentRegistry, "get_module", refuse)
+    monkeypatch.setattr(ComponentRegistry, "get_class", refuse)
+    monkeypatch.setitem(sys.modules, "g6.navigator.plan", None)
+    reply = selector.select(task, "verify", considering=considering, limit=8)
+    assert reply["ok"] is True and any(c["kind"] == "op" for c in reply["candidates"])
+    assert reply["candidates"] == healthy["candidates"] and reply["considering"][0]["validated"] is True
+
+
+def test_an_op_candidate_carries_the_corpus_door_check_and_validated_says_only_the_shape() -> None:
+    full = {entry["id"]: entry for entry in corpus.entries()}
+    reply = selector.select("push my branch to the remote", "implement", considering=["ctx_git.push"], limit=8)
+    for candidate in reply["candidates"]:
+        assert candidate["allowed_by_default"] is (not candidate["needs"]["sensitive"]), candidate["id"]
+        if candidate["kind"] == "op":
+            entry = full[candidate["id"]]
+            assert (candidate["validated"], candidate["issues"]) == (entry["validated"], entry["issues"])
+            assert not any("SENSITIVE" in issue or "NOT_CLEARED" in issue for issue in candidate["issues"])
+    push = next(c for c in reply["candidates"] if c["id"] == "op:ctx_git.push")
+    assert push["allowed_by_default"] is False
+
+
+def test_a_considered_op_call_missing_a_field_its_template_holds_is_not_validated() -> None:
+    reply = selector.select("check a claim", considering=[
+        {"component": "grounding", "op": "check_claim", "args": {"claim": "c"}}])
+    row = reply["considering"][0]
+    assert row["validated"] is False and any("sources" in issue for issue in row["issues"])
+
+
 def test_considering_may_be_text() -> None:
     reply = selector.select("check claims", considering="grounding.check_claim, g6_find")
     assert [entry["validated"] for entry in reply["considering"]] == [True, True]

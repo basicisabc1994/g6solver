@@ -4,6 +4,7 @@ runnable built-in ops, regenerated from the code and compared, so it cannot drif
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from g6.mcp import registrations
@@ -61,6 +62,33 @@ def test_an_agent_facing_member_with_no_corpus_entry_is_a_problem() -> None:
     exempt = {**selectable, dropped: "exempt: short"}
     problems = routing.check(routing.load(), **{**inputs, "selectable": exempt})
     assert [(p.code, p.key) for p in problems] == [("UNSELECTABLE", dropped)]
+
+
+def test_an_op_template_is_validated_exactly_when_the_doors_typed_input_check_takes_it() -> None:
+    """``validated`` is the door's own check (registry.build_typed_input, what g6_invoke runs), made when the corpus is
+    built from shipped code; a refused template says why in G6's words, with no path."""
+    from g6.core.registry import build_typed_input, get_registry
+
+    registry = get_registry()
+    for entry in corpus.entries():
+        if entry["kind"] != "op":
+            continue
+        component, op = entry["id"][3:].split(".", 1)
+        params = json.loads(entry["call"]["arguments"]["params_json"])
+        _, error = build_typed_input(registry.get_class(component)(), {**params, "op": op},
+                                     code=f"[{component.upper()}_ERROR]", op=op)
+        assert entry["validated"] is (error is None), (entry["id"], error)
+        if error:
+            assert entry["issues"] and all(i.startswith("[G6_E_INPUT_VALIDATION]") for i in entry["issues"]), entry
+        else:
+            assert entry["issues"] == [], entry["id"]
+        for issue in entry["issues"]:
+            assert not re.search(r"[A-Za-z]:[\\/]|\\\\|/(?:home|Users|tmp)/", issue), issue
+
+
+def test_the_door_fields_a_refusal_names_are_filled_into_the_template() -> None:
+    query = next(e for e in corpus.entries() if e["id"] == "op:database.query")
+    assert "sql" in json.loads(query["call"]["arguments"]["params_json"]) and query["validated"] is True
 
 
 def test_the_corpus_is_sorted_and_written_one_way() -> None:
