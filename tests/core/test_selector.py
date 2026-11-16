@@ -134,6 +134,17 @@ def test_the_action_gate_as_next_shows_the_field_to_fill_and_how() -> None:
     assert "action_type" in nxt["say"] and "allow, confirm, review or block" in nxt["say"], nxt["say"]
 
 
+def test_the_gate_hint_example_is_an_act_the_gate_decides() -> None:
+    """The example the hint teaches is an action type the gate profiles, and the gate decides it."""
+    from g6.mcp import invoke_reply
+
+    example = json.loads(re.search(r"\{.*?\}", selector.FILL_HINTS["op:action_gating.evaluate"]).group(0))
+    ran = invoke_reply("action_gating", "evaluate", json.dumps({"action": example}), allow_sensitive=frozenset())
+    assert example["action_type"] in ran["result"]["capabilities"]["supported_action_types"], example
+    assert ran["result"]["gate_decision"]["decision"] in ("allow", "confirm", "review", "block"), ran["result"][
+        "gate_decision"]
+
+
 def test_a_next_call_whose_template_is_not_known_to_run_says_what_to_fill() -> None:
     for task, phase in (("check that the claims in my summary are supported by the sources", "verify"),
                         ("pytest fails with an import error after my change", "diagnose"),

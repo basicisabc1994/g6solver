@@ -890,9 +890,11 @@ def _schedule(hypotheses: list[dict[str, Any]], entries: dict[str, dict[str, Any
 #: What to put in a template whose op refuses it as given, where G6 can say it in one line; any other such template
 #: says which fields to fill, from the corpus's record of the refusal.
 FILL_HINTS = {
-    "op:action_gating.evaluate": 'Fill action with the act you are about to take, as {"action_type": "git_push", '
-                                 '"target_resource": "origin main"}: the gate decides allow, confirm, review or '
-                                 "block before you act.",
+    "op:action_gating.evaluate": 'Fill action with the act you are about to take, as {"action_type": "run_code", '
+                                 '"target_resource": "git push origin main"} (action_type is one the gate profiles: '
+                                 "write_file, run_code, call_api, send_email, payment, account_deletion, "
+                                 "production_infrastructure_change, permission_escalation, plc_write, gcode_execute): "
+                                 "the gate decides allow, confirm, review or block before you act.",
 }
 
 
