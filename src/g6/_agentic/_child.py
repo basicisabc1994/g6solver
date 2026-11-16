@@ -35,7 +35,12 @@ MEMORY_MB = 1024
 
 
 class Refused(RuntimeError):
-    """The child stage did not give an answer; ``str()`` starts with the stable code."""
+    """The child stage did not give an answer; ``str()`` starts with the stable code, and ``isolation`` is the run's
+    record when a plan was made."""
+
+    def __init__(self, message: str, isolation: Mapping[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.isolation = dict(isolation or {})
 
 
 class _Asked(BaseException):
@@ -191,31 +196,31 @@ def launch(request: Mapping[str, Any], *, timeout_s: float) -> tuple[dict[str, A
             if plan.backend is None:
                 raise Refused(f"[{ISOLATION_UNAVAILABLE}] the agentic kernel runs a substitute only inside an "
                               f"operating-system boundary, and none can confine it here ({plan.why}); nothing was run. "
-                              "Run g6 doctor: it says what this computer needs for a boundary.")
+                              "Run g6 doctor: it says what this computer needs for a boundary.", record)
             body = canonical({**dict(request), "isolation": record}).encode("utf-8")
             try:
                 with component_process.window(timeout_s):
                     done = component_process.run_contained(argv, env=env, cwd=cwd, input_bytes=body,
                                                            memory_bytes=MEMORY_MB * 1024 * 1024, confined=plan)
             except component_process.ExecutionInterrupted as exc:
-                raise Refused(f"[G6_E_AGENTIC_TIMEOUT] the child ran longer than {timeout_s:g}s and was killed") from exc
+                raise Refused(f"[G6_E_AGENTIC_TIMEOUT] the child ran longer than {timeout_s:g}s and was killed", record) from exc
             except (OSError, ConnectionResetError) as exc:
-                raise Refused(f"[G6_E_AGENTIC_CHILD_FAILED] the child could not be run: {exc}") from exc
+                raise Refused(f"[G6_E_AGENTIC_CHILD_FAILED] the child could not be run: {exc}", record) from exc
         finally:
             plan.release()
     stderr = done.stderr.decode("utf-8", "replace")
     failure = confine.import_failure(stderr)
     if failure:
-        raise Refused(failure)
+        raise Refused(failure, record)
     lines = [line for line in done.stdout.decode("utf-8", "replace").splitlines() if line.strip()]
     try:
         reply = json.loads(lines[-1])
     except (IndexError, json.JSONDecodeError):
         reply = None
     if done.returncode != 0 or not isinstance(reply, dict):
-        raise Refused(f"[G6_E_AGENTIC_CHILD_FAILED] the child exited with {done.returncode}: {stderr[-400:]}")
+        raise Refused(f"[G6_E_AGENTIC_CHILD_FAILED] the child exited with {done.returncode}: {stderr[-400:]}", record)
     if "refused" in reply:
-        raise Refused(str(reply["refused"]))
+        raise Refused(str(reply["refused"]), record)
     return reply, record
 
 

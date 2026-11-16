@@ -106,6 +106,7 @@ def test_the_child_is_confined_or_the_stage_is_refused_never_run_unconfined(monk
     if made.backend is None:
         assert reply["agentic"]["outcome"] == "degraded" and reply["agentic"]["reason"] == "isolation_unavailable"
         assert "G6_E_ISOLATION_UNAVAILABLE" in reply["agentic"]["detail"] and contained == [] and model.prompts == []
+        assert reply["agentic"]["isolation"]["backend"] is None and reply["agentic"]["isolation"]["why"] == made.why
         assert reply["warning_card"]["code"] == "G6_E_CEGIS_HOLE_UNSUPPORTED"
         return
     assert reply["agentic"]["outcome"] == "substituted", reply["agentic"]

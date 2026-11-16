@@ -413,6 +413,7 @@ def override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
             reply, isolation = _child.launch(request, timeout_s=CHILD_TIMEOUT_S)
         except _child.Refused as exc:
             text = str(exc)
+            isolation = exc.isolation or isolation
             raise _Stop("isolation_unavailable" if "G6_E_ISOLATION_UNAVAILABLE" in text[:40] else "child_failed",
                         text[:REASON_CHARS]) from exc
         return reply
