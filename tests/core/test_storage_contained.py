@@ -372,7 +372,7 @@ def test_state_path_still_refuses_an_escape_from_the_g6_home() -> None:
 
 #: Names a check and open could read two ways on Windows: a stream (open reads 'j::$INDEX_ALLOCATION' as the folder
 #: 'j', pathlib as the drive 'J:'), a control character, half of a UTF-16 character, a device, a trailing space or dot.
-TWO_WAYS = ["j::$INDEX_ALLOCATION", "f.txt:s:$DATA", "a\x01b", "dp\udc80", "con.txt", "COM¹", "nul", "x.", "x "]
+TWO_WAYS = ["j::$INDEX_ALLOCATION", "f.txt:s:$DATA", "a\x01b", "dp\udc80", "con.txt", "COM1.log", "nul", "x.", "x "]
 
 
 def _asked_nothing(monkeypatch: pytest.MonkeyPatch) -> list[str]:

@@ -363,7 +363,7 @@ def test_a_home_reached_through_a_link_is_its_target(tmp_path: Path, monkeypatch
 
 
 #: Names a check and open could read two ways on Windows (see test_storage_contained's TWO_WAYS); a NUL everywhere.
-TWO_WAYS = ["a\x00b"] + (["j::$INDEX_ALLOCATION", "f.txt:s:$DATA", "a\x01b", "dp\udc80", "con.txt", "COM\u00b9", "nul",
+TWO_WAYS = ["a\x00b"] + (["j::$INDEX_ALLOCATION", "f.txt:s:$DATA", "a\x01b", "dp\udc80", "con.txt", "COM1.log", "nul",
                           "x.", "x ", "C:\\elsewhere"] if sys.platform == "win32" else [])
 
 

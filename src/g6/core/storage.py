@@ -20,10 +20,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-#: Names Windows keeps for devices in every folder (``CON``, ``nul.txt``, ``COM¹``): a path naming one is never a plain
-#: file.
-_DEVICES = frozenset({"con", "prn", "aux", "nul", "conin$", "conout$", *(f"com{i}" for i in [*range(10), *"¹²³"]),
-                      *(f"lpt{i}" for i in [*range(10), *"¹²³"])})
+#: Names Windows keeps for devices in every folder (``CON``, ``nul.txt``): a path naming one is never a plain file.
+_DEVICES = frozenset({"con", "prn", "aux", "nul", "conin$", "conout$", *(f"com{i}" for i in range(10)),
+                      *(f"lpt{i}" for i in range(10))})
 
 
 class PathRefused(ValueError):
@@ -100,10 +99,10 @@ def _gate(*texts: str | os.PathLike[str]) -> str | None:
     check and open could read two ways; None when every name is plain. Each entry point runs it on the caller's words
     before anything is resolved, joined or asked about, and :func:`_opened_inside` on every name below the root.
 
-    On Windows it refuses a name holding a NUL or another control character; a ``:`` (open reads ``j::$INDEX_ALLOCATION``
-    as the folder ``j``, a file's stream, where pathlib reads the drive ``J:``); half of a UTF-16 character (a
-    surrogate); a name Windows keeps for a device, with or without an extension (``CON``, ``nul.txt``, ``COM¹``); and a
-    name ending in a space or a dot, which Windows drops from the last part of a path but keeps (a space) on a part
+    On Windows it refuses a name holding a NUL or another control character; a ``:`` (open reads
+    ``j::$INDEX_ALLOCATION`` as the folder ``j``, a file's stream, where pathlib reads the drive ``J:``); half of a
+    UTF-16 character (a surrogate); a name Windows keeps for a device, with or without an extension (``CON``,
+    ``nul.txt``, ``COM1.log``); and a name ending in a space or a dot, which Windows drops from the last part of a path but keeps (a space) on a part
     before it. On Linux and macOS it refuses only a NUL: a POSIX name may hold every other character, and open reads it
     as written. The reason is G6's own words for the kind, never the name or the path."""
     for text in texts:
