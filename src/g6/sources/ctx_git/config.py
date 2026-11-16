@@ -145,6 +145,14 @@ def _how_to_declare() -> str:
             "ctx_git/config.json under G6's home, as {\"roots\": [\"<absolute folder>\"]}")
 
 
+def _metadata_text(path: Path, name: str) -> str:
+    """Read git metadata with a fixed relative label, never the OS error or an absolute path."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        raise GitRefused(PATH_INVALID, f"{name} could not be read, so git was not run") from None
+
+
 def repository(raw: str, config: GitConfig) -> tuple[Path, Path]:
     """The working copy ``raw`` names and its git folder, both resolved; :class:`GitRefused` unless both are at or
     under a declared root."""
@@ -165,7 +173,7 @@ def repository(raw: str, config: GitConfig) -> tuple[Path, Path]:
         raise GitRefused(NOT_A_REPOSITORY, f"{name} is not the top folder of a git working copy (it has no .git)")
     gitdir = _confined(dotgit, config.roots)
     if dotgit.is_file():
-        line = dotgit.read_text(encoding="utf-8", errors="replace").strip()
+        line = _metadata_text(dotgit, ".git").strip()
         if not line.startswith("gitdir:"):
             raise GitRefused(NOT_A_REPOSITORY, f"{name}/.git is a file that names no git folder")
         named = Path(line.partition(":")[2].strip())
@@ -190,7 +198,7 @@ def _common(gitdir: Path, config: GitConfig) -> Path:
     named = gitdir / "commondir"
     if not named.exists():
         return gitdir
-    text = named.read_text(encoding="utf-8", errors="replace").rstrip("\r\n") if named.is_file() else ""
+    text = _metadata_text(named, "commondir").rstrip("\r\n") if named.is_file() else ""
     if not text.strip():
         raise GitRefused(NOT_A_REPOSITORY, "commondir is not a file naming a git folder")
     common = _confined(Path(text) if Path(text).is_absolute() else gitdir / text, config.roots, "commondir")
@@ -210,7 +218,7 @@ def _alternates(objects: Path, config: GitConfig, depth: int) -> None:
         return
     if depth >= ALTERNATES_DEPTH or not listed.is_file():
         raise GitRefused(PATH_INVALID, "objects/info/alternates nests deeper than git follows, or is not a file")
-    for line in listed.read_text(encoding="utf-8", errors="replace").split("\n"):
+    for line in _metadata_text(listed, "objects/info/alternates").split("\n"):
         if not line or line.startswith("#"):
             continue
         if line.startswith('"') or line != line.strip():
