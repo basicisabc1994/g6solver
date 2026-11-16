@@ -311,6 +311,26 @@ def test_patch_reads_confined_and_bounded(tmp_path, monkeypatch, kind, changed):
     # Removing patch_check's read_file injection opens changed/derived tests outside the bounds.
 
 
+def test_a_read_refuses_a_hard_link_to_a_file_kept_outside_the_root(tmp_path):
+    # containment decides where a name is; a hard link in a declared root is a second name for a file kept elsewhere,
+    # which resolving never shows, so the read checks the file itself (as a workspace read does)
+    import os
+    from g6.code._types import CodeRefused
+    root, outside = tmp_path.resolve() / "root", tmp_path.resolve() / "outside.txt"
+    root.mkdir()
+    outside.write_text("kept outside", encoding="utf-8")
+    try:
+        os.link(outside, root / "h.txt")
+    except OSError:
+        pytest.skip("hard links cannot be made here")
+    (root / "own.txt").write_text("kept here", encoding="utf-8")
+    roots = _roots.Roots((root,), "test")
+    for given in (None, roots):
+        with pytest.raises(CodeRefused):
+            _roots.read_text(root / "h.txt", 1000, roots=given)
+        assert _roots.read_text(root / "own.txt", 1000, roots=given) == "kept here"
+
+
 def test_pattern_scan_linear_budget():
     import time
     from g6.code.swe_diagnostics.read import code_summarize

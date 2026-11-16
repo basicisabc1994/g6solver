@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from g6.code._types import CodeRefused
-from g6.core.storage import confined_path, state_path
+from g6.core.storage import PathRefused, confined_path, plain_file, state_path
 
 CONFIG_ENV = "G6_CODE_CONFIG"
 CONFIG_FILE = ("code", "config.json")
@@ -250,13 +250,21 @@ def _files(folder: Path, skip_dirs: frozenset[str], found: Walk, max_entries: in
 
 
 def read_text(path: Path, max_bytes: int, *, roots: Roots | None = None) -> str:
-    """A contained read, refusing oversized files before opening them. At most ``max_bytes`` of a file, as text with the line endings ``Path.read_text`` gives (undecodable bytes
-    replaced)."""
+    """A contained read of a plain file, refusing oversized files before opening them. At most ``max_bytes`` of a file, as text with the line endings ``Path.read_text`` gives (undecodable bytes
+    replaced). Containment decides where a name is; the file itself must be a regular file kept under that one name
+    (``plain_file``: no link, junction or hard link, which resolving never shows), and the one opened must be it."""
     try:
         path = confined_path(path, roots.roots if roots is not None else (path.parent,))
-        if path.stat().st_size > max_bytes:
+        try:
+            found = plain_file(path)
+        except PathRefused as exc:
+            raise CodeRefused(PATH_INVALID, f"{path.name}: {exc.reason}") from None
+        if found.st_size > max_bytes:
             raise CodeRefused(PATH_INVALID, f"{path.name} exceeds {max_bytes} bytes")
         with open(path, "rb") as handle:
+            opened = os.fstat(handle.fileno())
+            if (opened.st_dev, opened.st_ino) != (found.st_dev, found.st_ino) or opened.st_nlink > 1:
+                raise CodeRefused(PATH_INVALID, f"{path.name} changed between the check and the read")
             data = handle.read(max_bytes + 1)
         if len(data) > max_bytes:
             raise CodeRefused(PATH_INVALID, f"{path.name} grew beyond {max_bytes} bytes")
