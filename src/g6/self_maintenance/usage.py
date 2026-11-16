@@ -88,6 +88,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import weakref
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
@@ -1168,6 +1169,34 @@ class _Watched:
             return super().run(*args, **kwargs)
 
 
+_HOST_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar("g6_host_deadline", default=None)
+
+
+@contextmanager
+def host_deadline(deadline: float) -> Iterator[None]:
+    """One owned completion's absolute monotonic deadline, including preparation and admission waits."""
+    previous = _HOST_DEADLINE.get()
+    token = _HOST_DEADLINE.set(deadline if previous is None else min(previous, deadline))
+    try:
+        # The bound launcher opens its own relative window after stream preparation. Its nested window must
+        # inherit this absolute cut as well, so preparation can never restart the process tree's allowance.
+        with component_process.window(max(0.0, _HOST_DEADLINE.get() - time.monotonic())) as window:
+            window.deadline = min(window.deadline, _HOST_DEADLINE.get())
+            yield
+    finally:
+        _HOST_DEADLINE.reset(token)
+
+
+def _launch_seconds(seconds: float) -> float:
+    deadline = _HOST_DEADLINE.get()
+    if deadline is None:
+        return seconds
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise LLMError(f"{host_models.REPLY_TIMEOUT}: no time remains for a host launch; nothing was started")
+    return min(seconds, left)
+
+
 def _complete_host(caller: Any, system: str, user: str, *, max_tokens: int = host_models.DEFAULT_MAX_TOKENS) -> str:
     """The owned completion path. Every caller hook runs before admission; only module functions run after it. A send
     its sources are not shared for is refused before the first caller hook (``refuse_unshared``): the program is not
@@ -1193,7 +1222,8 @@ def _complete_host(caller: Any, system: str, user: str, *, max_tokens: int = hos
             with cloud_consent.admission(**host_admission(caller, system, user)):
                 _note_launch(owned)
                 try:
-                    code, printed, errors = host_models._run(argv, stdin, work, files, env, seconds, name)
+                    code, printed, errors = host_models._run(argv, stdin, work, files, env,
+                                                            _launch_seconds(seconds), name)
                 except BaseException as failed:
                     try:
                         _observe_reply(provider, None, "", owned, (system, user, stdin))
@@ -1412,6 +1442,13 @@ class WatchedCodex(_Watched, ConsentCodex):
 #: Each host caller the loop watches, and what it becomes.
 _WATCHED = ((host_models.ClaudeCodeCaller, WatchedClaude), (host_models.CodexCaller, WatchedCodex))
 
+# Stable exact identities for G6's own construction wrappers. Custom host subclasses never enter this table.
+_OWNED_HOST_CLASSES = {
+    kind: type(kind.__name__, (observer, kind), {})
+    for kind, observer in ((host_models.ClaudeCodeCaller, WatchedClaude), (host_models.CodexCaller, WatchedCodex),
+                           (ConsentClaude, WatchedClaude), (ConsentCodex, WatchedCodex))
+}
+
 
 def _check_seam(kind: type) -> None:
     """Command/argv/locate hooks run before admission. Completion, observation and session launch are final.
@@ -1442,7 +1479,8 @@ def _new_host(kind: type, *args: Any, **kwargs: Any) -> Any:
     dormant = not issubclass(kind, _Watched)
     if dormant:
         observer = next(wrapper for host, wrapper in _WATCHED if issubclass(kind, host))
-        kind = type(kind.__name__, (observer, kind), {})
+        kind = (_OWNED_HOST_CLASSES[kind] if any(kind is owned for owned in _OWNED_HOST_CLASSES)
+                else type(kind.__name__, (observer, kind), {}))
     caller = object.__new__(kind)
     object.__setattr__(caller, "_observe_stops", not dormant)
     _remember_host(caller)

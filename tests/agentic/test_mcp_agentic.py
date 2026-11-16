@@ -235,12 +235,8 @@ def test_a_person_who_shared_with_the_model_is_not_refused_in_the_overrides_thre
     if granted:
         asyncio.run(grant())
     reply = call(rig, FLOAT)
-    if granted:
-        assert reply["agentic"]["outcome"] == "substituted", reply["agentic"].get("detail")
-        assert len(sent) == 1 and reply["result"]["program"] == "def f(x):\n    return x * 0.5\n"
-    else:
-        assert reply["agentic"]["reason"] == "model_failed" and "CONSENT" in reply["agentic"]["detail"]
-        assert sent == []
+    # Follow-up ruling: SDK sharing does not establish a total deadline, so both cases refuse before a question.
+    assert reply["agentic"]["code"] == kernel.CALLER_UNMETERED and sent == [] and rig.asked == []
 
 
 def test_a_ledger_that_cannot_be_read_leaves_the_original_standing_and_the_job_completes(rig):

@@ -251,3 +251,23 @@ designer's call, made under the owner's decisions in section 3, unless it is mar
 - The exact default limits.
 - The skill text: when an agent should ask for a judgement, and how to show both answers.
 - A fresh security review before merge: this runs model-written code, so it is security-sensitive.
+
+## 12. V1 transport limit (owner ruling, 2026-11-16)
+
+An override needs a model G6 can end at the deadline. Use Claude Code / Codex sign-in or a local model.
+
+| Caller kind | V1 override | Enforced bound |
+| --- | --- | --- |
+| `host`: native or watched Claude Code / Codex sign-in | Allowed for exact owned classes | One session per counted call. The owned launch reads the absolute deadline after preparation and consent admission, gives the process tree the time left, and ends it at that deadline. |
+| `local`: exact owned process / no-send callers | Allowed | Call count and reply-character budget; G6 stops waiting at the deadline and uses no later reply. No network send. |
+| `endpoint`: loopback Ollama / OpenAI-compatible server on this machine, with a local first hop | Allowed for exact owned classes | Every request counted, including rate-limit resends; per-operation timeout set to the time left. G6 stops waiting at the deadline. A dripping reply belongs to the person's local process; this is no total network deadline. |
+| Cloud endpoint: OpenAI-compatible, OpenRouter, non-loopback Ollama | Refused | `G6_E_AGENTIC_CALLER_UNMETERED`, before any override question or send. |
+| Anthropic SDK, including a loopback SDK endpoint | Refused | Same code; a total-deadline transport is needed before v1 can allow it. |
+| Subclass, unknown wrapper, custom caller, or fallback across models | Refused | Same code. Kind detection and wrapper walking use exact class identity, and kind is checked again at override. |
+
+G6's anonymous dynamically generated consent subclasses are refused when supplied by Python callers unless that
+exact class was issued by the kernel's own call to the existing guarded configured-model factory. That factory's
+issued classes are kept by weak identity; ancestry and caller-supplied attributes enrol nothing. Python callers can
+pass an exact built-in caller instead; the kernel copies it and installs the existing consent guard at the send
+boundary. Watched native host construction has stable owned class identities; a custom host subclass never gains
+one. No source or provider permission is added.

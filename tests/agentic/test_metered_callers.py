@@ -134,7 +134,7 @@ def test_a_resend_that_would_carry_its_first_requests_timeout_past_the_deadline_
     assert all(0 < o["timeout"] <= 30.0 for o in opened)
 
 
-# Anthropic's SDK: its own retries off, the time left as each request's timeout
+# V1 follow-up ruling supersedes SDK admission: refuse before a question, even for a loopback SDK endpoint.
 
 def test_the_anthropic_sdk_sends_once_with_its_own_retries_off(monkeypatch):
     in_process_child(monkeypatch)
@@ -146,9 +146,8 @@ def test_the_anthropic_sdk_sends_once_with_its_own_retries_off(monkeypatch):
 
     client = _sdk(monkeypatch, handle)
     caller = llm.EmptyRetry(llm.AnthropicCaller("fixture-model", client=client, fallbacks=False))
-    _, reply = _run(caller, _budget(calls=1))
-    assert len(sent) == 1, sent
-    assert reply["agentic"]["outcome"] == "degraded" and reply["agentic"]["reason"] == "model_failed"
+    reply = kernel.prepare("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=caller, budget=_budget(calls=1))
+    assert reply["agentic"]["code"] == kernel.CALLER_UNMETERED and sent == []
     assert client.max_retries == 2               # the person's own client is not changed
 
 
@@ -161,10 +160,9 @@ def test_the_anthropic_sdk_is_given_the_time_left_as_each_requests_timeout(monke
         return _answer(core)
 
     caller = llm.EmptyRetry(llm.AnthropicCaller("fixture-model", client=_sdk(monkeypatch, handle), fallbacks=False))
-    pending, reply = _run(caller, _budget(seconds=30.0))
-    assert reply["agentic"]["outcome"] == "substituted", reply["agentic"].get("detail")
-    assert len(sent) == 1 and all(0 < sent[0][phase] <= 30.0 for phase in ("connect", "read", "write", "pool"))
-    assert "sent with the time left as its timeout and the SDK's own retries off" in pending.question
+    reply = kernel.prepare("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=caller, budget=_budget(seconds=30.0))
+    assert reply["agentic"]["code"] == kernel.CALLER_UNMETERED and sent == []
+    assert "Anthropic SDK" in reply["error"]
 
 
 # callers G6 cannot bound per request are refused before the question
@@ -283,46 +281,25 @@ BUDGET_S = 1.5
 
 def test_a_stalled_provider_holds_neither_the_reply_nor_a_revoke_past_the_deadline_from_python(monkeypatch):
     in_process_child(monkeypatch)
-    entered, release, revoked = [], threading.Event(), []
+    entered, release = [], threading.Event()
     _grant({"component": "cegis", "op": "synthesize", "params_json": json.dumps(FLOAT_PARAMS)})
     pending = kernel.prepare("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW,
                              llm=_stalling(monkeypatch, entered, release), budget=_budget(seconds=BUDGET_S))
-    started = time.monotonic()
-    watcher = _revoke_during(entered, revoked)
-    try:
-        reply = kernel.override(pending, confirmation=kernel.Confirmation(pending.digest, "Ada"))
-        took = time.monotonic() - started
-        watcher.join(BUDGET_S + MARGIN_S)
-    finally:
-        release.set()
-    assert entered, reply["agentic"].get("detail")            # the request was out: the provider stalled on it
-    assert reply["agentic"]["outcome"] == "degraded" and reply["agentic"]["reason"] in ("budget_exhausted",
-                                                                                         "model_failed")
-    assert took < BUDGET_S + MARGIN_S, took
-    assert revoked and revoked[0] - started < BUDGET_S + MARGIN_S, revoked
+    assert pending["agentic"]["code"] == kernel.CALLER_UNMETERED and entered == []
+    # Owner's v1 follow-up ruling: this transport is refused before the question.
 
 
 @pytest.mark.usefixtures("declared_mcp_grants")
 def test_a_stalled_provider_holds_neither_the_reply_nor_a_revoke_past_the_deadline_over_mcp(monkeypatch, request):
     mcp = request.getfixturevalue("rig")
-    entered, release, revoked = [], threading.Event(), []
+    entered, release = [], threading.Event()
     cloud = _stalling(monkeypatch, entered, release)
     monkeypatch.setattr(kernel, "person_caller", lambda: cloud)
     monkeypatch.setattr(kernel, "DEFAULT_BUDGET", _budget(seconds=BUDGET_S))
     _grant(FLOAT)
-    started = time.monotonic()
-    watcher = _revoke_during(entered, revoked)
-    try:
-        reply = call(mcp, FLOAT)
-        took = time.monotonic() - started
-        watcher.join(BUDGET_S + MARGIN_S)
-    finally:
-        release.set()
-    assert entered, reply
-    assert reply["agentic"]["outcome"] == "degraded" and reply["agentic"]["reason"] in ("budget_exhausted",
-                                                                                         "model_failed")
-    assert took < BUDGET_S + MARGIN_S, took
-    assert revoked and revoked[0] - started < BUDGET_S + MARGIN_S, revoked
+    reply = call(mcp, FLOAT)
+    assert reply["agentic"]["code"] == kernel.CALLER_UNMETERED and entered == [] and mcp.asked == []
+    # Owner's v1 follow-up ruling: this transport is refused before the question.
 
 
 @pytest.mark.usefixtures("declared_mcp_grants")
@@ -332,5 +309,5 @@ def test_over_mcp_a_caller_g6_cannot_bound_is_refused_and_nobody_is_asked(monkey
     monkeypatch.setattr(kernel, "person_caller", lambda: cloud)
     reply = call(mcp, FLOAT)
     assert reply["agentic"]["code"] == kernel.CALLER_UNMETERED and mcp.asked == []
-    assert "not Anthropic's own SDK client" in reply["error"]
+    assert "model it can end at the deadline" in reply["error"]
 

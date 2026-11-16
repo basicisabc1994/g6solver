@@ -20,8 +20,8 @@ confined child (:mod:`g6._agentic._child`) where the part's functions ask the pa
 the metered model call (``MeteredCaller`` over the person's configured model through the consent guard), checks the
 value against the function's declared return type and the component's own validator, and only then answers. The final
 answer is re-checked by the checker the component declares, with nothing substituted, in a fresh confined run.
-Only a model whose every request the kernel can hold to the limits the question states is used (an Ollama or
-OpenAI-compatible endpoint, Anthropic's own SDK client, a Claude Code or Codex session, or a model on this machine:
+Only a model the kernel can end at the deadline is used (a Claude Code or Codex session, or a local model;
+loopback Ollama and OpenAI-compatible servers keep their per-request timeout):
 :func:`_kind`); any other is refused before the question (``G6_E_AGENTIC_CALLER_UNMETERED``).
 
 The reply holds the substitute's result and the original's answer beside it, the trigger, the part, the mode, the
@@ -45,6 +45,7 @@ import threading
 import time
 import traceback
 import uuid
+import weakref
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -139,10 +140,39 @@ class Pending:
 
 
 def person_caller() -> Any:
-    """The model the person configured for G6, behind the consent guard (``g6.core.consent_callers``)."""
-    from g6.core import consent_callers
+    """The configured model through the existing guarded factory; remember only classes that factory just issued."""
+    caller = consent_callers.provider_from_env()
+    _remember_configured(caller)
+    return caller
 
-    return consent_callers.provider_from_env()
+
+_CONFIGURED_GUARDS: weakref.WeakKeyDictionary[type, Any] = weakref.WeakKeyDictionary()
+_GUARD_LOCK = threading.Lock()
+
+
+def _remember_configured(caller: Any, seen: frozenset[int] = frozenset()) -> None:
+    """Exact guard-class identities issued by our own call to G6's factory, never inferred from caller ancestry.
+
+    ``guard`` makes a fresh anonymous class for an endpoint. Only that trusted factory's returned object can enrol
+    its class here. An arbitrary caller passed by Python cannot enrol itself or a subclass.
+    """
+    if id(caller) in seen:
+        return
+    slot = _wrapper_slot(caller)
+    if slot:
+        inner = getattr(caller, slot)
+        for one in (inner if slot == "_callers" else (inner,)):
+            _remember_configured(one, seen | {id(caller)})
+    else:
+        raw = getattr(type(caller), "_guards", None)
+        if raw is not None:
+            with _GUARD_LOCK:
+                _CONFIGURED_GUARDS[type(caller)] = raw
+
+
+def _raw(caller: Any) -> Any:
+    with _GUARD_LOCK:
+        return next((raw for kind, raw in _CONFIGURED_GUARDS.items() if type(caller) is kind), caller)
 
 
 def _refused(code: str, message: str, *, original: Mapping[str, Any] | None = None, request_id: str = "",
@@ -178,7 +208,7 @@ def _model_name(caller: Any) -> str:
 def _no_model(caller: Any) -> bool:
     from g6.core import llm
 
-    return caller is None or isinstance(caller, llm.NoModel | llm.UnusableModel)
+    return caller is None or type(caller) is llm.NoModel or type(caller) is llm.UnusableModel
 
 
 #: The most exceptions of one chain read before it is taken as no trigger (fail closed).
@@ -328,15 +358,18 @@ def prepare(component: str, op: str, params: Any, *, part: str | None = None, mo
                                           "mode.", request_id=request_id)
     if mode not in MODES:
         return _refused("G6_E_INPUT_VALIDATION", f"mode must be one of {list(MODES)}", request_id=request_id)
-    if not isinstance(params, Mapping):
-        return _refused("G6_E_INPUT_VALIDATION", "the op's parameters must be a JSON object", request_id=request_id)
     try:   # digested and made canonical here, inside the reply's path: a value no JSON holds is refused, never raised
+        if not isinstance(params, Mapping):
+            return _refused("G6_E_INPUT_VALIDATION", "the op's parameters must be a JSON object", request_id=request_id)
         params_digest = digest(params)
         _child.canonical(params)
-    except (TypeError, ValueError, RecursionError) as exc:
+        params = dict(params)
+        reason = str(reason)[:REASON_CHARS]
+    except Exception as exc:  # noqa: BLE001 - a host mapping or reason may fail with any Exception
         return _refused("G6_E_INPUT_VALIDATION", "the op's parameters must be JSON values: finite numbers, text, "
                                                  f"true, false, null, lists and objects with text keys "
-                                                 f"({type(exc).__name__})", request_id=request_id)
+                                                 f"and the reason must be readable ({type(exc).__name__})",
+                        request_id=request_id)
     from g6.core.registry import get_registry
 
     registry = get_registry()
@@ -353,7 +386,6 @@ def prepare(component: str, op: str, params: Any, *, part: str | None = None, mo
     if said:
         code = said[1:said.index("]")]
         return _refused(code, said[said.index("]") + 2:], request_id=request_id)
-    params = dict(params)
     limits = {c for c in getattr(module, "__g6_limits__", ()) if isinstance(c, str) and not _door(c)}
     # the original first, through the door every surface shares
     try:
@@ -391,13 +423,11 @@ def prepare(component: str, op: str, params: Any, *, part: str | None = None, mo
                         request_id=request_id)
     kind, why = _metering(caller)
     if why:
-        return _refused(CALLER_UNMETERED, f"the model G6 would ask is {why}, so the limits an override states could "
-                                          "not be held at each request; nothing was asked and the original's answer "
-                                          "stands", original=original, request_id=request_id)
+        return _unmetered(why, original, request_id)
     budget = budget or DEFAULT_BUDGET
     functions = tuple(spec["functions"])
     model = _model_name(caller)
-    quoted = json.dumps(str(reason)[:REASON_CHARS]) if str(reason).strip() else "(none given)"
+    quoted = json.dumps(reason) if reason.strip() else "(none given)"
     binding = {
         "Operation": f"{component}.{op}",
         "Parameters digest": params_digest,
@@ -454,16 +484,22 @@ class _OutOfBudget(BudgetExhausted):
     """The envelope's own refusal of a send at its boundary, in G6's words."""
 
 
-def _raw(backend: Any) -> Any:
-    """The backend that sends, under a guarded form ``consent_callers.guard`` made of it (guarded again by
-    :class:`_Envelope`), or ``backend`` itself."""
-    raw = getattr(type(backend), "_guards", None) if isinstance(backend, consent_callers._Consent) else None
-    return backend if raw is None else raw
+def _wrapper_slot(caller: Any) -> str | None:
+    """Only exact G6 wrapper classes are walked; the published subclass contract is too broad for overrides."""
+    if "complete" in vars(caller):
+        return None
+    for qualified, kind in consent_callers.CALLER_KINDS.items():
+        module, _, name = qualified.rpartition(".")
+        owner = sys.modules.get(module)
+        if owner is not None and type(caller) is getattr(owner, name, None):
+            return kind.partition(":")[2] if kind.startswith("wrapper:") else None
+    return None
 
 
 def _backends(caller: Any, seen: frozenset[int] = frozenset()) -> Iterable[Any]:
     """The callers that send, below every wrapper G6 knows (``consent_callers.wrapper_slot``, by class identity)."""
-    slot = consent_callers.wrapper_slot(caller)
+    caller = _raw(caller)
+    slot = _wrapper_slot(caller)
     if not slot or id(caller) in seen:
         yield caller
         return
@@ -472,71 +508,76 @@ def _backends(caller: Any, seen: frozenset[int] = frozenset()) -> Iterable[Any]:
         yield from _backends(one, seen | {id(caller)})
 
 
-def _native_sdk(client: Any) -> bool:
-    """Whether ``client`` is Anthropic's own SDK client (its class exactly, as ``consent_callers`` reads it)."""
-    module = sys.modules.get("anthropic")
-    native = getattr(module, "Anthropic", None) if module is not None else None
-    return isinstance(native, type) and type(client) is native
-
-
 def _kind(backend: Any) -> tuple[str, str]:
-    """How the kernel holds each request of ``backend`` (a caller that sends, below every wrapper) to the override's
-    limits: ``endpoint`` (G6's urllib callers: the time left as each request's timeout, every Retry-After resend
-    through :meth:`_Envelope.resend`), ``sdk`` (Anthropic's own SDK client: the time left as each request's timeout,
-    its own retries off), ``host`` (a Claude Code or Codex session: started with the time left and ended, with its
-    processes, at the deadline), ``local`` (a model on this machine that is sent nothing over the network); or "" and
-    why it cannot be held, and then no override uses it."""
+    """The exact owned backend's kind. No subclass or anonymous guarded class establishes an identity."""
     from g6.core import host_models, llm
 
-    raw = _raw(backend)
+    raw = backend
     name = type(raw).__name__
-    if type(raw) is consent_callers._Unknown or not consent_callers.backend_supported(raw):
-        return "", f"{name}, a caller G6 does not know"
-    if consent_callers.caller_kind(raw) in ("process", "no-send"):
-        return "local", ""
-    if isinstance(raw, llm.OllamaCaller | llm.OpenAICompatibleCaller):
-        return "endpoint", ""
-    if isinstance(raw, llm.AnthropicCaller):
-        if _native_sdk(raw._client) or (raw._client is None and raw._api_key):
-            return "sdk", ""
-        return "", (f"{name} with a client that is not Anthropic's own SDK client, which takes no timeout per request "
-                    "and may send again on its own")
-    session = getattr(sys.modules.get("g6.harness.completion_loop"), "ToolSession", None)
-    if (isinstance(raw, host_models.ClaudeCodeCaller | host_models.CodexCaller)
-            and not (isinstance(session, type) and isinstance(raw, session))):
+    if not consent_callers.backend_supported(raw):
+        return "", f"{name}, a modified caller"
+    if type(raw) is llm.AnthropicCaller:
+        return "", "Anthropic SDK (sdk), whose transport has no total deadline"
+    if type(raw) is llm.OllamaCaller or type(raw) is llm.OpenAICompatibleCaller:
+        if consent_callers.loopback(raw.base_url) and consent_callers.urllib_destination(raw.base_url).local:
+            return "endpoint", ""
+        return "", f"{name}, a cloud endpoint (endpoint), whose transport has no total deadline"
+    usage = sys.modules.get("g6.self_maintenance.usage")
+    hosts = (host_models.ClaudeCodeCaller, host_models.CodexCaller,
+             consent_callers.ConsentClaude, consent_callers.ConsentCodex)
+    if usage is not None:
+        hosts += (usage.WatchedClaude, usage.WatchedCodex, *usage._OWNED_HOST_CLASSES.values())
+    if any(type(raw) is host for host in hosts):
         return "host", ""
-    return "", f"{name}, a caller G6 cannot hold to a limit at each request"
+    # caller_kind's subclass special case is deliberately not used, even for process/no-send.
+    for qualified, kind in consent_callers.CALLER_KINDS.items():
+        module, _, attribute = qualified.rpartition(".")
+        owner = sys.modules.get(module)
+        if (kind in ("process", "no-send") and owner is not None
+                and type(raw) is getattr(owner, attribute, None)):
+            return "local", ""
+    return "", f"{name}, an unknown caller, subclass or wrapper"
 
 
 def _metering(caller: Any) -> tuple[str, str]:
     """The kind of the one model ``caller`` sends to (:func:`_kind`), or "" and why no override may use it."""
-    backends = list(_backends(caller))
-    if len(backends) != 1:
-        return "", f"a caller that sends to {len(backends)} models in turn, where an override names one model"
-    return _kind(backends[0])
+    try:
+        backends = list(_backends(caller))
+        if len(backends) != 1:
+            return "", f"a caller that sends to {len(backends)} models in turn, where an override names one model"
+        return _kind(backends[0])
+    except Exception:  # noqa: BLE001 - an unreadable caller establishes no kind
+        return "", "an unreadable caller"
+
+
+def _unmetered(why: str, original: Mapping[str, Any], request_id: str) -> dict[str, Any]:
+    return _refused(CALLER_UNMETERED, f"the model G6 would ask is {why}. Override v1 needs a model it can end at the "
+                    "deadline. Use Claude Code / Codex sign-in or a local model; nothing was asked and the "
+                    "original's answer stands", original=original, request_id=request_id)
 
 
 def _bound(kind: str, caller: Any) -> str:
     """What the question says holds each request of a ``kind`` caller: only what :class:`_Envelope` enforces."""
     if kind == "endpoint":
-        return ("each request to the model is sent with the time left as its timeout, and a resend after the provider "
+        return ("this endpoint is a loopback server on this machine: a dripping reply is the person's own process, "
+                "and the timeout is per operation, not a total network deadline; "
+                "each request to the model is sent with the time left as its timeout, and a resend after the provider "
                 f"asks G6 to wait passes the same count and is sent only within {RESEND_SLACK_S:g} second of its "
                 "call's first request")
-    if kind == "sdk":
-        return "each request to the model is sent with the time left as its timeout and the SDK's own retries off"
     if kind == "host":
-        program = _raw(next(iter(_backends(caller)))).program.name
+        program = next(iter(_backends(caller))).program.name
         return (f"one model call is one session of {program}, which may make several requests to its model; each "
-                "session is given the time left and ended, with every process it started, at the deadline")
+                "session is given the time left at its own launch, after any consent-lock wait, and ended, with "
+                "every process it started, at the deadline")
     return "this model runs on this machine and is sent nothing over the network"
 
 
-def _unretried(caller: Any, timed: list[tuple[Any, Any]], seen: frozenset[int] = frozenset()) -> Any:
+def _unretried(caller: Any, timed: list[Any], seen: frozenset[int] = frozenset()) -> Any:
     """``caller`` as the kernel sends through it, built of copies so the person's own caller is never changed: every
     ``EmptyRetry`` taken out (the kernel asks again after an empty reply itself, counted, and never with more tokens),
-    every other wrapper G6 knows copied, and the backend that sends copied and listed in ``timed`` with the SDK client
-    its per-request clients are made from (``None`` for a backend whose ``timeout`` is set)."""
-    slot = consent_callers.wrapper_slot(caller)
+    every other exact G6 wrapper copied, and the backend that sends copied and listed in ``timed``."""
+    caller = _raw(caller)
+    slot = _wrapper_slot(caller)
     if slot and id(caller) not in seen:
         inner, seen = getattr(caller, slot), seen | {id(caller)}
         if type(caller) is EmptyRetry:
@@ -546,14 +587,17 @@ def _unretried(caller: Any, timed: list[tuple[Any, Any]], seen: frozenset[int] =
                 else _unretried(inner, timed, seen))
         return clone
     kind = _kind(caller)[0]
-    if kind not in ("endpoint", "sdk", "host"):
+    if kind not in ("endpoint", "host"):
         return caller
-    raw = _raw(caller)
-    own = copy.copy(raw)      # guarded again by the envelope; its limits are set before each request
-    base = None
-    if kind == "sdk":         # built here from the person's key when it was not built yet; the key stays in G6
-        base = raw._client if raw._client is not None else own._get_client()
-    timed.append((own, base))
+    if kind == "host":
+        from g6.self_maintenance import usage
+
+        # Even a native caller made before usage loaded enters its owned launch path for an override.
+        host = usage.WatchedClaude if caller.program.name == "Claude Code" else usage.WatchedCodex
+        own = host(caller.model, timeout=caller.timeout)
+    else:
+        own = copy.copy(caller)
+    timed.append(own)
     return own
 
 
@@ -610,7 +654,7 @@ class _Envelope:
     (``g6.core.model_calls.counting``'s observer, :meth:`admit`), and a resend after a provider's rate-limit wait where
     ``g6.core.llm`` tells the call's waits record (:class:`_Resends`, :meth:`resend`); the one past the budget, or after
     the override stopped waiting, is refused there, before it is sent. The kernel's caller has no retry of its own
-    (:func:`_unretried`; Anthropic's SDK client with its retries off): an empty reply is asked again by :meth:`ask`,
+    (:func:`_unretried`): an empty reply is asked again by :meth:`ask`,
     counted, with the same tokens. Characters of model replies: a reply longer than the characters left is refused
     before it is used. One deadline for the whole override, every model call and every child run, the final run and
     the re-check included: none starts with less than :meth:`floor` left; a child, and each request to the model, is
@@ -628,7 +672,7 @@ class _Envelope:
         self.kind = _metering(caller)[0]
         self._sent_at = 0.0     # when the current call's first request was let go
         self._in_call = 0       # requests let go in the current call
-        self._timed: list[tuple[Any, Any]] = []
+        self._timed: list[Any] = []
         self.caller = consent_callers.guard(_unretried(caller, self._timed))   # the guard checks each backend
 
     def elapsed_s(self) -> float:
@@ -658,13 +702,9 @@ class _Envelope:
         return left
 
     def _cut(self, left: float) -> None:
-        """Each request's own limit set to ``left`` seconds: the ``timeout`` of a urllib request or a host session, and
-        for Anthropic's SDK a client made with ``left`` as its timeout and its own retries off."""
-        for own, base in self._timed:
-            if base is None:
-                own.timeout = left
-            else:
-                own._client = base.with_options(max_retries=0, timeout=left)
+        """Each loopback request's timeout; hosts also read the absolute deadline at their own launch."""
+        for own in self._timed:
+            own.timeout = left
 
     def admit(self) -> None:
         """The observer at each send's boundary: count the request before it is sent and give it the time left, or
@@ -717,7 +757,15 @@ class _Envelope:
             noted: Any = lambda: 0  # noqa: E731
             waits = llm._WAITS.set((*llm._WAITS.get(), _Resends(self)))   # as g6.core.llm.waits, with the gate
             try:
-                with counting(before_call=self.admit) as noted:
+                from contextlib import nullcontext
+
+                if self.kind == "host":
+                    from g6.self_maintenance.usage import host_deadline
+
+                    deadline = host_deadline(self._start + self.budget.max_wall_clock_s)
+                else:
+                    deadline = nullcontext()
+                with deadline, counting(before_call=self.admit) as noted:
                     box["text"] = self.caller.complete(system, user, max_tokens=MODEL_TOKENS)
             except BaseException as exc:  # noqa: BLE001 - reported to the waiting override, never lost
                 box["error"] = exc
@@ -860,6 +908,13 @@ def override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
     if not isinstance(confirmation, Confirmation) or confirmation.digest != pending.digest:
         return _refused(DIGEST_MISMATCH, "the answer is not for this question's digest, so it allows nothing; ask "
                                          "the person again", original=pending.original, request_id=pending.request_id)
+    kind, why = _metering(pending.caller)
+    if why:
+        return _unmetered(why, pending.original, pending.request_id)
+    # An answer to a question for another allowed kind does not cover its different bounds either.
+    if _bound(kind, pending.caller) not in pending.binding["Limits"]:
+        return _refused(DIGEST_MISMATCH, "the caller's bounds changed; ask the person again",
+                        original=pending.original, request_id=pending.request_id)
     package = _package(pending.component)
     envelope = _Envelope(pending.caller, pending.budget)
     prompts: list[str] = []
