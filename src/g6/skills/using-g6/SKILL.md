@@ -80,9 +80,9 @@ g6_invoke("grounding", "coverage", {"text": "The limit is 42 units.", "sources":
 
 `sources` maps names to supplied text. These lexical checks do not establish factual truth.
 
-When a G6 op refuses with a limit it declares, `g6_agentic_run` can run a confined model substitute for its
-declared part, covered by the provider's consent check. No per-override question is asked. Show the model used,
-the warning card and the original answer beside the substitute; it is qualified-draft at best.
+`g6_agentic_run` substitutes a declared part after a declared limit, computation failure, or successful answer when
+the caller names a part. Hosts/endpoints require provider consent; process callers are allowed in code. No override
+question. Show model, warning and original beside the substitute: qualified-draft at best.
 
 ## Compose
 

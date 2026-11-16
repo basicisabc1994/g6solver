@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""g6_agentic_run: original first, confined substitution as a job, covered by provider consent.
+"""g6_agentic_run: original first, confined substitution as a job, with the acting authority recorded.
 
-No per-override dialog is requested. The existing provider consent check admits the model call, and the sensitive
-allowances still apply. Poll metaharness_job; show the model used and both the substitute and the original answer.
+No per-override dialog is requested. Hosts/endpoints use the existing provider consent check; process callers are
+allowed in code. Sensitive allowances still apply. Poll metaharness_job; show the model and both answers.
 """
 from __future__ import annotations
 
@@ -25,8 +25,9 @@ def register(server: Any, context_type: Any, jobs: Any) -> None:
         when the component refuses with a declared limit, fails in its own code, or the caller names a part after
         a successful answer. Trust-door refusals never trigger an override. Prompt mode only; protected parts and
         code mode are refused. params_json holds the operation's JSON parameters; reason is recorded as quoted data.
-        Model calls pass the existing consent check for their provider; there is no per-override question or typed
-        name. Requires host permission agentic.run and the operation's own sensitive allowance. Returns a job when
+        Host/endpoint calls pass the existing consent check for their provider; process callers are allowed in code.
+        There is no per-override question or typed name. Requires host permission agentic.run and the operation's own
+        sensitive allowance. Returns a job when
         an override runs: poll metaharness_job. Each value passes its type and the declared validator; the final
         result passes the declared checker with nothing substituted. At most three model calls by default, within
         a character and wall-clock budget. Only owned host sign-in, local models and loopback IP-literal endpoints
@@ -43,8 +44,8 @@ def register(server: Any, context_type: Any, jobs: Any) -> None:
             return public_instructions(blocked_reply(
                 "[G6_E_SENSITIVE_COMPONENT_DENIED] agentic.run is not allowed: an override runs G6's code again with a "
                 "model standing in for part of it. Only the person who runs this server can allow it, by adding "
-                f"agentic.run to {SENSITIVE_ENV} where the server is registered. Model calls still require their "
-                "provider's consent admission."))
+                f"agentic.run to {SENSITIVE_ENV} where the server is registered. Host/endpoint calls still require "
+                "their provider's consent admission; process callers use the code's allowance."))
         try:   # the client's text, bounded in size and depth before it is decoded
             params = decode.loads(params_json or "{}", max_chars=PARAMS_CHARS)
         except decode.Undecodable as exc:

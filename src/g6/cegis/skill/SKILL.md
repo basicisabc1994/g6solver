@@ -27,6 +27,7 @@ says exactly which domain it rests on.
 - A floating-point constant: a `??f` hole has no candidate grid and refuses (`G6_E_CEGIS_HOLE_UNSUPPORTED`). Over MCP,
   `g6_agentic_run` can run a confined model proposal for that grid, covered by provider consent without a separate
   override question. Show the model, warning card and original answer beside the substitute; it is qualified-draft at best.
+  Naming the part also permits replacing a successful answer. Process callers use the code's allowance.
 
 ## Ops
 

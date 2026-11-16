@@ -70,8 +70,8 @@ def float_grid(hole: int, lo: int, hi: int, sketch: str) -> tuple[float, ...]:
     substitute for one call, in its confined child, where a model proposes the grid and :func:`valid_float_grid`
     checks it before cegis uses it."""
     raise HoleUnsupported(f"[{HOLE_UNSUPPORTED}] hole {hole} is a floating-point hole (??f) and cegis has no candidate "
-                          f"grid for it in [{lo}, {hi}]; use an integer, boolean or string hole, or ask the person to let "
-                          "a model propose the grid (g6_agentic_run)")
+                          f"grid for it in [{lo}, {hi}]; use an integer, boolean or string hole, or run a confined "
+                          "model proposal under the provider's consent (g6_agentic_run), keeping the original answer beside it")
 
 
 def valid_float_grid(value: Any, hole: int, lo: int, hi: int, sketch: str) -> str:

@@ -18,7 +18,8 @@ builtins table, a wall-clock allowance and a whole-tree kill; a memory cap (POSI
 macOS, which refuses the address-space limit), and on POSIX also CPU and file-size limits.
 
 A ``??f`` floating-point hole has no candidate grid: it refuses with ``G6_E_CEGIS_HOLE_UNSUPPORTED``, a limit the
-agentic override kernel may follow by letting a model propose the grid, with the person's agreement (``g6_agentic_run``).
+agentic override kernel may follow with a model proposal under the provider's consent, keeping the original answer beside
+it (``g6_agentic_run``).
 The block (``CegisBlock``, op ``synthesize``, sensitive) takes the oracle as a table of inputs and outputs.
 
 An optional ``verifier`` (the ``Verifier`` protocol) checks a candidate the sampled check passed. ``Z3Verifier(spec)``
