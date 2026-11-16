@@ -64,7 +64,8 @@ Copy is a draft for the owner's review in the live preview.
             <li class="step">
                 <span class="step__n">4</span>
                 <h2 class="h2">Approve</h2>
-                <p class="lede">Nothing changes until you say yes. Every change is recorded, and can be rolled back.</p>
+                <p class="lede">A new version goes live only when you say yes. Each version is recorded, and you can
+                roll back to one you approved.</p>
             </li>
         </ol>
 
@@ -92,8 +93,8 @@ Copy is a draft for the owner's review in the live preview.
         <div class="pair">
             <div class="pair__item">
                 <h3 class="statement">The meta-harness learns.</h3>
-                <p>It tests changes to how it runs on cases it has never seen, keeps what wins once you approve, and can
-                never touch the checks that judge it.</p>
+                <p>It tests changes to how it runs on held-out cases, keeps what wins once you approve, and blocks the
+                decision when the code that judges a change differs from the code you confirmed.</p>
                 <a class="link" href="{% url 'pages:metaharness' %}">How the meta-harness works</a>
             </div>
             <div class="pair__item">
@@ -155,7 +156,8 @@ Copy is a draft for the owner's review in the live preview.
         <h2 class="h2 band__title" id="gives-h">What that gives you</h2>
         <ul class="gives">
             <li><h3 class="statement">Work that checks itself.</h3>
-                <p>Every result carries one of three labels, and says why:
+                <p>Each result of a component called through G6's MCP server or CLI carries one of three labels, and
+                says why:
                 <span class="state is-verified">verified</span> <span class="state">qualified-draft</span>
                 <span class="state is-blocked">blocked-escalated</span></p></li>
             <li><h3 class="statement">Agents that act within what you approve.</h3>
@@ -286,7 +288,8 @@ pip install ".[all]" &amp;&amp; g6 setup --client claude --allow patch_review.re
         <div class="cols modes-row">
             <div class="band__head">
                 <h3 class="h3" id="modes">You decide how deep it goes</h3>
-                <p class="small quiet">Three levels of access, all open now. Every change still needs your approval.</p>
+                <p class="small quiet">Three levels of access, all open now. At each, the meta-harness puts no new version live
+                without your approval.</p>
             </div>
             <div class="band__body" data-modes>
                 <div class="modes__switch" role="group" aria-label="Level of access">

@@ -118,3 +118,18 @@ def test_the_home_and_research_pages_claim_no_more_than_the_code_does(client):
     assert "Every action gated" not in home and "Actions that go through G6 are gated" in home
     research = _text(client.get("/research/").content.decode())
     assert "when G6 engineers the harness" not in research and "Larger models engineer the harness" not in research
+
+
+def test_the_home_page_scopes_approval_labels_and_judging_to_what_the_code_does(client):
+    # review 3 of the entry branch: a new meta-harness version goes live only on a person's yes (its drift monitor may
+    # move back to an approved one by itself); a decision is blocked when the judging code differs from what was
+    # confirmed (it is not out of reach); the three labels come with results through G6's doors, not every result
+    home = _text(client.get("/").content.decode())
+    for overclaim in ("Nothing changes until you say yes", "Every change is recorded, and can be rolled back",
+                      "can never touch the checks that judge it", "Every result carries one of three labels",
+                      "Every change still needs your approval"):
+        assert overclaim not in home, overclaim
+    assert "A new version goes live only when you say yes" in home
+    assert "differs from the code you confirmed" in home
+    assert "called through G6's MCP server or CLI carries one of three labels" in home
+    assert "the meta-harness puts no new version live without your approval" in home
