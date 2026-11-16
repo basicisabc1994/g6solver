@@ -72,8 +72,8 @@ def parse(text: str, source: str) -> Roots:
             raise CodeRefused(CONFIG_INVALID, f"{source}: each root is an absolute path (~ is not expanded)")
         try:
             resolved.append(confined_path(raw, (Path(raw),)))
-        except (ValueError, OSError) as exc:
-            raise CodeRefused(CONFIG_INVALID, f"{source}: {exc}") from None
+        except (ValueError, OSError):
+            raise CodeRefused(CONFIG_INVALID, f"{source}: a root is not a local folder G6 can check") from None
     return Roots(tuple(resolved), source)
 
 
@@ -83,15 +83,48 @@ def load(environ: Mapping[str, str] | None = None) -> Roots:
     raw = env.get(CONFIG_ENV, "").strip()
     if raw:
         return parse(raw, CONFIG_ENV)
-    file = state_path(*CONFIG_FILE)
-    if file.is_file():
-        return parse(file.read_text(encoding="utf-8"), "the code configuration file under the G6 home")
+    try:
+        file = state_path(*CONFIG_FILE)
+        text = file.read_text(encoding="utf-8") if file.is_file() else None
+    except (OSError, ValueError):
+        raise CodeRefused(CONFIG_INVALID, "the code configuration file under the G6 home could not be read as "
+                                          "UTF-8 text; check code/config.json") from None
+    if text is not None:
+        return parse(text, "the code configuration file under the G6 home")
     return Roots((), "no configuration")
 
 
 def how_to_declare() -> str:
     return (f"the person who runs G6 declares the folders the code extensions may use in {CONFIG_ENV} or in "
-            f"{state_path(*CONFIG_FILE)}, as {{\"roots\": [\"<absolute folder>\"]}}")
+            "code/config.json under G6's home, as {\"roots\": [\"<absolute folder>\"]}")
+
+
+def for_folder(folder: Path, source: str) -> Roots:
+    """Capture a caller-owned folder at its check, once, for all subsequent walks and reads.
+
+    For installed packages and their nearby tests, whose roots come from installation rather than configuration.
+    Never construct a root from a file's parent at read time.
+    """
+    try:
+        resolved = confined_path(folder, (folder,))
+    except (OSError, ValueError):
+        raise CodeRefused(PATH_INVALID, "the folder could not be checked for reading") from None
+    return Roots((resolved,), source)
+
+
+def _name(given: Path, roots: Roots) -> str:
+    """The caller's lexical name relative to a root, without exposing a resolved machine path."""
+    for root in roots.roots:
+        if given == root or root in given.parents:
+            return given.relative_to(root).as_posix()
+    return given.name or "path"
+
+
+def _refused_path(exc: ValueError | OSError, what: str) -> CodeRefused:
+    outside = getattr(exc, "outside", False)
+    reason = ("is not at or under a declared root (a link out of one counts as outside)" if outside
+              else "is not a path G6 can check")
+    return CodeRefused(OUTSIDE_ROOT if outside else PATH_INVALID, f"{what} {reason}")
 
 
 def under(path: Path, roots: tuple[Path, ...]) -> bool:
@@ -118,18 +151,20 @@ def existing(raw: str, roots: Roots, *, what: str = "path", kind: str = "any") -
         raise CodeRefused(NO_ROOT, f"no folder is declared for the code extensions, so nothing is read: "
                                    f"{how_to_declare()}")
     try:
-        real = confined_path(_given(raw, what), roots.roots)
+        given = _given(raw, what)
+        real = confined_path(given, roots.roots)
     except (ValueError, OSError) as exc:          # labelled by the refusal's own outside flag
-        raise CodeRefused(OUTSIDE_ROOT if getattr(exc, "outside", False) else PATH_INVALID, f"{what}: {exc}") from None
+        raise _refused_path(exc, what) from None
+    name = _name(given, roots)
     if not under(real, roots.roots):
-        raise CodeRefused(OUTSIDE_ROOT, f"{what} resolves to {real}, which is not at or under a declared root (a link "
+        raise CodeRefused(OUTSIDE_ROOT, f"{what} {name} is not at or under a declared root (a link "
                                         f"out of one counts as outside): {how_to_declare()}")
     if kind == "file" and not real.is_file():
-        raise CodeRefused(PATH_INVALID, f"{what} is not a file: {real}")
+        raise CodeRefused(PATH_INVALID, f"{what} is not a file: {name}")
     if kind == "folder" and not real.is_dir():
-        raise CodeRefused(PATH_INVALID, f"{what} is not a folder: {real}")
+        raise CodeRefused(PATH_INVALID, f"{what} is not a folder: {name}")
     if kind == "any" and not real.exists():
-        raise CodeRefused(PATH_INVALID, f"nothing exists at {what}: {real}")
+        raise CodeRefused(PATH_INVALID, f"nothing exists at {what}: {name}")
     return real
 
 
@@ -140,16 +175,18 @@ def destination(raw: str, roots: Roots, *, what: str = "dest") -> Path:
         raise CodeRefused(NO_ROOT, f"no folder is declared for the code extensions, so nothing is written: "
                                    f"{how_to_declare()}")
     try:
-        real = confined_path(_given(raw, what), roots.roots)
+        given = _given(raw, what)
+        real = confined_path(given, roots.roots)
     except (ValueError, OSError) as exc:          # labelled by the refusal's own outside flag
-        raise CodeRefused(OUTSIDE_ROOT if getattr(exc, "outside", False) else PATH_INVALID, f"{what}: {exc}") from None
+        raise _refused_path(exc, what) from None
+    name = _name(given, roots)
     if not under(real, roots.roots) or real in roots.roots:
-        raise CodeRefused(OUTSIDE_ROOT, f"{what} resolves to {real}, which is not inside a declared root: "
+        raise CodeRefused(OUTSIDE_ROOT, f"{what} {name} is not inside a declared root: "
                                         f"{how_to_declare()}")
     if real.exists() and (not real.is_dir() or any(real.iterdir())):
-        raise CodeRefused(PATH_INVALID, f"{real} already exists and is not an empty folder; nothing is overwritten")
+        raise CodeRefused(PATH_INVALID, f"{name} already exists and is not an empty folder; nothing is overwritten")
     if not real.parent.is_dir():
-        raise CodeRefused(PATH_INVALID, f"the folder {real.parent} does not exist")
+        raise CodeRefused(PATH_INVALID, f"the parent folder of {name} does not exist")
     return real
 
 
@@ -275,14 +312,17 @@ def _files(folder: Path, skip_dirs: frozenset[str], found: Walk, max_entries: in
         stack.extend(reversed(dirs))
 
 
-def read_text(path: Path, max_bytes: int, *, roots: Roots | None = None) -> str:
+def read_text(path: Path, max_bytes: int, *, roots: Roots) -> str:
     """A contained read of a plain file, refusing oversized files before opening them. At most ``max_bytes`` of a file, as text with the line endings ``Path.read_text`` gives (undecodable bytes
     replaced). Containment decides where a name is; the file itself must be a regular file kept under that one name
     (``plain_file``: no link, junction or hard link, which resolving never shows), and the one opened must be it.
-    Every refusal is in G6's words, naming the file (never its full path, nor the system's words)."""
+    Every refusal is in G6's words, naming the file (never its full path, nor the system's words).
+    ``roots`` is the same declaration used at the caller's check; there is no default root."""
+    if not isinstance(roots, Roots) or not roots.roots:
+        raise CodeRefused(NO_ROOT, "no checked folder was supplied for the read")
     name = Path(path).name
     try:
-        path = confined_path(path, roots.roots if roots is not None else (path.parent,))
+        path = confined_path(path, roots.roots)
         try:
             found = plain_file(path)
         except PathRefused as exc:
@@ -308,5 +348,5 @@ def read_text(path: Path, max_bytes: int, *, roots: Roots | None = None) -> str:
 
 
 __all__ = ["CONFIG_ENV", "CONFIG_FILE", "CONFIG_INVALID", "NO_ROOT", "OUTSIDE_ROOT", "PATH_INVALID", "SKIP_DIRS",
-           "Roots", "Walk", "destination", "existing", "how_to_declare", "load", "parse", "read_text", "under",
+           "Roots", "Walk", "destination", "existing", "for_folder", "how_to_declare", "load", "parse", "read_text", "under",
            "walk"]

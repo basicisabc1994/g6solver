@@ -326,10 +326,12 @@ def test_a_read_refuses_a_hard_link_to_a_file_kept_outside_the_root(tmp_path):
         pytest.skip("hard links cannot be made here")
     (root / "own.txt").write_text("kept here", encoding="utf-8")
     roots = _roots.Roots((root,), "test")
-    for given in (None, roots):
-        with pytest.raises(CodeRefused):
-            _roots.read_text(root / "h.txt", 1000, roots=given)
-        assert _roots.read_text(root / "own.txt", 1000, roots=given) == "kept here"
+    with pytest.raises(CodeRefused):
+        _roots.read_text(root / "h.txt", 1000, roots=roots)
+    assert _roots.read_text(root / "own.txt", 1000, roots=roots) == "kept here"
+    # there is no default root any more: a read with no checked roots is refused before anything is opened
+    with pytest.raises(CodeRefused):
+        _roots.read_text(root / "own.txt", 1000, roots=None)
 
 
 def test_a_walk_skips_a_hard_linked_file_as_a_link_so_a_package_with_one_is_still_read(tmp_path):
@@ -430,7 +432,7 @@ def test_a_read_refusal_is_in_g6s_words_and_labelled_by_its_own_outside_flag(tmp
     assert handle not in (None, wintypes.HANDLE(-1).value)
     try:
         with pytest.raises(CodeRefused) as refused:
-            _roots.read_text(held, 10_000)
+            _roots.read_text(held, 10_000, roots=roots)
     finally:
         k32.CloseHandle(handle)
     cases = [(refused.value, "G6_E_CODE_PATH_INVALID")]

@@ -312,7 +312,8 @@ def _tests_near(folder: Path, name: str, family: str, roots: _roots.Roots,
 
 def _files(folder: Path, roots: _roots.Roots) -> tuple[dict[str, str], _roots.Walk]:
     walked = _roots.walk(folder, roots, max_files=MAX_FILES, max_file_bytes=MAX_FILE_BYTES, suffixes=(".py", ".md"))
-    return ({p.relative_to(folder).as_posix(): _roots.read_text(p, MAX_FILE_BYTES) for p in walked.files}, walked)
+    return ({p.relative_to(folder).as_posix(): _roots.read_text(p, MAX_FILE_BYTES, roots=roots)
+             for p in walked.files}, walked)
 
 
 def _incomplete(out: dict[str, Any], walked: _roots.Walk) -> None:
@@ -357,8 +358,8 @@ def check_component(name: str) -> dict[str, Any]:
     locations = list(spec.submodule_search_locations or ()) if spec else []
     if not locations:
         raise CodeRefused(NOT_A_PACKAGE, f"{package} is not a package folder")
-    folder = Path(locations[0]).resolve()
-    every = _roots.Roots((folder,), "the installed package")
+    every = _roots.for_folder(Path(locations[0]), "the installed package")
+    folder = every.roots[0]
     files, walked = _files(folder, every)
     cls = reg.get_class(name)
     forbids = None
@@ -372,7 +373,7 @@ def check_component(name: str) -> dict[str, Any]:
     family = reg.refs[name].family or ""
     home = folder.parents[min(3, len(folder.parents) - 1)]
     unread: list[dict[str, str]] = []
-    tests = _tests_near(folder, name, family, _roots.Roots((home,), "installed tests"), unread)
+    tests = _tests_near(folder, name, family, _roots.for_folder(home, "installed tests"), unread)
     out = check_package(name, package, files, tests, ops=list(discovery.ops(name) or []), input_forbids_extra=forbids)
     out["problems"].extend(unread)
     _incomplete(out, walked)

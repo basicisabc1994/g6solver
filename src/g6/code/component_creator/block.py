@@ -118,7 +118,7 @@ def _modules(d: ComponentCreatorInput, roots: _roots.Roots) -> tuple[dict[str, s
         if found.suffix != ".py" or found.stat().st_size > MAX_MODULE_BYTES:
             raise CodeRefused(SOURCE_INVALID, f"{found.name} is not a Python file of at most {MAX_MODULE_BYTES} bytes")
         module = d.module or found.stem
-        text = _roots.read_text(found, MAX_MODULE_BYTES)
+        text = _roots.read_text(found, MAX_MODULE_BYTES, roots=roots)
         return {module: text}, module, {"kind": "ast_read", "from": str(found), "modules": 1,
                                         "bytes": len(text.encode("utf-8")), "imported": False}
     package = d.module or found.name
@@ -132,7 +132,7 @@ def _modules(d: ComponentCreatorInput, roots: _roots.Roots) -> tuple[dict[str, s
             parts = parts[:-1]
         if any(p.startswith("_") or not p.isidentifier() for p in parts):
             continue
-        modules[".".join([package, *parts])] = _roots.read_text(file, MAX_MODULE_BYTES)
+        modules[".".join([package, *parts])] = _roots.read_text(file, MAX_MODULE_BYTES, roots=roots)
     if not modules and walked.skipped_hard_links:
         raise CodeRefused(SOURCE_INVALID, f"{found}: no module was read: {walked.hard_links_said()} (a second name "
                                           "for a file kept elsewhere, which G6 does not read)")
