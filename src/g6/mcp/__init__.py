@@ -1,13 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """g6-mcp — a stdio MCP server exposing G6's progressive discovery surface.
 
-57 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
+58 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
 ``g6_select``, the staged selector: checked next calls for the agent's situation, and a reroute after a refusal
 (``g6.mcp.selector``);
 ``g6_allowances`` for both providers' quota windows and advisory pacing (``g6.allowance``);
 ``g6_review_patch``, which assesses a Python patch against stated requirements in confined test runs, as a job;
 ``g6_review_until_clean``, one step of the completion loop for a client the plugin's hook cannot reach (``g6.mcp.review_loop``),
-as a job; ``g6_premortem`` and six ``g6_mission_*`` tools (``_create``, ``_clarify``, ``_confirm``, ``_submit``, ``_status``,
+as a job; ``g6_agentic_run``, which runs a confined model substitute after a declared limit or computation failure,
+or replaces a successful answer when the caller names a part. Remote admission records provider consent; local
+admission records local model; process callers record allowed in code; refusal records refused by the consent check.
+The original answer stays beside the substitute (``g6.mcp.agentic``);
+``g6_premortem`` and six ``g6_mission_*`` tools (``_create``, ``_clarify``, ``_confirm``, ``_submit``, ``_status``,
 ``_certificate``) for a coding mission (``g6.mcp.mission``), where what a person allows and confirms goes through the
 client's own dialog and nowhere else, and the check step is the patch review; ``g6_confirm_behaviour``, one behaviour
 question about a task shown in the client's own dialog, whose confirmed answer each later ``g6_review_patch`` of the
@@ -777,6 +781,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         if "ctx" in tool.__annotations__:  # the real Context type, so the server injects it (annotations are strings)
             tool.__annotations__["ctx"] = context_type
         server.tool()(tool)
+    from g6.mcp import agentic
+    agentic.register(server, context_type, jobs)   # the override kernel's jobs are polled through metaharness_job
 
 
 def main() -> None:

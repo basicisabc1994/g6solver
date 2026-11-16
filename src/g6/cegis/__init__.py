@@ -17,6 +17,12 @@ a check of each candidate on an explicit input domain; the loop. Every candidate
 builtins table, a wall-clock allowance and a whole-tree kill; a memory cap (POSIX rlimit, a Windows Job Object; none on
 macOS, which refuses the address-space limit), and on POSIX also CPU and file-size limits.
 
+A ``??f`` floating-point hole has no candidate grid: it refuses with ``G6_E_CEGIS_HOLE_UNSUPPORTED``, a limit the
+agentic override kernel may follow with a model proposal (``g6_agentic_run``), keeping the original answer beside it.
+It records provider consent for remote admission, local model for local admission, allowed in code for process
+callers, or refused by the consent check.
+The block (``CegisBlock``, op ``synthesize``, sensitive) takes the oracle as a table of inputs and outputs.
+
 An optional ``verifier`` (the ``Verifier`` protocol) checks a candidate the sampled check passed. ``Z3Verifier(spec)``
 asks Z3, through ``g6.formal`` (``pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'``; imported only when a check runs), for an input of the
 whole domain on which the candidate breaks ``spec``, an SMT-LIB term over the arguments and ``result``. It answers
@@ -48,16 +54,35 @@ from g6.cegis.verify import (
 )
 from g6.cegis.z3_verifier import Z3Verifier
 from g6.cegis.templates import TemplateFit, fit_template
+from g6.cegis.block import CegisBlock, CegisInput
 
 __g6_component__ = True
-__g6_maturity__ = "beta"  # no block: Python API only
+__g6_maturity__ = "beta"
+__g6_block__ = "CegisBlock"
+# synthesize runs every candidate it tries, a program built from the caller's sketch
+__g6_sensitive_ops__: tuple[str, ...] = ("synthesize",)
+# The agentic override kernel (g6._agentic, design 10.5-10.8). A limit: a code that says what cegis cannot do, the one
+# kind of refusal (with an exception inside its own code) an override may follow. A part: functions of cegis's own code
+# the kernel may substitute for one call of the pure-computation ops named, with the validator that checks a value
+# before it is used. The verifiers and the checker are cegis's own, never substituted: the checker re-checks a final
+# answer in a fresh confined run. The seam runs candidates in process inside the kernel's confined child.
+__g6_limits__: tuple[str, ...] = ("G6_E_CEGIS_HOLE_UNSUPPORTED",)
+__g6_agentic_parts__: dict[str, dict] = {
+    "float_grid": {"ops": ("synthesize",), "functions": ("g6.cegis.hole:float_grid",),
+                   "validator": "g6.cegis.hole:valid_float_grid"},
+}
+__g6_verifiers__: tuple[str, ...] = ("g6.cegis.verify", "g6.cegis.z3_verifier", "g6.cegis.loop:_verifier_says",
+                                     "g6.cegis.block:recheck")
+__g6_agentic_check__ = "g6.cegis.block:recheck"
+__g6_agentic_inside__ = "g6.cegis.runner:inside_kernel_child"
 __g6_requires__: tuple[str, ...] = ("formal", "distillation")
 # Failure-mode codes (g6.core.failure_modes): what it guards against, and what its own use can cause.
 __g6_mitigates__: tuple[str, ...] = ("overfit_to_examples",)
 __g6_introduces__: tuple[str, ...] = ()
 __g6_extras__: dict[str, tuple[str, ...]] = {"formal": ("z3",), "optim": ("numpy", "scipy")}
 
-__all__ = ["CegisResult", "Control", "Counterexample", "Hole", "HoleKind", "Inconclusive", "InputDomain",
+__all__ = ["CegisBlock", "CegisInput", "CegisResult", "Control", "Counterexample", "Hole", "HoleKind", "Inconclusive",
+           "InputDomain",
            "NoCounterexample", "Oracle", "Outcome", "Runner", "RunnerError", "RunnerTimeout", "SearchResult", "Sketch",
            "SubprocessRunner", "TableOracle", "TemplateFit", "Verifier", "Z3Verifier", "cegis", "fit_template"]
 

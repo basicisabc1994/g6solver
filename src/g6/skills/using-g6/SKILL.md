@@ -88,6 +88,10 @@ g6_invoke("grounding", "coverage", {"text": "The limit is 42 units.", "sources":
 
 `sources` maps names to supplied text. These lexical checks do not establish factual truth.
 
+`g6_agentic_run` substitutes parts after limits, computation failure, or success when the caller names a part.
+Remote admission: provider consent; local admission: local model; process callers: allowed in code; refusal: refused by
+the consent check. No override question. Show model, warning, original: qualified-draft at best.
+
 ## Compose
 
 Use `g6_compose` with data-only stages. Connect downstream fields explicitly with `0.field` or `caller.field`.

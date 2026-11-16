@@ -99,9 +99,9 @@ packages in the project's folder never replace G6's own, installs the `using-g6`
 `g6`, setup stops; remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`) and run setup again.
 For another client, register `g6-mcp` and give it `G6_MCP_SENSITIVE=patch_review.review` in its environment.
 
-57 MCP tools: six discovery tools, `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`; `g6_select`, which proposes a few checked next calls for the agent's situation and reroutes after a refusal;
+58 MCP tools: six discovery tools, `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`; `g6_select`, which proposes a few checked next calls for the agent's situation and reroutes after a refusal;
 `g6_allowances` for both providers' quota windows and advisory pacing; `g6_review_patch`;
-`g6_review_until_clean`; `g6_premortem` and six `g6_mission_*` tools for a coding mission; `g6_confirm_behaviour`, one behaviour question for the person; six `g6_improve_*` tools for G6's self-improvement loop;
+`g6_review_until_clean`; `g6_agentic_run`, which runs a confined model substitute for a declared part after a declared limit or computation failure, or replaces a successful answer when the caller names a part. Remote admission records provider consent; local admission records local model; process callers record allowed in code; refusal records refused by the consent check. The model is named and the original answer kept beside it; `g6_premortem` and six `g6_mission_*` tools for a coding mission; `g6_confirm_behaviour`, one behaviour question for the person; six `g6_improve_*` tools for G6's self-improvement loop;
 thirteen `metaharness_*` tools for [tuning](#tune-g6-to-your-workflow); four sharing tools,
 `g6_cloud_grant`, `g6_cloud_revoke`, `g6_cloud_grants` and `g6_disclosures` ([cloud sharing consent](#cloud-sharing-consent));
 eleven `g6_knowledge_*` tools for the Context Engine, which searches the person's own folders on their machine;

@@ -101,6 +101,13 @@ TOOL_DATA: dict[str, dict[str, Any]] = {
     "g6_compose": _tool(
         "chain ops with explicit field mappings and contract checks",
         "structural checks of the composed contracts", "application correctness", ("implement",)),
+    "g6_agentic_run": _tool(
+        "an op refused with a limit it declares, or failed in a computation, and a model could fill that part; "
+        "replace a declared part's answer with a model's",
+        "the original answer beside a confined model substitute's answer for the declared part, with the model named "
+        "and the authority that covered each send",
+        "that the substitute is correct: it is never verified, and the original answer or refusal stays beside it. "
+        + _JOB, ("implement", "diagnose", "stuck"), "high", sensitive="agentic.run", model="required", confined=True),
     "g6_review_patch": _tool(
         "review my patch before I say it is done; check a Python change against stated requirements and tests; "
         "would my tests catch a wrong change or boundary (test adequacy)",
