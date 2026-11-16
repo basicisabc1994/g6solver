@@ -241,3 +241,15 @@ def test_a_person_who_shared_with_the_model_is_not_refused_in_the_overrides_thre
     else:
         assert reply["agentic"]["reason"] == "model_failed" and "CONSENT" in reply["agentic"]["detail"]
         assert sent == []
+
+
+def test_a_ledger_that_cannot_be_read_leaves_the_original_standing_and_the_job_completes(rig):
+    from g6._agentic import ledger
+
+    target = ledger.path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("[" * 200_000 + "\n", encoding="utf-8")     # nested too deep for any JSON decoder
+    reply = call(rig, FLOAT)
+    assert reply.get("status") != "failed" and reply["agentic"]["outcome"] == "degraded"
+    assert reply["degradation_reason"].startswith("agentic_ledger_failed") and "result" not in reply
+    assert reply["warning_card"]["code"] == "G6_E_CEGIS_HOLE_UNSUPPORTED" and check_envelope(reply) == []

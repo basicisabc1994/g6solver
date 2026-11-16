@@ -760,3 +760,54 @@ def test_a_model_name_outside_the_ledgers_pattern_is_recorded_normalised(monkeyp
     assert reply["agentic"]["outcome"] == "substituted", reply["agentic"].get("detail")
     entry = ChainLedger(ledger.path()).entries()[-1]["body"]
     assert entry["model"] == reply["agentic"]["model"] == "FakeLLM:llama_3__8b___"
+
+
+# review 3, F4: any failure while the ledger is read or written leaves the original standing, in G6's words
+
+def _plant_deep_ledger_line() -> None:
+    target = ledger.path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("[" * 200_000 + "\n", encoding="utf-8")
+
+
+def test_the_ledger_refuses_a_line_nested_too_deep_before_any_decoder_reads_it(monkeypatch, tmp_path):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    in_process_child(monkeypatch)
+    kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm, name="Ada")
+    body = ChainLedger(ledger.path()).entries()[-1]["body"]
+    _plant_deep_ledger_line()
+    with pytest.raises(ValueError, match="nests deeper than"):
+        ledger.append(body)
+    assert ledger.path().read_text(encoding="utf-8") == "[" * 200_000 + "\n"
+
+
+def test_a_ledger_line_nested_too_deep_leaves_the_original_standing(monkeypatch, tmp_path):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    in_process_child(monkeypatch)
+    _plant_deep_ledger_line()
+    reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm, name="Ada")
+    assert reply["agentic"]["outcome"] == "degraded" and reply["agentic"]["reason"] == "ledger_failed"
+    assert reply["degradation_reason"].startswith("agentic_ledger_failed") and "result" not in reply
+    assert reply["warning_card"]["code"] == "G6_E_CEGIS_HOLE_UNSUPPORTED" and check_envelope(reply) == []
+
+
+@pytest.mark.parametrize("error", [RecursionError, RuntimeError, LookupError, MemoryError])
+def test_any_exception_from_the_ledger_degrades_with_gs_own_words(monkeypatch, tmp_path, error):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    in_process_child(monkeypatch)
+
+    def broken(body):
+        raise error(PLANTED)
+
+    monkeypatch.setattr(ledger, "append", broken)
+    reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm, name="Ada")
+    assert reply["agentic"]["outcome"] == "degraded" and reply["agentic"]["reason"] == "ledger_failed"
+    assert reply["agentic"]["ledger"] == {"entry": "", "error": error.__name__} and PLANTED not in json.dumps(reply)
+
+
+def test_a_degraded_override_whose_ledger_fails_keeps_its_own_reason(monkeypatch, tmp_path):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    in_process_child(monkeypatch)
+    _plant_deep_ledger_line()
+    reply = kernel.run("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model(raw="no json").llm, name="Ada")
+    assert reply["agentic"]["reason"] == "value_invalid" and reply["agentic"]["ledger"]["error"] == "ValueError"

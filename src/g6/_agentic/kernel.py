@@ -934,7 +934,8 @@ def override(pending: Pending, *, confirmation: Confirmation) -> dict[str, Any]:
     try:
         entry = ledger.append(ledger.entry(record))
         record["ledger"] = {"entry": entry, "kind": ledger.KIND}
-    except (OSError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 - any failure reading or writing the ledger leaves the original standing
+        # (RecursionError, MemoryError included), named by its type only
         if record["outcome"] == "substituted":
             record.update(outcome="degraded", substituted=False, reason="ledger_failed",
                           detail=f"the override could not be recorded: {type(exc).__name__}")
