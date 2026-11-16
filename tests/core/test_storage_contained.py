@@ -104,6 +104,65 @@ def test_a_junction_windows_cannot_follow_out_of_the_root_counts_as_outside(root
             storage.confined_path(str(base / raw), (root,))
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junctions and \\\\?\\ paths")
+def test_a_junction_named_with_a_trailing_space_out_of_the_root_counts_as_outside(root: Path) -> None:
+    # Windows drops a trailing space from the last part of a path but keeps it on a part before it: a check that asks
+    # about 'ws\a ' as a last part asks about 'ws\a', while opening 'ws\a \secret.txt' goes through the junction 'a '
+    from tests.core.test_storage_state_path import verbatim_junction
+
+    base, outside = root.resolve(), root.parent.resolve() / "outside"
+    link = Path("\\\\?\\" + str(base / "a "))
+    verbatim_junction(link, "\\??\\" + str(outside))
+    try:
+        for raw in ("a /secret.txt", "a \\new\\kept.json"):
+            with pytest.raises(PathRefused):
+                contained(root, raw)
+            with pytest.raises(PathRefused):
+                contained(root, raw, refuse_links=True)
+            with pytest.raises(PathRefused):
+                storage.confined_path(str(base) + "\\" + raw, (root,))
+    finally:
+        os.rmdir(link)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junctions and \\\\?\\ paths")
+def test_the_link_walk_sees_a_junction_named_with_a_trailing_space_in_the_roots_own_words(root: Path) -> None:
+    # refuse_links asks about each part as open goes through it, so 'ws\a ' is asked about as 'a ', not 'a'
+    from tests.core.test_storage_state_path import verbatim_junction
+
+    base, outside = root.resolve(), root.parent.resolve() / "outside"
+    link = Path("\\\\?\\" + str(base / "a "))
+    verbatim_junction(link, "\\??\\" + str(outside))
+    try:
+        for raw in ("secret.txt", "new.txt"):
+            with pytest.raises(PathRefused, match="linked"):
+                contained(str(base) + "\\a ", raw, refuse_links=True)
+    finally:
+        os.rmdir(link)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows drops a trailing space or dot from a name")
+@pytest.mark.parametrize("raw", ["a.", "a ", "sub./x.txt", "sub /x.txt", "x.txt.", "sub\\x.txt ", "sub\\...\\x"])
+def test_a_part_ending_in_a_space_or_a_dot_is_refused_as_input(root: Path, raw: str) -> None:
+    # Windows reads such a name one way as the last part of a path and another way before it, so G6 refuses it
+    with pytest.raises(PathRefused, match="space or a dot") as refused:
+        contained(root, raw)
+    assert refused.value.outside is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="names Windows cannot hold")
+@pytest.mark.parametrize("raw", ["a<b", "?", "x" * 300, "a<b/c.txt"])
+def test_a_name_windows_cannot_hold_is_refused_at_once_as_input(root: Path, raw: str,
+                                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    # lstat answers such a name with an error that never clears: it is no folder being deleted, so it is not asked
+    # again, and the path is refused as input G6 cannot use, not as outside the folder
+    waits: list[float] = []
+    monkeypatch.setattr(storage.time, "sleep", waits.append)
+    with pytest.raises(PathRefused) as refused:
+        contained(root, raw)
+    assert (refused.value.outside, waits) == (False, [])
+
+
 @pytest.mark.parametrize("name", ["café.txt", unicodedata.normalize("NFD", "café.txt")])
 def test_unicode_names_inside_are_allowed_in_either_form(root: Path, name: str) -> None:
     assert contained(root, name).parent == root.resolve()

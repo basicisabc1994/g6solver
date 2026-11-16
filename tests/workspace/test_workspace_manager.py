@@ -7,6 +7,8 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
+import sys
 import tarfile
 import tempfile
 from pathlib import Path
@@ -99,6 +101,27 @@ def test_d1_a_folder_swapped_for_a_link_after_the_check_is_caught_when_the_file_
         ws.write("sub/b.txt", "through the link", dry_run=False)
     assert refused.value.code == E.OUTSIDE_ROOT
     assert sorted(p.name for p in outside.iterdir()) == ["secret.txt"]   # the partial file was removed again
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junctions and trailing-space names")
+def test_d1_a_junction_named_with_a_trailing_space_is_never_read_or_written_through(home, outside) -> None:
+    # a command run in the workspace can make a junction 'a ' (through \\?\, no privilege) out of it; Windows keeps the
+    # space on 'a /secret.txt' when it opens it, so the name must be refused, not taken as 'a' (not there)
+    from tests.core.test_storage_state_path import verbatim_junction
+
+    ws = _task(home)
+    link = Path("\\\\?\\" + str(ws.root / "a "))
+    verbatim_junction(link, "\\??\\" + str(outside.resolve()))
+    try:
+        for raw in ("a /secret.txt", "a \\new.txt"):
+            with pytest.raises(E.WorkspaceRefused) as refused:
+                ws.read(raw)
+            assert refused.value.code == E.INPUT_INVALID, raw
+            assert ops.write("t1", raw, "written", dry_run=False).code == E.INPUT_INVALID, raw
+    finally:
+        os.rmdir(link)
+    assert sorted(p.name for p in outside.iterdir()) == ["secret.txt"]
+    assert (outside / "secret.txt").read_text(encoding="utf-8") == "keep"
 
 
 def test_paths_inside_are_allowed_and_the_check_is_the_shared_one(home) -> None:
