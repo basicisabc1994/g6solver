@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,8 @@ LOG = ("repairs", "repairs.jsonl")
 #: The only fields a row may hold.
 FIELDS = frozenset({"event", "id", "session", "tool", "code", "fix_by", "by", "outcome"})
 _LOCK = threading.Lock()
+#: How long one writer waits for the other servers' turns before its row is given up (Windows; flock waits).
+LOCK_WAIT_S = 120.0
 
 
 @contextmanager
@@ -35,7 +38,16 @@ def _process_lock(path: Path):
                 lock.write(b"\0")
                 lock.flush()
             lock.seek(0)
-            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+            # LK_LOCK gives up after ten one-second tries and raises; a busy log is waited for, within LOCK_WAIT_S
+            deadline = time.monotonic() + LOCK_WAIT_S
+            while True:
+                try:
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise
+                    lock.seek(0)
             try:
                 yield
             finally:
@@ -75,12 +87,12 @@ def repair_stats(path: Path | None = None) -> dict[str, dict[str, Any]]:
     path = path or state_path(*LOG)
     out: dict[str, dict[str, Any]] = {}
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
+        lines = path.read_bytes().splitlines()
+    except (OSError, UnicodeError):
         return out
     for line in lines:
         try:
-            row = json.loads(line)
+            row = json.loads(line.decode("utf-8"))
             if not isinstance(row, dict) or not isinstance(row.get("code"), str):
                 continue
             stats = out.setdefault(row["code"], {"refused": 0, "resolved": 0, "not": 0, "person": 0})
