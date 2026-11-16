@@ -79,3 +79,21 @@ def no_child(monkeypatch) -> list[dict]:
 
     monkeypatch.setattr(_child, "launch", launch)
     return started
+
+
+def configured_model(monkeypatch, model: Model) -> None:
+    """MCP uses a configured endpoint; replace only its HTTP transport with the scripted answer.
+
+    A FakeLLM responder is explicit Python input, never a configured/MCP caller (repair 1 ruling F1).
+    """
+    from g6._agentic import kernel
+    from g6.core import llm
+
+    monkeypatch.setattr(kernel, "person_caller", lambda: llm.OllamaCaller("fixture-model", "http://127.0.0.1:9"))
+
+    def post(url, body, headers, timeout):
+        assert url == "http://127.0.0.1:9/api/chat"
+        system, user = (message["content"] for message in body["messages"])
+        return {"message": {"content": model._answer(system, user)}}
+
+    monkeypatch.setattr(llm, "_post_json", post)

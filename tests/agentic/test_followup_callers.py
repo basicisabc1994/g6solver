@@ -56,6 +56,10 @@ def test_override_rechecks_caller_after_prepare(monkeypatch, replacement):
     else:
         pending = dataclasses.replace(pending, caller=REFUSED[replacement]())
     reply = kernel.override(pending, confirmation=kernel.Confirmation(pending.digest, "Ada"))
+    if replacement == "cloud":
+        # Repair ruling: the original object's mutation cannot change G6's prepared snapshot.
+        assert reply["agentic"]["outcome"] == "degraded" and len(started) == 1
+        return
     assert reply["agentic"]["code"] == "G6_E_AGENTIC_CALLER_UNMETERED"
     assert started == []
 
@@ -129,6 +133,11 @@ def test_loopback_question_discloses_per_operation_timeout(monkeypatch, url):
     no_child(monkeypatch)
     caller = llm.OllamaCaller("m", base_url=url)
     pending = kernel.prepare("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=caller)
+    if "localhost" in url:
+        # Repair ruling F5: names, including localhost, establish no loopback IP literal.
+        assert isinstance(pending, dict) and pending["agentic"]["code"] == kernel.CALLER_UNMETERED
+        assert "127.0.0.1" in pending["error"]
+        return
     assert isinstance(pending, kernel.Pending), pending
     assert "timeout is per operation, not a total network deadline" in pending.question
     assert "SDK" not in pending.question

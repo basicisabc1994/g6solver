@@ -20,7 +20,8 @@ from fastmcp.client.elicitation import ElicitResult  # noqa: E402
 from g6._agentic import kernel  # noqa: E402
 from g6.invariants import check_envelope  # noqa: E402
 from g6.mcp import build_server  # noqa: E402
-from tests.agentic.kit import FLOAT_PARAMS, INT_PARAMS, Model, cegis_in_process, in_process_child  # noqa: E402
+from tests.agentic.kit import (  # noqa: E402
+    FLOAT_PARAMS, INT_PARAMS, Model, cegis_in_process, configured_model, in_process_child)
 
 pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
 
@@ -63,7 +64,7 @@ def rig(monkeypatch, tmp_path):
     monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("G6_MCP_SENSITIVE", "agentic.run,cegis.synthesize")
     model = Model([0.25, 0.5, 1.0])
-    monkeypatch.setattr(kernel, "person_caller", lambda: model.llm)
+    configured_model(monkeypatch, model)
     found = SimpleNamespace(model=model, served=in_process_child(monkeypatch), asked=[], server=build_server())
 
     def client(handler=named):
@@ -141,7 +142,7 @@ def test_params_json_nested_past_the_depth_is_invalid_input_and_nobody_is_asked(
 
 def test_a_deeply_nested_model_reply_leaves_the_original_answer_standing(rig, monkeypatch):
     deep = Model(raw='{"value": ' + "[" * 3000 + "]" * 3000 + "}")
-    monkeypatch.setattr(kernel, "person_caller", lambda: deep.llm)
+    configured_model(monkeypatch, deep)
     reply = call(rig, FLOAT)
     assert reply.get("status") != "failed" and reply["agentic"]["outcome"] == "degraded"
     assert reply["degradation_reason"].startswith("agentic_value_invalid") and "result" not in reply

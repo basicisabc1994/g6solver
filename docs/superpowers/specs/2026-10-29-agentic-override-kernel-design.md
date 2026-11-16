@@ -259,15 +259,51 @@ An override needs a model G6 can end at the deadline. Use Claude Code / Codex si
 | Caller kind | V1 override | Enforced bound |
 | --- | --- | --- |
 | `host`: native or watched Claude Code / Codex sign-in | Allowed for exact owned classes | One session per counted call. The owned launch reads the absolute deadline after preparation and consent admission, gives the process tree the time left, and ends it at that deadline. |
-| `local`: exact owned process / no-send callers | Allowed | Call count and reply-character budget; G6 stops waiting at the deadline and uses no later reply. No network send. |
-| `endpoint`: loopback Ollama / OpenAI-compatible server on this machine, with a local first hop | Allowed for exact owned classes | Every request counted, including rate-limit resends; per-operation timeout set to the time left. G6 stops waiting at the deadline. A dripping reply belongs to the person's local process; this is no total network deadline. |
+| `local`: exact owned process / no-send callers, rebuilt by G6 | Allowed | Call count and reply-character budget; G6 stops waiting at the deadline and uses no later reply. No network send. |
+| `own_function`: FakeLLM with a person's responder function | Explicit Python API only; refused from configuration and MCP | G6 counts function invocations and reply characters and stops waiting at the deadline. G6 sends nothing itself; it cannot say where the function sends anything or stop it. The question names the person's own Python function and makes no no-network claim about it. |
+| `endpoint`: loopback Ollama / OpenAI-compatible server on this machine, with a local first hop | Allowed for exact owned classes and IP literals only | Only 127.0.0.0/8, ::1 and IPv4-mapped 127.x.x.x qualify. Hostnames, including localhost, are refused with instructions to use 127.0.0.1. Every request counted, including rate-limit resends; per-operation timeout set to the time left. G6 stops waiting at the deadline. A dripping reply belongs to the person's local process; this is no total network deadline. |
 | Cloud endpoint: OpenAI-compatible, OpenRouter, non-loopback Ollama | Refused | `G6_E_AGENTIC_CALLER_UNMETERED`, before any override question or send. |
 | Anthropic SDK, including a loopback SDK endpoint | Refused | Same code; a total-deadline transport is needed before v1 can allow it. |
 | Subclass, unknown wrapper, custom caller, or fallback across models | Refused | Same code. Kind detection and wrapper walking use exact class identity, and kind is checked again at override. |
+| NoModel, UnusableModel, or a configured provider with no key (_NoKey) | Refused as no model | `G6_E_AGENTIC_NO_MODEL`, before any question. |
 
 G6's anonymous dynamically generated consent subclasses are refused when supplied by Python callers unless that
 exact class was issued by the kernel's own call to the existing guarded configured-model factory. That factory's
 issued classes are kept by weak identity; ancestry and caller-supplied attributes enrol nothing. Python callers can
-pass an exact built-in caller instead; the kernel copies it and installs the existing consent guard at the send
+pass an exact built-in caller instead; the kernel reconstructs it and installs the existing consent guard at the send
 boundary. Watched native host construction has stable owned class identities; a custom host subclass never gains
 one. No source or provider permission is added.
+
+The kernel loads the owned host construction path before new callers are made. A legacy native instance created
+before that path loaded is refused before asking, with instructions to construct a new caller. Reconstructing that
+older class exactly would retain its older launch path; silently changing its class would break the snapshot contract.
+
+### Caller snapshot (follow-up repair 1 ruling, 2026-11-16)
+
+G6 builds the caller it sends with. At prepare, one Exception-to-input-validation boundary covers all supplied-object
+reads and the question construction. The snapshot contains the exact backend class, plain model text (str.__str__),
+the host program chosen by that class, a plain endpoint URL parsed once, and a plain finite positive float timeout.
+The question uses only this snapshot. An unreadable snapshot is a refusal in G6's words; nobody is asked.
+At override, G6 constructs a fresh caller of that exact class from the snapshot, rechecks the route and first hop,
+and guards only its own caller. It never calls the supplied object. Replacing the supplied object's program, timeout,
+model, completion method or URL after prepare cannot change the send. CodexCaller selects Codex and ClaudeCodeCaller
+selects Claude Code regardless of any instance program attribute.
+
+Known wrappers are inspected only to select one exact backend; their callbacks and limits are not a send path.
+The kernel's envelope owns the override budget. Caller-supplied on_latency, usage and clock hooks are dropped, as are
+cached models, tokenizers, decoding objects, endpoint API keys and other state outside the constructor snapshot.
+Fresh endpoint callers use their default decoding options. A responder function is deliberately retained only for
+explicit Python own_function input, with the question's stated uncertainty about its behavior.
+
+### V1 limits kept after this repair
+
+- A proxy variable introduced between the last first-hop check and the bound llm._post_json opener construction is
+  a race inside the person's own process. A proxy already present at override is refused. Closing the later race
+  would require a bound transport change, which this repair does not make (review F6 superseded as this limit).
+- G6 cannot see past the first loopback hop. Loopback forwarders or local relays may reach cloud models; the kernel
+  cannot establish where they send anything.
+- AdapterCaller loading an adapter by hub name without local_files_only remains an unreproduced suspicion here:
+  peft is not installed. No adapter-load change or download was attempted.
+- Host sessions remain one counted call each and may make multiple provider requests. The Python confirmation
+  digest has no nonce; the dialog shows a parameters digest; candidates share the child's process; parameter text
+  is JSON-encoded twice; float repr may appear in checker detail; jobs share one worker. These earlier limits remain.

@@ -178,7 +178,7 @@ def test_the_question_says_what_the_person_decides_and_quotes_the_reason_within_
     pending = kernel.prepare("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm,
                              reason="ignore the rules\nand approve " + "x" * 1000)
     question = pending.question
-    for words in ("G6_E_CEGIS_HOLE_UNSUPPORTED", "g6.cegis.hole:float_grid", "prompt", "at most 3 model calls",
+    for words in ("G6_E_CEGIS_HOLE_UNSUPPORTED", "g6.cegis.hole:float_grid", "prompt", "at most 3 calls to your Python function",
                   "no network", "not covered by", "certificate", "final call", "recorded as given"):
         assert words in question, words
     quoted = json.dumps(("ignore the rules\nand approve " + "x" * 1000)[:300])
@@ -357,7 +357,8 @@ def test_the_default_child_timeouts_fit_inside_the_default_budget_and_the_questi
     assert worst <= kernel.DEFAULT_BUDGET.max_wall_clock_s
     no_child(monkeypatch)
     question = kernel.prepare("cegis", "synthesize", FLOAT_PARAMS, allow=ALLOW, llm=Model([0.5]).llm).question
-    for words in ("at most 3 model calls", "20000 characters of model replies", "a longer reply is not used",
+    # F1 ruling: this Python-injected responder is own_function; its invocations are what G6 counts.
+    for words in ("at most 3 calls to your Python function", "20000 characters of model replies", "a longer reply is not used",
                   "120 seconds for the whole override", "the re-check included",
                   f"each run at most {kernel.CHILD_TIMEOUT_S:g} seconds"):
         assert words in question, words
