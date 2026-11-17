@@ -9,20 +9,56 @@ WITHHELD = "Results were withheld from a source not shared with this provider. T
 _AUTHORITY = re.compile(
     r"allow\s*=|G6_MCP_SENSITIVE|G6_ALLOW_UNCONFINED|allow_execution|\ballow_sensitive\b|"
     r"\b(?:confirm|approve|grant|promote)\s*\(|\bapprover\b|autonomous_low_risk|"
-    r"\bg6\s+setup\b|--allow|allow parameter|\bicacls\b|/grant\b|\bchmod\b|\bsetfacl\b", re.I)
+    r"\bg6\s+setup\b|--allow|allow parameter|\bicacls\b|/grant\b|\bchmod\b|\bsetfacl\b|"
+    r"\b(?:sudo|doas|runas|sysctl|apparmor_parser|aa-complain|setenforce)\b|\bsu\s+-|/etc/", re.I)
 _SETTING = re.compile(r"\bG6_(?!E_)[A-Z][A-Z0-9_]*\b|"
                       r"(?i:\bG6_(?!E_)[A-Z][A-Z0-9_]*\s*=|\$env:[A-Z][A-Z0-9_]*|~[/\\]\.g6[/\\]\.env)")
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
-# These are prose surfaces, not a licence to rewrite arbitrary string data.
+# These fields describe G6-authored guidance only. Component results have a
+# separate ownership boundary below; their field names never confer ownership.
 _PROSE_FIELDS = frozenset({
     "step", "reason", "message", "error", "warning", "warnings", "warning_card",
     "action", "next_actions", "degradation_reason", "help", "description", "text",
     "say", "why", "issues", "limitations", "summary", "result", "setup",
     "suggested_action", "next_step", "risks", "note", "known_limitations", "missing_checks",
     "recommended_next_steps", "block_reason", "required_human_decision", "evidence_collected",
-    "safe_next_action", "rollback_or_containment",
+    "safe_next_action", "rollback_or_containment", "install",
 })
 _TEMPLATES = frozenset({"call", "arguments", "args", "params", "params_json", "fill", "next", "fix_by"})
+_G6_CODE = re.compile(r"\bG6_E_[A-Z0-9_]+\b")
+_ISOLATION = "G6_E_ISOLATION_UNAVAILABLE"
+_ISOLATION_ACTION = ("Tell the person G6 cannot run this confined on this machine. "
+                     "Setting it up is the person's decision.")
+_MAX_GUIDANCE_DEPTH = 64
+
+
+class _GuidanceLimit(Exception):
+    pass
+
+
+def _g6_refusal(value: dict) -> bool:
+    """A failed reply with a G6 code is program guidance, never a successful result.
+
+    Look through mirrored refusal fields too. This walk is bounded independently
+    of Python's stack; calls/arguments and successful component data are opaque.
+    """
+    if value.get("ok") is not False:
+        return False
+    todo = [(value, 0)]
+    visits = 0
+    while todo:
+        item, depth = todo.pop()
+        visits += 1
+        if depth > _MAX_GUIDANCE_DEPTH or visits > 50_000:
+            raise _GuidanceLimit
+        if isinstance(item, str) and _G6_CODE.search(item):
+            return True
+        if isinstance(item, dict):
+            todo.extend((child, depth + 1) for key, child in item.items()
+                        if key not in _TEMPLATES and not (key == "result" and item.get("ok") is True))
+        elif isinstance(item, (list, tuple)):
+            todo.extend((child, depth + 1) for child in item)
+    return False
 
 
 def _instruction(text: str) -> bool:
@@ -57,17 +93,44 @@ def text_for_agent(text: str) -> str:
     return " ".join(kept)
 
 
-def reply_for_agent(value, *, _prose: bool = True):
-    """Filter free-text sentences in every reply family; preserve structured data exactly."""
+def _guidance(value, *, prose: bool = True, depth: int = 0):
+    if depth > _MAX_GUIDANCE_DEPTH:
+        raise _GuidanceLimit
     if isinstance(value, str):
-        return text_for_agent(value) if _prose else value
+        return text_for_agent(value) if prose else value
     if isinstance(value, dict):
-        return {key: child if key in _TEMPLATES else reply_for_agent(child, _prose=key in _PROSE_FIELDS)
-                for key, child in value.items()}
+        # The door's successful result is the person's data, byte for byte,
+        # including nested envelopes, warning cards, and authority-shaped keys.
+        # A component failure without a G6 refusal code remains its data too.
+        result_is_data = value.get("ok") is True or (value.get("ok") is False and not _g6_refusal(value))
+        out = {key: child if key in _TEMPLATES or (key == "result" and result_is_data)
+               else _guidance(child, prose=key in _PROSE_FIELDS, depth=depth + 1)
+               for key, child in value.items()}
+        card = out.get("warning_card")
+        if isinstance(card, dict) and card.get("code") == _ISOLATION:
+            # errors.ISOLATION_ACTION is bound. Replace its agent-facing copy,
+            # including either card spelling, without altering the bound source.
+            card["suggested_action"] = _ISOLATION_ACTION
+            if "action" in card:
+                card["action"] = _ISOLATION_ACTION
+        return out
     if isinstance(value, (list, tuple)):
-        children = [reply_for_agent(child, _prose=_prose) for child in value]
+        children = [_guidance(child, prose=prose, depth=depth + 1) for child in value]
         return tuple(children) if isinstance(value, tuple) else children
     return value
+
+
+def reply_for_agent(value, *, _prose: bool = True):
+    """Filter G6's guidance, preserving the ownership boundary of component results.
+
+    Overdeep or cyclic guidance is refused as a whole, never partially returned.
+    Successful result data and structured call templates are not traversed.
+    """
+    try:
+        return _guidance(value, prose=_prose)
+    except _GuidanceLimit:
+        return {"ok": False, "completion_state": "blocked-escalated",
+                "error": "[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person."}
 
 
 def skill_for_agent(text: str | None) -> str | None:

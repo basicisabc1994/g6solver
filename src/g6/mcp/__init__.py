@@ -85,7 +85,9 @@ def _denial_for_agent(reply: dict[str, Any]) -> None:
     """Compatibility entry point; every reply uses the same agent filter."""
     from g6.core.agent_guidance import reply_for_agent
 
-    reply.update(reply_for_agent(reply))
+    filtered = reply_for_agent(reply)
+    reply.clear()
+    reply.update(filtered)
 
 
 def describe_reply(component: str, *, allow_sensitive: frozenset[str] | None = None) -> dict[str, Any]:

@@ -45,7 +45,8 @@ def test_all_server_tools_use_the_filter_before_source_ticketing(tmp_path, monke
     @server.tool()
     @public_tool
     def synthetic_reply() -> dict:
-        return {"ok": True, "result": {"message": "Run chmod 700 folder. The person decides."},
+        return {"ok": False, "error": "[G6_E_INPUT_VALIDATION] refused",
+                "result": {"message": "Run chmod 700 folder. The person decides."},
                 "next_actions": ["Set G6_REQUIRE_ISOLATION=0. Tell the person."],
                 "repair": {"step": "Run g6 setup. The person decides."}}
 
@@ -60,13 +61,52 @@ def test_all_server_tools_use_the_filter_before_source_ticketing(tmp_path, monke
     asyncio.run(run())
 
 
-def test_authority_keys_do_not_escape_as_component_result_fields():
-    from g6.mcp import _denial_for_agent
+@pytest.mark.parametrize("transport", ["invoke", "mcp"])
+def test_successful_chunker_result_passes_whole_with_offsets_and_digest(tmp_path, monkeypatch, transport):
+    import hashlib
+    import re
 
-    reply = {"result": {"G6_MCP_SENSITIVE": "lean", "message": "The person decides."}}
-    _denial_for_agent(reply)
-    assert "G6_MCP_SENSITIVE" not in json.dumps(reply)
-    assert reply["result"]["message"] == "The person decides."
+    from fastmcp import Client
+    from mcp.types import Implementation
+    from g6.core import door
+    from g6.knowledge._types import Document, Passage, Source
+    from g6.mcp import build_server, invoke_reply
+
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    text = "Make the script executable. Run chmod +x build.sh. Then run it."
+    document = Document(text=text, source=Source(
+        uri="file:///notes.md", sha256=hashlib.sha256(text.encode()).hexdigest(),
+        retrieved_at="2026-11-17T00:00:00Z", provenance="caller_supplied"))
+    params = {"document": document.model_dump(), "size": 200}
+    expected = door.invoke_checked("knowledge_chunker", "chunk", params, allow=frozenset(), how_to_allow="")["result"]
+
+    async def run():
+        async def accepting(message, response_type, params, context):
+            return {"value": "Fixture person"}
+
+        async with Client(build_server(), client_info=Implementation(name="codex", version="test"),
+                          elicitation_handler=accepting) as client:
+            arguments = {"component": "knowledge_chunker", "op": "chunk", "params_json": json.dumps(params)}
+            found = await client.call_tool("g6_invoke", arguments)
+            reply = found.structured_content
+            if "G6_E_CLOUD_CONSENT_REQUIRED" in json.dumps(reply):
+                sources = re.search(r"Withheld source identifiers: ([^.]*)\.", json.dumps(reply))[1].split(", ")
+                for source in sources:
+                    await client.call_tool("g6_cloud_grant", {"source": source, "provider": "openai:codex"})
+                found = await client.call_tool("g6_invoke", arguments)
+                reply = found.structured_content
+            # Both MCP representations must carry exactly the same result.
+            assert json.loads(found.content[0].text)["result"] == reply["result"]
+            return reply
+
+    reply = (invoke_reply("knowledge_chunker", "chunk", json.dumps(params)) if transport == "invoke"
+             else asyncio.run(run()))
+    assert reply["ok"] is True
+    assert json.dumps(reply["result"]).encode() == json.dumps(expected).encode()
+    for passage in reply["result"]["passages"]:
+        assert passage["text"] == text[passage["start"]:passage["end"]]
+        assert passage["document_sha256"] == hashlib.sha256(text.encode()).hexdigest()
+        Passage.model_validate(passage)  # recomputes the source/document/offset-bound id
 
 
 def test_skill_keeps_safe_list_items_and_lines():

@@ -56,13 +56,17 @@ def test_g6_tool_names_in_prose_do_not_name_authority_commands():
 
 
 def test_warning_text_and_help_prose_are_filtered_inside_nested_results():
+    from g6.core.agent_guidance import _ISOLATION_ACTION
+
     value = {"warning_card": {"code": "G6_E_ISOLATION_UNAVAILABLE",
                               "action": "Run icacls folder /grant identity:F. The person decides."},
              "next_actions": ["Run g6 setup. Tell the person."],
              "result": {"help": "Set G6_REQUIRE_ISOLATION=0. Read the fields.",
                         "degradation_reason": "Run setfacl folder. Keep the evidence."}}
     assert reply_for_agent(value) == {
-        "warning_card": {"code": "G6_E_ISOLATION_UNAVAILABLE", "action": "The person decides."},
+        # The isolation card action is G6's fixed sentence (lead ruling, wire-repair follow-up repair 1, F5).
+        "warning_card": {"code": "G6_E_ISOLATION_UNAVAILABLE", "action": _ISOLATION_ACTION,
+                         "suggested_action": _ISOLATION_ACTION},
         "next_actions": ["Tell the person."],
         "result": {"help": "Read the fields.", "degradation_reason": "Keep the evidence."}}
 
