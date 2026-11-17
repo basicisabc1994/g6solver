@@ -30,9 +30,10 @@ A finished run is ``qualified-draft``: the graph's state is what its nodes wrote
 """
 from __future__ import annotations
 
+from g6.core.llm import model_calls_disabled
+
 import contextlib
 import json
-import os
 import re
 import typing
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -138,9 +139,11 @@ def _node(node: GraphNode, llm: LLMCaller | None) -> Callable[[dict[str, Any]], 
             by = int(node.by) if float(node.by).is_integer() and isinstance(held, int) else node.by
             return {node.key: held + by}
         if node.op == "llm":
-            if os.environ.get("G6_DISABLE_LLM"):
+            if model_calls_disabled():
                 raise AgentRefusal(LLM_DISABLED, "model calls are disabled by G6_DISABLE_LLM")
             assert llm is not None   # a graph with an llm node never starts without one
+            from g6.agents._runtime.consent import require_model_session
+            require_model_session(llm)
             from g6.core.consent_callers import guard
             from g6.core.cloud_consent import prompt_state
             with prompt_state(state) as (snapshot,):
@@ -242,7 +245,7 @@ class LangGraphRuntime:
             if self.llm is None:
                 raise AgentRefusal(NO_MODEL, "the graph has an llm node and no model was passed in; from Python, pass "
                                              "one (LangGraphRuntime(spec, llm=...)); over MCP no model is passed")
-            if os.environ.get("G6_DISABLE_LLM"):
+            if model_calls_disabled():
                 raise AgentRefusal(LLM_DISABLED, "model calls are disabled by G6_DISABLE_LLM, and the graph has an "
                                                  "llm node, so it was not started")
         if size_of(self.input, MAX_VALUE_CHARS) > MAX_VALUE_CHARS:
@@ -255,6 +258,9 @@ class LangGraphRuntime:
             if gate.dry_run and spec.has_llm:   # its llm nodes would ask the model: the plan, and nothing run
                 yield AgentEvent(kind="finished", payload={"output": "", "detail": self._plan(spec, gate)})
                 return
+        if spec is not None and spec.has_llm:
+            from g6.agents._runtime.consent import require_model_session
+            require_model_session(self.llm)
         from g6.agents.agent_langgraph.checkpoints import Checkpoints
 
         store = Checkpoints(self.checkpoints, allowed_types=self.allowed_types)

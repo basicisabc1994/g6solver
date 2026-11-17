@@ -284,7 +284,7 @@ class Proposals:
     calls: int = 0
 
 
-#: How the person's model is found when the review is given none (a test sets it): only one they opted into.
+#: Resolve the default tool-less model when the review is given none (a test sets it).
 def default_caller() -> LLMCaller:
     from g6.core.consent_callers import provider_from_env
 
@@ -361,8 +361,8 @@ class Proposer:
         if skip:
             self.ready = skip
         elif isinstance(raw, NoModel):
-            self.ready = ("no model is configured for G6 (G6_LLM_PROVIDER in your key file), so the proposer asked "
-                          "none; a review asks a model only when the person opted in")
+            self.ready = (f"no model is available for G6 ({raw.reason or 'no installed host or key-file opt-out'}), "
+                          "so the proposer asked none; tool-less completions use the calling host by default")
         elif isinstance(raw, UnusableModel) or not callable(getattr(raw, "complete", None)):
             self.ready = f"the configured model cannot be used: {getattr(raw, 'reason', 'it has no complete method')}"
         else:

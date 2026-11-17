@@ -424,7 +424,10 @@ def test_scout_same_run_without_each_grant_starts_no_process(tmp_path, monkeypat
     assert sent == []
 
 
-def test_workspace_and_environment_do_not_attribute_an_unscoped_prompt(tmp_path):
+def test_workspace_and_environment_do_not_attribute_an_unscoped_prompt(tmp_path, monkeypatch):
+    # Session approval is separate from the source grants challenged below.
+    from g6.core import keys as session_keys
+    monkeypatch.setattr(session_keys, 'read', lambda: {'G6_LLM_PROVIDER': 'codex'})
     from g6.agents._runtime.consent import consent_run
     from g6.agents._runtime.model import AgentRefusal
     sent = []
@@ -503,6 +506,8 @@ def test_scout_retry_carries_unknown_child_diagnostics(tmp_path, monkeypatch):
     monkeypatch.setattr(host_models, '_environment', lambda *args: {})
     monkeypatch.setattr(loop.ToolSession, 'locate', lambda self: 'fake')
     stand_in_hosts(monkeypatch, lambda system, text: sent.append(text) or 'fake reply')
+    # Approve the synthetic tool session; unknown retry diagnostics remain withheld.
+    monkeypatch.setattr(host_models.key_file, 'read', lambda: {'G6_LLM_PROVIDER': 'claude_code'})
     loop._scout(SimpleNamespace(repo=cwd), 'task', '{title} {text}', where, loop.ToolSession().run,
                 time.monotonic() + 10000)
     assert len(sent) == 1

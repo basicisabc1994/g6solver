@@ -28,7 +28,8 @@ INTERRUPTED = "G6_E_PATCH_REVIEW_INTERRUPTED"
 #: The envelope's fields the compact reply carries as they are.
 ENVELOPE = ("ok", "completion_state", "reliability_label", "request_id", "run_id", "artifact_digest")
 #: The fields of each evidence item it keeps.
-EVIDENCE = ("source", "summary", "authority", "artifact_digest", "base_commit", "scope")
+EVIDENCE = ("source", "summary", "authority", "artifact_digest", "base_commit", "scope",
+            "kind", "provider", "reason", "available_hosts", "status")
 HOLDS = ("every field of the review: each requirement's status, assessment.completion (what was demonstrated, what is "
          "not established, each reproduction with its text, preservation, open questions, every activity), the scope "
          "with every check run, the gate, the grounding and all the evidence")

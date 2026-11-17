@@ -37,7 +37,8 @@ against a real Codex, so it is not passed.
 """
 from __future__ import annotations
 
-import os
+from g6.core.llm import model_calls_disabled
+
 import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -165,7 +166,7 @@ class CodexRuntime:
         if decision.verdict == "dry_run":
             yield AgentEvent(kind="finished", payload={"output": "", "detail": self._plan(detail, writes, workspace)})
             return
-        if os.environ.get("G6_DISABLE_LLM"):
+        if model_calls_disabled():
             raise AgentRefusal(LLM_DISABLED, "model calls are disabled by G6_DISABLE_LLM, and Codex runs a model, so "
                                              "nothing was started", detail=detail)
         try:

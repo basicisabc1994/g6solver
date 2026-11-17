@@ -50,8 +50,10 @@ class Jobs:
         self._lock = Lock()
 
     def start(self, operation, *, compact=None):
-        capture = cloud.current_capture()
+        capture = cloud.calling_capture()
         origin = (capture.client, frozenset(capture.supplied)) if capture is not None else (None, frozenset())
+        workspace = ((capture.client_roots, frozenset(capture.client_repositories)) if capture is not None
+                     else ((), frozenset()))
         context = copy_context()
         with self._lock:
             if sum(not job.done() for job in self._jobs.values()) >= 16:
@@ -63,19 +65,26 @@ class Jobs:
                     self._compact.pop(oldest, None)
                     self._provenance.pop(oldest, None)
             ident = uuid4().hex
-            self._jobs[ident] = self._pool.submit(context.run, self._run, operation, compact, ident, origin)
+            self._jobs[ident] = self._pool.submit(context.run, self._run, operation, compact, ident, origin, workspace)
         return cloud.bind_output({"ok": True, "job_id": ident, "status": "pending",
                 "completion_state": "qualified-draft",
                 "note": "Execution is pending. Poll metaharness_job; this is not an evaluation result."}, ())
 
-    def _run(self, operation, compact, ident, origin):
+    def _run(self, operation, compact, ident, origin, workspace):
         refs = shown_refs = (cloud.UNKNOWN,)
         metadata = shown_metadata = {}
         with cloud.collect_sources() as capture:
             capture.client, capture.supplied = origin[0], set(origin[1])
+            capture.client_roots, capture.client_repositories = workspace[0], set(workspace[1])
             try:
                 result = operation()
                 body, known, metadata = cloud.freeze_output(result)
+                detached = json.loads(body)
+                if capture.model_calls and isinstance(detached, dict):
+                    prior = detached.get('evidence')
+                    evidence = prior if isinstance(prior, list) else [prior] if prior else []
+                    detached['evidence'] = [*evidence, *capture.model_calls]
+                    body = json.dumps(detached, separators=(',', ':'), allow_nan=False)
                 refs = cloud.boundary_sources(carried=(*(known if known is not None else
                     cloud.current_sources() or (cloud.UNKNOWN,)), *capture.sources))
                 metadata = shown_metadata = _FrozenResult.of(metadata)

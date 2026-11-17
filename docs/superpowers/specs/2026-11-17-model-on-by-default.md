@@ -9,6 +9,19 @@ Sandbox basetemp access remains limited; no permission or runner workaround is u
 
 ## Rule
 
+Review-one ruling: the built-in default covers tool-less completions only. Every
+host session with tools, file access, edits or a session spending budget needs its
+provider explicitly named in the key file. `host_models.session_approved` is the
+shared predicate; scout construction, direct/watched session admission and agent
+runtime boundaries enforce it. Source admission remains a separate requirement.
+The tool-less critic keeps its existing explicit critic setting.
+
+Key-file `none` wins over every environment provider setting. Python's explicit
+provider argument retains its separate meaning. An environment-only host setting
+produces an unusable caller: calls fail and no default is used while it remains.
+One `llm.model_calls_disabled` reader handles resolution, doctor and send checks;
+a nonempty switch in either the file or environment wins over an empty override.
+
 With no provider named in settings or a Python argument, resolve the built-in `auto`
 default for each call. Prefer the MCP calling client's installed Claude Code or
 Codex host, using its existing sign-in. Test availability through `locate()`;
@@ -34,7 +47,13 @@ Installation alone does not establish that a sign-in works.
 ## One consent decision
 
 At the existing send-time admission check, a recognised recipient equal to the
-server-populated `capture.client[0]` can admit recorded model sources without a grant.
+server-populated `capture.client[0]` can admit only current request bytes, a
+declared repository inside protocol-declared client workspace roots, and G6's
+operational data without a grant. Missing roots authorize no repository. The
+server obtains roots through MCP, never a tool argument or its own working folder.
+Agent environments, folders outside the roots, retained records, knowledge and
+other source classes still need a grant. A source id alone carries no authority
+between requests: current supplied-byte and repository sets belong to the request.
 The preliminary `refuse_unshared` check must use the same rule. Keep the durable
 disclosure before send, existing locks, source union and nested-send handling.
 Record `calling_client` as the source's disclosure basis when this exemption

@@ -28,6 +28,10 @@ class Declaration:
     def sources(self, arguments=None, *, payload=''):
         arguments = arguments or {}
         capture = cloud.current_capture()
+        # Wire arguments exist even when the request has no recognised client.
+        # A child may find its request's snapshot, but never cross a new client.
+        while capture is not None and capture.client_arguments is None and capture.client is None:
+            capture = capture.parent
         refs = []
         for kind in self.classes:
             if kind == 'g6_operational':
@@ -42,6 +46,8 @@ class Declaration:
                 repo = arguments.get('repo')
                 try:
                     source = cloud.repository_source(repo) if repo else 'repositories'
+                    if repo:
+                        cloud.client_repository(repo)
                 except (ValueError, OSError):
                     # Validation belongs to the tool. An invalid client path
                     # must not replace its earlier refusal with a consent error.
@@ -223,7 +229,11 @@ MODELS = {name: MODEL_INPUTS for name in (
 
 
 def model_sources():
-    return cloud.boundary_sources(MODEL_INPUTS.sources(), carried=cloud.prompt_sources())
+    # A complete request construction already names its origins. The generic
+    # model_inputs scope covers callers without such a construction. Never
+    # replace any observed unknown or retained origin with a current input.
+    refs = cloud.boundary_sources(carried=cloud.prompt_sources())
+    return refs or MODEL_INPUTS.sources()
 
 
 def tool_declaration(fn):

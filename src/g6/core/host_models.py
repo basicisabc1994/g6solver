@@ -127,9 +127,23 @@ _PLAIN_PATH = re.compile(r"[A-Za-z0-9 _\-.:\\/~()]+")
 def not_approved(provider: str) -> str:
     """Why a host provider named only in the environment, or in an ``env`` mapping, starts nothing."""
     program = {"claude_code": "Claude Code", "codex": "Codex"}.get(provider, provider)
-    return (f"G6_E_NO_MODEL: an environment cannot select {program}. G6 uses the calling Claude Code / Codex sign-in "
-            f"by default; choose G6_LLM_PROVIDER={provider} in {key_file.path()} explicitly, or "
+    return (f"G6_E_NO_MODEL: an environment cannot select {program}; calls fail and no default is used while this "
+            "environment-only host setting remains. G6 uses the calling Claude Code / Codex sign-in "
+            f"by default for tool-less completions with no provider named; choose G6_LLM_PROVIDER={provider} in {key_file.path()} explicitly, or "
             "G6_LLM_PROVIDER=none to opt out. A different provider asks first")
+
+
+def session_approved(provider: str) -> bool:
+    """Tools, file access, edits or session spending require this explicit key-file provider.
+
+    Built-in auto and Python/environment choices authorize tool-less completions only.
+    Call at session construction and again at the send boundary, including watched launches.
+    """
+    from g6.core.llm import model_calls_disabled
+    filed = key_file.read()
+    name = {'anthropic:claude_code': 'claude_code', 'openai:codex': 'codex'}.get(provider, provider)
+    return (name in CALLERS and not model_calls_disabled(filed=filed)
+            and (filed.get('G6_LLM_PROVIDER') or '').strip().lower() == name)
 
 
 def _never(name: str) -> bool:
@@ -377,4 +391,4 @@ CALLERS: dict[str, type[_HostCaller]] = {"claude_code": ClaudeCodeCaller, "codex
 
 __all__ = ["BAD_MODEL", "BASE_ENV", "CALLERS", "CLAUDE", "CLAUDE_TOOLS", "CODEX", "CODEX_SHELL_NOTE", "CODEX_SHELL_OFF",
            "DEFAULT_TIMEOUT_S", "HOOKS_OFF", "HOST_FAILED", "MODEL_NAME", "NEVER_PASSED", "NO_SERVERS",
-           "ClaudeCodeCaller", "CodexCaller", "not_approved"]
+           "ClaudeCodeCaller", "CodexCaller", "not_approved", "session_approved"]

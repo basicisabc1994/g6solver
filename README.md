@@ -129,17 +129,22 @@ Not a programmer? Ready-made **bundles** (double-click apps) are described in th
 Long runs return job IDs; poll `metaharness_job`. A tool that runs code or starts the loop needs a permission given
 with `g6 setup --allow` (the loop's: `metaharness.improve`). [AGENT_GUIDE.md](AGENT_GUIDE.md) is written for the agent.
 
-**Consent.** Model sends to the calling MCP client's own Claude Code or Codex provider need no dialog and are disclosed
-in the log. A recorded revoke or decline still wins. Other recipients, unknown clients and Python calls need the
+**Consent.** Tool-less model sends to the calling MCP client's own Claude Code or Codex provider need no dialog for
+the current request, repositories inside the client's declared workspace roots, and G6 operational data. These sends
+are disclosed in the log. Other sources, including agent environments, knowledge and retained records, need a grant.
+A recorded revoke or decline still wins. Other recipients, unknown clients and Python calls need the
 person's source/provider grant in the client's dialog (`g6_cloud_grant`); without it, work stays local or the result
 is withheld. Tool replies still require a grant or the current request's exact supplied bytes. The same admission
 check covers model calls, tool replies, the Python API, the cognitive bridge and host sessions.
 
 G6 uses the calling Claude Code / Codex sign-in by default when installed. It resolves the host for each call,
 preferring the calling client, then the other installed host. With neither installed it uses plain code; steps
-that need a model say so. Put `G6_LLM_PROVIDER=none` in your key file to opt out; `G6_DISABLE_LLM` stops model calls.
+that need a model say so. Put `G6_LLM_PROVIDER=none` in your key file to opt out; environment settings cannot undo it.
+`G6_DISABLE_LLM` in either the key file or environment stops model calls, even if the other sets an empty value.
+The default covers tool-less completions. Scouts, tool sessions and agent runners need their host provider named
+explicitly by the key file's `G6_LLM_PROVIDER` line, as well as any required source grants.
 An explicit provider line keeps your choice, such as `claude_code`, `codex`, `ollama` or a provider with its key.
-An environment-only host choice starts nothing; explicit paid-provider settings retain their validation and need
+An environment-only host choice makes model calls fail without a default; explicit paid-provider settings retain their validation and need
 keys from the key file. A different provider asks first.
 Same-provider sends are logged with their basis; a recorded revoke or decline still wins. The MCP client name is
 self-declared, and this policy assumes same-user processes. Installation alone does not establish a working sign-in.

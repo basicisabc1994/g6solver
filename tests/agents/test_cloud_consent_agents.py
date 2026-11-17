@@ -59,6 +59,9 @@ def test_a_program_version_probe_sends_no_personal_data(tmp_path, monkeypatch):
 @pytest.mark.parametrize('actual_boundary', [False, True])
 def test_cli_external_environment_is_not_the_named_repository(tmp_path, monkeypatch, accepted_cloud_dialog,
                                                              provider, granted, actual_boundary):
+    # Session approval is separate from the source grants challenged below.
+    from g6.core import keys as session_keys
+    monkeypatch.setattr(session_keys, 'read', lambda: {'G6_LLM_PROVIDER': 'claude_code' if provider == 'anthropic:claude_code' else 'codex'})
     from g6.agents._runtime.consent import consent_run
     from g6.agents._runtime.model import AgentRefusal
     from g6.core import cloud_consent as cloud

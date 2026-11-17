@@ -122,6 +122,7 @@ def claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> StandIn:
 def workspace(tmp_path: Path, key_file, accepted_cloud_dialog) -> Path:
     # Choose the test's home before granting. A later key_file fixture must not
     # replace the home that holds the repository/environment grants.
+    key_file('G6_LLM_PROVIDER=claude_code\n')
     folder = tmp_path / "project"
     folder.mkdir()
     from g6.core.cloud_consent import repository_source
@@ -210,7 +211,7 @@ def test_d1_claude_code_gets_no_more_than_the_person_declared(claude: StandIn, w
     for name, value in (("ANTHROPIC_API_KEY", "canary-env-key"), ("ANTHROPIC_AUTH_TOKEN", "canary-token"),
                         ("ANTHROPIC_BASE_URL", "http://canary.invalid"), ("ACME_DEPLOY_PAT", "canary-pat")):
         monkeypatch.setenv(name, value)   # the last by a name no list of key names would know
-    key_file("ANTHROPIC_API_KEY=canary-file-key\n")    # a key in the person's key file is G6's, never Claude Code's
+    key_file("G6_LLM_PROVIDER=claude_code\nANTHROPIC_API_KEY=canary-file-key\n")    # G6's key, never Claude Code's
     monkeypatch.setenv("G6_MCP_SENSITIVE", "agent_claude")
     reply = live(workspace)
     seen = claude.record()

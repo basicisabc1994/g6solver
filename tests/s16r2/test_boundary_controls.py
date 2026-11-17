@@ -21,7 +21,10 @@ async def agreed(source, provider='openai:codex'):
     assert result['status'] == 'granted'
 
 
-def test_process_separate_prompt_directory_and_environment(tmp_path):
+def test_process_separate_prompt_directory_and_environment(tmp_path, monkeypatch):
+    # Session approval is separate from the source grants challenged below.
+    from g6.core import keys as session_keys
+    monkeypatch.setattr(session_keys, 'read', lambda: {'G6_LLM_PROVIDER': 'codex'})
     from g6.agents._runtime.consent import consent_run
     from g6.agents._runtime.model import AgentRefusal
     sent = []

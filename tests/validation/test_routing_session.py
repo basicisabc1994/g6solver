@@ -472,6 +472,8 @@ def test_the_adapters_and_the_runner_start_a_client_through_one_helper(monkeypat
     from g6.core import stop as core_stop
 
     assert claude.consent_run is codex.consent_run is consent.consent_run
+    from g6.core import keys
+    monkeypatch.setattr(keys, 'read', lambda: {'G6_LLM_PROVIDER': 'codex'})
     monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
     monkeypatch.delenv("G6_STOP", raising=False)
     calls: list[dict[str, Any]] = []

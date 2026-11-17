@@ -104,7 +104,8 @@ def test_a_session_with_no_grant_starts_no_program(programs, tmp_path):
     assert programs == [] and meter.refusal["code"] == cloud.REQUIRED and cloud.disclosures() == []
 
 
-def test_a_session_with_its_grants_starts_once_with_one_disclosure(programs, accepted_cloud_dialog, tmp_path):
+def test_a_session_with_its_grants_starts_once_with_one_disclosure(programs, accepted_cloud_dialog, tmp_path, monkeypatch):
+    monkeypatch.setattr(host_models.key_file, 'read', lambda: {'G6_LLM_PROVIDER': 'claude_code'})
     for scope in (cloud.repository_source(tmp_path), "model_inputs", "agent_environment"):
         accepted_cloud_dialog(scope, "anthropic:claude_code", text="synthetic scout request")
     meter = loop._Requests()

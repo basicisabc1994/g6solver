@@ -479,6 +479,7 @@ def test_a_later_scout_is_skipped_when_the_hooks_time_is_spent(world, monkeypatc
 
 def test_a_scout_session_has_no_shell_no_hooks_no_servers_and_keeps_nothing(monkeypatch, tmp_path,
                                                                          accepted_cloud_dialog):
+    monkeypatch.setattr(keys, 'read', lambda: {'G6_LLM_PROVIDER': 'claude_code'})
     seen = {}
 
     def run(argv, stdin, cwd, files, env, timeout, name):

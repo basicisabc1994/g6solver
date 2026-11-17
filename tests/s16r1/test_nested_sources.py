@@ -79,7 +79,10 @@ def test_a_mutated_binding_cannot_become_unannotated_content():
         assert cloud.UNKNOWN in cloud.output_sources(value)
 
 
-def test_a_bare_process_prompt_needs_its_literal_grant_and_never_covers_unknown(tmp_path):
+def test_a_bare_process_prompt_needs_its_literal_grant_and_never_covers_unknown(tmp_path, monkeypatch):
+    # Session approval is separate from the source grants challenged below.
+    from g6.core import keys as session_keys
+    monkeypatch.setattr(session_keys, 'read', lambda: {'G6_LLM_PROVIDER': 'codex'})
     from types import SimpleNamespace
     from g6.agents._runtime.consent import consent_run
     from g6.agents._runtime.model import AgentRefusal

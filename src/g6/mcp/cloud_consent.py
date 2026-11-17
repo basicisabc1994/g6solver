@@ -103,6 +103,29 @@ def client_provider(ctx: Any) -> str:
             'codex': 'openai:codex', 'codex-mcp-client': 'openai:codex'}.get(name, 'cloud:unknown')
 
 
+async def client_roots(session) -> tuple:
+    """Only protocol-declared workspace roots, never a tool argument or process cwd."""
+    from pathlib import Path
+    from urllib.parse import urlsplit
+    from urllib.request import url2pathname
+    try:
+        capabilities = session.client_params.capabilities
+        if capabilities.roots is None:
+            return ()
+    except AttributeError:
+        return ()
+    result = await session.list_roots()
+    roots = []
+    for root in result.roots:
+        uri = urlsplit(str(root.uri))
+        if uri.scheme != 'file' or uri.netloc not in ('', 'localhost') or uri.query or uri.fragment:
+            continue
+        path = Path(url2pathname(uri.path))
+        if path.is_absolute():
+            roots.append(path)
+    return tuple(roots)
+
+
 async def request_grant(ctx: Any, source: str, provider: str, *, description: str = '', label: str = '') -> dict:
     if not _PROVIDER.fullmatch(provider):
         return {'status': 'invalid', 'code': 'G6_E_CLOUD_CONSENT_INPUT'}
@@ -241,6 +264,7 @@ def install(server) -> None:
                     raise ToolError('Undeclared tool argument; use only the declared arguments.')
                 capture.expected_tool = getattr(getattr(tool, 'fn', None), '_g6_tool_identity', None)
                 capture.client = client_provider(ctx), session
+                capture.client_roots = await client_roots(session)
                 def inputs(value):
                     if isinstance(value, str):
                         try:

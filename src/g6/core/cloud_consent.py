@@ -174,6 +174,8 @@ class Capture:
     client: tuple[str, object] | None = None
     supplied: set[str] = field(default_factory=set)
     client_arguments: dict | None = None
+    client_roots: tuple[Path, ...] = ()
+    client_repositories: set[str] = field(default_factory=set)
     outputs: dict[int, tuple[object, str, tuple[Source, ...], dict]] = field(default_factory=dict)
     job: dict[str, str] | None = None
     expected_tool: object | None = None
@@ -220,6 +222,25 @@ def boundary_sources(declared: Sequence[Source] = (), *, carried: Sequence[Sourc
     refs = (*(_SOURCES.get() if inherit else ()), *carried, *declared,
             *(Source.text(repository_source(path), 'process-readable-directory', '') for path in directories))
     return tuple(dict.fromkeys(refs))
+
+
+def client_repository(repo: str | Path) -> None:
+    """Record a declared repository only inside a root supplied by this request's client.
+
+    A tool's repo argument alone never declares workspace authority. Resolve without
+    links using the same containment rule as repository_source; retain only scope ids.
+    """
+    capture = calling_capture()
+    if capture is None:
+        return
+    for root in capture.client_roots:
+        try:
+            resolved = contained(root, repo, refuse_links=True)
+            scope = repository_source(resolved)
+        except (OSError, ValueError):
+            continue
+        capture.client_repositories.add(scope)
+        return
 
 
 def _output_digest(value):
@@ -697,14 +718,17 @@ def _basis(decisions: dict, provider: str, source: Source, supplied: Sequence[st
     row = decisions.get((source.source_id, provider))
     if row is not None:
         return 'grant' if row['kind'] == 'grant' else ''  # a recorded negative always wins
+    capture = calling_capture() if calling_client else None
+    if (provider in ('anthropic:claude_code', 'openai:codex') and capture is not None
+            and capture.client is not None and capture.client[0] == provider
+            and ((source.source_id in capture.supplied and source.source_id == 'input:' + source.content_sha256)
+                 or source.source_id in capture.client_repositories
+                 or source.source_id == 'g6_operational')):
+        return 'calling_client'
     # Supplied means these exact argument bytes, never a path or repository handle.
     if (source.source_id in supplied and source.source_id.startswith('input:')
             and source.source_id == 'input:' + source.content_sha256):
         return 'client-supplied'
-    capture = calling_capture() if calling_client else None
-    if (provider in ('anthropic:claude_code', 'openai:codex') and capture is not None
-            and capture.client is not None and capture.client[0] == provider):
-        return 'calling_client'
     return ''
 
 

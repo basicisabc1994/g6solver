@@ -336,6 +336,8 @@ def host_admission(caller: object, system: str, user: str) -> dict:
     """The terms of the sharing check of one owned host launch (``usage._complete_host``), for
     ``cloud_consent.admission``: its recipient (a host no rule here recognises is ``cloud:unknown``, which no grant
     covers), the model inputs, and the request's digest."""
+    if llm.model_calls_disabled():
+        raise llm.LLMError('G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM')
     to = destination(caller)
     return {'provider': to.provider, 'sources': model_sources(),
             'payload_sha256': digest({'system': system, 'user': user}), 'local': to.local,
@@ -348,6 +350,10 @@ def session_admission(caller: object, stdin: str) -> dict:
     (``request_sources``), and it sends only inside that run's admitted send: anywhere else its recipient is
     ``cloud:unknown``, which no grant covers."""
     to = destination(caller)
+    if admitted(to.provider) and not host_models.session_approved(to.provider):
+        if llm.model_calls_disabled():
+            raise llm.LLMError('G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM')
+        raise llm.LLMError('G6_E_NO_MODEL: a tool session needs its explicit G6_LLM_PROVIDER in the key file')
     provider = to.provider if to.local or admitted(to.provider) else 'cloud:unknown'
     return {'provider': provider, 'sources': (), 'payload_sha256': sha256(stdin), 'local': to.local}
 
@@ -418,6 +424,8 @@ class _Consent:
             raise llm.LLMError('G6_E_CLOUD_CALLER_UNSUPPORTED: guarded completion methods cannot be overridden')
 
     def complete(self, system: str, user: str, *, max_tokens: int = llm.DEFAULT_MAX_TOKENS) -> str:
+        if llm.model_calls_disabled():
+            raise llm.LLMError('G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM')
         backend = self if self._guards is None else self._guards
         to = destination(backend)
         with (admission(to.provider, model_sources(), digest({'system': system, 'user': user}), local=to.local),
@@ -430,11 +438,18 @@ class _Consent:
             return (super() if backend is self else backend).complete(system, user, max_tokens=max_tokens)
 
     def complete_with_images(self, system, user, images, *, max_tokens=llm.DEFAULT_MAX_TOKENS):
+        if llm.model_calls_disabled():
+            raise llm.LLMError('G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM')
         backend = self if self._guards is None else self._guards
         to = destination(backend)
         hashes = [sha256(image.data) for image in images]
         with (admission(to.provider, model_sources(), digest({'system': system, 'user': user, 'images': hashes}), local=to.local),
               _sdk_call(getattr(backend, '_client', None), to.provider)):
+            from g6.core.cloud_consent import current_capture
+            capture = current_capture()
+            selection = getattr(backend, 'model_selection', None)
+            if capture is not None and selection is not None:
+                capture.model_calls.append(dict(selection, status='attempted'))
             return (super() if backend is self else backend).complete_with_images(system, user, images,
                                                                                   max_tokens=max_tokens)
 

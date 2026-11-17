@@ -20,8 +20,9 @@ policy) and the time limit between steps. An agent that has not answered when it
 """
 from __future__ import annotations
 
+from g6.core.llm import model_calls_disabled
+
 import contextlib
-import os
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
@@ -131,7 +132,7 @@ class SmolagentsRuntime:
         if self.llm is None or isinstance(self.llm, NoModel):
             raise AgentRefusal(NO_MODEL, "the agent needs a model and none was passed in: pass a g6.core.llm caller "
                                          "(SmolagentsRuntime(spec, task=..., llm=...)), or set G6_LLM_PROVIDER")
-        if os.environ.get("G6_DISABLE_LLM"):
+        if model_calls_disabled():
             raise AgentRefusal(LLM_DISABLED, "model calls are disabled by G6_DISABLE_LLM, and the agent calls a model, "
                                              "so it was not started")
         self._check_tools()
@@ -139,6 +140,8 @@ class SmolagentsRuntime:
             yield AgentEvent(kind="finished", payload={"output": "", "detail": self._plan(gate)})
             return
         from smolagents.memory import ActionStep, FinalAnswerStep
+        from g6.agents._runtime.consent import require_model_session
+        require_model_session(self.llm)
         from smolagents.utils import AgentMaxStepsError
 
         calls = GatedCalls(gate, self.tools, own=_SELF)

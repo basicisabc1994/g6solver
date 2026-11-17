@@ -83,6 +83,9 @@ def test_every_agent_model_send_uses_guard():
 
 @pytest.mark.parametrize('granted', [False, True])
 def test_agent_other_provider_captures_repository(tmp_path, monkeypatch, accepted_cloud_dialog, granted):
+    # Session approval is separate from the source grants challenged below.
+    from g6.core import keys as session_keys
+    monkeypatch.setattr(session_keys, 'read', lambda: {'G6_LLM_PROVIDER': 'claude_code'})
     from g6.agents._runtime.consent import consent_run
     from g6.agents._runtime.model import AgentRefusal
     from g6.core import cloud_consent as c
@@ -151,6 +154,9 @@ def test_local_sdk_endpoint_needs_no_grant(tmp_path, monkeypatch):
 
 
 def test_agent_revocation_stops_the_next_run(tmp_path, monkeypatch, accepted_cloud_dialog):
+    # Session approval is separate from the source grants challenged below.
+    from g6.core import keys as session_keys
+    monkeypatch.setattr(session_keys, 'read', lambda: {'G6_LLM_PROVIDER': 'codex'})
     from types import SimpleNamespace
     from g6.agents._runtime.consent import consent_run
     from g6.agents._runtime.model import AgentRefusal
@@ -173,6 +179,9 @@ def test_agent_revocation_stops_the_next_run(tmp_path, monkeypatch, accepted_clo
 @pytest.mark.parametrize('same_client', [False, True])
 def test_actual_mcp_agent_workspace_is_the_named_repository(tmp_path, monkeypatch, accepted_cloud_dialog,
                                                           provider, component, name, same_client):
+    # Session approval is separate from the source grants challenged below.
+    from g6.core import keys as session_keys
+    monkeypatch.setattr(session_keys, 'read', lambda: {'G6_LLM_PROVIDER': 'claude_code' if provider == 'anthropic:claude_code' else 'codex'})
     from types import SimpleNamespace
     from fastmcp import Client
     from mcp.types import Implementation

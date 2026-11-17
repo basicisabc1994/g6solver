@@ -14,7 +14,8 @@
 """
 from __future__ import annotations
 
-import os
+from g6.core.llm import model_calls_disabled
+
 from collections.abc import Sequence
 from typing import Any
 
@@ -60,8 +61,10 @@ class G6Model(Model):
     def generate(self, messages: list[Any], stop_sequences: list[str] | None = None,
                  response_format: dict[str, str] | None = None, tools_to_call_from: list[Any] | None = None,
                  **kwargs: Any) -> ChatMessage:
-        if os.environ.get("G6_DISABLE_LLM"):
+        if model_calls_disabled():
             raise LLMError("G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM")
+        from g6.agents._runtime.consent import require_model_session
+        require_model_session(self.llm)
         self.calls += 1
         from g6.core.consent_callers import guard
         from g6.core.cloud_consent import prompt_state

@@ -103,6 +103,7 @@ PROVIDERS: tuple[str, ...] = ("ollama", "anthropic", "openai", "openrouter")
 HOST_PROVIDERS: tuple[str, ...] = ("claude_code", "codex")
 #: How a person gives G6 a model, for a refusal that has none.
 CONFIGURE_MODEL = ("G6 uses the calling Claude Code / Codex sign-in by default when installed; "
+                   "this default covers tool-less completions; tool sessions need an explicit key-file provider. "
                    "G6_LLM_PROVIDER=none in your key file opts out. A different provider asks first. "
                    "Install and sign in to a host yourself, or choose G6_LLM_PROVIDER=ollama (a local model) "
                    "or another provider with its key in the key file")
@@ -200,8 +201,15 @@ def supports_images(caller: object) -> bool:
     return bool(getattr(caller, "accepts_images", False)) and callable(getattr(caller, "complete_with_images", None))
 
 
+def model_calls_disabled(env: Mapping[str, str] | None = None, *, filed: Mapping[str, str] | None = None) -> bool:
+    """Either the person's file or the environment disables calls; an empty override cannot undo either."""
+    settings = key_file.read() if filed is None else filed
+    return bool(settings.get("G6_DISABLE_LLM") or os.environ.get("G6_DISABLE_LLM")
+                or (env is not None and env.get("G6_DISABLE_LLM")))
+
+
 def _start_model_call() -> None:
-    if os.environ.get("G6_DISABLE_LLM"):
+    if model_calls_disabled():
         raise LLMError("G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM")
     # counted before the request: a failed request may still have reached the model. The send's boundary is the caller
     # of this function, which hands the request to its backend.
@@ -629,12 +637,16 @@ def provider_from_env(env: Mapping[str, str] | None = None, *, provider: str | N
     file goes only to the provider's own address or to the base URL written beside it in the file; an
     ``OPENAI_BASE_URL`` from ``env`` or the environment that differs is called without it.
 
-    Explicit settings retain their existing precedence and validation. A host named
+    The key file's ``none`` overrides every environment provider value; neither
+    an empty environment kill switch nor an env mapping can undo the file's kill switch.
+    Other explicit settings retain their existing precedence and validation. A host named
     only in the environment is refused; it cannot select or fall back to a host."""
     filed = key_file.read()
     settings = {**filed, **(os.environ if env is None else env)}
     given = filed if keys is None else dict(keys)
     name = (provider or settings.get("G6_LLM_PROVIDER") or "auto").strip().lower()
+    if provider is None and (filed.get("G6_LLM_PROVIDER") or "").strip().lower() == "none":
+        name = "none"
     if provider is None and name == "auto":
         # Auto is a default, never an environment override of an explicit file choice.
         name = (filed.get("G6_LLM_PROVIDER") or "auto").strip().lower()
@@ -649,7 +661,7 @@ def provider_from_env(env: Mapping[str, str] | None = None, *, provider: str | N
             caller._inner.model_selection = selection
         return caller
 
-    if settings.get("G6_DISABLE_LLM") or os.environ.get("G6_DISABLE_LLM"):
+    if model_calls_disabled(env, filed=filed):
         reason = "disabled"
         return selected(NoModel("G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM"), "none")
     model = model or settings.get("G6_LLM_MODEL") or ""
@@ -662,7 +674,14 @@ def provider_from_env(env: Mapping[str, str] | None = None, *, provider: str | N
         order = (matching, *(host for host in HOST_PROVIDERS if host != matching)) if matching else HOST_PROVIDERS
         callers = {}
         for host in order:
-            candidate = host_models.CALLERS[host](model)
+            try:
+                candidate = host_models.CALLERS[host](model)
+            except LLMError as exc:
+                if not str(exc).startswith(host_models.BAD_MODEL + ':'):
+                    raise
+                reason = 'invalid_model'
+                return selected(UnusableModel("G6_E_LLM_BAD_MODEL: G6_LLM_MODEL is invalid for a host completion; "
+                                              "no model was called"), host)
             try:
                 candidate.locate()
             except LLMError as exc:
@@ -782,5 +801,5 @@ __all__ = [
     "REPLY_TOO_LARGE", "RETRY_AFTER_CAP_S",
     "NoModel", "OllamaCaller", "OpenAICompatibleCaller", "TimingLLMCaller", "UnusableModel",
     "authorized_completion_tokens",
-    "complete_structured", "cap_model_label", "extract_json", "provider_from_env", "waits",
+    "complete_structured", "cap_model_label", "extract_json", "model_calls_disabled", "provider_from_env", "waits",
 ]

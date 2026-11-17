@@ -30,6 +30,8 @@ def test_custom_harness_without_training_is_a_source(tmp_path, monkeypatch):
     monkeypatch.setattr(host_models, '_environment', lambda *args: {})
     monkeypatch.setattr(loop.ToolSession, 'locate', lambda self: 'fake')
     stand_in_hosts(monkeypatch, lambda system, text: sent.append(text) or 'fake reply')
+    # Approve the synthetic tool session separately from the source grants.
+    monkeypatch.setattr(host_models.key_file, 'read', lambda: {'G6_LLM_PROVIDER': 'claude_code'})
     with cloud.request_sources(shipped.sources):
         try:
             loop.ToolSession().run(shipped.scout, cwd, where, 1)

@@ -1989,6 +1989,8 @@ PATH_PLACES = {
     # a full path, and none builds a child's import path or names its interpreter
     ("core/cloud_consent.py", "repository_source"): (NOT_IMPORT, 1, "the repository a sharing grant names, resolved to "
                                                                     "the identifier it is granted by"),
+    ("mcp/cloud_consent.py", "client_roots"): (NOT_IMPORT, 1, "a workspace root declared by the MCP client: only a "
+                                                            "full local file path can scope repository sharing"),
     ("_context_engine/_scope.py", "_plain_folder"): (NOT_IMPORT, 1, "the folder a server starts in, or a root its "
                                                                     "configuration lists: a full path, or it is no root"),
     ("_context_engine/_scope.py", "inside"): (NOT_IMPORT, 1, "a path a caller asks to index, held inside a listed root"),

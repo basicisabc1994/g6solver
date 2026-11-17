@@ -31,8 +31,27 @@ def program_provider(program):
     return 'cloud:unknown'
 
 
+def require_model_session(caller):
+    """An agent using a tool-less host completion still needs explicit session approval."""
+    from g6.core import host_models
+    from g6.core.consent_callers import destination
+    from g6.core.llm import model_calls_disabled
+    if model_calls_disabled():
+        raise AgentRefusal('G6_E_LLM_DISABLED', 'model calls are disabled by G6_DISABLE_LLM',
+                           detail={'started': False})
+    provider = destination(caller).provider
+    if provider in ('anthropic:claude_code', 'openai:codex') and not host_models.session_approved(provider):
+        raise AgentRefusal('G6_E_NO_MODEL', 'an agent model session needs its explicit G6_LLM_PROVIDER in the key file',
+                           detail={'started': False})
+
+
 @contextmanager
 def process_admission(provider, prompt, cwd, *, local=False, directories=()):
+    from g6.core import host_models
+    from g6.core.llm import model_calls_disabled
+    if model_calls_disabled():
+        raise AgentRefusal('G6_E_LLM_DISABLED', 'model calls are disabled by G6_DISABLE_LLM',
+                           detail={'started': False})
     # CLI permissions do not confine reads to cwd. User configuration, hooks,
     # configured MCP servers and any other outside reads are a separate source.
     refs = boundary_sources((Source.text('agent_environment', 'coding-agent-environment', ''),),
@@ -44,6 +63,10 @@ def process_admission(provider, prompt, cwd, *, local=False, directories=()):
         and capture.client[0] == provider else ()
     try:
         with admission(provider, refs, sha256(prompt), supplied=supplied, local=local):
+            if not local and not host_models.session_approved(provider):
+                raise AgentRefusal('G6_E_NO_MODEL',
+                                   'a coding-agent session needs its explicit G6_LLM_PROVIDER in the key file',
+                                   detail={'started': False})
             yield
     except LLMError as exc:
         code = str(exc).partition(':')[0]
@@ -66,13 +89,13 @@ def consent_run(runner, argv, *, provider, prompt, cwd, stop=None, **kwargs):
     in process, ``G6_STOP``, or the ``STOP`` file); each refusal carries ``detail["started"] = False``. The stop is
     then handed to the runner, so a session under way is ended when it engages. A stand-in whose ``run`` takes no
     ``stop`` is still held to the check before the start."""
-    import os
+    from g6.core.llm import model_calls_disabled
     from g6.agents._runtime import codes
     from g6.agents._runtime.cli import CliAgentRunner, _stopped
     from g6.core import stop as core_stop
     given = stop is not None
     stop = stop or core_stop.engaged
-    if os.environ.get('G6_DISABLE_LLM'):
+    if model_calls_disabled():
         raise AgentRefusal('G6_E_LLM_DISABLED', 'model calls are disabled by G6_DISABLE_LLM, and a coding client runs '
                                                 'a model, so nothing was started', detail={'started': False})
     why = _stopped(stop)

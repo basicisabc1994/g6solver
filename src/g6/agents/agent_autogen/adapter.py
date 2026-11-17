@@ -31,9 +31,10 @@ No code runs: G6 builds no code-running agent and refuses one in a team of yours
 """
 from __future__ import annotations
 
+from g6.core.llm import model_calls_disabled
+
 import asyncio
 import contextlib
-import os
 import queue
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -205,7 +206,7 @@ class AutoGenRuntime:
             if self.llm is None or isinstance(self.llm, NoModel):
                 raise AgentRefusal(NO_MODEL, "the team's agents need a model and none was passed in: pass a g6.core.llm "
                                              "caller (AutoGenRuntime(spec, task=..., llm=...)), or set G6_LLM_PROVIDER")
-            if os.environ.get("G6_DISABLE_LLM"):
+            if model_calls_disabled():
                 raise AgentRefusal(LLM_DISABLED, "model calls are disabled by G6_DISABLE_LLM, and every agent of a team "
                                                  "calls a model, so the team was not started")
         limit = gate.limits.max_steps
@@ -216,6 +217,9 @@ class AutoGenRuntime:
         if gate.dry_run:
             yield AgentEvent(kind="finished", payload={"output": "", "detail": self._plan(gate)})
             return
+        if self.spec is not None:
+            from g6.agents._runtime.consent import require_model_session
+            require_model_session(self.llm)
         left = _still_running()
         if left:
             raise AgentRefusal(WORKER_ALIVE, f"{left} team thread(s) of an earlier run have not stopped (one may still "

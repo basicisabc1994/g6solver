@@ -106,6 +106,8 @@ def codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> StandIn:
 @pytest.fixture
 def workspace(tmp_path: Path, monkeypatch, accepted_cloud_dialog) -> Path:
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'consent-home'))
+    from g6.core import keys
+    monkeypatch.setattr(keys, 'read', lambda: {'G6_LLM_PROVIDER': 'codex'})
     folder = tmp_path / "project"
     folder.mkdir()
     from g6.core.cloud_consent import repository_source

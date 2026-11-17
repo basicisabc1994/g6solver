@@ -13,8 +13,9 @@ the gate does not let run answers with the verdict, its code and the reason, whi
 """
 from __future__ import annotations
 
+from g6.core.llm import model_calls_disabled
+
 import json
-import os
 import uuid
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextvars import ContextVar
@@ -114,8 +115,10 @@ class G6ChatClient(ChatCompletionClient):
     async def create(self, messages: Sequence[Any], *, tools: Sequence[Any] = (), tool_choice: Any = "auto",
                      json_output: Any = None, extra_create_args: Mapping[str, Any] | None = None,
                      cancellation_token: CancellationToken | None = None) -> CreateResult:
-        if os.environ.get("G6_DISABLE_LLM"):
+        if model_calls_disabled():
             raise LLMError("G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM")
+        from g6.agents._runtime.consent import require_model_session
+        require_model_session(self.llm)
         offered = list(tools) if tool_choice != "none" else []
         self.calls += 1
         from g6.core.consent_callers import guard

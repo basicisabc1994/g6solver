@@ -126,14 +126,17 @@ def _host_model(provider: str, keys: dict[str, str]) -> Check:
 
 def _model(env: dict[str, str], keys: dict[str, str]) -> Check:
     from g6.core.keys import path
-    from g6.core.llm import HOST_PROVIDERS, PROVIDER_KEYS, LLMError
+    from g6.core.llm import HOST_PROVIDERS, PROVIDER_KEYS, LLMError, model_calls_disabled
 
     provider = (env.get("G6_LLM_PROVIDER") or keys.get("G6_LLM_PROVIDER") or "auto").strip().lower()
+    if (keys.get("G6_LLM_PROVIDER") or "").strip().lower() == "none":
+        provider = "none"
     if provider == "auto":
         provider = (keys.get("G6_LLM_PROVIDER") or "auto").strip().lower()
     guidance = ("Key-file G6_LLM_PROVIDER=none opts out; a different provider asks first. "
-                "G6_DISABLE_LLM stops model calls.")
-    if env.get("G6_DISABLE_LLM") or os.environ.get("G6_DISABLE_LLM"):
+                "The default covers tool-less completions; tool sessions need an explicit key-file provider. "
+                "G6_DISABLE_LLM in the key file or environment stops model calls.")
+    if model_calls_disabled(env, filed=keys):
         return Check("AI model", "ok", "Model calls disabled by G6_DISABLE_LLM", guidance)
     if provider == "auto":
         from g6.core import host_models
@@ -154,9 +157,8 @@ def _model(env: dict[str, str], keys: dict[str, str]) -> Check:
         return Check("AI model", "ok", "Key-file opt-out: plain code only", guidance)
     if provider in HOST_PROVIDERS:
         if (keys.get("G6_LLM_PROVIDER") or "").strip().lower() != provider:
-            return Check("AI model", "warn", f"{provider} named only in the environment is ignored; "
-                         "it cannot choose a host or trigger fallback. With no provider named: G6 will use the "
-                         "calling client's sign-in.",
+            return Check("AI model", "warn", f"{provider} named only in the environment is ignored as approval; "
+                         "model calls fail and no default is used while that setting remains.",
                          f"To choose this host explicitly, put G6_LLM_PROVIDER={provider} in {path()}. " + guidance)
         return _host_model(provider, keys)
     if provider == "ollama":

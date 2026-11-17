@@ -49,9 +49,10 @@ def test_default_selects_calling_host_or_installed_fallback(monkeypatch, client,
 @pytest.mark.parametrize('provider', ['anthropic:claude_code', 'openai:codex'])
 def test_calling_provider_is_admitted_and_disclosed_without_grant(provider):
     """Catch missing exemption or missing durable disclosure basis."""
-    source = policy.Source.text('source:model-default', 'synthetic-item', 'synthetic-text')
+    source = policy.Source.text(policy.input_source('synthetic-text'), 'synthetic-item', 'synthetic-text')
     with policy.collect_sources() as capture:
         capture.client = (provider, object())
+        capture.supplied.add(source.source_id)
         with policy.admission(provider, (source,), policy.sha256('synthetic-payload')):
             pass  # exercise admission only; nothing is sent
         rows = policy.disclosures()
@@ -149,9 +150,10 @@ def test_sequential_sessions_resolve_again_without_caching(monkeypatch):
 
 @pytest.mark.parametrize('client', [None, 'cloud:unknown', 'openai:codex'])
 def test_nonmatching_callers_still_refused_after_same_client_admission(client):
-    source = policy.Source.text('source:isolated', 'item', 'synthetic')
+    source = policy.Source.text(policy.input_source('synthetic'), 'item', 'synthetic')
     with policy.collect_sources() as capture:
         capture.client = ('anthropic:claude_code', object())
+        capture.supplied.add(source.source_id)
         with policy.admission('anthropic:claude_code', (source,), policy.sha256('payload')):
             pass
         capture.client = (client, object()) if client else None
@@ -162,9 +164,10 @@ def test_nonmatching_callers_still_refused_after_same_client_admission(client):
 
 
 def test_revoke_wins_and_unrecorded_sources_remain_refused():
-    source = policy.Source.text('source:revocable', 'item', 'synthetic')
+    source = policy.Source.text(policy.input_source('synthetic'), 'item', 'synthetic')
     with policy.collect_sources() as capture:
         capture.client = ('openai:codex', object())
+        capture.supplied.add(source.source_id)
         policy.refuse_unshared('openai:codex', (source,))
         policy.revoke(source.source_id, 'openai:codex')
         for refs in ((source,), (policy.UNKNOWN,)):
@@ -211,13 +214,14 @@ def test_model_evidence_attached_before_output_freeze_and_tool_argument_cannot_s
 
     def tool() -> dict:
         caller = consent_callers.provider_from_env(env={})
-        with policy.request_sources((policy.Source.text('source:evidence', 'item', 'synthetic'),)):
+        with policy.request_sources((policy.Source.text(policy.input_source('synthetic'), 'item', 'synthetic'),)):
             caller.complete('system', 'synthetic')
         return {'ok': True, 'result': 'synthetic reply', 'evidence': []}
 
     wrapped = adapter._source_function(tool)
     with policy.collect_sources() as capture:
         capture.client = ('openai:codex', object())
+        capture.supplied.add(policy.input_source('synthetic'))
         capture.expected_tool = wrapped._g6_tool_identity
         result = asyncio.run(wrapped())
         assert result['evidence'][-1]['provider'] == 'codex'
@@ -327,7 +331,8 @@ def test_nested_capture_keeps_current_client_and_model_evidence(monkeypatch):
             assert isinstance(caller, llm.EmptyRetry), 'a nested source capture must retain the current calling host'
             assert caller.model_selection['provider'] == 'codex'
             assert child.client is None
-            source = policy.Source.text('source:nested', 'item', 'synthetic')
+            source = policy.Source.text(policy.input_source('synthetic'), 'item', 'synthetic')
+            parent.supplied.add(source.source_id)
             with policy.admission('openai:codex', (source,), policy.sha256('payload')):
                 pass
             parent.client = ('cloud:unknown', object())
@@ -340,9 +345,10 @@ def test_nested_capture_keeps_current_client_and_model_evidence(monkeypatch):
 
 
 def test_python_without_capture_still_needs_grant_after_same_client_send():
-    source, provider = policy.Source.text('source:python', 'item', 'synthetic'), 'openai:codex'
+    source, provider = policy.Source.text(policy.input_source('synthetic'), 'item', 'synthetic'), 'openai:codex'
     with policy.collect_sources() as capture:
         capture.client = (provider, object())
+        capture.supplied.add(source.source_id)
         with policy.admission(provider, (source,), policy.sha256('payload')):
             pass
     assert policy.current_capture() is None
@@ -373,7 +379,10 @@ def test_owned_host_admission_records_selection_only_after_admission(monkeypatch
         capture.client = ('openai:codex', object())
         caller = llm.provider_from_env(env={})
         assert isinstance(caller, llm.EmptyRetry), 'the installed calling host must be selected'
-        terms = consent_callers.host_admission(caller._inner, 'system', 'synthetic')
+        source = policy.Source.text(policy.input_source('synthetic'), 'item', 'synthetic')
+        capture.supplied.add(source.source_id)
+        with policy.request_sources((source,)):
+            terms = consent_callers.host_admission(caller._inner, 'system', 'synthetic')
         assert capture.model_calls == []
         with policy.admission(**terms):
             assert capture.model_calls == [dict(caller.model_selection, status='attempted')]
@@ -421,8 +430,11 @@ def test_model_exemption_does_not_release_retained_reply_without_grant(boundary)
 
     with policy.collect_sources() as capture:
         capture.client = ('openai:codex', session)
+        capture.supplied.add(source.source_id)
         with policy.admission('openai:codex', (source,), policy.sha256('model payload')):
             pass
+        # Model admission cannot retain authority after these bytes leave the current request.
+        capture.supplied.clear()
         withheld = reply()
         assert marker not in json.dumps(withheld)
         assert policy.REQUIRED in json.dumps(withheld)
