@@ -82,4 +82,7 @@ def test_retained_producers_and_handoffs_are_inventoried():
                        'registrations.py:inputs': {'read_text'},
                        # db20c4f (section 14): the names in G6's own package .py files under each component a routed
                        # skill file names (paths from G6's own routing table), also G6's installed program text.
-                       'registrations.py:identifiers': {'read_text'}}
+                       'registrations.py:identifiers': {'read_text'},
+                       # G6's checked-in built-in component list, and its --check comparison.
+                       # Neither reader handles user data (test_catalogue_exemption.py).
+                       'catalogue.py:shipped': {'read_text'}, 'catalogue.py:main': {'read_text'}}

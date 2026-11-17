@@ -84,6 +84,14 @@ def source_sites(extra=()):
 
 # A new source builder must get a planted case and an explicit review here.
 SOURCE_SITES = {
+    # Explicit semantic requests carry client_request into the common guarded caller.
+    # Planted in test_semantic_auto_repair2 (one guard for each explicit consumer),
+    # test_semantic_proposals (withheld send, no repository arguments), and
+    # test_semantic_repairs (own-client/grant/explicit controls; auto never reads consent).
+    'g6.core.semantic_proposals.model_json',
+    # The sources argument only selects the consent repair block; it adds no source or grant.
+    # Planted in tests/core/test_mcp_repair.py and the S16 withheld MCP cases.
+    'g6.mcp.repair.consent_block',
     'g6.harness.completion_hook._again',
     'g6.harness.completion_hook._record',
     'g6.harness.completion_hook._task',

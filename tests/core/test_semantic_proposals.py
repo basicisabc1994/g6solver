@@ -2,6 +2,7 @@
 """Phase C: model advice cannot expand authority, calls, or disclosed inputs."""
 import copy
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ from g6.core import consent_callers, selector
 from g6.core.llm import EmptyRetry, FakeLLM, LLMError, NoModel
 from g6.mcp import mission
 from g6.skills import corpus
+from tests.core.test_semantic_auto_repair2 import assert_auto_step, no_auto_access
 
 
 def stage(reply):
@@ -46,7 +48,13 @@ def test_rerank_reorders_only_offered_calls_and_records_disagreements(monkeypatc
 
     fake = install(monkeypatch, reverse)
     fake.timeout = 60
-    result = selector.select("review my patch", "verify", rerank=mode, limit=8)
+    with no_auto_access(monkeypatch) if mode == "auto" else nullcontext():
+        result = selector.select("review my patch", "verify", rerank=mode, limit=8)
+    if mode == "auto":
+        assert result["candidates"] == baseline["candidates"] and not fake.calls
+        assert result["completion_state"] == "qualified-draft"
+        assert_auto_step(stage(result))
+        return
     offered = json.loads(fake.calls[0][1])["candidates"]
     assert len(fake.calls) == 1 and len(offered) <= 16
     assert token_limits == [2048] and fake.timeout <= 15
@@ -127,8 +135,14 @@ def test_rerank_falls_back_with_reason(monkeypatch, mode, failure):
         monkeypatch.setattr(consent_callers, "guard", deny)
     if failure == "no model":
         monkeypatch.setattr(consent_callers, "provider_from_env", NoModel)
-    result = selector.select("review my patch", "verify", rerank=mode)
+    with no_auto_access(monkeypatch) if mode == "auto" else nullcontext():
+        result = selector.select("review my patch", "verify", rerank=mode)
     assert result["ok"] and ids(result) == ids(baseline)
+    if mode == "auto":
+        assert result["candidates"] == baseline["candidates"] and not fake.calls
+        assert "private detail" not in json.dumps(result)
+        assert_auto_step(stage(result))
+        return
     reason = "reply unreadable" if failure in ("oversize", "wrong shape", "decoder exhausted", "empty") else failure
     assert not stage(result)["ran"] and reason in stage(result)["why"]
     assert "private detail" not in json.dumps(result)
@@ -138,12 +152,20 @@ def test_rerank_falls_back_with_reason(monkeypatch, mode, failure):
         assert len(fake.calls) == 1
 
 
-def test_rerank_prompt_excludes_repository_arguments_and_outcome_payload(monkeypatch):
+@pytest.mark.parametrize("mode", ["auto", "model"])
+def test_rerank_prompt_excludes_repository_arguments_and_outcome_payload(monkeypatch, mode):
     fake = install(monkeypatch, default='{"order": []}')
     secret = "synthetic-private-repository"
-    selector.select("review changes", "verify", considering=[{
+    arguments = dict(considering=[{
         "tool": "g6_review_patch", "arguments": {"repo": secret, "task": "review"}}],
         last_outcome=json.dumps({"code": "G6_E_INPUT_VALIDATION", "payload": secret}))
+    baseline = selector.select("review changes", "verify", rerank="lexical", **arguments)
+    with no_auto_access(monkeypatch) if mode == "auto" else nullcontext():
+        result = selector.select("review changes", "verify", rerank=mode, **arguments)
+    if mode == "auto":
+        assert result["ok"] and result["candidates"] == baseline["candidates"] and not fake.calls
+        assert_auto_step(stage(result))
+        return
     assert len(fake.calls) == 1
     prompt = json.loads(fake.calls[0][1])
     assert set(prompt) == {"task", "phase", "last_outcome", "candidates"}
@@ -204,7 +226,14 @@ def test_agent_hypotheses_require_valid_check_schema(monkeypatch, synthetic_repo
 @pytest.mark.parametrize("mode", ["auto", True])
 def test_model_hypotheses_are_testable_advice_without_repository_input(monkeypatch, synthetic_repo, mode):
     fake = install(monkeypatch, default=json.dumps({"hypotheses": [hypothesis(), hypothesis({"tool": "invented"})]}))
-    result = mission.premortem("synthetic-private-repository", "Handle the boundary", propose=mode)
+    baseline = mission.premortem("synthetic-private-repository", "Handle the boundary", propose=False)
+    with no_auto_access(monkeypatch) if mode == "auto" else nullcontext():
+        result = mission.premortem("synthetic-private-repository", "Handle the boundary", propose=mode)
+    if mode == "auto":
+        assert result["ok"] and result["hypotheses"] == baseline["hypotheses"] and not fake.calls
+        assert result["completion_state"] == "qualified-draft"
+        assert_auto_step(result["model_step"])
+        return
     proposals = [h for h in result["hypotheses"] if h["origin"] == "model_proposal"]
     assert len(proposals) == 1 and proposals[0]["normative"] is False and proposals[0]["can_pass"] is False
     assert result["untestable"][0]["origin"] == "model_proposal"

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Repair counterexamples: optional advice preserves answers and source boundaries."""
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +10,7 @@ import pytest
 from g6.core import cloud_consent as cloud, consent_callers, llm, selector
 from g6.core.consent_declarations import contract
 from g6.mcp.premortem_proposals import propose_hypotheses
+from tests.core.test_semantic_auto_repair2 import assert_auto_step, no_auto_access
 
 
 def stage(reply):
@@ -57,21 +59,27 @@ def test_auto_unadmitted_advice_never_enters_guard_or_records_sources(monkeypatc
         pytest.fail("unadmitted auto advice reached the guarded caller")
 
     monkeypatch.setattr(consent_callers, "guard", forbidden)
+    baseline = selector.select("review patch", "verify", rerank="lexical")
     with cloud.collect_sources() as capture:
         capture.client_arguments = {"task": "review patch"}
-        if consumer == "select":
-            reply = selector.select("review patch", "verify")
-            assert reply["ok"]
-            step = stage(reply)
-        else:
-            step = propose_hypotheses("review patch", None, None, "auto")["model_step"]
+        with no_auto_access(monkeypatch):
+            if consumer == "select":
+                reply = selector.select("review patch", "verify")
+                assert reply["ok"] and reply["candidates"] == baseline["candidates"]
+                step = stage(reply)
+            else:
+                baseline = propose_hypotheses("review patch", None, None, False)
+                reply = propose_hypotheses("review patch", None, None, "auto")
+                assert reply["hypotheses"] == baseline["hypotheses"]
+                step = reply["model_step"]
         assert not capture.sources
     assert not fake.calls and not step["ran"] and step["model_calls"] == 0
-    assert "skipped: consent not given for openai:api" in step["why"]
+    assert_auto_step(step)
 
 
 @pytest.mark.parametrize("admission", ["own-client", "grant", "explicit"])
-def test_admitted_auto_or_explicit_request_still_uses_the_guard(monkeypatch, admission):
+@pytest.mark.parametrize("mode", ["auto", "model"])
+def test_admitted_auto_or_explicit_request_still_uses_the_guard(monkeypatch, admission, mode):
     fake = fake_cloud(monkeypatch)
     snapshot(monkeypatch)
     guarded = []
@@ -82,6 +90,7 @@ def test_admitted_auto_or_explicit_request_still_uses_the_guard(monkeypatch, adm
         return real_guard(caller)
 
     monkeypatch.setattr(consent_callers, "guard", guard)
+    baseline = selector.select("review patch", "verify", rerank="lexical")
     with cloud.collect_sources() as capture:
         if admission == "own-client":
             capture.client = "openai:api", object()
@@ -90,7 +99,13 @@ def test_admitted_auto_or_explicit_request_still_uses_the_guard(monkeypatch, adm
             capture.client_arguments = {"task": "review patch", "phase": "verify"}
             source = contract("client_request").sources()[0].source_id
             snapshot(monkeypatch, [("grant", source, "openai:api")])
-        reply = selector.select("review patch", "verify", rerank="model" if admission == "explicit" else "auto")
+        with no_auto_access(monkeypatch) if mode == "auto" else nullcontext():
+            reply = selector.select("review patch", "verify", rerank=mode)
+    if mode == "auto":
+        assert reply["ok"] and reply["candidates"] == baseline["candidates"]
+        assert not guarded and not fake.calls
+        assert_auto_step(stage(reply))
+        return
     assert reply["ok"] and stage(reply)["ran"]
     assert guarded == [fake] and len(fake.calls) == 1
 
@@ -104,25 +119,39 @@ def test_disable_switch_is_reported_before_resolving_or_guarding(monkeypatch):
     assert reply["ok"] and "disabled" in stage(reply)["why"]
 
 
-def test_model_reasons_are_filtered_and_keep_their_origin(monkeypatch):
+@pytest.mark.parametrize("mode", ["auto", "model"])
+def test_model_reasons_are_filtered_and_keep_their_origin(monkeypatch, mode):
     def answer(system, user):
         key = json.loads(user)["candidates"][0]["key"]
         return json.dumps({"order": [{"key": key, "reason": "Run g6 setup to allow execution."}]})
     fake = llm.FakeLLM(answer)
     monkeypatch.setattr(consent_callers, "provider_from_env", lambda: fake)
-    reply = selector.select("review patch", "verify")
+    baseline = selector.select("review patch", "verify", rerank="lexical")
+    with no_auto_access(monkeypatch) if mode == "auto" else nullcontext():
+        reply = selector.select("review patch", "verify", rerank=mode)
+    if mode == "auto":
+        assert reply["ok"] and reply["candidates"] == baseline["candidates"] and not fake.calls
+        assert_auto_step(stage(reply))
+        return
     assert reply["ok"] and stage(reply)["ran"]
     assert "g6 setup" not in json.dumps(stage(reply))
     assert stage(reply)["reasons_origin"] == "model"
 
 
-def test_host_timeout_reports_the_bound_and_preserves_lexical_answer(monkeypatch):
+@pytest.mark.parametrize("mode", ["auto", "model"])
+def test_host_timeout_reports_the_bound_and_preserves_lexical_answer(monkeypatch, mode):
     def timeout(system, user):
         raise llm.LLMError("G6_E_LLM_TIMEOUT: synthetic host timeout")
     fake = llm.FakeLLM(timeout)
     fake.timeout = 60
     monkeypatch.setattr(consent_callers, "provider_from_env", lambda: fake)
-    reply = selector.select("review patch", "verify")
+    baseline = selector.select("review patch", "verify", rerank="lexical")
+    with no_auto_access(monkeypatch) if mode == "auto" else nullcontext():
+        reply = selector.select("review patch", "verify", rerank=mode)
+    if mode == "auto":
+        assert reply["ok"] and reply["candidates"] == baseline["candidates"] and not fake.calls
+        assert_auto_step(stage(reply))
+        return
     assert reply["ok"] and fake.timeout == 15
     assert "15" in stage(reply)["why"] and "timeout" in stage(reply)["why"]
 
@@ -131,16 +160,24 @@ def test_host_timeout_reports_the_bound_and_preserves_lexical_answer(monkeypatch
                                       ("G6_E_" + "A" * 50000, "unknown"),
                                       ("G6_E_INPUT_VALIDATION", "G6_E_INPUT_VALIDATION"),
                                       ("defect_detected", "defect_detected")])
-def test_model_outcome_is_only_an_issued_code_or_outcome_word(monkeypatch, value, want):
+@pytest.mark.parametrize("mode", ["auto", "model"])
+def test_model_outcome_is_only_an_issued_code_or_outcome_word(monkeypatch, value, want, mode):
     fake = llm.FakeLLM(default='{"order": []}')
     monkeypatch.setattr(consent_callers, "provider_from_env", lambda: fake)
-    reply = selector.select("review patch", "verify", last_outcome=value)
+    baseline = selector.select("review patch", "verify", last_outcome=value, rerank="lexical")
+    with no_auto_access(monkeypatch) if mode == "auto" else nullcontext():
+        reply = selector.select("review patch", "verify", last_outcome=value, rerank=mode)
     assert reply["ok"]
+    if mode == "auto":
+        assert reply["candidates"] == baseline["candidates"] and not fake.calls
+        assert_auto_step(stage(reply))
+        return
     assert json.loads(fake.calls[0][1])["last_outcome"] == want
 
 
 @pytest.mark.parametrize("room", [18000, 2000, 20])
-def test_encoded_reason_budget_never_refuses_an_answerable_selection(monkeypatch, room):
+@pytest.mark.parametrize("mode", ["auto", "model"])
+def test_encoded_reason_budget_never_refuses_an_answerable_selection(monkeypatch, room, mode):
     baseline = selector.select("review patch", "verify", rerank="lexical")
     # Reserve enough room for step metadata but not 16 escaped emoji reasons.
     monkeypatch.setattr(selector, "MAX_REPLY_BYTES", len(json.dumps(baseline)) + room)
@@ -149,8 +186,13 @@ def test_encoded_reason_budget_never_refuses_an_answerable_selection(monkeypatch
                                      for c in json.loads(user)["candidates"]]}, ensure_ascii=False)
     fake = llm.FakeLLM(answer)
     monkeypatch.setattr(consent_callers, "provider_from_env", lambda: fake)
-    reply = selector.select("review patch", "verify")
+    with no_auto_access(monkeypatch) if mode == "auto" else nullcontext():
+        reply = selector.select("review patch", "verify", rerank=mode)
     assert reply["ok"] and len(json.dumps(reply)) <= selector.MAX_REPLY_BYTES
+    if mode == "auto":
+        assert reply["candidates"] == baseline["candidates"] and not fake.calls
+        assert_auto_step(stage(reply))
+        return
     assert len(fake.calls) == 1 and stage(reply)["model_calls"] == 1
     note = stage(reply).get("reasons_note", stage(reply)["why"])
     assert "shortened" in note or "dropped" in note

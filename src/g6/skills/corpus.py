@@ -72,7 +72,7 @@ _PERSON = "Only the person answers, in the client's own dialog."
 #: is not registered, stops ``build``.
 TOOL_DATA: dict[str, dict[str, Any]] = {
     "g6_select": _tool(
-        "what to do next, which G6 step fits now, rerank auto (model when consent is already given), model or lexical",
+        "what to do next, which G6 step fits now, rerank auto (lexical until the consent fix ships), model or lexical",
         "a short ranked list of checked next calls with their templates, and a reroute after a refusal",
         "no candidate ran; lexical rules and optional guarded model reranking over built-in text, advice only",
         PHASES, model="optional"),
@@ -123,7 +123,7 @@ TOOL_DATA: dict[str, dict[str, Any]] = {
         ("verify", "stuck"), "high", hypotheses=_REVIEW[:3], sensitive="patch_review.review",
         model="required", confined=True, outside=("git",)),
     "g6_premortem": _tool(
-        "before the work: hypotheses {claim, predicts, check}; propose auto, true or false; open questions",
+        "before the work: hypotheses {claim, predicts, check}; propose auto (local until the consent fix ships), true or false; open questions",
         "an intent contract, a proposed standard and checkable agent/model hypotheses; model sees task and intent only",
         "a proposal: nothing is frozen, confirmed or checked", ("plan", "stuck", "diagnose"), model="optional"),
     "g6_confirm_behaviour": _tool(

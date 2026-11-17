@@ -4,10 +4,11 @@
 Given the agent's situation, G6 returns a short
 ranked list of next calls, each with its exact call template, what it establishes and what it needs, checked before
 the agent makes it; the agent chooses, and the door checks the call it makes. A refusal passed back as
-``last_outcome`` reroutes. Lexical rules read G6's own corpus and the agent's arguments. By default, one guarded model
-completion may reorder at most 16 lexical/prior candidates, using only task, phase, the recognised last outcome and
-built-in corpus text. No candidate runs and no repository is read. With no model or a withheld, failed or unreadable
-reply, lexical order stands. The model cannot add or alter calls; all existing validation and action rules still apply.
+``last_outcome`` reroutes. Lexical rules read G6's own corpus and the agent's arguments. Until the consent fix ships,
+``auto`` stays lexical; ``rerank="model"`` requests one guarded completion to reorder at most 16 lexical/prior candidates,
+using only task, phase, the recognised last outcome and built-in corpus text. No candidate runs and no repository is read.
+With no model or a withheld, failed or unreadable reply, lexical order stands. The model cannot add or alter calls;
+all existing validation and action rules still apply.
 
 The stages, each reported in ``mechanisms`` as run or skipped, with why:
 
@@ -920,7 +921,8 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
                              "rankers": ["lexical"] + (["phase_prior"] if phase else [])
                              + (["intent_prior"] if intents else [])}
     stage["rerank"] = (NOT_OFFERED if rerank == "colbert" else "not asked (rerank=lexical)"
-                       if rerank == "lexical" else "guarded model advice follows")
+                       if rerank == "lexical" else "lexical (rerank=auto)"
+                       if rerank == "auto" else "guarded model advice follows")
     top = order[:limit]
     disagreements = []
     for key in sorted(set(top) | set(lexical_order[:limit])):
@@ -1107,6 +1109,12 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     # Account for JSON escapes exactly as on the wire. Optional model reasons
     # lose space before an otherwise answerable selection can be refused.
     model_reply = next(m for m in reply["mechanisms"] if m["stage"] == "model_rerank")
+    if rerank == "auto" and not model_reply["ran"] and len(json.dumps(reply).encode("utf-8")) > MAX_REPLY_BYTES:
+        # Keep the reason auto stayed local even at the reply limit. The
+        # candidates already carry their rankers; shorten only that repeated
+        # explanation, preserving the order and the external-action constraint.
+        ranking_step = next(m for m in reply["mechanisms"] if m["stage"] == "candidates")
+        ranking_step["why"] = "lexical/prior order; external actions rank last and are never next"
     if len(json.dumps(reply).encode("utf-8")) > MAX_REPLY_BYTES and model_reply.get("reasons"):
         model_reply["reasons_note"] = "model reasons shortened to fit the encoded reply budget"
         for ceiling in (150, 75, 37, 18, 9, 4, 2, 1):
@@ -1125,7 +1133,7 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
                            request_id=request_id, run_id=run_id)
             if local["ok"]:
                 step = next(m for m in local["mechanisms"] if m["stage"] == "model_rerank")
-                step.update(why="model reasons dropped" if model_reply.get("ran") else "model step skipped",
+                step.update(why="model reasons dropped" if model_reply.get("ran") else model_reply["why"],
                             model_calls=model_reply["model_calls"])
                 return local
         return _refuse(f"the reply would be over {MAX_REPLY_BYTES // 1024} KB: pass fewer or shorter entries in "

@@ -10,7 +10,7 @@ import json
 import os
 from typing import Any
 
-from g6.core import cloud_consent as consent, consent_callers, llm
+from g6.core import consent_callers, llm
 from g6.core.cloud_consent import REQUIRED, request_sources
 from g6.core.consent_declarations import contract
 from g6.core.model_calls import counting
@@ -18,29 +18,6 @@ from g6.core.model_calls import counting
 MAX_TOKENS = 2048
 MAX_REPLY_BYTES = 32 * 1024
 TIMEOUT_S = 15
-
-
-def _auto_allowed(caller, sources) -> tuple[bool, str]:
-    """A read-only hint, never admission; the guarded completion still checks.
-
-    preview/is_granted create mutex files. Read the existing checked ledger
-    snapshot instead: a concurrent write or revocation can only skip advice,
-    and the send-time guard remains responsible for the final decision.
-    """
-    to = consent_callers.destination(caller)
-    if to.local:
-        return True, to.provider
-    capture = consent.current_capture()
-    if to.provider == 'cloud:unknown':
-        return False, to.provider
-    if capture is not None and capture.client is not None and capture.client[0] == to.provider:
-        return True, to.provider
-    try:
-        ledger = consent._open(consent.ledger_path().parent)
-        allowed = bool(sources) and all(consent._decision(ledger, s.source_id, to.provider)[0] for s in sources)
-        return allowed, to.provider
-    except (OSError, ValueError, llm.LLMError):
-        return False, to.provider
 
 
 def _one_call(caller):
@@ -70,6 +47,12 @@ def model_json(payload: dict[str, Any], system: str, *, enabled: bool = True,
     if os.environ.get("G6_DISABLE_LLM"):
         step["why"] = "disabled by G6_DISABLE_LLM"
         return None, step
+    if auto:
+        # Bound admission has no side-effect-free dry run for both the send
+        # and the reply. Do not duplicate its decision or taint a local answer
+        # with sources from refused optional advice.
+        step["why"] = 'skipped: model rerank needs rerank="model" until the consent fix ships'
+        return None, step
     try:
         caller = consent_callers.provider_from_env()
         while isinstance(caller, llm.EmptyRetry):
@@ -79,11 +62,6 @@ def model_json(payload: dict[str, Any], system: str, *, enabled: bool = True,
             return None, step
         step["model"] = llm._caller_name(caller)
         sources = contract("client_request").sources(payload)
-        if auto:
-            allowed, provider = _auto_allowed(caller, sources)
-            if not allowed:
-                step["why"] = f"skipped: consent not given for {provider}; consent withheld (no send attempted)"
-                return None, step
         caller = _one_call(caller)
         with request_sources(sources), counting() as sent:
             try:
