@@ -26,7 +26,7 @@ from typing import Any
 
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.guidance_builders import ISOLATION_ACTION
-from g6.core.agent_guidance import authored_fields
+
 from g6.core.reliability_envelope import WarningCard
 from g6.model_checking.schema import ModelCheckResult
 
@@ -155,7 +155,6 @@ _ACTIONS = {
                       "max_output_bytes from Python.",
     RUN_FAILED: "The program could not be run to the end, or G6 could not confirm it stopped; inspect the reason.",
 }
-_ACTIONS = authored_fields(_ACTIONS, *_ACTIONS)
 _NOT_VERIFIED = ("A solver's answer on your model is not a proof a person has inspected, so it is not verified; if the "
                  "model does not say what you mean, neither does the answer.")
 

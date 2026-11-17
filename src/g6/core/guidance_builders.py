@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Authored prose adapters at the first unbound layer around bound builders.
+"""Default-filtering adapters at the first unbound layer around bound builders.
 
 These functions accept producer contracts, not arbitrary component values. They
 never assign authorship by inspecting ok, a diagnostic code, or nested data.
@@ -8,25 +8,20 @@ The original builders remain untouched for the certificate issuance batch.
 from __future__ import annotations
 from collections.abc import Mapping
 
-from g6.core.agent_guidance import authored_fields, _ISOLATION_ACTION
+from g6.core.agent_guidance import reply_for_agent, text_for_agent, _ISOLATION_ACTION
+from g6.core.external_data import borrowed_envelope
 
-CARD_PROSE = ("message", "suggested_action", "action", "next_step", "reason", "why", "risks")
-ENVELOPE_PROSE = ("error", "degradation_reason", "next_actions", "recommended_next_steps",
-                  "block_reason", "required_human_decision", "evidence_collected",
-                  "safe_next_action", "rollback_or_containment", "known_limitations", "missing_checks")
-ISOLATION_ACTION = authored_fields({"action": _ISOLATION_ACTION}, "action")["action"]
+ISOLATION_ACTION = _ISOLATION_ACTION
 
 
 def warning_card(*args, **kwargs):
     from g6.core.reliability_envelope import warning_card as build
-    return authored_fields(build(*args, **kwargs), *CARD_PROSE)
+    return reply_for_agent(build(*args, **kwargs))
 
 
 def card(existing, *args, **kwargs):
     from g6.core.door import card as build
-    value = build(existing, *args, **kwargs)
-    # An existing producer card is data. The fallback card is G6's own text.
-    return value if borrows_card(existing) else authored_fields(value, *CARD_PROSE)
+    return reply_for_agent(build(existing, *args, **kwargs))
 
 
 def borrows_card(argument):
@@ -43,62 +38,47 @@ def borrows_card(argument):
 
 def envelope_fields(**kwargs):
     from g6.core.reliability_envelope import envelope_fields as build
-    value = build(**kwargs)
-    if kwargs.get("warning_card") is None:
-        if isinstance(value.get("warning_card"), dict):
-            value["warning_card"] = authored_fields(value["warning_card"], *CARD_PROSE)
-    else:
-        # Pydantic can erase string subtypes. Preserve the supplied card's
-        # receipts, including an entirely unmarked component-owned card.
-        value["warning_card"] = {**(value.get("warning_card") or {}), **kwargs["warning_card"]}
-    return authored_fields(value, *ENVELOPE_PROSE)
+    return reply_for_agent(borrowed_envelope(build(**kwargs), kwargs.get("warning_card")))
 
 
 def door_envelope(claimed, **kwargs):
     from g6.core.door import door_envelope as build
-    value = build(claimed, **kwargs)
-    supplied = kwargs.get("warning_card")
-    if supplied is None or claimed == "verified":
-        if isinstance(value.get("warning_card"), dict):
-            value["warning_card"] = authored_fields(value["warning_card"], *CARD_PROSE)
-    else:
-        value["warning_card"] = {**(value.get("warning_card") or {}), **supplied}
-    return authored_fields(value, *ENVELOPE_PROSE)
+    supplied = kwargs.get("warning_card") if claimed != "verified" else None
+    return reply_for_agent(borrowed_envelope(build(claimed, **kwargs), supplied))
 
 
 def door_reply_fields(value, *, card_owned=True):
-    """The bound door's envelope, with its component result kept opaque.
-
-    The caller records whether the producer supplied the card when invoking it.
-    That borrowed card remains data; a door fallback card is its own prose. No
-    result content is searched to decide who wrote a card.
-    """
-    # ReliabilityEnvelope mirrors a borrowed producer card into these fields.
-    # Those copies inherit the card's ownership; only the door's fixed defaults
-    # and its own error remain ours when a component supplied the card.
-    fields = ENVELOPE_PROSE if card_owned else ("error", "missing_checks", "rollback_or_containment")
-    out = authored_fields(value, *fields)
-    if isinstance(out.get("warning_card"), dict) and card_owned:
-        out["warning_card"] = authored_fields(out["warning_card"], *CARD_PROSE)
-        if out["warning_card"].get("code") == "G6_E_ISOLATION_UNAVAILABLE":
-            out["warning_card"] = authored_fields({**out["warning_card"],
-                "suggested_action": ISOLATION_ACTION, "action": ISOLATION_ACTION}, *CARD_PROSE)
-    return out
+    """Compatibility receiver; all unmarked prose is filtered by default."""
+    return reply_for_agent(value)
 
 
 def blocked_reply(*args, **kwargs):
     from g6.core.door import blocked_reply as build
-    return door_reply_fields(build(*args, **kwargs))
+    return reply_for_agent(build(*args, **kwargs))
+
+
+def invoke_checked(component, op, params, *, registry=None, **kwargs):
+    from g6.core.door import invoke_checked as build, said_state
+    from g6.core.registry import get_registry
+    from g6.core.consent_registry import GuardedRegistry
+    from g6.core.external_data import ComponentRegistryIngress, ExternalDataLimit, component_failure_reply
+
+    ingress = ComponentRegistryIngress(registry if registry is not None else get_registry())
+    try:
+        value = build(component, op, params, registry=GuardedRegistry(ingress), **kwargs)
+    except ExternalDataLimit as exc:
+        return blocked_reply(str(exc), request_id=kwargs.get("request_id", ""))
+    if ingress.failure is not None:
+        value = component_failure_reply(ingress.failure, request_id=value.get("request_id", ""))
+    elif isinstance(ingress.value, Mapping) and said_state(ingress.value) != "verified":
+        supplied = ingress.value.get("warning_card")
+        if borrows_card(supplied):
+            value = borrowed_envelope(value, supplied)
+    return reply_for_agent(value)
 
 
 def job_result(value):
-    """Adapt a job operation's declared G6 envelope before its JSON retention.
-
-    Jobs receive G6 operation envelopes; component values belong in result.
-    This contract is independent of status and diagnostic codes. Never use it
-    on a bare component value.
-    """
-    return door_reply_fields(value) if isinstance(value, dict) else value
+    return reply_for_agent(value)
 
 
 def script_run(*args, **kwargs):
@@ -111,39 +91,45 @@ def script_run(*args, **kwargs):
     """
     from dataclasses import replace
     from g6.core import sandbox, confine
+    from g6.core.external_data import program_diagnostic, program_output
 
     run = sandbox.run_script(*args, **kwargs)
-    isolation = authored_fields(run.isolation, "why", "warning", "cleanup")
+    isolation = reply_for_agent(run.isolation)
     stderr = run.stderr
+    stdout = program_output(run.stdout) if run.returncode is not None else run.stdout
     if run.returncode is None or run.status == "timeout":
-        stderr = authored_fields({"stderr": stderr}, "stderr")["stderr"]
+        stderr = text_for_agent(stderr)
     elif run.isolation.get("backend") is not None and run.returncode != 0:
         prefix = confine.import_failure(stderr)
         if prefix and stderr.startswith(prefix + "\n"):
-            safe = authored_fields({"prefix": prefix}, "prefix")["prefix"]
-            stderr = safe + "\n" + stderr[len(prefix) + 1:]
-    return replace(run, stderr=stderr, isolation=isolation)
+            safe = text_for_agent(prefix)
+            stderr = program_diagnostic(safe, stderr[len(prefix) + 1:])
+        else:
+            stderr = program_output(stderr)
+    else:
+        stderr = program_output(stderr)
+    return replace(run, stdout=stdout, stderr=stderr, isolation=isolation)
 
 
 def confine_record(plan):
-    return authored_fields(plan.record(), "why", "warning", "cleanup")
+    return reply_for_agent(plan.record())
 
 
 def confine_refused(plan):
     from g6.core import confine
-    return authored_fields({"reason": confine.refused(plan)}, "reason")["reason"]
+    return text_for_agent(confine.refused(plan))
 
 
 def confine_refusal(plan):
     from g6.core import confine
-    return authored_fields({"reason": confine.refusal(plan)}, "reason")["reason"]
+    return text_for_agent(confine.refusal(plan))
 
 
 def confine_not_started(record, exc):
     from g6.core import confine
-    return authored_fields(confine.not_started(record, exc), "why", "warning", "cleanup")
+    return reply_for_agent(confine.not_started(record, exc))
 
 
 def confine_summary(records):
     from g6.core import confine
-    return authored_fields(confine.summary(records), "why", "warning", "cleanup")
+    return reply_for_agent(confine.summary(records))

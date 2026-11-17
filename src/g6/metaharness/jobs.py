@@ -14,7 +14,9 @@ from threading import Lock
 from uuid import uuid4
 
 from g6.core.guidance_builders import blocked_reply
-from g6.core.agent_guidance import authored_fields
+from g6.core.agent_guidance import reply_for_agent
+from g6.core.external_data import freeze_output, receipts, restore
+
 
 DETAILS = ("compact", "full")
 
@@ -23,30 +25,24 @@ DETAILS = ("compact", "full")
 class _FrozenResult:
     body: str
     body_sha256: str
+    external: tuple = ()
 
     @classmethod
     def of(cls, value):
-        body = json.dumps(value, separators=(',', ':'), allow_nan=False)
-        return cls(body, cloud.sha256(body))
+        body = json.dumps(reply_for_agent(value), separators=(',', ':'), allow_nan=False)
+        return cls(body, cloud.sha256(body), receipts(value))
 
     @classmethod
-    def completed(cls, ident, result_body, *, authored_envelope=True):
-        from g6.core.agent_guidance import reply_for_agent
-        from g6.core.guidance_builders import job_result
-        # The operation's typed G6 envelope is distinct from its component result.
-        # Filter before retaining bytes and their digest, for both poll forms.
-        if authored_envelope:
-            result_body = json.dumps(reply_for_agent(job_result(json.loads(result_body))),
-                                     separators=(',', ':'), allow_nan=False)
-        body = json.dumps({"ok": True, "job_id": ident, "status": "completed"},
-                          separators=(',', ':'))[:-1] + ',"result":' + result_body + '}'
-        return cls(body, cloud.sha256(body))
+    def completed(cls, ident, result_body, *, authored_envelope=True, external=()):
+        # Legacy flag grants no exemption. Raw JSON always has default ownership.
+        result = restore(json.loads(result_body), external)
+        return cls.of({"ok": True, "job_id": ident, "status": "completed", "result": result})
 
     def read(self):
         body, expected = self.body, self.body_sha256
         if cloud.sha256(body) != expected:
             raise ValueError('retained result digest mismatch')
-        return json.loads(body)
+        return restore(json.loads(body), self.external)
 
 
 class Jobs:
@@ -72,9 +68,9 @@ class Jobs:
                     self._provenance.pop(oldest, None)
             ident = uuid4().hex
             self._jobs[ident] = self._pool.submit(context.run, self._run, operation, compact, ident, origin)
-        return cloud.bind_output(authored_fields({"ok": True, "job_id": ident, "status": "pending",
+        return cloud.bind_output({"ok": True, "job_id": ident, "status": "pending",
                 "completion_state": "qualified-draft",
-                "note": "Execution is pending. Poll metaharness_job; this is not an evaluation result."}, "note"), ())
+                "note": "Execution is pending. Poll metaharness_job; this is not an evaluation result."}, ())
 
     def _run(self, operation, compact, ident, origin):
         refs = shown_refs = (cloud.UNKNOWN,)
@@ -83,25 +79,26 @@ class Jobs:
             capture.client, capture.supplied = origin[0], set(origin[1])
             try:
                 result = operation()
-                body, known, metadata = cloud.freeze_output(result)
+                body, known, metadata = freeze_output(result)
                 refs = cloud.boundary_sources(carried=(*(known if known is not None else
                     cloud.current_sources() or (cloud.UNKNOWN,)), *capture.sources))
                 metadata = shown_metadata = _FrozenResult.of(metadata)
                 shown_refs = refs
                 # Freeze before a compactor can mutate the producer's object.
-                # Operation builders have already marked/filtered their prose.
-                # Reclassifying their snapshot could claim a borrowed data card.
-                full = _FrozenResult.completed(ident, body, authored_envelope=False)
+                # Default prose filtering has already run on the frozen bytes.
+                # Only exact external receipts can exempt data in either poll.
+                full = _FrozenResult.completed(ident, body, external=receipts(result))
                 if compact:
                     try:
                         # A compactor must render the full snapshot, not reread
                         # the producer's mutable result under its old receipt.
-                        detached = cloud.bind_output(json.loads(body), refs, metadata=metadata.read())
+                        detached = cloud.bind_output(restore(json.loads(body), receipts(result)), refs,
+                                                     metadata=metadata.read())
                         shown = compact(detached, ident)
-                        body, known, shown_metadata = cloud.freeze_output(shown)
+                        body, known, shown_metadata = freeze_output(shown)
                         shown_refs = cloud.boundary_sources(carried=(*refs, *(known or ()), *capture.sources))
                         shown_metadata = _FrozenResult.of(shown_metadata)
-                        shown = _FrozenResult.completed(ident, body, authored_envelope=False)
+                        shown = _FrozenResult.completed(ident, body, external=receipts(shown))
                     except Exception:
                         shown = full
                         shown_refs, shown_metadata = refs, metadata

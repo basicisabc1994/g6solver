@@ -9,7 +9,6 @@ authority to disclose it. Unannotated content remains UNKNOWN.
 from __future__ import annotations
 
 from collections.abc import Sequence
-import json
 
 from g6.core import cloud_consent as cloud
 
@@ -21,8 +20,8 @@ def public_instructions(value: dict) -> dict:
 
 def host_controls(value: dict, controls: dict, *, sources: Sequence[cloud.Source] | None = None) -> dict:
     """Bind explicitly supplied host controls while retaining the content's origins."""
-    body, refs, metadata = cloud.freeze_output(value)
-    value = json.loads(body)
+    from g6.core.external_data import detached
+    value, refs, metadata = detached(value)
     if sources is not None:
         refs = cloud.boundary_sources(sources, carried=refs if refs is not None else (), inherit=False)
     if refs is None:

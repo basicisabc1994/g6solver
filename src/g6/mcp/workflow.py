@@ -59,10 +59,10 @@ def _noted(reply: Any, note: str) -> Any:
     if not note or not isinstance(reply, dict):
         return reply
     try:
-        body, refs, metadata = cloud.freeze_output(reply)
+        from g6.core.external_data import detached
+        noted, refs, metadata = detached(reply)
     except (TypeError, ValueError):
         return reply
-    noted = json.loads(body)
     noted["workflow"] = {**(noted.get("workflow") or {}), "note": note}
     return cloud.bind_output(noted, refs, metadata=metadata) if refs is not None else noted
 
@@ -80,8 +80,9 @@ def attach(reply: Any, built: Any, where: tuple[str, ...], project: str) -> Any:
     goes on a detached copy of the one serialisation the reply's receipt was matched against."""
     if not built or not isinstance(reply, dict):
         return reply
-    body, refs, metadata = cloud.freeze_output(reply)
-    shown = holder = json.loads(body)
+    from g6.core.external_data import detached
+    shown, refs, metadata = detached(reply)
+    holder = shown
     for key in where[:-1]:
         if not isinstance(holder.get(key), dict):
             return reply

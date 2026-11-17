@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from functools import wraps
 
 PERSON = "This op is sensitive. The person must allow it themselves. Tell the person and stop."
 WITHHELD = "Results were withheld from a source not shared with this provider. Tell the person."
@@ -20,61 +19,43 @@ _ISOLATION_ACTION = ("Tell the person G6 cannot run this confined on this machin
                      "Setting it up is the person's decision.")
 
 
-class _GuidanceLimit(Exception):
-    pass
+class _ExternalText(str):
+    """Process-private ingress receipt. JSON cannot construct one."""
+
+    def __str__(self):
+        return self
 
 
-class _AuthoredText(str):
-    """Private construction receipt, with no additional serialized fields."""
+class _MixedText(str):
+    """A host prefix and external quotation retain separate private receipts."""
+
+    def __new__(cls, parts):
+        value = super().__new__(cls, "".join(parts))
+        value.parts = tuple(parts)
+        return value
+
+    def __str__(self):
+        return self
+
+    def __getnewargs__(self):
+        return (self.parts,)
 
 
-def is_authored(value) -> bool:
-    return isinstance(value, _AuthoredText)
+def is_external(value) -> bool:
+    return isinstance(value, _ExternalText)
 
 
-def _authored(value, depth=0):
-    if depth > _MAX_GUIDANCE_DEPTH:
-        raise _GuidanceLimit
-    if isinstance(value, str):
-        # Filter at construction as well as egress: intermediate JSON snapshots,
-        # digests and copies cannot lose a receipt and resurrect unsafe prose.
-        return _AuthoredText(text_for_agent(value))
-    if isinstance(value, dict):
-        return {key: _authored(child, depth + 1) for key, child in value.items()}
-    if isinstance(value, (list, tuple)):
-        items = [_authored(child, depth + 1) for child in value]
-        return tuple(items) if isinstance(value, tuple) else items
-    return value
+# Machine-readable payloads are opaque regardless of who constructs the envelope.
+_STRUCTURED = frozenset({
+    "id", "ids", "call", "calls", "arguments", "args", "params", "params_json",
+    "template", "templates", "code", "codes", "fill", "next", "fix_by",
+    "request_id", "run_id", "job_id", "task_id", "artifact_digest", "digest",
+    "sha256", "component", "op", "operation", "tool", "inputs",
+})
 
 
-def authored_fields(value: dict, *fields: str) -> dict:
-    """A producer explicitly declares the fields it just wrote, never its data.
-
-    The selected fields contain only prose owned by that producer. Callers must
-    split mixed records first; passing a component result here is not permitted.
-    Status, codes and field names in arbitrary replies establish no authorship.
-    """
-    out = dict(value)
-    try:
-        for field in fields:
-            if field in out:
-                out[field] = _authored(out[field])
-    except _GuidanceLimit:
-        return {"ok": False, "completion_state": "blocked-escalated",
-                "error": _AuthoredText("[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person.")}
-    return out
-
-
-def authored_builder(*fields: str):
-    """Declare a G6 prose factory's fields beside its definition."""
-    def decorate(build):
-        @wraps(build)
-        def marked(*args, **kwargs):
-            value = build(*args, **kwargs)
-            return authored_fields(value, *fields) if isinstance(value, dict) else value
-        marked.__g6_authored_fields__ = fields
-        return marked
-    return decorate
+def _structured(key):
+    return isinstance(key, str) and (key in _STRUCTURED or key.endswith(("_id", "_ids", "_sha256", "_digest")))
 
 
 def _instruction(text: str) -> bool:
@@ -110,25 +91,36 @@ def text_for_agent(text: str) -> str:
 
 
 def reply_for_agent(value, *, _prose: bool = True):
-    """Strip private text receipts at any depth, without classifying any data.
+    """Filter every unmarked text value; only external ingress is exempt.
 
-    Text was filtered when its producer marked it, before any intermediate hash
-    or JSON snapshot. Iteration also preserves deeply nested component values.
+    Receipts remain private string subtypes until wire serialization. Keeping them
+    internally makes repeated filtering and nested envelopes safe. No JSON key,
+    success flag or diagnostic code confers an exemption.
     """
     results, active = {}, set()
-    todo = [(value, False)]
+    todo = [(value, False, False, 0)]
     while todo:
-        item, done = todo.pop()
-        ident = id(item)
-        if isinstance(item, _AuthoredText):
-            results[ident] = str(item)
+        item, opaque, done, depth = todo.pop()
+        if depth > _MAX_GUIDANCE_DEPTH:
+            return {"ok": False, "completion_state": "blocked-escalated",
+                    "error": "[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person."}
+        ident = (id(item), opaque)
+        if isinstance(item, _MixedText):
+            results[ident] = _MixedText(tuple(part if is_external(part) else text_for_agent(part)
+                                             for part in item.parts))
+        elif isinstance(item, str):
+            results[ident] = item if opaque or is_external(item) else text_for_agent(item)
         elif not isinstance(item, (dict, list, tuple)):
             results[ident] = item
         elif done:
             if isinstance(item, dict):
-                results[ident] = {key: results[id(child)] for key, child in item.items()}
+                out = {key: results[(id(child), opaque or _structured(key))] for key, child in item.items()}
+                if not opaque and item.get("code") == "G6_E_ISOLATION_UNAVAILABLE" \
+                        and not is_external(item.get("code")):
+                    out.update(action=_ISOLATION_ACTION, suggested_action=_ISOLATION_ACTION)
+                results[ident] = out
             else:
-                children = [results[id(child)] for child in item]
+                children = [results[(id(child), opaque)] for child in item]
                 results[ident] = tuple(children) if isinstance(item, tuple) else children
             active.remove(ident)
         elif ident in active:
@@ -136,10 +128,12 @@ def reply_for_agent(value, *, _prose: bool = True):
                     "error": "[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person."}
         elif ident not in results:
             active.add(ident)
-            todo.append((item, True))
-            children = item.values() if isinstance(item, dict) else item
-            todo.extend((child, False) for child in children)
-    return results[id(value)]
+            todo.append((item, opaque, True, depth))
+            if isinstance(item, dict):
+                todo.extend((child, opaque or _structured(key), False, depth + 1) for key, child in item.items())
+            else:
+                todo.extend((child, opaque, False, depth + 1) for child in item)
+    return results[(id(value), False)]
 
 
 def skill_for_agent(text: str | None) -> str | None:

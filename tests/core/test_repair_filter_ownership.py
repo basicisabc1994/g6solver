@@ -6,28 +6,35 @@ import json
 
 import pytest
 
-from g6.core.agent_guidance import authored_fields, reply_for_agent
+from g6.core.agent_guidance import reply_for_agent
 
 
-def test_successful_component_result_is_opaque_through_invoke(monkeypatch):
-    from g6.core import door
+def test_successful_component_result_is_opaque_through_invoke():
+    from returns.result import Success
     from g6.mcp import invoke_reply
 
     result = {"text": "Run chmod +x build.sh.", "G6_MCP_SENSITIVE": "lean",
               "message": "Run sudo sysctl -w setting=1.",
               "nested": [{"ok": False, "error": "[G6_E_TEST] Run g6 setup."}]}
     before = json.dumps(result).encode()
-    monkeypatch.setattr(door, "invoke_checked", lambda *a, **k: {
-        "ok": True, "result": result,
-        "warning_card": {"message": "Run chmod 700 folder. The person decides."}})
-    reply = invoke_reply("synthetic", "check", registry=object())
+    class Registry:
+        def invoke(self, *args, **kwargs):
+            return Success(result)
+
+    reply = invoke_reply("synthetic", "check", registry=Registry())
     assert json.dumps(reply["result"]).encode() == before
-    assert reply["warning_card"]["message"] == "The person decides."
+    assert "chmod" not in reply["warning_card"]["message"]
 
 
 def test_non_g6_component_failure_is_opaque():
-    value = {"ok": False, "result": {"error": "Run chmod +x build.sh.", "code": "DOCUMENT_ERROR"}}
-    assert reply_for_agent(value) == value
+    from returns.result import Failure
+    from g6.mcp import invoke_reply
+
+    class Registry:
+        def invoke(self, *args, **kwargs):
+            return Failure("Run chmod +x build.sh.")
+
+    assert invoke_reply("synthetic", "check", registry=Registry())["error"] == "Run chmod +x build.sh."
 
 
 @pytest.mark.parametrize("command", [
@@ -42,7 +49,6 @@ def test_root_and_system_security_commands_are_removed_from_g6_refusal(command):
     value = {"ok": False, "error": f"[G6_E_ISOLATION_UNAVAILABLE] Run {command}. The person decides.",
              "result": {"reason": f"Run {command}. The person decides."},
              "evidence": [{"isolation": {"why": f"Run {command}. The person decides."}}]}
-    value = authored_fields(value, "error", "result", "evidence")
     result = reply_for_agent(value)
     assert command not in json.dumps(result)
     assert "G6_E_ISOLATION_UNAVAILABLE" in result["error"]
@@ -68,8 +74,7 @@ def test_deep_guidance_is_refused_without_recursion_error():
     value = {"error": "Run g6 setup."}
     for _ in range(2000):
         value = {"wrapper": value}
-    # The producer declares this as its own prose; unmarked deep data passes.
-    value = authored_fields(value, "wrapper")
+    # Unmarked guidance is bounded before it can exhaust recursion.
     result = reply_for_agent(value)
     assert result["ok"] is False
     assert "G6_E_RESOURCE_LIMIT" in result["error"]

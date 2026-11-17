@@ -111,8 +111,7 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
     ``allow_sensitive`` (by default ``G6_MCP_SENSITIVE``) lists it or its component. A component whose block takes a
     model (``__g6_model__``) is given the one the person configured, built once for the call; with none configured,
     nothing is passed."""
-    from g6.core.door import invoke_checked
-    from g6.core.guidance_builders import blocked_reply
+    from g6.core.guidance_builders import blocked_reply, invoke_checked
     from g6.core.agent_guidance import reply_for_agent
 
     request_id = uuid.uuid4().hex[:12]
@@ -123,34 +122,11 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
     if not isinstance(params, dict):
         return reply_for_agent(blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id))
     allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
-    from g6.core.consent_registry import GuardedRegistry
     from g6.core.registry import ComponentRegistry, get_registry
     target = registry if registry is not None else get_registry()
-    class ObservedRegistry:
-        # Record the card argument the bound door will receive from the producer,
-        # before its copies erase identity. This is not a reply-content classifier.
-        card_owned = True
-
-        def __getattr__(self, name):
-            return getattr(target, name)
-
-        def invoke(self, *args, **kwargs):
-            from collections.abc import Mapping
-            from g6.core.door import said_state
-            from g6.core.guidance_builders import borrows_card
-            outcome = GuardedRegistry(target).invoke(*args, **kwargs)
-            if outcome.__class__.__name__ == "Success":
-                produced = outcome.unwrap()
-                self.card_owned = not (isinstance(produced, Mapping)
-                    and borrows_card(produced.get("warning_card")) and said_state(produced) != "verified")
-            return outcome
-
-    observed = ObservedRegistry()
-    reply = invoke_checked(component, op, params, allow=allow, registry=observed, request_id=request_id,
+    reply = invoke_checked(component, op, params, allow=allow, registry=target, request_id=request_id,
                           how_to_allow="This op is sensitive. The person must allow it themselves. "
                                        "Tell the person and stop.")
-    from g6.core.guidance_builders import door_reply_fields
-    reply = door_reply_fields(reply, card_owned=observed.card_owned)
     if op == "help" and reply.get("ok"):
         from g6.core.agent_guidance import help_for_agent
 

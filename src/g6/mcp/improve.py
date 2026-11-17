@@ -56,7 +56,7 @@ from typing import Any
 from uuid import uuid4
 
 import g6
-from g6.core.agent_guidance import authored_builder
+
 from g6.core.door import allowed_sensitive, is_allowed
 from g6.core.guidance_builders import blocked_reply
 from g6.core.ledger import LedgerError, digest as digest_of
@@ -1059,7 +1059,6 @@ def _stop_on_record(root: Path, before: dict[str, Any], ident: str, reason: str,
             "its note in the constraint log": note}
 
 
-@authored_builder("message", "next_action", "recommended_next_steps")
 def _stop_reply(state: str, code: str, message: str, *, canonical_id: str | None,
                 next_action: str = "", **extra: Any) -> dict:
     """Use the library's envelope builders without reading fresh entropy after a stop.

@@ -27,7 +27,7 @@ from typing import Any
 from g6.core.outside import OutsideProgram
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.guidance_builders import ISOLATION_ACTION
-from g6.core.agent_guidance import authored_fields
+
 from g6.core.reliability_envelope import WarningCard
 from g6.prolog.schema import PrologResult
 
@@ -115,7 +115,6 @@ _ACTIONS = {
     NOT_CHECKED: "Build results with g6.prolog's functions; this one carries no re-checked report from SWI-Prolog.",
     ENGINE_ERROR: "G6 failed before answering; report it with the input and the reason.",
 }
-_ACTIONS = authored_fields(_ACTIONS, *_ACTIONS)
 
 
 class Refusal(Exception):

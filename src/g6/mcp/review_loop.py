@@ -119,7 +119,7 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
 
 def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
     """Retain the run's saved origins; never rebind old report content to the current request."""
-    from g6.core.cloud_consent import Source, bind_output, repository_source, freeze_output
+    from g6.core.cloud_consent import Source, bind_output, repository_source
     from g6.harness import completion_loop
     result = _step(repo, task, session, base, reason)
     if result.get('action') == completion_loop.WAIT:
@@ -132,8 +132,9 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     if capture is not None:
         capture.review_unsent = (result.get('ending') == 'untested' and
             str(result.get('error', '')).startswith(f'[{REQUIRED}]'))
-    body, refs, _ = freeze_output(result)
-    result = json.loads(body)
+    from g6.core.external_data import detached
+    result, refs, _ = detached(result)
+    body = json.dumps(result, separators=(',', ':'), allow_nan=False)
     metadata = {key: result[key] for key in ('action', 'ending', 'request_id', 'run_id') if key in result}
     metadata.update(has_report='report' in result, has_text='text' in result)
     if capture is not None and capture.review_unsent and capture.refused_provider:

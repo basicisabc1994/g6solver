@@ -41,19 +41,25 @@ def _source_function(fn):
         root = capture is not None and capture.expected_tool is identity and not _INSIDE.get()
         token = _INSIDE.set(True)
         try:
-            arguments = inspect.signature(fn).bind(*args, **kwargs).arguments
-            arguments = {k: v for k, v in arguments.items() if k != 'ctx'}
+            bound = inspect.signature(fn).bind(*args, **kwargs)
+            arguments = {k: v for k, v in bound.arguments.items() if k != 'ctx'}
+            # Only supplied arguments cross this ingress. Defaults and any prose
+            # the handler constructs keep G6 ownership.
+            from g6.core.external_data import caller_echo
+            for name in tuple(bound.arguments):
+                if name != 'ctx':
+                    bound.arguments[name] = caller_echo(bound.arguments[name])
             declared = declaration.sources(arguments) if declaration is not None else ()
             with policy.request_sources(declared):
-                value = fn(*args, **kwargs) if inspect.iscoroutinefunction(fn) else await anyio.to_thread.run_sync(
-                    partial(fn, *args, **kwargs))
+                value = fn(*bound.args, **bound.kwargs) if inspect.iscoroutinefunction(fn) else await anyio.to_thread.run_sync(
+                    partial(fn, *bound.args, **bound.kwargs))
                 if inspect.isawaitable(value):
                     value = await value
             if root:
                 from g6.core.ledger import digest
                 try:
-                    body, refs, metadata = policy.freeze_output(value)
-                    value = json.loads(body)
+                    from g6.core.external_data import detached
+                    value, refs, metadata = detached(value)
                     # A refused reply gains its repair block (g6.mcp.repair: G6's own words, codes and templates)
                     # on the frozen snapshot, so the sources it carries are exactly the snapshot's.
                     repaired = _repaired(fn.__name__, arguments, value, capture)
@@ -176,7 +182,7 @@ async def request_grant(ctx: Any, source: str, provider: str, *, description: st
 
 def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unknown', sources=(), session=None):
     from g6.core.guidance_builders import blocked_reply
-    from g6.core.agent_guidance import authored_fields
+
     from g6.core.ledger import digest
     result = result if isinstance(result, dict) else {}
     control = dict(metadata or {})
@@ -188,7 +194,6 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
     has_report, has_text = control.pop('has_report', False), control.pop('has_text', False)
     message = ('Results were withheld from a source not shared with this provider. Tell the person. ' +
                policy.withheld_message(provider, sources).removeprefix(policy.WITHHELD).lstrip())
-    message = authored_fields({'message': message}, 'message')['message']
     refused = {**blocked_reply(f'[{code}] {message}'), **control}
     refused['cloud_consent_code'] = policy.REQUIRED
     from g6.mcp.repair import consent_block
@@ -203,7 +208,6 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
         if job.get('review_unsent'):
             recipient = f' to {review_provider}' if _PROVIDER.fullmatch(review_provider) else ''
             refused.update(action='stop', ending='untested', report=f'The review was not sent{recipient}. ' + message)
-            refused = authored_fields(refused, 'report')
         if job['status'] == 'completed':
             return {'ok': True, 'job_id': job['job_id'], 'status': 'completed', 'result': refused,
                     'repair': refused['repair']}
@@ -214,8 +218,9 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
 def protect_reply(ctx: Any, result: dict, sources, *, supplied=(), job=None, record=True) -> dict:
 
     try:
-        body, known, metadata = policy.freeze_output(result)
-        result = json.loads(body)
+        from g6.core.external_data import detached
+        result, known, metadata = detached(result)
+        body = json.dumps(result, separators=(',', ':'), allow_nan=False)
         sources = policy.boundary_sources(sources, carried=known or ())
         payload = policy.sha256(body)
         with policy.admission(client_provider(ctx), sources, payload, supplied=supplied, disclose=record):

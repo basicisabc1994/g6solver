@@ -1010,9 +1010,8 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
             said = said.removeprefix(f"[{exc.code}] ").split(" To run such code without one")[0] + " " + BOUNDARY_HELP
         refused = blocked_reply(f"[{exc.code}] {said}")
         if getattr(exc, "help", ""):
-            from g6.core.agent_guidance import authored_fields
-            refused["warning_card"] = authored_fields({**refused["warning_card"],
-                "suggested_action": exc.help, "next_step": exc.help}, "suggested_action", "next_step")
+            refused["warning_card"] = {**refused["warning_card"],
+                "suggested_action": exc.help, "next_step": exc.help}
         return refused
     except (OSError, ValueError, TypeError) as exc:
         return blocked_reply(f"[{CODE}] {exc}")

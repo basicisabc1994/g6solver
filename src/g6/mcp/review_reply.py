@@ -84,7 +84,8 @@ def _shorten(value: Any, items: int, chars: int, where: str, cut: set[str]) -> A
         if len(value) <= chars:
             return value
         cut.add(where)
-        return value[:chars - 3] + "..."
+        from g6.core.external_data import shortened
+        return shortened(value, value[:chars - 3] + "...")
     if isinstance(value, list | tuple):
         if len(value) > items:
             cut.add(where)
@@ -147,8 +148,8 @@ def finish(reply: Any, job_id: str) -> Any:
         return reply
     from g6.core import cloud_consent as cloud
     from g6.core.storage import g6_home
-    body, refs, _ = cloud.freeze_output(reply)
-    reply = json.loads(body)
+    from g6.core.external_data import detached
+    reply, refs, _ = detached(reply)
     # A job entered through a declared producer already carries that contract.
     # Absence of a value receipt is distinct from an explicitly unknown origin;
     # the latter stays in refs and cannot be replaced by the declaration.

@@ -173,8 +173,6 @@ def describe(name: str) -> dict[str, Any]:
         info["mitigates"] = _modes(getattr(mod, "__g6_mitigates__", ()))
         info["introduces"] = _modes(getattr(mod, "__g6_introduces__", ()))
         info["outside"] = [program.describe() for program in getattr(mod, "__g6_outside__", ())]
-        from g6.core.agent_guidance import authored_fields
-        info["outside"] = [authored_fields(program, "install") for program in info["outside"]]
         info["extras"] = _extras(getattr(mod, "__g6_extras__", {}))
         info["keys"] = [key.describe() for key in getattr(mod, "__g6_keys__", ())]
         from g6.core.agent_guidance import skill_for_agent

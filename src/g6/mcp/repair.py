@@ -41,7 +41,7 @@ from typing import Any
 
 from g6.core.repair_log import append as _log
 from g6.core.repair_log import repair_stats
-from g6.core.agent_guidance import authored_builder
+
 
 MAX_RETRIES = 2
 _LOCK = threading.Lock()
@@ -69,7 +69,6 @@ def declined(session: Any, source: str, provider: str, status: str = "") -> str:
         return decisions.get(pair, "")
 
 
-@authored_builder("step")
 def declined_block(status: str) -> dict[str, Any]:
     return {"code": "G6_E_CLOUD_CONSENT_REQUIRED", "fix_by": "person", "by": "person",
             "step": f"The person {status} sharing this source with this provider in this session. "
@@ -165,7 +164,6 @@ def _named(reply: dict[str, Any], schema: list[str]) -> list[str]:
     return [field for field in schema if field in words]
 
 
-@authored_builder("step")
 def block(tool: str, reply: dict[str, Any], *, data: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """The repair block for ``tool``'s refused ``reply``, before any retry is counted (``retries_left`` is
     ``MAX_RETRIES``, or 0 where only the person can act); ``None`` for a reply that is not a refusal."""
@@ -265,7 +263,6 @@ def observe(tool: str, arguments: Any, reply: Any, session: Any = None) -> Any:
     return {**reply, "repair": found}
 
 
-@authored_builder("step")
 def consent_block(session: Any = None, sources=(), provider: str = "") -> dict[str, Any]:
     """The repair block of a reply withheld for consent: the person decides, in the dialog ``g6_cloud_grant`` opens."""
     from g6.core import refusals

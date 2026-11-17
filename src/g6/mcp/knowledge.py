@@ -43,8 +43,9 @@ def _destination() -> str:
 
 def _ok(result: dict[str, Any], sources: tuple[cloud.Source, ...], evidence: list[dict[str, Any]] | None = None) -> dict:
     from g6.core.guidance_builders import envelope_fields, warning_card
+    from g6.core.external_data import knowledge_quotes
 
-    reply = {"ok": True, "result": result, **envelope_fields(
+    reply = {"ok": True, "result": knowledge_quotes(result), **envelope_fields(
         reliability_label="qualified-draft", warning_card=warning_card(*CARD), evidence=evidence or [])}
     return cloud.bind_output(reply, sources)
 
