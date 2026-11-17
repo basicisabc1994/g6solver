@@ -264,9 +264,11 @@ def _metadata_entry(text: str, base: Path, name: str, roots: _roots.Roots) -> Pa
     return _metadata_target(target if target.is_absolute() else base / target, name, roots)
 
 
-def repository(raw: str, config: GitConfig) -> tuple[Path, Path]:
+def repository(raw: str, config: GitConfig, *, file_policy: set[str] | None = None) -> tuple[Path, Path]:
     """The working copy ``raw`` names and its git folder, both resolved; :class:`GitRefused` unless both are at or
-    under a declared root."""
+    under a declared root. ``file_policy`` optionally records denied tree-file keys;
+    sessions always neutralise them, even without the collector. Repository
+    info/exclude and info/attributes retain Git's native behaviour."""
     admission = _Admission()
     if not config.roots:
         raise GitRefused(NO_ROOT, f"no folder is declared for ctx_git, so git is not run anywhere: {_how_to_declare()}")
@@ -306,7 +308,7 @@ def repository(raw: str, config: GitConfig) -> tuple[Path, Path]:
     common = _common(gitdir, roots, admission)
     admission.check()
     for file in dict.fromkeys((gitdir / "config", common / "config", gitdir / "config.worktree")):
-        _includes(file, roots, admission)
+        _includes(file, roots, admission, worktree=real, file_policy=file_policy)
     for name in ("objects", "refs"):
         info = _metadata_info(common / name, name, roots)
         if info is not None and not stat.S_ISDIR(info.st_mode):
@@ -340,8 +342,13 @@ def _common(gitdir: Path, roots: _roots.Roots, admission: _Admission | None = No
     return common
 
 
-def _includes(path: Path, roots: _roots.Roots, admission: _Admission, depth: int = 0) -> None:
-    """Check every repository-local include, including inactive conditions, before git runs."""
+def _includes(path: Path, roots: _roots.Roots, admission: _Admission, depth: int = 0, *, worktree: Path,
+              file_policy: set[str] | None = None) -> None:
+    """Confine repository includes and blame paths; neutralise other tree-file keys.
+
+    Only repository-owned config enters this reader. Git follows the person's own
+    global/system files and includes itself, with their normal precedence.
+    """
     admission.check()
     if path in admission.active_configs or depth > CONFIG_INCLUDE_DEPTH:
         raise GitRefused(PATH_INVALID, "repository config includes form a loop or exceed G6's nesting limit")
@@ -356,9 +363,18 @@ def _includes(path: Path, roots: _roots.Roots, admission: _Admission, depth: int
     admission.active_configs.add(path)
     try:
         data = _metadata_bytes(path, "repository config", roots)
-        for raw_entry in _config_includes.paths(data, check=admission.check):
+        for key, raw_entry in _config_includes.file_entries(data, check=admission.check):
             admission.check()
+            if key in {b"core.excludesfile", b"core.attributesfile"}:
+                # These are unconditionally denied before every Git query.
+                # Never expand or inspect a target that cannot be used anyway.
+                if file_policy is not None:
+                    file_policy.add(key.decode("ascii"))
+                continue
             entry = _include_path(raw_entry)
+            include = key in {b"include.path", b"includeif.path"}
+            if not entry and not include:
+                continue  # No target; blame's CLI option clears the accumulated list.
             if entry.startswith("~"):
                 # Git uses HOME. Without a bound home spelling, do not guess another user's expansion.
                 home = os.environ.get("HOME", "")
@@ -367,10 +383,22 @@ def _includes(path: Path, roots: _roots.Roots, admission: _Admission, depth: int
                 entry = home if entry == "~" else home.rstrip("/\\") + "/" + entry[2:]
             if entry.startswith("%(prefix)"):
                 raise ValueError("git installation prefix cannot be classified")
-            target = _metadata_entry(entry, path.parent, "repository config include", roots)
-            _includes(target, roots, admission, depth + 1)
+            label = "repository config include" if include else "repository config file"
+            base = path.parent if include else worktree
+            # Decide a lexically outside path before asking about its metadata.
+            # Includes and blame retain their fail-closed admission refusal.
+            candidate = Path(os.path.normpath(base / entry))
+            if not _under(candidate, roots.roots):
+                raise GitRefused(OUTSIDE_ROOT, f"{label} names a file outside the checked folders")
+            target = _metadata_entry(entry, base, label, roots)
+            if include:
+                _includes(target, roots, admission, depth + 1, worktree=worktree, file_policy=file_policy)
+            else:
+                info = _metadata_info(target, label, roots)
+                if info is not None:
+                    _metadata_bytes(target, label, roots)
     except (ValueError, OSError, MemoryError, RecursionError):
-        raise GitRefused(PATH_INVALID, "repository config holds syntax or an include path G6 cannot classify; "
+        raise GitRefused(PATH_INVALID, "repository config holds syntax or a file path G6 cannot classify; "
                                        "git was not run") from None
     finally:
         admission.active_configs.remove(path)

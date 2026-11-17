@@ -145,6 +145,12 @@ def _unchecked_calls(text, module):
     tree = ast.parse(text)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     aliases = {}
+    # A confined helper can call another helper in its own module by bare
+    # name. Resolve that name before the generic content-I/O check, and keep
+    # the required-roots validation below for these calls too.
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and f"{module}.{node.name}" in targets:
+            aliases[node.name] = f"{module}.{node.name}"
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             base = node.module or ""
@@ -257,12 +263,17 @@ def _unchecked_calls(text, module):
                        or name == "__roots_class__" or name.endswith(".__class__")
                        or name in {"g6.code._roots.Roots.__new__", "g6.code._roots.Roots.__init__"}
                        or isinstance(node.func, ast.Call) and qualified(node.func.func) in {"type", "builtins.type"})
+            plain_super_init = (name == "__roots_super__.__init__" and isinstance(receiver, ast.Attribute)
+                                and isinstance(receiver.value, ast.Call)
+                                and qualified(receiver.value.func) in {"super", "builtins.super"}
+                                and not any("roots" in qualified(arg).lower() or "roots" in ast.unparse(arg).lower()
+                                            for arg in receiver.value.args))
             mutated = (name in {"object.__setattr__", "builtins.setattr", "setattr"}
                        and len(args) >= 2 and (not isinstance(bound(args[1]), ast.Constant)
                        or bound(args[1]).value in {"roots", "identities", "unavailable"})
                        or name.startswith("__roots_dict__.")
                        or name == "__roots_super__.__setattr__"
-                       or name.endswith(".__init__") and isinstance(node.func, ast.Attribute)
+                       or name.endswith(".__init__") and not plain_super_init and isinstance(node.func, ast.Attribute)
                        and "roots" in qualified(bound(node.func.value)).lower()
                        or name in {"operator.setitem", "dict.__setitem__"} and args
                        and qualified(args[0]) == "__roots_dict__")

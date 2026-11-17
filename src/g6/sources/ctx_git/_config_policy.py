@@ -4,7 +4,9 @@
 Keep the reason beside each decision. The independent pinned documentation inventory
 in tests/sources/data/git_path_command_keys.txt must be covered by this table.
 Subsection keys are discovered with a bounded names-only query, never by opening
-their values. Includes alone are recursively admitted by config.repository first.
+their targets. Repository includes are admitted first; native content-reading
+settings and repository info rules retain their scopes; configured external
+ignore and attribute files cannot control review visibility.
 """
 import os
 import re
@@ -20,7 +22,7 @@ class Rule:
 
 
 RULES = (
-    Rule("include.path", "classified", "", "Every include is read and bounded by repository admission."),
+    Rule("include.path", "classified", "", "Repository includes are read and bounded; personal includes stay native."),
     Rule("includeIf.<condition>.path", "classified", "", "Admission checks even inactive conditional includes."),
     Rule("bundle.<id>.uri", "exempt", "", "Bundle discovery is disabled; ctx_git never supplies --bundle-uri."),
     Rule("attr.tree", "exempt", "", "A tree reference reads only the admitted object store; attribute programs are disabled."),
@@ -30,8 +32,8 @@ RULES = (
     Rule("core.sshCommand", "override", "", "Only the PATH-selected SSH program may be used by network sessions."),
     Rule("core.gitProxy", "override", "none", "No repository-selected proxy program; git transport is disabled."),
     Rule("core.alternateRefsCommand", "override", "", "Never run an alternate object-store shell command."),
-    Rule("core.excludesFile", "override", "@null", "Do not read an external ignore file or the home default."),
-    Rule("core.attributesFile", "override", "@null", "Do not read an external attributes file or the home default."),
+    Rule("core.excludesFile", "override", "@null", "Repository ignore rules remain native; configured files and home defaults are disabled."),
+    Rule("core.attributesFile", "override", "@null", "Repository attributes remain native; configured files and home defaults are disabled."),
     Rule("core.askPass", "override", "", "Disable password prompt programs."),
     Rule("core.editor", "override", ":", "Use Git's no-editor command."),
     Rule("core.pager", "override", "", "Disable shell pagers; --no-pager also covers early queries."),
@@ -44,6 +46,7 @@ RULES = (
     Rule("filter.<driver>.clean", "override", "", "Disable named check-in filters."),
     Rule("filter.<driver>.smudge", "override", "", "Disable named checkout filters."),
     Rule("filter.<driver>.process", "override", "", "Disable long-running named filters."),
+    Rule("filter.<driver>.required", "override", "false", "A disabled filter must not prevent normal tree reads."),
     Rule("merge.<driver>.driver", "override", "", "Disable custom merge programs."),
     Rule("commit.template", "override", "@null", "No external commit message template."),
     Rule("commit.gpgSign", "override", "false", "Do not sign commits."),
@@ -60,9 +63,9 @@ RULES = (
     Rule("user.signingKey", "override", "", "Do not read a path-valued SSH signing key."),
     Rule("mailmap.file", "override", "@null", "Do not read an augmenting mailmap outside the admitted content."),
     Rule("mailmap.blob", "override", "", "Do not resolve a repository-selected augmenting mailmap blob."),
-    Rule("blame.ignoreRevsFile", "override", "", "Empty value resets all ignore-revision files, including earlier values."),
-    Rule("http.sslCAInfo", "override", "", "No repository-selected TLS CA file; TLS verification stays enabled."),
-    Rule("http.sslCAPath", "override", "", "No repository-selected CA directory."),
+    Rule("blame.ignoreRevsFile", "override", "", "Blame negates the file-list option before clearing accumulated revision IDs."),
+    Rule("http.sslCAInfo", "override", "", "Disable configured CA file reads, including URL subsections; TLS verification stays enabled."),
+    Rule("http.sslCAPath", "override", "", "Disable configured CA directory reads, including URL subsections."),
     Rule("http.sslCert", "override", "", "No repository-selected client certificate file."),
     Rule("http.sslKey", "override", "", "No repository-selected client private key file."),
     Rule("http.cookieFile", "override", "", "Empty string explicitly disables reading a cookie file."),
@@ -72,7 +75,9 @@ RULES = (
     Rule("http.proxySSLCAInfo", "override", "", "No repository-selected proxy CA file."),
     Rule("http.pinnedPubkey", "override", "", "Do not read a repository-selected public-key file."),
     Rule("http.proxy", "override", "", "No repository-selected proxy endpoint or Unix socket."),
-    Rule("http.<url>.*", "classified", "", "Specific file keys inherit overrides; all local HTTP keys block outward ops."),
+    Rule("http.sslVerify", "override", "true", "Keep TLS verification on, including URL-scoped settings."),
+    Rule("http.followRedirects", "override", "false", "Do not follow another network path, including URL-scoped settings."),
+    Rule("http.<url>.*", "classified", "", "Specific keys inherit policy; all repository HTTP keys block outward ops."),
     Rule("init.templateDir", "override", "@template", "Clone uses a new empty scratch template directory."),
     Rule("fsck.skipList", "override", "@null", "No repository-selected fsck object list."),
     Rule("fetch.fsck.skipList", "override", "@null", "No external object list during fetch checks."),
@@ -89,11 +94,16 @@ RULES = (
     Rule("remote.<name>.uploadpack", "override", "git-upload-pack", "Use the standard remote service, never a configured command."),
     Rule("remote.<name>.receivepack", "override", "git-receive-pack", "Use the standard remote receive service."),
     Rule("remote.<name>.proxy", "override", "", "No per-remote proxy endpoint."),
+    Rule("remote.<name>.serverOption", "classified", "", "Repository server options refuse network operations before the gate."),
+    Rule("remote.<name>.tagOpt", "classified", "", "Repository tag options refuse network operations before the gate."),
+    Rule("push.pushOption", "classified", "", "Repository push options refuse pushes before the gate."),
     Rule("remote.<name>.vcs", "classified", "refuse", "Foreign-VCS helpers are refused after the names-only query."),
     Rule("remote.<name>.url", "classified", "", "The expanded addresses are checked before any outward operation."),
     Rule("remote.<name>.pushurl", "classified", "", "All expanded push addresses are checked before sending."),
-    Rule("url.<base>.insteadOf", "classified", "", "Expanded remote addresses pass remote_problem before sending."),
-    Rule("url.<base>.pushInsteadOf", "classified", "", "Expanded push addresses pass remote_problem before sending."),
+    Rule("url.<base>.insteadOf", "classified", "network-refuse", "Additive rewrites cannot be reset with -c; refuse outward commands."),
+    Rule("url.<base>.pushInsteadOf", "classified", "network-refuse", "Additive push rewrites cannot be reset with -c; refuse outward commands."),
+    Rule("protocol.allow", "override", "never", "No transport unless the session's GIT_ALLOW_PROTOCOL explicitly permits it."),
+    Rule("protocol.<name>.allow", "override", "never", "Disable protocol helpers; GIT_ALLOW_PROTOCOL bounds network sessions."),
     Rule("fetch.bundleURI", "override", "", "Do not download or read a configured bundle list."),
     Rule("transfer.bundleURI", "override", "false", "Clone must not request additional bundle sources."),
     Rule("trace2.normalTarget", "override", "0", "Disable trace destinations, including files and sockets."),
@@ -145,8 +155,8 @@ RULES = (
 
 def _expression(pattern: str) -> re.Pattern[str]:
     expression = re.escape(pattern.lower())
-    expression = re.sub(r"<[^>]+>", ".+", expression).replace(r"\*", ".*")
-    return re.compile(expression + r"\Z")
+    expression = re.sub(r"<[^>]+>", ".*", expression).replace(r"\*", ".*")
+    return re.compile(expression + r"\Z", re.S)
 
 
 _EXACT = {rule.key.lower(): rule for rule in RULES if "<" not in rule.key and "*" not in rule.key}
@@ -154,14 +164,32 @@ _PATTERNS = tuple((rule, _expression(rule.key)) for rule in RULES if "<" in rule
 
 
 def rule_for(key: str) -> Rule | None:
-    """Match a documented placeholder or an actual key, including URL-scoped HTTP settings."""
+    """Match concrete keys without letting a subsection escape a denied key class."""
     lower = key.lower()
-    if lower.startswith("http.") and lower.count(".") > 1 and not lower.endswith(".*"):
-        lower = "http." + lower.rsplit(".", 1)[1]
-    return _EXACT.get(lower) or next((rule for rule, expression in _PATTERNS if expression.fullmatch(lower)), None)
+    if lower in _EXACT:
+        return _EXACT[lower]
+    # Git preserves subsection spelling (including dots, URLs and the empty
+    # subsection). Match each fixed denied key with inserted subsection text,
+    # including multi-part fixed keys such as fetch.fsck.skipList. Restrict this
+    # fallback to overrides: exemptions must never swallow a deny decision.
+    for fixed, rule in _EXACT.items():
+        if rule.action != "override":
+            continue
+        parts = fixed.split(".")
+        for index in range(1, len(parts)):
+            prefix, suffix = ".".join(parts[:index]) + ".", "." + ".".join(parts[index:])
+            if lower.startswith(prefix) and lower.endswith(suffix) and len(lower) >= len(prefix) + len(suffix):
+                return rule
+    return next((rule for rule, expression in _PATTERNS if expression.fullmatch(lower)), None)
 
 
-def settings(keys: tuple[str, ...] = (), *, hooks: str, template: str) -> tuple[tuple[str, str], ...]:
+def _rendered(key: str, value: str) -> str:
+    """Git cannot open the null device as an exclude file on Windows (exit 128); an empty value disables it."""
+    return "" if key.lower() == "core.excludesfile" and value == os.devnull else value
+
+
+def settings(keys: tuple[str, ...] = (), *, hooks: str, template: str,
+             repository_files: tuple[str, ...] = ()) -> tuple[tuple[str, str], ...]:
     """Static overrides plus every concrete subsection override found by the names-only query."""
     values = {"@null": os.devnull, "@hooks": hooks, "@template": template}
     pairs = {}
@@ -169,5 +197,16 @@ def settings(keys: tuple[str, ...] = (), *, hooks: str, template: str) -> tuple[
                 "gpg.openpgp.program", "gpg.x509.program", "gpg.ssh.program"):
         rule = rule_for(key)
         if rule is not None and rule.action == "override":
-            pairs[key] = values.get(rule.value, rule.value)
+            if "=" in key or any(ord(char) < 32 or ord(char) == 127 for char in key):
+                raise ValueError("config key spelling cannot be encoded as a command override")
+            pairs[key] = _rendered(rule.key, values.get(rule.value, rule.value))
+    for key in repository_files:
+        # Only admission's two singleton tree-file keys have this decision.
+        # A supplied name cannot inject a value or replace another deny key.
+        if key.lower() not in {"core.excludesfile", "core.attributesfile"}:
+            raise ValueError("unrecognised repository tree-file policy")
+        rule = rule_for(key)
+        if rule is None or rule.action != "override" or rule.value != "@null":
+            raise ValueError("repository tree-file policy has no neutralisation rule")
+        pairs[key] = _rendered(rule.key, values[rule.value])
     return tuple(pairs.items())

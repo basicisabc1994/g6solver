@@ -163,10 +163,11 @@ class CtxGitBlock(AIBlock[CtxGitInput, dict, dict]):
                     _intend(entry)
                 found = ops.clone(call, outward)
             else:
-                repo, gitdir = cfg.repository(data.repo, config)
+                file_policy: set[str] = set()
+                repo, gitdir = cfg.repository(data.repo, config, file_policy=file_policy)
                 entry["repo"] = str(repo)
                 network = data.op in ops.NETWORK
-                with runner.session(repo, gitdir, network=network) as run:
+                with runner.session(repo, gitdir, network=network, repository_files=tuple(sorted(file_policy))) as run:
                     entry["head_before"] = ops.head(run)
                     _intend(entry)   # before the op changes anything
                     if network:

@@ -76,11 +76,17 @@ def _value(data: bytes, check: Callable[[], None]) -> bytes:
     return bytes(char for char, _ in value)
 
 
-def paths(data: bytes, *, check: Callable[[], None] = lambda: None) -> Iterator[bytes]:
-    """Every include path, even when its condition is inactive; no value decoding."""
+def file_entries(data: bytes, *, check: Callable[[], None] = lambda: None) -> Iterator[tuple[bytes, bytes]]:
+    """Repository includes and native tree-file paths; unrelated values stay opaque.
+
+    Include conditions are not evaluated here: even an inactive repository include
+    must remain inside the declared roots. Subsections of core/blame do not name
+    their ordinary file settings.
+    """
     if b"\x00" in data:
         raise ValueError("config contains a null byte")
     section = b""
+    plain_section = False
     for line in _lines(data.removeprefix(b"\xef\xbb\xbf"), check):
         check()
         line = line.lstrip(_SPACE)
@@ -91,15 +97,26 @@ def paths(data: bytes, *, check: Callable[[], None] = lambda: None) -> Iterator[
             if match is None:
                 raise ValueError("config section cannot be classified")
             section = match[1].split(b".", 1)[0].lower()
+            plain_section = b'"' not in match[0] and b"." not in match[1]
             line = line[match.end():].lstrip(_SPACE)
             if not line or line[0] in (35, 59):
                 continue
         match = _KEY.fullmatch(line)
         if match is None or not section:
             raise ValueError("config key cannot be classified")
-        if section not in {b"include", b"includeif"} or match[1].lower() != b"path":
+        key = section + b"." + match[1].lower()
+        include = section in {b"include", b"includeif"} and match[1].lower() == b"path"
+        native_file = plain_section and key in {b"core.excludesfile", b"core.attributesfile", b"blame.ignorerevsfile"}
+        if not include and not native_file:
             continue
         rest = match[2].lstrip(_SPACE)
         if not rest.startswith(b"="):
-            raise ValueError("config include needs a path")
-        yield _value(rest[1:].lstrip(_SPACE), check)
+            raise ValueError("config file entry needs a path")
+        yield key, _value(rest[1:].lstrip(_SPACE), check)
+
+
+def paths(data: bytes, *, check: Callable[[], None] = lambda: None) -> Iterator[bytes]:
+    """Every include path, even when its condition is inactive; no value decoding."""
+    for key, value in file_entries(data, check=check):
+        if key in {b"include.path", b"includeif.path"}:
+            yield value

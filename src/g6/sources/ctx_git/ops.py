@@ -60,8 +60,8 @@ ACTIONS: dict[str, str] = {
     INPUT: "Correct the request as the reason says.",
     CONFLICT: "Resolve the conflict yourself, or leave it; nothing was changed by the attempt.",
     READ_BACK: "git reported success but the remote does not show the pushed commit: check the remote by hand.",
-    STEERED: "The repository's own config would steer this network act: a person removes the key named (git config "
-             "--unset) or runs the command themselves.",
+    STEERED: "Git config would steer this network act: a person reviews the key named in its owning scope, "
+             "removes it, or runs the command themselves.",
     cfg.NO_ROOT: "The person who runs G6 declares the folders ctx_git may use; an agent cannot.",
     cfg.OUTSIDE_ROOT: "Use a repository, file or folder inside a declared root.",
     cfg.NOT_A_REPOSITORY: "Give the absolute path of a repository's top folder under a declared root.",
@@ -76,7 +76,7 @@ _CONFLICTS = frozenset({"DD", "AU", "UD", "UA", "DU", "AA", "UU"})
 #: The most entries each list status and changes_since return holds; the rest are counted, not listed.
 MAX_LISTED = 1000
 #: A remote's keys in the repository's own config that steer how git reaches it, or what a push sends.
-_REMOTE_STEERING = frozenset({"proxy", "uploadpack", "receivepack", "mirror"})
+_REMOTE_STEERING = frozenset({"proxy", "uploadpack", "receivepack", "mirror", "serveroption", "tagopt"})
 #: What a person who runs a command ctx_git hands them runs it under.
 UNDER = ("a person who runs this command runs it under their own git config and this repository's own (its hooks and "
          "settings included), not under ctx_git's settings")
@@ -295,7 +295,12 @@ def blame(run: Run, repo: Path, c: Call) -> Outcome:
     if not c.file:
         raise GitRefused(INPUT, "blame needs file: a file in the repository")
     path = cfg.inside(repo, c.file)
-    done = run("blame", "--line-porcelain", rev(c.rev, "rev") if c.rev else "HEAD", "--", path, cut_ok=True)
+    # The empty-file option clears revision IDs after processing earlier files;
+    # it does not prevent opening those files. Negate the string-list option
+    # first to discard configured file names before Git processes any of them.
+    # Keep the empty value in the option to survive Windows argv forwarding.
+    done = run("blame", "--no-ignore-revs-file", "--ignore-revs-file=", "--line-porcelain",
+               rev(c.rev, "rev") if c.rev else "HEAD", "--", path, cut_ok=True)
     raw = done.text.rpartition("\n")[0] if done.cut else done.text   # a cut output's last line may be partial
     lines: list[dict[str, Any]] = []
     sha, author, number, total = "", "", 0, 0
@@ -595,22 +600,27 @@ def _unsteered(run: Run, remote: str, urls: list[str], op: str) -> None:
     followed) sets a key that would steer ``op`` to ``remote``: any ``http.*`` key (a URL-scoped one outranks the
     command scope's ``http.sslVerify``), the remote's ``proxy``, ``uploadpack``, ``receivepack`` or ``mirror`` (a
     mirror turns a push into a forced one), ``fetch.bundleURI`` (another address to download from), ``push.followTags``
-    (tags pushed beside the branch), or a ``pushurl`` that is not one of the push addresses checked."""
+    (tags pushed beside the branch), push options, server options, tag options, or a
+    ``pushurl`` that is not one of the push addresses checked. Additive URL rewrites
+    in any scope are refused: an empty -c value cannot erase their earlier entries."""
     listed = run("config", "--list", "--show-scope", "--includes", "-z").text.split("\0")
     prefix = f"remote.{remote}."
     for scope, entry in zip(listed[0::2], listed[1::2]):
-        if scope not in ("local", "worktree"):
-            continue
         key, _, value = entry.partition("\n")
         lower = key.lower()
+        rewrite = lower.startswith("url.") and lower.endswith((".insteadof", ".pushinsteadof"))
+        if scope not in ("local", "worktree") and not rewrite:
+            continue
         named = key[len(prefix):].lower() if key.startswith(prefix) else ""
-        steers = (lower.startswith("http.") or named in _REMOTE_STEERING
+        steers = (rewrite or lower.startswith("http.") or named in _REMOTE_STEERING
                   or (lower == "fetch.bundleuri" and op in ("fetch", "pull"))
-                  or (op == "push" and (lower == "push.followtags" or (named == "pushurl" and value not in urls))))
+                  or (op == "push" and (lower in {"push.followtags", "push.pushoption"}
+                                        or (named == "pushurl" and value not in urls))))
         if steers:
-            raise GitRefused(STEERED, f"{op} refused: the repository's own config sets {key}, which would steer how git "
-                                      f"reaches {remote} or what it sends; ctx_git does not let a repository's config "
-                                      "do that")
+            owner = "Git config" if rewrite else "the repository's own config"
+            raise GitRefused(STEERED, f"{op} refused: {owner} sets {key}, which would steer how git "
+                                      f"reaches {remote} or what it sends; ctx_git refuses configured steering "
+                                      "for this network operation")
 
 
 def _action(op: str, target: str, urls: list[str], what: str, expected: str, monitor: str,
@@ -761,8 +771,9 @@ def clone(c: Call, out: Outward) -> Outcome:
         return Outcome(held)
     with clone_session(dest.parent) as run:
         run(*command)
-    repo, gitdir = cfg.repository(str(dest), out.config)
-    with session(repo, gitdir) as run:
+    file_policy: set[str] = set()
+    repo, gitdir = cfg.repository(str(dest), out.config, file_policy=file_policy)
+    with session(repo, gitdir, repository_files=tuple(sorted(file_policy))) as run:
         now = head(run)
     return Outcome(_sent(answer("clone", SENT, f"Cloned into {dest}; HEAD is {now[:12]} (read back).", ids=c.ids,
                                 repo=str(dest), head=now, evidence=[{"kind": "read_back", "head": now}]), gate))

@@ -36,3 +36,33 @@ def test_census_repair2_rejects_io_and_reinitialisation(text, module):
 ])
 def test_census_repair2_accepts_non_filesystem_copy_and_walk(text):
     assert not _unchecked_calls(text, "g6.code.x.probe")
+
+
+@pytest.mark.parametrize("text", [
+    'class Block(Base):\n def __init__(self):\n  super().__init__(name="x")',
+    'class Block(Base):\n def __init__(self):\n  super(Block, self).__init__(name="x")',
+    'class Block(Base):\n def __init__(self):\n  start = super().__init__\n  start(name="x")',
+])
+def test_census_accepts_plain_super_construction(text):
+    assert _unchecked_calls(text, "g6.code.example.block") == []
+
+
+@pytest.mark.parametrize("text", [
+    'super().__setattr__("roots", (p,))',
+    'from g6.code._roots import Roots\nsuper(Roots, roots).__init__((p,), "x")',
+])
+def test_census_super_init_exception_preserves_rewrite_detection(text):
+    assert _unchecked_calls(text, "g6.code.example.block")
+
+
+def test_census_accepts_local_confined_reader_forwarding_with_roots():
+    text = ('def read_bytes(path, cap, *, roots):\n pass\n'
+            'def read_text(path, cap, *, roots):\n return read_bytes(path, cap, roots=roots)')
+    assert _unchecked_calls(text, "g6.code._roots") == []
+
+
+@pytest.mark.parametrize("argument", ["", ", roots=None"])
+def test_census_rejects_local_confined_reader_forwarding_without_roots(argument):
+    text = ('def read_bytes(path, cap, *, roots):\n pass\n'
+            f'def read_text(path, cap, *, roots):\n return read_bytes(path, cap{argument})')
+    assert _unchecked_calls(text, "g6.code._roots")
