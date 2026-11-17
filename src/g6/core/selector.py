@@ -760,10 +760,11 @@ def _validate(entry: dict[str, Any], call: dict[str, Any]) -> tuple[bool, list[s
         except (ValueError, RecursionError, TypeError):
             return False, ["params_json is not JSON"]
         return _check_op(entry, params)
-    from g6.mcp.registrations import package_root
     from g6.skills import routing
 
-    root = (package_root() / routing.ROOT).read_text(encoding="utf-8")
+    # The registration recorder inspects dialogs at import time, loading components.
+    # Route validation needs only the shipped skill beside its routing contract.
+    root = routing.manifest_path().with_name("SKILL.md").read_text(encoding="utf-8")
     found = routing.section(root, call["section"]) is not None
     return found, [] if found else [f"the skill has no section {call['section']}"]
 

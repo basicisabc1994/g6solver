@@ -1,6 +1,7 @@
 # Abstraction: the separate server's tools
 
-These tools exist only where the person registered G6's second MCP server, `python -P -m g6.abstraction.server`. It is
+Only where the person registered the separate server, `python -P -m g6.abstraction.server`: its
+tools search a design space for abstractions that hold up. It is
 not part of `g6-mcp`: if your client does not list the tools below, they are absent, and `g6_describe("abstraction")`
 gives the Python API instead. The component's own skill says when an abstraction of a design space is worth
 searching for, and what its statuses mean.
@@ -26,8 +27,3 @@ names. You can set neither.
 
 The status "checked" means the gate's own checks passed on the recorded trace. It is not a claim that the
 abstraction holds on configurations nobody evaluated.
-
-## Abstraction route
-
-- **abstraction.** Only where the person registered the separate server, `python -P -m g6.abstraction.server`: its
-  tools search a design space for abstractions that hold up (`references/abstraction.md`).

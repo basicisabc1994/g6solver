@@ -23,8 +23,3 @@ g6_invoke("grounding", "coverage", {"text": "The limit is 42 units.", "sources":
 ```
 
 `sources` maps names to supplied text. These lexical checks do not establish factual truth.
-
-## Route signpost
-
-A tool named here that your server does not list is absent: say so, use `g6_find`, and do not call it again. The
-sections below are routes too: Deliver (review), Find (discover), Compose and Fit.

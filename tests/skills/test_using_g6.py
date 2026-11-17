@@ -80,7 +80,9 @@ def test_every_g6_invoke_names_a_real_op_and_only_fields_its_input_takes() -> No
 
 def test_every_component_and_op_it_names_exists() -> None:
     names = set(get_registry().names())
-    pairs = [(c, o) for c, o in re.findall(r"`([a-z_]+)\.([a-z_]+)`", BOTH)]
+    # Markdown pointers are checked by the reference-path census, not Python APIs.
+    api_text = re.sub(r"`[^`\n]+\.md`", "", BOTH)
+    pairs = [(c, o) for c, o in re.findall(r"`([a-z_]+)\.([a-z_]+)`", api_text)]
     for component, listed in re.findall(r"`([a-z_]+)` \(([^)]*)\)", BOTH):
         pairs += [(component, o) for o in re.findall(r"`([a-z_*]+)`", listed)]
     # Mapping placeholders and the host permission namespace are not components.
@@ -183,10 +185,11 @@ def _route_section(route: str) -> str:
 
     found = routing.section(TEXT, routing.load().routes[route].anchor)
     assert found is not None, route
-    # Include the instruction moved out of the old root, rather than checking only the new link line.
-    heading = {"review": "## Deliver a coding task with G6", "discover": "## Find",
-               "compose": "## Compose", "fit": "## Fit"}.get(route, f"## {route.capitalize()} route")
-    return " ".join(found.split()) + " " + _section(heading)
+    # Read exactly the detail the route sends an agent to, without requiring a
+    # duplicate "X route" heading or a self-pointer just for this census.
+    detail = [DETAILS[target] for target in re.findall(r"\]\((references/[^)]+)\)", found)]
+    assert detail, route
+    return " ".join("\n".join([found, *detail]).split())
 
 
 def test_one_question_is_the_default_and_three_is_gone() -> None:

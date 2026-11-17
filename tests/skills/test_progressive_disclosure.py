@@ -19,7 +19,15 @@ LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 
 
 def _normal(text: str) -> str:
-    return " ".join(text.split())
+    # Navigation is checked by the link census, separately from instructions.
+    text = re.sub(r"^#{1,6} .*?$", "", text, flags=re.M)
+    text = re.sub(r"\*\*[a-z]+\.\*\*\s*", "", text)
+    text = re.sub(r"\s*\(`(?:references/)?[^`]+\.md`\)", "", text)
+    text = re.sub(r"Other tools: `[^`]+\.md`\.", "", text)
+    text = re.sub(r"`references/([^`]+\.md)`", r"`\1`", text)
+    text = " ".join(text.split())
+    # This signpost described the old monolithic headings, not agent instructions.
+    return re.sub(r"The sections below are routes too: [^.]+\.", "", text).strip()
 
 
 def _units(text: str) -> list[str]:
@@ -31,7 +39,7 @@ def _units(text: str) -> list[str]:
             units.append(_normal(block))
             continue
         for paragraph in re.split(r"\n\s*\n", block):
-            lines = [re.sub(r"^(?:#{1,6} |\s*(?:[-*+] |\d+\. ))", "", line)
+            lines = [re.sub(r"^\s*(?:[-*+] |\d+\. )", "", line)
                      for line in paragraph.splitlines()]
             prose = _normal("\n".join(lines))
             units.extend(s for s in re.split(r"(?<=[.!?])\s+", prose) if s)
@@ -90,5 +98,7 @@ def test_every_reference_is_directly_reachable_and_each_route_links_its_detail()
 
 @pytest.mark.parametrize("path", sorted((GUIDE / "references").glob("*.md")), ids=lambda p: p.name)
 def test_links_in_detail_also_resolve(path):
-    for target in LINK.findall(path.read_text(encoding="utf-8")):
+    text = path.read_text(encoding="utf-8")
+    targets = LINK.findall(text) + re.findall(r"`([^`\n]+\.md(?:#[^`\n]+)?)`", text)
+    for target in targets:
         assert (path.parent / target.split("#", 1)[0]).is_file(), (path.name, target)
