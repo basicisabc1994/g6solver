@@ -76,6 +76,8 @@ def _admit(rows: list, origin: str) -> tuple[list[dict], list[dict]]:
 
 
 def propose_hypotheses(task: str, intent: dict | None, hypotheses: list | None, propose: str | bool) -> dict:
+    if isinstance(propose, str) and propose in ("true", "false"):
+        propose = propose == "true"
     if propose != "auto" and type(propose) is not bool:
         raise ValueError("propose must be auto, true or false")
     if hypotheses is not None and (not isinstance(hypotheses, list) or len(hypotheses) > MAX_HYPOTHESES):
@@ -94,7 +96,7 @@ def propose_hypotheses(task: str, intent: dict | None, hypotheses: list | None, 
         + json.dumps(vocabulary, sort_keys=True)
         + '. Alternatively check may be a proposed_checks entry matching this schema: '
         + json.dumps(search.ProposedCheck.model_json_schema(), sort_keys=True),
-        enabled=propose is not False, disabled_reason="not requested (propose=false)")
+        enabled=propose is not False, disabled_reason="not requested (propose=false)", auto=propose == "auto")
     if proposal is not None:
         rows = proposal.get("hypotheses")
         if not isinstance(rows, list) or len(rows) > MAX_HYPOTHESES:
