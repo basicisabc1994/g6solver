@@ -2,19 +2,19 @@
   "format": "g6.routing/1",
   "release": "0.3.0",
   "routes": {
-    "abstraction": {"anchor": "**abstraction.**", "detail": ["skills/using-g6/references/abstraction.md", "abstraction/skill/SKILL.md"]},
+    "abstraction": {"anchor": "**abstraction.**", "detail": ["skills/using-g6/references/abstraction.md"]},
     "compose": {"anchor": "**compose.**", "detail": ["skills/using-g6/references/compose.md"]},
     "consent": {"anchor": "**consent.**", "detail": ["skills/using-g6/references/consent.md"]},
     "context": {"anchor": "**context.**", "detail": ["skills/using-g6/references/context.md"]},
     "discover": {"anchor": "**discover.**", "detail": ["skills/using-g6/references/find.md", "skills/using-g6/references/override.md"]},
-    "fit": {"anchor": "**fit.**", "detail": ["skills/using-g6/references/fit.md", "metaharness/skill/SKILL.md"]},
+    "fit": {"anchor": "**fit.**", "detail": ["skills/using-g6/references/fit.md"]},
     "improve": {"anchor": "**improve.**", "detail": ["skills/using-g6/references/improve.md"]},
-    "mission": {"anchor": "**mission.**", "detail": ["skills/using-g6/references/lifecycle.md"]},
+    "mission": {"anchor": "**mission.**", "detail": ["skills/using-g6/references/mission.md"]},
     "question": {"anchor": "**question.**", "detail": ["skills/using-g6/references/question.md"]},
     "review": {"anchor": "**review.**", "detail": ["skills/using-g6/references/deliver.md", "skills/using-g6/references/lifecycle.md", "skills/using-g6/references/templates.md"]},
     "rules": {"anchor": "**rules.**", "detail": ["skills/using-g6/references/rules.md"]},
     "select": {"anchor": "**select.**", "detail": ["skills/using-g6/references/find.md"]},
-    "workflow": {"anchor": "**workflow.**", "detail": ["skills/using-g6/references/workflow.md", "harness/workflow/skill/SKILL.md"]}
+    "workflow": {"anchor": "**workflow.**", "detail": ["skills/using-g6/references/workflow.md"]}
   },
   "entries": {
     "mcp:abstraction/advise_pruning": {"agent_facing": true, "route": "abstraction", "since": "0.1.0"},

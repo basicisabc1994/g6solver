@@ -20,7 +20,7 @@ When a G6 reply carries `repair`, follow its step; if `by` is person, tell the p
 
 - **select.** Unsure which step fits or repairing a refused call: `g6_select`; [read selection and repair steps](references/find.md).
 - **question.** Task leaves behaviour undecided: `g6_confirm_behaviour`; [read before asking](references/question.md).
-- **mission.** Freeze a person-confirmed standard: `g6_premortem`, `g6_mission_*`; [read the lifecycle and mission steps](references/lifecycle.md).
+- **mission.** Freeze a person-confirmed standard: `g6_premortem`, `g6_mission_*`; [read the mission steps](references/mission.md).
 - **consent.** Sharing or withdrawing sources: `g6_cloud_grant`, `g6_cloud_revoke`, `g6_cloud_grants`, `g6_disclosures`; [read the consent rules](references/consent.md).
 - **context.** Index or cite the person's documents: `g6_knowledge_add`, `g6_knowledge_search`, `g6_knowledge_context`; [read context admission and replies](references/context.md).
 - **improve.** Self-improvement on a folder: `g6_improve_enrol`, `g6_improve_start`, `g6_improve_resume`, `g6_improve_demote`, `g6_improve_status`, `g6_improve_stop`; [read before enrolling or running](references/improve.md).
@@ -34,9 +34,9 @@ When a G6 reply carries `repair`, follow its step; if `by` is person, tell the p
 
 ## Read and ask
 
+If host permission is missing, tell the person and stop; never change permissions yourself.
 Never call a patch `verified`, and never merge for the person.
 Only the person answers; you never answer for them. Never grant for the person.
-If host permission is missing, tell the person and stop; never change permissions yourself.
 Never write workflow record files or answer their dialogs for the person.
 
 Preserve `verified`, `qualified-draft` and `blocked-escalated` exactly as returned; `verified` covers only the named

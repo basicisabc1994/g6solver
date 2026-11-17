@@ -17,8 +17,10 @@ GUIDE = Path(__file__).resolve().parents[2] / "src/g6/skills/using-g6"
 BASELINE = Path(__file__).with_name("fixtures") / "using_g6_wiring_int.md"
 LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 AUTHORITY = re.compile(
-    r"never|do not|only the person|only where|person.*(?:decid|registered|confirm|agrees)|"
-    r"consent|grant|dialog|approv|accept", re.I)
+    r"\b(?:never|do not|no|not|only|must|without|outside|authorization|consent|grant\w*|"
+    r"dialog|approv\w*|accept\w*|confirm\w*|decid\w*|agrees|permission\w*|withheld|"
+    r"untrusted|pending|exploration|verified|qualified-draft|blocked-escalated|scope|"
+    r"refus\w*|stale|missing|hypothesis|limitations)\b", re.I)
 TASKS = [
     ("write numbered requirements, acceptance tests and template instances for a hidden constraint", "verify",
      {"route:review"}),
@@ -40,18 +42,26 @@ def _instructions(text: str) -> str:
 
 
 def _sentences(text: str) -> list[str]:
-    text = re.sub(r"^\s*(?:#{1,6} |[-*+] |\d+\. )", "", text, flags=re.M)
+    if text.startswith("---"):
+        text = text.split("---", 2)[2]
+    text = re.sub(r"^#{1,6} .*?$", "", text, flags=re.M)
+    text = re.sub(r"^```[^\n]*$", "", text, flags=re.M)
+    text = re.sub(r"^\s*(?:[-*+] |\d+\. )", "", text, flags=re.M)
     text = re.sub(r"\*\*[\w ]+\.\*\*\s*", "", text)
-    return [s for s in re.split(r"(?<=[.!?])\s+", _normal(_instructions(text))) if s]
+    text = _instructions(text).replace("`", "").replace("**", "")
+    sentences = []
+    for paragraph in re.split(r"\n\s*\n", text):
+        sentences.extend(s for s in re.split(r"(?<=[.!?])\s+", _normal(paragraph)) if s)
+    return sentences
 
 
 @pytest.mark.parametrize("route_id", sorted(routing.load().routes))
 def test_each_route_reaches_its_original_safety_and_authority_sentences(route_id):
     """Moving a tool's authority rules into an unrelated route must fail this check.
 
-    Derive obligations from the original section and paragraphs led by this route's
-    owned tools. The latter includes the question tool's hidden-constraints paragraph
-    in Deliver; no list of safety sentences is maintained by hand.
+    Derive obligations from the WHOLE fixture: its shared preamble and Read and ask
+    bind every route; its own section and paragraphs led by owned tools bind that
+    route. Compare complete sentences after whitespace and markup normalization.
     """
     original = BASELINE.read_text(encoding="utf-8")
     route = routing.load().routes[route_id]
@@ -66,14 +76,29 @@ def test_each_route_reaches_its_original_safety_and_authority_sentences(route_id
         first_tool = re.search(r"\b(?:g6_|metaharness_)[a-z_]+", paragraph)
         if first_tool and first_tool.group() in tools:
             paragraphs.append(paragraph)
-    required = {s for text in [section, *paragraphs] for s in _sentences(text) if AUTHORITY.search(s)}
+    shared = [original.split("- **select.**", 1)[0], routing.section(original, "## Read and ask")]
+    assert all(shared)
+    required = {s for text in [*shared, section, *paragraphs] for s in _sentences(text) if AUTHORITY.search(s)}
     root = (GUIDE / "SKILL.md").read_text(encoding="utf-8")
     line = routing.section(root, route.anchor)
     assert line, route_id
     reachable = [root, *((GUIDE / target).read_text(encoding="utf-8") for target in LINK.findall(line))]
-    available = [_normal(_instructions(re.sub(r"\*\*[\w ]+\.\*\*\s*", "", text))) for text in reachable]
-    missing = sorted(s for s in required if not any(s in text for text in available))
+    available = {s for text in reachable for s in _sentences(text)}
+    missing = sorted(required - available)
     assert not missing, f"{route_id} cannot reach original authority rules: {missing}"
+    qualified = sorted((s, candidate) for s in required for candidate in available
+                       if candidate != s and re.match(re.escape(s.rstrip('.!?')) + r"\b", candidate))
+    # An intact duplicate cannot hide a newly appended conditional exception,
+    # even across a paragraph break or with a different verb. Original following
+    # sentences are allowed exactly as written; no exception wording is hand-kept.
+    original_sentences = set(_sentences(original))
+    for text in reachable:
+        sentences = _sentences(text)
+        qualified.extend((rule, following) for rule, following in zip(sentences, sentences[1:])
+                         if rule in required
+                         and re.match(r"(?:If|Unless|Except|But|However|Otherwise|When|Although)\b", following)
+                         and following not in original_sentences)
+    assert not qualified, f"{route_id} qualifies original authority rules: {qualified}"
 
 
 @pytest.mark.parametrize("route_id", sorted(routing.load().routes))
@@ -91,7 +116,7 @@ def test_route_corpus_includes_its_root_entry_and_every_declared_detail(route_id
 def test_every_explicit_repair_step_keeps_the_roots_repair_owner_rule(detail):
     """A repair step must retain the root's complete rule, including the person-owned stop."""
     root = (GUIDE / "SKILL.md").read_text(encoding="utf-8")
-    rules = [sentence for sentence in _sentences(root.split("## Routes", 1)[0]) if "`repair`" in sentence]
+    rules = [sentence for sentence in _sentences(root.split("## Routes", 1)[0]) if "reply carries repair" in sentence]
     assert rules
     step = re.search(r"\d+\. \*\*Repair\.\*\*\s*(.*?)(?=\n\d+\. |\Z)",
                      detail.read_text(encoding="utf-8"), re.S)

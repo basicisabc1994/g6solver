@@ -6,6 +6,9 @@ Declare a data-only application (task, labelled cases, frozen checks, baseline P
 `metaharness_decide`, present the client's approval prompt (`metaharness_approve`), and `metaharness_run` the approved
 version. `g6_describe("metaharness")` has the rest, `metaharness_inspect` among them.
 
+For a server-loaded workflow, `metaharness_propose` proposes profiles and `metaharness_evaluate` measures a
+candidate synchronously. `metaharness_rollback` asks the person to restore a version they approved.
+
 Below 30 held-out cases is exploration only.
 Generated-code activation also requires a host-configured safety/injection evaluator. Never invent its observations.
 Client-mediated consent may occur in the proposing session; the recorded name is not authenticated.

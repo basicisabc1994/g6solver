@@ -6,6 +6,8 @@
 
 ## Find
 
+A tool named here that your server does not list is absent: say so, use `g6_find`, and do not call it again.
+
 Read `g6_allowances` before optional fan-out, and declare useful independent work honestly. Its advice is pacing
 only: stale or missing data never justifies more use.
 
