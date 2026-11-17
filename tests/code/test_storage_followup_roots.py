@@ -87,8 +87,8 @@ PLAIN_IO = {
     ("g6.code._roots", "_files", "entry.is_file"): "Walk classification after link exclusion.",
     ("g6.code._roots", "_walk_open_identity", "os.open"): "Descriptor-relative no-follow identity fallback.",
     ("g6.code._roots", "_walk_open_identity", "os.stat"): "Descriptor-relative stat with follow_symlinks=False.",
-    ("g6.code._roots", "read_text", "os.open"): "No-follow nonblocking opener used by the confined reader.",
-    ("g6.code._roots", "read_text", "open"): "The capped, identity-checked content reader itself.",
+    ("g6.code._roots", "read_bytes", "os.open"): "No-follow nonblocking opener used by the confined reader.",
+    ("g6.code._roots", "read_bytes", "open"): "The capped, identity-checked content reader itself.",
     ("g6.code._build", "write_files", "output.open"): "Exclusive write after retained parent identity checks.",
     ("g6.code._build", "write_files", "output.read_bytes"): "Read back bytes this writer just created.",
     ("g6.code.component_creator.render", "write", "target.exists"): "Writer overwrite refusal; exclusive open below.",
@@ -122,18 +122,25 @@ PLAIN_IO = {
 
 def test_read_requires_declared_roots():
     assert inspect.signature(_roots.read_text).parameters["roots"].default is inspect.Parameter.empty
+    assert inspect.signature(_roots.read_bytes).parameters["roots"].default is inspect.Parameter.empty
 
 
 def _unchecked_calls(text, module):
     """Flag unchecked roots, recaptures, plain content I/O and following metadata queries."""
     missing = []
-    targets = {"g6.code._roots.read_text": 3, "g6.core.storage.confined_path": 2,
+    targets = {"g6.code._roots.read_text": 3, "g6.code._roots.read_bytes": 3, "g6.core.storage.confined_path": 2,
                "g6.code._roots.Roots": 0, "g6.code._roots.for_folder": 0, "g6.code._roots.path_info": 2,
                "g6.code._roots.walk": 2}
     io_methods = {"read_text", "read_bytes", "open", "exists", "is_file", "is_dir", "stat",
                   "isfile", "isdir", "getsize", "realpath", "resolve", "access", "samefile",
                   "iterdir", "scandir", "listdir", "glob", "rglob", "walk", "fwalk", "iglob",
-                  "getmtime", "ismount", "is_mount", "owner", "copyfile", "copy", "copy2", "copytree"}
+                  "getmtime", "getctime", "ismount", "is_mount", "owner"}
+    module_io = {"os.walk", "os.fwalk", "glob.iglob", "shutil.copyfile", "shutil.copy", "shutil.copy2",
+                 "shutil.copytree", "shutil.move", "shutil.make_archive", "shutil.rmtree",
+                 "filecmp.cmp", "filecmp.dircmp"}
+    # copy and walk also name ordinary collection/visitor methods. Keep module
+    # operations qualified; infer Path receivers from construction or annotations.
+    io_methods -= {"walk", "fwalk", "iglob"}
     recaptures = {"dataclasses.replace", "__roots_class__", "object.__setattr__", "builtins.setattr", "setattr"}
     tree = ast.parse(text)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
@@ -174,6 +181,8 @@ def _unchecked_calls(text, module):
             return "__roots_dict__"
         if isinstance(node, ast.Call) and qualified(node.func) in {"type", "builtins.type"}:
             return "__roots_class__"
+        if isinstance(node, ast.Call) and qualified(node.func) in {"super", "builtins.super"}:
+            return "__roots_super__"
         if (isinstance(node, ast.Call) and qualified(node.func) == "importlib.import_module"
                 and node.args and isinstance(node.args[0], ast.Constant)
                 and isinstance(node.args[0].value, str)):
@@ -191,6 +200,8 @@ def _unchecked_calls(text, module):
             name = qualified(value)
             if (name in targets or name in recaptures or name == "__roots_dict__"
                     or name.startswith("__roots_dict__.") or name.endswith((".__class__", ".__new__"))
+                    or name in module_io or name in {"operator.setitem", "dict.__setitem__"}
+                    or name.endswith((".__init__", ".__setattr__", ".walk"))
                     or name.rpartition(".")[2] in io_methods) and aliases.get(target) != name:
                 aliases[target] = name
                 changed = True
@@ -210,6 +221,16 @@ def _unchecked_calls(text, module):
             owner = parents.get(owner)
         return module, owner.name if owner else ""
 
+    path_names = {node.arg for node in ast.walk(tree) if isinstance(node, ast.arg)
+                  and node.annotation is not None and qualified(node.annotation) == "pathlib.Path"}
+
+    def path_receiver(node):
+        if isinstance(node, ast.Name) and node.id in path_names:
+            return True
+        node = bound(node)
+        return (isinstance(node, ast.Call) and qualified(node.func) == "pathlib.Path"
+                or qualified(node) == "pathlib.Path")
+
     for node in ast.walk(tree):
         scoped = module.startswith(("g6.code.", "g6.sources.ctx_git."))
         if (scoped and isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del))
@@ -222,20 +243,29 @@ def _unchecked_calls(text, module):
             name, args = qualified(args[0]), args[1:]
         if scoped:
             method = name.rpartition(".")[2]
-            # ast.walk and local recursive walk functions visit syntax trees, not folders.
-            plain = (method in io_methods and name not in targets and name != "ast.walk"
-                     and not (method == "walk" and "." not in name))
+            receiver = bound(node.func)
+            # Unknown p.walk remains conservative for legacy unannotated Path callers;
+            # self.walk and cls.walk are visitors. Typed/constructed Path receivers are explicit.
+            path_walk = (method == "walk" and isinstance(receiver, ast.Attribute)
+                         and (path_receiver(receiver.value)
+                              or qualified(receiver.value) in {"p", "path", "folder"}))
+            plain = (name not in targets and (name in module_io or path_walk or method in io_methods))
             if plain and (*owner_of(node), ast.unparse(node.func)) not in PLAIN_IO:
                 missing.append(node.lineno)
             rebuilt = (name == "dataclasses.replace" and (any(k.arg == "roots" for k in node.keywords)
                        or args and isinstance(args[0], ast.Name) and "roots" in args[0].id)
                        or name == "__roots_class__" or name.endswith(".__class__")
-                       or name == "g6.code._roots.Roots.__new__"
+                       or name in {"g6.code._roots.Roots.__new__", "g6.code._roots.Roots.__init__"}
                        or isinstance(node.func, ast.Call) and qualified(node.func.func) in {"type", "builtins.type"})
             mutated = (name in {"object.__setattr__", "builtins.setattr", "setattr"}
                        and len(args) >= 2 and (not isinstance(bound(args[1]), ast.Constant)
                        or bound(args[1]).value in {"roots", "identities", "unavailable"})
-                       or name.startswith("__roots_dict__."))
+                       or name.startswith("__roots_dict__.")
+                       or name == "__roots_super__.__setattr__"
+                       or name.endswith(".__init__") and isinstance(node.func, ast.Attribute)
+                       and "roots" in qualified(bound(node.func.value)).lower()
+                       or name in {"operator.setitem", "dict.__setitem__"} and args
+                       and qualified(args[0]) == "__roots_dict__")
             if rebuilt or mutated and (*owner_of(node), ast.unparse(node.func)) not in PLAIN_IO:
                 missing.append(node.lineno)
         if name not in targets:

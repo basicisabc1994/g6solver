@@ -17,8 +17,9 @@ refuses it unless it is at or under a root and is the top folder of a working co
 inside a root, and so does every other folder git would read or write for it: the common git folder a ``commondir``
 file names (a worktree's refs and objects live there), the ``objects`` and ``refs`` folders, and every entry of
 ``objects/info/alternates``, followed through each alternate's own list (git borrows objects from those), and the
-repository and worktree configs' nested include paths. Reads and traversal share line and time budgets. This is
-checked before any git command runs. :func:`inside` does the same for every file an op names in the repository, and
+repository and worktree configs' nested include paths. Configs have byte and time budgets; alternates also have
+line budgets. This is checked before any git command runs. :func:`inside` does the same for every file an op names
+in the repository, and
 refuses the ``.git`` folder itself.
 :func:`remote_problem` says why a remote's address may not be reached (only https and ssh, only a declared host, no
 password in the address, and the host must resolve to public addresses only); ``""`` when it may.
@@ -213,6 +214,23 @@ def _metadata_text(path: Path, name: str, roots: _roots.Roots) -> str:
         raise _metadata_refusal(exc, name) from None
 
 
+def _metadata_bytes(path: Path, name: str, roots: _roots.Roots) -> bytes:
+    """Config syntax must see the original bytes, with a 1 MiB confined read cap."""
+    try:
+        _roots.path_info(path, roots=roots)
+        return _roots.read_bytes(path, CONFIG_MAX_BYTES, roots=roots)
+    except (CodeRefused, OSError, ValueError, MemoryError) as exc:
+        raise _metadata_refusal(exc, name) from None
+
+
+def _include_path(entry: bytes) -> str:
+    # Git for Windows interprets path bytes as UTF-8. POSIX uses the filesystem
+    # encoding; do not let surrogateescape authorise an undecodable include.
+    import sys
+
+    return entry.decode("utf-8" if os.name == "nt" else sys.getfilesystemencoding(), "strict")
+
+
 def _metadata_target(path: Path, name: str, roots: _roots.Roots) -> Path:
     # The no-follow walk precedes even confined_path's preliminary name resolution.
     _metadata_info(path, name, roots)
@@ -275,7 +293,7 @@ def repository(raw: str, config: GitConfig) -> tuple[Path, Path]:
     gitdir = _metadata_target(dotgit, ".git", roots)
     if stat.S_ISREG(dotgit_info.st_mode):
         admission.check()
-        line = admission.account(_metadata_text(dotgit, ".git", roots)).strip()
+        line = _metadata_text(dotgit, ".git", roots).strip()
         if not line.startswith("gitdir:"):
             raise GitRefused(NOT_A_REPOSITORY, f"{name}/.git is a file that names no git folder")
         gitdir = _metadata_entry(line.partition(":")[2].strip(), real, ".git", roots)
@@ -309,7 +327,7 @@ def _common(gitdir: Path, roots: _roots.Roots, admission: _Admission | None = No
         return gitdir
     text = _metadata_text(named, "commondir", roots) if stat.S_ISREG(info.st_mode) else ""
     if admission is not None:
-        admission.account(text)
+        admission.check()
     text = text.rstrip("\r\n")
     if not text.strip():
         raise GitRefused(NOT_A_REPOSITORY, "commondir is not a file naming a git folder")
@@ -337,9 +355,10 @@ def _includes(path: Path, roots: _roots.Roots, admission: _Admission, depth: int
         return
     admission.active_configs.add(path)
     try:
-        text = admission.account(_metadata_text(path, "repository config", roots))
-        for entry in _config_includes.paths(text):
+        data = _metadata_bytes(path, "repository config", roots)
+        for raw_entry in _config_includes.paths(data, check=admission.check):
             admission.check()
+            entry = _include_path(raw_entry)
             if entry.startswith("~"):
                 # Git uses HOME. Without a bound home spelling, do not guess another user's expansion.
                 home = os.environ.get("HOME", "")
