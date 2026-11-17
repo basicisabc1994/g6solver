@@ -72,9 +72,9 @@ _PERSON = "Only the person answers, in the client's own dialog."
 #: is not registered, stops ``build``.
 TOOL_DATA: dict[str, dict[str, Any]] = {
     "g6_select": _tool(
-        "what to do next, which G6 step fits now, after a refusal or when stuck",
+        "what to do next, which G6 step fits now, rerank auto (model when configured), model or lexical",
         "a short ranked list of checked next calls with their templates, and a reroute after a refusal",
-        "nothing ran; the ranking is fixed rules over G6's own text, a proposal for you to choose from",
+        "no candidate ran; lexical rules and optional guarded model reranking over built-in text, advice only",
         PHASES),
     "g6_help": _tool(
         "how to use G6 from an agent; start here",
@@ -123,8 +123,8 @@ TOOL_DATA: dict[str, dict[str, Any]] = {
         ("verify", "stuck"), "high", hypotheses=_REVIEW[:3], sensitive="patch_review.review",
         model="required", confined=True, outside=("git",)),
     "g6_premortem": _tool(
-        "before the work: what done would mean, how the task can fail, open questions, ambiguous requirements",
-        "an intent contract, a proposed standard of done and competing failure hypotheses, with no model call",
+        "before the work: hypotheses {claim, predicts, check}; propose auto, true or false; open questions",
+        "an intent contract, a proposed standard and checkable agent/model hypotheses; model sees task and intent only",
         "a proposal: nothing is frozen, confirmed or checked", ("plan", "stuck", "diagnose")),
     "g6_confirm_behaviour": _tool(
         "the task does not decide a behaviour: ask the person one question about the unclear, ambiguous case",

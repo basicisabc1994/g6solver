@@ -14,13 +14,13 @@ A tool named here that your server does not list is absent: say so, use `g6_find
 sections below are routes too: Deliver (review), Find (discover), Compose and Fit.
 
 - **select.** Not sure which G6 step fits, or a call was refused? `g6_select` with the task, your phase and the
-  refusal returns checked calls with templates; nothing runs. When a G6 reply carries `repair`, follow its step; if
+  refusal returns checked calls; `rerank=auto` uses guarded model advice when configured. When a reply carries `repair`, follow its step; if
   `by` is person, tell the person and stop.
 - **question.** Where the task may not decide a behaviour, `g6_confirm_behaviour` asks the person in the client's own
   dialog: one question per task by default, and the person may allow more or set none. Only the person answers; you
   never answer for them.
 - **mission.** A standard of done, fixed before the work and confirmed by the person: `g6_premortem`, then the
-  `g6_mission_*` tools (`references/lifecycle.md`).
+  `g6_mission_*` tools; premortem takes `hypotheses` with checks and `propose=auto|true|false` (`references/lifecycle.md`).
 - **consent.** Nothing of the person's reaches a cloud model without their grant; without one, results are withheld
   and local work goes on. `g6_cloud_grant` asks them in the client's dialog; `g6_cloud_revoke`, `g6_cloud_grants`
   and `g6_disclosures` withdraw, list and read what was attempted. Never grant for the person.
