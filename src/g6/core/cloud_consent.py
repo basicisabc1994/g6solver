@@ -184,6 +184,7 @@ class Capture:
     refused_provider: str = ''
     model_calls: list[dict] = field(default_factory=list)
     parent: Capture | None = field(default=None, repr=False, compare=False)
+    live: bool = field(default=True, repr=False, compare=False)
 
 
 def record_sources(sources: Sequence[Source]) -> None:
@@ -203,11 +204,11 @@ def current_capture() -> Capture | None:
 
 
 def calling_capture() -> Capture | None:
-    """Find the nearest request owning a client, without copying its authority."""
+    """Only a running request (or an owned job's running snapshot) supplies client authority."""
     capture = _CAPTURE.get()
     while capture is not None and capture.client is None:
         capture = capture.parent
-    return capture
+    return capture if capture is not None and capture.live else None
 
 
 def boundary_sources(declared: Sequence[Source] = (), *, carried: Sequence[Source] = (),
@@ -413,6 +414,7 @@ def collect_sources() -> Iterator[Capture]:
     try:
         yield capture
     finally:
+        capture.live = False  # copied contexts share the expiry marker, never extend this request/job
         _CAPTURE.reset(token)
         if parent is not None:
             record_sources(capture.sources)
@@ -432,6 +434,19 @@ def admitted(provider: str) -> bool:
     sends only there."""
     hold = _HELD.get()
     return hold is not None and hold.here() and hold.send[0] == provider
+
+
+def recheck_model_authority() -> None:
+    """Re-read the live basis of an enclosing admission immediately before a model handoff.
+
+    Preparation and model-count observers may end a request or change its inputs.
+    A held send serialises revocation, but cannot keep an ended request's exemption.
+    Raw Python backends without a consent admission borrow no calling-client basis.
+    """
+    hold = _HELD.get()
+    if hold is not None and hold.here():
+        with _locked() as ledger:
+            _refuse_unshared(_decisions(ledger), hold.send[0], hold.send[1], ())
 
 
 def ledger_path() -> Path:

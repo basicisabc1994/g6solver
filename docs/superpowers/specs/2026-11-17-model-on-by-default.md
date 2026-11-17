@@ -125,3 +125,33 @@ Additional tests cover retained reply/transport refusal followed by an explicit
 grant, a live request owner's changed identity, environment-auto opt-out protection,
 and selection evidence from owned-host admission. Their execution remains pending
 the lead's run: the builder stopped pytest after the temporary-directory denial.
+
+## Repair 2: live authority at each send
+
+`core.llm._check_model_send` is the shared final gate. It re-reads the key-file
+opt-out, uses `model_calls_disabled` for either kill-switch source, and rechecks
+the enclosing consent admission's live authority. Every HTTP attempt (including
+Retry-After resends), SDK handoff/resource call, native host completion, watched
+host completion/session, scout launch and coding-agent session reaches it.
+Selection and preparation checks remain early refusals; they cannot replace the
+final gate. Model-count observers run before the final recheck.
+
+Each capture now expires when its owning scope exits. A copied context shares
+that expiry marker. An anonymous collector cannot revive its ended parent.
+`Jobs` already snapshots client identity, supplied inputs and workspace scopes
+into a separate running capture; that snapshot expires when the job ends and is
+still subject to the current opt-out. Grants keep their existing meaning and
+negative decisions still win. The K-loop critic retains its guarded construction
+and passes the same gate as every other host caller.
+
+The physical-handoff census in `tests/core/test_model_default_send_gate.py`
+discovers HTTP, SDK, host launcher and prompt-process sites across the source
+tree. New sites require a reviewed route; each route must reach the common gate,
+on every structural path to its handoff. A separate mutation control challenges
+aliased new launches and a gate placed on only one branch.
+
+Additional bound hunks are confined to `llm.py` (common gate, count-observer
+recheck, HTTP attempts, SDK handoff), `host_models.py` (after command/environment
+preparation), `consent_callers.py` (early checks and direct SDK resources), and
+`cloud_consent.py` (capture expiry and admission-basis recheck). No certificate,
+issuance hash or certificate manifest changes belong to this repair.

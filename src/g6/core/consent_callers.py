@@ -218,6 +218,7 @@ def sdk_send(client, body):
     The live token belongs to this SDK client, recipient and synchronous thread.
     A copied context cannot retain permission after the enclosing call ends.
     """
+    llm._check_model_send()
     to = destination(llm.AnthropicCaller(client=client))  # recipient inspection; no model is called
     call = _SDK_CALL.get()
     counted = call is not None and call.active and call.thread == threading.get_ident()
@@ -336,8 +337,7 @@ def host_admission(caller: object, system: str, user: str) -> dict:
     """The terms of the sharing check of one owned host launch (``usage._complete_host``), for
     ``cloud_consent.admission``: its recipient (a host no rule here recognises is ``cloud:unknown``, which no grant
     covers), the model inputs, and the request's digest."""
-    if llm.model_calls_disabled():
-        raise llm.LLMError('G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM')
+    llm._check_model_send()
     to = destination(caller)
     return {'provider': to.provider, 'sources': model_sources(),
             'payload_sha256': digest({'system': system, 'user': user}), 'local': to.local,
@@ -424,8 +424,7 @@ class _Consent:
             raise llm.LLMError('G6_E_CLOUD_CALLER_UNSUPPORTED: guarded completion methods cannot be overridden')
 
     def complete(self, system: str, user: str, *, max_tokens: int = llm.DEFAULT_MAX_TOKENS) -> str:
-        if llm.model_calls_disabled():
-            raise llm.LLMError('G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM')
+        llm._check_model_send()
         backend = self if self._guards is None else self._guards
         to = destination(backend)
         with (admission(to.provider, model_sources(), digest({'system': system, 'user': user}), local=to.local),
@@ -438,8 +437,7 @@ class _Consent:
             return (super() if backend is self else backend).complete(system, user, max_tokens=max_tokens)
 
     def complete_with_images(self, system, user, images, *, max_tokens=llm.DEFAULT_MAX_TOKENS):
-        if llm.model_calls_disabled():
-            raise llm.LLMError('G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM')
+        llm._check_model_send()
         backend = self if self._guards is None else self._guards
         to = destination(backend)
         hashes = [sha256(image.data) for image in images]

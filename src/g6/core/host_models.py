@@ -276,7 +276,10 @@ class _HostCaller:
         where = self.locate()
         with _folders() as (work, files):
             argv, stdin = self._command(where, system, user, work, files)
-            code, printed, errors = _run(argv, stdin, work, files, _environment(self.keep_env, files / "tmp"),
+            env = _environment(self.keep_env, files / "tmp")
+            from g6.core.llm import _check_model_send
+            _check_model_send()
+            code, printed, errors = _run(argv, stdin, work, files, env,
                                          self.timeout, self.program.name)
             return self._reply(code, printed, errors, files, (system, user, stdin))
 

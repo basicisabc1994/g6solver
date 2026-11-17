@@ -208,12 +208,23 @@ def model_calls_disabled(env: Mapping[str, str] | None = None, *, filed: Mapping
                 or (env is not None and env.get("G6_DISABLE_LLM")))
 
 
-def _start_model_call() -> None:
-    if model_calls_disabled():
+def _check_model_send() -> None:
+    """The common final gate for every model transport, including retries and SDK resources."""
+    filed = key_file.read()
+    if model_calls_disabled(filed=filed):
         raise LLMError("G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM")
+    if (filed.get("G6_LLM_PROVIDER") or "").strip().lower() == "none":
+        raise LLMError("G6_E_NO_MODEL: model calls are disabled by key-file G6_LLM_PROVIDER=none")
+    from g6.core.cloud_consent import recheck_model_authority
+    recheck_model_authority()
+
+
+def _start_model_call() -> None:
+    _check_model_send()
     # counted before the request: a failed request may still have reached the model. The send's boundary is the caller
     # of this function, which hands the request to its backend.
     note_model_call(boundary=1)
+    _check_model_send()  # observers run before handoff and may change settings or authority
 
 
 def authorized_completion_tokens(max_tokens: int) -> int:
@@ -421,6 +432,7 @@ def _post_json(url: str, body: dict, headers: dict[str, str], timeout: float) ->
                                      headers={"content-type": "application/json", **headers})
         deadline = time.monotonic() + timeout
         try:
+            _check_model_send()
             with opener.open(req, timeout=timeout) as resp:  # caller-chosen endpoint; no redirect followed
                 return json.loads(_read_capped(resp, url, MAX_REPLY_BYTES, deadline, timeout).decode("utf-8"))
         except urllib.error.HTTPError as exc:
@@ -580,6 +592,7 @@ class AnthropicCaller:
         client = self._get_client()
         kwargs = dict(model=self.model, max_tokens=max_tokens, system=system,
                       messages=[{"role": "user", "content": content}])
+        _check_model_send()
         try:
             if self.fallbacks:
                 response = client.beta.messages.create(

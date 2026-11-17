@@ -36,7 +36,7 @@ PLACES = {
     "harness/workflow/feedback.py": ("opted_in", "one setting's value held in a local named env, no child"),
     "mcp/registrations.py": ("server_sources", "a map of module bindings held in a local named env, no child"),
     "core/git_env.py": ("ask safe_git safe_git_env", "outside Git"),
-    "core/host_models.py": ("_environment _run locate", "outside host model CLI"),
+    "core/host_models.py": ("_environment _run locate complete", "outside host model CLI; complete holds the clean environment before the final send gate"),
     "core/outside.py": ("OutsideProgram _run clean_environment", "outside program discovery and transport"),
     "core/promotion_custody.py": ("_call_service _service_env", "evaluator Python child: isolated, its roots by the "
                                                                 "loop children's one transport since the issuance window"),

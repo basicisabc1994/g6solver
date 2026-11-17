@@ -67,6 +67,9 @@ def process_admission(provider, prompt, cwd, *, local=False, directories=()):
                 raise AgentRefusal('G6_E_NO_MODEL',
                                    'a coding-agent session needs its explicit G6_LLM_PROVIDER in the key file',
                                    detail={'started': False})
+            if not local:
+                from g6.core.llm import _check_model_send
+                _check_model_send()
             yield
     except LLMError as exc:
         code = str(exc).partition(':')[0]
