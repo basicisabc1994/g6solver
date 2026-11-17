@@ -45,7 +45,6 @@ from g6.intent_engine import IntentElicitor
 from g6.invariants import ERROR_CODE_PATTERN
 from g6.mcp import review_reply
 from g6.mcp.consent_controls import host_controls, public_instructions
-from g6.reliability_pipeline import premortem as checklist
 from g6.workforce import acceptance, api, bench, coding, repo_tests
 
 #: What ``G6_MCP_SENSITIVE`` lists for the tools that run a repository's code: ``workforce.mission``, or ``workforce``.
@@ -362,8 +361,10 @@ def certificate(mission_id: str) -> dict:
     return _guarded(work)
 
 
-def premortem(repo: str, task: str, intent: dict | None = None) -> dict:
-    """Before the work, from what the caller gave and the repository's file names: no model, and nothing runs. The
+def premortem(repo: str, task: str, intent: dict | None = None, hypotheses: list[dict] | None = None,
+              propose: str | bool = "auto") -> dict:
+    """Before the work, from what the caller gave and the repository's file names. Optional model proposals see
+    only task and intent; no check runs. The
     intent contract, a proposed standard of done (a requirement that names one of the repository's test files has it
     as its stated check; any other is not established), the competing ways the task can fail and at most three
     questions. A proposal: nothing here is frozen, and the person confirms a standard only through a mission."""
@@ -378,6 +379,10 @@ def premortem(repo: str, task: str, intent: dict | None = None) -> dict:
         return blocked_reply(f"[G6_E_INPUT_VALIDATION] intent: {exc}")
 
     def work() -> dict:
+        from g6.mcp.premortem_proposals import propose_hypotheses
+
+        proposals = propose_hypotheses(task, given.model_dump(mode="json") if given is not None else None,
+                                      hypotheses, propose)
         session = IntentElicitor().elicit(task, prior=given)
         listed = repo_tests._git(root, "ls-files", "-z").decode("utf-8", "replace").split("\0")
         tests = [rel for rel in listed if rel and repo_tests.is_test_related(rel)]
@@ -388,8 +393,8 @@ def premortem(repo: str, task: str, intent: dict | None = None) -> dict:
         questions = [q.question for q in session.questions[:verification_search.MAX_QUESTIONS]]
         shown = card(None, "G6_E_QUALIFIED_DRAFT", "g6_premortem: a proposal; nothing in it has been checked")
         return {"ok": True, "intent": session.contract.model_dump(mode="json"), "standard": standard,
-                "hypotheses": checklist.hypotheses(), "questions": questions, "test_files": tests[:MAX_TEST_FILES],
-                "unknowns": mapped.unknowns, "model_calls": 0,
+                **proposals, "questions": questions, "test_files": tests[:MAX_TEST_FILES],
+                "unknowns": mapped.unknowns,
                 **door_envelope("qualified-draft", who="g6_premortem", warning_card=shown)}
 
     return _guarded(work)

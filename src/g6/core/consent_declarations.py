@@ -140,7 +140,7 @@ TOOL_ARGUMENTS = {
     'g6_review_patch': _arguments('task requirements claim intent timeout_s expected_artifact_digest',
                                  'repo tests sources base search import_roots proposed_checks template_instances'),
     'g6_review_until_clean': _arguments('task reason', 'repo session base'),
-    'g6_premortem': _arguments('task intent', 'repo'),
+    'g6_premortem': _arguments('task intent hypotheses propose', 'repo'),
     'g6_select': _arguments('task phase last_outcome considering limit rerank'),
     'g6_mission_create': _arguments('objective function budget_cents risk', 'repo module helpers'),
     'g6_mission_clarify': _arguments('replay_semantics', 'mission_id'),
