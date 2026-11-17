@@ -51,6 +51,8 @@ def _source_function(fn):
                     value = await value
             if root:
                 from g6.core.ledger import digest
+                from g6.core.reply_budget import schema_of
+                reply_schema = schema_of(value)
                 try:
                     body, refs, metadata = policy.freeze_output(value)
                     value = json.loads(body)
@@ -72,6 +74,7 @@ def _source_function(fn):
                 return_type = hints.get('return')
                 if return_type is list or get_origin(return_type) is list:
                     metadata['empty_result'] = []
+                metadata['reply_schema'] = reply_schema.to_data()
                 capture.returned = body, content_hash, refs, public and refs is None, metadata
             return value
         finally:
@@ -178,6 +181,7 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
     control = dict(metadata or {})
     if job is not None and job.get('digest') == digest(result):
         control = dict(job.get('metadata') or control)
+    control.pop('reply_schema', None)  # Host-only compaction declaration, never user-facing guidance.
     code = control.pop('error_code', policy.REQUIRED)
     empty_result = control.pop('empty_result', None)
     review_provider = control.pop('review_provider', '')

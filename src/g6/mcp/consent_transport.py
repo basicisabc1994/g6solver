@@ -21,6 +21,7 @@ from g6.core import cloud_consent as policy
 from g6.core.ledger import digest
 from g6.core.llm import LLMError
 from g6.core.agent_guidance import WITHHELD
+from g6.core.reply_budget import ReplySchema
 
 _CONTROL = contextvars.ContextVar('g6_public_mcp_control', default=False)
 _OUTBOUND = contextvars.ContextVar('g6_mcp_source_ticket', default=None)
@@ -55,6 +56,7 @@ class Ticket:
     body_sha256: str
     job: dict | None = None
     control: dict | None = None
+    reply_schema: ReplySchema | None = None
 
 
 def _request_key(request_id):
@@ -76,7 +78,8 @@ def prepare(session, request_id, result, sources, supplied=(), job=None, *, meta
     except (RecursionError, MemoryError):
         raise ValueError("a JSON record exceeds decoder limits") from None
     session._g6_tickets[key] = Ticket(tuple(sources), provider(session), frozenset(supplied),
-                                    digest(body), controls['job'], controls['metadata'])
+                                    digest(body), controls['job'], controls['metadata'],
+                                    ReplySchema.from_data((controls['metadata'] or {}).get('reply_schema')))
 
 
 def _refused(message, ticket, recipient='cloud:unknown', session=None):
@@ -93,6 +96,14 @@ def _refused(message, ticket, recipient='cloud:unknown', session=None):
             result=result.model_dump(mode='json', by_alias=True, exclude_none=True))
         return SessionMessage(types.JSONRPCMessage(root), metadata=message.metadata)
     raise LLMError(f'{policy.REQUIRED}: {WITHHELD}')
+
+
+def _packet_schema(packet, ticket):
+    """A layout belongs to the receipt's exact bytes, never to a later packet."""
+    root = packet.message.root
+    if ticket is not None and isinstance(root, types.JSONRPCResponse) and ticket.body_sha256 == digest(root.result):
+        return ticket.reply_schema
+    return None
 
 
 class _Stream:
@@ -118,7 +129,7 @@ class _Stream:
     async def _egress(self, packet):
         from g6.mcp.reply_egress import budget_packet
 
-        await self.inner.send(budget_packet(packet))
+        await self.inner.send(budget_packet(packet, schema=_packet_schema(packet, _OUTBOUND.get())))
 
     async def send(self, message):
         # Freeze the actual packet. Neither a later mutation nor a serializer's

@@ -77,9 +77,9 @@ def declined_block(status: str) -> dict[str, Any]:
 
 def suppress_declined_dialogs(value: Any, session: Any) -> Any:
     """Apply session decisions to G6's selector guidance, including generic dialog templates."""
-    from g6.core.reply_budget import fit_reply
+    from g6.core.reply_budget import fit_reply, SELECTOR
 
-    return fit_reply(_suppress_declined_dialogs(value, session))
+    return fit_reply(_suppress_declined_dialogs(value, session), schema=SELECTOR)
 
 
 def _suppress_declined_dialogs(value: Any, session: Any) -> Any:

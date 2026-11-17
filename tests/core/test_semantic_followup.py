@@ -77,6 +77,8 @@ def test_transport_budgets_after_each_transformation(transformation):
     from mcp.shared.message import SessionMessage
     from g6.core.door import blocked_reply
     from g6.mcp import consent_transport, repair
+    from g6.core.reply_budget import ENVELOPE, SELECTOR, PREMORTEM, ReplySchema
+    from g6.core.ledger import digest
 
     base = selector.select("review patch", "verify", rerank="lexical")
     candidates = copy.deepcopy(base["candidates"])
@@ -107,7 +109,18 @@ def test_transport_budgets_after_each_transformation(transformation):
             self.packet = value
 
     sink = Sink()
-    asyncio.run(consent_transport._Stream(sink, SimpleNamespace())._egress(packet))
+    # The synthetic producer declares the same positions as the real producers;
+    # field names inside a result never serve as a declaration.
+    schema = (ReplySchema("job", SELECTOR) if transformation in ("job", "poll") else
+              PREMORTEM if transformation == "premortem" else
+              ENVELOPE if transformation in ("consent", "repair") else SELECTOR)
+    token = consent_transport._OUTBOUND.set(consent_transport.Ticket((), "openai:codex", frozenset(),
+                                                                  digest(packet.message.root.result),
+                                                                  reply_schema=schema))
+    try:
+        asyncio.run(consent_transport._Stream(sink, SimpleNamespace())._egress(packet))
+    finally:
+        consent_transport._OUTBOUND.reset(token)
     result = sink.packet.message.root.result
     assert len(json.dumps(result).encode()) <= CAP
     reply = result["structuredContent"]
@@ -221,13 +234,13 @@ def test_protocol_metadata_oversize_keeps_refusal_envelope():
 
 
 def test_compaction_preserves_issued_remedy_and_diagnostic_codes():
-    from g6.core.reply_budget import fit_reply
+    from g6.core.reply_budget import fit_reply, SELECTOR
 
     code = "G6_E_CLOUD_CONSENT_REQUIRED"
     reply = fit_reply({"ok": True, "candidates": [{"call": {"task": "x" * (CAP - 1200)}}],
                        "remedy": {"key": "consent", "code": code},
                        "mechanisms": [{"stage": "facts", "facts": {"last_outcome": code},
-                                       "why": "x" * 2000}]})
+                                       "why": "x" * 2000}]}, schema=SELECTOR)
     assert reply["ok"] and len(json.dumps(reply).encode()) <= CAP
     assert reply["remedy"]["code"] == code
     assert reply["mechanisms"][0]["facts"]["last_outcome"] == code

@@ -1122,7 +1122,9 @@ def _selection_reply(task: str, phase: str, last_outcome: str, considering: Any,
         "considering": considered, "mechanisms": mechanisms, "unknown_until_observed": list(UNKNOWN_UNTIL_OBSERVED),
         **envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
                           request_id=request_id, run_id=run_id)})
-    return reply
+    from g6.core.reply_budget import declare_reply, SELECTOR
+
+    return declare_reply(reply, SELECTOR)
 
 
 def _budget_reply(reply: dict[str, Any], *, rerank: str, request_id: str, run_id: str, lexical) -> dict[str, Any]:

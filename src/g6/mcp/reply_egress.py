@@ -7,20 +7,21 @@ import json
 from mcp import types
 from mcp.shared.message import SessionMessage
 
-from g6.core.reply_budget import MAX_REPLY_BYTES, fit_reply, oversize_refusal
+from g6.core.reply_budget import MAX_REPLY_BYTES, fit_reply, oversize_refusal, WITHHELD
 
 
-def budget_packet(packet):
+def budget_packet(packet, *, schema=None):
     root = packet.message.root
     if not isinstance(root, types.JSONRPCResponse) or "content" not in root.result:
         return packet
     if len(json.dumps(root.result).encode("utf-8")) <= MAX_REPLY_BYTES:
         return packet
 
-    def render(value):
+    def render(value, *, lean=False):
         # Retain protocol error status and metadata, while text and structure
         # are rendered from the same final value with the same JSON escaping.
-        return {**root.result, "content": [{"type": "text", "text": json.dumps(value)}],
+        metadata = {"isError": bool(root.result.get("isError"))} if lean else root.result
+        return {**metadata, "content": [{"type": "text", "text": json.dumps(value)}],
                 "structuredContent": value}
 
     try:
@@ -28,13 +29,24 @@ def budget_packet(packet):
         if value is None:
             content = root.result["content"]
             value = json.loads(content[0]["text"]) if len(content) == 1 else oversize_refusal()
-        value = fit_reply(value, measure=lambda reply: len(json.dumps(render(reply)).encode("utf-8")))
+        original = value
+        value = fit_reply(value, schema=schema, refuse=False,
+                          measure=lambda reply: len(json.dumps(render(reply)).encode("utf-8")))
         result = render(value)
         if len(json.dumps(result).encode("utf-8")) > MAX_REPLY_BYTES:
-            # An oversized protocol metadata field cannot make the fixed refusal grow.
-            refused = oversize_refusal(value)
-            result = {"content": [{"type": "text", "text": json.dumps(refused)}],
-                      "structuredContent": refused, "isError": True}
+            # Retry from the ORIGINAL value: a failed metadata compaction must
+            # not become the source of a lossy control projection.
+            def measure(reply):
+                return len(json.dumps(render(reply, lean=True)).encode("utf-8"))
+            value = fit_reply(original, schema=schema, measure=measure)
+            if measure(original) <= MAX_REPLY_BYTES and isinstance(original, dict):
+                # Only protocol metadata was too large. Keep opaque units whole.
+                value = {**oversize_refusal(original, schema=schema, measure=measure), **original,
+                         "ok": False, "size_notice": WITHHELD}
+                if measure(value) > MAX_REPLY_BYTES:
+                    value = fit_reply(original, schema=schema, measure=measure)
+            result = render(value, lean=True)
+            result["isError"] = True
     except (ValueError, TypeError, KeyError, RecursionError, MemoryError):
         refused = oversize_refusal()
         result = {"content": [{"type": "text", "text": json.dumps(refused)}],

@@ -15,6 +15,7 @@ from threading import Lock
 from uuid import uuid4
 
 from g6.core.door import blocked_reply
+from g6.core.reply_budget import ENVELOPE, JOB, ReplySchema, declare_reply, declared_schema
 
 DETAILS = ("compact", "full")
 #: An exact caller-supplied input (``cloud_consent.input_source``).
@@ -25,6 +26,7 @@ _INPUT = re.compile(r"input:[0-9a-f]{64}")
 class _FrozenResult:
     body: str
     body_sha256: str
+    reply_schema: ReplySchema = ENVELOPE
 
     @classmethod
     def of(cls, value):
@@ -32,17 +34,17 @@ class _FrozenResult:
         return cls(body, cloud.sha256(body))
 
     @classmethod
-    def completed(cls, ident, result_body):
+    def completed(cls, ident, result_body, result_schema=None):
         body = json.dumps({"ok": True, "job_id": ident, "status": "completed"},
                           separators=(',', ':'))[:-1] + ',"result":' + result_body + '}'
-        return cls(body, cloud.sha256(body))
+        return cls(body, cloud.sha256(body), ReplySchema("job", result_schema))
 
     def read(self):
         body, expected = self.body, self.body_sha256
         if cloud.sha256(body) != expected:
             raise ValueError('retained result digest mismatch')
         try:
-            return json.loads(body)
+            return declare_reply(json.loads(body), self.reply_schema)
         except (RecursionError, MemoryError):
             raise ValueError("a JSON record exceeds decoder limits") from None
 
@@ -87,7 +89,7 @@ class Jobs:
                 metadata = shown_metadata = _FrozenResult.of(metadata)
                 shown_refs = refs
                 # Freeze before a compactor can mutate the producer's object.
-                full = _FrozenResult.completed(ident, body)
+                full = _FrozenResult.completed(ident, body, declared_schema(result))
                 if compact:
                     try:
                         # A compactor must render the full snapshot, not reread
@@ -101,7 +103,7 @@ class Jobs:
                         body, known, shown_metadata = cloud.freeze_output(shown)
                         shown_refs = cloud.boundary_sources(carried=(*refs, *(known or ()), *capture.sources))
                         shown_metadata = _FrozenResult.of(shown_metadata)
-                        shown = _FrozenResult.completed(ident, body)
+                        shown = _FrozenResult.completed(ident, body, declared_schema(shown))
                     except Exception:
                         shown = full
                         shown_refs, shown_metadata = refs, metadata
@@ -142,9 +144,13 @@ class Jobs:
                      for source in inputs)
 
     def _status_reply(self, ident, result, detail):
-        from g6.core.reply_budget import fit_reply
+        from g6.core.reply_budget import fit_reply, result_control
 
-        result = fit_reply(result)
+        schema = declared_schema(result) or JOB
+        control = result_control(result)
+        if control is not None:
+            result['result_control'] = control
+        result = fit_reply(result, schema=schema)
         capture = cloud.current_capture()
         if capture is None:
             return result

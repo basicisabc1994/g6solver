@@ -396,10 +396,12 @@ def premortem(repo: str, task: str, intent: dict | None = None, hypotheses: list
                      "status": "stated_checks" if named else "not_established"} for found in mapped.requirements]
         questions = [q.question for q in session.questions[:verification_search.MAX_QUESTIONS]]
         shown = card(None, "G6_E_QUALIFIED_DRAFT", "g6_premortem: a proposal; nothing in it has been checked")
-        return {"ok": True, "intent": session.contract.model_dump(mode="json"), "standard": standard,
+        from g6.core.reply_budget import declare_reply, PREMORTEM
+
+        return declare_reply({"ok": True, "intent": session.contract.model_dump(mode="json"), "standard": standard,
                 **proposals, "questions": questions, "test_files": tests[:MAX_TEST_FILES],
                 "unknowns": mapped.unknowns,
-                **door_envelope("qualified-draft", who="g6_premortem", warning_card=shown)}
+                **door_envelope("qualified-draft", who="g6_premortem", warning_card=shown)}, PREMORTEM)
 
     return _guarded(work)
 
