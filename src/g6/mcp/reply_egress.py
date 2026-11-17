@@ -7,7 +7,7 @@ import json
 from mcp import types
 from mcp.shared.message import SessionMessage
 
-from g6.core.reply_budget import MAX_REPLY_BYTES, fit_reply, oversize_refusal, WITHHELD
+from g6.core.reply_budget import MAX_REPLY_BYTES, fit_reply, fixed_refusal, oversize_refusal, reply_code, WITHHELD
 
 
 def budget_packet(packet, *, schema=None):
@@ -24,6 +24,7 @@ def budget_packet(packet, *, schema=None):
         return {**metadata, "content": [{"type": "text", "text": json.dumps(value)}],
                 "structuredContent": value}
 
+    original = None
     try:
         value = root.result.get("structuredContent")
         if value is None:
@@ -51,5 +52,11 @@ def budget_packet(packet, *, schema=None):
         refused = oversize_refusal()
         result = {"content": [{"type": "text", "text": json.dumps(refused)}],
                   "structuredContent": refused, "isError": bool(root.result.get("isError"))}
+    # Check the bytes that will actually be handed off, after every mutation,
+    # including exception/last-resort paths. The code-only template is bounded
+    # independently of compaction, component values and protocol metadata.
+    if len(json.dumps(result).encode("utf-8")) > MAX_REPLY_BYTES:
+        result = render(fixed_refusal(reply_code(original, schema=schema)), lean=True)
+        result["isError"] = True
     return SessionMessage(types.JSONRPCMessage(types.JSONRPCResponse(
         jsonrpc="2.0", id=root.id, result=result)), metadata=packet.metadata)

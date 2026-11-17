@@ -10,8 +10,18 @@ import re
 MAX_REPLY_BYTES = 256 * 1024
 TRUNCATED = "[truncated]"
 WITHHELD = "[withheld for size]"
-_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
+REPLY_WITHHELD = "G6_E_REPLY_WITHHELD"
+CODE_NOTICE = "The component's code was not a G6 code; it was withheld whole."
+_CODE = re.compile(r"G6_E_[A-Z0-9_]{1,64}")
 _IDENTITY = ("completion_state", "request_id", "run_id", "job_id", "status")
+# Character limits include JSON's worst-case twelve-byte Unicode escaping.
+# Containers also have an encoded-byte limit, covering their opaque extra fields.
+IDENTITY_LIMITS = {"completion_state": 64, "request_id": 256, "run_id": 256, "job_id": 256, "status": 64}
+CARD_TEXT_LIMIT = 2048
+CARD_MAX_BYTES = 8192
+CONTROL_MAX_BYTES = 32768
+CONTROL_MAX_DEPTH = 16
+STAGE_LIMIT = 64
 
 
 @dataclass(frozen=True)
@@ -34,6 +44,7 @@ ENVELOPE = ReplySchema()
 SELECTOR = ReplySchema("selector")
 PREMORTEM = ReplySchema("premortem")
 JOB = ReplySchema("job")
+_CONTROL = ReplySchema("controls")
 
 
 class _DeclaredReply(dict):
@@ -65,7 +76,7 @@ def _positions(value, schema):
 
 
 def _steps(envelope, schema):
-    if schema.kind == "selector":
+    if schema.kind in ("selector", "controls"):
         steps = envelope.get("mechanisms", [])
         return [step for step in steps if isinstance(step, dict)] if isinstance(steps, list) else []
     if schema.kind == "premortem":
@@ -74,38 +85,78 @@ def _steps(envelope, schema):
     return []
 
 
-def _controls(envelope, schema):
-    """Lossless control projection. Never inspect a lexical/application value."""
-    kept = {key: deepcopy(envelope[key]) for key in (*_IDENTITY, "warning_card") if key in envelope}
+def _issued_code(value):
+    return isinstance(value, str) and len(value) <= 69 and _CODE.fullmatch(value) is not None
+
+
+def _error_code(error):
+    if not isinstance(error, str):
+        return None
+    # Read the whole code token, never a valid-looking prefix of component data.
+    code = error[1:].partition("]")[0] if error.startswith("[") and "]" in error else error.partition(" ")[0]
+    return code if _issued_code(code) else None
+
+
+def _bounded_text(value, maximum):
+    return value if isinstance(value, str) and len(value) <= maximum else WITHHELD
+
+
+def _controls(envelope, schema, depth=0):
+    """Bounded control projection. Never inspect a lexical/application value."""
+    if depth >= CONTROL_MAX_DEPTH:
+        return WITHHELD
+    kept = {key: _bounded_text(envelope[key], IDENTITY_LIMITS[key]) for key in _IDENTITY if key in envelope}
+
+    def keep_code(code):
+        if _issued_code(code):
+            return code
+        kept["code_notice"] = CODE_NOTICE
+        return WITHHELD
+
+    card = envelope.get("warning_card")
+    if isinstance(card, dict):
+        code = keep_code(card.get("code"))
+        if code != WITHHELD:
+            if (_measure(card) <= CARD_MAX_BYTES and all(
+                    key not in card or isinstance(card[key], str) and len(card[key]) <= CARD_TEXT_LIMIT
+                    for key in ("message", "suggested_action"))):
+                kept["warning_card"] = deepcopy(card)
+            else:
+                kept["warning_card"] = {"code": code, "message": WITHHELD, "suggested_action": WITHHELD}
+    elif card is not None:
+        keep_code(None)
     for key in ("code", "cloud_consent_code"):
-        if isinstance(envelope.get(key), str) and _CODE.fullmatch(envelope[key]):
-            kept[key] = envelope[key]
+        if key in envelope:
+            kept[key] = keep_code(envelope[key])
     error = envelope.get("error")
     if isinstance(error, str):
-        match = re.match(r"\[?(G6_E_[A-Z0-9_]+)\]?", error)
-        if match:
-            kept["error"] = f"[{match.group(1)}] Reply withheld for size."
-    elif isinstance(error, dict) and isinstance(error.get("code"), str):
-        kept["error"] = {"code": error["code"]}
+        code = keep_code(_error_code(error))
+        kept["error"] = f"[{code}] Reply withheld for size." if code != WITHHELD else WITHHELD
+    elif isinstance(error, dict) and "code" in error:
+        kept["error"] = {"code": keep_code(error["code"])}
     for key in ("repair", "remedy"):
         holder = envelope.get(key)
-        if isinstance(holder, dict) and isinstance(holder.get("code"), str):
-            kept[key] = {"code": holder["code"]}
-    if schema.kind == "selector":
+        if isinstance(holder, dict) and "code" in holder:
+            kept[key] = {"code": keep_code(holder["code"])}
+    if schema.kind in ("selector", "controls"):
         diagnostics = []
         for step in _steps(envelope, schema):
             facts = step.get("facts")
-            code = facts.get("last_outcome") if isinstance(facts, dict) else None
-            if isinstance(code, str) and _CODE.fullmatch(code):
-                diagnostics.append({"stage": step.get("stage"), "facts": {"last_outcome": code}})
+            if isinstance(facts, dict) and "last_outcome" in facts:
+                diagnostics.append({"stage": _bounded_text(step.get("stage"), STAGE_LIMIT),
+                                    "facts": {"last_outcome": keep_code(facts["last_outcome"])}})
         if diagnostics:
             kept["mechanisms"] = diagnostics
-    if schema.result is not None and isinstance(envelope.get("result"), dict):
-        kept["result"] = _controls(envelope["result"], schema.result)
+    if (schema.result is not None or schema.kind == "controls") and isinstance(envelope.get("result"), dict):
+        kept["result"] = _controls(envelope["result"], schema.result or _CONTROL, depth + 1)
     elif "result_control" in envelope:
         # Jobs publishes this host-built projection beside its opaque snapshot.
-        # It is copied as one declared control value, never parsed as data.
-        kept["result"] = deepcopy(envelope["result_control"])
+        # Its layout declares control positions, never the snapshot's data keys.
+        control = envelope["result_control"]
+        kept["result"] = (_controls(control, _CONTROL, depth + 1) if isinstance(control, dict)
+                          and _measure(control) <= CONTROL_MAX_BYTES else WITHHELD)
+    if "code_notice" in envelope and schema.kind == "controls":
+        kept["code_notice"] = CODE_NOTICE
     return kept
 
 
@@ -121,34 +172,77 @@ def result_control(reply):
 
 def _original_code(controls):
     card = controls.get("warning_card")
-    if isinstance(card, dict) and isinstance(card.get("code"), str) and _CODE.fullmatch(card["code"]):
+    if isinstance(card, dict) and _issued_code(card.get("code")):
         return card["code"]
     for key in ("code", "cloud_consent_code"):
-        if key in controls:
+        if _issued_code(controls.get(key)):
             return controls[key]
     error = controls.get("error")
     if isinstance(error, str):
-        match = re.match(r"\[(G6_E_[A-Z0-9_]+)\]", error)
-        if match:
-            return match.group(1)
-    if isinstance(error, dict) and isinstance(error.get("code"), str):
+        code = _error_code(error)
+        if code:
+            return code
+    if isinstance(error, dict) and _issued_code(error.get("code")):
         return error["code"]
     if isinstance(controls.get("result"), dict):
-        return _original_code(controls["result"])
+        code = _original_code(controls["result"])
+        if code:
+            return code
     for key in ("remedy", "repair"):
-        if key in controls:
+        if isinstance(controls.get(key), dict) and _issued_code(controls[key].get("code")):
             return controls[key]["code"]
+    for step in _steps(controls, SELECTOR):
+        facts = step.get("facts")
+        code = facts.get("last_outcome") if isinstance(facts, dict) else None
+        if _issued_code(code):
+            return code
+    return None
+
+
+def _fallback_code(controls):
+    code = _original_code(controls)
+    if code:
+        return code
+    current = controls
+    while isinstance(current, dict):
+        if "code_notice" in current:
+            return REPLY_WITHHELD
+        current = current.get("result")
+    # Preserve the pre-existing no-code fallback. Component data in a code
+    # position instead takes the distinct withholding code above.
     return "G6_E_INPUT_VALIDATION"
 
 
-def oversize_refusal(reply=None, *, schema=None, limit=MAX_REPLY_BYTES, measure=None):
-    from g6.core.door import blocked_reply
+def fixed_refusal(code=REPLY_WITHHELD, *, controls=None):
+    """Fixed last-resort template; only a bounded code and bounded identity vary.
 
+    No door/registry-generated text or component card enters this body. The
+    all-maxima MCP rendering is tested below MAX_REPLY_BYTES. With controls=None
+    only the issued code varies, for the final egress guard.
+    """
+    code = code if _issued_code(code) else REPLY_WITHHELD
+    refused = {"ok": False, "completion_state": "blocked-escalated",
+               "error": f"[{code}] Reply withheld for size.",
+               "warning_card": {"code": code, "message": "Reply withheld for size."},
+               "size_notice": WITHHELD,
+               "code_policy": "A component value that was not a G6 code was withheld whole."}
+    for key in ("request_id", "run_id", "job_id", "status"):
+        if controls is not None and key in controls:
+            refused[key] = _bounded_text(controls[key], IDENTITY_LIMITS[key])
+    return refused
+
+
+def reply_code(reply, *, schema=None):
+    """An issued code from declared controls, or the applicable fallback code."""
+    return _fallback_code(_controls(reply, schema or schema_of(reply))) if isinstance(reply, dict) else _fallback_code({})
+
+
+def oversize_refusal(reply=None, *, schema=None, limit=MAX_REPLY_BYTES, measure=None):
     schema = schema or schema_of(reply)
     measure = measure or _measure
     controls = _controls(reply, schema) if isinstance(reply, dict) else {}
-    code = _original_code(controls)
-    refused = blocked_reply(f"[{code}] Reply withheld for size.")
+    code = _fallback_code(controls)
+    refused = fixed_refusal(code)
     refused.update(controls)
     refused["size_notice"] = WITHHELD
     if isinstance(reply, dict):
@@ -158,12 +252,9 @@ def oversize_refusal(reply=None, *, schema=None, limit=MAX_REPLY_BYTES, measure=
                 refused[key] = WITHHELD
     if measure(refused) > limit:
         # The explicit last resort: no partial card or identity can be truthful.
-        refused = blocked_reply(f"[{code}] Reply withheld for size.")
-        # A job's own bounded handle/state must remain pollable even when its
-        # declared child's card or identity makes the full control body too big.
-        for key in ("job_id", "status"):
-            if key in controls and measure({**refused, key: controls[key]}) <= limit:
-                refused[key] = controls[key]
+        refused = fixed_refusal(code, controls=controls)
+        if measure(refused) > limit:
+            refused = fixed_refusal(code)
     return declare_reply(refused, schema)
 
 
