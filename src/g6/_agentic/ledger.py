@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, TypeAdapter, model_validator
+from pydantic_core import PydanticCustomError
 
 from g6._agentic import decode
 from g6.core.ledger import ChainLedger
@@ -112,10 +113,18 @@ class Entry(_Closed):
 
     @model_validator(mode="after")
     def _bounded_authority_sends(self) -> Entry:
-        # The bound belongs to this run, including nondefault budgets; historical omission remains an empty list.
-        TypeAdapter(Annotated[list[SendAuthority], Field(max_length=self.budget.max_model_calls)]).validate_python(
-            self.authority_sends, strict=True)
+        # The bound belongs to this run, including nondefault budgets of any size the kernel accepts; historical
+        # omission remains an empty list. The list is checked by one fixed schema and its length compared in Python,
+        # so no schema is built from the budget (pydantic-core cannot hold a bound past 2**63 - 1).
+        _SENDS.validate_python(self.authority_sends, strict=True)
+        if len(self.authority_sends) > self.budget.max_model_calls:
+            raise PydanticCustomError(   # the same error type a schema bound raises
+                "too_long", "authority_sends holds {actual_length} sends, more than the run's {max_length} model calls",
+                {"actual_length": len(self.authority_sends), "max_length": self.budget.max_model_calls})
         return self
+
+
+_SENDS = TypeAdapter(list[SendAuthority])
 
 
 def path() -> Path:

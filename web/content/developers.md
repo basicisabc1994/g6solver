@@ -8,8 +8,9 @@ For the agentic library route (`from g6._agentic.kernel import run`), the trust 
 responders, validators and caller objects run with your own authority in your process. The kernel's original-first
 execution, seals and digests, single use, authority record, confined child and prohibition on using substitutes as
 evidence apply against the MCP client, model replies and child; they do not defend against Python you run in the
-same process on your own objects. Callable pins check accidental changes on a best-effort basis. Functions held in
-defaults, dictionary values or partial arguments are not followed (review 3 F1: `default_function`, `dict_value`,
+same process on your own objects. Callable pins check accidental changes on a best-effort basis. Code reached through a responder's module globals, and functions held in
+defaults, dictionary values, partial arguments, tuples or lists in closures, instance attributes or a followed class's
+properties, are not followed (review 3 F1: `default_function`, `dict_value`,
 `partial_argument`); in-process seal discovery and rewriting with `gc.get_referrers` is also outside the boundary
 (F4). Over MCP, `g6_agentic_run` accepts data only and builds a caller from G6's own provider callers; a client cannot
 supply a responder, validator or caller object. A substitute remains qualified-draft at best.
