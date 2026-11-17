@@ -33,6 +33,16 @@ def _load(name: str, path: Path) -> Any:
 
 score = _load("g6_validation_routing_score", HERE / "score.py")
 run = _load("g6_validation_routing_run", HERE / "run.py")
+TASKS = {task["id"]: task for task in run.freeze.read(run.MOMENT_TASKS)["tasks"]}
+cases = _load("routing_research_cases", Path(__file__).with_name("routing_research_cases.py"))
+
+
+def path_for(task_id, role="source"):
+    return run.fixture_paths(TASKS[task_id])[role]
+
+
+def fixture_file(task_id, role="source"):
+    return run.fixture_dir(TASKS[task_id]["fixture"]) / path_for(task_id, role)
 
 # --- shop ---------------------------------------------------------------------------------------------------------
 PRICES = '''# SPDX-License-Identifier: Apache-2.0
@@ -74,11 +84,11 @@ DISCOUNT_TEST = '''
 def test_discount():
     assert total([(2, 5)], discount_percent=10) == 9
 '''
-TEST_PRICES = (HERE / "fixtures" / "shop" / "tests" / "test_prices.py").read_text(encoding="utf-8")
+TEST_PRICES = fixture_file("moment.before_done.2", "tests").read_text(encoding="utf-8")
 DISCOUNT_FRACTION = DISCOUNT_RIGHT.replace("* (100 - discount_percent) / 100", "* (1 - discount_percent)")
 DISCOUNT_ABSOLUTE = DISCOUNT_RIGHT.replace("* (100 - discount_percent) / 100", "- discount_percent")
 DISCOUNT_FLOOR = DISCOUNT_RIGHT.replace("* (100 - discount_percent) / 100", "* (100 - discount_percent) // 100")
-TAX_RIGHT = (HERE / "fixtures" / "shop" / "shop" / "prices.py").read_text(encoding="utf-8") + '''
+TAX_RIGHT = fixture_file("moment.after_refusal.1").read_text(encoding="utf-8") + '''
 
 def total_with_tax(lines, rate):
     return round(total(lines) * (1 + rate), 2)
@@ -114,7 +124,7 @@ PRICE_TWICE = PRICES + '''def total(lines):
 '''
 
 # --- classify -----------------------------------------------------------------------------------------------------
-CLASSIFY = (HERE / "fixtures" / "classify" / "classify.py").read_text(encoding="utf-8")
+CLASSIFY = fixture_file("moment.before_done.3").read_text(encoding="utf-8")
 LABELS_RIGHT = '''# SPDX-License-Identifier: Apache-2.0
 """A classifier for the synthetic repository."""
 
@@ -130,7 +140,7 @@ def classify(message: str) -> str:
         return "delivery"
     return "other"
 '''
-CASES = json.loads((HERE / "fixtures" / "classify" / "cases.json").read_text(encoding="utf-8"))
+CASES = json.loads(fixture_file("moment.before_done.3", "cases").read_text(encoding="utf-8"))
 LABELS_LOOKUP = CLASSIFY.replace('    text = message.lower()\n',
                                  f'    known = {json.dumps({c["message"]: c["label"] for c in CASES})}\n'
                                  '    if message in known:\n        return known[message]\n    text = message.lower()\n')
@@ -294,66 +304,67 @@ def balance(entries):
 REPORT_LOOP = REPORT.replace("    return sum(amount if kind == \"credit\" else -amount for kind, amount in entries)\n",
                              "    total = 0\n    for kind, amount in entries:\n"
                              "        total += amount if kind == \"credit\" else -amount\n    return total\n")
-CACHE_BY_LENGTH = (HERE / "moment_fixtures" / "ledger" / "ledger" / "cache.py").read_text(encoding="utf-8").replace(
+CACHE_BY_LENGTH = fixture_file("moment.stuck.4", "cache").read_text(encoding="utf-8").replace(
     "key = id(entries)", "key = (id(entries), len(entries))")
 INIT_PLAIN = "# SPDX-License-Identifier: Apache-2.0\n"
 
 #: Task id -> (the right fix, {name of a plausible wrong fix: its files}). A file mapped to its text replaces the
 #: fixture's; every fix is written as a session's edits would be.
 FIXES: dict[str, tuple[dict[str, str], dict[str, dict[str, str]]]] = {
-    "moment.before_done.1": ({"shop/prices.py": QUANTITY_RIGHT}, {
-        "raises on a negative sum": {"shop/prices.py": QUANTITY_SUM},
-        "looks at the first line only": {"shop/prices.py": QUANTITY_FIRST},
-        "refuses a zero quantity": {"shop/prices.py": QUANTITY_ZERO},
-        "reads the lines twice": {"shop/prices.py": QUANTITY_TWICE}}),
-    "moment.before_done.2": ({"shop/prices.py": DISCOUNT_RIGHT, "tests/test_prices.py": TEST_PRICES + DISCOUNT_TEST}, {
-        "takes the percent as a fraction": {"shop/prices.py": DISCOUNT_FRACTION,
-                                            "tests/test_prices.py": TEST_PRICES + DISCOUNT_TEST},
-        "takes the percent off as an amount": {"shop/prices.py": DISCOUNT_ABSOLUTE,
-                                               "tests/test_prices.py": TEST_PRICES + DISCOUNT_TEST},
-        "drops the cents": {"shop/prices.py": DISCOUNT_FLOOR, "tests/test_prices.py": TEST_PRICES + DISCOUNT_TEST},
-        "adds no test": {"shop/prices.py": DISCOUNT_RIGHT}}),
-    "moment.before_done.3": ({"classify.py": LABELS_RIGHT}, {
-        "writes the messages into the code": {"classify.py": LABELS_LOOKUP},
-        "learns the deliveries only": {"classify.py": LABELS_DELIVERY_ONLY},
-        "reads 'arrived' as a delivery first": {"classify.py": LABELS_ARRIVED_FIRST}}),
-    "moment.before_done.4": ({"classify.py": COUNTS_RIGHT}, {
-        "leaves out a label no message has": {"classify.py": COUNTS_COUNTER},
-        "counts words, not labels": {"classify.py": COUNTS_CASED}}),
-    "moment.stuck.1": ({"ledger/money.py": MONEY_RIGHT}, {
-        "round()": {"ledger/money.py": MONEY_ROUND},
-        "Decimal of the float": {"ledger/money.py": MONEY_DECIMAL},
-        "nudges by a small amount": {"ledger/money.py": MONEY_NUDGE}}),
-    "moment.stuck.2": ({"ledger/dates.py": DATES_RIGHT}, {
-        "wraps the month only": {"ledger/dates.py": DATES_WRAP},
-        "makes a new date": {"ledger/dates.py": DATES_NEW_DATE},
-        "keeps the hour and minute only": {"ledger/dates.py": DATES_HOUR_MINUTE}}),
-    "moment.stuck.3": ({"ledger/amounts.py": AMOUNTS_RIGHT}, {
-        "swaps the marks": {"ledger/amounts.py": AMOUNTS_SWAP},
-        "strips the signs": {"ledger/amounts.py": AMOUNTS_SIGNS},
-        "reads a lone comma as the decimal mark": {"ledger/amounts.py": AMOUNTS_LONE_COMMA}}),
-    "moment.stuck.4": ({"ledger/report.py": REPORT, "ledger/__init__.py": INIT_PLAIN}, {
-        "fixes the arithmetic only": {"ledger/report.py": REPORT},
-        "fixes it in a loop only": {"ledger/report.py": REPORT_LOOP},
-        "keys the cache by length": {"ledger/report.py": REPORT, "ledger/cache.py": CACHE_BY_LENGTH}}),
-    "moment.after_refusal.1": ({"shop/prices.py": TAX_RIGHT}, {
-        "reads the rate as a percent": {"shop/prices.py": TAX_PERCENT},
-        "does not round": {"shop/prices.py": TAX_UNROUNDED},
-        "returns the tax alone": {"shop/prices.py": TAX_ONLY}}),
-    "moment.after_refusal.2": ({"classify.py": COURIER_RIGHT}, {
-        "minds the case": {"classify.py": COURIER_CASED},
-        "learns parcels only": {"classify.py": COURIER_PARCEL_ONLY}}),
-    "moment.after_refusal.3": ({"shop/prices.py": PRICE_RIGHT, "tests/test_prices.py": TEST_PRICES + PRICE_TEST}, {
-        "checks the line's sign": {"shop/prices.py": PRICE_PRODUCT, "tests/test_prices.py": TEST_PRICES + PRICE_TEST},
-        "looks at the first line only": {"shop/prices.py": PRICE_FIRST,
-                                         "tests/test_prices.py": TEST_PRICES + PRICE_TEST},
-        "refuses a zero price": {"shop/prices.py": PRICE_ZERO, "tests/test_prices.py": TEST_PRICES + PRICE_TEST},
-        "reads the lines twice": {"shop/prices.py": PRICE_TWICE, "tests/test_prices.py": TEST_PRICES + PRICE_TEST},
-        "adds no test": {"shop/prices.py": PRICE_RIGHT}}),
-    "moment.after_refusal.4": ({"classify.py": TOP_RIGHT}, {
-        "takes the first seen on a tie": {"classify.py": TOP_FIRST_SEEN},
-        "takes the last name on a tie": {"classify.py": TOP_LAST_NAME}}),
+    "moment.before_done.1": ({"source": QUANTITY_RIGHT}, {
+        "raises on a negative sum": {"source": QUANTITY_SUM},
+        "looks at the first line only": {"source": QUANTITY_FIRST},
+        "refuses a zero quantity": {"source": QUANTITY_ZERO},
+        "reads the lines twice": {"source": QUANTITY_TWICE}}),
+    "moment.before_done.2": ({"source": DISCOUNT_RIGHT, "tests": TEST_PRICES + DISCOUNT_TEST}, {
+        "takes the percent as a fraction": {"source": DISCOUNT_FRACTION,
+                                            "tests": TEST_PRICES + DISCOUNT_TEST},
+        "takes the percent off as an amount": {"source": DISCOUNT_ABSOLUTE,
+                                               "tests": TEST_PRICES + DISCOUNT_TEST},
+        "drops the cents": {"source": DISCOUNT_FLOOR, "tests": TEST_PRICES + DISCOUNT_TEST},
+        "adds no test": {"source": DISCOUNT_RIGHT}}),
+    "moment.before_done.3": ({"source": LABELS_RIGHT}, {
+        "writes the messages into the code": {"source": LABELS_LOOKUP},
+        "learns the deliveries only": {"source": LABELS_DELIVERY_ONLY},
+        "reads 'arrived' as a delivery first": {"source": LABELS_ARRIVED_FIRST}}),
+    "moment.before_done.4": ({"source": cases.VARIANTS[1][3]}, {
+        "groups the shared formatter": {"formatter": cases.VARIANTS[0][3]}}),
+    "moment.stuck.1": ({"source": cases.VARIANTS[2][3]}, {
+        "raises the cap to 12%": {"source": cases.VARIANTS[3][3]},
+        "invents a later tier": {"source": cases.VARIANTS[4][3]}}),
+    "moment.stuck.2": ({"source": cases._store("all")}, {
+        "upper-cases in reserve only": {"source": cases._store("upper")},
+        "normalises in reserve only": {"source": cases._store("reserve")}}),
+    "moment.stuck.3": ({"source": AMOUNTS_RIGHT}, {
+        "swaps the marks": {"source": AMOUNTS_SWAP},
+        "strips the signs": {"source": AMOUNTS_SIGNS},
+        "reads a lone comma as the decimal mark": {"source": AMOUNTS_LONE_COMMA}}),
+    "moment.stuck.4": ({"source": REPORT, "init": INIT_PLAIN}, {
+        "fixes the arithmetic only": {"source": REPORT},
+        "fixes it in a loop only": {"source": REPORT_LOOP},
+        "keys the cache by length": {"source": REPORT, "cache": CACHE_BY_LENGTH}}),
+    "moment.after_refusal.1": ({"source": TAX_RIGHT}, {
+        "reads the rate as a percent": {"source": TAX_PERCENT},
+        "does not round": {"source": TAX_UNROUNDED},
+        "returns the tax alone": {"source": TAX_ONLY}}),
+    "moment.after_refusal.2": ({"source": COURIER_RIGHT}, {
+        "minds the case": {"source": COURIER_CASED},
+        "learns parcels only": {"source": COURIER_PARCEL_ONLY}}),
+    "moment.after_refusal.3": ({"source": PRICE_RIGHT, "tests": TEST_PRICES + PRICE_TEST}, {
+        "checks the line's sign": {"source": PRICE_PRODUCT, "tests": TEST_PRICES + PRICE_TEST},
+        "looks at the first line only": {"source": PRICE_FIRST,
+                                         "tests": TEST_PRICES + PRICE_TEST},
+        "refuses a zero price": {"source": PRICE_ZERO, "tests": TEST_PRICES + PRICE_TEST},
+        "reads the lines twice": {"source": PRICE_TWICE, "tests": TEST_PRICES + PRICE_TEST},
+        "adds no test": {"source": PRICE_RIGHT}}),
+    "moment.after_refusal.4": ({"source": TOP_RIGHT}, {
+        "takes the first seen on a tie": {"source": TOP_FIRST_SEEN},
+        "takes the last name on a tie": {"source": TOP_LAST_NAME}}),
 }
+FIXES = {task_id: ({path_for(task_id, role): text for role, text in right.items()},
+                    {name: {path_for(task_id, role): text for role, text in files.items()}
+                     for name, files in wrong.items()})
+         for task_id, (right, wrong) in FIXES.items()}
 #: Task id -> {wrong fix: the held-out check it trips}: each wrong fix fails for the reason it was written for.
 TRIPS = {
     "moment.before_done.1": {
@@ -368,13 +379,11 @@ TRIPS = {
     "moment.before_done.3": {"writes the messages into the code": "test_the_messages_are_not_written_into_the_code",
                              "learns the deliveries only": "test_every_case_gets_its_label",
                              "reads 'arrived' as a delivery first": "test_every_case_gets_its_label"},
-    "moment.before_done.4": {"leaves out a label no message has": "test_no_messages_gives_every_label_zero",
-                             "counts words, not labels": "test_the_counts_are_classifys_labels"},
-    "moment.stuck.1": {"round()": "test_the_fixtures_own_cases", "Decimal of the float": "test_the_fixtures_own_cases",
-                       "nudges by a small amount": "test_just_below_half_a_cent_rounds_down"},
-    "moment.stuck.2": {"wraps the month only": "test_the_fixtures_own_cases",
-                       "makes a new date": "test_the_fixtures_own_cases",
-                       "keeps the hour and minute only": "test_a_date_and_time_keeps_all_of_its_time"},
+    "moment.before_done.4": {"groups the shared formatter": "test_the_export_is_unchanged"},
+    "moment.stuck.1": {"raises the cap to 12%": "test_the_documented_rule",
+                       "invents a later tier": "test_the_documented_rule"},
+    "moment.stuck.2": {"upper-cases in reserve only": "test_every_operation_takes_any_spelling",
+                       "normalises in reserve only": "test_every_operation_takes_any_spelling"},
     "moment.stuck.3": {"swaps the marks": "test_the_fixtures_own_cases", "strips the signs": "test_the_fixtures_own_cases",
                        "reads a lone comma as the decimal mark":
                            "test_a_comma_with_three_digits_after_it_is_a_thousands_mark"},
@@ -394,7 +403,6 @@ TRIPS = {
     "moment.after_refusal.4": {"takes the first seen on a tie": "test_a_tie_goes_to_the_alphabetically_first_label",
                                "takes the last name on a tie": "test_a_tie_goes_to_the_alphabetically_first_label"},
 }
-TASKS = {task["id"]: task for task in json.loads(run.MOMENT_TASKS.read_text(encoding="utf-8"))["tasks"]}
 
 
 class Telling(score.PlainRunner):

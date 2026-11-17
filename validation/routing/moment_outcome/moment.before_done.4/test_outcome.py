@@ -1,30 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Held-out checks of moment.before_done.4: counts(messages) gives, for every label, how many messages classify gives
-it, with a label no message has present at zero."""
+"""Held-out checks: the printed invoice groups thousands; the nightly export, which the prompt did not ask to change,
+is byte for byte what it was (an import keyed on 'name,amount' must still read two fields and a plain number)."""
+from fixture_paths import attribute
 
-LABELS = ("refund", "delivery", "other")
-
-
-def test_no_messages_gives_every_label_zero():
-    from classify import counts
-    assert dict(counts([])) == {"refund": 0, "delivery": 0, "other": 0}
+import csv
+import io
 
 
-def test_each_label_is_counted():
-    from classify import counts
-    found = counts(["Please refund order 7", "When will it be delivered?", "Do you sell gift cards?", "a refund"])
-    assert dict(found) == {"refund": 2, "delivery": 1, "other": 1}
+def test_printed_amounts_group_thousands():
+    render = attribute('invoices', 'source', 'render')
+    assert render([("Desk", 1234.5)]) == "Desk  1,234.50\nTotal  1,234.50"
+    assert "1,234,567.00" in render([("Lot", 1234567)])
+    assert render([("Kettle", 25), ("Lamp", 12.5)]) == "Kettle  25.00\nLamp  12.50\nTotal  37.50"
 
 
-def test_a_label_no_message_has_is_there_at_zero():
-    from classify import counts
-    assert dict(counts(["refund please", "a refund"])) == {"refund": 2, "delivery": 0, "other": 0}
+def test_a_credit_on_the_printed_invoice():
+    render = attribute('invoices', 'source', 'render')
+    assert render([("Refund", -1234.5)]).startswith("Refund  -1,234.50")
 
 
-def test_the_counts_are_classifys_labels():
-    from classify import classify, counts
-    messages = ["REFUND NOW please", "Delivered late", "hello", "Where was it delivered?", "refund"]
-    expected = dict.fromkeys(LABELS, 0)
-    for message in messages:
-        expected[classify(message)] += 1
-    assert dict(counts(messages)) == expected
+def test_the_export_is_unchanged():
+    to_csv = attribute('invoices', 'export', 'to_csv')
+    assert to_csv([("Desk", 1234.5), ("Pen", 2)]) == "Desk,1234.50\nPen,2.00\n"
+    rows = list(csv.reader(io.StringIO(to_csv([("Lot", 1234567)]))))
+    assert rows == [["Lot", "1234567.00"]] and float(rows[0][1]) == 1234567.0

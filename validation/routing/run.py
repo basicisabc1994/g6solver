@@ -94,7 +94,7 @@ UNKEPT = (":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/.pytest_cache/*
 #: The Claude Code plugin this tree ships (hooks and skills): a moment session of Claude Code loads it.
 PLUGIN = HERE.parents[1] / "plugins" / "g6"
 #: What the moment cohort's Claude Code arm may run beyond the development arm's tools: the tests, and nothing else.
-TEST_RUNS = ("Bash(python -m pytest:*)", "Bash(pytest:*)")
+TEST_RUNS = ("Bash(python -m pytest:*)", "Bash(python3 -m pytest:*)", "Bash(py -m pytest:*)", "Bash(pytest:*)")
 #: A moment session is not started while the person's decisions share a source the cohort says a session lacks.
 NOT_FRESH = "G6_E_ROUTING_NOT_FRESH"
 #: A moment session is not started while the person's decisions do not share a source its task needs.
@@ -149,6 +149,12 @@ def _shown() -> dict[str, str]:
     return out
 
 
+def development_fixtures() -> dict[str, Path]:
+    """Only the frozen development inventory binds its routes; moment-only additions are separate."""
+    tasks = freeze.bound(TASKS, pins()["tasks_digest"], what="the development task list")
+    return {name: FIXTURES / name for name in sorted({task["fixture"] for task in tasks["tasks"]})}
+
+
 def route_digests(manifest: Any = None) -> dict[str, str]:
     """Route id -> the digest that binds a route: its anchor, its members, what its own section of the root skill
     says, the bytes of each of its detail files, what the servers show for each of its tools (description and input
@@ -189,7 +195,7 @@ def route_digests(manifest: Any = None) -> dict[str, str]:
         "root": _sha(rest), "installed": {path: found for path, found in installed.items() if path not in owned},
         "shown": {key: found for key, found in sorted(shown.items()) if key not in routed},
         "spoken": {tool: text for tool, text in sorted(spoken.items()) if f"mcp:g6/{tool}" not in routed},
-        "fixtures": {path.name: freeze.tree_digest(path) for path in sorted(FIXTURES.iterdir()) if path.is_dir()}})
+        "fixtures": {name: freeze.tree_digest(path) for name, path in development_fixtures().items()}})
     return out
 
 
@@ -311,9 +317,18 @@ def load_withheld() -> dict[str, Any]:
 def fixtures_digest() -> str:
     """The digest of every fixture a task of the frozen moment list names: fixture name -> the digest of its folder
     as it stands (each file's path and the sha256 of its bytes)."""
-    names = sorted({task["fixture"] for task in freeze.bound(MOMENT_TASKS, moment_pins()["tasks_digest"],
-                                                             what="the moment task list")["tasks"]})
-    return freeze.digest({name: freeze.tree_digest(fixture_dir(name)) for name in names})
+    return freeze.digest({name: freeze.tree_digest(path) for name, path in active_moment_fixtures().items()})
+
+
+def active_moment_fixtures() -> dict[str, Path]:
+    """Resolve every fixture in the active bound inventory, including moment-only copies."""
+    tasks = freeze.bound(MOMENT_TASKS, moment_pins()["tasks_digest"], what="the moment task list")
+    return {name: fixture_dir(name) for name in sorted({task["fixture"] for task in tasks["tasks"]})}
+
+
+def fixture_paths(task: Mapping[str, Any]) -> dict[str, str]:
+    """The file roles for a task's fixture; checks and probes use this same table."""
+    return dict(score.fixture_paths.FILES[task["fixture"]])
 
 
 def moment_fixtures() -> str:
@@ -667,6 +682,18 @@ def _step_call(server: Any, tool: Any, args: Any, valid: Any, state: str = "", c
     return {"kind": "call", **_call(server, tool, args, valid, state), "code": code}
 
 
+def _grant_success(content: Any) -> bool:
+    """A grant's positive status, including the public sharing envelope's informational consent code."""
+    try:
+        value = json.loads(_said(content))
+    except (ValueError, RecursionError):
+        return False
+    if not isinstance(value, dict) or value.get("ok") is False or _code(content) not in ("", "G6_E_CLOUD_CONSENT"):
+        return False
+    result = value.get("result", value)
+    return isinstance(result, dict) and result.get("status") == "granted"
+
+
 def steps_claude(text: str) -> list[dict[str, Any]]:
     """The steps of a ``claude -p --output-format stream-json`` session in the order its log holds them: each MCP
     call (as ``parse_claude`` reads it, with the code its reply carried), each file a file tool changed, each shell
@@ -696,6 +723,8 @@ def steps_claude(text: str) -> list[dict[str, Any]]:
                 if step["kind"] == "call":
                     step.update(valid=step["valid"] and part.get("is_error", False) is False,
                                 result_state=_state(part.get("content")), code=_code(part.get("content")))
+                    if step["tool"] == "g6_cloud_grant":
+                        step["remedy_succeeded"] = _grant_success(part.get("content"))
                 elif step["kind"] == "test":
                     step["failed"] = part.get("is_error") is True or bool(_FAILED.search(_said(part.get("content"))))
         if event.get("type") == "result":
@@ -721,6 +750,8 @@ def steps_codex(text: str) -> list[dict[str, Any]]:
                                   item.get("status") == "completed" and not item.get("error"),
                                   _state(result.get("content")),
                                   _code(result.get("content")) or _code(item.get("error"))))
+            if item.get("tool") == "g6_cloud_grant":
+                out[-1]["remedy_succeeded"] = _grant_success(result.get("content"))
         elif kind == "file_change":
             changes = item.get("changes")
             out += [{"kind": "edit", "path": str(change.get("path", ""))}

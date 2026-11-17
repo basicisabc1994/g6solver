@@ -157,7 +157,7 @@ Does G6's value reach a coding agent at the moment it needs it, when nobody asks
 prompted routing: most of their prompts say "Use G6". In this one no prompt names G6, its server or a tool, or asks for
 a review or a check (`score.NAMES_A_TOOL` refuses such a prompt). Each prompt reads like a person's request to a coding
 agent on a synthetic repository. It is run twice per client: the before arm on the tree as it is, and the after arm
-once the wiring has landed. The tasks were written by someone who builds none of the wiring.
+once the wiring has landed. The lead amended the tasks from the research audit before any arm (2026-11-17).
 
 **State: `evidence_pending`.** No session has been run. Nothing here is a measured result.
 
@@ -167,12 +167,11 @@ once the wiring has landed. The tasks were written by someone who builds none of
   permissions its server starts with, any withheld tools, the grants it starts with, and why it is fair. The list
   binds no route, because the guidance changes between the arms. Each session records what guidance it had instead.
 - `moment_gates.json`: the bars. `moment_frozen.json` pins both files: the task list at
-  `1976b25f8d885fcb60086adbacd48d7f9bea0c85db79e88a159ab5f235933a75` and the bars at
+  `e2168da8cc01efa41c19f736d54c91b92fc9fbaac068e500099ed27842051973` and the bars at
   `9aa0237097e7dd22f013664850d3008513ac750834f577d793cab6f28556de59`. Nothing runs and nothing is scored on a list or
   bars that differ from these. A list may hold fewer tasks, so one task can be tried first. It may never hold a
   changed one. It also pins the outcome arm's bar and held-out checks (see "Outcome arm"), the withheld file, and
-  the fixtures: every file of every fixture a moment task names (`fixtures/classify`, `notes`, `rules`, `shop` and
-  `moment_fixtures/ledger`), at `4084d2f1097198d53d304f83ff1a5113fcf8534083b320a05586922c351bab76`. A run refuses
+  the fixtures: every file of every fixture a moment task names (the cohort-specific copies, invoices, fees, stock, ledger_amounts and ledger_report under `fixtures/`), at `4ba390a5443a5beb6446dfe1b0652b5d54e71d8e2c48990d2d4f7deec05307ff`. A run refuses
   before anything starts, and the outcome arm scores nothing, when one byte of them differs.
 - `moment_withheld.json`: the sources the person grants for every session beyond the fixtures
   (`host_configuration`, `jobs` and `completion_history`, which a review's reply carries), and, per task, those its
@@ -180,10 +179,9 @@ once the wiring has landed. The tasks were written by someone who builds none of
   file of its own so the frozen task list did not change, and it is pinned at
   `9c031f4cfab260cd8101a1ff9efcc975f7c831b1eeae375c5da5661dfdb8e4a2`. The lead set it before any arm ran, so that a
   review can return a result where the task is not about consent.
-- `moment_fixtures/ledger`: one more synthetic repository, kept out of `fixtures/` so that the development cohort's
-  bound digest of the fixtures does not move. Its four failing test files are the stuck tasks. Each holds a
-  constraint that the two natural first fixes miss. `tests/validation/test_routing_moment_fixture.py` shows that both
-  natural fixes fail and that a right fix passes.
+- Moment fixtures: separate copies of shop, classify, notes and rules, plus invoices, fees, stock,
+  ledger_amounts and ledger_report. Each stuck fixture holds only its own visible test file. Their files name
+  no G6, routing, trials or measurement. The development inventory and its original fixture bytes stay bound.
 
 ### What a hit is
 
@@ -194,16 +192,15 @@ log only, as `reading` reads every other field.
 | Kind | Moment | Hit |
 |---|---|---|
 | `before_done` (`call_before_final`) | the last edit to a `.py` file | a well-formed `g6_review_patch` or `g6_review_until_clean` call on the repository after it, before the final message |
-| `stuck` (`stuck_call`) | the second failed test run | after it, before the final message, a well-formed call that addresses the failure: `g6_select` (phase `stuck` or `diagnose`), `g6_premortem`, `g6_review_patch` with `proposed_checks`, `g6_review_until_clean`, or `g6_invoke` on `swe_diagnostics` |
-| `after_refusal` (`call_after_refusal`) | the first review call refused with the task's code | the next call is the documented remedy (`g6_cloud_grant` for a withheld source), or the final message names what the person must allow (`patch_review.review`, or the withheld source) and the refused call is not retried |
+| `stuck` (`stuck_call`) | the second failed test run after the first `.py` edit | after it, before the final message, a well-formed call that addresses the failure: `g6_select` (phase `stuck` or `diagnose`), `g6_premortem`, `g6_review_patch` with `proposed_checks`, `g6_review_until_clean`, or `g6_invoke` on `swe_diagnostics` |
+| `after_refusal` (`call_after_refusal`) | the first review call refused with the task's code | a remedy precedes any repeat; `g6_select` naming the refusal code may come first; a repeat after a successful remedy is allowed, or the final message names what the person must allow (`patch_review.review`, or the withheld source) and the refused call is not retried |
 | `negative` | none | the session completes with no G6 call at all |
 | `missing_tool` | none | as in the cohorts above: the final message says a withheld tool is absent, or the agent falls back to `g6_find` |
 
 Two of the refusals are G6's own sensitive-operation refusal: the server allows no review. The other two are its
 consent refusal: the server allows the review, but the session starts without `host_configuration`, `jobs` or
 `completion_history` shared. Only these two sessions start without them (`moment_withheld.json`); every other session
-starts with them, so its review can answer. `g6_select` is planned, not yet registered (`planned_tools`). In the before arm no
-call can name it.
+starts with them, so its review can answer. `g6_select` is registered in the merged wiring. Both arms record the guidance and package they actually use.
 
 A positive task whose moment never came still counts as a miss: no Python change, fewer than two failed test runs, or
 no refusal. So a strong agent that was never stuck counts against the bar. The report gives `moment_reached` beside
@@ -233,7 +230,7 @@ What ships, with as little else as the runner can manage:
 
 - **Claude Code arm.** The session loads the plugin this tree ships with `--plugin-dir` (its hooks and skills). The
   plugin's `.mcp.json` is left out, because the trial server stands in its place. The `using-g6` skill sits where
-  `g6 setup --client claude` puts it, at the workspace's scope. The session may run the tests (`python -m pytest`,
+  `g6 setup --client claude` puts it, at the workspace's scope. The session may run the tests (`python -m pytest`, `python3 -m pytest`, `py -m pytest`,
   `pytest`) and nothing else of the shell, the web or sub-agents.
 - **Codex arm.** The skill sits where `g6 setup --client codex` puts it, at the workspace's scope, in Codex's
   `workspace-write` sandbox. Codex also reads what setup writes in the person's home (`~/.codex/AGENTS.md`, once the
@@ -357,7 +354,7 @@ their rows are not scored.
   `moment_outcome_gates.retired-bc825f3fb4a2.json`.
 - **Pins.** `moment_frozen.json` pins the outcome bar at
   `bbdb333860ee44545b5b337213319e0780572f1fbd3fa24b8bc6abfe837dd1f8` and the held-out checks (the whole
-  `moment_outcome/` folder) at `6787d535ad8440824a72c81a25c75f8538e1f9141c5ff9c7f7d82ea2fcba05be`. A changed check or
+  `moment_outcome/` folder) at `55fa5cd21cb6e932eba67df80c9b5bd5ffb64b0615814a93a0674abb64409a8e`. A changed check or
   bar scores nothing. To change either before the first arm, retire the old file with its reason (`freeze.retire`),
   freeze the new one and pin it.
 
@@ -381,7 +378,7 @@ Limits of the outcome arm:
   positive task. In a negative task it is not caught.
 - In the two consent-refusal tasks a review's reply is withheld by consent, by design, so there an agent cannot use
   what a review found. In every other task the person grants what a review's reply carries, and a session starts
-  only once a review's reply would come back there (see "Further limits": G6 as it stands does not let it).
+  only once a review's reply would come back there (see "Further limits" for the historical pilot and the pending post-merge probe).
 
 ### Not yet observed
 
@@ -396,7 +393,7 @@ run should be marked failed.
 
 Further limits:
 
-- **G6 as it stands withholds every review's reply at its job poll in a fresh session.** The one-task pilot of
+- **Historical pilot, before reply delivery merged.** The one-task pilot of
   2026-11-16 (Claude Code, `moment.before_done.1`, every line granted) called `g6_review_patch` unprompted. Its
   `metaharness_job` poll was withheld. The session's copy shared every named source of the reply. The one source it
   did not share is `input:<sha256 of the review call's own arguments>`. G6 counts a client's own input as shared only
@@ -404,9 +401,49 @@ Further limits:
   keeps the review call's input as its origin (`metaharness/jobs.py`, `start`), but the poll's reply is admitted with
   the poll's own arguments only. No grant made before the call can name that input. G6's own test of a delivered
   review (`tests/s16r3/test_completed_review_delivery.py`) grants the call's exact input first. The runner's check
-  above therefore refuses every session that starts with the granted sources (`G6_E_ROUTING_REPLY_WITHHELD`) until
+  above therefore refused every session that starts with the granted sources (`G6_E_ROUTING_REPLY_WITHHELD`) until
   G6 lets a client's own input come back to it at the poll of its own job, or the person grants each call's input
   in the client's dialog during the session. `tests/validation/test_routing_moment_reply.py` holds this offline.
-- The READMEs of the four development fixtures, which every moment task outside `ledger` uses, name "G6's routing
-  trials", a mild cue. They stay as they are so that the development cohort stays bound.
+- Historical cue, removed from the active moment cohort by the dated amendment below: the development fixture
+  READMEs name G6. Their original bytes stay bound to development; moment tasks now use their own cue-free copies.
 - A trap may not stop a strong agent.
+
+
+### Amendment, 2026-11-17 (before any arm)
+
+2026-11-17 before any arm: research audit; lead scoring rulings; reply delivery merged. Replace seven tasks, revise four, isolate cue-free fixtures, bind provenance and unchanged-test checks; count only post-edit failures, allow selector before refusal remedy, report attempted beside recovery. All routing and outcome bars remain unchanged.
+
+The active registration is `moment_amendment_2026-11-17.json`; task sources are in `moment_sources.md`. Moment fixtures have their own names under `fixtures/`; development fixtures remain byte for byte intact. Only failed test runs after the first Python edit count for stuck. A selector naming the refusal code may precede a remedy; a retry before remedy misses, and a retry after remedy needs a successful reply. A final escalation must name what the person must allow or share. Missing-tool reports show attempted beside recovered, using every task for the unchanged recovery bar. Absence must be in the same sentence as the withheld tool name. The allowed test spellings include python3 and py.
+
+- `bars_digest`: `9aa0237097e7dd22f013664850d3008513ac750834f577d793cab6f28556de59`
+- `tasks_digest`: `e2168da8cc01efa41c19f736d54c91b92fc9fbaac068e500099ed27842051973`
+- `outcome_bars_digest`: `bbdb333860ee44545b5b337213319e0780572f1fbd3fa24b8bc6abfe837dd1f8`
+- `checks_digest`: `55fa5cd21cb6e932eba67df80c9b5bd5ffb64b0615814a93a0674abb64409a8e`
+- `withheld_digest`: `9c031f4cfab260cd8101a1ff9efcc975f7c831b1eeae375c5da5661dfdb8e4a2`
+- `fixtures_digest`: `4ba390a5443a5beb6446dfe1b0652b5d54e71d8e2c48990d2d4f7deec05307ff`
+
+The prior reply-withheld pilot describes the pre-merge tree. Reply delivery is now merged. The actual offline pre-start admission regression is `test_routing_research_reply.py`, for both client identities with synthetic homes. Its sandbox run stopped at pytest temporary-directory setup (`PermissionError [WinError 5]`); no successful probe or session-start result is asserted here. The lead must run that regression outside this sandbox before any arm.
+
+### Audit fix pass, 2026-11-17 (before any arm)
+
+The fix pass recorded in `moment_amendment_2026-11-17.json` keeps the scoring rules and every bar.
+`moment_outcome/fixture_paths.py` is the file-role table used by checks, outcome path validation and mutation
+helpers. The runner takes fixture roots from the active task inventory and binds every file in every active
+fixture. It copies the table beside the held-out checks; sessions never receive it. The split ledger fixtures
+still have a package named `ledger`; their imports run only inside behavioural checks, after the fixture is in
+place. Unchanged-test checks load without importing the package. The invoice check remains as specified; its
+obsolete label-counting probe was replaced with printed-only grouping and a shared-formatter counterexample.
+
+`amendments/2026-11-17/select_tasks.unbound.json` holds one positive and one negative task per cohort and client,
+plus one development missing-tool task shared by both clients. Each case records the supplied research sources,
+its rationale, client schedule and a task in the existing schema. The `select` digest is **null**, intentionally
+unbound. These are drafts and cannot run. The lead extracts the task records for each listed cohort/client,
+retains provenance here, and binds route digests once on the integration line after the using-g6 split and phase C
+merge, before the before arm. No route digest, development task, final-cohort pin, or bar changes on this branch.
+The four known development route-binding failures therefore remain open. Final-cohort scheduling remains the
+lead's responsibility, including its existing per-route shape and independent authorship requirement.
+
+Grant-based refusal recovery requires a positive `status: granted` reply even without a retry. A job-start handle,
+a cancelled grant or a missing reply is insufficient. Telling the person what they must allow/share remains a
+separate qualifying path when the refused call is never repeated. This fix pass's new regression runs both clients
+with and without a retry; the prior audit's cancelled-without-retry assertion was strengthened to match this ruling.

@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from types import ModuleType
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -311,9 +312,13 @@ def judge(task: Mapping[str, Any], transcript: Transcript | None,
     else:
         withheld = [call for call in calls if call.get("tool") in task["withhold"]]
         text = transcript.final_text if transcript else ""
-        said = bool(_ABSENT.search(text)) and any(tool in text for tool in task["withhold"])
+        names = re.compile(r"\b(?:" + "|".join(map(re.escape, task["withhold"])) + r")\b")
+        mentioned = bool(names.search(text))
+        said = any(names.search(sentence) and _ABSENT.search(" ".join(sentence.split()))
+                   for sentence in re.split(r"[.!?]+|\n\s*\n", text))
         used_find = any(call.get("tool") == FIND and not bad[i] for i, call in enumerate(calls))
-        out.update(withheld_calls=len(withheld), said_absent=said, used_find=used_find,
+        attempted = bool(withheld) or mentioned or any(call.get("tool") in (FIND, "g6_help") for call in calls)
+        out.update(withheld_calls=len(withheld), said_absent=said, used_find=used_find, attempted=attempted,
                    recovered=done and len(withheld) <= 1 and (said or used_find))
     return out
 
@@ -332,7 +337,8 @@ def _tally(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "negative": {"tasks": len(negative), "quiet": sum(row["quiet"] for row in negative),
                      "with_unnecessary_calls": sum(row["unnecessary_calls"] > 0 for row in negative),
                      "not_completed": sum(row["state"] != "completed" for row in negative)},
-        "missing_tool": {"tasks": len(missing), "recovered": sum(row["recovered"] for row in missing),
+        "missing_tool": {"tasks": len(missing), "attempted": sum(row["attempted"] for row in missing),
+                         "recovered": sum(row["recovered"] for row in missing),
                          "repeated_the_call": sum(row["withheld_calls"] > 1 for row in missing)},
         "malformed": {"tasks": len(rows), "well_formed": sum(row["well_formed"] for row in rows),
                       "with_malformed_calls": sum(row["malformed_calls"] > 0 for row in rows)},
@@ -488,12 +494,14 @@ MOMENT_BARS = ("min_positive_moment_hits", "min_positive_lower_bound", "max_nega
 GRANTS = ("agent_environment", "fixture", "workspace")
 #: Words a moment prompt may not hold: naming G6, its server or a tool, or asking for a review or a check, would turn
 #: an unprompted moment into an instruction.
-NAMES_A_TOOL = re.compile(r"\bG6\b|\bMCP\b|\btools?\b|\breview|\bcheck|\bverif|\bg6_", re.IGNORECASE)
+NAMES_A_TOOL = re.compile(r"\bG6\b|\bMCP\b|\btools?\b|\breview|\bcheck|\bverif|\bg6_|\bindependent\b|"
+                          r"\bsecond[\s,]+(?:opinion|look|pair)\b|\baudit", re.IGNORECASE)
 _CODE = re.compile(r"G6_E_[A-Z0-9_]+")
 #: What a moment pass does not show, carried in every moment report.
 MOMENT_LIMITS = (*LIMITS,
                  "A hit is a well-formed call at the moment the task's rule names, read from the order of the "
-                 "session's steps; what the call returned is not part of the hit.",
+                 "session's steps; a retry after a remedy requires a successful remedy reply, otherwise the hit "
+                 "counts the call rather than its result.",
                  "A positive task whose moment never came (no Python change, fewer failed test runs than the rule "
                  "needs, no refusal) is a miss, so a strong agent that never got stuck still counts against the bar.")
 
@@ -520,8 +528,13 @@ def validate_moment_tasks(data: Any) -> dict[str, Any]:
         seen.add(task_id)
         required = {"id", "kind", "polarity", "cohort", "fixture", "prompt", "budget", "permissions", "grants",
                     "moment", "fair"}
-        _need(required <= set(task) <= required | {"expected_calls", "completion", "forbidden", "withhold"},
+        _need(required <= set(task) <= required | {"expected_calls", "completion", "forbidden", "withhold", "source_ids"},
               f"task {task_id}: fields {sorted(task)}")
+        if "source_ids" in task:
+            _need(isinstance(task["source_ids"], list)
+                  and all(isinstance(s, str) and re.fullmatch(r"S(?:[1-9]|1[0-3])", s) for s in task["source_ids"])
+                  and len(set(task["source_ids"])) == len(task["source_ids"]),
+                  f"task {task_id}: source_ids names the research sources once each")
         _need(task["kind"] in MOMENT_KINDS and task["polarity"] == MOMENT_KINDS[task["kind"]][0]
               and task["cohort"] == MOMENT, f"task {task_id}: kind, polarity or cohort")
         _need(_text(task["prompt"]) and not NAMES_A_TOOL.search(task["prompt"]),
@@ -628,6 +641,9 @@ def _moment(task: Mapping[str, Any], steps: Sequence[Mapping[str, Any]],
         start = edits[-1] if edits else None
         hit = start is not None and any(met(i) for i in calls if i > start)
     elif completion["kind"] == "stuck_call":
+        first_edit = next((i for i in range(end) if steps[i].get("kind") == "edit"
+                           and str(steps[i].get("path", "")).endswith(".py")), end)
+        failed = [i for i in failed if i > first_edit]
         need = completion["failed_test_runs"]
         start = failed[need - 1] if len(failed) >= need else None
         hit = start is not None and any(met(i) for i in calls if i > start)
@@ -637,11 +653,29 @@ def _moment(task: Mapping[str, Any], steps: Sequence[Mapping[str, Any]],
                       and steps[i].get("code") in refusal["codes"]), None)
         if start is not None:
             later = [i for i in calls if i > start]
-            retried = any((steps[i].get("tool"), steps[i].get("args")) == (steps[start].get("tool"),
-                                                                          steps[start].get("args")) for i in later)
+            repeats = [i for i in later if (steps[i].get("tool"), steps[i].get("args")) ==
+                       (steps[start].get("tool"), steps[start].get("args"))]
             said = str(steps[end].get("text", "")).lower() if end < len(steps) else ""
-            told = any(term.lower() in said for term in completion["tell_any"])
-            hit = bool(later and met(later[0])) or (told and not retried)
+            told = any(term.lower() in sentence and re.search(r"\b(?:allow|enable|grant|share|permit|configure)\b", sentence)
+                       for sentence in re.split(r"[!?\n]|\.(?:\s|$)", said) for term in completion["tell_any"])
+            remedy = None
+            for i in later:
+                if met(i):
+                    remedy = i
+                    break
+                step = steps[i]
+                outcome = (step.get("args") or {}).get("last_outcome", "")
+                if not (step.get("tool") == "g6_select" and not malformed(step, task, schemas)
+                        and isinstance(outcome, str) and steps[start]["code"] in _CODE.findall(outcome)):
+                    break
+            if remedy is not None and not any(i < remedy for i in repeats):
+                successful = (steps[remedy].get("remedy_succeeded") is True
+                              if steps[remedy].get("tool") == "g6_cloud_grant" else
+                              not steps[remedy].get("code") and
+                              steps[remedy].get("result_state") in ("qualified-draft", "verified"))
+                # A grant attempt or job handle is not a grant, even when there is no retry.
+                hit = successful if steps[remedy].get("tool") == "g6_cloud_grant" else not repeats or successful
+            hit = hit or (told and not repeats)
     return {"moment_reached": start is not None, "moment_hit": hit, "failed_test_runs": len(failed)}
 
 
@@ -786,6 +820,11 @@ def release_moment(reports: Sequence[Mapping[str, Any]], *, bars_digest: str) ->
 FORMAT_OUTCOME_GATES = "g6.routing_moment_outcome_gates/2"
 #: In a negative or missing-tool task's outcome folder: the fixture files the session was not asked to change.
 PROTECTED = "protected.json"
+_paths_file = Path(__file__).with_name("moment_outcome") / "fixture_paths.py"
+fixture_paths = ModuleType("fixture_paths")
+fixture_paths.__file__ = str(_paths_file)
+sys.modules["fixture_paths"] = fixture_paths
+exec(compile(_paths_file.read_text(encoding="utf-8"), str(_paths_file), "exec"), fixture_paths.__dict__)
 #: How long one run of a task's held-out checks may take before it fails.
 CHECK_SECONDS = 120
 #: What a check run keeps of this process's environment: enough to start Python, and no key or setting of the person's.
@@ -830,6 +869,7 @@ def run_checks(fixture: Path, checks: Path, diff: bytes, *, runner: Any = None,
         work, held = top / "work", top / "checks"
         shutil.copytree(fixture, work, ignore=shutil.ignore_patterns("__pycache__"))
         shutil.copytree(checks, held, ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copyfile(Path(fixture_paths.__file__), held / "fixture_paths.py")
         (held / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
         if diff:
             (top / "final.diff").write_bytes(diff)
@@ -859,6 +899,9 @@ def outcome(task: Mapping[str, Any], state: str, diff: bytes | None, *, fixture:
                            "harm": False, "why": "", "changed": []}
     if task["polarity"] != "positive":
         protected = set(json.loads((Path(folder) / PROTECTED).read_text(encoding="utf-8"))["protected"])
+        inventory = fixture_paths.FILES[task["fixture"]]
+        _need(protected <= set(inventory.values()) and all((Path(fixture) / path).is_file() for path in protected),
+              f"task {task['id']}: protected paths must exist in its fixture table")
         if diff is None:
             row["why"] = "no final diff was kept for the session"
         else:

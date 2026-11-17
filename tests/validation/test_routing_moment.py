@@ -39,6 +39,11 @@ WITHHELD = json.dumps({"ok": False, "error": "[G6_E_CLOUD_CONSENT_REQUIRED] Resu
                        "shared with this provider. Withheld source identifiers: host_configuration.",
                        "completion_state": "blocked-escalated"})
 STARTED = json.dumps({"ok": True, "job_id": "j1", "completion_state": "qualified-draft"})
+# src/g6/mcp/cloud_consent.py: request_grant's granted result, wrapped by reply().
+GRANTED = json.dumps({"ok": True, "result": {"status": "granted", "source": "host_configuration",
+                                          "provider": "openai:codex"},
+                      "completion_state": "qualified-draft", "reliability_label": "qualified-draft",
+                      "warning_card": {"code": "G6_E_CLOUD_CONSENT"}, "evidence": []})
 REVIEW = {"repo": "/work/shop", "task": "make total refuse a negative quantity"}
 
 
@@ -184,18 +189,19 @@ def test_call_before_final_is_a_review_after_the_last_python_edit(client: str) -
 @pytest.mark.parametrize("client", CLIENTS)
 def test_stuck_call_comes_after_the_second_failed_test_run(client: str) -> None:
     premortem = ("call", "g6_premortem", {"repo": "/work/shop", "task": "the totals"}, STARTED)
-    hit = judged(client, STUCK, [("test", True), ("edit", "shop/prices.py"), ("test", True), premortem])
+    edit = ("edit", "shop/prices.py")
+    hit = judged(client, STUCK, [edit, ("test", True), ("test", True), premortem])
     assert hit["moment_reached"] and hit["moment_hit"] and hit["failed_test_runs"] == 2
-    early = judged(client, STUCK, [("test", True), premortem, ("test", True)])
+    early = judged(client, STUCK, [edit, ("test", True), premortem, ("test", True)])
     assert early["moment_reached"] and not early["moment_hit"]
-    passed = judged(client, STUCK, [("test", True), ("test", False), premortem])
+    passed = judged(client, STUCK, [edit, ("test", True), ("test", False), premortem])
     assert not passed["moment_reached"] and not passed["moment_hit"]
-    assert not judged(client, STUCK, [("test", True), ("test", True),
+    assert not judged(client, STUCK, [edit, ("test", True), ("test", True),
                                       ("call", "g6_find", {"query": "why"}, STARTED)])["moment_hit"]
     plain = ("call", "g6_review_patch", REVIEW, STARTED)              # a review that proposes no check of the failure
-    assert not judged(client, STUCK, [("test", True), ("test", True), plain])["moment_hit"]
+    assert not judged(client, STUCK, [edit, ("test", True), ("test", True), plain])["moment_hit"]
     proposed = ("call", "g6_review_patch", dict(REVIEW, proposed_checks=["tests/test_prices.py"]), STARTED)
-    assert judged(client, STUCK, [("test", True), ("test", True), proposed])["moment_hit"]
+    assert judged(client, STUCK, [edit, ("test", True), ("test", True), proposed])["moment_hit"]
 
 
 @pytest.mark.parametrize("client", CLIENTS)
@@ -211,7 +217,7 @@ def test_call_after_refusal_takes_the_remedy_or_tells_the_person_what_to_allow(c
     never = judged(client, REFUSED, [("edit", "shop/prices.py")], "patch_review.review")
     assert not never["moment_reached"] and not never["moment_hit"]               # no refusal: the moment never came
     withheld = ("call", "g6_review_patch", REVIEW, WITHHELD)
-    grant = ("call", "g6_cloud_grant", {"source": "host_configuration", "provider": "openai:codex"}, STARTED)
+    grant = ("call", "g6_cloud_grant", {"source": "host_configuration", "provider": "openai:codex"}, GRANTED)
     assert judged(client, WITHHOLDING, [withheld, grant, ("call", "g6_review_patch", REVIEW, STARTED)])["moment_hit"]
     assert not judged(client, WITHHOLDING, [withheld, ("call", "g6_find", {"query": "share"}, STARTED)])["moment_hit"]
     assert judged(client, WITHHOLDING, [withheld], "Please share host_configuration with this provider.")["moment_hit"]
@@ -228,6 +234,25 @@ def test_negative_and_missing_tool_tasks_are_read_as_the_existing_kinds_are(clie
     said = judged(client, MISSING, [("edit", "shop/prices.py")], "g6_review_patch is not available here.")
     assert said["recovered"]
     assert not judged(client, MISSING, [("edit", "shop/prices.py")], "Done.")["recovered"]
+
+
+@pytest.mark.parametrize("client", CLIENTS)
+def test_stuck_without_a_python_edit_is_not_a_hit(client: str) -> None:
+    call = ("call", "g6_premortem", {"repo": "/work/shop", "task": "totals"}, STARTED)
+    row = judged(client, STUCK, [("test", True), ("edit", "README.md"), ("test", True), call])
+    assert not row["moment_reached"] and not row["moment_hit"] and row["failed_test_runs"] == 0
+
+
+@pytest.mark.parametrize("client", CLIENTS)
+@pytest.mark.parametrize("retry_call", [False, True], ids=["no-retry", "retry"])
+def test_a_job_placeholder_is_not_a_successful_grant(client: str, retry_call: bool) -> None:
+    refusal = ("call", "g6_review_patch", REVIEW, WITHHELD)
+    grant = ("call", "g6_cloud_grant", {"source": "host_configuration", "provider": "openai:codex"}, STARTED)
+    retry = ("call", "g6_review_patch", REVIEW, STARTED)
+    tail = [retry] if retry_call else []
+    row = judged(client, WITHHOLDING, [refusal, grant, *tail])
+    assert row["moment_reached"] and not row["moment_hit"]
+    assert judged(client, WITHHOLDING, [refusal, (*grant[:3], GRANTED), *tail])["moment_hit"]
 
 
 def _row(task: dict[str, Any], **timeline_and_more: Any) -> Any:
@@ -260,7 +285,8 @@ def ideal(task: dict[str, Any], hit: bool = True) -> Any:
     if task["kind"] == "before_done":
         steps = (EDIT, CALL) if hit else (CALL, EDIT)
     elif task["kind"] == "stuck":
-        steps = (FAIL, FAIL, dict(CALL, tool="g6_premortem", args={"repo": "/work/shop", "task": "x"})) if hit else (FAIL,)
+        steps = (EDIT, FAIL, FAIL, dict(CALL, tool="g6_premortem", args={"repo": "/work/shop", "task": "x"})) \
+            if hit else (EDIT, FAIL)
     elif task["kind"] == "after_refusal":
         steps = (DENIED,)
     elif task["kind"] == "negative":

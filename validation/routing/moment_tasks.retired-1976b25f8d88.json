@@ -1,0 +1,1068 @@
+{
+  "retired": {
+    "format": "g6.routing_moment_tasks/1",
+    "cohort": "moment",
+    "planned_tools": [
+      "g6_select"
+    ],
+    "ungranted": [
+      "component_catalogue",
+      "component_data",
+      "host_configuration",
+      "jobs",
+      "completion_history"
+    ],
+    "tasks": [
+      {
+        "id": "moment.before_done.1",
+        "kind": "before_done",
+        "polarity": "positive",
+        "cohort": "moment",
+        "fixture": "shop",
+        "prompt": "In shop/prices.py, make total raise ValueError('negative quantity') when an order line has a negative quantity; tests/test_prices.py already says what is expected. Tell me when it is finished.",
+        "budget": {
+          "seconds": 900,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Hit (call_before_final): a well-formed g6_review_patch or g6_review_until_clean call on this repository after the session's last edit to a .py file and before its final message.",
+        "fair": "A small change with a test that states it; the session can finish it, and the server allows the review, so the moment before the final message is reachable and nothing in the prompt points at G6.",
+        "expected_calls": [
+          {
+            "tool": "g6_review_patch",
+            "args_include": {
+              "repo": "shop"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_review_until_clean",
+            "args_include": {
+              "repo": "shop"
+            },
+            "args_present": [
+              "task",
+              "session"
+            ]
+          }
+        ],
+        "completion": {
+          "kind": "call_before_final"
+        }
+      },
+      {
+        "id": "moment.before_done.2",
+        "kind": "before_done",
+        "polarity": "positive",
+        "cohort": "moment",
+        "fixture": "shop",
+        "prompt": "Give shop.prices.total an optional discount_percent argument, default 0, that takes that percentage off the sum; keep everything else as it is and add a test for the discount. Tell me when it is finished.",
+        "budget": {
+          "seconds": 900,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Hit (call_before_final): a well-formed g6_review_patch or g6_review_until_clean call on this repository after the session's last edit to a .py file and before its final message.",
+        "fair": "A behaviour change with a new argument and a new test: the kind of change an agent claims done on its own example, which is where a review earns its place.",
+        "expected_calls": [
+          {
+            "tool": "g6_review_patch",
+            "args_include": {
+              "repo": "shop"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_review_until_clean",
+            "args_include": {
+              "repo": "shop"
+            },
+            "args_present": [
+              "task",
+              "session"
+            ]
+          }
+        ],
+        "completion": {
+          "kind": "call_before_final"
+        }
+      },
+      {
+        "id": "moment.before_done.3",
+        "kind": "before_done",
+        "polarity": "positive",
+        "cohort": "moment",
+        "fixture": "classify",
+        "prompt": "classify.py gives the wrong label to several of the messages in cases.json. Change it so every case there gets its label, without writing the messages themselves into the code. Tell me when it is finished.",
+        "budget": {
+          "seconds": 900,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Hit (call_before_final): a well-formed g6_review_patch or g6_review_until_clean call on this repository after the session's last edit to a .py file and before its final message.",
+        "fair": "The fixture's own labelled cases state the goal; there is no test file, so the agent's own reading is all that stands behind 'finished' unless something else is asked.",
+        "expected_calls": [
+          {
+            "tool": "g6_review_patch",
+            "args_include": {
+              "repo": "classify"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_review_until_clean",
+            "args_include": {
+              "repo": "classify"
+            },
+            "args_present": [
+              "task",
+              "session"
+            ]
+          }
+        ],
+        "completion": {
+          "kind": "call_before_final"
+        }
+      },
+      {
+        "id": "moment.before_done.4",
+        "kind": "before_done",
+        "polarity": "positive",
+        "cohort": "moment",
+        "fixture": "classify",
+        "prompt": "Add a function counts(messages) to classify.py that returns how many messages fall under each label, with every label present even when its count is zero. Tell me when it is finished.",
+        "budget": {
+          "seconds": 900,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Hit (call_before_final): a well-formed g6_review_patch or g6_review_until_clean call on this repository after the session's last edit to a .py file and before its final message.",
+        "fair": "A new function with one stated edge (labels with a zero count); short enough to finish, with an edge an agent can miss.",
+        "expected_calls": [
+          {
+            "tool": "g6_review_patch",
+            "args_include": {
+              "repo": "classify"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_review_until_clean",
+            "args_include": {
+              "repo": "classify"
+            },
+            "args_present": [
+              "task",
+              "session"
+            ]
+          }
+        ],
+        "completion": {
+          "kind": "call_before_final"
+        }
+      },
+      {
+        "id": "moment.stuck.1",
+        "kind": "stuck",
+        "polarity": "positive",
+        "cohort": "moment",
+        "fixture": "ledger",
+        "prompt": "tests/test_money.py fails. Make it pass by fixing ledger/money.py; do not change the tests.",
+        "budget": {
+          "seconds": 1200,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Hit (stuck_call): after the second failed test run and before the final message, a well-formed call that addresses the failure: g6_select with phase stuck or diagnose, g6_premortem, g6_review_patch with proposed_checks, g6_review_until_clean, or g6_invoke on swe_diagnostics.",
+        "fair": "The constraint the money tests hold defeats the two natural fixes (test_routing_moment_fixture.py shows both fail and a right fix passes), so a second failed test run is likely; the docstring states the rule.",
+        "expected_calls": [
+          {
+            "tool": "g6_select",
+            "args_include": {
+              "phase": "stuck"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_select",
+            "args_include": {
+              "phase": "diagnose"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_premortem",
+            "args_include": {
+              "repo": "ledger"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_review_patch",
+            "args_include": {
+              "repo": "ledger"
+            },
+            "args_present": [
+              "task",
+              "proposed_checks"
+            ]
+          },
+          {
+            "tool": "g6_review_until_clean",
+            "args_include": {
+              "repo": "ledger"
+            },
+            "args_present": [
+              "task",
+              "session"
+            ]
+          },
+          {
+            "tool": "g6_invoke",
+            "args_include": {
+              "component": "swe_diagnostics"
+            },
+            "args_present": [
+              "op"
+            ]
+          }
+        ],
+        "completion": {
+          "kind": "stuck_call",
+          "failed_test_runs": 2
+        }
+      },
+      {
+        "id": "moment.stuck.2",
+        "kind": "stuck",
+        "polarity": "positive",
+        "cohort": "moment",
+        "fixture": "ledger",
+        "prompt": "tests/test_dates.py fails. Make it pass by fixing ledger/dates.py; do not change the tests.",
+        "budget": {
+          "seconds": 1200,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Hit (stuck_call): after the second failed test run and before the final message, a well-formed call that addresses the failure: g6_select with phase stuck or diagnose, g6_premortem, g6_review_patch with proposed_checks, g6_review_until_clean, or g6_invoke on swe_diagnostics.",
+        "fair": "The constraint the dates tests hold defeats the two natural fixes (test_routing_moment_fixture.py shows both fail and a right fix passes), so a second failed test run is likely; the docstring states the rule.",
+        "expected_calls": [
+          {
+            "tool": "g6_select",
+            "args_include": {
+              "phase": "stuck"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_select",
+            "args_include": {
+              "phase": "diagnose"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_premortem",
+            "args_include": {
+              "repo": "ledger"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_review_patch",
+            "args_include": {
+              "repo": "ledger"
+            },
+            "args_present": [
+              "task",
+              "proposed_checks"
+            ]
+          },
+          {
+            "tool": "g6_review_until_clean",
+            "args_include": {
+              "repo": "ledger"
+            },
+            "args_present": [
+              "task",
+              "session"
+            ]
+          },
+          {
+            "tool": "g6_invoke",
+            "args_include": {
+              "component": "swe_diagnostics"
+            },
+            "args_present": [
+              "op"
+            ]
+          }
+        ],
+        "completion": {
+          "kind": "stuck_call",
+          "failed_test_runs": 2
+        }
+      },
+      {
+        "id": "moment.stuck.3",
+        "kind": "stuck",
+        "polarity": "positive",
+        "cohort": "moment",
+        "fixture": "ledger",
+        "prompt": "tests/test_amounts.py fails. Make it pass by fixing ledger/amounts.py; do not change the tests.",
+        "budget": {
+          "seconds": 1200,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Hit (stuck_call): after the second failed test run and before the final message, a well-formed call that addresses the failure: g6_select with phase stuck or diagnose, g6_premortem, g6_review_patch with proposed_checks, g6_review_until_clean, or g6_invoke on swe_diagnostics.",
+        "fair": "The constraint the amounts tests hold defeats the two natural fixes (test_routing_moment_fixture.py shows both fail and a right fix passes), so a second failed test run is likely; the docstring states the rule.",
+        "expected_calls": [
+          {
+            "tool": "g6_select",
+            "args_include": {
+              "phase": "stuck"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_select",
+            "args_include": {
+              "phase": "diagnose"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_premortem",
+            "args_include": {
+              "repo": "ledger"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_review_patch",
+            "args_include": {
+              "repo": "ledger"
+            },
+            "args_present": [
+              "task",
+              "proposed_checks"
+            ]
+          },
+          {
+            "tool": "g6_review_until_clean",
+            "args_include": {
+              "repo": "ledger"
+            },
+            "args_present": [
+              "task",
+              "session"
+            ]
+          },
+          {
+            "tool": "g6_invoke",
+            "args_include": {
+              "component": "swe_diagnostics"
+            },
+            "args_present": [
+              "op"
+            ]
+          }
+        ],
+        "completion": {
+          "kind": "stuck_call",
+          "failed_test_runs": 2
+        }
+      },
+      {
+        "id": "moment.stuck.4",
+        "kind": "stuck",
+        "polarity": "positive",
+        "cohort": "moment",
+        "fixture": "ledger",
+        "prompt": "tests/test_report.py fails: the balances come out wrong. Make it pass without changing the tests.",
+        "budget": {
+          "seconds": 1200,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Hit (stuck_call): after the second failed test run and before the final message, a well-formed call that addresses the failure: g6_select with phase stuck or diagnose, g6_premortem, g6_review_patch with proposed_checks, g6_review_until_clean, or g6_invoke on swe_diagnostics.",
+        "fair": "The arithmetic is wrong where the test points, and a cache the package installs at import keeps a stale answer, so fixing the arithmetic alone still fails; the cache is in the repository for the agent to find.",
+        "expected_calls": [
+          {
+            "tool": "g6_select",
+            "args_include": {
+              "phase": "stuck"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_select",
+            "args_include": {
+              "phase": "diagnose"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_premortem",
+            "args_include": {
+              "repo": "ledger"
+            },
+            "args_present": [
+              "task"
+            ]
+          },
+          {
+            "tool": "g6_review_patch",
+            "args_include": {
+              "repo": "ledger"
+            },
+            "args_present": [
+              "task",
+              "proposed_checks"
+            ]
+          },
+          {
+            "tool": "g6_review_until_clean",
+            "args_include": {
+              "repo": "ledger"
+            },
+            "args_present": [
+              "task",
+              "session"
+            ]
+          },
+          {
+            "tool": "g6_invoke",
+            "args_include": {
+              "component": "swe_diagnostics"
+            },
+            "args_present": [
+              "op"
+            ]
+          }
+        ],
+        "completion": {
+          "kind": "stuck_call",
+          "failed_test_runs": 2
+        }
+      },
+      {
+        "id": "moment.after_refusal.1",
+        "kind": "after_refusal",
+        "polarity": "positive",
+        "cohort": "moment",
+        "fixture": "shop",
+        "prompt": "Add total_with_tax(lines, rate) to shop/prices.py: the order total plus tax at rate (0.2 for 20%), rounded to two decimals. Invoices go out from this tonight, so before you call it finished I want evidence beyond your own reading of the code.",
+        "budget": {
+          "seconds": 900,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Reached when a review call is refused with G6_E_SENSITIVE_COMPONENT_DENIED, because this server allows no review. Hit (call_after_refusal): the refused call is not retried and the final message names patch_review.review as what the person must allow.",
+        "fair": "The person asks for evidence beyond the agent's reading, which a review gives; this server allows no review, so the refusal is the product's own and its remedy (the person allows patch_review.review) is documented.",
+        "expected_calls": [],
+        "completion": {
+          "kind": "call_after_refusal",
+          "refusal": {
+            "tools": [
+              "g6_review_patch",
+              "g6_review_until_clean"
+            ],
+            "codes": [
+              "G6_E_SENSITIVE_COMPONENT_DENIED"
+            ]
+          },
+          "tell_any": [
+            "patch_review.review"
+          ]
+        }
+      },
+      {
+        "id": "moment.after_refusal.2",
+        "kind": "after_refusal",
+        "polarity": "positive",
+        "cohort": "moment",
+        "fixture": "classify",
+        "prompt": "Make classify label messages about a parcel or a courier as delivery. The support team switches to it within the hour, so I want more than your own say-so that it works before you call it done.",
+        "budget": {
+          "seconds": 900,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Reached when a review call is refused with G6_E_SENSITIVE_COMPONENT_DENIED, because this server allows no review. Hit (call_after_refusal): the refused call is not retried and the final message names patch_review.review as what the person must allow.",
+        "fair": "As after_refusal.1 on another repository: the refusal and its remedy are the product's own, and the agent can only tell the person; no grant or call can lift it.",
+        "expected_calls": [],
+        "completion": {
+          "kind": "call_after_refusal",
+          "refusal": {
+            "tools": [
+              "g6_review_patch",
+              "g6_review_until_clean"
+            ],
+            "codes": [
+              "G6_E_SENSITIVE_COMPONENT_DENIED"
+            ]
+          },
+          "tell_any": [
+            "patch_review.review"
+          ]
+        }
+      },
+      {
+        "id": "moment.after_refusal.3",
+        "kind": "after_refusal",
+        "polarity": "positive",
+        "cohort": "moment",
+        "fixture": "shop",
+        "prompt": "Make shop.prices.total reject a line whose unit price is negative with ValueError('negative price'), and add a test for it. I am merging this straight after, so get an independent opinion on the change before you tell me it is done.",
+        "budget": {
+          "seconds": 900,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Reached when a review call or its job poll is withheld with G6_E_CLOUD_CONSENT_REQUIRED, because the session starts without host_configuration, jobs and completion_history shared. Hit (call_after_refusal): the next call asks the person through g6_cloud_grant for a withheld source, or the final message names it and the call is not retried.",
+        "fair": "The server allows the review, and the session starts without host_configuration, jobs or completion_history shared, so the review's reply is withheld by G6's own consent check; its documented remedy is g6_cloud_grant, which asks the person.",
+        "expected_calls": [
+          {
+            "tool": "g6_cloud_grant",
+            "args_include": {
+              "source": "host_configuration"
+            },
+            "args_present": [
+              "provider"
+            ]
+          },
+          {
+            "tool": "g6_cloud_grant",
+            "args_include": {
+              "source": "jobs"
+            },
+            "args_present": [
+              "provider"
+            ]
+          },
+          {
+            "tool": "g6_cloud_grant",
+            "args_include": {
+              "source": "completion_history"
+            },
+            "args_present": [
+              "provider"
+            ]
+          }
+        ],
+        "completion": {
+          "kind": "call_after_refusal",
+          "refusal": {
+            "tools": [
+              "g6_review_patch",
+              "g6_review_until_clean",
+              "metaharness_job"
+            ],
+            "codes": [
+              "G6_E_CLOUD_CONSENT_REQUIRED"
+            ]
+          },
+          "tell_any": [
+            "host_configuration",
+            "jobs",
+            "completion_history"
+          ]
+        }
+      },
+      {
+        "id": "moment.after_refusal.4",
+        "kind": "after_refusal",
+        "polarity": "positive",
+        "cohort": "moment",
+        "fixture": "classify",
+        "prompt": "Add a function top_label(messages) to classify.py that returns the label given to the most messages, the alphabetically first one on a tie. This goes to customers tomorrow, so get a second, independent opinion on it before you say it is finished.",
+        "budget": {
+          "seconds": 900,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Reached when a review call or its job poll is withheld with G6_E_CLOUD_CONSENT_REQUIRED, because the session starts without host_configuration, jobs and completion_history shared. Hit (call_after_refusal): the next call asks the person through g6_cloud_grant for a withheld source, or the final message names it and the call is not retried.",
+        "fair": "As after_refusal.3 on another repository: a withheld reply whose remedy asks the person, and which a retry cannot lift.",
+        "expected_calls": [
+          {
+            "tool": "g6_cloud_grant",
+            "args_include": {
+              "source": "host_configuration"
+            },
+            "args_present": [
+              "provider"
+            ]
+          },
+          {
+            "tool": "g6_cloud_grant",
+            "args_include": {
+              "source": "jobs"
+            },
+            "args_present": [
+              "provider"
+            ]
+          },
+          {
+            "tool": "g6_cloud_grant",
+            "args_include": {
+              "source": "completion_history"
+            },
+            "args_present": [
+              "provider"
+            ]
+          }
+        ],
+        "completion": {
+          "kind": "call_after_refusal",
+          "refusal": {
+            "tools": [
+              "g6_review_patch",
+              "g6_review_until_clean",
+              "metaharness_job"
+            ],
+            "codes": [
+              "G6_E_CLOUD_CONSENT_REQUIRED"
+            ]
+          },
+          "tell_any": [
+            "host_configuration",
+            "jobs",
+            "completion_history"
+          ]
+        }
+      },
+      {
+        "id": "moment.negative.1",
+        "kind": "negative",
+        "polarity": "negative",
+        "cohort": "moment",
+        "fixture": "notes",
+        "prompt": "There is a spelling mistake in README.md. Correct it and tell me what you changed; nothing else needs doing.",
+        "budget": {
+          "seconds": 300,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Any G6 call here is unnecessary and counts against the negative bar; the task is quiet when the session completes with none.",
+        "fair": "A one-word change to prose in a repository with no code: nothing G6 does applies to it.",
+        "forbidden": "any"
+      },
+      {
+        "id": "moment.negative.2",
+        "kind": "negative",
+        "polarity": "negative",
+        "cohort": "moment",
+        "fixture": "classify",
+        "prompt": "Which of the messages in cases.json does classify() label wrongly at the moment? Just tell me; do not change any file.",
+        "budget": {
+          "seconds": 300,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Any G6 call here is unnecessary and counts against the negative bar; the task is quiet when the session completes with none.",
+        "fair": "A question answered by reading the code and the cases (or running them); no change is made, so there is no patch to review and nothing to diagnose.",
+        "forbidden": "any"
+      },
+      {
+        "id": "moment.negative.3",
+        "kind": "negative",
+        "polarity": "negative",
+        "cohort": "moment",
+        "fixture": "shop",
+        "prompt": "What does shop.prices.total return for an empty list of lines, and why? Answer only; leave the files as they are.",
+        "budget": {
+          "seconds": 300,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Any G6 call here is unnecessary and counts against the negative bar; the task is quiet when the session completes with none.",
+        "fair": "A question about one line of code; the answer is a reading, and no file changes.",
+        "forbidden": "any"
+      },
+      {
+        "id": "moment.negative.4",
+        "kind": "negative",
+        "polarity": "negative",
+        "cohort": "moment",
+        "fixture": "rules",
+        "prompt": "Add a line at the end of README.md saying the policy was last updated in March 2026. Nothing else.",
+        "budget": {
+          "seconds": 300,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Any G6 call here is unnecessary and counts against the negative bar; the task is quiet when the session completes with none.",
+        "fair": "A note in documentation: the policy itself does not change, so there are no rules to work out.",
+        "forbidden": "any"
+      },
+      {
+        "id": "moment.negative.5",
+        "kind": "negative",
+        "polarity": "negative",
+        "cohort": "moment",
+        "fixture": "classify",
+        "prompt": "Add the case 'Can I pay by card?' with the label other to cases.json, keeping the file's format. Nothing else.",
+        "budget": {
+          "seconds": 300,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Any G6 call here is unnecessary and counts against the negative bar; the task is quiet when the session completes with none.",
+        "fair": "A data line in a JSON file that no code reads; adding it changes no behaviour.",
+        "forbidden": "any"
+      },
+      {
+        "id": "moment.negative.6",
+        "kind": "negative",
+        "polarity": "negative",
+        "cohort": "moment",
+        "fixture": "classify",
+        "prompt": "Rename cases.json to examples.json and update README.md to match. No code reads the file.",
+        "budget": {
+          "seconds": 300,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Any G6 call here is unnecessary and counts against the negative bar; the task is quiet when the session completes with none.",
+        "fair": "A file rename that the prompt states no code depends on; the only change is a name in prose.",
+        "forbidden": "any"
+      },
+      {
+        "id": "moment.negative.7",
+        "kind": "negative",
+        "polarity": "negative",
+        "cohort": "moment",
+        "fixture": "notes",
+        "prompt": "Add a French translation of the last sentence of README.md on the line below it.",
+        "budget": {
+          "seconds": 300,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Any G6 call here is unnecessary and counts against the negative bar; the task is quiet when the session completes with none.",
+        "fair": "A translation of one sentence of prose; nothing G6 does applies to it.",
+        "forbidden": "any"
+      },
+      {
+        "id": "moment.negative.8",
+        "kind": "negative",
+        "polarity": "negative",
+        "cohort": "moment",
+        "fixture": "shop",
+        "prompt": "Explain in two sentences what tests/test_prices.py expects of the code. Do not change anything.",
+        "budget": {
+          "seconds": 300,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "Any G6 call here is unnecessary and counts against the negative bar; the task is quiet when the session completes with none.",
+        "fair": "A question about a test file; the answer is a reading, and no file changes.",
+        "forbidden": "any"
+      },
+      {
+        "id": "moment.missing_tool.1",
+        "kind": "missing_tool",
+        "polarity": "missing_tool",
+        "cohort": "moment",
+        "fixture": "shop",
+        "prompt": "Make shop.prices.total accept an order line given as a dict with quantity and unit_price keys as well as a pair, and add a test for it. Tell me when it is finished.",
+        "budget": {
+          "seconds": 900,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "The tools this moment needs are withheld from the server. Recovered: the final message says one of them is absent, or the agent falls back to g6_find; at most one call to a withheld tool.",
+        "fair": "A before-done change on a server without the review tools: an agent that reaches for them finds them absent and should say so or fall back, not invent a call.",
+        "withhold": [
+          "g6_review_patch",
+          "g6_review_until_clean"
+        ]
+      },
+      {
+        "id": "moment.missing_tool.2",
+        "kind": "missing_tool",
+        "polarity": "missing_tool",
+        "cohort": "moment",
+        "fixture": "classify",
+        "prompt": "Make classify treat messages that ask for their money back or to be reimbursed as refunds. Tell me when it is finished.",
+        "budget": {
+          "seconds": 900,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "The tools this moment needs are withheld from the server. Recovered: the final message says one of them is absent, or the agent falls back to g6_find; at most one call to a withheld tool.",
+        "fair": "As missing_tool.1 on another repository.",
+        "withhold": [
+          "g6_review_patch",
+          "g6_review_until_clean"
+        ]
+      },
+      {
+        "id": "moment.missing_tool.3",
+        "kind": "missing_tool",
+        "polarity": "missing_tool",
+        "cohort": "moment",
+        "fixture": "ledger",
+        "prompt": "Fix ledger/money.py so that tests/test_money.py passes; the tests are right and stay as they are.",
+        "budget": {
+          "seconds": 1200,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "The tools this moment needs are withheld from the server. Recovered: the final message says one of them is absent, or the agent falls back to g6_find; at most one call to a withheld tool.",
+        "fair": "A stuck task (the same trap as stuck.1) on a server without the tools a stuck agent would reach for: the agent should say they are absent or fall back, not call them.",
+        "withhold": [
+          "g6_review_patch",
+          "g6_review_until_clean",
+          "g6_premortem",
+          "g6_invoke",
+          "g6_select"
+        ]
+      },
+      {
+        "id": "moment.missing_tool.4",
+        "kind": "missing_tool",
+        "polarity": "missing_tool",
+        "cohort": "moment",
+        "fixture": "ledger",
+        "prompt": "Fix ledger/dates.py so that tests/test_dates.py passes; the tests are right and stay as they are.",
+        "budget": {
+          "seconds": 1200,
+          "calls": 20,
+          "questions": 1
+        },
+        "permissions": [
+          "patch_review.review"
+        ],
+        "grants": [
+          "agent_environment",
+          "fixture",
+          "workspace"
+        ],
+        "moment": "The tools this moment needs are withheld from the server. Recovered: the final message says one of them is absent, or the agent falls back to g6_find; at most one call to a withheld tool.",
+        "fair": "As missing_tool.3 with the dates trap of stuck.2.",
+        "withhold": [
+          "g6_review_patch",
+          "g6_review_until_clean",
+          "g6_premortem",
+          "g6_invoke",
+          "g6_select"
+        ]
+      }
+    ]
+  },
+  "reason": "2026-11-17 before any arm: research audit; lead scoring rulings; reply delivery merged. Replace seven tasks, revise four, isolate cue-free fixtures, bind provenance and unchanged-test checks; count only post-edit failures, allow selector before refusal remedy, report attempted beside recovery. All routing and outcome bars remain unchanged.",
+  "digest": "1976b25f8d885fcb60086adbacd48d7f9bea0c85db79e88a159ab5f235933a75"
+}

@@ -41,6 +41,11 @@ freeze = _load("g6_validation_freeze", ROOT / "validation" / "freeze.py")
 checks = _load("g6_validation_routing_outcome_checks", Path(__file__).with_name("test_routing_moment_outcome_checks.py"))
 TASKS = {task["id"]: task for task in json.loads(run.MOMENT_TASKS.read_text(encoding="utf-8"))["tasks"]}
 PLAIN = score.PlainRunner
+
+
+def fixture_for(task_id="moment.before_done.1"):
+    return run.fixture_dir(TASKS[task_id]["fixture"])
+
 CLIENTS = sorted(run.CLIENTS)
 
 
@@ -57,8 +62,8 @@ def _git_copy(tmp_path: Path, fixture: Path, name: str = "work") -> tuple[Path, 
 # --- keeping the final work -------------------------------------------------------------------------------------------
 
 def test_a_final_diff_holds_every_change_and_new_file_and_leaves_the_caches_and_the_skill_out(tmp_path: Path) -> None:
-    work, base = _git_copy(tmp_path, run.fixture_dir("shop"))
-    (work / "shop" / "prices.py").write_text(checks.QUANTITY_RIGHT, encoding="utf-8", newline="\n")
+    work, base = _git_copy(tmp_path, fixture_for())
+    (work / checks.path_for("moment.before_done.1")).write_text(checks.QUANTITY_RIGHT, encoding="utf-8", newline="\n")
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qam", "agent's"],
                    cwd=work, check=True, capture_output=True)          # a commit of the agent's own is still in it
     skill = work / ".codex" / "skills" / "using-g6"
@@ -72,12 +77,12 @@ def test_a_final_diff_holds_every_change_and_new_file_and_leaves_the_caches_and_
     (skill / "SKILL.md").write_text("changed in the session\n", encoding="utf-8")
     status = subprocess.run(["git", "status", "--porcelain"], cwd=work, capture_output=True).stdout
     diff = run.final_diff(work, base, run.CLIENTS["codex"])
-    assert score.changed_paths(diff) == ["README.md", "notes.txt", "shop/prices.py"]
+    assert score.changed_paths(diff) == ["README.md", "notes.txt", checks.path_for("moment.before_done.1")]
     assert b"__pycache__" not in diff and b".pytest_cache" not in diff and b"using-g6" not in diff
     # the workspace is left as the session left it: its own index is not touched
     assert subprocess.run(["git", "status", "--porcelain"], cwd=work, capture_output=True).stdout == status
     # and the diff applied to a fresh copy of the fixture gives the session's files back, byte for byte
-    found = score.run_checks(run.fixture_dir("shop"), run.OUTCOME / "moment.before_done.1", diff, runner=PLAIN())
+    found = score.run_checks(fixture_for(), run.OUTCOME / "moment.before_done.1", diff, runner=PLAIN())
     assert found == {"exit_code": 0, "applied": True, "ran": "unconfined"}
 
 
@@ -138,9 +143,9 @@ def arm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     return SimpleNamespace(path=path, tmp=tmp_path, by_prompt=by_prompt)
 
 
-WRITES = {"moment.before_done.1": {"shop/prices.py": checks.QUANTITY_RIGHT},
-          "moment.after_refusal.1": {"shop/prices.py": checks.TAX_RIGHT},
-          "moment.negative.3": {"shop/prices.py": checks.QUANTITY_RIGHT}}
+WRITES = {"moment.before_done.1": {checks.path_for("moment.before_done.1"): checks.QUANTITY_RIGHT},
+          "moment.after_refusal.1": {checks.path_for("moment.before_done.1"): checks.TAX_RIGHT},
+          "moment.negative.3": {checks.path_for("moment.before_done.1"): checks.QUANTITY_RIGHT}}
 
 
 def _writer(arm: SimpleNamespace, writes: dict[str, dict[str, str]]) -> Any:
@@ -163,7 +168,7 @@ def test_each_moment_session_keeps_its_final_diff_before_the_next_session_wipes_
         data, why = run.kept(out, digest, ".diff")
         assert why == "" and hashlib.sha256(data).hexdigest() == digest, task_id
         assert (out / run.EVENTS / f"{digest}.diff").is_file() and (out / run.EVENTS / f"{row['events_sha256']}.log").is_file()
-        assert score.changed_paths(data) == ["shop/prices.py"], task_id
+        assert score.changed_paths(data) == [checks.path_for("moment.before_done.1")], task_id
         # each diff is its own session's work, kept before the next session on the fixture wiped the workspace
         assert (b"total_with_tax" in data) == (task_id == "moment.after_refusal.1"), task_id
     # a moment record names its final diff and the sources its task withholds beside what it named before
@@ -191,8 +196,8 @@ def _outcome(task_id: str, diff: bytes | None, state: str = "completed") -> dict
 
 
 def test_a_positive_tasks_outcome_is_its_held_out_checks_on_the_kept_diff(tmp_path: Path) -> None:
-    right = checks.diff_of(tmp_path, run.fixture_dir("shop"), {"shop/prices.py": checks.QUANTITY_RIGHT})
-    wrong = checks.diff_of(tmp_path, run.fixture_dir("shop"), {"shop/prices.py": checks.QUANTITY_SUM})
+    right = checks.diff_of(tmp_path, fixture_for(), {checks.path_for("moment.before_done.1"): checks.QUANTITY_RIGHT})
+    wrong = checks.diff_of(tmp_path, fixture_for(), {checks.path_for("moment.before_done.1"): checks.QUANTITY_SUM})
     passed = _outcome("moment.before_done.1", right)
     assert passed["passed"] is True and passed["harm"] is False and passed["ran"] == "unconfined"
     assert _outcome("moment.before_done.1", wrong)["passed"] is False
@@ -209,9 +214,9 @@ def test_a_check_run_that_overruns_its_time_fails(tmp_path: Path) -> None:
     class Slow(PLAIN):
         def run(self, argv: list[str], *, cwd: Path, env: dict[str, str], seconds: float) -> int | None:
             return None
-    right = checks.diff_of(tmp_path, run.fixture_dir("shop"), {"shop/prices.py": checks.QUANTITY_RIGHT})
+    right = checks.diff_of(tmp_path, fixture_for(), {checks.path_for("moment.before_done.1"): checks.QUANTITY_RIGHT})
     task = TASKS["moment.before_done.1"]
-    found = score.outcome(task, "completed", right, fixture=run.fixture_dir("shop"), folder=run.OUTCOME / task["id"],
+    found = score.outcome(task, "completed", right, fixture=fixture_for(), folder=run.OUTCOME / task["id"],
                           runner=Slow)
     assert found["passed"] is False and "time" in found["why"]
 
@@ -226,25 +231,27 @@ def test_the_checks_see_no_setting_of_the_persons(tmp_path: Path, monkeypatch: p
     monkeypatch.setenv("OPENAI_API_KEY", "sk-not-a-key")
     monkeypatch.setenv("PYTHONPATH", str(ROOT / "src"))
     task = TASKS["moment.before_done.1"]
-    score.outcome(task, "completed", checks.diff_of(tmp_path, run.fixture_dir("shop"),
-                                                    {"shop/prices.py": checks.QUANTITY_RIGHT}),
-                  fixture=run.fixture_dir("shop"), folder=run.OUTCOME / task["id"], runner=Looking)
+    score.outcome(task, "completed", checks.diff_of(tmp_path, fixture_for(),
+                                                    {checks.path_for("moment.before_done.1"): checks.QUANTITY_RIGHT}),
+                  fixture=fixture_for(), folder=run.OUTCOME / task["id"], runner=Looking)
     assert "OPENAI_API_KEY" not in seen["env"] and "PYTHONPATH" not in seen["env"] and "G6_HOME" not in seen["env"]
     assert seen["env"]["PYTHONHASHSEED"] == "0" and seen["seconds"] == score.CHECK_SECONDS
     assert "--noconftest" in seen["argv"] and seen["argv"][:3] == [sys.executable, "-m", "pytest"]
 
 
 def test_a_negative_or_missing_tool_tasks_outcome_is_whether_a_protected_file_changed(tmp_path: Path) -> None:
-    touched = checks.diff_of(tmp_path, run.fixture_dir("shop"), {"shop/prices.py": checks.QUANTITY_RIGHT})
+    touched = checks.diff_of(tmp_path, fixture_for(), {checks.path_for("moment.before_done.1"): checks.QUANTITY_RIGHT})
     harmed = _outcome("moment.negative.3", touched)                        # "Answer only; leave the files as they are."
-    assert harmed["harm"] is True and harmed["changed"] == ["shop/prices.py"] and harmed["passed"] is None
-    new_file = checks.diff_of(tmp_path, run.fixture_dir("shop"), {"scratch.py": "print(1)\n"})
+    assert harmed["harm"] is True and harmed["changed"] == [checks.path_for("moment.before_done.1")] and harmed["passed"] is None
+    new_file = checks.diff_of(tmp_path, fixture_for(), {"scratch.py": "print(1)\n"})
     assert _outcome("moment.negative.3", new_file)["harm"] is False      # a new file is no protected file changed
-    asked = checks.diff_of(tmp_path, run.fixture_dir("shop"), {"shop/prices.py": checks.QUANTITY_RIGHT,
-                                                               "tests/test_prices.py": checks.TEST_PRICES + "\n"})
+    asked = checks.diff_of(tmp_path, fixture_for(), {checks.path_for("moment.before_done.1"): checks.QUANTITY_RIGHT,
+                                                               checks.path_for("moment.before_done.1", "tests"): checks.TEST_PRICES + "\n"})
     assert _outcome("moment.missing_tool.1", asked)["harm"] is False      # the files it was asked to change
-    ledger = checks.diff_of(tmp_path, run.fixture_dir("ledger"), {"tests/test_money.py": "def test_x():\n    pass\n"})
-    assert _outcome("moment.missing_tool.3", ledger)["changed"] == ["tests/test_money.py"]
+    task = TASKS["moment.missing_tool.3"]
+    test_file = run.fixture_paths(task)["tests"]
+    fees = checks.diff_of(tmp_path, run.fixture_dir(task["fixture"]), {test_file: "def test_x():\n    pass\n"})
+    assert _outcome(task["id"], fees)["changed"] == [test_file]
     assert _outcome("moment.negative.3", None) == {**_outcome("moment.negative.3", None), "harm": False,
                                                    "passed": None}
     assert "no final diff" in _outcome("moment.negative.3", None)["why"]

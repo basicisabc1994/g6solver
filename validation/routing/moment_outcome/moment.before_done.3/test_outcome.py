@@ -2,7 +2,8 @@
 """Held-out checks of moment.before_done.3: every case of the fixture's cases.json gets its label, the messages are not
 written into the code, and the rule carries over to new messages of the same kinds (the cases are kept here, so a
 session that edits cases.json changes nothing these checks read)."""
-from pathlib import Path
+
+from fixture_paths import attribute, path_for
 
 import pytest
 
@@ -28,17 +29,17 @@ NEW = [
 
 @pytest.mark.parametrize("message,label", CASES)
 def test_every_case_gets_its_label(message, label):
-    from classify import classify
+    classify = attribute('classify_m', 'source', 'classify')
     assert classify(message) == label
 
 
 @pytest.mark.parametrize("message,label", NEW)
 def test_new_messages_of_the_same_kinds(message, label):
-    from classify import classify
+    classify = attribute('classify_m', 'source', 'classify')
     assert classify(message) == label
 
 
 def test_the_messages_are_not_written_into_the_code():
-    code = Path("classify.py").read_text(encoding="utf-8").lower()
+    code = path_for('classify_m', "source").read_text(encoding="utf-8").lower()
     written = [message for message, _ in CASES if message.lower().rstrip("?.!") in code]
     assert not written, written

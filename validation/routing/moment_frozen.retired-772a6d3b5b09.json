@@ -1,0 +1,12 @@
+{
+  "retired": {
+    "bars_digest": "9aa0237097e7dd22f013664850d3008513ac750834f577d793cab6f28556de59",
+    "tasks_digest": "e2168da8cc01efa41c19f736d54c91b92fc9fbaac068e500099ed27842051973",
+    "outcome_bars_digest": "bbdb333860ee44545b5b337213319e0780572f1fbd3fa24b8bc6abfe837dd1f8",
+    "checks_digest": "d3c43ff90b62c650d7f1b5b0aadca78db40eb43c9712cf157a03f093905b3c8d",
+    "withheld_digest": "9c031f4cfab260cd8101a1ff9efcc975f7c831b1eeae375c5da5661dfdb8e4a2",
+    "fixtures_digest": "4ba390a5443a5beb6446dfe1b0652b5d54e71d8e2c48990d2d4f7deec05307ff"
+  },
+  "reason": "2026-11-17 before any arm, audit fix pass: central fixture path roles shared by held-out checks, outcome reader and probes; lazy fixture imports; replace obsolete right/wrong mutation data. No bar, task, withheld overlay, development binding or fixture byte changes in this fix pass.",
+  "digest": "772a6d3b5b09779e68627ebc2a1f928d4ff8ddad720930bd84076e811e29db1a"
+}

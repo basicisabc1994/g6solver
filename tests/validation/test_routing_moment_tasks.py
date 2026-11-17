@@ -109,7 +109,7 @@ def test_each_refusal_is_set_up_by_what_the_session_starts_with() -> None:
 
 def test_every_fixture_exists_and_is_synthetic() -> None:
     for task in run.load_moment()["tasks"]:
-        readme = run.fixture_dir(task["fixture"]) / "README.md"
+        readme = run.fixture_dir(task["fixture"]) / run.fixture_paths(task)["readme"]
         assert readme.is_file() and "synthetic" in readme.read_text(encoding="utf-8").lower(), task["id"]
     assert run.fixture_dir("ledger") == run.MOMENT_FIXTURES / "ledger" and run.fixture_dir("shop") == run.FIXTURES / "shop"
 
@@ -461,7 +461,10 @@ def test_a_changed_fixture_byte_refuses_a_moment_run_before_anything_starts(
     monkeypatch.setattr(run, "MOMENT_FIXTURES", own)
     assert run.moment_fixtures() == run.moment_pins()["fixtures_digest"]  # copies of the same bytes: the same pin
     seen = _fake(monkeypatch, lambda prompt: QUIET)
-    for changed in (shared / "shop" / "shop" / "prices.py", own / "ledger" / "ledger" / "money.py"):
+    # Every active fixture is bound, including the isolated and renamed audit copies.
+    for task in tasks["tasks"]:
+        roles = run.fixture_paths(task)
+        changed = run.fixture_dir(task["fixture"]) / roles.get("source", roles["readme"])
         data = changed.read_bytes()
         changed.write_bytes(data + b" ")
         with pytest.raises(freeze.FrozenError, match="fixtures"):

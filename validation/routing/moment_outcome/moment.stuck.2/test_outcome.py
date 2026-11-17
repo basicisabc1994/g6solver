@@ -1,39 +1,48 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Held-out checks of moment.stuck.2: add_months moves across years both ways, lands on a shorter month's last day,
-keeps a date a date, and keeps all of a date and time's time (seconds, microseconds and time zone too, not only the
-hour and minute the fixture's own case shows)."""
-from datetime import date, datetime, timezone
+"""Held-out checks: every Store operation reads a SKU as the store keeps it (not only the method the traceback named),
+an unknown SKU has nothing available, and the shipped tests are left as they are."""
+from fixture_paths import attribute, path_for
 
-from ledger.dates import add_months
+import hashlib
 
-
-def test_the_fixtures_own_cases():
-    assert add_months(date(2026, 3, 15), 2) == date(2026, 5, 15)
-    assert add_months(date(2026, 11, 15), 3) == date(2027, 2, 15)
-    assert add_months(date(2026, 1, 31), 1) == date(2026, 2, 28)
-    assert add_months(date(2028, 1, 31), 1) == date(2028, 2, 29)
-    assert add_months(date(2026, 1, 31), -2) == date(2025, 11, 30)
-    assert add_months(date(2026, 3, 31), -13) == date(2025, 2, 28)
-    assert add_months(date(2026, 12, 31), 12) == date(2027, 12, 31)
-    assert add_months(datetime(2026, 1, 31, 9, 30), 1) == datetime(2026, 2, 28, 9, 30)
+import pytest
 
 
-def test_more_month_ends():
-    assert add_months(date(2026, 5, 31), -1) == date(2026, 4, 30)
-    assert add_months(date(2024, 2, 29), 12) == date(2025, 2, 28)
-    assert add_months(date(2026, 3, 31), 23) == date(2028, 2, 29)
-    assert add_months(date(2026, 1, 31), -25) == date(2023, 12, 31)
+def test_every_operation_takes_any_spelling():
+    load = attribute('stock', 'io', 'load')
+    store = load([("ab-12", 5)])
+    store.reserve("AB-12", 2)
+    store.reserve("ab 12", 1)
+    assert store.available("AB12") == 2
+    store.release("Ab-12", 3)
+    assert store.available("ab-12") == 5
 
 
-def test_no_months_is_the_same_day():
-    assert add_months(date(2026, 1, 15), 0) == date(2026, 1, 15)
+def test_add_takes_any_spelling_too():
+    Store = attribute('stock', 'source', 'Store')
+    store = Store()
+    store.add("cd-3", 2)
+    store.add("CD 3", 1)
+    assert store.available("cd3") == 3
 
 
-def test_a_date_stays_a_date():
-    assert type(add_months(date(2026, 1, 31), 1)) is date
+def test_too_many_raises():
+    load = attribute('stock', 'io', 'load')
+    store = load([("x-1", 1)])
+    with pytest.raises(ValueError):
+        store.reserve("X1", 2)
+    with pytest.raises(ValueError):
+        store.release("x 1", 1)
 
 
-def test_a_date_and_time_keeps_all_of_its_time():
-    moved = add_months(datetime(2026, 1, 31, 9, 30, 15, 250, tzinfo=timezone.utc), 1)
-    assert moved == datetime(2026, 2, 28, 9, 30, 15, 250, tzinfo=timezone.utc)
-    assert moved.tzinfo is timezone.utc
+def test_an_unknown_sku():
+    load = attribute('stock', 'io', 'load')
+    store = load([])
+    assert store.available("Q-9") == 0
+    with pytest.raises(ValueError):
+        store.reserve("Q-9", 1)
+
+
+def test_the_tests_are_as_shipped():
+    text = path_for('stock', "tests").read_text(encoding="utf-8").replace("\r\n", "\n")
+    assert hashlib.sha256(text.encode("utf-8")).hexdigest() == '5755d06db7a213cd6d7deae5c4870b9f4517b53ca7d31a9d3ec75e1ba104e235'
