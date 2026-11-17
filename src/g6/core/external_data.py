@@ -11,28 +11,33 @@ from collections.abc import Mapping
 from functools import wraps
 import json
 
-from g6.core.agent_guidance import _ExternalText, _MixedText, _MAX_GUIDANCE_DEPTH, is_external, reply_for_agent
+from g6.core.agent_guidance import (
+    _ExternalText, _MixedText, _MAX_GUIDANCE_DEPTH, _structured, guidance_role, is_external, reply_for_agent,
+)
 
 
 class ExternalDataLimit(ValueError):
     """The host could not safely copy external text receipts."""
 
 
-def external_value(value):
+def external_value(value, *, _component=False):
     """Copy external JSON-like data, marking text without inspecting its words."""
     results, active = {}, set()
-    todo = [(value, False)]
+    todo = [(value, False, 0, False, True)]
     while todo:
-        item, done = todo.pop()
-        ident = id(item)
+        item, opaque, guidance, done, at_root = todo.pop()
+        ident = (id(item), opaque, guidance, at_root)
         if isinstance(item, str):
-            results[ident] = _ExternalText(item)
+            results[ident] = str.__str__(item) if guidance else _ExternalText(item)
         elif not isinstance(item, (Mapping, list, tuple)):
             results[ident] = item
         elif done:
-            results[ident] = ({key: results[id(child)] for key, child in item.items()}
+            results[ident] = ({key: results[(id(child), _component and (opaque or _structured(key)),
+                                           guidance_role(key, guidance, opaque, at_root=at_root)
+                                           if _component else 0, False)]
+                              for key, child in item.items()}
                              if isinstance(item, Mapping) else
-                             [results[id(child)] for child in item])
+                             [results[(id(child), opaque, guidance, False)] for child in item])
             if isinstance(item, tuple):
                 results[ident] = tuple(results[ident])
             active.remove(ident)
@@ -40,13 +45,28 @@ def external_value(value):
             raise ExternalDataLimit("[G6_E_RESOURCE_LIMIT] cyclic external data")
         elif ident not in results:
             active.add(ident)
-            todo.append((item, True))
-            todo.extend((child, False) for child in (item.values() if isinstance(item, Mapping) else item))
-    return results[id(value)]
+            todo.append((item, opaque, guidance, True, at_root))
+            if isinstance(item, Mapping):
+                todo.extend((child, _component and (opaque or _structured(key)),
+                             guidance_role(key, guidance, opaque, at_root=at_root)
+                             if _component else 0, False, False)
+                            for key, child in item.items())
+            else:
+                todo.extend((child, opaque, guidance, False, False) for child in item)
+    return results[(id(value), False, 0, True)]
 
 
-def component_value(value):
-    return external_value(value)
+def component_value(value, *, in_result=False):
+    """Classify roles at their reply position before granting data receipts.
+
+    A component's successful payload will sit under result, not at the envelope
+    root. Warning cards remain guidance in either position.
+    """
+    envelope = {"result": value} if in_result else value
+    shown = reply_for_agent(external_value(envelope, _component=True))
+    # A depth refusal replaces the whole envelope; retain that refusal as the
+    # component result rather than trying to unwrap a result that is absent.
+    return shown.get("result", shown) if in_result else shown
 
 
 def component_call(fn, *args, **kwargs):
@@ -58,7 +78,7 @@ def component_call(fn, *args, **kwargs):
         return Result.fail(external_value(str(exc)))
     if isinstance(outcome, Result):
         return (Result.fail(external_value(outcome.error)) if outcome.is_fail() else
-                Result.ok(component_value(outcome.value)))
+                Result.ok(component_value(outcome.value, in_result=True)))
     return outcome
 
 
@@ -71,16 +91,39 @@ def quoted_content(value):
 
 
 def knowledge_quotes(value):
-    """Engine passage schemas: redacted view.text and authorised raw text only."""
-    value = dict(value)
-    items = list(value.get("items") or [])
-    passage = value.get("passage")
-    for item in [*items, *([passage] if isinstance(passage, dict) else [])]:
-        if isinstance(item.get("view"), dict):
-            item["view"] = {**item["view"], "text": quoted_content(item["view"]["text"])}
-        if "text" in item:
-            item["text"] = quoted_content(item["text"])
-    return value
+    """Walk typed records and their dumps, independent of search container names.
+
+    PassageItem declares the redacted View role; an authorised fetch can also
+    carry canonical Passage.text. Other engine text receives no receipt.
+    """
+    from pydantic import BaseModel
+    from g6._context_engine._envelope import PassageItem
+    from g6._context_engine._view import View
+    from g6.knowledge._types import Passage
+
+    record_types = {name: field.annotation for name, field in PassageItem.model_fields.items()
+                    if isinstance(field.annotation, type) and issubclass(field.annotation, BaseModel)}
+
+    def walk(item, schema=None, depth=0):
+        if depth > _MAX_GUIDANCE_DEPTH:
+            raise ExternalDataLimit("[G6_E_RESOURCE_LIMIT] knowledge quotations are too deeply nested")
+        if isinstance(item, BaseModel):
+            schema = type(item)
+            item = {name: getattr(item, name) for name in
+                    (*type(item).model_fields, *type(item).model_computed_fields)}
+        if isinstance(item, Mapping):
+            out = {key: walk(child, record_types.get(key), depth + 1)
+                   for key, child in item.items()}
+            passage_view = any(name in item and kind is View for name, kind in record_types.items())
+            if (schema in (View, Passage) or passage_view) and isinstance(out.get("text"), str):
+                out["text"] = quoted_content(out["text"])
+            return out
+        if isinstance(item, (list, tuple)):
+            children = [walk(child, schema, depth + 1) for child in item]
+            return tuple(children) if isinstance(item, tuple) else children
+        return item
+
+    return walk(value)
 
 
 def program_output(value):
@@ -157,42 +200,8 @@ def shortened(original, text):
 
 
 def borrowed_envelope(value, supplied):
-    """Pydantic mirrors a supplied card into envelope prose; retain its receipts."""
-    if supplied is None:
-        return value
-    value = dict(value)
-    card = value.get("warning_card")
-    if isinstance(card, dict):
-        # Restore text only, never overlay producer flags or add missing fields.
-        card = restore(dict(card), receipts(supplied))
-        value["warning_card"] = card
-    message = supplied.get("message") or supplied.get("why")
-    action = supplied.get("suggested_action") or supplied.get("next_step")
-    risks = supplied.get("risks") if isinstance(supplied.get("risks"), list) else []
-
-    def inherit(item, sources):
-        if isinstance(item, str):
-            for original in sources:
-                if is_external(original) and item in (original, original.strip()):
-                    return _ExternalText(item)
-        elif isinstance(item, list):
-            return [inherit(child, sources) for child in item]
-        return item
-
-    # These are the bound model's explicit copy/strip derivations, not a search
-    # for external-looking text in arbitrary reply fields.
-    for field, sources in (
-        ("block_reason", [message]), ("degradation_reason", [message]),
-        ("required_human_decision", [action]), ("safe_next_action", [action]),
-        ("known_limitations", risks or [message]), ("recommended_next_steps", [action]),
-    ):
-        if field in value:
-            value[field] = inherit(value[field], sources)
-    if isinstance(card, dict):
-        for field, sources in (("why", [message]), ("risks", risks or [message]), ("next_step", [action])):
-            if field in card:
-                card[field] = inherit(card[field], sources)
-    return value
+    """A supplied card and its envelope mirrors are always guidance."""
+    return reply_for_agent(value)
 
 
 class ComponentRegistryIngress:
@@ -226,7 +235,7 @@ class ComponentRegistryIngress:
                     if outcome.is_fail():
                         owner.failure = external_value(outcome.error)
                         return Result.fail(owner.failure)
-                    owner.value = component_value(outcome.value)
+                    owner.value = component_value(outcome.value, in_result=True)
                     return Result.ok(owner.value)
                 return outcome
             return invoke
@@ -260,21 +269,15 @@ class ComponentRegistryIngress:
             self.failure = external_value(str(exc))
             return Failure(self.failure)
         if outcome.__class__.__name__ == "Success":
-            self.value = component_value(outcome.unwrap())
+            self.value = component_value(outcome.unwrap(), in_result=True)
             return Success(self.value)
         self.failure = external_value(str(outcome.failure()))
         return Failure(self.failure)
 
 
 def component_failure_reply(message, *, request_id=""):
-    """Only the component diagnostic and its envelope mirrors are external."""
+    """Keep the raw diagnostic in data; envelope errors and cards are guidance."""
     from g6.core.door import blocked_reply
     reply = blocked_reply(str(message), request_id=request_id)
-    reply["error"] = external_value(str(message))
-    reply["degradation_reason"] = external_value(str(message)[:300])
-    card = reply.get("warning_card")
-    if isinstance(card, dict):
-        card["message"] = external_value(card["message"])
-        # Only the message is borrowed; G6's fallback action stays unmarked.
-        reply = borrowed_envelope(reply, card)
-    return reply
+    reply["detail"] = external_value(str(message))
+    return reply_for_agent(reply)

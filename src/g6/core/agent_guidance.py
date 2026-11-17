@@ -10,7 +10,8 @@ _AUTHORITY = re.compile(
     r"allow\s*=|G6_MCP_SENSITIVE|G6_ALLOW_UNCONFINED|allow_execution|\ballow_sensitive\b|"
     r"\b(?:confirm|approve|grant|promote)\s*\(|\bapprover\b|autonomous_low_risk|"
     r"\bg6\s+setup\b|--allow|allow parameter|\bicacls\b|/grant\b|\bchmod\b|\bsetfacl\b|"
-    r"\b(?:sudo|doas|runas|sysctl|apparmor_parser|aa-complain|setenforce)\b|\bsu\s+-|/etc/", re.I)
+    r"\b(?:sudo|doas|runas|sysctl|apparmor_parser|aa-complain|setenforce|pkexec|run0|"
+    r"Set-ExecutionPolicy|Add-MpPreference|netsh)\b|\breg\s+add\b|\bsu\s+-|/etc/", re.I)
 _SETTING = re.compile(r"\bG6_(?!E_)[A-Z][A-Z0-9_]*\b|"
                       r"(?i:\bG6_(?!E_)[A-Z][A-Z0-9_]*\s*=|\$env:[A-Z][A-Z0-9_]*|~[/\\]\.g6[/\\]\.env)")
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -53,9 +54,34 @@ _STRUCTURED = frozenset({
     "sha256", "component", "op", "operation", "tool", "inputs",
 })
 
+# These roles are guidance at the envelope root, regardless of producer/receipt.
+# At any depth a warning card makes its entire subtree guidance, including future fields.
+GUIDANCE_FIELDS = frozenset({
+    "warning_card", "next_actions", "action", "suggested_action", "help",
+    "degradation_reason", "repair", "step", "why", "next_step",
+    "recommended_next_steps", "safe_next_action", "block_reason",
+    "required_human_decision", "error",
+})
+
 
 def _structured(key):
     return isinstance(key, str) and (key in _STRUCTURED or key.endswith(("_id", "_ids", "_sha256", "_digest")))
+
+
+def guidance_role(key, parent=0, opaque=False, *, at_root=False):
+    """0: data/default prose, 1: guidance, 2: every field of a card.
+
+    Reserved names apply only at the envelope root or within guidance already
+    selected there. Structured calls stay data. Cards alone make their entire
+    subtree guidance, including keys otherwise used for data.
+    """
+    if parent == 2:
+        return 2
+    if key == "warning_card":
+        return 2
+    if opaque or _structured(key):
+        return 0
+    return int(bool(parent or (at_root and key in GUIDANCE_FIELDS)))
 
 
 def _instruction(text: str) -> bool:
@@ -91,21 +117,24 @@ def text_for_agent(text: str) -> str:
 
 
 def reply_for_agent(value, *, _prose: bool = True):
-    """Filter every unmarked text value; only external ingress is exempt.
+    """Filter unmarked text and every guidance role, regardless of receipts.
 
     Receipts remain private string subtypes until wire serialization. Keeping them
     internally makes repeated filtering and nested envelopes safe. No JSON key,
-    success flag or diagnostic code confers an exemption.
+    success flag or diagnostic code confers an exemption on prose.
     """
     results, active = {}, set()
-    todo = [(value, False, False, 0)]
+    todo = [(value, False, 0, False, 0)]
     while todo:
-        item, opaque, done, depth = todo.pop()
+        item, opaque, guidance, done, depth = todo.pop()
         if depth > _MAX_GUIDANCE_DEPTH:
             return {"ok": False, "completion_state": "blocked-escalated",
                     "error": "[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person."}
-        ident = (id(item), opaque)
-        if isinstance(item, _MixedText):
+        ident = (id(item), opaque, guidance)
+        if isinstance(item, str) and guidance:
+            # str() retains our private subtype; the base method strips it.
+            results[ident] = text_for_agent(str.__str__(item))
+        elif isinstance(item, _MixedText):
             results[ident] = _MixedText(tuple(part if is_external(part) else text_for_agent(part)
                                              for part in item.parts))
         elif isinstance(item, str):
@@ -114,13 +143,15 @@ def reply_for_agent(value, *, _prose: bool = True):
             results[ident] = item
         elif done:
             if isinstance(item, dict):
-                out = {key: results[(id(child), opaque or _structured(key))] for key, child in item.items()}
+                out = {key: results[(id(child), opaque or _structured(key),
+                                    guidance_role(key, guidance, opaque, at_root=depth == 0))]
+                       for key, child in item.items()}
                 if not opaque and item.get("code") == "G6_E_ISOLATION_UNAVAILABLE" \
                         and not is_external(item.get("code")):
                     out.update(action=_ISOLATION_ACTION, suggested_action=_ISOLATION_ACTION)
                 results[ident] = out
             else:
-                children = [results[(id(child), opaque)] for child in item]
+                children = [results[(id(child), opaque, guidance)] for child in item]
                 results[ident] = tuple(children) if isinstance(item, tuple) else children
             active.remove(ident)
         elif ident in active:
@@ -128,12 +159,14 @@ def reply_for_agent(value, *, _prose: bool = True):
                     "error": "[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person."}
         elif ident not in results:
             active.add(ident)
-            todo.append((item, opaque, True, depth))
+            todo.append((item, opaque, guidance, True, depth))
             if isinstance(item, dict):
-                todo.extend((child, opaque or _structured(key), False, depth + 1) for key, child in item.items())
+                todo.extend((child, opaque or _structured(key),
+                             guidance_role(key, guidance, opaque, at_root=depth == 0), False, depth + 1)
+                            for key, child in item.items())
             else:
-                todo.extend((child, opaque, False, depth + 1) for child in item)
-    return results[(id(value), False)]
+                todo.extend((child, opaque, guidance, False, depth + 1) for child in item)
+    return results[(id(value), False, 0)]
 
 
 def skill_for_agent(text: str | None) -> str | None:
@@ -175,9 +208,11 @@ def skill_for_agent(text: str | None) -> str | None:
     return "".join(kept)
 
 
-def help_for_agent(component: str, help_text: object = None) -> str:
+def help_for_agent(component: str, help_text: object = None, *,
+                   allow_sensitive: frozenset[str] = frozenset()) -> str:
     """Keep the component's safe help lines beside its declared operation templates."""
     from g6.skills import corpus
+    from g6.core.door import is_allowed
 
     if isinstance(help_text, dict):
         original = [f"{key}: {value}" for key, value in help_text.items()]
@@ -201,5 +236,7 @@ def help_for_agent(component: str, help_text: object = None) -> str:
         if entry["kind"] == "op" and entry["component"] == component:
             template = entry["id"][3:] + ": params_json template " + entry["call"]["arguments"]["params_json"]
             if not _instruction(template):
-                lines.append(template + (" " + PERSON if entry["sensitive"] else ""))
+                denied = entry["sensitive"] and not is_allowed(
+                    component, entry["call"]["arguments"]["op"], allow_sensitive)
+                lines.append(template + (" " + PERSON if denied else ""))
     return "\n".join(lines) or "No registered operation is available through the G6 door."

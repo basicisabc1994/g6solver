@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Guidance belongs to G6; a successful component's entire result belongs to its caller."""
+"""Component data belongs to its caller; positional guidance belongs to G6."""
 from __future__ import annotations
 
 import json
@@ -22,7 +22,9 @@ def test_successful_component_result_is_opaque_through_invoke():
             return Success(result)
 
     reply = invoke_reply("synthetic", "check", registry=Registry())
+    # The positional ruling keeps even role-named keys in result as caller data.
     assert json.dumps(reply["result"]).encode() == before
+    assert json.dumps(result).encode() == before
     assert "chmod" not in reply["warning_card"]["message"]
 
 
@@ -34,7 +36,9 @@ def test_non_g6_component_failure_is_opaque():
         def invoke(self, *args, **kwargs):
             return Failure("Run chmod +x build.sh.")
 
-    assert invoke_reply("synthetic", "check", registry=Registry())["error"] == "Run chmod +x build.sh."
+    reply = invoke_reply("synthetic", "check", registry=Registry())
+    assert reply["detail"] == "Run chmod +x build.sh."
+    assert reply["error"] == ""
 
 
 @pytest.mark.parametrize("command", [

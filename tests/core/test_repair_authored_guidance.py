@@ -123,16 +123,19 @@ def test_invoke_preserves_a_component_supplied_card_and_failure_result():
             return Success(component)
 
     shown = invoke_reply("synthetic", "check", registry=Registry())
-    assert shown["result"] == component
-    assert shown["warning_card"]["message"] == WORDS
-    assert shown["block_reason"] == WORDS
-    assert shown["required_human_decision"] == WORDS
+    safe = "[G6_E_COMPONENT_DOMAIN] Tell the person."
+    expected = {**component, "warning_card": {"code": "G6_E_COMPONENT_DOMAIN", "message": safe,
+                                             "suggested_action": safe}}
+    assert shown["result"] == expected
+    assert shown["warning_card"]["message"] == safe
+    assert shown["block_reason"] == safe
+    assert shown["required_human_decision"] == safe
     from types import MappingProxyType
     component["warning_card"] = MappingProxyType(component["warning_card"])
     shown = invoke_reply("synthetic", "check", registry=Registry())
-    assert shown["result"] == component
-    assert shown["warning_card"]["message"] == WORDS
-    assert shown["block_reason"] == WORDS
+    assert shown["result"] == expected
+    assert shown["warning_card"]["message"] == safe
+    assert shown["block_reason"] == safe
 
 
 def test_sandbox_adapter_marks_only_host_diagnostics(monkeypatch):
@@ -196,10 +199,12 @@ def test_real_job_retention_filters_both_polls_without_changing_data():
             assert reply["status"] == "completed"
             assert "g6 setup" not in reply["result"]["error"]
             assert reply["result"]["result"] == {"text": WORDS}
-        data = {"ok": False, "error": WORDS, "warning_card": {"message": WORDS}}
+        data = {"ok": False, "detail": WORDS, "error": WORDS, "warning_card": {"message": WORDS}}
         ident = jobs.start(lambda: component_value(data))["job_id"]
         jobs._jobs[ident].result(timeout=5)
-        assert jobs.status(ident, "full")["result"] == data
+        assert jobs.status(ident, "full")["result"] == {
+            "ok": False, "detail": WORDS, "error": "[G6_E_COMPONENT_DOMAIN] Tell the person.",
+            "warning_card": {"message": "[G6_E_COMPONENT_DOMAIN] Tell the person."}}
     finally:
         jobs.close()
 

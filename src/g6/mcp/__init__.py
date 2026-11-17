@@ -132,7 +132,7 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
 
         result = reply.get("result")
         if isinstance(result, dict):
-            result["help"] = help_for_agent(component, result.get("help"))
+            result["help"] = help_for_agent(component, result.get("help"), allow_sensitive=allow)
     _denial_for_agent(reply)
     # The host's permission refusal runs no component code. Operations, including
     # a component's own "ops" implementation, retain the component source scope.

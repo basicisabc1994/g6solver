@@ -137,11 +137,13 @@ def test_component_ingress_inventory(outcome, route, dispatch, monkeypatch):
     else:
         replies = [operation()]
     for reply in replies:
-        field = reply["result"]["message"] if outcome == "success" else reply["error"]
+        field = reply["result"]["message"] if outcome == "success" else reply["detail"]
         assert field == WORDS
         assert getattr(guidance, "is_external", lambda value: False)(field)
         assert guidance.reply_for_agent(reply)["result"]["message"] == WORDS if outcome == "success" else (
-            guidance.reply_for_agent(reply)["error"] == WORDS)
+            guidance.reply_for_agent(reply)["detail"] == WORDS)
+        if outcome != "success":
+            assert reply["error"] == "Keep the diagnosis."
 
 
 @pytest.mark.parametrize("dispatch", ["infer", "screen", "screen_fallthrough", "exception"])
@@ -168,10 +170,12 @@ def test_compose_component_success_and_failure_ingress_inventory(dispatch):
     for fail in (False, True):
         reply = compose(Stage(Block(), "check"), Stage(Block(fail), "check"),
                         caller_inputs=(), strict=False).infer({}).value
-        field = reply["error"] if fail else reply["result"]["message"]
+        field = reply["detail"] if fail else reply["result"]["message"]
         assert field == WORDS
         assert getattr(guidance, "is_external", lambda value: False)(field)
         assert guidance.reply_for_agent(reply)["result"]["message"] == WORDS
+        if fail:
+            assert reply["error"] == "Keep the diagnosis."
 
 
 def test_private_job_receipts_survive_compaction_and_json_but_are_not_in_wire():
@@ -191,9 +195,10 @@ def test_private_job_receipts_survive_compaction_and_json_but_are_not_in_wire():
         jobs._jobs[started["job_id"]].result(timeout=5)
         for detail in ("compact", "full"):
             reply = jobs.status(started["job_id"], detail)
-            assert guidance.reply_for_agent(reply)["result"]["error"] == WORDS
+            assert guidance.reply_for_agent(reply)["result"]["detail"] == WORDS
             wire = json.loads(json.dumps(reply))
-            assert wire["result"]["error"] == WORDS
+            assert wire["result"]["detail"] == WORDS
+            assert wire["result"]["error"] == "Keep the diagnosis."
             assert "_ExternalText" not in json.dumps(wire) and "external" not in wire
     finally:
         jobs.close()
@@ -241,15 +246,15 @@ def test_borrowed_card_preserves_existing_mirrors_without_adding_fields(state):
     reply = invoke_reply("extension", "check", registry=Registry())
     assert "next_actions" not in reply
     assert reply["warning_card"]["verified"] is False
-    assert reply["warning_card"]["why"] == WORDS
-    assert reply["warning_card"]["risks"] == [WORDS]
-    assert reply["warning_card"]["next_step"] == WORDS
+    assert reply["warning_card"]["why"] == "Keep the diagnosis."
+    assert reply["warning_card"]["risks"] == ["Keep the diagnosis."]
+    assert reply["warning_card"]["next_step"] == "Keep the diagnosis."
     if state == "qualified-draft":
         assert reply["block_reason"] == "" and reply["required_human_decision"] == ""
-        assert reply["known_limitations"] == [WORDS]
-        assert reply["recommended_next_steps"] == [WORDS]
+        assert reply["known_limitations"] == ["Keep the diagnosis."]
+        assert reply["recommended_next_steps"] == ["Keep the diagnosis."]
     else:
-        assert reply["safe_next_action"] == WORDS
+        assert reply["safe_next_action"] == "Keep the diagnosis."
 
 
 def test_external_marks_are_confined_to_ingress_registry():
