@@ -7,6 +7,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -252,7 +253,7 @@ ZERO = "test_more.py::test_zero"
 def _tier2(monkeypatch, second, replay=lambda rel: {"verdict": "not_run", "said": "not replayed",
     'output': '', 'rootdir': '', 'test_outcomes': None,
     'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
-    'omitted_ids': []}, spend=False):
+    'omitted_ids': []}, spend=False, clock=None):
     """The stated checks pass; the tests that touch the changed module give ``second`` (with ``spend``, after the
     whole time they were given, so the review's time budget is spent whatever the set-up took); each replay at the
     base commit and on the patch gives ``replay(file)``."""
@@ -264,7 +265,10 @@ def _tier2(monkeypatch, second, replay=lambda rel: {"verdict": "not_run", "said"
         if all("::" in node for node in ids):
             return result(ids)
         if spend:
-            time.sleep(timeout_s + 0.2)
+            if clock is None:
+                time.sleep(timeout_s + 0.2)
+            else:
+                clock[0] += timeout_s + 0.2
         return second
 
     monkeypatch.setattr(patch_review, "_execute", execute)
@@ -334,7 +338,10 @@ def test_the_copy_over_its_cap_is_insufficient_evidence(tmp_path, monkeypatch):
 
 def test_the_time_budget_spent_before_the_replay_is_insufficient_evidence(tmp_path, monkeypatch):
     root = _touched(tmp_path)
-    _tier2(monkeypatch, FAILING, spend=True)
+    # db861331 reserves closing time: spend the checks' budget at tier 2, independently of opening wall time.
+    clock = [0.0]
+    monkeypatch.setattr(patch_review, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    _tier2(monkeypatch, FAILING, spend=True, clock=clock)
     got = review_patch(root, task="Repair add.", requirements=STATED, timeout_s=5)
     found = [r["detail"] for r in got["assessment"]["reasons"] if r["code"] == "derived_test_not_compared"]
     assert found and "time budget was spent" in found[0], got["assessment"]["reasons"]

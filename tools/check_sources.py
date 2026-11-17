@@ -14,6 +14,10 @@ update the entry and its hash, and review the checks that rest on it.
 An entry whose ``hash_scope`` is ``corpus_file`` hashes a file in the owner's corpus, not the page at its URL, so it is
 never re-fetched: it is reported ``held``, and with ``--corpus`` the file named by its ``file_name`` is found under
 that folder and re-hashed (``unchanged`` or ``changed``; ``held`` again when it is not there).
+
+The ACT-R register uses ``sources`` keyed by source id, alongside ``component`` and ``rules``. Its ``file_sha256``
+hashes the retrieved file at ``url``, or the held file named by ``corpus_file`` (which need not have a URL). Rules'
+``clause_sha256`` hashes extracted clauses, not fetched bytes, and is not used here. Unknown shapes are errors.
 """
 from __future__ import annotations
 
@@ -41,6 +45,48 @@ def _where(path: Path) -> str:
 HELD = "held in the owner's corpus; not re-fetched"
 
 
+def _entries(path: Path) -> list[dict[str, Any]]:
+    """Read either committed register shape; reject missing fetch/hash data before any request."""
+    def invalid(detail: str) -> ValueError:
+        return ValueError(f"invalid source register {_where(path)}: {detail}")
+
+    try:
+        register = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise invalid(f"invalid JSON: {exc.msg}") from exc
+    if not isinstance(register, dict) or ("entries" in register) == ("sources" in register):
+        raise invalid("expected entries (a list) or component/sources/rules (sources keyed by id), exclusively")
+    if "entries" in register:
+        entries = register["entries"]
+        if not isinstance(entries, list):
+            raise invalid("entries must be a list")
+    else:
+        if (not isinstance(register.get("component"), str) or not register["component"]
+                or not isinstance(register.get("sources"), dict) or not isinstance(register.get("rules"), list)):
+            raise invalid("expected component (a name), sources (an object keyed by id) and rules (a list)")
+        entries = []
+        for ident, source in register["sources"].items():
+            if not isinstance(source, dict):
+                raise invalid(f"source {ident!r} must be an object")
+            entry = {"id": ident, "url": source.get("url", ""), "sha256": source.get("file_sha256")}
+            if "corpus_file" in source:
+                entry.update(hash_scope="corpus_file", file_name=source["corpus_file"])
+            entries.append(entry)
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str) or not entry["id"]:
+            raise invalid("each source must have a nonempty id")
+        sha = entry.get("sha256")
+        if not isinstance(sha, str) or len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha):
+            raise invalid(f"source {entry['id']!r} needs a SHA-256 file hash (sha256 or file_sha256)")
+        # Older entries may identify a held source without naming its corpus file; _held reports that limitation.
+        field = "file_name" if entry.get("hash_scope") == "corpus_file" else "url"
+        if (field == "url" or field in entry) and (not isinstance(entry.get(field), str) or not entry[field]):
+            raise invalid(f"source {entry['id']!r} needs {field}")
+        if not isinstance(entry.get("url", ""), str):
+            raise invalid(f"source {entry['id']!r} has an invalid url")
+    return entries
+
+
 def _held(entry: dict[str, Any], corpus: Path | None) -> dict[str, str]:
     """A corpus-held entry's row: re-hashed when its file is found under ``corpus``, otherwise ``held``."""
     name = str(entry.get("file_name", ""))
@@ -58,9 +104,10 @@ def check(paths: list[Path], client: Any, corpus: Path | None = None) -> list[di
     from g6.core.http import HTTPError
 
     rows = []
-    for path in paths:
-        for entry in json.loads(path.read_text(encoding="utf-8"))["entries"]:
-            row = {"register": _where(path), "id": entry["id"], "url": entry["url"]}
+    registered = [(path, _entries(path)) for path in paths]
+    for path, entries in registered:
+        for entry in entries:
+            row = {"register": _where(path), "id": entry["id"], "url": entry.get("url", "")}
             if entry.get("hash_scope") == "corpus_file":
                 rows.append({**row, **_held(entry, corpus)})
                 continue
@@ -79,7 +126,11 @@ def main(argv: list[str], client: Any = None, paths: list[Path] | None = None) -
     from g6.core.http import Client
 
     corpus = Path(argv[argv.index("--corpus") + 1]) if "--corpus" in argv[:-1] else None
-    rows = check(registers() if paths is None else paths, client or Client(), corpus=corpus)
+    try:
+        rows = check(registers() if paths is None else paths, client or Client(), corpus=corpus)
+    except ValueError as exc:
+        print(exc)
+        return 1
     for r in rows:
         print(f"{r['status']:<11} {r['id']}  {r['url']}" + (f"  ({r['detail']})" if r.get("detail") else ""))
     held = [r for r in rows if r["status"] == "held"]
