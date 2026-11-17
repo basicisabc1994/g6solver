@@ -7,7 +7,7 @@ import logging
 import sys
 import threading
 import warnings
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 
 from g6._streams import routing_owner, seal_console
 
@@ -54,11 +54,20 @@ class InvokeCapture:
     """One installed capture; its owner decides when to restore the caller."""
 
     def __init__(self):
-        global _active_capture
         if _active_capture is not None:
             raise RuntimeError("an invocation capture is already installed")
-        self.routing_context = routing_owner()
-        self.routing = self.routing_context.__enter__()
+        self.cleanup = ExitStack()
+        try:
+            self._install()
+        except BaseException:
+            # Roll back every completed step, including a failed installation.
+            # ExitStack still runs later restorations if one cleanup raises.
+            self.restore()
+            raise
+
+    def _install(self):
+        global _active_capture
+        self.routing = self.cleanup.enter_context(routing_owner())
         self.stdout, self.stderr = self.routing.targets()
         self.lock = threading.RLock()
         self.counts = dict.fromkeys(("warnings", "thread failures", "unraisable exceptions", "uncaught exceptions",
@@ -66,17 +75,23 @@ class InvokeCapture:
         self.reported = self.counts.copy()
         self.hooks = (warnings.showwarning, threading.excepthook, sys.unraisablehook, sys.excepthook)
         self.warning_context = warnings.catch_warnings()
+        self.cleanup.callback(self._restore_warnings)
         self.warning_context.__enter__()
         self.root = logging.getLogger()
         self.logging = (self.root.handlers, self.root.level, logging.lastResort)
+        self.cleanup.callback(self._restore_logging)
         self.out_buffer = _Buffer(self, "stdout writes")
         self.err_buffer = _Buffer(self, "stderr writes")
-        self.previous_targets = self.routing.set_defaults((self.out_buffer, self.err_buffer))
+        self.cleanup.callback(self.routing.set_defaults, self.routing.defaults)
+        self.routing.set_defaults((self.out_buffer, self.err_buffer))
         # Named/non-propagating loggers emit before the root counter sees them.
         # Rebind every existing handler using either entry stream, including the
         # previous lastResort, and restore each exact object at owner exit.
-        self.handler_streams = []
-        loggers = [self.root, *(logger for logger in logging.Logger.manager.loggerDict.values()
+        # Logger creation mutates loggerDict under logging's module lock. Copy
+        # under that same lock, then inspect only the detached inventory.
+        with logging._lock:
+            inventory = list(logging.Logger.manager.loggerDict.values())
+        loggers = [self.root, *(logger for logger in inventory
                                 if isinstance(logger, logging.Logger))]
         handlers = {handler for logger in loggers for handler in logger.handlers}
         if logging.lastResort is not None:
@@ -85,9 +100,9 @@ class InvokeCapture:
             stream = getattr(handler, "stream", None)
             for index, original in enumerate(self.routing.originals):
                 if stream is original:
+                    self.cleanup.callback(self._restore_handler, handler, stream)
                     handler.acquire()
                     try:
-                        self.handler_streams.append((handler, stream))
                         handler.stream = self.routing.streams[index]
                     finally:
                         handler.release()
@@ -101,6 +116,24 @@ class InvokeCapture:
         self.root.setLevel(logging.NOTSET)
         logging.lastResort = handler
         _active_capture = self
+
+    def _restore_warnings(self):
+        if self.warning_context._entered:
+            # Restore the filter object and invalidate Python's warning cache.
+            self.warning_context.__exit__(None, None, None)
+        warnings.showwarning, threading.excepthook, sys.unraisablehook, sys.excepthook = self.hooks
+
+    def _restore_logging(self):
+        self.root.handlers, level, logging.lastResort = self.logging
+        self.root.setLevel(level)
+
+    @staticmethod
+    def _restore_handler(handler, stream):
+        handler.acquire()
+        try:
+            handler.stream = stream
+        finally:
+            handler.release()
 
     def count(self, kind):
         with self.lock:
@@ -176,21 +209,10 @@ class InvokeCapture:
     def restore(self):
         """Return all streams and hooks to the caller that installed this capture."""
         global _active_capture
-        self.routing.set_defaults(self.previous_targets)
-        warnings.showwarning, threading.excepthook, sys.unraisablehook, sys.excepthook = self.hooks
-        # catch_warnings restores the filter object and invalidates registries,
-        # including entries made by a library changing its filters during the op.
-        self.warning_context.__exit__(None, None, None)
-        self.root.handlers, level, logging.lastResort = self.logging
-        self.root.setLevel(level)
-        for handler, stream in self.handler_streams:
-            handler.acquire()
-            try:
-                handler.stream = stream
-            finally:
-                handler.release()
-        self.routing_context.__exit__(None, None, None)
-        _active_capture = None
+        try:
+            self.cleanup.close()
+        finally:
+            _active_capture = None
 
 
 def current_capture():

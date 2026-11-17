@@ -97,9 +97,14 @@ class Routing:
         self.users = 0
         self.protocol = False
         self.process_owned = False
+        self.console_shutdown = False
         self.unattributed = _Unattributed(self.originals[1])
         self.streams = _Stream(self, 0), _Stream(self, 1)
-        sys.stdout, sys.stderr = self.streams
+        try:
+            sys.stdout, sys.stderr = self.streams
+        except BaseException:
+            sys.stdout, sys.stderr = self.originals
+            raise
 
     def restore(self):
         # Called by the installing owner, never by workers or target releases.
@@ -112,6 +117,9 @@ class Routing:
             _ShutdownSink() if failed else original
             for original, failed in zip(self.originals, (stdout_failed, stderr_failed))
         )
+        # The console owns process shutdown even when a library helper installed
+        # this router earlier. Only embedding restoration depends on ownership.
+        self.console_shutdown = True
 
     def targets(self):
         return tuple(stream.target() for stream in self.streams)
@@ -214,7 +222,7 @@ def routing_owner(*, process=False):
     try:
         yield owner
     finally:
-        if installed and not process:
+        if not process and (installed or owner.console_shutdown):
             owner.restore()
 
 

@@ -76,6 +76,18 @@ from g6.mcp._stdio import capture_stdout
 
 _DENIED = "[G6_E_SENSITIVE_COMPONENT_DENIED]"
 
+# Keep the public surface from before the door/consent imports became lazy.
+__all__ = [
+    "annotations", "asyncio", "json", "os", "uuid", "Any", "capture_stdout",
+    "SENSITIVE_ENV", "allowed_sensitive", "public_instructions",
+    "describe_reply", "invoke_reply", "QUIET", "build_server", "main",
+]
+_LAZY_NAMES = ("SENSITIVE_ENV", "allowed_sensitive", "_allowed", "public_instructions")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_NAMES))
+
 
 def __getattr__(name: str) -> Any:
     # Preserve existing exports without importing Pydantic before the owned
