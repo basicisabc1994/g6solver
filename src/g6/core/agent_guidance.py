@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+from functools import lru_cache
 
 PERSON = "This op is sensitive. The person must allow it themselves. Tell the person and stop."
 WITHHELD = "Results were withheld from a source not shared with this provider. Tell the person."
@@ -63,12 +65,58 @@ GUIDANCE_FIELDS = frozenset({
     "required_human_decision", "error",
 })
 
+# Model-qualified positions extend the same role inventory. Only the outcome's
+# reason is guidance: Contribution.reason and a passage's own data stay data.
+GUIDANCE_MODEL_POSITIONS = {
+    "g6.knowledge._index.Searched": frozenset({("reason",)}),
+    "g6.knowledge.knowledge_fetcher.fetcher.FetchResult": frozenset({("reason",)}),
+    "g6._context_engine._envelope.SearchResponse": frozenset({("payload", "reason")}),
+}
+
+
+@lru_cache(maxsize=1)
+def _guidance_models():
+    from g6._context_engine._envelope import SearchResponse
+    from g6.knowledge._index import Searched
+    from g6.knowledge.knowledge_fetcher.fetcher import FetchResult
+    return (SearchResponse, Searched, FetchResult)
+
+
+def guidance_positions(value, *, schema=None):
+    """Resolve declared model positions, including complete serialized models.
+
+    A caller with a known schema may supply it for a partial record. Arbitrary
+    dictionaries never gain roles just because they contain a key named reason.
+    """
+    positions = frozenset()
+    for model in _guidance_models():
+        if (schema is model or isinstance(value, model) or
+                (isinstance(value, Mapping) and model.model_fields.keys() <= value.keys())):
+            positions |= GUIDANCE_MODEL_POSITIONS[f"{model.__module__}.{model.__name__}"]
+    return positions
+
+
+@lru_cache(maxsize=1)
+def _result_envelope_fields():
+    from g6.core.reliability_envelope import ReliabilityEnvelope
+    return frozenset(ReliabilityEnvelope.model_fields)
+
+
+def result_envelope(value):
+    """Recognise the complete result-envelope schema, never a lone role name.
+
+    Components flatten this schema alongside their data. It remains an envelope
+    under invoke's result, compose steps and job snapshots. A role-named field in
+    ordinary data does not acquire a guidance role from its spelling.
+    """
+    return isinstance(value, Mapping) and _result_envelope_fields() <= value.keys()
+
 
 def _structured(key):
     return isinstance(key, str) and (key in _STRUCTURED or key.endswith(("_id", "_ids", "_sha256", "_digest")))
 
 
-def guidance_role(key, parent=0, opaque=False, *, at_root=False):
+def guidance_role(key, parent=0, opaque=False, *, at_root=False, positions=()):
     """0: data/default prose, 1: guidance, 2: every field of a card.
 
     Reserved names apply only at the envelope root or within guidance already
@@ -81,7 +129,11 @@ def guidance_role(key, parent=0, opaque=False, *, at_root=False):
         return 2
     if opaque or _structured(key):
         return 0
-    return int(bool(parent or (at_root and key in GUIDANCE_FIELDS)))
+    return int(bool(parent or (at_root and key in GUIDANCE_FIELDS) or (key,) in positions))
+
+
+def child_guidance_positions(positions, key):
+    return frozenset(path[1:] for path in positions if len(path) > 1 and path[0] == key)
 
 
 def _instruction(text: str) -> bool:
@@ -116,7 +168,7 @@ def text_for_agent(text: str) -> str:
     return " ".join(kept)
 
 
-def reply_for_agent(value, *, _prose: bool = True):
+def reply_for_agent(value, *, _prose: bool = True, _schema=None):
     """Filter unmarked text and every guidance role, regardless of receipts.
 
     Receipts remain private string subtypes until wire serialization. Keeping them
@@ -124,13 +176,16 @@ def reply_for_agent(value, *, _prose: bool = True):
     success flag or diagnostic code confers an exemption on prose.
     """
     results, active = {}, set()
-    todo = [(value, False, 0, False, 0)]
+    root_positions = guidance_positions(value, schema=_schema)
+    todo = [(value, False, 0, False, 0, root_positions)]
     while todo:
-        item, opaque, guidance, done, depth = todo.pop()
+        item, opaque, guidance, done, depth, pending = todo.pop()
+        positions = pending | (guidance_positions(item) if not opaque else frozenset())
+        at_envelope = depth == 0 or (not opaque and result_envelope(item))
         if depth > _MAX_GUIDANCE_DEPTH:
             return {"ok": False, "completion_state": "blocked-escalated",
                     "error": "[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person."}
-        ident = (id(item), opaque, guidance)
+        ident = (id(item), opaque, guidance, pending)
         if isinstance(item, str) and guidance:
             # str() retains our private subtype; the base method strips it.
             results[ident] = text_for_agent(str.__str__(item))
@@ -144,14 +199,15 @@ def reply_for_agent(value, *, _prose: bool = True):
         elif done:
             if isinstance(item, dict):
                 out = {key: results[(id(child), opaque or _structured(key),
-                                    guidance_role(key, guidance, opaque, at_root=depth == 0))]
+                                    guidance_role(key, guidance, opaque, at_root=at_envelope, positions=positions),
+                                    child_guidance_positions(positions, key))]
                        for key, child in item.items()}
                 if not opaque and item.get("code") == "G6_E_ISOLATION_UNAVAILABLE" \
                         and not is_external(item.get("code")):
                     out.update(action=_ISOLATION_ACTION, suggested_action=_ISOLATION_ACTION)
                 results[ident] = out
             else:
-                children = [results[(id(child), opaque, guidance)] for child in item]
+                children = [results[(id(child), opaque, guidance, pending)] for child in item]
                 results[ident] = tuple(children) if isinstance(item, tuple) else children
             active.remove(ident)
         elif ident in active:
@@ -159,14 +215,15 @@ def reply_for_agent(value, *, _prose: bool = True):
                     "error": "[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person."}
         elif ident not in results:
             active.add(ident)
-            todo.append((item, opaque, guidance, True, depth))
+            todo.append((item, opaque, guidance, True, depth, pending))
             if isinstance(item, dict):
                 todo.extend((child, opaque or _structured(key),
-                             guidance_role(key, guidance, opaque, at_root=depth == 0), False, depth + 1)
+                             guidance_role(key, guidance, opaque, at_root=at_envelope, positions=positions),
+                             False, depth + 1, child_guidance_positions(positions, key))
                             for key, child in item.items())
             else:
-                todo.extend((child, opaque, guidance, False, depth + 1) for child in item)
-    return results[(id(value), False, 0)]
+                todo.extend((child, opaque, guidance, False, depth + 1, pending) for child in item)
+    return results[(id(value), False, 0, root_positions)]
 
 
 def skill_for_agent(text: str | None) -> str | None:

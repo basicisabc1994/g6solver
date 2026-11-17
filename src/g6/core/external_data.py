@@ -13,6 +13,7 @@ import json
 
 from g6.core.agent_guidance import (
     _ExternalText, _MixedText, _MAX_GUIDANCE_DEPTH, _structured, guidance_role, is_external, reply_for_agent,
+    child_guidance_positions, guidance_positions, result_envelope,
 )
 
 
@@ -23,21 +24,24 @@ class ExternalDataLimit(ValueError):
 def external_value(value, *, _component=False):
     """Copy external JSON-like data, marking text without inspecting its words."""
     results, active = {}, set()
-    todo = [(value, False, 0, False, True)]
+    todo = [(value, False, 0, False, True, frozenset())]
     while todo:
-        item, opaque, guidance, done, at_root = todo.pop()
-        ident = (id(item), opaque, guidance, at_root)
+        item, opaque, guidance, done, at_root, pending = todo.pop()
+        positions = pending | (guidance_positions(item) if _component and not opaque else frozenset())
+        at_envelope = at_root or (not opaque and result_envelope(item))
+        ident = (id(item), opaque, guidance, at_root, pending)
         if isinstance(item, str):
             results[ident] = str.__str__(item) if guidance else _ExternalText(item)
         elif not isinstance(item, (Mapping, list, tuple)):
             results[ident] = item
         elif done:
             results[ident] = ({key: results[(id(child), _component and (opaque or _structured(key)),
-                                           guidance_role(key, guidance, opaque, at_root=at_root)
-                                           if _component else 0, False)]
+                                           guidance_role(key, guidance, opaque, at_root=at_envelope,
+                                                         positions=positions)
+                                           if _component else 0, False, child_guidance_positions(positions, key))]
                               for key, child in item.items()}
                              if isinstance(item, Mapping) else
-                             [results[(id(child), opaque, guidance, False)] for child in item])
+                             [results[(id(child), opaque, guidance, False, pending)] for child in item])
             if isinstance(item, tuple):
                 results[ident] = tuple(results[ident])
             active.remove(ident)
@@ -45,22 +49,23 @@ def external_value(value, *, _component=False):
             raise ExternalDataLimit("[G6_E_RESOURCE_LIMIT] cyclic external data")
         elif ident not in results:
             active.add(ident)
-            todo.append((item, opaque, guidance, True, at_root))
+            todo.append((item, opaque, guidance, True, at_root, pending))
             if isinstance(item, Mapping):
                 todo.extend((child, _component and (opaque or _structured(key)),
-                             guidance_role(key, guidance, opaque, at_root=at_root)
-                             if _component else 0, False, False)
+                             guidance_role(key, guidance, opaque, at_root=at_envelope, positions=positions)
+                             if _component else 0, False, False, child_guidance_positions(positions, key))
                             for key, child in item.items())
             else:
-                todo.extend((child, opaque, guidance, False, False) for child in item)
-    return results[(id(value), False, 0, True)]
+                todo.extend((child, opaque, guidance, False, False, pending) for child in item)
+    return results[(id(value), False, 0, True, frozenset())]
 
 
 def component_value(value, *, in_result=False):
     """Classify roles at their reply position before granting data receipts.
 
-    A component's successful payload will sit under result, not at the envelope
-    root. Warning cards remain guidance in either position.
+    A component's payload sits under result. Its own complete result envelope
+    retains schema-defined guidance positions there; ordinary data role names
+    stay data. Warning cards remain guidance in either position.
     """
     envelope = {"result": value} if in_result else value
     shown = reply_for_agent(external_value(envelope, _component=True))
@@ -91,15 +96,17 @@ def quoted_content(value):
 
 
 def knowledge_quotes(value):
-    """Walk typed records and their dumps, independent of search container names.
+    """Preserve knowledge data records, including paths and caller echoes.
 
-    PassageItem declares the redacted View role; an authorised fetch can also
-    carry canonical Passage.text. Other engine text receives no receipt.
+    The search schema declares data fields, including open payloads. Fetch uses
+    the same PassageItem/View, denied and withheld records. All their text is
+    data, not just passage text, except schema-declared outcome guidance.
+    Undeclared G6 prose retains the default filter;
+    cards and complete component envelopes retain their guidance positions.
     """
     from pydantic import BaseModel
-    from g6._context_engine._envelope import PassageItem
+    from g6._context_engine._envelope import PassageItem, SearchResponse
     from g6._context_engine._view import View
-    from g6.knowledge._types import Passage
 
     record_types = {name: field.annotation for name, field in PassageItem.model_fields.items()
                     if isinstance(field.annotation, type) and issubclass(field.annotation, BaseModel)}
@@ -115,15 +122,23 @@ def knowledge_quotes(value):
             out = {key: walk(child, record_types.get(key), depth + 1)
                    for key, child in item.items()}
             passage_view = any(name in item and kind is View for name, kind in record_types.items())
-            if (schema in (View, Passage) or passage_view) and isinstance(out.get("text"), str):
-                out["text"] = quoted_content(out["text"])
+            if (schema is not None or passage_view or guidance_positions(item) or
+                    SearchResponse.model_fields.keys() <= item.keys()):
+                return component_value(out, in_result=True)
+            if depth == 0:
+                # The knowledge result root follows SearchResponse's data
+                # positions even when the engine returns a partial dictionary.
+                out = {key: component_value(child, in_result=True)
+                       if key in SearchResponse.model_fields else child for key, child in out.items()}
             return out
         if isinstance(item, (list, tuple)):
             children = [walk(child, schema, depth + 1) for child in item]
             return tuple(children) if isinstance(item, tuple) else children
         return item
 
-    return walk(value)
+    # MCP also supplies partial SearchResponse dictionaries. Supply that schema
+    # explicitly rather than treating every reason-named data key as guidance.
+    return reply_for_agent(walk(value), _schema=SearchResponse)
 
 
 def program_output(value):
