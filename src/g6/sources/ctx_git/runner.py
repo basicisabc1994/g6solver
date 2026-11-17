@@ -2,7 +2,7 @@
 """Running git for ctx_git, and the audit record of every call.
 
 :func:`session` opens one working copy (already confined by :func:`~g6.sources.ctx_git.config.repository`) and yields
-``run(*args)``: each git command runs in :func:`g6.core.git_env.safe_git`'s environment (no hooks, no fsmonitor, no
+``run(*args)``: each git command uses :func:`g6.core.git_env.safe_git_env` and the ctx_git config policy (no hooks, no fsmonitor, no
 pager, no credential helper, no filter, diff or merge driver the repository's config names, no transport, no prompt; a
 submodule refused) with the git folder and the working tree pinned (``GIT_DIR``, ``GIT_WORK_TREE``), so a planted
 ``core.worktree`` cannot point git elsewhere, with signing switched off for tags and pushes too, and with no signature
@@ -10,6 +10,8 @@ verifier of any type (``log`` and ``show`` also pass ``--no-show-signature``). I
 bounded child (:mod:`g6.core.component_process`): a time limit, the whole process tree ended, the reply capped; each
 call keeps at most :data:`MAX_OUTPUT` bytes of git's output, and more is refused (``G6_E_GIT_OUTPUT_TOO_LARGE``) unless
 the op takes a cut (a patch, which says it was cut). A
+session carries only validated tree-reading values from the person's system/global config, read without includes;
+Git itself uses null system/global configs throughout the operation. A
 network session (``network=True``) lets git use https and ssh only, with the ssh program found on PATH (never the
 repository's ``core.sshCommand``), TLS certificates checked, no HTTP redirect followed and no
 ``core.alternateRefsCommand`` run. :func:`clone_session` is the same for ``clone``, which has no working copy yet.
@@ -37,10 +39,12 @@ from subprocess import TimeoutExpired
 from typing import Any
 
 from g6.core import component_process
-from g6.core.git_env import SUBMODULE_REFUSED, UnsafeGitConfig, git_program, safe_git, safe_git_args, safe_git_env
+from g6.core.git_env import (DRIVER_QUERY, GITLINK_QUERIES, SUBMODULE_REFUSED, UnsafeGitConfig, driver_settings,
+                             git_program, refuse_gitlinks, safe_git_args, safe_git_env)
 from g6.core.outside import OUTSIDE_PROGRAM_MISSING, OutsideProgram, find_program
 from g6.core.storage import state_path
 from g6.sources.ctx_git.config import GitRefused
+from g6.sources.ctx_git import _config_policy
 
 GIT = OutsideProgram(name="git", purpose="ctx_git reads and changes repositories with the git program",
                      install="Install git 2.31 or later from git-scm.com and put it on PATH.", licence="GPL-2.0",
@@ -49,17 +53,15 @@ DEFAULT_TIMEOUT = 60.0
 NETWORK_TIMEOUT = 300.0
 #: The transports a network session may use. GIT_ALLOW_PROTOCOL outranks every protocol.* key a repository sets.
 PROTOCOLS = "https:ssh"
-#: Set in the command scope beside g6.core.git_env's own settings: no signing program for a tag or a push, and no
-#: signature verifier of any type (git picks the verifier from a signature's type: OpenPGP, X.509 or ssh), so a
-#: planted ``log.showSignature`` or ``merge.verifySignatures`` starts nothing.
-_MORE = (("tag.gpgSign", "false"), ("push.gpgSign", "false"), ("gpg.program", ""), ("log.showSignature", "false"),
-         ("merge.verifySignatures", "false"), ("gpg.x509.program", ""), ("gpg.ssh.program", ""))
+# File/program policies, signing included, live together in _config_policy.RULES.
 UNSAFE = "G6_E_GIT_UNSAFE_CONFIG"
 TIMEOUT = "G6_E_GIT_TIMEOUT"
 FAILED = "G6_E_GIT_FAILED"
 TOO_LARGE = "G6_E_GIT_OUTPUT_TOO_LARGE"
 #: The most bytes of git's output one call keeps (its error stream: :data:`MAX_ERROR`).
 MAX_OUTPUT = 8 * 1024 * 1024
+#: Admission queries include G6's own overrides; their bound is independent of a caller's patch cap.
+MAX_ADMISSION_OUTPUT = 8 * 1024 * 1024
 MAX_ERROR = 64 * 1024
 _AUDIT = ("ctx_git", "audit.jsonl")
 _LOCK = threading.Lock()
@@ -149,9 +151,15 @@ def missing_git() -> GitRefused:
                                                f"yourself: {GIT.install}")
 
 
-def _runner(where: Path, env: dict[str, str], timeout: float) -> Callable[..., Done]:
+def _runner(where: Path, env: dict[str, str], timeout: float, *,
+            settings: tuple[tuple[str, str], ...] | None = None,
+            output_limit: int | None = None) -> Callable[..., Done]:
+    if settings is None:
+        settings = _config_policy.settings(hooks=os.devnull, template="")
+    overrides = [part for key, value in settings for part in ("-c", f"{key}={value}")]
+
     def run(*args: str, ok: tuple[int, ...] = (0,), input_bytes: bytes = b"", cut_ok: bool = False) -> Done:
-        argv = [git_program(), "-C", str(where), *safe_git_args(*args)]
+        argv = [git_program(), "--no-pager", *overrides, "-C", str(where), *safe_git_args(*args)]
         try:
             with component_process.window(timeout):
                 done = component_process.run_contained(argv, env=env, input_bytes=input_bytes)
@@ -164,16 +172,127 @@ def _runner(where: Path, env: dict[str, str], timeout: float) -> Callable[..., D
                                         "(paths, rev, max_count)") from None
         except OSError as exc:
             raise GitRefused(FAILED, f"git {args[0]} could not be run to the end: {type(exc).__name__}") from None
-        cut = len(done.stdout) > MAX_OUTPUT
+        limit = MAX_OUTPUT if output_limit is None else output_limit
+        cut = len(done.stdout) > limit
         if cut and not cut_ok:
-            raise GitRefused(TOO_LARGE, f"git {args[0]} wrote {len(done.stdout)} bytes, more than the {MAX_OUTPUT} one "
+            raise GitRefused(TOO_LARGE, f"git {args[0]} wrote {len(done.stdout)} bytes, more than the {limit} one "
                                         "call keeps: narrow the request (paths, rev, max_count)")
-        found = Done(done.returncode, done.stdout[:MAX_OUTPUT], done.stderr[:MAX_ERROR], cut)
+        found = Done(done.returncode, done.stdout[:limit], done.stderr[:MAX_ERROR], cut)
         if found.code not in ok:
             raise GitRefused(classify(found.said), f"git {args[0]} failed with exit {found.code}; "
                              "check the repository and the requested operation")
         return found
     return run
+
+
+# Only values describing how Git reads the working tree may cross the external
+# config boundary. No path, program, include, URL, driver or credential key does.
+_TREE_READ_VALUES = {
+    "core.autocrlf": frozenset(("true", "false", "input")),
+    "core.eol": frozenset(("lf", "crlf", "native")),
+    "core.safecrlf": frozenset(("true", "false", "warn")),
+    "core.symlinks": frozenset(("true", "false")),
+    "core.ignorecase": frozenset(("true", "false")),
+}
+_TREE_READ_QUERY = r"^core\.(autocrlf|eol|safecrlf|symlinks|ignorecase)$"
+_BOOL_VALUES = {"true": "true", "yes": "true", "on": "true", "1": "true",
+                "false": "false", "no": "false", "off": "false", "0": "false", "": "false"}
+
+
+def _read_tree_settings(where: Path, env: dict[str, str], timeout: float) -> tuple[tuple[str, str], ...]:
+    """Read only fixed tree-reading keys from system then global config, without includes.
+
+    The lookup runs outside the repository with the same safe process controls and
+    policy. Explicit external config selectors are honoured (also for isolated
+    callers); their paths are never carried into a session. Operations themselves
+    still use the null system/global configs. Never retain an unvalidated value in
+    the audit, or allow even an allowlisted key to replace a policy decision.
+    """
+    lookup = dict(env)
+    for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_CONFIG_NOSYSTEM"):
+        lookup.pop(key, None)
+    lookup["GIT_CEILING_DIRECTORIES"] = str(where.parent)
+    for key in ("GIT_CONFIG_SYSTEM", "GIT_CONFIG_GLOBAL"):
+        if key in os.environ:
+            lookup[key] = os.environ[key]
+        else:
+            lookup.pop(key, None)
+    query = _runner(where, lookup, timeout, output_limit=MAX_ADMISSION_OUTPUT)
+    carried: dict[str, str] = {}
+    for scope in ("system", "global"):
+        found = query("config", f"--{scope}", "--no-includes", "--null", "--get-regexp",
+                      _TREE_READ_QUERY, ok=(0, 1))
+        for item in found.out.split(b"\0"):
+            if not item:
+                continue
+            raw_key, separator, raw_value = item.partition(b"\n")
+            # Git prints canonical section/variable names. Unknown names are never
+            # carried even if a future query or Git version returns additional keys.
+            key = raw_key.decode("ascii", "replace").lower()
+            if key not in _TREE_READ_VALUES:
+                raise GitRefused(UNSAFE, "external config query returned an unclassified key; git was not run")
+            reason = ""
+            if _config_policy.rule_for(key) is not None:
+                reason = "key is reserved by the Git config policy"
+            value = raw_value.decode("ascii", "replace").lower() if separator else "true"
+            if key != "core.eol":
+                value = _BOOL_VALUES.get(value, value)
+            if value not in _TREE_READ_VALUES[key]:
+                reason = "value is outside the documented tree-reading values"
+            if reason:
+                # A later invalid value must not expose an earlier accepted one.
+                carried.pop(key, None)
+                record({"op": "config_read_settings", "scope": scope, "key": key,
+                        "decision": "dropped", "reason": reason})
+            else:
+                carried[key] = value
+    return tuple(carried.items())
+
+
+@contextmanager
+def _prepared(where: Path, gitdir: Path | None, *, network: bool, timeout: float,
+              clone: bool = False) -> Iterator[Callable[..., Done]]:
+    """Policy precedes every query, including the first config and gitlink queries.
+
+    The core environment builder is reused unchanged. Its normal safe_git context
+    queries Git before ctx_git can add policy, so keep the same sentinel, driver and
+    gitlink checks here with ctx_git's bounded process runner and overrides already on.
+    """
+    with tempfile.TemporaryDirectory(prefix="g6-ctx-git-") as scratch:
+        folder = Path(scratch)
+        template = folder / "template"
+        template.mkdir()
+        base = safe_git_env(folder, ceiling=where.parent if gitdir is not None else where)
+        base.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_SYSTEM": os.devnull,
+                     "GIT_CONFIG_GLOBAL": os.devnull})
+        tree_settings = _read_tree_settings(folder, base, timeout)
+        if gitdir is not None:
+            base.update({"GIT_DIR": str(gitdir), "GIT_WORK_TREE": str(where)})
+        initial = (*_config_policy.settings(hooks=str(folder / "hooks"), template=str(template)), *tree_settings)
+        base = _with(base, initial)
+        if not clone:
+            query = _runner(where, base, timeout, settings=initial, output_limit=MAX_ADMISSION_OUTPUT)
+            # Config itself only follows admitted includes. Names reveal no file contents
+            # and are bounded by the process timeout and admission output cap.
+            names = query("config", "--null", "--name-only", "--list").out.split(b"\0")
+            try:
+                keys = tuple(name.decode("utf-8", "strict") for name in names if name)
+            except UnicodeError:
+                raise GitRefused(UNSAFE, "repository config key spelling cannot be classified; git was not run") from None
+            if any((rule := _config_policy.rule_for(key)) is not None
+                   and rule.action == "classified" and rule.value == "refuse" for key in keys):
+                raise GitRefused(UNSAFE, "repository config selects a foreign-VCS helper; git was not run")
+            initial = (*_config_policy.settings(keys, hooks=str(folder / "hooks"), template=str(template)),
+                       *tree_settings)
+            base = _with(base, initial)
+            query = _runner(where, base, timeout, settings=initial, output_limit=MAX_ADMISSION_OUTPUT)
+            found = query(*DRIVER_QUERY, ok=(0, 1, 128))
+            base = _with(base, driver_settings(found.code, found.out))
+            query = _runner(where, base, timeout, settings=initial, output_limit=MAX_ADMISSION_OUTPUT)
+            listings = [query(*args, ok=(0, 1, 128)) for args in GITLINK_QUERIES]
+            refuse_gitlinks(*(done.out for done in listings if done.code == 0))
+        yield _runner(where, _network(base) if network else base,
+                      NETWORK_TIMEOUT if network else timeout, settings=initial)
 
 
 @contextmanager
@@ -183,9 +302,8 @@ def session(repo: Path, gitdir: Path, *, network: bool = False,
     if find_program("git") is None:
         raise missing_git()
     try:
-        with safe_git(repo, ceiling=repo.parent, timeout=timeout) as base:
-            env = _with({**base, "GIT_DIR": str(gitdir), "GIT_WORK_TREE": str(repo)}, _MORE)
-            yield _runner(repo, _network(env) if network else env, NETWORK_TIMEOUT if network else timeout)
+        with _prepared(repo, gitdir, network=network, timeout=timeout) as run:
+            yield run
     except UnsafeGitConfig as exc:
         raise GitRefused(SUBMODULE_REFUSED if "submodule" in str(exc) else UNSAFE, str(exc)) from None
     except TimeoutExpired:
@@ -199,9 +317,8 @@ def clone_session(parent: Path) -> Iterator[Callable[..., Done]]:
     read yet (a clone copies none from the remote) and no search above ``parent``."""
     if find_program("git") is None:
         raise missing_git()
-    with tempfile.TemporaryDirectory(prefix="g6-git-clone-") as scratch:
-        env = _network(_with(safe_git_env(Path(scratch), ceiling=parent), _MORE))
-        yield _runner(parent, env, NETWORK_TIMEOUT)
+    with _prepared(parent, None, network=True, timeout=NETWORK_TIMEOUT, clone=True) as run:
+        yield run
 
 
 def audit_path() -> Path:

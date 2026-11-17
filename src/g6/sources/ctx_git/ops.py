@@ -639,6 +639,8 @@ def _go(op: str, command: list[str], action: dict[str, Any], out: Outward,
     display = list(command)
     if display[:1] == ["-C"] and len(display) >= 2:
         display[1] = cfg._name(Path(display[1]), out.config.roots)
+    elif op == "clone" and display[:1] == ["clone"]:
+        display[-1] = cfg._name(Path(display[-1]), out.config.roots)
     shown = "git " + " ".join(cfg.shown(part) for part in display)
     if c.dry_run:
         return answer(op, DRY_RUN, f"A dry run: nothing was sent. With dry_run false the action gate decides; it says "
@@ -661,8 +663,8 @@ def _sent(reply: dict[str, Any], gate: dict[str, Any]) -> dict[str, Any]:
 def fetch(run: Run, repo: Path, c: Call, out: Outward) -> Outcome:
     remote = remote_name(c.remote)
     urls = _urls(run, remote, push=False)
-    _reachable(urls, out)
     _unsteered(run, remote, urls, "fetch")
+    _reachable(urls, out)
     # the refspec named, and --refmap= so that no configured refspec maps a fetched ref onto a local branch as well
     args = ["fetch", "--no-recurse-submodules", "--refmap=", "--end-of-options", remote,
             f"+refs/heads/*:refs/remotes/{remote}/*"]
@@ -688,10 +690,10 @@ def fetch(run: Run, repo: Path, c: Call, out: Outward) -> Outcome:
 def pull(run: Run, repo: Path, c: Call, out: Outward) -> Outcome:
     remote = remote_name(c.remote)
     branch = ref_name(c.branch, "branch")
-    _clean_first(run, "pull")
     urls = _urls(run, remote, push=False)
-    _reachable(urls, out)
     _unsteered(run, remote, urls, "pull")
+    _clean_first(run, "pull")
+    _reachable(urls, out)
     # the one remote-tracking ref named, so that no configured refspec maps the fetched branch onto a local one
     args = ["pull", "--ff-only", "--no-rebase", "--no-recurse-submodules",
             f"--refmap=+refs/heads/{branch}:refs/remotes/{remote}/{branch}", remote, branch]
@@ -719,8 +721,8 @@ def push(run: Run, repo: Path, c: Call, out: Outward) -> Outcome:
     if not local:
         raise GitRefused("G6_E_GIT_BAD_REVISION", f"there is no local branch {branch!r} to push")
     urls = _urls(run, remote, push=True)
-    _reachable(urls, out)
     _unsteered(run, remote, urls, "push")
+    _reachable(urls, out)
     spec = f"refs/heads/{branch}:refs/heads/{branch}"
     command = ["-C", str(repo), "push", "--recurse-submodules=no", remote, spec]
     action = _action("push", remote, urls, f"publish {branch} ({local[:12]}) to {remote}, never forced",
@@ -750,8 +752,9 @@ def clone(c: Call, out: Outward) -> Outcome:
     dest = cfg.destination(c.dest, out.config)
     _reachable([c.url], out)
     command = ["clone", "--no-recurse-submodules", "--", c.url, str(dest)]
-    action = _action("clone", "clone", [c.url], f"download the repository into {dest}",
-                     f"a working copy at {dest} whose HEAD is the remote's default branch", "git rev-parse HEAD",
+    name = cfg._name(dest, out.config.roots)
+    action = _action("clone", "clone", [c.url], f"download the repository into {name}",
+                     f"a working copy at {name} whose HEAD is the remote's default branch", "git rev-parse HEAD",
                      "reversible")
     held, gate = _go("clone", command, action, out, c)
     if held is not None:
