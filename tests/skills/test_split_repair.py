@@ -9,11 +9,13 @@ import os
 import re
 import subprocess
 import sys
+from bisect import bisect_right
 from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
 from markdown_it import MarkdownIt
+from markdown_it.renderer import RendererHTML
 
 from g6.skills import corpus, routing
 
@@ -42,80 +44,184 @@ def _normal(text: str) -> str:
 def _instructions(text: str) -> str:
     # Relative navigation changes location, not the authority of the sentence.
     # The separate pointer census resolves every such file from its own folder.
-    text = re.sub(r"\s*\(`(?:references/)?[^`]+\.md`\)", "", text)
-    return re.sub(r"`references/([^`]+\.md)`", r"`\1`", text)
+    text = re.sub(r"\s*\((?:references/)?[^()\s]+\.md\)", "", text)
+    return re.sub(r"\breferences/([^\s()]+\.md)\b", r"\1", text)
 
 
 def _rendered_paragraphs(text: str) -> list[str]:
-    """Read CommonMark text/code, excluding images and raw HTML with its content."""
-    class RawHTML(HTMLParser):
+    """Read only HTML rendered from the whole, unaltered CommonMark document.
+
+    Renderer offsets carry provenance, never replacement text: they distinguish
+    passed-through HTML from generated elements and select source ranges only
+    after rendering. All visible words come from the resulting HTML tree.
+    """
+    class SourceRenderer(RendererHTML):
+        def __init__(self, parser):
+            super().__init__(parser)
+            self.spans = []
+            self.raw = []
+
+        def render(self, tokens, options, env):
+            chunks, offset = [], 0
+            for index, token in enumerate(tokens):
+                if token.type == "inline":
+                    children, parts = token.children or [], []
+                    position = offset
+                    for child_index, child in enumerate(children):
+                        rule = self.rules.get(child.type, self.renderToken)
+                        part = rule(children, child_index, options, env)
+                        if child.type == "html_inline":
+                            self.raw.append((position, position + len(part)))
+                        parts.append(part)
+                        position += len(part)
+                    chunk = "".join(parts)
+                else:
+                    rule = self.rules.get(token.type, self.renderToken)
+                    chunk = rule(tokens, index, options, env)
+                    if token.type == "html_block":
+                        self.raw.append((offset, offset + len(chunk)))
+                if chunk:
+                    self.spans.append((offset, offset + len(chunk), token.map,
+                                       token.markup if token.type == "heading_open" else ""))
+                chunks.append(chunk)
+                offset += len(chunk)
+            return "".join(chunks)
+
+    parser = MarkdownIt("commonmark", renderer_cls=SourceRenderer)
+    html = parser.render(text)
+    spans, raw = parser.renderer.spans, parser.renderer.raw
+    starts = [span[0] for span in spans]
+    raw_starts = [span[0] for span in raw]
+    line_starts = [0, *(match.end() for match in re.finditer("\n", html))]
+    # Preserve the baseline's front-matter/ATX-label exclusions after rendering.
+    front_matter_end = text.find("---", 3) if text.startswith("---") else -1
+    front_matter_lines = text.count("\n", 0, front_matter_end) + 1 if front_matter_end >= 0 else 0
+
+    class Paragraph(str):
+        """Rendered text with its original block's source range attached."""
+
+    class VisibleHTML(HTMLParser):
         void = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
                 "param", "source", "track", "wbr"}
+        blocks = {"p", "li", "pre", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6"}
 
         def __init__(self):
             super().__init__()
             self.elements = []
+            self.parts, self.paragraphs = [], []
+            self.heading_label = False
+            self.ordered = 0
+            self.caption = None
+            self.source = None
+
+        def position(self):
+            line, column = self.getpos()
+            return line_starts[line - 1] + column
+
+        def is_raw(self):
+            position = self.position()
+            index = bisect_right(raw_starts, position) - 1
+            return index >= 0 and position < raw[index][1]
+
+        def flush(self):
+            paragraph = "".join(self.parts)
+            if self.caption:
+                caption = paragraph[:self.caption]
+                if not any(re.search(rf"\b{term}\b", caption.casefold()) for term in AUTHORITY_TERMS):
+                    paragraph = paragraph[self.caption:]
+            if paragraph.strip():
+                rendered = Paragraph(paragraph)
+                rendered.source_lines = self.source
+                rendered.label = self.heading_label or bool(
+                    self.source and self.source[1] <= front_matter_lines)
+                self.paragraphs.append(rendered)
+            self.parts, self.caption = [], None
+            self.source = None
 
         def handle_starttag(self, tag, attrs):
-            if tag not in self.void:
-                self.elements.append(tag)
+            if self.is_raw():
+                if tag not in self.void:
+                    self.elements.append(tag)
+                return
+            if tag in self.blocks:
+                self.flush()
+            if tag.startswith("h") and tag[1:] in "123456":
+                index = bisect_right(starts, self.position()) - 1
+                self.heading_label = index >= 0 and spans[index][3].startswith("#")
+            if tag == "ol":
+                self.ordered += 1
+            if tag == "br" and not self.elements:
+                self.parts.append(" ")
+            if tag == "strong" and self.ordered and not "".join(self.parts).strip():
+                self.caption = 0
 
         def handle_startendtag(self, tag, attrs):
             # HTML ignores a self-closing slash on non-void elements.
             self.handle_starttag(tag, attrs)
 
         def handle_endtag(self, tag):
-            if tag in self.elements:
-                last = len(self.elements) - 1 - self.elements[::-1].index(tag)
-                del self.elements[last:]
+            if self.is_raw():
+                if tag in self.elements:
+                    last = len(self.elements) - 1 - self.elements[::-1].index(tag)
+                    del self.elements[last:]
+                return
+            if tag == "strong" and self.caption == 0:
+                candidate = "".join(self.parts)
+                self.caption = len(candidate) if re.fullmatch(r"[\w ]+\.", candidate) else None
+            if tag in self.blocks:
+                self.flush()
+            if tag.startswith("h") and tag[1:] in "123456":
+                self.heading_label = False
+            if tag == "ol":
+                self.ordered -= 1
 
-    # HTML can enclose Markdown across inline tokens, paragraphs and code blocks.
-    # An unclosed element excludes the rest; only void elements close themselves.
-    raw = RawHTML()
-    paragraphs = []
-    for token in MarkdownIt("commonmark").parse(text):
-        if token.type == "html_block":
-            raw.feed(token.content)
-        elif token.type == "inline":
-            parts = []
-            for child in token.children or []:
-                if child.type == "html_inline":
-                    raw.feed(child.content)
-                elif not raw.elements:
-                    if child.type in ("text", "code_inline"):
-                        parts.append(child.content)
-                    elif child.type in ("softbreak", "hardbreak"):
-                        parts.append(" ")
-                    # Image children are alt text; link targets/titles are attrs.
-            paragraphs.append("".join(parts))
-        elif token.type in ("fence", "code_block") and not raw.elements:
-            paragraphs.append(token.content)
-    return paragraphs
+        def handle_data(self, data):
+            if self.elements or self.is_raw():
+                return
+            index = bisect_right(starts, self.position()) - 1
+            source = spans[index][2] if index >= 0 else None
+            if source:
+                self.source = source
+            self.parts.append(data)
+
+    tree = VisibleHTML()
+    tree.feed(html)
+    tree.close()
+    tree.flush()
+    return tree.paragraphs
+
+
+def _paragraph_sentences(paragraphs, *, verbatim=False):
+    """Normalize rendered text only; never reinterpret it as Markdown."""
+    sentences = []
+    for paragraph in paragraphs:
+        if getattr(paragraph, "label", False):
+            continue
+        if not verbatim:
+            paragraph = _instructions(paragraph)
+        for part in re.split(r"\n\s*\n", paragraph):
+            sentences.extend(s for s in re.split(r"(?<=[.!?])\s+", _normal(part)) if s)
+    return sentences
 
 
 def _sentences(text: str, *, verbatim: bool = False) -> list[str]:
-    if text.startswith("---"):
-        text = text.split("---", 2)[2]
-    text = re.sub(r"^#{1,6} .*?$", "", text, flags=re.M)
-    text = re.sub(r"^```[^\n]*$", "", text, flags=re.M)
-    # Numbered step captions are labels, not the instruction that follows.
-    # A complete bold sentence elsewhere must keep all its rendered words.
-    def caption(match):
-        return (match.group() if any(re.search(rf"\b{term}\b", match[2].casefold()) for term in AUTHORITY_TERMS)
-                else match[1])
+    return _paragraph_sentences(_rendered_paragraphs(text), verbatim=verbatim)
 
-    text = re.sub(r"^(\s*\d+\. )\*\*([\w ]+\.)\*\*\s+(?=\S)", caption, text, flags=re.M)
-    text = re.sub(r"^\s*(?:[-*+] |\d+\. )", "", text, flags=re.M)
-    if not verbatim:
-        text = _instructions(text)
-    sentences = []
-    for paragraph in _rendered_paragraphs(text):
-        sentences.extend(s for s in re.split(r"(?<=[.!?])\s+", _normal(paragraph)) if s)
-    return sentences
+
+def _paragraphs_in_lines(paragraphs, lines):
+    return [paragraph for paragraph in paragraphs if paragraph.source_lines
+            and paragraph.source_lines[0] < lines[1] and paragraph.source_lines[1] > lines[0]]
+
+
+def _source_lines(document, fragment):
+    start = document.index(fragment)
+    first = document.count("\n", 0, start)
+    return first, first + len(fragment.splitlines())
 
 
 def _held_sentences(original, route_id):
     """All sentences, without a keyword filter; shared text binds every route."""
+    rendered = _rendered_paragraphs(original)
     route = routing.load().routes[route_id]
     headings = {"review": "## Deliver a coding task with G6", "discover": "## Find",
                 "compose": "## Compose", "fit": "## Fit"}
@@ -130,7 +236,8 @@ def _held_sentences(original, route_id):
             paragraphs.append(paragraph)
     shared = [original.split("- **select.**", 1)[0], routing.section(original, "## Read and ask")]
     assert all(shared)
-    return {s for text in [*shared, section, *paragraphs] for s in _sentences(text)}
+    return {s for text in [*shared, section, *paragraphs]
+            for s in _paragraph_sentences(_paragraphs_in_lines(rendered, _source_lines(original, text)))}
 
 
 def _exceptions(original):
@@ -230,7 +337,7 @@ def test_each_route_reaches_its_original_safety_and_authority_sentences(route_id
     held = _held_sentences(original, route_id)
     authority = {s for s in _sentences(original, verbatim=True)
                  if any(re.search(rf"\b{term}\b", s.casefold()) for term in AUTHORITY_TERMS)
-                 and set(_sentences(s)) & held}
+                 and set(_paragraph_sentences([s])) & held}
     rendered = {s for text in reachable for s in _sentences(text, verbatim=True)}
     verbatim_missing = sorted(authority - rendered)
     assert not verbatim_missing, f"{route_id} cannot reach original sentences verbatim: {verbatim_missing}"
@@ -264,12 +371,13 @@ def test_route_corpus_includes_its_root_entry_and_every_declared_detail(route_id
 def test_every_explicit_repair_step_keeps_the_roots_repair_owner_rule(detail):
     """A repair step must retain the root's complete rule, including the person-owned stop."""
     root = (GUIDE / "SKILL.md").read_text(encoding="utf-8")
-    rules = [sentence for sentence in _sentences(root.split("## Routes", 1)[0]) if "reply carries repair" in sentence]
+    rules = [sentence for sentence in _sentences(root) if "reply carries repair" in sentence]
     assert rules
-    step = re.search(r"\d+\. \*\*Repair\.\*\*\s*(.*?)(?=\n\d+\. |\Z)",
-                     detail.read_text(encoding="utf-8"), re.S)
+    document = detail.read_text(encoding="utf-8")
+    paragraphs = _rendered_paragraphs(document)
+    step = re.search(r"\d+\. \*\*Repair\.\*\*\s*(.*?)(?=\n\d+\. |\Z)", document, re.S)
     assert step
-    section = _normal(" ".join(_rendered_paragraphs(step.group(1))))
+    section = _normal(" ".join(_paragraphs_in_lines(paragraphs, _source_lines(document, step.group(1)))))
     assert all(rule in section for rule in rules), detail.name
 
 
