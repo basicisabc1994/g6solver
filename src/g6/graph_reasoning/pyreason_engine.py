@@ -247,7 +247,9 @@ def _captured(seen: list[dict[str, Any]]) -> Any:
     @contextlib.contextmanager
     def capture() -> Any:
         out = io.StringIO()
-        with warnings.catch_warnings(record=True) as caught, contextlib.redirect_stdout(out):
+        from g6._streams import stdout_target
+
+        with warnings.catch_warnings(record=True) as caught, stdout_target(out):
             warnings.simplefilter("always")
             try:
                 yield

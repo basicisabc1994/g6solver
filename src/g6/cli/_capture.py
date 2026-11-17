@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import io
 import logging
-import os
 import sys
 import threading
 import warnings
 from contextlib import contextmanager
+
+from g6._streams import routing_owner, seal_console
 
 
 _active_capture = None
@@ -56,9 +57,9 @@ class InvokeCapture:
         global _active_capture
         if _active_capture is not None:
             raise RuntimeError("an invocation capture is already installed")
-        self.stdout, self.stderr = sys.stdout, sys.stderr
-        # A failed write disables replies, but must not change what restoration saves.
-        self.streams = self.stdout, self.stderr
+        self.routing_context = routing_owner()
+        self.routing = self.routing_context.__enter__()
+        self.stdout, self.stderr = self.routing.targets()
         self.lock = threading.RLock()
         self.counts = dict.fromkeys(("warnings", "thread failures", "unraisable exceptions", "uncaught exceptions",
                                     "log records", "stdout writes", "stderr writes"), 0)
@@ -70,7 +71,27 @@ class InvokeCapture:
         self.logging = (self.root.handlers, self.root.level, logging.lastResort)
         self.out_buffer = _Buffer(self, "stdout writes")
         self.err_buffer = _Buffer(self, "stderr writes")
-        sys.stdout, sys.stderr = self.out_buffer, self.err_buffer
+        self.previous_targets = self.routing.set_defaults((self.out_buffer, self.err_buffer))
+        # Named/non-propagating loggers emit before the root counter sees them.
+        # Rebind every existing handler using either entry stream, including the
+        # previous lastResort, and restore each exact object at owner exit.
+        self.handler_streams = []
+        loggers = [self.root, *(logger for logger in logging.Logger.manager.loggerDict.values()
+                                if isinstance(logger, logging.Logger))]
+        handlers = {handler for logger in loggers for handler in logger.handlers}
+        if logging.lastResort is not None:
+            handlers.add(logging.lastResort)
+        for handler in handlers:
+            stream = getattr(handler, "stream", None)
+            for index, original in enumerate(self.routing.originals):
+                if stream is original:
+                    handler.acquire()
+                    try:
+                        self.handler_streams.append((handler, stream))
+                        handler.stream = self.routing.streams[index]
+                    finally:
+                        handler.release()
+                    break
         warnings.showwarning = self.warning
         threading.excepthook = self.thread_failed
         sys.unraisablehook = self.unraisable
@@ -144,21 +165,31 @@ class InvokeCapture:
             # Python restores the dunder streams during module teardown, after
             # atexit. Seal the console descriptors only after our final flush.
             # In-process main() never registers this callback.
-            null = open(os.devnull, "w", encoding="utf-8")
-            os.dup2(null.fileno(), 1)
-            os.dup2(null.fileno(), 2)
-            sys.__stdout__ = sys.__stderr__ = null
+            try:
+                self.routing.prepare_console_shutdown(
+                    stdout_failed=self.stdout is None, stderr_failed=self.stderr is None,
+                )
+                self.restore()
+            finally:
+                seal_console()
 
     def restore(self):
         """Return all streams and hooks to the caller that installed this capture."""
         global _active_capture
-        sys.stdout, sys.stderr = self.streams
+        self.routing.set_defaults(self.previous_targets)
         warnings.showwarning, threading.excepthook, sys.unraisablehook, sys.excepthook = self.hooks
         # catch_warnings restores the filter object and invalidates registries,
         # including entries made by a library changing its filters during the op.
         self.warning_context.__exit__(None, None, None)
         self.root.handlers, level, logging.lastResort = self.logging
         self.root.setLevel(level)
+        for handler, stream in self.handler_streams:
+            handler.acquire()
+            try:
+                handler.stream = stream
+            finally:
+                handler.release()
+        self.routing_context.__exit__(None, None, None)
         _active_capture = None
 
 

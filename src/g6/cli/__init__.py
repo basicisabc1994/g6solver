@@ -315,7 +315,12 @@ def _invoke(args, capture) -> int:
 
 def entrypoint(argv: list[str] | None = None) -> int:
     """Console ownership continues after main returns, through interpreter shutdown."""
+    from g6._warnings import install_process_warning_policy
+
     with invocation_lock:
+        # Parsing imports setup before invocation capture starts. Only the owned
+        # process entry changes warning policy; embedding main() leaves it alone.
+        install_process_warning_policy()
         return _entrypoint(argv)
 
 

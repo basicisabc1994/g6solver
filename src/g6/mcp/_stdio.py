@@ -2,146 +2,19 @@
 """Bounded call output and a separate descriptor for the stdio protocol writer."""
 from contextlib import contextmanager
 from functools import wraps
-import io
 import os
 import sys
-import threading
 
-
-_lock = threading.RLock()
-_local = threading.local()
-_users = 0
-_router = None
-_thread_start = None
-
-
-class _Unattributed(io.StringIO):
-    """Unowned writes are never protocol messages. Emit at most one masked line."""
-
-    def __init__(self, stderr):
-        super().__init__()
-        self.stderr = stderr
-        self.reported = False
-
-    def write(self, text):
-        if not isinstance(text, str):
-            raise TypeError("text required")
-        with _lock:
-            if text and not self.reported:
-                self.reported = True
-                if self.stderr is not None:
-                    try:
-                        self.stderr.write("G6: captured unattributed stdout output.\n")
-                        self.stderr.flush()
-                    except Exception:  # No stream failure may reopen protocol stdout.
-                        pass
-        return len(text)
-
-
-class _Stdout:
-    def __init__(self, original):
-        self.original = original
-        self.unattributed = _Unattributed(sys.stderr)
-
-    def _target(self):
-        buffer = getattr(_local, "buffer", None)
-        return buffer if buffer is not None else self.unattributed
-
-    def write(self, text):
-        return self._target().write(text)
-
-    def flush(self):
-        return self._target().flush()
-
-    def __getattr__(self, name):
-        return getattr(self._target(), name)
-
-
-class _Buffer(io.StringIO):
-    def __init__(self):
-        super().__init__()
-        self.lock = threading.RLock()
-
-    def write(self, text):
-        with self.lock:
-            # Buffer only a bounded prefix; the remainder is discarded too.
-            super().write(text[:max(0, 4096 - self.tell())])
-        return len(text)
-
-    def close(self):
-        # Workers may outlive a call. Their buffers remain private and bounded.
-        pass
-
-
-def _start_thread(thread, *args, **kwargs):
-    buffer = getattr(_local, "buffer", None)
-    with _lock:
-        start = _thread_start
-        if buffer is None:
-            return start(thread, *args, **kwargs)
-        _acquire_router()
-        previous_run = thread.run
-
-        def run():
-            previous = getattr(_local, "buffer", None)
-            _local.buffer = buffer
-            try:
-                return previous_run()
-            finally:
-                _local.buffer = previous
-                thread.run = previous_run
-                _release_router()
-
-        thread.run = run
-        try:
-            return start(thread, *args, **kwargs)
-        except BaseException:
-            thread.run = previous_run
-            _release_router()
-            raise
-
-
-def _acquire_router():
-    global _users, _router, _thread_start
-    with _lock:
-        if not _users:
-            _router = _Stdout(sys.stdout)
-            sys.stdout = _router
-            _thread_start = threading.Thread.start
-            threading.Thread.start = _start_thread
-        _users += 1
-
-
-def _release_router():
-    global _users, _router, _thread_start
-    with _lock:
-        _users -= 1
-        if not _users:
-            sys.stdout = _router.original
-            threading.Thread.start = _thread_start
-            _router = None
-            # Retain the original callable: another thread may have fetched our
-            # bound start method just before restoration and invoke it afterwards.
-
-
-@contextmanager
-def _routing():
-    _acquire_router()
-    try:
-        yield
-    finally:
-        _release_router()
+from g6._streams import Buffer, routing, routing_owner
 
 
 @contextmanager
 def _capture():
-    with _routing():
-        previous = getattr(_local, "buffer", None)
-        _local.buffer = _Buffer()
-        try:
-            yield
-        finally:
-            _local.buffer = previous
+    # The stream pair is owned centrally. Releasing a target, even on a detached
+    # worker, never changes a Python stream binding.
+    owner = routing()
+    with owner.stdout(Buffer()):
+        yield
 
 
 def capture_stdout(function):
@@ -173,17 +46,68 @@ def _protocol_stdout():
     # descriptor writes receive stderr as fd/standard handle 1.
     sys.stdout.flush()
     protocol_fd = os.dup(1)
+    protocol = None
     try:
         os.set_inheritable(protocol_fd, False)
         _redirect_fd_stdout(2)
-        with os.fdopen(protocol_fd, "w", encoding="utf-8", newline="\n", closefd=False) as protocol:
-            with _routing():
-                yield protocol
+        protocol = os.fdopen(protocol_fd, "w", encoding="utf-8", newline="\n")
+        with routing_owner(process=True) as owner:
+            previous = owner.protocol
+            owner.protocol = True
+            try:
+                yield _ProtocolPipe(protocol)
+            finally:
+                if not owner.process_owned:
+                    owner.protocol = previous
     finally:
         # This is the console server, not an embedding helper. Keep public fd 1
         # on stderr even after serving stops: a buffered dunder write or an exit
         # callback must never regain access to the client's protocol pipe.
-        os.close(protocol_fd)
+        # A peer can close its reader, or the private descriptor can already be
+        # closed. Close exactly once, without replacing the serving exception.
+        serving_error = sys.exception()
+        try:
+            if protocol is None:
+                os.close(protocol_fd)
+            else:
+                protocol.close()
+        except (OSError, ValueError):
+            if serving_error is None:
+                raise _ProtocolClosed from None
+
+
+class _ProtocolClosed(Exception):
+    pass
+
+
+class _ProtocolPipe:
+    """Identify closed-file ValueErrors at the I/O boundary, not in tool code."""
+
+    def __init__(self, stream):
+        self.stream = stream
+
+    def write(self, text):
+        try:
+            return self.stream.write(text)
+        except (OSError, ValueError):
+            raise _ProtocolClosed from None
+
+    def flush(self):
+        try:
+            return self.stream.flush()
+        except (OSError, ValueError):
+            raise _ProtocolClosed from None
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
+def _pipe_failure(error):
+    import anyio
+
+    if isinstance(error, BaseExceptionGroup):
+        return all(_pipe_failure(child) for child in error.exceptions)
+    return isinstance(error, (OSError, _ProtocolClosed, anyio.BrokenResourceError, anyio.ClosedResourceError))
 
 
 async def _serve_stdio(server, protocol):
@@ -207,7 +131,28 @@ async def _serve_stdio(server, protocol):
 
 
 def run_stdio(build_server):
+    from g6._warnings import install_process_warning_policy
+
+    # Install before anyio, server construction (_quiet imports FastMCP), and
+    # _serve_stdio's FastMCP imports, including import-time Authlib warnings.
+    install_process_warning_policy()
     import anyio
 
-    with _protocol_stdout() as protocol:
-        anyio.run(_serve_stdio, build_server(), protocol)
+    stderr = sys.stderr
+    try:
+        with _protocol_stdout() as protocol:
+            anyio.run(_serve_stdio, build_server(), protocol)
+    except BaseException as error:
+        if not _pipe_failure(error):
+            raise
+        try:
+            stderr.write("[G6_E_STDIO_CLOSED] G6: protocol pipe closed.\n")
+            stderr.flush()
+        except Exception:
+            pass
+        # Do not leave Python's final stdout flush aimed at a failed pipe.
+        try:
+            _redirect_fd_stdout(2)
+        except OSError:
+            pass
+        raise SystemExit(1) from None
