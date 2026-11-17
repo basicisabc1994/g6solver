@@ -225,7 +225,8 @@ def test_no_host_fact_reaches_a_reply(monkeypatch: pytest.MonkeyPatch, tmp_path:
     gives the same reply whatever the host says."""
     def run() -> str:
         reply = selector.select("review my patch before I say it is done", phase="verify",
-                                last_outcome="G6_E_SENSITIVE_COMPONENT_DENIED patch_review.review", limit=8)
+                                last_outcome="G6_E_SENSITIVE_COMPONENT_DENIED patch_review.review", limit=8,
+                                rerank="lexical")
         return json.dumps(reply, sort_keys=True)
 
     bare = run()
@@ -435,7 +436,7 @@ def test_a_considering_within_the_bounds_is_still_read() -> None:
     assert reply["ok"] is True and reply["considering"][-1]["validated"] is True
 
 
-@pytest.mark.parametrize("bad", [{"phase": "later"}, {"rerank": "model"}, {"task": "  "}])
+@pytest.mark.parametrize("bad", [{"phase": "later"}, {"rerank": "unsupported"}, {"task": "  "}])
 def test_an_input_outside_its_values_is_refused(bad: dict) -> None:
     arguments = {"task": "review my patch", **bad}
     reply = selector.select(**arguments)
@@ -765,13 +766,13 @@ def test_a_meta_harness_refusal_an_agent_resolves_still_reads_the_workflow() -> 
     assert reply["next"]["call"]["tool"] == "metaharness_inspect"
 
 
-def test_a_declared_limit_code_points_at_the_override_tool_marked_unavailable_until_it_is_registered() -> None:
+def test_a_declared_limit_code_offers_the_registered_override_tool() -> None:
     data = json.loads(json.dumps(corpus.load()))
     data["components"]["grounding"]["limits"] = ["G6_E_GROUNDING_EXAMPLE_LIMIT"]
     reply = selector.select("check a claim", last_outcome="[G6_E_GROUNDING_EXAMPLE_LIMIT] too long", corpus=data)
-    assert reply["remedy"]["tool"] == "g6_agentic_run" and reply["remedy"]["available"] is False
-    assert all(_call_tool(c) != "g6_agentic_run" for c in reply["candidates"])
-    assert reply["next"]["tell_person"] is False and reply["next"]["id"] != "tool:g6_agentic_run"
+    assert reply["remedy"]["tool"] == "g6_agentic_run" and reply["remedy"]["available"] is True
+    assert any(_call_tool(c) == "g6_agentic_run" for c in reply["candidates"])
+    assert reply["next"]["tell_person"] is False and reply["next"]["id"] == "tool:g6_agentic_run"
 
 
 def test_metaharness_recovery_remedies_are_mapped_by_component() -> None:

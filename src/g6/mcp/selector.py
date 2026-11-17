@@ -3,7 +3,7 @@
 
 It takes no repository and reads none: its reply is built from the client's own arguments and G6's built-in text
 (the corpus shipped with G6), so its declaration is ``client_request`` and ``g6_operational`` and a client that has
-granted nothing gets it. Nothing runs.
+granted nothing gets the local selection. Optional model advice is guarded and can only reorder existing calls.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def register(server: Any) -> None:
     from g6.core.consent_declarations import TOOLS
 
     def g6_select(task: str, phase: str = "", last_outcome: str = "", considering: list | dict | str = "",
-                  limit: int = 5, rerank: str = "lexical") -> dict:
+                  limit: int = 5, rerank: str = "auto") -> dict:
         """What to do next with G6. Give your task, the phase you are in (plan, implement, verify, diagnose or stuck),
         and last_outcome: a refusal's text or G6_E_* code, or an outcome such as defect_detected, from your last G6
         call. Optional considering, a list or one entry: calls or hypotheses you are weighing, as tool or component.op
@@ -28,8 +28,11 @@ def register(server: Any) -> None:
         withheld reply to g6_cloud_grant (the person answers in their dialog; never grant for them), a sensitive
         refusal to the person to decide themselves, an input refusal to g6_describe. Whether an op is allowed here, a
         grant exists or a model is configured is unknown until a call observes it: pass that refusal back. Ranking is
-        fixed rules over G6's own text, no model; rerank is lexical (a semantic rerank is not offered here, and
-        "colbert" is answered lexically). Runs nothing; qualified-draft. You choose, and the call you make is checked then."""
+        lexical and prior rules over G6's own text, then optional model advice. rerank is auto (model when configured),
+        model (request it), or lexical (never); colbert remains not offered. The model sees task, phase, outcome code
+        and at most 16 built-in candidate texts, never repository data; it can reorder only. Withheld consent or a
+        failed/unreadable model reply keeps lexical order, with why in mechanisms. No candidate call runs;
+        qualified-draft. You choose, and the call you make is checked then."""
         from g6.core.selector import select
 
         return select(task, phase, last_outcome, considering, limit, rerank, request_id=uuid.uuid4().hex[:12],
