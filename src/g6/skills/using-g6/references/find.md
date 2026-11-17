@@ -25,3 +25,5 @@ g6_invoke("grounding", "coverage", {"text": "The limit is 42 units.", "sources":
 ```
 
 `sources` maps names to supplied text. These lexical checks do not establish factual truth.
+
+For facts and rules, [read engine selection and sessions](rules.md).

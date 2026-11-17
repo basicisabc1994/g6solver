@@ -1,0 +1,3 @@
+sentence	reason	replacement
+The sections below are routes too: Deliver (review), Find (discover), Compose and Fit.	dropped-because: The monolithic heading signpost became false after the split; root route entries now link each detail.	-
+Other tools: context.md.	dropped-because: The old navigation-only pointer is replaced by the context route's direct link to references/context.md.	-

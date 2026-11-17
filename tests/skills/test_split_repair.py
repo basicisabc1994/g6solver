@@ -2,6 +2,7 @@
 """Regressions for route-local authority and selection after progressive disclosure."""
 from __future__ import annotations
 
+import csv
 import json
 import os
 import re
@@ -15,12 +16,8 @@ from g6.skills import corpus, routing
 
 GUIDE = Path(__file__).resolve().parents[2] / "src/g6/skills/using-g6"
 BASELINE = Path(__file__).with_name("fixtures") / "using_g6_wiring_int.md"
+EXCEPTIONS = BASELINE.with_name("using_g6_sentence_exceptions.tsv")
 LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
-AUTHORITY = re.compile(
-    r"\b(?:never|do not|no|not|only|must|without|outside|authorization|consent|grant\w*|"
-    r"dialog|approv\w*|accept\w*|confirm\w*|decid\w*|agrees|permission\w*|withheld|"
-    r"untrusted|pending|exploration|verified|qualified-draft|blocked-escalated|scope|"
-    r"refus\w*|stale|missing|hypothesis|limitations)\b", re.I)
 TASKS = [
     ("write numbered requirements, acceptance tests and template instances for a hidden constraint", "verify",
      {"route:review"}),
@@ -55,15 +52,8 @@ def _sentences(text: str) -> list[str]:
     return sentences
 
 
-@pytest.mark.parametrize("route_id", sorted(routing.load().routes))
-def test_each_route_reaches_its_original_safety_and_authority_sentences(route_id):
-    """Moving a tool's authority rules into an unrelated route must fail this check.
-
-    Derive obligations from the WHOLE fixture: its shared preamble and Read and ask
-    bind every route; its own section and paragraphs led by owned tools bind that
-    route. Compare complete sentences after whitespace and markup normalization.
-    """
-    original = BASELINE.read_text(encoding="utf-8")
+def _held_sentences(original, route_id):
+    """All sentences, without a keyword filter; shared text binds every route."""
     route = routing.load().routes[route_id]
     headings = {"review": "## Deliver a coding task with G6", "discover": "## Find",
                 "compose": "## Compose", "fit": "## Fit"}
@@ -78,14 +68,66 @@ def test_each_route_reaches_its_original_safety_and_authority_sentences(route_id
             paragraphs.append(paragraph)
     shared = [original.split("- **select.**", 1)[0], routing.section(original, "## Read and ask")]
     assert all(shared)
-    required = {s for text in [*shared, section, *paragraphs] for s in _sentences(text) if AUTHORITY.search(s)}
-    root = (GUIDE / "SKILL.md").read_text(encoding="utf-8")
+    return {s for text in [*shared, section, *paragraphs] for s in _sentences(text)}
+
+
+def _exceptions(original):
+    rows = list(csv.DictReader(EXCEPTIONS.read_text(encoding="utf-8").splitlines(), delimiter="\t"))
+    exceptions = {}
+    for row in rows:
+        assert set(row) == {"sentence", "reason", "replacement"}, row
+        sentence, reason = row["sentence"], row["reason"]
+        replacement = "" if row["replacement"] == "-" else row["replacement"]
+        assert sentence in _sentences(original), f"stale sentence exception: {sentence}"
+        assert sentence not in exceptions, f"duplicate sentence exception: {sentence}"
+        assert reason.startswith(("reworded-to: ", "dropped-because: ")) and reason.split(": ", 1)[1], row
+        if reason.startswith("reworded-to:"):
+            assert replacement and _sentences(replacement) == [replacement], row
+        else:
+            assert not replacement, row
+        exceptions[sentence] = replacement
+    return exceptions
+
+
+def _reachable(root, route):
+    """Follow local reference links from this route only, including onward links."""
     line = routing.section(root, route.anchor)
-    assert line, route_id
-    reachable = [root, *((GUIDE / target).read_text(encoding="utf-8") for target in LINK.findall(line))]
+    assert line, route.id
+    texts, seen, pending = [root], set(), [GUIDE / target for target in LINK.findall(line)]
+    while pending:
+        path = pending.pop().resolve()
+        assert path.is_relative_to(GUIDE.resolve()), path.name
+        if path in seen:
+            continue
+        seen.add(path)
+        text = path.read_text(encoding="utf-8")
+        texts.append(text)
+        pending.extend(path.parent / target for target in LINK.findall(text))
+    return texts
+
+
+def test_every_fixture_sentence_has_an_original_route_owner():
+    original = BASELINE.read_text(encoding="utf-8")
+    held = set().union(*(_held_sentences(original, route_id) for route_id in routing.load().routes))
+    assert set(_sentences(original)) <= held
+    _exceptions(original)
+
+
+@pytest.mark.parametrize("route_id", sorted(routing.load().routes))
+def test_each_route_reaches_its_original_safety_and_authority_sentences(route_id):
+    """Every fixture sentence survives on every route that held it, or has a reviewed exception.
+
+    Whole sentences are compared after whitespace and markup normalization. An
+    exception that rewords a sentence must name a reachable replacement sentence.
+    """
+    original = BASELINE.read_text(encoding="utf-8")
+    exceptions = _exceptions(original)
+    required = {exceptions.get(s, s) for s in _held_sentences(original, route_id)} - {""}
+    root = (GUIDE / "SKILL.md").read_text(encoding="utf-8")
+    reachable = _reachable(root, routing.load().routes[route_id])
     available = {s for text in reachable for s in _sentences(text)}
     missing = sorted(required - available)
-    assert not missing, f"{route_id} cannot reach original authority rules: {missing}"
+    assert not missing, f"{route_id} cannot reach original sentences: {missing}"
     qualified = sorted((s, candidate) for s in required for candidate in available
                        if candidate != s and re.match(re.escape(s.rstrip('.!?')) + r"\b", candidate))
     # An intact duplicate cannot hide a newly appended conditional exception,
