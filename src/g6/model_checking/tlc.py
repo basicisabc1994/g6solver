@@ -35,6 +35,7 @@ TLC runs in ``-tool`` mode and its output is read by :mod:`g6.model_checking.tlc
 as TLC's own verdict, ``qualified-draft`` at best; a violation is ``blocked-escalated`` with TLC's trace.
 """
 from __future__ import annotations
+from g6.core.guidance_builders import confine_not_started, confine_record, confine_refused
 
 import hashlib
 import os
@@ -247,7 +248,7 @@ def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, ca
                                       "tree killed") from None
         except (OSError, ProcessTreeError) as exc:
             if isinstance(exc, confine.NotStarted) and "isolation" in record:
-                record["isolation"] = confine.not_started(record["isolation"], exc)
+                record["isolation"] = confine_not_started(record["isolation"], exc)
             raise Refusal(RUN_FAILED, f"the program could not be run to the end: {exc}"[:500]) from None
         finally:
             if window is not None:
@@ -291,8 +292,8 @@ def _run_tool(state: dict[str, Any], *, engine: str, spec: str, module: str, con
         state["engine"] = engine
         reads = confine.program_paths(java, os.environ.get("JAVA_HOME", ""))
         confined = confine.plan(confine.Confinement(read_write=(tmp,), read_only=reads))
-        record["isolation"] = confined.record()
-        said = confine.refused(confined)
+        record["isolation"] = confine_record(confined)
+        said = confine_refused(confined)
         if said:
             raise Refusal(ISOLATION_UNAVAILABLE, said)
         try:

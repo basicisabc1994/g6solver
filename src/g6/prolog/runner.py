@@ -27,6 +27,7 @@ runs as you. That is also why the ops that run it are sensitive: callable from P
 person who runs the server lists them in ``G6_MCP_SENSITIVE`` (owner, 2026-10-20).
 """
 from __future__ import annotations
+from g6.core.guidance_builders import confine_not_started, confine_record, confine_refused
 
 import os
 import shutil
@@ -137,7 +138,7 @@ def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, ca
                               "so G6 stopped it and read the run as finished")
         except (OSError, ProcessTreeError) as exc:
             if isinstance(exc, confine.NotStarted) and "isolation" in record:
-                record["isolation"] = confine.not_started(record["isolation"], exc)
+                record["isolation"] = confine_not_started(record["isolation"], exc)
             raise Refusal(RUN_FAILED, f"SWI-Prolog could not be run to the end: {exc}"[:500]) from None
         finally:
             if window is not None:
@@ -174,8 +175,8 @@ def run(swipl: str, arguments: list[str], *, files: dict[str, str], seconds: flo
         confined = None
         if DRIVER_FILE in arguments:   # the caller's program and goal: untrusted, so planned (a version run is not)
             confined = confine.plan(confine.Confinement(read_write=(tmp,), read_only=confine.program_paths(swipl)))
-            record["isolation"] = confined.record()
-            said = confine.refused(confined)
+            record["isolation"] = confine_record(confined)
+            said = confine_refused(confined)
             if said:
                 raise Refusal(ISOLATION_UNAVAILABLE, said)
         try:

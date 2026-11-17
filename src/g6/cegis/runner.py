@@ -12,6 +12,7 @@ same user. Each call's isolation is recorded (``confine.recording``), and a run 
 backend can give is refused before anything starts (:class:`RunnerRefused`).
 """
 from __future__ import annotations
+from g6.core.guidance_builders import confine_refused
 
 import json
 import math
@@ -102,7 +103,7 @@ class SubprocessRunner:
         with confine.run_folder(prefix="g6_cegis_") as cwd:
             confined = confine.plan(confine.Confinement(read_write=(cwd,), read_only=confine.interpreter_paths(python)),
                                     python)
-            said = confine.refused(confined)
+            said = confine_refused(confined)
             if said:
                 raise RunnerRefused(said)
             try:

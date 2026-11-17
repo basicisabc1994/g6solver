@@ -13,7 +13,8 @@ from g6.core.ledger import digest
 from threading import Lock
 from uuid import uuid4
 
-from g6.core.door import blocked_reply
+from g6.core.guidance_builders import blocked_reply
+from g6.core.agent_guidance import authored_fields
 
 DETAILS = ("compact", "full")
 
@@ -29,7 +30,14 @@ class _FrozenResult:
         return cls(body, cloud.sha256(body))
 
     @classmethod
-    def completed(cls, ident, result_body):
+    def completed(cls, ident, result_body, *, authored_envelope=True):
+        from g6.core.agent_guidance import reply_for_agent
+        from g6.core.guidance_builders import job_result
+        # The operation's typed G6 envelope is distinct from its component result.
+        # Filter before retaining bytes and their digest, for both poll forms.
+        if authored_envelope:
+            result_body = json.dumps(reply_for_agent(job_result(json.loads(result_body))),
+                                     separators=(',', ':'), allow_nan=False)
         body = json.dumps({"ok": True, "job_id": ident, "status": "completed"},
                           separators=(',', ':'))[:-1] + ',"result":' + result_body + '}'
         return cls(body, cloud.sha256(body))
@@ -64,9 +72,9 @@ class Jobs:
                     self._provenance.pop(oldest, None)
             ident = uuid4().hex
             self._jobs[ident] = self._pool.submit(context.run, self._run, operation, compact, ident, origin)
-        return cloud.bind_output({"ok": True, "job_id": ident, "status": "pending",
+        return cloud.bind_output(authored_fields({"ok": True, "job_id": ident, "status": "pending",
                 "completion_state": "qualified-draft",
-                "note": "Execution is pending. Poll metaharness_job; this is not an evaluation result."}, ())
+                "note": "Execution is pending. Poll metaharness_job; this is not an evaluation result."}, "note"), ())
 
     def _run(self, operation, compact, ident, origin):
         refs = shown_refs = (cloud.UNKNOWN,)
@@ -81,7 +89,9 @@ class Jobs:
                 metadata = shown_metadata = _FrozenResult.of(metadata)
                 shown_refs = refs
                 # Freeze before a compactor can mutate the producer's object.
-                full = _FrozenResult.completed(ident, body)
+                # Operation builders have already marked/filtered their prose.
+                # Reclassifying their snapshot could claim a borrowed data card.
+                full = _FrozenResult.completed(ident, body, authored_envelope=False)
                 if compact:
                     try:
                         # A compactor must render the full snapshot, not reread
@@ -91,7 +101,7 @@ class Jobs:
                         body, known, shown_metadata = cloud.freeze_output(shown)
                         shown_refs = cloud.boundary_sources(carried=(*refs, *(known or ()), *capture.sources))
                         shown_metadata = _FrozenResult.of(shown_metadata)
-                        shown = _FrozenResult.completed(ident, body)
+                        shown = _FrozenResult.completed(ident, body, authored_envelope=False)
                     except Exception:
                         shown = full
                         shown_refs, shown_metadata = refs, metadata

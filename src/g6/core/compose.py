@@ -17,7 +17,8 @@ from typing import Any
 
 from g6.core.ai_block import AIBlock
 from g6.core.block_contract import contract_to_dict
-from g6.core.door import blocked_reply, corrected_result, door_envelope, said_state
+from g6.core.door import corrected_result, said_state
+from g6.core.guidance_builders import blocked_reply, door_envelope
 from g6.core.ledger import digest
 from g6.core.registry import OuterBudgetExceeded, build_typed_input, get_registry, outer_copy
 from g6.core.result import Result

@@ -72,8 +72,8 @@ def _evidence(state: dict, base: str) -> list[dict[str, Any]]:
 
 def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
     """One step of the loop, for a job over MCP: see the module's docstring."""
-    from g6.core.door import blocked_reply
-    from g6.core.reliability_envelope import envelope_fields, warning_card
+    from g6.core.guidance_builders import blocked_reply
+    from g6.core.guidance_builders import envelope_fields, warning_card
     from g6.harness import completion_hook, completion_loop as loop
     from g6.workforce import repo_tests
     from g6.workspace._envelope import WorkspaceRefused

@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from g6.core.llm import LLMError, extract_json
-from g6.core.sandbox import run_script
+from g6.core.guidance_builders import script_run as run_script
 
 OVERLAP = 400
 #: A field no backend gave a value for. From the model it is ``not_checked``: its null is its word, and nothing looks the

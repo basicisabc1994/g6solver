@@ -15,13 +15,13 @@ table and no import. Inputs and outputs are JSON: a value that is not JSON is an
 It is a resource bound and a pre-filter, not an operating-system sandbox: the child runs as the same user.
 """
 from __future__ import annotations
+from g6.core.guidance_builders import script_run
 
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from g6.core import sandbox
 from g6.core.source_check import SAFE_BUILTIN_NAMES, validate_source
 
 MAX_SOURCE_CHARS = 50_000
@@ -81,7 +81,7 @@ def run_batch(source: str, values: Sequence[Any], *, timeout_s: float = 10.0, me
         inputs = json.dumps(list(values))
     except (TypeError, ValueError) as exc:
         return [Run("refused", reason=f"the inputs are not JSON: {exc}") for _ in values]
-    done = sandbox.run_script(_HARNESS.format(names=SAFE_BUILTIN_NAMES),
+    done = script_run(_HARNESS.format(names=SAFE_BUILTIN_NAMES),
                               {"candidate.py": source, "inputs.json": inputs},
                               timeout_s=timeout_s, mem_mb=memory_mb, file_mb=8)
     if done.status == "timeout":

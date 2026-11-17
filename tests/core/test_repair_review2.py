@@ -57,6 +57,7 @@ def test_agent_surface_census(monkeypatch):
     # bound text. Route both through the MCP reply path, not a code-specific helper.
     import g6
     from g6.core import confine, door
+    from g6.core.guidance_builders import door_reply_fields, confine_record
 
     library_denial = g6.invoke("lean", "check_proof", {})
     assert "G6_E_SENSITIVE_COMPONENT_DENIED" in json.dumps(library_denial)
@@ -64,7 +65,8 @@ def test_agent_surface_census(monkeypatch):
     with monkeypatch.context() as patch:
         patch.setattr(door, "invoke_checked", lambda *a, **k: isolation_denial)
         surfaces["isolation refusal"] = invoke_reply("synthetic", "check", registry=object())
-        patch.setattr(door, "invoke_checked", lambda *a, **k: {"ok": False, "result": library_denial})
+        patch.setattr(door, "invoke_checked", lambda *a, **k: {
+            "ok": False, "result": door_reply_fields(library_denial)})
         surfaces["library-route denial"] = invoke_reply("synthetic", "check", registry=object())
         for label, facts in {
             "sysctl": {"program": "/usr/bin/bwrap", "unprivileged_userns_clone": "0"},
@@ -77,7 +79,7 @@ def test_agent_surface_census(monkeypatch):
             def linux_refusal(*args, **kwargs):
                 plan = confine.plan(confine.Confinement(()))
                 refused = door.blocked_reply(confine.refused(plan))
-                refused["evidence"] = [{"isolation": plan.record()}]
+                refused["evidence"] = [{"isolation": confine_record(plan)}]
                 return refused
 
             patch.setattr(door, "invoke_checked", linux_refusal)

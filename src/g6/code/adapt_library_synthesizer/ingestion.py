@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Bounded paper fetches through core.http, allow-listed at every redirect hop."""
+from g6.core.guidance_builders import script_run
 from urllib.parse import urlsplit
 
 from g6.code._types import CHECKER_NOT_INSTALLED, CodeRefused
-from g6.core import http, sandbox
+from g6.core import http
 
 ALLOWED_HOSTS = ("arxiv.org", "acm.org", "ieee.org", "springer.com", "sciencedirect.com",
                  "openreview.net", "aclanthology.org", "proceedings.neurips.cc", "papers.neurips.cc",
@@ -51,7 +52,7 @@ else:
 
 
 def pdf_text(body: bytes) -> str:
-    ran = sandbox.run_script(_PDF, {"paper.pdf": body}, timeout_s=30, mem_mb=1024, max_output_bytes=900_000)
+    ran = script_run(_PDF, {"paper.pdf": body}, timeout_s=30, mem_mb=1024, max_output_bytes=900_000)
     if "missing.txt" in ran.outputs:
         raise CodeRefused(CHECKER_NOT_INSTALLED, ran.outputs["missing.txt"].decode())
     if ran.status != "ok" or "paper.txt" not in ran.outputs:

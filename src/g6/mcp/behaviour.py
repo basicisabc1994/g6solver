@@ -29,7 +29,7 @@ import re
 import time
 from typing import Any
 
-from g6.core.door import blocked_reply, card, door_envelope
+from g6.core.guidance_builders import blocked_reply, card, door_envelope
 from g6.core.ledger import digest
 from g6.core.storage import state_path
 from g6.harness import behaviour_question as bq

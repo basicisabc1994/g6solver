@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from g6.core.agent_guidance import reply_for_agent, text_for_agent
+from g6.core.agent_guidance import authored_fields, reply_for_agent, text_for_agent
 
 
 CALL = {"tool": "g6_cloud_grant", "arguments": {
@@ -42,7 +42,8 @@ def test_every_reply_family_preserves_all_structured_fields_byte_for_byte(family
         "describe": lambda value: {"component": "synthetic", "ops": [value]},
         "consent": lambda value: {"cloud_consent_code": "G6_E_CLOUD_CONSENT_REQUIRED", "repair": value},
     }
-    original = wrappers[family](body)
+    original = wrappers[family](authored_fields(body, "step", "reason", "message"))
+    assert body["step"].startswith("Run g6 setup.")  # marking does not mutate data
     before = json.dumps(original, ensure_ascii=False).encode("utf-8")
     filtered = reply_for_agent(original)
     assert json.dumps(filtered, ensure_ascii=False).encode("utf-8") == json.dumps(
@@ -57,13 +58,15 @@ def test_g6_tool_names_in_prose_do_not_name_authority_commands():
 
 def test_warning_text_and_help_prose_are_filtered_inside_nested_results():
     from g6.core.agent_guidance import _ISOLATION_ACTION
+    from g6.core.guidance_builders import door_reply_fields
 
     value = {"warning_card": {"code": "G6_E_ISOLATION_UNAVAILABLE",
                               "action": "Run icacls folder /grant identity:F. The person decides."},
              "next_actions": ["Run g6 setup. Tell the person."],
              "result": {"help": "Set G6_REQUIRE_ISOLATION=0. Read the fields.",
                         "degradation_reason": "Run setfacl folder. Keep the evidence."}}
-    assert reply_for_agent(value) == {
+    value = authored_fields(value, "next_actions", "result")
+    assert reply_for_agent(door_reply_fields(value)) == {
         # The isolation card action is G6's fixed sentence (lead ruling, wire-repair follow-up repair 1, F5).
         "warning_card": {"code": "G6_E_ISOLATION_UNAVAILABLE", "action": _ISOLATION_ACTION,
                          "suggested_action": _ISOLATION_ACTION},
@@ -79,5 +82,5 @@ def test_warning_text_and_help_prose_are_filtered_inside_nested_results():
 def test_envelope_warning_prose_does_not_repeat_authority_in_mirrored_fields(field):
     text = "Run g6 setup. The person decides."
     value = {"warning_card": {field: text}, field: [text]}
-    assert reply_for_agent(value) == {"warning_card": {field: "The person decides."},
+    assert reply_for_agent(authored_fields(value, "warning_card", field)) == {"warning_card": {field: "The person decides."},
                                       field: ["The person decides."]}

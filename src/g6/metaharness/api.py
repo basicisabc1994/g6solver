@@ -24,10 +24,11 @@ from typing import Any
 
 import g6
 from g6.core import stop
+from g6.core.agent_guidance import authored_builder
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import LedgerError, digest
 from g6.core.llm import LLMError
-from g6.core.reliability_envelope import envelope_fields, warning_card
+from g6.core.guidance_builders import envelope_fields, warning_card
 from g6.core.storage import g6_home, state_path
 from g6.harness import Memory, run
 from g6.integrity import build_manifest, manifest_sha256
@@ -80,6 +81,7 @@ def judging_sha256() -> str:
     return manifest_sha256(build_manifest(Path(g6.__file__).resolve().parent, patterns=JUDGING_PATTERNS))
 
 
+@authored_builder("message", "next_action", "recommended_next_steps")
 def _envelope(state: str, code: str, message: str, *, next_action: str = "", evidence: list | None = None,
               **extra: Any) -> dict[str, Any]:
     # Qualified replies retain the invariant-required warning card, but explain

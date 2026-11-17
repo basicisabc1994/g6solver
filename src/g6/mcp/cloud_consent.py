@@ -107,7 +107,7 @@ def input_refusal(tool: str, fields, *, arguments=None, session=None) -> dict:
 
     Only published field names and G6's program text are returned; no argument value is read back.
     """
-    from g6.core.door import blocked_reply
+    from g6.core.guidance_builders import blocked_reply
     from g6.mcp.repair import observe
 
     reply = blocked_reply('[G6_E_INPUT_VALIDATION] Undeclared tool argument; use only the declared arguments.')
@@ -175,7 +175,8 @@ async def request_grant(ctx: Any, source: str, provider: str, *, description: st
 
 
 def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unknown', sources=(), session=None):
-    from g6.core.door import blocked_reply
+    from g6.core.guidance_builders import blocked_reply
+    from g6.core.agent_guidance import authored_fields
     from g6.core.ledger import digest
     result = result if isinstance(result, dict) else {}
     control = dict(metadata or {})
@@ -187,6 +188,7 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
     has_report, has_text = control.pop('has_report', False), control.pop('has_text', False)
     message = ('Results were withheld from a source not shared with this provider. Tell the person. ' +
                policy.withheld_message(provider, sources).removeprefix(policy.WITHHELD).lstrip())
+    message = authored_fields({'message': message}, 'message')['message']
     refused = {**blocked_reply(f'[{code}] {message}'), **control}
     refused['cloud_consent_code'] = policy.REQUIRED
     from g6.mcp.repair import consent_block
@@ -201,6 +203,7 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
         if job.get('review_unsent'):
             recipient = f' to {review_provider}' if _PROVIDER.fullmatch(review_provider) else ''
             refused.update(action='stop', ending='untested', report=f'The review was not sent{recipient}. ' + message)
+            refused = authored_fields(refused, 'report')
         if job['status'] == 'completed':
             return {'ok': True, 'job_id': job['job_id'], 'status': 'completed', 'result': refused,
                     'repair': refused['repair']}
@@ -323,8 +326,8 @@ def install(server) -> None:
 
 
 def register(server, context_type):
-    from g6.core.door import blocked_reply
-    from g6.core.reliability_envelope import envelope_fields, warning_card
+    from g6.core.guidance_builders import blocked_reply
+    from g6.core.guidance_builders import envelope_fields, warning_card
     from g6.mcp.consent_controls import public_instructions
 
     def reply(operation):

@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from g6.core.agent_guidance import reply_for_agent
+from g6.core.agent_guidance import authored_fields, reply_for_agent
 
 
 def test_successful_component_result_is_opaque_through_invoke(monkeypatch):
@@ -42,6 +42,7 @@ def test_root_and_system_security_commands_are_removed_from_g6_refusal(command):
     value = {"ok": False, "error": f"[G6_E_ISOLATION_UNAVAILABLE] Run {command}. The person decides.",
              "result": {"reason": f"Run {command}. The person decides."},
              "evidence": [{"isolation": {"why": f"Run {command}. The person decides."}}]}
+    value = authored_fields(value, "error", "result", "evidence")
     result = reply_for_agent(value)
     assert command not in json.dumps(result)
     assert "G6_E_ISOLATION_UNAVAILABLE" in result["error"]
@@ -49,11 +50,12 @@ def test_root_and_system_security_commands_are_removed_from_g6_refusal(command):
 
 
 def test_isolation_action_is_fixed_person_guidance_and_idempotent():
+    from g6.core.guidance_builders import door_reply_fields
     value = {"ok": False, "error": "[G6_E_ISOLATION_UNAVAILABLE] unavailable",
              "warning_card": {"code": "G6_E_ISOLATION_UNAVAILABLE",
                               "action": "Run g6 doctor. Then run it again.",
                               "suggested_action": "Run g6 setup."}}
-    result = reply_for_agent(value)
+    result = reply_for_agent(door_reply_fields(value))
     expected = ("Tell the person G6 cannot run this confined on this machine. "
                 "Setting it up is the person's decision.")
     assert result["warning_card"]["action"] == expected
@@ -66,6 +68,8 @@ def test_deep_guidance_is_refused_without_recursion_error():
     value = {"error": "Run g6 setup."}
     for _ in range(2000):
         value = {"wrapper": value}
+    # The producer declares this as its own prose; unmarked deep data passes.
+    value = authored_fields(value, "wrapper")
     result = reply_for_agent(value)
     assert result["ok"] is False
     assert "G6_E_RESOURCE_LIMIT" in result["error"]

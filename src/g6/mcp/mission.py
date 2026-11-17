@@ -28,15 +28,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from g6.core import cloud_consent as cloud, git_env
-from g6.core.door import (
-    allowed_sensitive,
-    blocked_reply,
-    card,
-    corrected_result,
-    door_envelope,
-    is_allowed,
-    said_state,
-)
+from g6.core.door import allowed_sensitive, corrected_result, is_allowed, said_state
+from g6.core.guidance_builders import blocked_reply, card, door_envelope
 from g6.core.git_name import shown
 from g6.core.ledger import digest
 from g6.harness import verification_search
@@ -112,7 +105,9 @@ def _here(value: Any) -> Any:
     """``value`` with each step named as this surface offers it (``_TOOLS``, ``_DIALOG``, ``SUBMIT_HERE``)."""
     if isinstance(value, str):
         named = _NAMED.sub(lambda found: _TOOLS[found[1]], value.replace(coding.OBJECTIVE_INSTRUCTIONS, SUBMIT_HERE))
-        return _TERMINAL.sub(lambda found: _DIALOG[found[1]], named)
+        named = _TERMINAL.sub(lambda found: _DIALOG[found[1]], named)
+        from g6.core.agent_guidance import authored_fields, is_authored
+        return authored_fields({"text": named}, "text")["text"] if is_authored(value) else named
     if isinstance(value, dict):
         return {key: _here(item) for key, item in value.items()}
     if isinstance(value, list | tuple):

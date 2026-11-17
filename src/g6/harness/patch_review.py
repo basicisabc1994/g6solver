@@ -164,11 +164,11 @@ from g6.core import component_process
 from g6.core.ai_block import AIBlock
 from g6.core.block_contract import BlockContract
 from g6.core.compose import Stage, compose
-from g6.core.door import blocked_reply
+from g6.core.guidance_builders import blocked_reply
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.git_name import shown
 from g6.core.ledger import digest
-from g6.core.reliability_envelope import envelope_fields, warning_card
+from g6.core.guidance_builders import envelope_fields, warning_card
 from g6.core.result import Result
 from g6.evidence.mapping import id_of
 from g6.safety_engine.weakening import _kind as _weakening_kind
@@ -1010,7 +1010,9 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
             said = said.removeprefix(f"[{exc.code}] ").split(" To run such code without one")[0] + " " + BOUNDARY_HELP
         refused = blocked_reply(f"[{exc.code}] {said}")
         if getattr(exc, "help", ""):
-            refused["warning_card"].update(suggested_action=exc.help, next_step=exc.help)
+            from g6.core.agent_guidance import authored_fields
+            refused["warning_card"] = authored_fields({**refused["warning_card"],
+                "suggested_action": exc.help, "next_step": exc.help}, "suggested_action", "next_step")
         return refused
     except (OSError, ValueError, TypeError) as exc:
         return blocked_reply(f"[{CODE}] {exc}")

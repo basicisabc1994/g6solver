@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from functools import wraps
 
 PERSON = "This op is sensitive. The person must allow it themselves. Tell the person and stop."
 WITHHELD = "Results were withheld from a source not shared with this provider. Tell the person."
@@ -14,51 +15,66 @@ _AUTHORITY = re.compile(
 _SETTING = re.compile(r"\bG6_(?!E_)[A-Z][A-Z0-9_]*\b|"
                       r"(?i:\bG6_(?!E_)[A-Z][A-Z0-9_]*\s*=|\$env:[A-Z][A-Z0-9_]*|~[/\\]\.g6[/\\]\.env)")
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
-# These fields describe G6-authored guidance only. Component results have a
-# separate ownership boundary below; their field names never confer ownership.
-_PROSE_FIELDS = frozenset({
-    "step", "reason", "message", "error", "warning", "warnings", "warning_card",
-    "action", "next_actions", "degradation_reason", "help", "description", "text",
-    "say", "why", "issues", "limitations", "summary", "result", "setup",
-    "suggested_action", "next_step", "risks", "note", "known_limitations", "missing_checks",
-    "recommended_next_steps", "block_reason", "required_human_decision", "evidence_collected",
-    "safe_next_action", "rollback_or_containment", "install",
-})
-_TEMPLATES = frozenset({"call", "arguments", "args", "params", "params_json", "fill", "next", "fix_by"})
-_G6_CODE = re.compile(r"\bG6_E_[A-Z0-9_]+\b")
-_ISOLATION = "G6_E_ISOLATION_UNAVAILABLE"
+_MAX_GUIDANCE_DEPTH = 64
 _ISOLATION_ACTION = ("Tell the person G6 cannot run this confined on this machine. "
                      "Setting it up is the person's decision.")
-_MAX_GUIDANCE_DEPTH = 64
 
 
 class _GuidanceLimit(Exception):
     pass
 
 
-def _g6_refusal(value: dict) -> bool:
-    """A failed reply with a G6 code is program guidance, never a successful result.
+class _AuthoredText(str):
+    """Private construction receipt, with no additional serialized fields."""
 
-    Look through mirrored refusal fields too. This walk is bounded independently
-    of Python's stack; calls/arguments and successful component data are opaque.
+
+def is_authored(value) -> bool:
+    return isinstance(value, _AuthoredText)
+
+
+def _authored(value, depth=0):
+    if depth > _MAX_GUIDANCE_DEPTH:
+        raise _GuidanceLimit
+    if isinstance(value, str):
+        # Filter at construction as well as egress: intermediate JSON snapshots,
+        # digests and copies cannot lose a receipt and resurrect unsafe prose.
+        return _AuthoredText(text_for_agent(value))
+    if isinstance(value, dict):
+        return {key: _authored(child, depth + 1) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        items = [_authored(child, depth + 1) for child in value]
+        return tuple(items) if isinstance(value, tuple) else items
+    return value
+
+
+def authored_fields(value: dict, *fields: str) -> dict:
+    """A producer explicitly declares the fields it just wrote, never its data.
+
+    The selected fields contain only prose owned by that producer. Callers must
+    split mixed records first; passing a component result here is not permitted.
+    Status, codes and field names in arbitrary replies establish no authorship.
     """
-    if value.get("ok") is not False:
-        return False
-    todo = [(value, 0)]
-    visits = 0
-    while todo:
-        item, depth = todo.pop()
-        visits += 1
-        if depth > _MAX_GUIDANCE_DEPTH or visits > 50_000:
-            raise _GuidanceLimit
-        if isinstance(item, str) and _G6_CODE.search(item):
-            return True
-        if isinstance(item, dict):
-            todo.extend((child, depth + 1) for key, child in item.items()
-                        if key not in _TEMPLATES and not (key == "result" and item.get("ok") is True))
-        elif isinstance(item, (list, tuple)):
-            todo.extend((child, depth + 1) for child in item)
-    return False
+    out = dict(value)
+    try:
+        for field in fields:
+            if field in out:
+                out[field] = _authored(out[field])
+    except _GuidanceLimit:
+        return {"ok": False, "completion_state": "blocked-escalated",
+                "error": _AuthoredText("[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person.")}
+    return out
+
+
+def authored_builder(*fields: str):
+    """Declare a G6 prose factory's fields beside its definition."""
+    def decorate(build):
+        @wraps(build)
+        def marked(*args, **kwargs):
+            value = build(*args, **kwargs)
+            return authored_fields(value, *fields) if isinstance(value, dict) else value
+        marked.__g6_authored_fields__ = fields
+        return marked
+    return decorate
 
 
 def _instruction(text: str) -> bool:
@@ -93,44 +109,37 @@ def text_for_agent(text: str) -> str:
     return " ".join(kept)
 
 
-def _guidance(value, *, prose: bool = True, depth: int = 0):
-    if depth > _MAX_GUIDANCE_DEPTH:
-        raise _GuidanceLimit
-    if isinstance(value, str):
-        return text_for_agent(value) if prose else value
-    if isinstance(value, dict):
-        # The door's successful result is the person's data, byte for byte,
-        # including nested envelopes, warning cards, and authority-shaped keys.
-        # A component failure without a G6 refusal code remains its data too.
-        result_is_data = value.get("ok") is True or (value.get("ok") is False and not _g6_refusal(value))
-        out = {key: child if key in _TEMPLATES or (key == "result" and result_is_data)
-               else _guidance(child, prose=key in _PROSE_FIELDS, depth=depth + 1)
-               for key, child in value.items()}
-        card = out.get("warning_card")
-        if isinstance(card, dict) and card.get("code") == _ISOLATION:
-            # errors.ISOLATION_ACTION is bound. Replace its agent-facing copy,
-            # including either card spelling, without altering the bound source.
-            card["suggested_action"] = _ISOLATION_ACTION
-            if "action" in card:
-                card["action"] = _ISOLATION_ACTION
-        return out
-    if isinstance(value, (list, tuple)):
-        children = [_guidance(child, prose=prose, depth=depth + 1) for child in value]
-        return tuple(children) if isinstance(value, tuple) else children
-    return value
-
-
 def reply_for_agent(value, *, _prose: bool = True):
-    """Filter G6's guidance, preserving the ownership boundary of component results.
+    """Strip private text receipts at any depth, without classifying any data.
 
-    Overdeep or cyclic guidance is refused as a whole, never partially returned.
-    Successful result data and structured call templates are not traversed.
+    Text was filtered when its producer marked it, before any intermediate hash
+    or JSON snapshot. Iteration also preserves deeply nested component values.
     """
-    try:
-        return _guidance(value, prose=_prose)
-    except _GuidanceLimit:
-        return {"ok": False, "completion_state": "blocked-escalated",
-                "error": "[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person."}
+    results, active = {}, set()
+    todo = [(value, False)]
+    while todo:
+        item, done = todo.pop()
+        ident = id(item)
+        if isinstance(item, _AuthoredText):
+            results[ident] = str(item)
+        elif not isinstance(item, (dict, list, tuple)):
+            results[ident] = item
+        elif done:
+            if isinstance(item, dict):
+                results[ident] = {key: results[id(child)] for key, child in item.items()}
+            else:
+                children = [results[id(child)] for child in item]
+                results[ident] = tuple(children) if isinstance(item, tuple) else children
+            active.remove(ident)
+        elif ident in active:
+            return {"ok": False, "completion_state": "blocked-escalated",
+                    "error": "[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person."}
+        elif ident not in results:
+            active.add(ident)
+            todo.append((item, True))
+            children = item.values() if isinstance(item, dict) else item
+            todo.extend((child, False) for child in children)
+    return results[id(value)]
 
 
 def skill_for_agent(text: str | None) -> str | None:

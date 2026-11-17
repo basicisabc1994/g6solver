@@ -37,7 +37,7 @@ HOLDS = ("every field of the review: each requirement's status, assessment.compl
 def review(repo: str | os.PathLike, **kwargs: Any) -> dict:
     """``review_patch`` for a job over MCP: what it lets reach an enclosing door is named here, for a job has none."""
     from g6.core import component_process
-    from g6.core.door import blocked_reply
+    from g6.core.guidance_builders import blocked_reply
     from g6.core.stop import STOPPED
     from g6.harness.patch_review import review_patch
 

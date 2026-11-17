@@ -42,7 +42,7 @@ def _destination() -> str:
 
 
 def _ok(result: dict[str, Any], sources: tuple[cloud.Source, ...], evidence: list[dict[str, Any]] | None = None) -> dict:
-    from g6.core.reliability_envelope import envelope_fields, warning_card
+    from g6.core.guidance_builders import envelope_fields, warning_card
 
     reply = {"ok": True, "result": result, **envelope_fields(
         reliability_label="qualified-draft", warning_card=warning_card(*CARD), evidence=evidence or [])}
@@ -50,7 +50,7 @@ def _ok(result: dict[str, Any], sources: tuple[cloud.Source, ...], evidence: lis
 
 
 def _refused(code: str, reason: str) -> dict:
-    from g6.core.door import blocked_reply
+    from g6.core.guidance_builders import blocked_reply
 
     return cloud.bind_output(blocked_reply(f"[{code}] {reason}"), ())
 

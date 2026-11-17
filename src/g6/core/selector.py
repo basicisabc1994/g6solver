@@ -61,6 +61,7 @@ checks. Several considered operations may be offered as ``g6.invoke`` calls. A b
 candidate. These rank after MCP calls, take at most ``LIBRARY_SLOTS``, and are never ``next``.
 """
 from __future__ import annotations
+from g6.core.agent_guidance import authored_builder, authored_fields
 
 import copy
 import itertools
@@ -188,6 +189,7 @@ CONSENT = "G6_E_CLOUD_CONSENT_REQUIRED"
 OUTCOME_FIELDS = (("assessment", "outcome"), ("outcome",), ("ending",), ("action",))
 
 
+@authored_builder("action", "setup")
 def _remedy(action: str, tool: str = "", arguments: dict[str, Any] | None = None, *, tell: bool = False,
             setup: str = "") -> dict[str, Any]:
     return {"action": action, "tool": tool, "arguments": dict(arguments or {}), "tell_person": tell,
@@ -476,7 +478,7 @@ def remedy_for(outcome: str, data: dict[str, Any] | None = None) -> dict[str, An
 
 # -- stage helpers ----------------------------------------------------------------------------------------------
 def _refuse(message: str, request_id: str, run_id: str) -> dict[str, Any]:
-    from g6.core.door import blocked_reply
+    from g6.core.guidance_builders import blocked_reply
 
     return {**blocked_reply(f"[G6_E_INPUT_VALIDATION] {message}", request_id=request_id), "run_id": run_id}
 
@@ -830,7 +832,7 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
            request_id: str = "", run_id: str = "") -> dict[str, Any]:
     """The selection for the agent's situation (module docstring). ``corpus`` stands in for the shipped corpus in
     tests."""
-    from g6.core.reliability_envelope import envelope_fields, warning_card
+    from g6.core.guidance_builders import envelope_fields, warning_card
     from g6.skills.corpus import PHASES, _expanded as expanded     # the reply is deep-copied at the end
 
     if not isinstance(task, str) or not task.strip():
@@ -1030,6 +1032,7 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     else:
         nxt = {"id": None, "call": None, "tell_person": False, "say": "Nothing matched: describe the task in other "
                "words, or call g6_find.", "why": "no candidate", "fill": []}
+    nxt = authored_fields(nxt, "say", "why")
     card = warning_card("G6_E_QUALIFIED_DRAFT",
                         "g6_select: a proposal ranked by fixed rules over G6's own text; nothing ran and nothing "
                         "about your task is checked",

@@ -24,6 +24,7 @@ its ``NoCounterexample`` lets the result stand; its ``Inconclusive`` makes the r
 verifier's degradation reason first in ``reason`` (audit 027, CG-008). ``boundary["verifier"]`` records what it said.
 """
 from __future__ import annotations
+from g6.core.guidance_builders import confine_summary
 
 import time
 from dataclasses import dataclass, field
@@ -125,7 +126,7 @@ def _cegis(sketch: Sketch, oracle: Oracle, *, domain: InputDomain, runner: Runne
         boundary = {"domain": domain.describe(), "answered": len(cases), "skipped": skipped, "compared": compared,
                     "search": methods[-1] if methods else None, "examples": len(examples),
                     "elapsed_s": round(time.monotonic() - started, 3), "model_calls": 0,
-                    "isolation": confine.summary(runs)}
+                    "isolation": confine_summary(runs)}
         if verifier is not None:  # audit 027, CG-004: what the verifier said in this run, not a default
             boundary["verifier"] = dict(said)
         program = sketch.instantiate(control) if control is not None else ""

@@ -25,6 +25,7 @@ def test_invoke_filters_every_refusal_and_result_surface(monkeypatch, field):
             "The person decides. Keep the evidence.")
     child = {"action": text, "reason": text, "step": text, "message": text}
     payload = {"ok": False, field: text if field in ("error", "degradation_reason") else [child]}
+    payload = agent_guidance.authored_fields(payload, field)
     monkeypatch.setattr(door, "invoke_checked", lambda *a, **k: payload)
     reply = invoke_reply("synthetic", "check", registry=object(), allow_sensitive=frozenset())
     encoded = json.dumps(reply)
@@ -45,10 +46,11 @@ def test_all_server_tools_use_the_filter_before_source_ticketing(tmp_path, monke
     @server.tool()
     @public_tool
     def synthetic_reply() -> dict:
-        return {"ok": False, "error": "[G6_E_INPUT_VALIDATION] refused",
+        return agent_guidance.authored_fields({"ok": False, "error": "[G6_E_INPUT_VALIDATION] refused",
                 "result": {"message": "Run chmod 700 folder. The person decides."},
                 "next_actions": ["Set G6_REQUIRE_ISOLATION=0. Tell the person."],
-                "repair": {"step": "Run g6 setup. The person decides."}}
+                "repair": {"step": "Run g6 setup. The person decides."}},
+                "error", "result", "next_actions", "repair")
 
     async def run():
         async with Client(server, client_info=Implementation(name="codex", version="test")) as client:

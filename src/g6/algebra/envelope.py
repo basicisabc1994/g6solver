@@ -23,7 +23,9 @@ from collections.abc import Callable
 from typing import Any
 
 from g6.algebra.schema import AlgebraResult
-from g6.core.errors import ISOLATION_ACTION, ISOLATION_UNAVAILABLE
+from g6.core.errors import ISOLATION_UNAVAILABLE
+from g6.core.guidance_builders import ISOLATION_ACTION
+from g6.core.agent_guidance import authored_fields
 from g6.core.reliability_envelope import WarningCard
 
 _P = "G6_E_ALGEBRA_"
@@ -113,6 +115,7 @@ _ACTIONS = {
     NOT_CHECKED: "Build results with g6.algebra's functions; this one carries no re-check record from G6.",
     ENGINE_ERROR: "G6 failed before answering; report it with the input and the reason.",
 }
+_ACTIONS = authored_fields(_ACTIONS, *_ACTIONS)
 _NOT_VERIFIED = ("A computer algebra system's answer on your input is not a proof a person has inspected, so it is not "
                  "verified.")
 

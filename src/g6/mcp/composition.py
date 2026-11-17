@@ -5,7 +5,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from g6.core.compose import Stage, compose
-from g6.core.door import blocked_reply, door_envelope
+from g6.core.guidance_builders import blocked_reply, door_envelope
 
 
 class StageInput(BaseModel):

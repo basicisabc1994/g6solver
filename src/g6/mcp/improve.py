@@ -56,10 +56,12 @@ from typing import Any
 from uuid import uuid4
 
 import g6
-from g6.core.door import allowed_sensitive, blocked_reply, is_allowed
+from g6.core.agent_guidance import authored_builder
+from g6.core.door import allowed_sensitive, is_allowed
+from g6.core.guidance_builders import blocked_reply
 from g6.core.ledger import LedgerError, digest as digest_of
 from g6.core.storage import g6_home
-from g6.core.reliability_envelope import envelope_fields, warning_card
+from g6.core.guidance_builders import envelope_fields, warning_card
 from g6.invariants import ERROR_CODE_PATTERN
 from g6.mcp.consent import question as _question
 from g6.mcp.consent_controls import public_instructions, refused_send
@@ -1057,6 +1059,7 @@ def _stop_on_record(root: Path, before: dict[str, Any], ident: str, reason: str,
             "its note in the constraint log": note}
 
 
+@authored_builder("message", "next_action", "recommended_next_steps")
 def _stop_reply(state: str, code: str, message: str, *, canonical_id: str | None,
                 next_action: str = "", **extra: Any) -> dict:
     """Use the library's envelope builders without reading fresh entropy after a stop.

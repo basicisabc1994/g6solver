@@ -26,6 +26,7 @@ worker are not planned. Elsewhere this is a resource bound, not a sandbox: both 
 ops are sensitive.
 """
 from __future__ import annotations
+from g6.core.guidance_builders import confine_not_started, confine_record, confine_refused
 
 import json
 import os
@@ -79,7 +80,7 @@ def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, ca
             stopped = "output" if exc.stopped and too_much() else "time"
         except (OSError, ProcessTreeError) as exc:
             if isinstance(exc, confine.NotStarted) and "isolation" in record:
-                record["isolation"] = confine.not_started(record["isolation"], exc)
+                record["isolation"] = confine_not_started(record["isolation"], exc)
             raise Refusal(RUN_FAILED, f"the program could not be run to the end: {exc}"[:500]) from None
         finally:
             if source is not None:
@@ -162,8 +163,8 @@ def run_sage(sage: str, arguments: list[str], *, file_name: str = "", file_text:
         if file_text is not None:   # built from the caller's expression: untrusted, so planned (a version run is not)
             reads = confine.program_paths(sage, *(env.get(key, "") for key in ("SAGE_ROOT", "SAGE_LOCAL", "SAGE_VENV")))
             confined = confine.plan(confine.Confinement(read_write=(tmp,), read_only=reads))
-            record["isolation"] = confined.record()
-            said = confine.refused(confined)
+            record["isolation"] = confine_record(confined)
+            said = confine_refused(confined)
             if said:
                 raise Refusal(ISOLATION_UNAVAILABLE, said)
         try:
