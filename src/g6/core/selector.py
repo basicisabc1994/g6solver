@@ -828,6 +828,26 @@ def _library_route(task: str, data: dict[str, Any], documents: dict[str, str], r
 def select(task: str, phase: str = "", last_outcome: str = "", considering: Any = "", limit: int = 5,
            rerank: str = "auto", *, corpus: dict[str, Any] | None = None,
            request_id: str = "", run_id: str = "") -> dict[str, Any]:
+    """Build every reply field before the single, final encoded budget step."""
+    reply = _safe_selection_reply(task, phase, last_outcome, considering, limit, rerank, corpus=corpus,
+                                  request_id=request_id, run_id=run_id)
+    return _budget_reply(reply, rerank=rerank, request_id=request_id, run_id=run_id,
+                         lexical=lambda: _safe_selection_reply(task, phase, last_outcome, considering, limit, "lexical",
+                                                                corpus=corpus, request_id=request_id, run_id=run_id))
+
+
+def _safe_selection_reply(task: str, phase: str, last_outcome: str, considering: Any, limit: int,
+                          rerank: str, *, corpus: dict[str, Any] | None,
+                          request_id: str, run_id: str) -> dict[str, Any]:
+    try:
+        return _selection_reply(task, phase, last_outcome, considering, limit, rerank, corpus=corpus,
+                                request_id=request_id, run_id=run_id)
+    except (RecursionError, MemoryError):
+        return _refuse("selection inputs exceed decoder resource limits", request_id, run_id)
+
+
+def _selection_reply(task: str, phase: str, last_outcome: str, considering: Any, limit: int,
+                     rerank: str, *, corpus: dict[str, Any] | None, request_id: str, run_id: str) -> dict[str, Any]:
     """The selection for the agent's situation (module docstring). ``corpus`` stands in for the shipped corpus in
     tests."""
     from g6.core.reliability_envelope import envelope_fields, warning_card
@@ -1106,36 +1126,45 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         "considering": considered, "mechanisms": mechanisms, "unknown_until_observed": list(UNKNOWN_UNTIL_OBSERVED),
         **envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
                           request_id=request_id, run_id=run_id)})
-    # Account for JSON escapes exactly as on the wire. Optional model reasons
-    # lose space before an otherwise answerable selection can be refused.
+    return reply
+
+
+def _budget_reply(reply: dict[str, Any], *, rerank: str, request_id: str, run_id: str, lexical) -> dict[str, Any]:
+    """Finalize size after all reasons, metadata and cards; never mutate after this step.
+
+    Optional model text loses space first. A lexical rebuild is unbudgeted until
+    its final fallback reason and call count are in place, and uses the same corpus.
+    """
+    def fits() -> bool:
+        return len(json.dumps(reply).encode("utf-8")) <= MAX_REPLY_BYTES
+
+    if fits() or not reply["ok"]:
+        return reply
     model_reply = next(m for m in reply["mechanisms"] if m["stage"] == "model_rerank")
-    if rerank == "auto" and not model_reply["ran"] and len(json.dumps(reply).encode("utf-8")) > MAX_REPLY_BYTES:
-        # Keep the reason auto stayed local even at the reply limit. The
-        # candidates already carry their rankers; shorten only that repeated
-        # explanation, preserving the order and the external-action constraint.
-        ranking_step = next(m for m in reply["mechanisms"] if m["stage"] == "candidates")
-        ranking_step["why"] = "lexical/prior order; external actions rank last and are never next"
-    if len(json.dumps(reply).encode("utf-8")) > MAX_REPLY_BYTES and model_reply.get("reasons"):
+    if model_reply.get("reasons"):
         model_reply["reasons_note"] = "model reasons shortened to fit the encoded reply budget"
         for ceiling in (150, 75, 37, 18, 9, 4, 2, 1):
             model_reply["reasons"] = {key: reason[:ceiling] for key, reason in model_reply["reasons"].items()}
-            if len(json.dumps(reply).encode("utf-8")) <= MAX_REPLY_BYTES:
-                break
-        else:
-            model_reply["reasons"] = {}
-            model_reply["reasons_note"] = "model reasons shortened then dropped to fit the encoded reply budget"
-    if len(json.dumps(reply).encode("utf-8")) > MAX_REPLY_BYTES:
-        if rerank in ("auto", "model"):
-            # Even reason keys/disagreement metadata may consume the last bytes.
-            # Rebuild locally without another model call, preserving an answer
-            # that fits lexically and reporting why the model advice was dropped.
-            local = select(task, phase, last_outcome, considering, limit, "lexical",
-                           request_id=request_id, run_id=run_id)
-            if local["ok"]:
-                step = next(m for m in local["mechanisms"] if m["stage"] == "model_rerank")
-                step.update(why="model reasons dropped" if model_reply.get("ran") else model_reply["why"],
-                            model_calls=model_reply["model_calls"])
-                return local
+            if fits():
+                return reply
+        model_reply["reasons"] = {}
+        model_reply["reasons_note"] = "model reasons shortened then dropped to fit the encoded reply budget"
+        if fits():
+            return reply
+    if rerank in ("auto", "model"):
+        local = lexical()
+        if local["ok"]:
+            step = next(m for m in local["mechanisms"] if m["stage"] == "model_rerank")
+            step.update(why="model reasons dropped" if model_reply["ran"] else model_reply["why"],
+                        model_calls=model_reply["model_calls"])
+            reply = local
+            if fits():
+                return reply
+            # Candidates already carry rankers. Compact only the repeated prose,
+            # retaining the local answer and the reason the model was skipped.
+            ranking_step = next(m for m in reply["mechanisms"] if m["stage"] == "candidates")
+            ranking_step["why"] = "lexical/prior order; external actions rank last and are never next"
+    if not fits():
         return _refuse(f"the reply would be over {MAX_REPLY_BYTES // 1024} KB: pass fewer or shorter entries in "
                        "considering", request_id, run_id)
     return reply

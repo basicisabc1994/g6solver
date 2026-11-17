@@ -74,7 +74,7 @@ def test_auto_unadmitted_advice_never_enters_guard_or_records_sources(monkeypatc
                 step = reply["model_step"]
         assert not capture.sources
     assert not fake.calls and not step["ran"] and step["model_calls"] == 0
-    assert_auto_step(step)
+    assert_auto_step(step, consumer)
 
 
 @pytest.mark.parametrize("admission", ["own-client", "grant", "explicit"])

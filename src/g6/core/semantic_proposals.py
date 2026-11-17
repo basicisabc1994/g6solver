@@ -39,7 +39,9 @@ def _one_call(caller):
 
 
 def model_json(payload: dict[str, Any], system: str, *, enabled: bool = True,
-               disabled_reason: str = "not requested", auto: bool = False) -> tuple[dict | None, dict]:
+               disabled_reason: str = "not requested", auto: bool = False,
+               auto_reason: str = 'skipped: model rerank needs rerank="model" until the consent fix ships'
+               ) -> tuple[dict | None, dict]:
     """JSON object or a skipped step. Reasons never echo a provider's private error."""
     step: dict[str, Any] = {"ran": False, "why": disabled_reason, "model_calls": 0}
     if not enabled:
@@ -51,7 +53,7 @@ def model_json(payload: dict[str, Any], system: str, *, enabled: bool = True,
         # Bound admission has no side-effect-free dry run for both the send
         # and the reply. Do not duplicate its decision or taint a local answer
         # with sources from refused optional advice.
-        step["why"] = 'skipped: model rerank needs rerank="model" until the consent fix ships'
+        step["why"] = auto_reason
         return None, step
     try:
         caller = consent_callers.provider_from_env()

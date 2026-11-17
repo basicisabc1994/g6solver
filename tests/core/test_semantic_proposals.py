@@ -232,7 +232,7 @@ def test_model_hypotheses_are_testable_advice_without_repository_input(monkeypat
     if mode == "auto":
         assert result["ok"] and result["hypotheses"] == baseline["hypotheses"] and not fake.calls
         assert result["completion_state"] == "qualified-draft"
-        assert_auto_step(result["model_step"])
+        assert_auto_step(result["model_step"], "premortem")
         return
     proposals = [h for h in result["hypotheses"] if h["origin"] == "model_proposal"]
     assert len(proposals) == 1 and proposals[0]["normative"] is False and proposals[0]["can_pass"] is False

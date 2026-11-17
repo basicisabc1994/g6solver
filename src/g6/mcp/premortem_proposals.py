@@ -96,7 +96,8 @@ def propose_hypotheses(task: str, intent: dict | None, hypotheses: list | None, 
         + json.dumps(vocabulary, sort_keys=True)
         + '. Alternatively check may be a proposed_checks entry matching this schema: '
         + json.dumps(search.ProposedCheck.model_json_schema(), sort_keys=True),
-        enabled=propose is not False, disabled_reason="not requested (propose=false)", auto=propose == "auto")
+        enabled=propose is not False, disabled_reason="not requested (propose=false)", auto=propose == "auto",
+        auto_reason="skipped: model proposals need propose=true until the consent fix ships")
     if proposal is not None:
         rows = proposal.get("hypotheses")
         if not isinstance(rows, list) or len(rows) > MAX_HYPOTHESES:

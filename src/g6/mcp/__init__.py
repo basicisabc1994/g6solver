@@ -563,17 +563,25 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         return mh.rollback(workflow, version, answer=consent.answer, binding=binding)
 
     def g6_premortem(repo: str, task: str, intent: dict | None = None, hypotheses: list[dict] | None = None,
-                     propose: str | bool = "auto") -> dict:
+                     propose: Any = "auto") -> dict:
         """Before the work: what done would mean and how the task can fail, with no checks run, from
         the task, an optional intent contract ({goal, success_criteria, non_goals, failure_criteria, assumptions}) and
         the repository's file names. It returns the intent contract; a proposed standard, each requirement with the
         test file it names as its stated check, or marked not_established; the competing failure hypotheses, each with
         what would test it, ranked by nothing. hypotheses are your {claim, predicts, check} proposals, retained only
-        when check validates as a verification template instance or proposed_checks entry. propose is auto (ask a
-        configured model), true (request it), or false (never); the model sees task and intent only. Model proposals
+        when check validates as a verification template instance or proposed_checks entry. propose is auto (lexical
+        until the consent fix ships), true (explicit model path: propose=true), or false (never). Accepts only those
+        strings or JSON booleans; the model sees task and intent only. Model proposals
         are advice, never normative and can pass nothing. The model step reports run or skipped with why.
         Returns the open questions it found, three at the most: one question per
         task is the default for what you put to the person. It is a proposal: nothing is frozen or confirmed here."""
+        if type(propose) is not bool and (type(propose) is not str or propose not in ("auto", "true", "false")):
+            from g6.core.door import blocked_reply
+
+            # Check raw JSON before conversion or repository reads. The refusal
+            # is fresh program text and echoes none of the supplied arguments.
+            return public_instructions(blocked_reply(
+                "[G6_E_INPUT_VALIDATION] propose must be auto, true or false (strings or JSON booleans)"))
         from g6.mcp import mission
         return mission.premortem(repo, task, intent, hypotheses, propose)
 

@@ -680,6 +680,9 @@ OPERATIONAL_FACTORIES = {
     'g6.mcp.__init__._metaharness_tools.g6_review_patch',
     'g6.mcp.__init__._metaharness_tools.g6_review_until_clean',
     'g6.mcp.__init__._metaharness_tools.runs_code',
+    # Raw invalid propose inputs: fixed refusal before repository access; the MCP
+    # regression plants private repo/task markers and traps provider resolution.
+    'g6.mcp.__init__._metaharness_tools.g6_premortem',
     'g6.mcp.cloud_consent.register.reply',
     'g6.mcp.consent_controls.public_instructions',
     'g6.mcp.improve.refused',
@@ -697,6 +700,9 @@ OPERATIONAL_FACTORIES = {
     # the override kernel's tool: its fixed refusal while agentic.run is not allowed, and the door's refusal of a
     # sensitive op the person has not allowed (as invoke_reply does), neither carrying source content
     'g6.mcp.agentic.register.g6_agentic_run',
+    # Raw invalid rerank inputs: fresh literal instructions only; no argument is
+    # echoed. test_semantic_repair3 plants private task/outcome text over MCP.
+    'g6.mcp.selector.register.g6_select',
 }
 
 

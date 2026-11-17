@@ -11,6 +11,7 @@ from g6.mcp import mission
 
 
 SKIPPED = 'skipped: model rerank needs rerank="model" until the consent fix ships'
+PREMORTEM_SKIPPED = "skipped: model proposals need propose=true until the consent fix ships"
 
 
 @contextmanager
@@ -34,8 +35,9 @@ def no_auto_access(monkeypatch):
             assert capture.refused_provider == refused
 
 
-def assert_auto_step(step):
-    assert not step["ran"] and step["model_calls"] == 0 and step["why"] == SKIPPED
+def assert_auto_step(step, consumer="select"):
+    expected = PREMORTEM_SKIPPED if consumer == "premortem" else SKIPPED
+    assert not step["ran"] and step["model_calls"] == 0 and step["why"] == expected
 
 
 @pytest.mark.parametrize("consumer", ["select", "premortem"])
@@ -70,7 +72,7 @@ def test_auto_answers_without_resolving_or_recording_model_advice(monkeypatch, c
             step = reply["model_step"]
         assert reply["ok"] and reply["completion_state"] == "qualified-draft"
         assert tuple(capture.sources) == before and not capture.refused_provider
-    assert step == {"ran": False, "why": SKIPPED, "model_calls": 0,
+    assert step == {"ran": False, "why": PREMORTEM_SKIPPED if consumer == "premortem" else SKIPPED, "model_calls": 0,
                     **({"stage": "model_rerank", "disagreements": []} if consumer == "select" else {})}
 
 

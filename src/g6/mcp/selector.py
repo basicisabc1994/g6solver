@@ -15,7 +15,7 @@ def register(server: Any) -> None:
     from g6.core.consent_declarations import TOOLS
 
     def g6_select(task: str, phase: str = "", last_outcome: str = "", considering: list | dict | str = "",
-                  limit: int = 5, rerank: str = "auto") -> dict:
+                  limit: int = 5, rerank: Any = "auto") -> dict:
         """What to do next with G6. Give your task, the phase you are in (plan, implement, verify, diagnose or stuck),
         and last_outcome: a refusal's text or G6_E_* code, or an outcome such as defect_detected, from your last G6
         call. Optional considering, a list or one entry: calls or hypotheses you are weighing, as tool or component.op
@@ -35,6 +35,14 @@ def register(server: Any) -> None:
         qualified-draft. You choose, and the call you make is checked then."""
         from g6.core.selector import select
 
+        if type(rerank) is not str or rerank not in ("auto", "model", "lexical", "colbert"):
+            from g6.core.door import blocked_reply
+            from g6.mcp.consent_controls import public_instructions
+
+            # Raw JSON reaches this check without coercion. Only these literal
+            # instructions are public; no task, outcome or supplied mode is echoed.
+            return public_instructions(blocked_reply(
+                "[G6_E_INPUT_VALIDATION] rerank is auto, model or lexical; colbert is not offered"))
         return select(task, phase, last_outcome, considering, limit, rerank, request_id=uuid.uuid4().hex[:12],
                       run_id="")
 
