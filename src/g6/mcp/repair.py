@@ -77,11 +77,17 @@ def declined_block(status: str) -> dict[str, Any]:
 
 def suppress_declined_dialogs(value: Any, session: Any) -> Any:
     """Apply session decisions to G6's selector guidance, including generic dialog templates."""
+    from g6.core.reply_budget import fit_reply
+
+    return fit_reply(_suppress_declined_dialogs(value, session))
+
+
+def _suppress_declined_dialogs(value: Any, session: Any) -> Any:
     if isinstance(value, list):
-        return [suppress_declined_dialogs(v, session) for v in value]
+        return [_suppress_declined_dialogs(v, session) for v in value]
     if not isinstance(value, dict):
         return value
-    out = {k: suppress_declined_dialogs(v, session) for k, v in value.items()}
+    out = {k: _suppress_declined_dialogs(v, session) for k, v in value.items()}
     call = value.get("call")
     if not isinstance(call, dict) or call.get("tool") != "g6_cloud_grant":
         return out

@@ -575,13 +575,14 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         are advice, never normative and can pass nothing. The model step reports run or skipped with why.
         Returns the open questions it found, three at the most: one question per
         task is the default for what you put to the person. It is a proposal: nothing is frozen or confirmed here."""
-        if type(propose) is not bool and (type(propose) is not str or propose not in ("auto", "true", "false")):
+        from g6.core.semantic_arguments import argument_error
+
+        error = argument_error("g6_premortem", dict(repo=repo, task=task, intent=intent,
+                                                  hypotheses=hypotheses, propose=propose))
+        if error:
             from g6.core.door import blocked_reply
 
-            # Check raw JSON before conversion or repository reads. The refusal
-            # is fresh program text and echoes none of the supplied arguments.
-            return public_instructions(blocked_reply(
-                "[G6_E_INPUT_VALIDATION] propose must be auto, true or false (strings or JSON booleans)"))
+            return public_instructions(blocked_reply(f"[G6_E_INPUT_VALIDATION] {error}"))
         from g6.mcp import mission
         return mission.premortem(repo, task, intent, hypotheses, propose)
 

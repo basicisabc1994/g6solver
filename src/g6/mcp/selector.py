@@ -34,15 +34,15 @@ def register(server: Any) -> None:
         failed/unreadable model reply keeps lexical order, with why in mechanisms. No candidate call runs;
         qualified-draft. You choose, and the call you make is checked then."""
         from g6.core.selector import select
+        from g6.core.semantic_arguments import argument_error
 
-        if type(rerank) is not str or rerank not in ("auto", "model", "lexical", "colbert"):
+        error = argument_error("g6_select", dict(task=task, phase=phase, last_outcome=last_outcome,
+                                              limit=limit, rerank=rerank))
+        if error:
             from g6.core.door import blocked_reply
             from g6.mcp.consent_controls import public_instructions
 
-            # Raw JSON reaches this check without coercion. Only these literal
-            # instructions are public; no task, outcome or supplied mode is echoed.
-            return public_instructions(blocked_reply(
-                "[G6_E_INPUT_VALIDATION] rerank is auto, model or lexical; colbert is not offered"))
+            return public_instructions(blocked_reply(f"[G6_E_INPUT_VALIDATION] {error}"))
         return select(task, phase, last_outcome, considering, limit, rerank, request_id=uuid.uuid4().hex[:12],
                       run_id="")
 

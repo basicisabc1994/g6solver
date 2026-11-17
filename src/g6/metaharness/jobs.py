@@ -142,6 +142,9 @@ class Jobs:
                      for source in inputs)
 
     def _status_reply(self, ident, result, detail):
+        from g6.core.reply_budget import fit_reply
+
+        result = fit_reply(result)
         capture = cloud.current_capture()
         if capture is None:
             return result

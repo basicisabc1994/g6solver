@@ -115,6 +115,11 @@ class _Stream:
     async def __aexit__(self, *args):
         return await self.inner.__aexit__(*args)
 
+    async def _egress(self, packet):
+        from g6.mcp.reply_egress import budget_packet
+
+        await self.inner.send(budget_packet(packet))
+
     async def send(self, message):
         # Freeze the actual packet. Neither a later mutation nor a serializer's
         # additional text can inherit an earlier result's source ticket.
@@ -135,7 +140,7 @@ class _Stream:
             ticket = Ticket(() if control else policy.current_sources() or (policy.UNKNOWN,),
                             actual, supplied, digest(root.model_dump(mode='json', exclude_none=True)))
         if not ticket.sources:
-            await self.inner.send(packet)
+            await self._egress(packet)
             return
 
         def handoff():
@@ -143,9 +148,9 @@ class _Stream:
             supplied = ticket.supplied if actual == ticket.provider else ()
             try:
                 with policy.admission(actual, ticket.sources, ticket.body_sha256, supplied=supplied):
-                    anyio.from_thread.run(self.inner.send, packet)
+                    anyio.from_thread.run(self._egress, packet)
             except (LLMError, RecursionError, MemoryError):
-                anyio.from_thread.run(self.inner.send, _refused(packet, ticket, actual, self.session))
+                anyio.from_thread.run(self._egress, _refused(packet, ticket, actual, self.session))
         await anyio.to_thread.run_sync(handoff)
 
 

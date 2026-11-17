@@ -272,19 +272,21 @@ def install(server) -> None:
             if not supported:
                 return ToolResult(structured_content=withheld_reply(session=session))
             args = context.message.arguments or {}
+            from g6.core.semantic_arguments import validate_arguments
+            invalid = validate_arguments(context.message.name, args)
             with policy.collect_sources() as capture:
-                capture.client_arguments = deepcopy(args)
                 tool = await server.get_tool(context.message.name)
                 # The source wrapper has *args/**kwargs. FastMCP/Pydantic can
                 # discard extra keys on that wrapper before signature.bind sees
                 # them, including an agent's purported answer to a dialog.
                 # Enforce the published argument names before that conversion.
-                if set(args) - tool.parameters.get('properties', {}).keys():
+                if invalid or set(args) - tool.parameters.get('properties', {}).keys():
                     result = input_error_result(context.message.name, tool.parameters.get('properties', {}),
                                                 arguments=args, session=session)
                     wire = result.to_mcp_result().model_dump(mode='json', by_alias=True, exclude_none=True)
                     prepare(session, ctx.request_context.request_id, result, (), body=wire)
                     return result
+                capture.client_arguments = deepcopy(args)
                 capture.expected_tool = getattr(getattr(tool, 'fn', None), '_g6_tool_identity', None)
                 capture.client = client_provider(ctx), session
                 def inputs(value):
@@ -302,7 +304,9 @@ def install(server) -> None:
                         for child in value:
                             inputs(child)
                 inputs(args)
-                result = await call_next(context)
+                from g6.core.semantic_arguments import checked_arguments
+                with checked_arguments(context.message.name, args):
+                    result = await call_next(context)
                 returned = capture.returned
                 # The rendered reply is serialised once, here. The frozen return is
                 # matched against that serialisation and the ticket is cut from it,

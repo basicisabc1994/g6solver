@@ -76,12 +76,19 @@ def _admit(rows: list, origin: str) -> tuple[list[dict], list[dict]]:
 
 
 def propose_hypotheses(task: str, intent: dict | None, hypotheses: list | None, propose: str | bool) -> dict:
+    from g6.core.semantic_arguments import validate_arguments
+
+    error = validate_arguments("g6_premortem_proposals", dict(task=task, intent=intent,
+                                                            hypotheses=hypotheses, propose=propose))
+    if error:
+        raise ValueError(error)
+    return _propose_hypotheses(task, intent, hypotheses, propose)
+
+
+def _propose_hypotheses(task: str, intent: dict | None, hypotheses: list | None, propose: str | bool) -> dict:
+    """Build after the public entry point has checked arguments, before repository/model work."""
     if isinstance(propose, str) and propose in ("true", "false"):
         propose = propose == "true"
-    if propose != "auto" and type(propose) is not bool:
-        raise ValueError("propose must be auto, true or false")
-    if hypotheses is not None and (not isinstance(hypotheses, list) or len(hypotheses) > MAX_HYPOTHESES):
-        raise ValueError(f"hypotheses must be a list of at most {MAX_HYPOTHESES} entries")
     kept, untestable = _admit(hypotheses or [], "agent")
     # Only task and intent are rendered; neither repository inventory nor agent
     # hypotheses are model inputs. The vocabulary is G6's built-in schema text.

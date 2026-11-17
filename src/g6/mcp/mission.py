@@ -368,8 +368,12 @@ def premortem(repo: str, task: str, intent: dict | None = None, hypotheses: list
     intent contract, a proposed standard of done (a requirement that names one of the repository's test files has it
     as its stated check; any other is not established), the competing ways the task can fail and at most three
     questions. A proposal: nothing here is frozen, and the person confirms a standard only through a mission."""
-    if not task.strip():
-        return blocked_reply("[G6_E_INPUT_VALIDATION] task must say what the change is for")
+    from g6.core.semantic_arguments import argument_error
+
+    error = argument_error("g6_premortem", dict(repo=repo, task=task, intent=intent,
+                                              hypotheses=hypotheses, propose=propose))
+    if error:
+        return blocked_reply(f"[G6_E_INPUT_VALIDATION] {error}")
     try:
         root = repo_tests.checked_repo(repo)
         given = verification_search.intent_contract(intent) if intent is not None else None
@@ -379,10 +383,10 @@ def premortem(repo: str, task: str, intent: dict | None = None, hypotheses: list
         return blocked_reply(f"[G6_E_INPUT_VALIDATION] intent: {exc}")
 
     def work() -> dict:
-        from g6.mcp.premortem_proposals import propose_hypotheses
+        from g6.mcp.premortem_proposals import _propose_hypotheses
 
-        proposals = propose_hypotheses(task, given.model_dump(mode="json") if given is not None else None,
-                                      hypotheses, propose)
+        proposals = _propose_hypotheses(task, given.model_dump(mode="json") if given is not None else None,
+                                       hypotheses, propose)
         session = IntentElicitor().elicit(task, prior=given)
         listed = repo_tests._git(root, "ls-files", "-z").decode("utf-8", "replace").split("\0")
         tests = [rel for rel in listed if rel and repo_tests.is_test_related(rel)]

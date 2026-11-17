@@ -477,8 +477,10 @@ def remedy_for(outcome: str, data: dict[str, Any] | None = None) -> dict[str, An
 # -- stage helpers ----------------------------------------------------------------------------------------------
 def _refuse(message: str, request_id: str, run_id: str) -> dict[str, Any]:
     from g6.core.door import blocked_reply
+    from g6.core.reply_budget import fit_reply
 
-    return {**blocked_reply(f"[G6_E_INPUT_VALIDATION] {message}", request_id=request_id), "run_id": run_id}
+    return fit_reply({**blocked_reply(f"[G6_E_INPUT_VALIDATION] {message}", request_id=request_id), "run_id": run_id},
+                     limit=MAX_REPLY_BYTES)
 
 
 def _documents(data: dict[str, Any], entries: dict[str, dict[str, Any]]) -> dict[str, str]:
@@ -829,8 +831,13 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
            rerank: str = "auto", *, corpus: dict[str, Any] | None = None,
            request_id: str = "", run_id: str = "") -> dict[str, Any]:
     """Build every reply field before the single, final encoded budget step."""
-    reply = _safe_selection_reply(task, phase, last_outcome, considering, limit, rerank, corpus=corpus,
-                                  request_id=request_id, run_id=run_id)
+    from g6.core.semantic_arguments import argument_error
+
+    invalid = argument_error("g6_select", dict(task=task, phase=phase, last_outcome=last_outcome,
+                                              limit=limit, rerank=rerank))
+    reply = (_refuse(invalid, request_id, run_id) if invalid else
+             _safe_selection_reply(task, phase, last_outcome, considering, limit, rerank, corpus=corpus,
+                                   request_id=request_id, run_id=run_id))
     return _budget_reply(reply, rerank=rerank, request_id=request_id, run_id=run_id,
                          lexical=lambda: _safe_selection_reply(task, phase, last_outcome, considering, limit, "lexical",
                                                                 corpus=corpus, request_id=request_id, run_id=run_id))
@@ -851,21 +858,10 @@ def _selection_reply(task: str, phase: str, last_outcome: str, considering: Any,
     """The selection for the agent's situation (module docstring). ``corpus`` stands in for the shipped corpus in
     tests."""
     from g6.core.reliability_envelope import envelope_fields, warning_card
-    from g6.skills.corpus import PHASES, _expanded as expanded     # the reply is deep-copied at the end
-
-    if not isinstance(task, str) or not task.strip():
-        return _refuse("task says what you are doing", request_id, run_id)
+    from g6.skills.corpus import _expanded as expanded     # the reply is deep-copied at the end
     if len(task) > MAX_TASK_BYTES or _size(task) > MAX_TASK_BYTES:
         return _refuse(f"task is over {MAX_TASK_BYTES // 1024} KB: say what you are doing in fewer words",
                        request_id, run_id)
-    if phase not in ("", *PHASES):
-        return _refuse(f"phase is one of {', '.join(PHASES)}, or empty", request_id, run_id)
-    if rerank not in RERANKS:
-        return _refuse("rerank is auto, model or lexical; colbert is not offered", request_id, run_id)
-    if not isinstance(limit, int) or isinstance(limit, bool):
-        return _refuse("limit is a whole number", request_id, run_id)
-    if not isinstance(last_outcome, str):
-        return _refuse("last_outcome is a refusal's text, its G6_E_* code or an outcome word", request_id, run_id)
     if len(last_outcome) > MAX_OUTCOME_BYTES or _size(last_outcome) > MAX_OUTCOME_BYTES:
         return _refuse(f"last_outcome is over {MAX_OUTCOME_BYTES // 1024} KB: pass the refusal's code and message, "
                        "or the outcome word", request_id, run_id)
@@ -1135,22 +1131,16 @@ def _budget_reply(reply: dict[str, Any], *, rerank: str, request_id: str, run_id
     Optional model text loses space first. A lexical rebuild is unbudgeted until
     its final fallback reason and call count are in place, and uses the same corpus.
     """
+    from g6.core.reply_budget import fit_reply
+
+    reply = fit_reply(reply, limit=MAX_REPLY_BYTES, refuse=False)
+
     def fits() -> bool:
         return len(json.dumps(reply).encode("utf-8")) <= MAX_REPLY_BYTES
 
     if fits() or not reply["ok"]:
         return reply
     model_reply = next(m for m in reply["mechanisms"] if m["stage"] == "model_rerank")
-    if model_reply.get("reasons"):
-        model_reply["reasons_note"] = "model reasons shortened to fit the encoded reply budget"
-        for ceiling in (150, 75, 37, 18, 9, 4, 2, 1):
-            model_reply["reasons"] = {key: reason[:ceiling] for key, reason in model_reply["reasons"].items()}
-            if fits():
-                return reply
-        model_reply["reasons"] = {}
-        model_reply["reasons_note"] = "model reasons shortened then dropped to fit the encoded reply budget"
-        if fits():
-            return reply
     if rerank in ("auto", "model"):
         local = lexical()
         if local["ok"]:
@@ -1164,6 +1154,7 @@ def _budget_reply(reply: dict[str, Any], *, rerank: str, request_id: str, run_id
             # retaining the local answer and the reason the model was skipped.
             ranking_step = next(m for m in reply["mechanisms"] if m["stage"] == "candidates")
             ranking_step["why"] = "lexical/prior order; external actions rank last and are never next"
+            reply = fit_reply(reply, limit=MAX_REPLY_BYTES, refuse=False)
     if not fits():
         return _refuse(f"the reply would be over {MAX_REPLY_BYTES // 1024} KB: pass fewer or shorter entries in "
                        "considering", request_id, run_id)
