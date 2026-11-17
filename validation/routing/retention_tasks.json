@@ -1,0 +1,246 @@
+{
+  "format": "g6.routing_retention_tasks/1",
+  "date": "2026-11-17",
+  "before_any_arm": true,
+  "pairs": [
+    {
+      "id": "retention.rounding",
+      "a": "retention.rounding.a",
+      "b": "retention.rounding.b"
+    },
+    {
+      "id": "retention.utc",
+      "a": "retention.utc.a",
+      "b": "retention.utc.b"
+    },
+    {
+      "id": "retention.ownership",
+      "a": "retention.ownership.a",
+      "b": "retention.ownership.b"
+    },
+    {
+      "id": "retention.cache",
+      "a": "retention.cache.a",
+      "b": "retention.cache.b"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "retention.rounding.a",
+      "family": "learning_retention",
+      "pair_id": "retention.rounding",
+      "stage": "a",
+      "fixture": "rounding",
+      "snapshot": "retention_fixtures/rounding/a",
+      "fixture_digest": "492b057b61d60a8622ddee1f6b82b94bd4d057e12a22e8f572204011bbf0fd60",
+      "defect_class": "decimal half-cent rounding",
+      "checks_path": "retention_outcome/rounding/a",
+      "checks": [
+        "test_regression"
+      ],
+      "defects": [
+        "test_regression"
+      ],
+      "prompt": "Make invoice_amount in engine.py return monetary amounts to two decimal places, rounding half cents away from zero. Preserve the Decimal return type.",
+      "budget": {
+        "seconds": 900,
+        "model_calls": 20,
+        "questions": 1
+      },
+      "source_ids": [
+        "owner-audit-2026-11-17"
+      ],
+      "fair": "The ordinary decimal example passes; the related operation repeats the same half-cent rounding error, including negative credits."
+    },
+    {
+      "id": "retention.rounding.b",
+      "family": "learning_retention",
+      "pair_id": "retention.rounding",
+      "stage": "b",
+      "fixture": "rounding",
+      "snapshot": "retention_fixtures/rounding/b",
+      "fixture_digest": "628500815a5e4c434bd2f1eedf1aeb54f68632bd30d00b284fc16ea3f3281b08",
+      "defect_class": "decimal half-cent rounding",
+      "checks_path": "retention_outcome/rounding/b",
+      "checks": [
+        "test_regression"
+      ],
+      "defects": [
+        "test_regression"
+      ],
+      "prompt": "Make credit_amount in engine.py return monetary amounts to two decimal places, rounding half cents away from zero. Preserve the Decimal return type.",
+      "budget": {
+        "seconds": 900,
+        "model_calls": 20,
+        "questions": 1
+      },
+      "source_ids": [
+        "owner-audit-2026-11-17"
+      ],
+      "fair": "The ordinary decimal example passes; the related operation repeats the same half-cent rounding error, including negative credits."
+    },
+    {
+      "id": "retention.utc.a",
+      "family": "learning_retention",
+      "pair_id": "retention.utc",
+      "stage": "a",
+      "fixture": "utc",
+      "snapshot": "retention_fixtures/utc/a",
+      "fixture_digest": "c871e3259e8fb99bfdc17657bedf205d3dc3d34d5deaf91bf0ee90f52df4a90e",
+      "defect_class": "timezone normalization before calendar-day extraction",
+      "checks_path": "retention_outcome/utc/a",
+      "checks": [
+        "test_regression"
+      ],
+      "defects": [
+        "test_regression"
+      ],
+      "prompt": "Make event_day in engine.py return the UTC calendar date of an ISO timestamp carrying an explicit UTC offset. Values without an offset are outside this function's contract.",
+      "budget": {
+        "seconds": 900,
+        "model_calls": 20,
+        "questions": 1
+      },
+      "source_ids": [
+        "owner-audit-2026-11-17"
+      ],
+      "fair": "The zero-offset example passes; a second operation repeats extracting the local day before normalizing the offset."
+    },
+    {
+      "id": "retention.utc.b",
+      "family": "learning_retention",
+      "pair_id": "retention.utc",
+      "stage": "b",
+      "fixture": "utc",
+      "snapshot": "retention_fixtures/utc/b",
+      "fixture_digest": "8b60d87c68fd046e96bd6dc7cc82908f3c208ee9ca6f2e0d7020b624a4b5fc79",
+      "defect_class": "timezone normalization before calendar-day extraction",
+      "checks_path": "retention_outcome/utc/b",
+      "checks": [
+        "test_regression"
+      ],
+      "defects": [
+        "test_regression"
+      ],
+      "prompt": "Make archive_day in engine.py return the UTC calendar date of an ISO timestamp carrying an explicit UTC offset. Values without an offset are outside this function's contract.",
+      "budget": {
+        "seconds": 900,
+        "model_calls": 20,
+        "questions": 1
+      },
+      "source_ids": [
+        "owner-audit-2026-11-17"
+      ],
+      "fair": "The zero-offset example passes; a second operation repeats extracting the local day before normalizing the offset."
+    },
+    {
+      "id": "retention.ownership.a",
+      "family": "learning_retention",
+      "pair_id": "retention.ownership",
+      "stage": "a",
+      "fixture": "ownership",
+      "snapshot": "retention_fixtures/ownership/a",
+      "fixture_digest": "ea95881514ae14d099edaf3361b826a985ac784e9f00f9165e8fc41423961e9d",
+      "defect_class": "nested mutable aliasing",
+      "checks_path": "retention_outcome/ownership/a",
+      "checks": [
+        "test_regression"
+      ],
+      "defects": [
+        "test_regression"
+      ],
+      "prompt": "Make copy_settings in engine.py return an independent copy of a JSON-like settings dictionary, including nested dictionaries and lists. Mutating either copy must leave the other unchanged.",
+      "budget": {
+        "seconds": 900,
+        "model_calls": 20,
+        "questions": 1
+      },
+      "source_ids": [
+        "owner-audit-2026-11-17"
+      ],
+      "fair": "The flat example passes; the related copy operation repeats shallow copying of nested mutable settings."
+    },
+    {
+      "id": "retention.ownership.b",
+      "family": "learning_retention",
+      "pair_id": "retention.ownership",
+      "stage": "b",
+      "fixture": "ownership",
+      "snapshot": "retention_fixtures/ownership/b",
+      "fixture_digest": "2feaee7713d2acdafd9a25934fcecd5cd586de3d5a2106eb99a505375d22772b",
+      "defect_class": "nested mutable aliasing",
+      "checks_path": "retention_outcome/ownership/b",
+      "checks": [
+        "test_regression"
+      ],
+      "defects": [
+        "test_regression"
+      ],
+      "prompt": "Make clone_settings in engine.py return an independent copy of a JSON-like settings dictionary, including nested dictionaries and lists. Mutating either copy must leave the other unchanged.",
+      "budget": {
+        "seconds": 900,
+        "model_calls": 20,
+        "questions": 1
+      },
+      "source_ids": [
+        "owner-audit-2026-11-17"
+      ],
+      "fair": "The flat example passes; the related copy operation repeats shallow copying of nested mutable settings."
+    },
+    {
+      "id": "retention.cache.a",
+      "family": "learning_retention",
+      "pair_id": "retention.cache",
+      "stage": "a",
+      "fixture": "cache",
+      "snapshot": "retention_fixtures/cache/a",
+      "fixture_digest": "8a4a1b860334a8ce00390bea0fc6cb82c2d374c5b74cf94827ef748bf01e5e39",
+      "defect_class": "cache identity omits input content",
+      "checks_path": "retention_outcome/cache/a",
+      "checks": [
+        "test_regression"
+      ],
+      "defects": [
+        "test_regression"
+      ],
+      "prompt": "Make report_total in engine.py return the sum of the current integer rows on every call, including when a same-length list changes contents between calls. Keep memoization for identical inputs.",
+      "budget": {
+        "seconds": 900,
+        "model_calls": 20,
+        "questions": 1
+      },
+      "source_ids": [
+        "owner-audit-2026-11-17"
+      ],
+      "fair": "The repeated-input example passes; a related summary repeats a cache keyed only by list length."
+    },
+    {
+      "id": "retention.cache.b",
+      "family": "learning_retention",
+      "pair_id": "retention.cache",
+      "stage": "b",
+      "fixture": "cache",
+      "snapshot": "retention_fixtures/cache/b",
+      "fixture_digest": "426d775fae863b37377eee45e0ac8cbd6c89577be7bfd6258436fa17b63101ec",
+      "defect_class": "cache identity omits input content",
+      "checks_path": "retention_outcome/cache/b",
+      "checks": [
+        "test_regression"
+      ],
+      "defects": [
+        "test_regression"
+      ],
+      "prompt": "Make summary_total in engine.py return the sum of the current integer rows on every call, including when a same-length list changes contents between calls. Keep memoization for identical inputs.",
+      "budget": {
+        "seconds": 900,
+        "model_calls": 20,
+        "questions": 1
+      },
+      "source_ids": [
+        "owner-audit-2026-11-17"
+      ],
+      "fair": "The repeated-input example passes; a related summary repeats a cache keyed only by list length."
+    }
+  ],
+  "new_bar": null
+}

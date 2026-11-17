@@ -992,3 +992,183 @@ def outcome_bar(comparisons: Mapping[str, Mapping[str, Any]], gates: Mapping[str
     unread = sorted(set(clients) - set(comparisons))
     return {"min_net": gates["min_net_positive"], "net": gates["net"], "harm": gates["harm"], "net_met_by": net_by,
             "harm_above_before_on": harmed, "unread": unread, "met": bool(net_by) and not harmed and not unread}
+
+
+# Reporting-only audit amendment. These functions consume recorded observations; they never run a client, a check,
+# or a model, and none of their outputs feed a release gate. audit.py binds their inputs to the frozen registration.
+AUDIT_LABELS = ("verified", "qualified-draft", "blocked-escalated", "test_integrity_compromised",
+                "defect_detected", "insufficient_evidence", "supported_within_scope")
+AUDIT_ARMS = ("alone", "with_g6", "retained", "fresh")
+
+
+def _audit_number(value: Any, name: str, *, integer: bool = False) -> None:
+    _need(value is None or (type(value) in ((int,) if integer else (int, float))
+                           and math.isfinite(value) and value >= 0), f"audit {name}: nonnegative finite number or null")
+
+
+def _audit_record(task: Mapping[str, Any], row: Mapping[str, Any]) -> dict[str, Any]:
+    for key in ("task_digest", "fixture_digest", "budget"):
+        expected = _digest(dict(task)) if key == "task_digest" else task[key]
+        _need(row.get(key) == expected, f"audit {task['id']}: {key} differs from the registered task")
+    _need(isinstance(row.get("model"), str) and bool(row["model"]), "audit model must be recorded")
+    for key in ("started", "ended", "completed"):
+        _need(type(row.get(key)) is bool, f"audit {key} must be boolean")
+    _need(not row["completed"] or (row["started"] and row["ended"]), "audit completion requires a finished session")
+    _need(row["started"] or (not row["final_diff_sha256"] and not row["events_sha256"]
+                            and not row["final_checks"] and not row["defect_checks"]
+                            and not row["g6_claims"] and not row["reply_states"]),
+          "audit unrun session cannot carry observations")
+    for key in ("seconds", "cost_usd", "model_calls"):
+        _need(key in row, f"audit {key} must be recorded, null if unknown")
+        _audit_number(row[key], key, integer=key == "model_calls")
+    for key in ("final_diff_sha256", "events_sha256", "g6_history_before_sha256", "g6_history_after_sha256"):
+        value = row.get(key)
+        _need(value is None or (isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None),
+              f"audit {key} must be a digest or null")
+    for key, allowed in (("final_checks", task["checks"]), ("defect_checks", task["defects"])):
+        value = row.get(key)
+        _need(isinstance(value, dict) and set(value) <= set(allowed)
+              and all(type(v) is bool or v is None for v in value.values()), f"audit {key}: registered boolean checks")
+    for key in ("g6_claims", "reply_states", "history_from"):
+        _need(isinstance(row.get(key), list) and all(isinstance(v, str) and v for v in row[key]),
+              f"audit {key} must be a list of nonempty strings")
+    _need(set(row["reply_states"]) <= set(AUDIT_LABELS), "audit reply state is outside the registered labels")
+    if row["arm"] == "alone":
+        _need(not row["g6_claims"] and not row["reply_states"] and not row["history_from"],
+              "audit alone arm cannot contain G6 claims, replies or history")
+        _need(row.get("g6_history_before_sha256") is None and row.get("g6_history_after_sha256") is None,
+              "audit alone arm cannot contain G6 history")
+    known, claims = set(task["defects"]), set(row["g6_claims"])
+    present = {key for key in known if row["defect_checks"].get(key) is False}
+    absent = {key for key in known if row["defect_checks"].get(key) is True}
+    checks = [row["final_checks"].get(key) for key in task["checks"]]
+    passed = (False if row["started"] and row["ended"] and (not row["completed"] or not row["final_diff_sha256"])
+              else False if False in checks else True if checks and all(v is True for v in checks) else None)
+    if not row["started"] or not row["ended"]:
+        passed = None
+    return {"task_id": task["id"], "started": row["started"], "hidden_check_pass": passed,
+            "defects_found": len(present & claims), "defects_missed": len(present - claims),
+            "false_alarms": len(absent & claims), "unadjudicated_claims": len(claims - present - absent),
+            "unknown_defects": len(known - present - absent),
+            "wall_seconds": row["seconds"], "cost_usd": row["cost_usd"], "model_calls": row["model_calls"],
+            "abandoned": row["started"] and row["ended"] and row["final_diff_sha256"] is None,
+            "ongoing": row["started"] and not row["ended"], "reply_states": sorted(set(row["reply_states"])),
+            "model": row["model"], "budget": dict(row["budget"]),
+            "budget_observed": row["seconds"] is not None and row["model_calls"] is not None,
+            "budget_exceeded": (row["seconds"] is not None and row["seconds"] > task["budget"]["seconds"])
+            or (row["model_calls"] is not None and row["model_calls"] > task["budget"]["model_calls"])}
+
+
+def audit_report(tasks: Sequence[Mapping[str, Any]], records: Sequence[Mapping[str, Any]], *,
+                 client: str, arm: str) -> dict[str, Any]:
+    """Measures per scheduled task and arm; nulls and coverage expose missing evidence, never guessed as zero.
+
+    A defect check is read on the snapshot G6 reviewed (False confirms a defect), not the repaired final diff.
+    Claims are independently coded to registered defect IDs; unmatched claims stay unadjudicated. Calibration is
+    descriptive: one observation per session and distinct reply label, with final-check success as its outcome.
+    """
+    _need(arm in AUDIT_ARMS, "audit arm is not registered")
+    by_id = {task["id"]: task for task in tasks}
+    _need(len(by_id) == len(tasks), "duplicate audit task")
+    mine = [row for row in records if row.get("client") == client and row.get("arm") == arm]
+    _need(all(row.get("task_id") in by_id for row in mine), "audit record names an unscheduled task")
+    indexed = {row["task_id"]: row for row in mine}
+    _need(len(indexed) == len(mine), "duplicate audit session for task, client and arm")
+    rows = []
+    for task in tasks:
+        if task["id"] in indexed:
+            rows.append(_audit_record(task, indexed[task["id"]]))
+        else:
+            rows.append({"task_id": task["id"], "started": False, "hidden_check_pass": None,
+                         "defects_found": 0, "defects_missed": 0, "false_alarms": 0,
+                         "unadjudicated_claims": 0, "unknown_defects": len(task["defects"]),
+                         "wall_seconds": None, "cost_usd": None, "model_calls": None,
+                         "abandoned": False, "ongoing": False, "reply_states": [], "model": None,
+                         "budget": dict(task["budget"]), "budget_exceeded": False, "budget_observed": False})
+
+    def total(key: str) -> dict[str, Any]:
+        values = [row[key] for row in rows if row[key] is not None]
+        return {"total": sum(values) if values else None, "observed": len(values), "missing": len(rows) - len(values)}
+
+    buckets = {}
+    for label in AUDIT_LABELS:
+        labelled = [row for row in rows if label in row["reply_states"]]
+        passed = sum(row["hidden_check_pass"] is True for row in labelled)
+        buckets[label] = {"sessions": len(labelled), "passed": passed,
+                          "unknown": sum(row["hidden_check_pass"] is None for row in labelled),
+                          "pass_share": passed / len(labelled) if labelled else None}
+    return {"format": "g6.routing_audit_report/1", "client": client, "arm": arm,
+            "tasks_digest": _digest(list(tasks)), "tasks": rows,
+            "overall": {"tasks": len(rows), "unrun": sum(not r["started"] for r in rows),
+                        "hidden_check_pass": sum(r["hidden_check_pass"] is True for r in rows),
+                        "hidden_check_unknown": sum(r["hidden_check_pass"] is None for r in rows),
+                        **{key: sum(r[key] for r in rows) for key in
+                           ("defects_found", "defects_missed", "false_alarms", "unadjudicated_claims",
+                            "unknown_defects", "abandoned", "ongoing", "budget_exceeded")},
+                        **{key: total(key) for key in ("wall_seconds", "cost_usd", "model_calls")}},
+            "calibration": buckets, "unexpected_verified": buckets["verified"]["sessions"], "claim": None}
+
+
+def compare_audit(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, Any]:
+    """Both measure rows for every scheduled pair, without any release decision."""
+    _need(before["client"] == after["client"] and before["tasks_digest"] == after["tasks_digest"],
+          "audit reports do not pair: client or task registration differs")
+    _need((before["arm"], after["arm"]) in (("alone", "with_g6"), ("fresh", "retained")), "audit arms do not pair")
+    later = {row["task_id"]: row for row in after["tasks"]}
+    _need(len(later) == len(after["tasks"]) and set(later) == {r["task_id"] for r in before["tasks"]},
+          "audit task rows do not pair")
+    pairs = []
+    for row in before["tasks"]:
+        other = later[row["task_id"]]
+        _need(row["budget"] == other["budget"] and
+              (row["model"] is None or other["model"] is None or row["model"] == other["model"]),
+              "audit pair differs in model or budget")
+        pairs.append({"task_id": row["task_id"], "before": dict(row), "after": dict(other)})
+    return {"client": before["client"], "pairs": pairs, "arms": {"before": before["arm"], "after": after["arm"]},
+            "claim": None}
+
+
+def retention_report(tasks: Sequence[Mapping[str, Any]], pairs: Sequence[Mapping[str, str]],
+                     records: Sequence[Mapping[str, Any]], *, client: str) -> dict[str, Any]:
+    """B with the recorded history of A versus B fresh, with identical starting fixture, model and budgets.
+
+    No A fix or agent conversation is carried into B. history_from binds the retained G6 history to the A row. A missing
+    prerequisite or B observation leaves the pair incomplete; no complete observed pairs means a null net.
+    """
+    mine = [row for row in records if row.get("client") == client]
+    indexed = {(row["task_id"], row["arm"]): row for row in mine}
+    _need(len(indexed) == len(mine), "duplicate retention session")
+    by_id, rows = {t["id"]: t for t in tasks}, []
+    for pair in pairs:
+        a = indexed.get((pair["a"], "with_g6"))
+        kept, fresh = indexed.get((pair["b"], "retained")), indexed.get((pair["b"], "fresh"))
+        a_digest = a.get("record_sha256", _digest(a)) if a is not None else None
+        if a is not None:
+            _audit_record(by_id[pair["a"]], a)
+            _need(not a["history_from"] and a.get("g6_history_before_sha256") is None,
+                  "retention A must start with fresh history")
+        if kept is not None:
+            _need(a is not None and a["started"] and a["ended"] and bool(a["events_sha256"])
+                  and bool(a.get("g6_history_after_sha256")) and kept["history_from"] == [a_digest]
+                  and kept.get("g6_history_before_sha256") == a["g6_history_after_sha256"],
+                  "retention history must be exactly the recorded, finished A session")
+        if fresh is not None:
+            _need(not fresh["history_from"] and fresh.get("g6_history_before_sha256") is None,
+                  "retention fresh control must have no A history")
+        if kept is not None and fresh is not None:
+            _need(kept["model"] == fresh["model"] == a["model"], "retention pair differs in model")
+        task = by_id[pair["b"]]
+        measured = {arm: audit_report([task], [r for r in (kept, fresh) if r is not None], client=client, arm=arm)
+                    ["tasks"][0] for arm in ("retained", "fresh")}
+        complete = a is not None and all(measured[arm]["hidden_check_pass"] is not None
+                                        and measured[arm]["started"] for arm in measured)
+        rows.append({"pair_id": pair["id"], "task_a": pair["a"], "task_b": pair["b"], "a_history": a_digest,
+                     **measured, "complete": complete})
+    complete = [row for row in rows if row["complete"]]
+    net = sum(int(r["retained"]["hidden_check_pass"]) - int(r["fresh"]["hidden_check_pass"]) for r in complete)
+    b_tasks = [by_id[pair["b"]] for pair in pairs]
+    b_records = [row for row in mine if row["task_id"] in {task["id"] for task in b_tasks}]
+    return {"client": client, "pairs": rows, "complete_pairs": len(complete), "incomplete_pairs": len(rows) - len(complete),
+            "net": net if complete else None,
+            "arms": {arm: audit_report(b_tasks, b_records, client=client, arm=arm) for arm in ("retained", "fresh")},
+            "claim": None}

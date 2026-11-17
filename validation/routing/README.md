@@ -447,3 +447,109 @@ Grant-based refusal recovery requires a positive `status: granted` reply even wi
 a cancelled grant or a missing reply is insufficient. Telling the person what they must allow/share remains a
 separate qualifying path when the refused call is never repeated. This fix pass's new regression runs both clients
 with and without a retry; the prior audit's cancelled-without-retry assertion was strengthened to match this ruling.
+
+### User-value and retention amendment (2026-11-17, before any arm)
+
+**State: `evidence_pending`.** `amendments/2026-11-17/audit_measures.json` records the owner's outside-audit
+request, the previous moment pins, the added pins and the rulings. No arm was run to author this amendment.
+`audit_protocol.json`, `retention_tasks.json` and `audit_frozen.json` were written with `validation/freeze.py`.
+The pre-arm import correction retired their initial versions where necessary, with the reason and initial
+fixture bytes beside the amendment. Existing moment tasks, fixture/check bytes, pins and every gate remain
+unchanged. The beta bar remains outcome net >= +1 with hidden checks and the final diff kept, OR >= 3 dogfood
+catches; the existing harm and routing gates still apply. These additional reports introduce no bar.
+
+`score.audit_report`, `score.compare_audit` and `score.retention_report` compute the measures. The read-only
+outcome reader `audit.py` checks the added freeze, reads kept artifacts again, and prints the reports. It runs
+no session, hidden check, model or network request. Before the before arm, check **both** the existing moment
+registration and the additive audit registration:
+
+    python validation/routing/audit.py --check
+
+For the paired user-value comparison, use each existing moment task with the same client, model/version/settings,
+fixture bytes, task and budgets in two conditions: `alone` (no G6 server, tools, hooks, skill or history) and
+`with_g6` (the same agent plus G6). Record the exact model/version/settings together in `model`. The total budget
+includes G6's model calls, waits and retries: 900 wall seconds, 20 total model calls and one question for these
+tasks; no extra assistance or uncharged G6 budget. Exceedance and missing budget observations are reported.
+Alternate which condition goes first by frozen task index, separately for each client. Do not pool clients.
+The original guidance-before/guidance-after arms both have access to G6: they remain the unchanged release
+comparison and must not be renamed as an agent-alone control. The independent audit conditions are supplemental.
+
+Every scheduled task remains in each arm's report, including absent recordings. For each task and each arm the
+report gives final hidden-check pass, confirmed G6 defect finds, missed defects, false alarms, unadjudicated
+claims, unknown defect observations, wall seconds, model cost or calls, abandonment and budget observation.
+The paired table carries both complete measure rows, with matching task registration, model and budgets.
+Unrun tasks have unknown outcomes; ended sessions without a completed kept final diff fail. An empty **kept**
+diff is not abandonment and must actually pass the hidden checks to count as success. An ongoing session
+is reported separately. Unknown costs/calls/time remain null, with observed/missing counts beside totals.
+
+Defects are counted by registered class, once per task, rather than by number of repeated G6 warnings. Each
+existing positive task's `task_outcome` is its full frozen hidden-check set; negative/missing-tool tasks have no
+hidden success check, so that measure is unknown there (their existing protected-file harm measure remains).
+An independent adjudicator maps actual G6 defect claims to these IDs, retaining unmatched claims, and runs
+the same hidden checks on the **reviewed snapshot before remediation** and on the final kept diff. A reviewed
+snapshot check failing confirms a claimed defect; passing makes that claim a false alarm. A confirmed defect
+without a G6 claim is missed, even if the agent repairs it independently. In the alone condition, use the same
+registered initial defect snapshot for that observation; there are no G6 finds. A final passing repair cannot
+by itself establish whether the original warning was false. Unchecked or unmatched claims stay explicitly
+unadjudicated; they are never silently counted as correct or false. Record adjudications blind to arm identity.
+
+Calibration buckets preserve the exact structured completion states `verified`, `qualified-draft`,
+`blocked-escalated`, and review outcomes `test_integrity_compromised`, `defect_detected`, `insufficient_evidence`,
+`supported_within_scope`. Each distinct label counts once per session, and buckets may overlap. The numerator
+is sessions whose final diff passes every hidden check; the denominator is every session giving that label,
+with unknown outcomes also shown. Empty buckets have null shares. `verified` is never expected and is flagged
+as unexpected if observed; the scorer does not promote any label to a guarantee. This is descriptive
+calibration against final task success, not a probability-calibration claim or proof about the reviewed snapshot.
+
+`retention_tasks.json` adds four independent A-then-B pairs: decimal half-cent rounding, UTC day normalization,
+nested mutable ownership and cache identity. Each pair has two snapshots of the **same fixture repository**
+under `retention_fixtures/<family>/{a,b}/`. Run A first, then reset that repository's working files to its B
+snapshot, which reintroduces the same defect class in a related function. No A final diff carries into B.
+Compare B `retained` with B `fresh`: both use the same B seed, model and budget, and both agent conversations
+start fresh. Only retained imports **G6's saved history** from A; fresh imports none. No A agent conversation
+is carried into either B. Alternate B condition order by frozen pair index. A itself starts fresh. Record the
+canonical digest of A's original record in retained `history_from`; fresh's list is empty. Retained's
+`g6_history_before_sha256` must equal A's `g6_history_after_sha256`, and the saved bytes must exist under that
+digest. A must have ended with a kept log and G6 history, but need not have succeeded. This narrower control
+was also retired and refrozen before any arm, as recorded in the amendment's `history_control_refinement`.
+Missing prerequisites leave the pair incomplete. Report B's measures, calibration, paired outcomes and net
+direction; no retention result enters a gate. Hidden checks under `retention_outcome/` were written before any
+run, outside all fixture copies; neither prompts nor fixture files name G6. Tests demonstrate each seed fails
+its held-out check, a reference repair passes, and an unrelated edit still fails.
+
+The recording interface is deliberately separate from trial execution. A future runner or independent scorer
+exports `<folder>/records.json`, with bytes kept under `<folder>/artifacts/<sha256>` (no suffix). Its envelope is:
+
+```json
+{"format": "g6.routing_audit_records/1", "pins": "copy the object in audit_frozen.json", "records": []}
+```
+
+Replace the illustrative pins string with the exact object. Each record contains:
+
+- `task_id`, `client` (`codex` or `claude_code`), `arm`, `model` (exact model/version/settings), `task_digest`
+  (freeze.digest of its audit task entry), `fixture_digest` and `budget` (the task's frozen values).
+- Boolean `started`, `ended`; process `exit_code`; `seconds` (full session wall time, null if unknown);
+  `events_sha256` and `final_diff_sha256` (null if not kept); `history_from` (normally empty).
+- `g6_history_before_sha256` and `g6_history_after_sha256` (saved G6 history artifacts, null when absent).
+  Retention A must keep its output snapshot. Retained B's input digest must match it; fresh B has null input.
+- `adjudication_sha256`: an independent JSON artifact containing matching `task_id`, `task_digest`,
+  `events_sha256`, `final_diff_sha256`, `pins` (the exact active audit pin object), plus `reviewed_diff_sha256`,
+  `final_checks`, `defect_checks`, `g6_claims`.
+  Each check map uses registered IDs and boolean results (true means check passes), null or omitted if unknown.
+  Claims are distinct registered defect IDs or unmatched identifiers, coded from the G6 reply. Keep the reviewed
+  diff bytes too. The independent recorder retains raw hidden-check logs and claim citations for human audit;
+  digest binding establishes artifact identity, not adjudicator honesty. Never copy an agent's asserted success
+  into this artifact. A record's own claims/checks/labels/completion/cost are ignored by the reader.
+- Optional `usage_sha256`: JSON artifact with matching `events_sha256`, `includes_g6: true`, `cost_usd` and
+  `model_calls` (null if unknown). It records total exact usage including G6's delegated work, with the raw usage
+  receipts retained for audit. Without this artifact both cost and calls remain unknown, not an estimate of
+  G6 work from the number of tool calls.
+
+The reader derives completion and labels from the kept client event log, reads final-diff and adjudication
+bytes under their digests, and refuses missing/substituted artifacts, duplicate rows and mismatched pairs.
+For already-recorded data only:
+
+    python validation/routing/audit.py --records <folder>/records.json
+
+The export adapter and actual controlled trials are pending; this amendment specifies the recording contract
+and scoring only. Nothing above reports a measured user benefit, abandonment rate or retention effect.

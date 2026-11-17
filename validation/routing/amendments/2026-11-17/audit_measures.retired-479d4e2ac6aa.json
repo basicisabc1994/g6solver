@@ -1,0 +1,55 @@
+{
+  "retired": {
+    "date": "2026-11-17",
+    "before_any_arm": true,
+    "reasons": [
+      "owner-requested paired user-value audit",
+      "learning retention"
+    ],
+    "reason": "2026-11-17 before any arm: add reporting-only task success, defect adjudication, wall time, model cost/calls, abandonment, label calibration and four learning-retention A/B pairs. Every routing, outcome and beta bar remains unchanged.",
+    "previous_pins": {
+      "bars_digest": "9aa0237097e7dd22f013664850d3008513ac750834f577d793cab6f28556de59",
+      "tasks_digest": "e2168da8cc01efa41c19f736d54c91b92fc9fbaac068e500099ed27842051973",
+      "outcome_bars_digest": "bbdb333860ee44545b5b337213319e0780572f1fbd3fa24b8bc6abfe837dd1f8",
+      "checks_digest": "55fa5cd21cb6e932eba67df80c9b5bd5ffb64b0615814a93a0674abb64409a8e",
+      "withheld_digest": "9c031f4cfab260cd8101a1ff9efcc975f7c831b1eeae375c5da5661dfdb8e4a2",
+      "fixtures_digest": "4ba390a5443a5beb6446dfe1b0652b5d54e71d8e2c48990d2d4f7deec05307ff"
+    },
+    "pins": {
+      "protocol_digest": "6bae13591c0d3a3e7b62125088fb5678df98afbc585cff46ca9e71b385be34b3",
+      "retention_tasks_digest": "58a3d6ec5e8dbd81c308df2e2640925e4d383852094b87aec00a19a17603cc67",
+      "fixtures_digest": "e61ebbe8b11986fb0ddf88f320de1ba7dcb26e710e5ba9c356bd625611037b2a",
+      "checks_digest": "d455f82c834768be876d5cd7bf1a09393351d72d2cec70a0fa5be2d4f397db8f",
+      "previous_moment_pins_digest": "69e2cb49644e427bfc695e6c2b01c735f345fac90e328ab91af40235b90bbddd"
+    },
+    "retired": {
+      "retention_tasks.json": "retention_tasks.retired-f292aa18a8d9.json",
+      "audit_frozen.json": "audit_frozen.retired-b147c0e1b6a3.json",
+      "amendments/2026-11-17/audit_measures.json": "amendments/2026-11-17/audit_measures.retired-782582750c6c.json"
+    },
+    "source_index": "owner brief, 2026-11-17; audit_protocol.json",
+    "rulings": [
+      "Additive registration; no prior frozen file changes, so no retirement is required.",
+      "A final passing repair does not invalidate a prior confirmed defect: false alarms use the reviewed snapshot.",
+      "Existing before/after guidance arms are not relabelled as agent-alone/plus-G6 arms.",
+      "Unknown evidence is reported explicitly, and no new measure enters a gate.",
+      "Retention B resets working files to its frozen seed and varies A history only."
+    ],
+    "beta_bar": "unchanged: outcome arm net >= +1 with hidden checks and kept final diff, OR >= 3 dogfood catches; existing harm and routing gates stand",
+    "authoring_correction": {
+      "date": "2026-11-17",
+      "before_any_arm": true,
+      "reason": "2026-11-17 before any arm, audit authoring correction: module imports avoid unused repair-only imports and solution cues in the rounding, ownership and UTC seeds. Defect behavior, prompts, budgets, checks and every existing bar remain unchanged. Initial fixture bytes are archived beside this amendment.",
+      "previous_audit_pins": {
+        "protocol_digest": "6bae13591c0d3a3e7b62125088fb5678df98afbc585cff46ca9e71b385be34b3",
+        "retention_tasks_digest": "f292aa18a8d96d675c75597c7a6734a0959484641dc9284ccabb26aac0c09e2d",
+        "fixtures_digest": "119eae181f1fefaffbe1e0b5e7779e913423c507278aa2d2f4d5f5eb9e56036a",
+        "checks_digest": "d455f82c834768be876d5cd7bf1a09393351d72d2cec70a0fa5be2d4f397db8f",
+        "previous_moment_pins_digest": "69e2cb49644e427bfc695e6c2b01c735f345fac90e328ab91af40235b90bbddd"
+      },
+      "initial_fixture_bytes": "amendments/2026-11-17/audit_initial_fixtures"
+    }
+  },
+  "reason": "2026-11-17 before any arm: narrow the retention intervention to G6's saved history alone. Both B agent conversations start fresh; retained imports the digest-bound G6 history left by A, fresh imports none. This removes the ordinary agent-context confound; all tasks, checks, budgets and release bars stand.",
+  "digest": "479d4e2ac6aa572acc9396801e4fad691cc1cb602b3f90e28b60392f5275533a"
+}

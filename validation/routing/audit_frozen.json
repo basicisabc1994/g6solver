@@ -1,0 +1,7 @@
+{
+  "protocol_digest": "41482999a7114c69005567f7a2a44989438c40e70b368a404742bdb2d676050a",
+  "retention_tasks_digest": "58a3d6ec5e8dbd81c308df2e2640925e4d383852094b87aec00a19a17603cc67",
+  "fixtures_digest": "e61ebbe8b11986fb0ddf88f320de1ba7dcb26e710e5ba9c356bd625611037b2a",
+  "checks_digest": "d455f82c834768be876d5cd7bf1a09393351d72d2cec70a0fa5be2d4f397db8f",
+  "previous_moment_pins_digest": "69e2cb49644e427bfc695e6c2b01c735f345fac90e328ab91af40235b90bbddd"
+}
