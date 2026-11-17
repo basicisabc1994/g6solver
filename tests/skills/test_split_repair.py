@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 import re
@@ -18,6 +19,10 @@ GUIDE = Path(__file__).resolve().parents[2] / "src/g6/skills/using-g6"
 BASELINE = Path(__file__).with_name("fixtures") / "using_g6_wiring_int.md"
 EXCEPTIONS = BASELINE.with_name("using_g6_sentence_exceptions.tsv")
 LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+# This closed table has two lead-reviewed navigation-only rows. Any row change
+# needs the lead's review and an update to this pin in the same change.
+EXCEPTION_ROWS_SHA256 = "570281c5f6754e065736f17e5acc6b4601daa6fcaa31767cd883d635031a415c"
+AUTHORITY_TERMS = ("never", "not", "do not", "person", "decides", "ask", "stop", "consent", "grant")
 TASKS = [
     ("write numbered requirements, acceptance tests and template instances for a hidden constraint", "verify",
      {"route:review"}),
@@ -89,11 +94,47 @@ def _exceptions(original):
     return exceptions
 
 
+def _reviewed_exceptions(original):
+    rows = list(csv.DictReader(EXCEPTIONS.read_text(encoding="utf-8").splitlines(), delimiter="\t"))
+    digest = hashlib.sha256(json.dumps(rows, sort_keys=True).encode("utf-8")).hexdigest()
+    assert digest == EXCEPTION_ROWS_SHA256, (
+        "cannot reach original sentences with unreviewed exception rows: lead review and pin update required")
+    exceptions = _exceptions(original)
+    for sentence, replacement in exceptions.items():
+        if not replacement:
+            continue  # Only the pinned, reviewed rows may drop a sentence.
+        for term in AUTHORITY_TERMS:
+            pattern = rf"\b{term}\b"
+            old = len(re.findall(pattern, _normal(sentence).casefold()))
+            new = len(re.findall(pattern, _normal(replacement).casefold()))
+            assert new >= old, f"reworded exception loses authority term {term!r}: {sentence}"
+    return exceptions
+
+
+def _navigation_links(text):
+    """Literal code examples are not rendered navigation, including onward links."""
+    rendered, fence = [], None
+    for line in text.splitlines():
+        if fence:
+            char, length = fence
+            if re.fullmatch(rf"\s*{re.escape(char)}{{{length},}}\s*", line):
+                fence = None
+            continue
+        marker = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if marker:
+            fence = (marker[1][0], len(marker[1]))
+        else:
+            rendered.append(line)
+    # The closing backtick run must have the same length as the opening run.
+    prose = re.sub(r"(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)", "", "\n".join(rendered))
+    return LINK.findall(prose)
+
+
 def _reachable(root, route):
     """Follow local reference links from this route only, including onward links."""
     line = routing.section(root, route.anchor)
     assert line, route.id
-    texts, seen, pending = [root], set(), [GUIDE / target for target in LINK.findall(line)]
+    texts, seen, pending = [root], set(), [GUIDE / target for target in _navigation_links(line)]
     while pending:
         path = pending.pop().resolve()
         assert path.is_relative_to(GUIDE.resolve()), path.name
@@ -102,7 +143,7 @@ def _reachable(root, route):
         seen.add(path)
         text = path.read_text(encoding="utf-8")
         texts.append(text)
-        pending.extend(path.parent / target for target in LINK.findall(text))
+        pending.extend(path.parent / target for target in _navigation_links(text))
     return texts
 
 
@@ -121,7 +162,7 @@ def test_each_route_reaches_its_original_safety_and_authority_sentences(route_id
     exception that rewords a sentence must name a reachable replacement sentence.
     """
     original = BASELINE.read_text(encoding="utf-8")
-    exceptions = _exceptions(original)
+    exceptions = _reviewed_exceptions(original)
     required = {exceptions.get(s, s) for s in _held_sentences(original, route_id)} - {""}
     root = (GUIDE / "SKILL.md").read_text(encoding="utf-8")
     reachable = _reachable(root, routing.load().routes[route_id])

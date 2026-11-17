@@ -973,21 +973,24 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     chosen = ([first] if first else []) + sorted((k for k in must + rest if k != first),
                                                  key=lambda k: (bool(acting[k]), rank.get(k, len(rank)), k))
 
-    # Discovery holds the general operation inventory. A nonempty route list
-    # always retains that escape hatch, without tuning its lexical score.
+    # Route-list priority: (1) highest-ranked candidate; (2) discovery fallback
+    # when absent and limit >= 2; (3) highest-ranked route if a slot remains;
+    # (4) remaining candidates in rank order while slots remain. Emit kept
+    # candidates in their original rank order, then the discovery fallback last.
     fallback = "route:discover"
-    fallback_added = (fallback in entries and fallback not in chosen
-                      and any(entries[k]["kind"] == "route" for k in chosen))
-    if fallback_added:
-        # Keep the specific routes when a lower call can yield its slot. Forced
-        # remedies, scheduled checks and considered calls still keep their slots.
-        disposable = [k for k in chosen if k not in must and entries[k]["kind"] != "route"]
-        removed = disposable[-1] if disposable else next(k for k in reversed(chosen)
-                                                        if entries[k]["kind"] == "route")
-        chosen.remove(removed)
-        # The fallback is the last route; outward calls retain their safety order.
-        position = next((i for i, k in enumerate(chosen) if acting[k]), len(chosen))
-        chosen.insert(position, fallback)
+    fallback_added = False
+    removed = ""
+    if (limit >= 2 and fallback in entries and fallback not in chosen
+            and any(entries[k]["kind"] == "route" for k in chosen)):
+        routes = [k for k in chosen if entries[k]["kind"] == "route"]
+        priority = list(dict.fromkeys([chosen[0], fallback, *routes[:1], *chosen]))[:limit]
+        removed = next((k for k in chosen if k not in priority), "")
+        chosen = [k for k in chosen if k in priority] + [fallback]
+        fallback_added = True
+    stage["why"] += "; " + ("limit=1: no discovery fallback is forced" if limit == 1 else
+                            f"replaced {removed} with the discovery fallback" if removed else
+                            "added the discovery fallback" if fallback_added else
+                            "discovery already ranked, no route list, or discovery absent from the corpus")
 
     # 6. validation
     candidates = []
