@@ -147,8 +147,7 @@ def _network(env: dict[str, str]) -> dict[str, str]:
 
 
 def missing_git() -> GitRefused:
-    return GitRefused(OUTSIDE_PROGRAM_MISSING, f"git ({GIT.purpose}) is not on PATH. G6 never installs it; install it "
-                                               f"yourself: {GIT.install}")
+    return GitRefused(OUTSIDE_PROGRAM_MISSING, 'git_missing')
 
 
 def _runner(where: Path, env: dict[str, str], timeout: float, *,
@@ -160,30 +159,26 @@ def _runner(where: Path, env: dict[str, str], timeout: float, *,
 
     def run(*args: str, ok: tuple[int, ...] = (0,), input_bytes: bytes = b"", cut_ok: bool = False) -> Done:
         if refuse_rewrites and args and args[0] in {"clone", "fetch", "pull", "push", "ls-remote"}:
-            raise GitRefused(UNSAFE, "config selects additive URL rewrites that cannot be disabled with -c; "
-                                    "the network command was not run")
+            raise GitRefused(UNSAFE, 'runner_runner_1')
         argv = [git_program(), "--no-pager", *overrides, "-C", str(where), *safe_git_args(*args)]
         try:
             with component_process.window(timeout):
                 done = component_process.run_contained(argv, env=env, input_bytes=input_bytes)
         except component_process.ExecutionInterrupted as exc:
             if exc.stopped:
-                raise GitRefused(FAILED, "G6's stop is engaged, so git was ended") from None
-            raise GitRefused(TIMEOUT, f"git {args[0]} did not finish within {timeout:g} seconds and was ended") from None
+                raise GitRefused(FAILED, 'runner_runner_2') from None
+            raise GitRefused(TIMEOUT, 'command_timeout') from None
         except ConnectionResetError:   # the contained process wrote more than its reply protocol carries
-            raise GitRefused(TOO_LARGE, f"git {args[0]} wrote more than G6 reads from one command: narrow the request "
-                                        "(paths, rev, max_count)") from None
-        except OSError as exc:
-            raise GitRefused(FAILED, f"git {args[0]} could not be run to the end: {type(exc).__name__}") from None
+            raise GitRefused(TOO_LARGE, 'command_protocol_limit') from None
+        except OSError:
+            raise GitRefused(FAILED, 'command_oserror') from None
         limit = MAX_OUTPUT if output_limit is None else output_limit
         cut = len(done.stdout) > limit
         if cut and not cut_ok:
-            raise GitRefused(TOO_LARGE, f"git {args[0]} wrote {len(done.stdout)} bytes, more than the {limit} one "
-                                        "call keeps: narrow the request (paths, rev, max_count)")
+            raise GitRefused(TOO_LARGE, 'command_output_limit')
         found = Done(done.returncode, done.stdout[:limit], done.stderr[:MAX_ERROR], cut)
         if found.code not in ok:
-            raise GitRefused(classify(found.said), f"git {args[0]} failed with exit {found.code}; "
-                             "check the repository and the requested operation")
+            raise GitRefused(classify(found.said), 'command_failed')
         return found
     return run
 
@@ -222,17 +217,17 @@ def _prepared(where: Path, gitdir: Path | None, *, network: bool, timeout: float
         try:
             keys = tuple(name.decode("utf-8", "strict") for name in names if name)
         except UnicodeError:
-            raise GitRefused(UNSAFE, "config key spelling cannot be classified; git was not run") from None
+            raise GitRefused(UNSAFE, 'runner_prepared_1') from None
         if any((rule := _config_policy.rule_for(key)) is not None
                and rule.action == "classified" and rule.value == "refuse" for key in keys):
-            raise GitRefused(UNSAFE, "config selects a foreign-VCS helper; git was not run")
+            raise GitRefused(UNSAFE, 'runner_prepared_2')
         rewrites = any((rule := _config_policy.rule_for(key)) is not None
                        and rule.value == "network-refuse" for key in keys)
         try:
             initial = _config_policy.settings(keys, hooks=str(folder / "hooks"), template=str(template),
                                               repository_files=repository_files)
         except ValueError:
-            raise GitRefused(UNSAFE, "config key spelling cannot be safely overridden; no operation was run") from None
+            raise GitRefused(UNSAFE, 'runner_prepared_3') from None
         base = _with(base, initial)
         if not clone:
             query = _runner(where, base, timeout, settings=initial, output_limit=MAX_ADMISSION_OUTPUT)
@@ -256,10 +251,9 @@ def session(repo: Path, gitdir: Path, *, network: bool = False,
         with _prepared(repo, gitdir, network=network, timeout=timeout, repository_files=repository_files) as run:
             yield run
     except UnsafeGitConfig as exc:
-        raise GitRefused(SUBMODULE_REFUSED if "submodule" in str(exc) else UNSAFE, str(exc)) from None
+        raise GitRefused(SUBMODULE_REFUSED if "submodule" in str(exc) else UNSAFE, 'unsafe_config') from None
     except TimeoutExpired:
-        raise GitRefused(TIMEOUT, f"git did not answer within {timeout:g} seconds while G6 read the repository's "
-                                  "config") from None
+        raise GitRefused(TIMEOUT, 'config_timeout') from None
 
 
 @contextmanager

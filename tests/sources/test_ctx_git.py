@@ -296,8 +296,9 @@ def test_p1_git02_clone_takes_only_https_or_ssh_to_a_declared_public_host(home: 
         assert out["code"] == cfg.REMOTE_REFUSED, url
     assert "not one of the remote hosts" in call(block, "clone", url="https://gitlab.com/x/y",
                                                  dest=str(root / "new"))["reason"]
-    assert "non-public address 10.0.0.7" in call(block, "clone", url="https://internal.example/x/y",
-                                          dest=str(root / "new"))["reason"]
+    # A refusal reason is G6's fixed vocabulary: it never echoes a resolved address.
+    private = call(block, "clone", url="https://internal.example/x/y", dest=str(root / "new"))["reason"]
+    assert "public-address policy" in private and "10.0.0.7" not in private
     assert call(block, "clone", url="https://github.com/x/y", dest=str(home / "out"))["code"] == cfg.OUTSIDE_ROOT
 
 
@@ -490,7 +491,8 @@ def test_g4_a_merge_conflict_is_aborted_and_leaves_the_copy_as_it_was(block: Ctx
     git(repo, "commit", "-q", "-am", "ours")
     before = sha(repo)
     out = call(block, "merge", repo=str(repo), branch="other")
-    assert out["code"] == ops.CONFLICT and "a.txt" in out["reason"]
+    # A refusal reason is G6's fixed vocabulary: it never names a file from the repository.
+    assert out["code"] == ops.CONFLICT and "the merge was aborted" in out["reason"] and "a.txt" not in out["reason"]
     assert sha(repo) == before and git(repo, "status", "--porcelain").stdout == ""
 
 

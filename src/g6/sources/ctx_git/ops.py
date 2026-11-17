@@ -10,7 +10,7 @@ act, so it is evidence, not a check by anyone else.
 * Local changes: ``add``, ``commit``, ``branch_create``, ``branch_switch``, ``merge``, ``stash_save``, ``stash_pop``,
   ``tag_create``, ``reset_staged``. ``branch_switch``, ``merge``, ``stash_pop`` and ``pull`` refuse a working copy
   with uncommitted changes (commit or stash them first): there is no flag a caller can set to go past that. A merge
-  that conflicts is aborted, so the working copy is as it was, and the conflicting files are listed.
+  that conflicts is aborted, so the working copy is as it was.
 * Outward: ``fetch``, ``pull`` (fast-forward only), ``push`` (never forced) and ``clone``. Each is a dry run unless
   ``dry_run`` is false, and then runs only when ``g6.action_gating`` lets it through (``g6.sources._gate``); the reply
   of a dry run or a held act carries the exact command, for a person to run under their own git config. The
@@ -33,7 +33,7 @@ from typing import Any
 import g6.knowledge._reply as _reply
 import g6.sources._gate as _gate
 from g6.core import http
-from g6.sources.ctx_git import config as cfg
+from g6.sources.ctx_git import _refusals, config as cfg
 from g6.sources.ctx_git.config import GitConfig, GitRefused
 from g6.sources.ctx_git.runner import Done
 
@@ -56,19 +56,19 @@ ACTIONS: dict[str, str] = {
     DRY_RUN: "Nothing was sent. Ask again with dry_run false; the action gate decides, or a person runs the command.",
     SENT: "The read-back is ctx_git's own: fetch or log again to see the remote as it is now.",
     HELD: "Nothing was sent: the action gate holds this for a person. A person can run the command shown.",
-    DIRTY: "Commit or stash the changes listed (stash_save), then ask again.",
+    DIRTY: "Commit or stash the working-copy changes (stash_save), then ask again.",
     INPUT: "Correct the request as the reason says.",
     CONFLICT: "Resolve the conflict yourself, or leave it; nothing was changed by the attempt.",
     READ_BACK: "git reported success but the remote does not show the pushed commit: check the remote by hand.",
-    STEERED: "Git config would steer this network act: a person reviews the key named in its owning scope, "
-             "removes it, or runs the command themselves.",
+    STEERED: "Git config would steer this network act: a person reviews the indicated key form in its owning scope, "
+             "removes the setting, or runs the command themselves.",
     cfg.NO_ROOT: "The person who runs G6 declares the folders ctx_git may use; an agent cannot.",
     cfg.OUTSIDE_ROOT: "Use a repository, file or folder inside a declared root.",
     cfg.NOT_A_REPOSITORY: "Give the absolute path of a repository's top folder under a declared root.",
     cfg.CONFIG_INVALID: "The person who runs G6 corrects the ctx_git configuration.",
     cfg.REMOTE_REFUSED: "Use an https or ssh remote on a host the person declared.",
 }
-_DEFAULT_ACTION = "Read git's message in the reason, correct the request or the repository, and ask again."
+_DEFAULT_ACTION = "Read the reason, correct the request or the repository, and ask again."
 _REV = re.compile(r"^(?!-)[^\s\x00-\x1f\\]{1,250}$")
 _NAME = re.compile(r"^(?!-)(?!.*\.\.)(?!.*@\{)(?!.*//)[A-Za-z0-9._/-]{1,200}(?<!\.lock)(?<![/.])$")
 _REMOTE = re.compile(r"^(?!-)[A-Za-z0-9._-]{1,100}$")
@@ -135,20 +135,19 @@ def refuse(op: str, exc: GitRefused, ids: dict[str, str], **fields: Any) -> dict
 
 def rev(value: str, what: str) -> str:
     if not _REV.fullmatch(value):
-        raise GitRefused(INPUT, f"{what} {value!r} is not a revision (no spaces, and it may not start with -)")
+        raise GitRefused(INPUT, 'revision_input')
     return value
 
 
 def ref_name(value: str, what: str) -> str:
     if not _NAME.fullmatch(value):
-        raise GitRefused(INPUT, f"{what} {value!r} is not a branch or tag name git takes (letters, digits, . _ / -; "
-                                "no .., no leading -)")
+        raise GitRefused(INPUT, 'ref_input')
     return value
 
 
 def remote_name(value: str) -> str:
     if not _REMOTE.fullmatch(value):
-        raise GitRefused(INPUT, f"remote {value!r} is not a remote's name")
+        raise GitRefused(INPUT, 'remote_input')
     return value
 
 
@@ -211,10 +210,7 @@ def status_of(run: Run) -> dict[str, Any]:
 def _clean_first(run: Run, op: str) -> None:
     found = status_of(run)
     if not found["clean"]:
-        changed = [*found["conflicted"], *found["staged"], *found["modified"], *found["untracked"]]
-        raise GitRefused(DIRTY, f"{op} refused: the working copy has uncommitted changes "
-                                f"({', '.join(changed[:5])}{' and more' if len(changed) > 5 else ''}); commit or stash "
-                                "them first (no flag goes past this)")
+        raise GitRefused(DIRTY, 'dirty')
 
 
 def _staged(run: Run) -> list[str]:
@@ -293,7 +289,7 @@ def show(run: Run, repo: Path, c: Call) -> Outcome:
 
 def blame(run: Run, repo: Path, c: Call) -> Outcome:
     if not c.file:
-        raise GitRefused(INPUT, "blame needs file: a file in the repository")
+        raise GitRefused(INPUT, 'ops_blame_1')
     path = cfg.inside(repo, c.file)
     # The empty-file option clears revision IDs after processing earlier files;
     # it does not prevent opening those files. Negate the string-list option
@@ -392,13 +388,11 @@ def changes_since(run: Run, repo: Path, c: Call) -> Outcome:
     since = c.since or next((e.get("head_after") or e.get("head_before") for e in reversed(log_)
                              if e.get("head_after") or e.get("head_before")), "")
     if not since:
-        raise GitRefused(INPUT, "changes_since needs since (a commit): the audit log holds no earlier point for this "
-                                "repository")
+        raise GitRefused(INPUT, 'ops_changes_since_1')
     found = run("rev-parse", "--verify", "-q", "--end-of-options", f"{rev(since, 'since')}^{{commit}}", ok=(0, 1))
     point = found.text.strip()
     if not point:
-        raise GitRefused("G6_E_GIT_BAD_REVISION", f"since {since!r} is not a commit in this repository (history may "
-                                                  "have been rewritten elsewhere)")
+        raise GitRefused("G6_E_GIT_BAD_REVISION", 'since_commit')
     now = head(run)
     in_history = bool(now) and run("merge-base", "--is-ancestor", point, now, ok=(0, 1)).code == 0
     made = {s for e in log_ for s in e.get("created", [])}
@@ -457,7 +451,7 @@ def add(run: Run, repo: Path, c: Call) -> Outcome:
     elif c.paths:
         run("add", "--", *[cfg.inside(repo, p) for p in c.paths])
     else:
-        raise GitRefused(INPUT, "add needs paths, or all_files true")
+        raise GitRefused(INPUT, 'ops_add_1')
     staged = _staged(run)
     return Outcome(answer("add", CHANGED, f"{len(staged)} file(s) staged now (read back from the index).",
                           texts=staged, ids=c.ids, staged=staged))
@@ -465,7 +459,7 @@ def add(run: Run, repo: Path, c: Call) -> Outcome:
 
 def commit(run: Run, repo: Path, c: Call) -> Outcome:
     if not c.message.strip():
-        raise GitRefused(INPUT, "commit needs message")
+        raise GitRefused(INPUT, 'ops_commit_1')
     before = head(run)
     run("commit", "-q", "--no-verify", "-F", "-", input_bytes=c.message.encode("utf-8"))
     after = head(run)
@@ -495,18 +489,17 @@ def branch_switch(run: Run, repo: Path, c: Call) -> Outcome:
 def merge(run: Run, repo: Path, c: Call) -> Outcome:
     source = rev(c.branch, "branch") if c.branch else ""
     if not source:
-        raise GitRefused(INPUT, "merge needs branch: what to merge into the current branch")
+        raise GitRefused(INPUT, 'ops_merge_1')
     _clean_first(run, "merge")
     before = head(run)
     merging = run("rev-parse", "--verify", "-q", "--end-of-options", f"{source}^{{commit}}", ok=(0, 1)).text.strip()
     if not merging:
-        raise GitRefused("G6_E_GIT_BAD_REVISION", f"branch {source!r} is not a commit in this repository")
+        raise GitRefused("G6_E_GIT_BAD_REVISION", 'merge_commit')
     done = run("merge", "--no-edit", "--end-of-options", source, ok=(0, 1))
     if done.code == 1:
-        conflicted = [p for p in run("diff", "--name-only", "--diff-filter=U", "-z").text.split("\0") if p]
+        run("diff", "--name-only", "--diff-filter=U", "-z")
         run("merge", "--abort", ok=(0, 128))
-        raise GitRefused(CONFLICT, f"merging {source} conflicts in {', '.join(conflicted[:10]) or 'the working copy'}; "
-                                   "the merge was aborted, so the working copy is as it was")
+        raise GitRefused(CONFLICT, 'merge_conflict')
     after = head(run)
     parents = run("rev-list", "--parents", "-n", "1", after).text.split() if after else []
     # ctx_git's own merge commit only: a new commit (neither the old tip nor what was merged, so not a fast-forward
@@ -524,7 +517,7 @@ def stash_save(run: Run, repo: Path, c: Call) -> Outcome:
     args = ["stash", "push"] + (["--include-untracked"] if c.include_untracked else [])
     done = run(*args, *(["-m", c.message] if c.message else []))
     if "no local changes to save" in done.said.lower():
-        raise GitRefused("G6_E_GIT_NOTHING_TO_STASH", "there are no local changes to stash")
+        raise GitRefused("G6_E_GIT_NOTHING_TO_STASH", 'ops_stash_save_1')
     top = run("stash", "list", "-n", "1", "--format=%gd%x1f%H%x1f%s").text.strip().split("\x1f")
     return Outcome(answer("stash_save", CHANGED, f"Stashed as {top[0]} (read back); the working copy is clean of "
                           "those changes.", ids=c.ids, stash=top[0], sha=top[1] if len(top) > 1 else ""))
@@ -535,7 +528,7 @@ def stash_pop(run: Run, repo: Path, c: Call) -> Outcome:
     done = run("stash", "pop", ok=(0, 1))
     if done.code == 1:
         raise GitRefused(CONFLICT if "conflict" in done.said.lower() else "G6_E_GIT_FAILED",
-                         "stash pop did not apply cleanly; git keeps the stash")
+                         'ops_stash_pop_1')
     found = status_of(run)
     return Outcome(answer("stash_pop", CHANGED, "The newest stash was applied and dropped (read back from status).",
                           texts=[*found["modified"], *found["untracked"]], ids=c.ids, **found))
@@ -559,7 +552,7 @@ def reset_staged(run: Run, repo: Path, c: Call) -> Outcome:
     elif c.paths:
         run("reset", "-q", "--", *[cfg.inside(repo, p) for p in c.paths])
     else:
-        raise GitRefused(INPUT, "reset_staged needs paths, or all_files true")
+        raise GitRefused(INPUT, 'ops_reset_staged_1')
     staged = _staged(run)
     return Outcome(answer("reset_staged", CHANGED, f"{len(staged)} file(s) still staged (read back); the working "
                           "copy's files were not touched.", texts=staged, ids=c.ids, staged=staged))
@@ -579,7 +572,7 @@ class Outward:
 def _urls(run: Run, remote: str, *, push: bool) -> list[str]:
     raw = run("remote", "get-url", "--all", *(["--push"] if push else []), remote, ok=(0, 2, 128))
     if raw.code != 0:
-        raise GitRefused("G6_E_GIT_BAD_REVISION", f"there is no remote named {remote!r}")
+        raise GitRefused("G6_E_GIT_BAD_REVISION", 'remote_missing')
     return [u for u in raw.text.splitlines() if u.strip()]
 
 
@@ -589,10 +582,13 @@ def _reachable(urls: list[str], out: Outward) -> None:
     for url in urls:
         problem = cfg.remote_problem(url, out.config, resolver=out.resolver)
         if problem:
-            raise GitRefused(cfg.REMOTE_REFUSED, f"{cfg.shown(url)}: {problem}")
+            if problem == _refusals.render("remote_host_policy"):
+                raise GitRefused(cfg.REMOTE_REFUSED, "remote_host_policy")
+            if problem == _refusals.render("remote_address_policy"):
+                raise GitRefused(cfg.REMOTE_REFUSED, "remote_address_policy")
+            raise GitRefused(cfg.REMOTE_REFUSED, 'remote_policy')
         if cfg.remote_host(url)[0] == "ssh" and ssh_program() is None:
-            raise GitRefused(cfg.REMOTE_REFUSED, f"{cfg.shown(url)} is an ssh remote and there is no ssh program on "
-                                                 "PATH")
+            raise GitRefused(cfg.REMOTE_REFUSED, 'ssh_missing')
 
 
 def _unsteered(run: Run, remote: str, urls: list[str], op: str) -> None:
@@ -617,10 +613,7 @@ def _unsteered(run: Run, remote: str, urls: list[str], op: str) -> None:
                   or (op == "push" and (lower in {"push.followtags", "push.pushoption"}
                                         or (named == "pushurl" and value not in urls))))
         if steers:
-            owner = "Git config" if rewrite else "the repository's own config"
-            raise GitRefused(STEERED, f"{op} refused: {owner} sets {key}, which would steer how git "
-                                      f"reaches {remote} or what it sends; ctx_git refuses configured steering "
-                                      "for this network operation")
+            raise GitRefused(STEERED, 'steering', key=key, scope=scope)
 
 
 def _action(op: str, target: str, urls: list[str], what: str, expected: str, monitor: str,
@@ -643,9 +636,9 @@ def _go(op: str, command: list[str], action: dict[str, Any], out: Outward,
     ``None`` when it may. A gate that raises holds the act."""
     try:
         gate = out.gate(action, None)
-    except Exception as exc:  # noqa: BLE001 - a gate that cannot decide holds the act
+    except Exception:  # noqa: BLE001 - a gate that cannot decide holds the act
         gate = {"kind": "action_gate", "decision": "block", "reason_codes": [],
-                "message": f"the action gate could not decide: {type(exc).__name__}"}
+                "message": _refusals.render("gate_unavailable")}
     display = list(command)
     if display[:1] == ["-C"] and len(display) >= 2:
         display[1] = cfg._name(Path(display[1]), out.config.roots)
@@ -657,10 +650,8 @@ def _go(op: str, command: list[str], action: dict[str, Any], out: Outward,
                       f"{gate['decision']} now. A person can run: {shown} ({UNDER}).", ids=c.ids, would_run=shown,
                       would_run_under=UNDER, gate=gate, evidence=[{"kind": "dry_run", "would_run": shown}, gate]), gate
     if not _gate.lets_through(gate):
-        return _reply.refuse(COMPONENT, op, HELD, f"Nothing was sent: the action gate (g6.action_gating) decided "
-                             f"{gate['decision']} ({', '.join(gate.get('reason_codes', [])) or 'no reason code'}): "
-                             f"{gate.get('message', '')} A person can run: {shown} ({UNDER}).", action=ACTIONS[HELD],
-                             would_run=shown, would_run_under=UNDER, gate=gate, evidence=[gate], **c.ids), gate
+        return refuse(op, GitRefused(HELD, "gate_held"), c.ids,
+                      would_run=shown, would_run_under=UNDER, gate=gate, evidence=[gate]), gate
     return None, gate
 
 
@@ -729,7 +720,7 @@ def push(run: Run, repo: Path, c: Call, out: Outward) -> Outcome:
     branch = ref_name(c.branch, "branch")
     local = run("rev-parse", "--verify", "-q", f"refs/heads/{branch}", ok=(0, 1)).text.strip()
     if not local:
-        raise GitRefused("G6_E_GIT_BAD_REVISION", f"there is no local branch {branch!r} to push")
+        raise GitRefused("G6_E_GIT_BAD_REVISION", 'push_branch_missing')
     urls = _urls(run, remote, push=True)
     _unsteered(run, remote, urls, "push")
     _reachable(urls, out)
@@ -746,8 +737,7 @@ def push(run: Run, repo: Path, c: Call, out: Outward) -> Outcome:
         seen = run("ls-remote", url, f"refs/heads/{branch}").text.split()
         there = seen[0] if seen else ""
         if there != local:
-            raise GitRefused(READ_BACK, f"git reported the push done, but {cfg.shown(url)} shows {branch} at "
-                                        f"{there[:12] or 'nothing'}, not {local[:12]}")
+            raise GitRefused(READ_BACK, 'push_read_back')
     return Outcome(_sent(answer("push", SENT, f"Pushed {branch} to {remote}: each address it went to shows "
                                 f"{local[:12]} (read back with ls-remote).", ids=c.ids, branch=branch, sha=local,
                                 read_back_from=[cfg.shown(u) for u in urls],
@@ -758,7 +748,7 @@ def clone(c: Call, out: Outward) -> Outcome:
     from g6.sources.ctx_git.runner import clone_session, session
 
     if not c.url:
-        raise GitRefused(INPUT, "clone needs url: an https or ssh address")
+        raise GitRefused(INPUT, 'ops_clone_1')
     dest = cfg.destination(c.dest, out.config)
     _reachable([c.url], out)
     command = ["clone", "--no-recurse-submodules", "--", c.url, str(dest)]

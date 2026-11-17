@@ -40,7 +40,7 @@ from g6.code import _roots
 from g6.code._types import CodeRefused
 from g6.core import http
 from g6.core.storage import confined_path, plain_file, state_path
-from g6.sources.ctx_git import _config_includes
+from g6.sources.ctx_git import _config_includes, _refusals
 
 CONFIG_ENV = "G6_GIT_CONFIG"
 CONFIG_FILE = ("ctx_git", "config.json")
@@ -67,9 +67,13 @@ _HOST = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-
 
 
 class GitRefused(Exception):
-    """An op ctx_git will not run, with its stable code and the reason in words."""
+    """An op ctx_git will not run, with a stable code and a registered reason.
 
-    def __init__(self, code: str, reason: str) -> None:
+    Unknown identifiers produce a fixed fallback, never their supplied text.
+    """
+
+    def __init__(self, code: str, identifier: str, *, key: str = "", scope: str = "", metadata: str = "") -> None:
+        reason = _refusals.render(identifier, key=key, scope=scope, metadata=metadata)
         super().__init__(f"[{code}] {reason}")
         self.code, self.reason = code, reason
 
@@ -98,7 +102,7 @@ class _Admission:
 
     def check(self) -> None:
         if monotonic() >= self.deadline:
-            raise GitRefused(PATH_INVALID, "repository metadata exceeds G6's admission time limit; git was not run")
+            raise GitRefused(PATH_INVALID, 'config_check_1')
 
     def account(self, text: str) -> str:
         self.check()
@@ -106,14 +110,12 @@ class _Admission:
         count = text.count("\n") + bool(text and not text.endswith("\n"))
         self.lines += count
         if count > METADATA_FILE_LINES or self.lines > METADATA_TOTAL_LINES:
-            raise GitRefused(PATH_INVALID, "repository metadata exceeds G6's line limit per file or repository; "
-                                           "git was not run")
+            raise GitRefused(PATH_INVALID, 'config_account_1')
         return text
 
     def alternate_limit(self, checked: set[tuple[int, int]]) -> None:
         if len(checked) + len(self.missing_alternates) >= ALTERNATES_FOLDERS:
-            raise GitRefused(PATH_INVALID, f"objects/info/alternates exceeds G6's limit of {ALTERNATES_FOLDERS} "
-                                           "distinct object folders per repository (missing targets count)")
+            raise GitRefused(PATH_INVALID, 'alternate_folders')
 
 
 def parse(text: str, source: str) -> GitConfig:
@@ -122,23 +124,23 @@ def parse(text: str, source: str) -> GitConfig:
     try:
         data = json.loads(text)
     except (ValueError, RecursionError, TypeError, MemoryError):
-        raise GitRefused(CONFIG_INVALID, f"{source} is not JSON G6 can read") from None
+        raise GitRefused(CONFIG_INVALID, 'config_json') from None
     if not isinstance(data, Mapping) or set(data) - {"roots", "remote_hosts"}:
-        raise GitRefused(CONFIG_INVALID, f"{source} must be a JSON object with only roots and remote_hosts")
+        raise GitRefused(CONFIG_INVALID, 'config_object')
     roots, hosts = data.get("roots", []), data.get("remote_hosts", [])
     if not isinstance(roots, list) or not all(isinstance(r, str) and r.strip() for r in roots):
-        raise GitRefused(CONFIG_INVALID, f"{source}: roots must be a list of folder paths")
+        raise GitRefused(CONFIG_INVALID, 'config_roots')
     if not isinstance(hosts, list) or not all(isinstance(h, str) and _HOST.fullmatch(h.lower()) for h in hosts):
-        raise GitRefused(CONFIG_INVALID, f"{source}: remote_hosts must be a list of host names, such as github.com")
+        raise GitRefused(CONFIG_INVALID, 'config_hosts')
     resolved = []
     for raw in roots:
         path = Path(raw)
         if raw.startswith("~") or not path.is_absolute():
-            raise GitRefused(CONFIG_INVALID, f"{source}: each root is an absolute path (~ is not expanded)")
+            raise GitRefused(CONFIG_INVALID, 'config_absolute_root')
         try:
             resolved.append(confined_path(raw, (path,)))
         except (ValueError, OSError):
-            raise GitRefused(CONFIG_INVALID, f"{source}: a root is not a local folder G6 can check") from None
+            raise GitRefused(CONFIG_INVALID, 'config_root_check') from None
     return GitConfig(tuple(resolved), tuple(h.lower() for h in hosts), source)
 
 
@@ -158,8 +160,7 @@ def load(environ: Mapping[str, str] | None = None) -> GitConfig:
                 raise ValueError("configuration too large")
             return parse(data.decode("utf-8"), "the ctx_git configuration file under the G6 home")
     except (OSError, ValueError, TypeError, RecursionError, MemoryError):
-        raise GitRefused(CONFIG_INVALID, "the ctx_git configuration file could not be read as UTF-8 text "
-                                         "of at most 1 MiB; check ctx_git/config.json under G6's home") from None
+        raise GitRefused(CONFIG_INVALID, 'config_load_1') from None
     return GitConfig((), (), "no configuration")
 
 
@@ -168,10 +169,9 @@ def _confined(raw: str | Path, roots: tuple[Path, ...], what: str = "") -> Path:
         return confined_path(raw, roots)
     except (ValueError, OSError, MemoryError) as exc:
         code = OUTSIDE_ROOT if getattr(exc, "outside", False) else PATH_INVALID
-        reason = ("the path is outside every declared root (a link out counts as outside)" if code == OUTSIDE_ROOT
-                  else "the path could not be opened and checked")
-        label = what if what in {"commondir", "objects/info/alternates"} else ""
-        raise GitRefused(code, f"{label}: {reason}" if label else reason) from None
+        if code == OUTSIDE_ROOT:
+            raise GitRefused(code, "path_outside") from None
+        raise GitRefused(code, 'path_check') from None
 
 
 def _name(path: Path, roots: tuple[Path, ...]) -> str:
@@ -185,16 +185,11 @@ def _under(path: Path, roots: tuple[Path, ...]) -> bool:
     return any(path == root or root in path.parents for root in roots)
 
 
-def _how_to_declare() -> str:
-    return (f"the person who runs G6 declares the folders ctx_git may use in {CONFIG_ENV} or in "
-            "ctx_git/config.json under G6's home, as {\"roots\": [\"<absolute folder>\"]}")
-
-
 def _metadata_refusal(exc: Exception, name: str) -> GitRefused:
     outside = isinstance(exc, CodeRefused) and exc.code == _roots.OUTSIDE_ROOT
-    return GitRefused(OUTSIDE_ROOT if outside else PATH_INVALID,
-                      f"{name}: the path is outside the checked root" if outside else
-                      f"{name} could not be checked or read, so git was not run")
+    if outside:
+        return GitRefused(OUTSIDE_ROOT, "metadata_outside", metadata=name)
+    return GitRefused(PATH_INVALID, 'metadata_check', metadata=name)
 
 
 def _metadata_info(path: Path, name: str, roots: _roots.Roots) -> os.stat_result | None:
@@ -246,20 +241,20 @@ def _metadata_entry(text: str, base: Path, name: str, roots: _roots.Roots) -> Pa
     """
     if (not text or text != text.strip() or text.startswith('"')
             or any(ord(ch) < 32 or 0xD800 <= ord(ch) <= 0xDFFF for ch in text)):
-        raise GitRefused(PATH_INVALID, f"{name} holds an entry whose spelling G6 cannot check")
+        raise GitRefused(PATH_INVALID, 'metadata_spelling', metadata=name)
     windows = PureWindowsPath(text)
     if text.startswith(("\\\\", "//")):
-        raise GitRefused(OUTSIDE_ROOT, f"{name} names a network or device path outside the checked folders")
+        raise GitRefused(OUTSIDE_ROOT, 'metadata_network', metadata=name)
     if windows.drive and not windows.root:
         if os.name == "nt" and re.fullmatch(r"[A-Za-z]:", windows.drive):
             git_path = Path(os.path.normpath(windows.drive + "/" + text[2:]))
             if not _under(git_path, roots.roots):
-                raise GitRefused(OUTSIDE_ROOT, f"{name} names a drive-relative target outside the checked folders")
-        raise GitRefused(PATH_INVALID, f"{name} holds a drive-relative entry whose spelling G6 cannot check")
+                raise GitRefused(OUTSIDE_ROOT, 'metadata_drive_outside', metadata=name)
+        raise GitRefused(PATH_INVALID, 'metadata_drive_relative', metadata=name)
     if windows.root and not windows.drive and (os.name == "nt" or text.startswith("\\")):
-        raise GitRefused(PATH_INVALID, f"{name} holds a rooted entry whose target G6 cannot determine")
+        raise GitRefused(PATH_INVALID, 'metadata_rooted', metadata=name)
     if os.name != "nt" and windows.drive:
-        raise GitRefused(PATH_INVALID, f"{name} holds a drive entry G6 cannot interpret on this system")
+        raise GitRefused(PATH_INVALID, 'metadata_drive', metadata=name)
     target = Path(text)
     return _metadata_target(target if target.is_absolute() else base / target, name, roots)
 
@@ -271,12 +266,11 @@ def repository(raw: str, config: GitConfig, *, file_policy: set[str] | None = No
     info/exclude and info/attributes retain Git's native behaviour."""
     admission = _Admission()
     if not config.roots:
-        raise GitRefused(NO_ROOT, f"no folder is declared for ctx_git, so git is not run anywhere: {_how_to_declare()}")
+        raise GitRefused(NO_ROOT, 'repository_no_roots')
     if not raw.strip():
-        raise GitRefused(NOT_A_REPOSITORY, "give repo: the absolute path of a repository under a declared root")
+        raise GitRefused(NOT_A_REPOSITORY, 'config_repository_1')
     if raw.startswith("~") or not Path(raw).is_absolute():
-        raise GitRefused(NOT_A_REPOSITORY, "repo is an absolute path (a relative one, or ~, is never resolved against "
-                                           "the folder G6 runs in)")
+        raise GitRefused(NOT_A_REPOSITORY, 'config_repository_2')
     try:
         roots = _roots.Roots(config.roots, "the declared git folders")
         roots.refuse_if_empty("checked", raw)
@@ -284,27 +278,24 @@ def repository(raw: str, config: GitConfig, *, file_policy: set[str] | None = No
         raise _metadata_refusal(exc, "repo") from None
     repo_info = _metadata_info(Path(raw), "repo", roots)
     real = _metadata_target(Path(raw), "repo", roots)
-    name = _name(real, config.roots)
     if not _under(real, config.roots):
-        raise GitRefused(OUTSIDE_ROOT, f"{name} is not at or under a declared root (a link out of one counts as "
-                                       f"outside): {_how_to_declare()}")
+        raise GitRefused(OUTSIDE_ROOT, 'repository_outside')
     dotgit = real / ".git"
     dotgit_info = _metadata_info(dotgit, ".git", roots)
     if repo_info is None or not stat.S_ISDIR(repo_info.st_mode) or dotgit_info is None:
-        raise GitRefused(NOT_A_REPOSITORY, f"{name} is not the top folder of a git working copy (it has no .git)")
+        raise GitRefused(NOT_A_REPOSITORY, 'repository_top')
     gitdir = _metadata_target(dotgit, ".git", roots)
     if stat.S_ISREG(dotgit_info.st_mode):
         admission.check()
         line = _metadata_text(dotgit, ".git", roots).strip()
         if not line.startswith("gitdir:"):
-            raise GitRefused(NOT_A_REPOSITORY, f"{name}/.git is a file that names no git folder")
+            raise GitRefused(NOT_A_REPOSITORY, 'repository_gitfile')
         gitdir = _metadata_entry(line.partition(":")[2].strip(), real, ".git", roots)
     if not _under(gitdir, config.roots):
-        raise GitRefused(OUTSIDE_ROOT, f"the git folder of {name} is outside every declared root (its .git "
-                                       "links out of the root)")
+        raise GitRefused(OUTSIDE_ROOT, 'repository_gitdir_outside')
     gitdir_info = _metadata_info(gitdir, ".git", roots)
     if gitdir_info is None or not stat.S_ISDIR(gitdir_info.st_mode):
-        raise GitRefused(NOT_A_REPOSITORY, f"the git folder of {name} is missing")
+        raise GitRefused(NOT_A_REPOSITORY, 'repository_gitdir_missing')
     common = _common(gitdir, roots, admission)
     admission.check()
     for file in dict.fromkeys((gitdir / "config", common / "config", gitdir / "config.worktree")):
@@ -312,7 +303,7 @@ def repository(raw: str, config: GitConfig, *, file_policy: set[str] | None = No
     for name in ("objects", "refs"):
         info = _metadata_info(common / name, name, roots)
         if info is not None and not stat.S_ISDIR(info.st_mode):
-            raise GitRefused(PATH_INVALID, f"{name} is not a git metadata folder")
+            raise GitRefused(PATH_INVALID, 'repository_metadata_folder')
     _alternates(common / "objects", roots, 0, admission=admission)
     admission.check()
     return real, gitdir
@@ -332,13 +323,13 @@ def _common(gitdir: Path, roots: _roots.Roots, admission: _Admission | None = No
         admission.check()
     text = text.rstrip("\r\n")
     if not text.strip():
-        raise GitRefused(NOT_A_REPOSITORY, "commondir is not a file naming a git folder")
+        raise GitRefused(NOT_A_REPOSITORY, 'config_common_1')
     common = _metadata_entry(text, gitdir, "commondir", roots)
     if not _under(common, roots.roots):
-        raise GitRefused(OUTSIDE_ROOT, "commondir names a git folder outside every declared root")
+        raise GitRefused(OUTSIDE_ROOT, 'config_common_2')
     common_info = _metadata_info(common, "commondir", roots)
     if common_info is None or not stat.S_ISDIR(common_info.st_mode):
-        raise GitRefused(NOT_A_REPOSITORY, "commondir names no existing git folder")
+        raise GitRefused(NOT_A_REPOSITORY, 'config_common_3')
     return common
 
 
@@ -351,11 +342,11 @@ def _includes(path: Path, roots: _roots.Roots, admission: _Admission, depth: int
     """
     admission.check()
     if path in admission.active_configs or depth > CONFIG_INCLUDE_DEPTH:
-        raise GitRefused(PATH_INVALID, "repository config includes form a loop or exceed G6's nesting limit")
+        raise GitRefused(PATH_INVALID, 'config_includes_1')
     if path in admission.configs:
         return
     if len(admission.configs) >= CONFIG_INCLUDE_FILES:
-        raise GitRefused(PATH_INVALID, "repository config exceeds G6's included-file limit")
+        raise GitRefused(PATH_INVALID, 'config_includes_2')
     admission.configs.add(path)
     info = _metadata_info(path, "repository config", roots)
     if info is None:  # Git ignores a missing include, after its spelling and confinement were checked.
@@ -389,7 +380,7 @@ def _includes(path: Path, roots: _roots.Roots, admission: _Admission, depth: int
             # Includes and blame retain their fail-closed admission refusal.
             candidate = Path(os.path.normpath(base / entry))
             if not _under(candidate, roots.roots):
-                raise GitRefused(OUTSIDE_ROOT, f"{label} names a file outside the checked folders")
+                raise GitRefused(OUTSIDE_ROOT, 'config_file_outside')
             target = _metadata_entry(entry, base, label, roots)
             if include:
                 _includes(target, roots, admission, depth + 1, worktree=worktree, file_policy=file_policy)
@@ -398,8 +389,7 @@ def _includes(path: Path, roots: _roots.Roots, admission: _Admission, depth: int
                 if info is not None:
                     _metadata_bytes(target, label, roots)
     except (ValueError, OSError, MemoryError, RecursionError):
-        raise GitRefused(PATH_INVALID, "repository config holds syntax or a file path G6 cannot classify; "
-                                       "git was not run") from None
+        raise GitRefused(PATH_INVALID, 'config_includes_3') from None
     finally:
         admission.active_configs.remove(path)
 
@@ -417,15 +407,14 @@ def _alternates(objects: Path, roots: _roots.Roots, depth: int,
     folder = _metadata_info(objects, "objects/info/alternates", roots)
     if folder is None:
         if depth == 0:
-            raise GitRefused(PATH_INVALID, "the repository's object folder is missing")
+            raise GitRefused(PATH_INVALID, 'config_alternates_1')
         if objects not in admission.missing_alternates:
             admission.alternate_limit(checked)
             admission.missing_alternates.add(objects)
         return  # Git skips missing alternate folders; both lines and targets still consume the budget.
     if (not stat.S_ISDIR(folder.st_mode) or not getattr(folder, "st_ino", 0)
             or getattr(folder, "st_dev", None) is None):
-        raise GitRefused(PATH_INVALID, "objects/info/alternates names an existing entry that is not a folder "
-                                       "with an identity G6 can check")
+        raise GitRefused(PATH_INVALID, 'config_alternates_2')
     identity = (folder.st_dev, folder.st_ino)
     if identity in checked:
         return
@@ -436,7 +425,7 @@ def _alternates(objects: Path, roots: _roots.Roots, depth: int,
     if info is None:
         return
     if depth >= ALTERNATES_DEPTH or not stat.S_ISREG(info.st_mode):
-        raise GitRefused(PATH_INVALID, "objects/info/alternates nests deeper than git follows, or is not a file")
+        raise GitRefused(PATH_INVALID, 'config_alternates_3')
     seen_lines = set()
     text = admission.account(_metadata_text(listed, "objects/info/alternates", roots))
     for line in text.removeprefix("\ufeff").split("\n"):
@@ -448,8 +437,7 @@ def _alternates(objects: Path, roots: _roots.Roots, depth: int,
             continue
         borrowed = _metadata_entry(line, objects, "objects/info/alternates", roots)
         if not _under(borrowed, roots.roots):
-            raise GitRefused(OUTSIDE_ROOT, "objects/info/alternates borrows objects from a folder outside every declared root "
-                                           "(objects/info/alternates)")
+            raise GitRefused(OUTSIDE_ROOT, 'config_alternates_4')
         _alternates(borrowed, roots, depth + 1, checked, admission=admission)
 
 
@@ -457,18 +445,18 @@ def destination(raw: str, config: GitConfig) -> Path:
     """Where ``clone`` may write: an absolute path under a declared root that does not exist yet (or is an empty
     folder), whose parent folder exists."""
     if not config.roots:
-        raise GitRefused(NO_ROOT, f"no folder is declared for ctx_git, so nothing is cloned: {_how_to_declare()}")
+        raise GitRefused(NO_ROOT, 'clone_no_roots')
     if not raw.strip() or raw.startswith("~") or not Path(raw).is_absolute():
-        raise GitRefused(PATH_INVALID, "dest is the absolute path of a new folder under a declared root")
+        raise GitRefused(PATH_INVALID, 'config_destination_1')
     real = _confined(raw, config.roots)
     if not _under(real, config.roots):
-        raise GitRefused(OUTSIDE_ROOT, f"the destination is not inside a declared root: {_how_to_declare()}")
+        raise GitRefused(OUTSIDE_ROOT, 'destination_outside')
     if real in config.roots:
-        raise GitRefused(PATH_INVALID, "dest names a declared root; give a new folder inside it")
+        raise GitRefused(PATH_INVALID, 'config_destination_2')
     if real.exists() and (not real.is_dir() or any(real.iterdir())):
-        raise GitRefused(PATH_INVALID, f"{_name(real, config.roots)} already exists and is not an empty folder")
+        raise GitRefused(PATH_INVALID, 'destination_occupied')
     if not real.parent.is_dir():
-        raise GitRefused(PATH_INVALID, f"the parent folder of {_name(real, config.roots)} does not exist")
+        raise GitRefused(PATH_INVALID, 'destination_parent')
     return real
 
 
@@ -476,14 +464,14 @@ def inside(repo: Path, raw: str) -> str:
     """``raw`` (a path in the repository) as git's path relative to ``repo``; :class:`GitRefused` when it resolves
     outside the repository, into its ``.git`` folder, or reads as an option."""
     if not raw.strip() or raw.startswith("-") or any(ch in raw for ch in "\x00\r\n"):
-        raise GitRefused(PATH_INVALID, "give a path in the repository, without an option or control character")
+        raise GitRefused(PATH_INVALID, 'config_inside_1')
     given = Path(raw)
     real = _confined(given if given.is_absolute() else repo / given, (repo,))
     if real != repo and repo not in real.parents:
-        raise GitRefused(OUTSIDE_ROOT, "the path is outside the repository (a link out of it counts as outside)")
+        raise GitRefused(OUTSIDE_ROOT, 'config_inside_2')
     dotgit = repo / ".git"
     if real == dotgit or dotgit in real.parents:
-        raise GitRefused(PATH_INVALID, "the path is inside the repository's .git folder, which no op touches")
+        raise GitRefused(PATH_INVALID, 'config_inside_3')
     return real.relative_to(repo).as_posix() or "."
 
 
@@ -491,17 +479,17 @@ def remote_host(url: str) -> tuple[str, str]:
     """``(scheme, host)`` of a remote address: ``https`` or ``ssh``; :class:`GitRefused` for any other form."""
     text = url.strip()
     if any(ch.isspace() or ord(ch) < 32 for ch in text) or text.startswith("-") or "::" in text:
-        raise GitRefused(REMOTE_REFUSED, "the remote address is not an https or ssh address")
+        raise GitRefused(REMOTE_REFUSED, 'config_remote_host_1')
     scp = _SCP.fullmatch(text)
     if scp and len(scp.group("host")) == 1:  # C:/work/repo is a path on this machine, not host C
-        raise GitRefused(REMOTE_REFUSED, "only https and ssh remotes are reached, not a local path")
+        raise GitRefused(REMOTE_REFUSED, 'config_remote_host_2')
     if scp:
         return "ssh", scp.group("host").lower()
     parts = urlsplit(text)
     if parts.scheme not in ("https", "ssh") or not parts.hostname:
-        raise GitRefused(REMOTE_REFUSED, f"only https and ssh remotes are reached, not {parts.scheme or 'a local path'}")
+        raise GitRefused(REMOTE_REFUSED, 'remote_scheme')
     if parts.password:
-        raise GitRefused(REMOTE_REFUSED, "the remote address carries a password; G6 does not send one")
+        raise GitRefused(REMOTE_REFUSED, 'config_remote_host_3')
     return parts.scheme, parts.hostname.lower()
 
 
@@ -512,12 +500,11 @@ def remote_problem(url: str, config: GitConfig, *, resolver: http.Resolver | Non
     except GitRefused as exc:
         return exc.reason
     if host not in config.remote_hosts:
-        return (f"{host} is not one of the remote hosts the person declared ({', '.join(config.remote_hosts) or 'none'}"
-                f"); they add it to remote_hosts in {CONFIG_ENV} or ctx_git/config.json under G6's home")
+        return _refusals.render("remote_host_policy")
     try:
         http.check_url(f"https://{host}/", resolver=resolver)
-    except http.HTTPError as exc:
-        return f"{host} is refused: {str(exc).partition(': ')[2] or exc.code}"
+    except http.HTTPError:
+        return _refusals.render("remote_address_policy")
     return ""
 
 

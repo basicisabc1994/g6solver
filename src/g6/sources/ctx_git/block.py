@@ -26,6 +26,7 @@ import g6.sources._gate as _gate
 from g6.sources.ctx_git import config as cfg
 from g6.sources.ctx_git import ops, runner
 from g6.sources.ctx_git.config import GitConfig, GitRefused
+from g6.sources.ctx_git import _refusals
 
 COMPONENT = ops.COMPONENT
 ROOTS = "G6_E_GIT_ROOTS"
@@ -192,7 +193,7 @@ def _write(entry: dict[str, Any], phase: str) -> str:
     try:
         runner.record({**entry, "phase": phase})
     except OSError:
-        return "the audit log under G6's home could not be written"
+        return _refusals.render("audit_unwritten")
     return ""
 
 
@@ -200,16 +201,15 @@ def _intend(entry: dict[str, Any]) -> None:
     """The call's intent in the audit log; :class:`GitRefused` (``AUDIT``) when the log cannot take it."""
     problem = _write(entry, "intent")
     if problem:
-        raise GitRefused(AUDIT, "the audit log under G6's home could not be written, so the op was "
-                                "not run: a change ctx_git made would go unrecorded")
+        raise GitRefused(AUDIT, 'block_intend_1')
 
 
 def _unrecorded(reply: dict[str, Any], problem: str) -> dict[str, Any]:
     """``reply`` saying that the audit log could not record the call's outcome (its intent is there)."""
-    said = (f" The audit log could not record this call's outcome ({problem}): its intent is recorded, and "
-            "changes_since will count what it changed as not through ctx_git.")
+    said = _refusals.render("audit_outcome")
     reply["warning_card"]["message"] += said
-    reply["evidence"] = [*reply["evidence"], {"kind": "audit_log", "outcome_written": False, "reason": problem}]
+    reply["evidence"] = [*reply["evidence"], {"kind": "audit_log", "outcome_written": False,
+                                           "reason": _refusals.render("audit_unwritten")}]
     return {**reply, "audit_outcome_written": False}
 
 
