@@ -72,15 +72,40 @@ GUIDANCE_FIELDS = frozenset({
     "required_human_decision", "error",
 })
 
-# Model-qualified positions extend the same role inventory. Only the outcome's
-# reason is guidance: Contribution.reason and a passage's own data stay data.
-GUIDANCE_MODEL_POSITIONS = {
-    "g6.core.reliability_envelope.ReliabilityEnvelope": frozenset((name,) for name in GUIDANCE_FIELDS),
-    "g6.knowledge._index.Searched": frozenset({("reason",)}),
-    "g6.knowledge.knowledge_fetcher.fetcher.FetchResult": frozenset({("reason",)}),
-    "g6._context_engine._envelope.SearchResponse": frozenset({("payload", "reason")}),
-}
 ENVELOPE_CONTRACT = "g6.core.reliability_envelope.ReliabilityEnvelope"
+# Named dictionary contracts are producer declarations, never inferred from data.
+GUIDANCE_CONTRACT_POSITIONS = {
+    ENVELOPE_CONTRACT: frozenset((name,) for name in GUIDANCE_FIELDS),
+    # Built-in op help is raw signature/template data for help_for_agent, which
+    # writes the final host guidance with the door's allowance. Filtering that
+    # input as prose would erase allowed parameter signatures before rendering.
+    "builtin.envelope": frozenset((name,) for name in (*GUIDANCE_FIELDS, "message") if name != "help"),
+    "knowledge.add": frozenset({("job", "reason")}),
+    "knowledge.sources": frozenset({("roots_setting",), ("sources", "*", "why_not")}),
+    "knowledge.job": frozenset({("backends", "*", "reason"), ("unread", "*", "why")}),
+    "knowledge.count": frozenset({("reason",), ("note",)}),
+    "knowledge.refresh": frozenset({("reason",), ("sources", "*", "failed", "*", "why")}),
+    "knowledge.delete": frozenset({("note",)}),
+}
+
+
+def guidance_model_inventory():
+    """Import actual classes lazily; importing a component may import this module.
+
+    Only outcome reasons are guidance. Contribution.reason and passage data keep
+    their data roles. Class labels and a payload's runtime type grant no roles.
+    """
+    from g6.core.reliability_envelope import ReliabilityEnvelope
+    from g6.knowledge._index import Searched
+    from g6.knowledge.knowledge_fetcher.fetcher import FetchResult
+    from g6._context_engine._envelope import SearchResponse
+
+    return {
+        ReliabilityEnvelope: GUIDANCE_CONTRACT_POSITIONS[ENVELOPE_CONTRACT],
+        Searched: frozenset({("reason",)}),
+        FetchResult: frozenset({("reason",)}),
+        SearchResponse: frozenset({("payload", "reason")}),
+    }
 
 
 def guidance_positions(value, *, schema):
@@ -99,7 +124,7 @@ def guidance_positions(value, *, schema):
         if isinstance(contract, (tuple, list)):
             return frozenset(path for child in contract for path in declared(child, seen))
         if isinstance(contract, str):
-            return GUIDANCE_MODEL_POSITIONS.get(contract, frozenset())
+            return GUIDANCE_CONTRACT_POSITIONS.get(contract, frozenset())
         origin, args = get_origin(contract), get_args(contract)
         if origin in (list, tuple):
             return frozenset(("*", *path) for child in args if child is not Ellipsis
@@ -109,8 +134,9 @@ def guidance_positions(value, *, schema):
         if not isinstance(contract, type):
             return frozenset()
         positions = frozenset()
-        for parent in contract.__mro__:
-            positions |= GUIDANCE_MODEL_POSITIONS.get(f"{parent.__module__}.{parent.__name__}", frozenset())
+        for model, roles in guidance_model_inventory().items():
+            if issubclass(contract, model):
+                positions |= roles
         fields = getattr(contract, "model_fields", {})
         out = set(positions)
         for name, field in fields.items():

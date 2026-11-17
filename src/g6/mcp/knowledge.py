@@ -172,10 +172,10 @@ def register(server: Any, context_type: Any) -> None:
             except Refused as exc:
                 result["job"] = {"state": "refused", "reason": f"[{exc.code}] {exc.reason}"}
         if result["sharing"] != "granted":
-            return _ok(result, (), schema=None)
+            return _ok(result, (), schema="knowledge.add")
         result.update(label=done["label"], files=done["files"], passages=done["passages"], unread=done["unread"],
                       excluded=done["excluded"])
-        return _ok(result, (_summary_source(result),), schema=None)
+        return _ok(result, (_summary_source(result),), schema="knowledge.add")
     g6_knowledge_add.__annotations__["ctx"] = context_type
     server.tool()(g6_knowledge_add)
 
@@ -192,7 +192,8 @@ def register(server: Any, context_type: Any) -> None:
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
         return _ok({"sources": rows, "roots_setting": ROOTS_ENV},
-                   tuple(_summary_source(r) for r in rows if r.get("shared_with_this_client") and "label" in r), schema=None)
+                   tuple(_summary_source(r) for r in rows if r.get("shared_with_this_client") and "label" in r),
+                   schema="knowledge.sources")
 
     @server.tool()
     @declares("client_request")
@@ -314,13 +315,14 @@ def register(server: Any, context_type: Any) -> None:
             return _refused(exc.code, exc.reason)
         if not in_scope:   # scope first: outside it the reply holds states only, and nothing counted from the source
             return _ok({"job": job.id, "state": job.state, "unread_files": None,
-                        "backends": {name: {"state": entry.get("state", "")} for name, entry in job.backends.items()}}, (), schema=None)
+                        "backends": {name: {"state": entry.get("state", "")} for name, entry in job.backends.items()}}, (),
+                       schema="knowledge.job")
         shown = {"job": job.id, "source": job.registration_id, "generation": job.generation, "state": job.state,
                  "backends": {name: {k: v for k, v in entry.items() if k != "dry_run"}
                               for name, entry in job.backends.items()},
                  "unread_files": len(job.unread), "started_at": job.started_at, "finished_at": job.finished_at,
                  "unread": [{"path": label_view(e.relative), "why": e.why} for e in job.unread]}
-        return _ok(shown, (_summary_source({**shown, "source": job.registration_id}),), schema=None)
+        return _ok(shown, (_summary_source({**shown, "source": job.registration_id}),), schema="knowledge.job")
 
     @server.tool()
     @declares("client_request")
@@ -337,7 +339,8 @@ def register(server: Any, context_type: Any) -> None:
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
         counted = found.get("sources_counted") or []
-        return _ok(found, tuple(_summary_source({"source": rid, "count": found.get("answer")}) for rid in counted), schema=None)
+        return _ok(found, tuple(_summary_source({"source": rid, "count": found.get("answer")}) for rid in counted),
+                   schema="knowledge.count")
 
     @server.tool()
     @declares("client_request")
@@ -378,7 +381,7 @@ def register(server: Any, context_type: Any) -> None:
         rows = list(done.get("sources", []))
         refs = tuple(_summary_source(row) for row in rows)
         rows += [{"source": rid, "withheld": True} for rid in done.pop("out_of_scope", [])]
-        return _ok({**done, "sources": rows}, refs, schema=None)
+        return _ok({**done, "sources": rows}, refs, schema="knowledge.refresh")
 
     @declares("client_request")
     @_guarded
@@ -420,7 +423,7 @@ def register(server: Any, context_type: Any) -> None:
                                                           attribution=consent.answer))
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
-        return _ok(done, (), schema=None)
+        return _ok(done, (), schema="knowledge.delete")
     g6_knowledge_delete.__annotations__["ctx"] = context_type
     server.tool()(g6_knowledge_delete)
 

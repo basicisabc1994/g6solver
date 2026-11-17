@@ -35,7 +35,8 @@ def test_typed_view_walk_preserves_bytes_and_citation_metadata(dumped, nested):
         shown = shown["future_search_wrapper"][0]
     passage = shown["payload"]["items"][0]
     assert passage["view"]["text"] == TEXT
-    assert passage["view"]["spans"] == ((0, len(TEXT), 0, len(TEXT)),)
+    # Values, not the container type: a model reaches an agent through its JSON serialisation, where tuples are lists.
+    assert [list(span) for span in passage["view"]["spans"]] == [[0, len(TEXT), 0, len(TEXT)]]
     assert passage["start"] == 0 and passage["end"] == len(TEXT)
     assert passage["passage_id"] == "a" * 64
     assert passage["checked"]["reread_sha256"] == digest

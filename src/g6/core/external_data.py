@@ -29,8 +29,7 @@ def _model_values(item, depth=0):
     if depth > _MAX_GUIDANCE_DEPTH:
         raise ExternalDataLimit("[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person.")
     if isinstance(item, BaseModel):
-        item = {name: getattr(item, name) for name in
-                (*type(item).model_fields, *type(item).model_computed_fields)}
+        item = item.model_dump(mode="json")
     if isinstance(item, Mapping):
         return {key: _model_values(child, depth + 1) for key, child in item.items()}
     if isinstance(item, (list, tuple)):
@@ -126,6 +125,10 @@ def producer_result_contract(fn):
                  KnowledgeFetcherBlock: (ENVELOPE_CONTRACT, FetchResult)}
     if type(owner) in contracts:
         return contracts[type(owner)]
+    from g6.core.producer_contracts import builtin_result_contract
+    builtin = builtin_result_contract(owner)
+    if builtin is not None:
+        return builtin
     try:
         from g6.core.result import Result
         annotation = get_type_hints(fn).get("return")
