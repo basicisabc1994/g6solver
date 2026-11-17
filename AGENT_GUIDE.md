@@ -11,8 +11,9 @@ It does not think for you, and it never makes your result more certain than the 
    means nothing fits, so do not force one.
 2. `g6_describe(component)`: maturity, ops and dependencies. Read the maturity reason.
 3. `g6_invoke(component, op, params_json)`: one op, with typed input. Bad input fails with a named
-   error (`[..._ERROR] op: field: message`), which you fix and retry. Never retry unchanged. Every reply
-   carries `completion_state` and a `warning_card` (with a `G6_E_*` code) beside `result` or `error`:
+   error (`[..._ERROR] op: field: message`), which you fix and retry. Never retry unchanged. Replies from
+   G6's checks and work tools on the MCP server carry `completion_state` and a `warning_card`
+   (with a `G6_E_*` code) beside `result` or `error`:
    a result whose component reported no state is a `qualified-draft`, and a component's own `verified`
    stands only when G6's own code re-runs a check at the door, against what you gave it, and reproduces it.
    Any other is held at `qualified-draft` with a `G6_E_PROMOTION_LAW` card and `claimed_completion_state`

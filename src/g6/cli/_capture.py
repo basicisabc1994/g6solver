@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import sys
 import threading
 import warnings
@@ -11,6 +12,9 @@ from contextlib import contextmanager
 
 
 _active_capture = None
+# Global Python streams/hooks make the CLI a serial API. RLock preserves nested
+# calls on the owning thread; another thread waits through installation/restoration.
+invocation_lock = threading.RLock()
 
 
 class _Buffer(io.StringIO):
@@ -60,14 +64,14 @@ class InvokeCapture:
                                     "log records", "stdout writes", "stderr writes"), 0)
         self.reported = self.counts.copy()
         self.hooks = (warnings.showwarning, threading.excepthook, sys.unraisablehook, sys.excepthook)
-        self.filters = warnings.filters[:]
+        self.warning_context = warnings.catch_warnings()
+        self.warning_context.__enter__()
         self.root = logging.getLogger()
         self.logging = (self.root.handlers, self.root.level, logging.lastResort)
         self.out_buffer = _Buffer(self, "stdout writes")
         self.err_buffer = _Buffer(self, "stderr writes")
         sys.stdout, sys.stderr = self.out_buffer, self.err_buffer
         warnings.showwarning = self.warning
-        warnings.simplefilter("always")
         threading.excepthook = self.thread_failed
         sys.unraisablehook = self.unraisable
         sys.excepthook = self.uncaught
@@ -134,14 +138,25 @@ class InvokeCapture:
             self.diagnostic(f"G6: captured {kinds} {when}.")
 
     def report_late(self):
-        self.report("after the reply")
+        try:
+            self.report("after the reply")
+        finally:
+            # Python restores the dunder streams during module teardown, after
+            # atexit. Seal the console descriptors only after our final flush.
+            # In-process main() never registers this callback.
+            null = open(os.devnull, "w", encoding="utf-8")
+            os.dup2(null.fileno(), 1)
+            os.dup2(null.fileno(), 2)
+            sys.__stdout__ = sys.__stderr__ = null
 
     def restore(self):
         """Return all streams and hooks to the caller that installed this capture."""
         global _active_capture
         sys.stdout, sys.stderr = self.streams
         warnings.showwarning, threading.excepthook, sys.unraisablehook, sys.excepthook = self.hooks
-        warnings.filters[:] = self.filters
+        # catch_warnings restores the filter object and invalidates registries,
+        # including entries made by a library changing its filters during the op.
+        self.warning_context.__exit__(None, None, None)
         self.root.handlers, level, logging.lastResort = self.logging
         self.root.setLevel(level)
         _active_capture = None
@@ -154,15 +169,16 @@ def current_capture():
 @contextmanager
 def capture_invocation():
     """Reuse an outer tally and original streams; restore only a capture we own."""
-    capture = current_capture()
-    owns_capture = capture is None
-    if owns_capture:
-        capture = InvokeCapture()
-    try:
-        yield capture
-    finally:
+    with invocation_lock:
+        capture = current_capture()
+        owns_capture = capture is None
+        if owns_capture:
+            capture = InvokeCapture()
         try:
-            capture.report("during the invocation")
+            yield capture
         finally:
-            if owns_capture:
-                capture.restore()
+            try:
+                capture.report("during the invocation")
+            finally:
+                if owns_capture:
+                    capture.restore()

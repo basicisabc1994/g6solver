@@ -736,4 +736,6 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
 
 
 def main() -> None:
-    build_server().run()
+    from g6.mcp._stdio import run_stdio
+
+    run_stdio(build_server)

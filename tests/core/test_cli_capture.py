@@ -110,6 +110,7 @@ REENTRY_SCRIPT = textwrap.dedent('''
         return Result.ok({'answer': 42})
     get_registry().get_class('grounding').infer = infer
     argv = ['invoke', 'grounding', 'check_claim', '{}', '--json']
+    warnings.simplefilter('always')
     assert entrypoint(argv) == 0
     assert main(argv) == 0
     assert main(argv) == 0

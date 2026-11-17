@@ -107,7 +107,8 @@ thirteen `metaharness_*` tools for [tuning](#tune-g6-to-your-workflow); four sha
 eleven `g6_knowledge_*` tools for the Context Engine, which searches the person's own folders on their machine;
 and five tools for [the workflow record](#the-workflow-record), `g6_workflow_export`, `g6_workflow_correct`,
 `g6_workflow_delete`, `g6_suggestion_decide` and `g6_feedback`. The agent finds a component
-by describing its task, reads what the component can do and how mature it is, then calls one op. Every reply carries
+by describing its task, reads what the component can do and how mature it is, then calls one op. Replies from
+G6's checks and work tools on the MCP server carry
 `completion_state`, a `warning_card` with a `G6_E_*` code, `evidence`, `request_id` and `run_id`. An op a component
 marks sensitive is refused over MCP unless the person who runs the server lists it in `G6_MCP_SENSITIVE`.
 

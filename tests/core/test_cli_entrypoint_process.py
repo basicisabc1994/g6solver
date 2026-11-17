@@ -15,6 +15,8 @@ import textwrap
 import pytest
 
 LIBRARY = textwrap.dedent('''
+    import os
+    import sys
     import threading
     import time
     import warnings
@@ -32,6 +34,23 @@ LIBRARY = textwrap.dedent('''
             time.sleep(0.5)
             warnings.warn("private late warning detail", RuntimeWarning)
         threading.Thread(target=work).start()
+
+
+    held = []
+    class Finaliser:
+        def __del__(self, os=os, sys=sys):
+            print("private teardown detail", file=sys.stdout)
+            print("private teardown detail", file=sys.stderr)
+            sys.__stdout__.write("private dunder teardown detail\\n")
+            sys.__stderr__.write("private dunder teardown detail\\n")
+            os.write(1, b"private descriptor teardown detail\\n")
+            os.write(2, b"private descriptor teardown detail\\n")
+
+    def teardown():
+        held.append(Finaliser())
+
+    def unclosed_file():
+        held.append(open(os.path.join(os.path.dirname(__file__), "capture-data.txt"), "w"))
 ''')
 
 # As the console script runs it: sys.exit(entrypoint()).
@@ -61,7 +80,7 @@ def _env(tmp_path):
     return env
 
 
-@pytest.mark.parametrize("kind", ["late_thread", "late_warning"])
+@pytest.mark.parametrize("kind", ["late_thread", "late_warning", "teardown", "unclosed_file"])
 @pytest.mark.parametrize("json_mode", [False, True])
 def test_what_an_op_leaves_running_after_main_returns_never_reaches_stderr_raw(tmp_path, kind, json_mode):
     lib = tmp_path / "private_site"
@@ -70,8 +89,12 @@ def test_what_an_op_leaves_running_after_main_returns_never_reaches_stderr_raw(t
     result = subprocess.run([sys.executable, "-X", "utf8", "-c", OP_SCRIPT, str(lib), kind,
                              "invoke", "grounding", "check_claim", "{}", *(["--json"] if json_mode else [])],
                             capture_output=True, text=True, timeout=120, env=_env(tmp_path))
-    leaked = [m for m in (*MARKERS, str(lib)) if m in result.stderr]
+    leaked = [m for m in (*MARKERS, str(lib)) if m in result.stdout + result.stderr]
     assert not leaked, f"exit {result.returncode}; leaked {leaked}; stderr: {result.stderr[-700:]}"
+    assert result.returncode == 0
+    if json_mode:
+        import json
+        assert json.loads(result.stdout)["ok"] is True
 
 
 def test_a_real_closed_pipe_ends_in_one_g6_line(tmp_path):

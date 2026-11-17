@@ -8,6 +8,8 @@ import json
 import sys
 from pathlib import Path
 
+from g6.cli._capture import invocation_lock
+
 
 def _print(value: object) -> None:
     print(json.dumps(value, indent=2, default=str))
@@ -194,6 +196,11 @@ def _parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     """Run a CLI call, restoring any capture it installs before returning."""
+    with invocation_lock:
+        return _main(argv)
+
+
+def _main(argv: list[str] | None = None) -> int:
     args = _parse_arguments(argv)
 
     if args.cmd == "workflow":
@@ -308,6 +315,11 @@ def _invoke(args, capture) -> int:
 
 def entrypoint(argv: list[str] | None = None) -> int:
     """Console ownership continues after main returns, through interpreter shutdown."""
+    with invocation_lock:
+        return _entrypoint(argv)
+
+
+def _entrypoint(argv: list[str] | None = None) -> int:
     # Parse before capturing so argparse's help and usage errors keep their streams.
     args = _parse_arguments(argv)
     if args.cmd != "invoke":

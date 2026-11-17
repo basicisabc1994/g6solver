@@ -41,11 +41,16 @@ def _sentence_label_claims(claim):
     tail = claim[universal.end():] if universal else ""
     says_state = re.search(r"\b(?:says?|carr(?:y|ies)|has|have)\b|"
                            r"\b(?:is|are)\s+(?:\w+\s+){0,3}(?:marked|labelled|labeled)\b", tail, re.I)
+    # A subject-first promise puts its action before the universal noun phrase:
+    # "G6 labels each of its results ..." / "marks every result ...".
+    labels_subject = universal and re.search(r"\b(?:labels?|marks?)\s*$",
+                                             claim[:universal.start()], re.I)
     names_states = all(state in claim.lower() for state in ("verified", "qualified-draft", "blocked-escalated"))
     direct = re.search(r"\blabels (?:every |each |all )?results?\b|"
                        r"\bresults\b.{0,180}\b(?:are|come back) labelled\b|"
                        r"\blabels?\b.{0,100}\bevery return\b", claim, re.I)
-    if (universal and labelled and (says_state or names_states)) or "three labels" in claim.lower() or direct:
+    if labels_subject or (universal and labelled and (says_state or names_states)) \
+            or "three labels" in claim.lower() or direct:
         yield claim
 
 
@@ -89,6 +94,10 @@ def test_census_includes_new_nested_pages_and_metadata(scratch):
     "site_description: Open-source harness for AI agents — checks their work, gates risky actions and labels "
     "every result for what the evidence shows. Free, local-first, Apache-2.0.",
     "Each G6 reply carries a completion state.",
+    "G6 labels each of its results for what the evidence supports.",
+    "Settles small logic questions exactly with a solver, and labels each answer for what it is",
+    "G6 labels all of its replies with a completion state.",
+    "G6 marks every result with its state.",
     "All G6 answers are labelled with a state.",
     "Each answer from G6 is marked qualified-draft.",
     "Every result says its state.",
@@ -110,6 +119,16 @@ def test_census_does_not_borrow_scope_from_a_different_sentence():
 
 def test_component_check_description_is_not_a_global_label_promise():
     _assert_label_scope("Checks that every result's label matches the evidence attached to it", "component")
+
+
+def test_solver_operation_answer_labels_are_scoped_to_that_operation():
+    _assert_label_scope("Settles small logic questions exactly with a solver and reports the solver "
+                        "operation's own answer labels", "component")
+
+
+def test_subject_first_promise_can_name_its_scope():
+    _assert_label_scope("The MCP server labels each result from G6's checks and work tools for what "
+                        "the evidence supports.", "page")
 
 
 @pytest.mark.parametrize("name", ["README.md", "web/content/faq.md", "site/docs/faq.md"])
