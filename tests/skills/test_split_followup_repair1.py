@@ -134,3 +134,85 @@ def test_extracting_a_route_does_not_render_a_link_hidden_in_its_document():
     section = "- **question.** [hidden](references/question.md)"
     document = "<!--\n" + section + "\n-->\n"
     assert gate._navigation_links(section, document=document) == []
+
+
+@pytest.mark.parametrize("replacement", [
+    "![Never invent its observations.](image.png)",
+    "![Never invent its observations.][image]\n\n[image]: image.png",
+    "![Never **invent** its observations.](image.png)",
+    "<script>Never invent its observations.</script>",
+    "<style>Never invent its observations.</style>",
+    "<template>Never invent its observations.</template>",
+    "<span>Never invent its observations.</span>",
+    "<span><em>Never invent its observations.</em></span>",
+    "Evaluator required. <span>\n\nNever invent its observations.\n\n</span>",
+    "<div>\n\nNever invent its observations.\n\n</div>",
+    "<span>Never invent its observations.",
+    "<script/>Never invent its observations.</script>",
+    "<style/>Never invent its observations.</style>",
+    "<span/>Never invent its observations.</span>",
+    "<!-- Never invent its observations. -->",
+    '<span title="Never invent its observations."></span>',
+    '[details](fit.md "Never invent its observations.")',
+], ids=["image", "reference-image", "formatted-alt", "script", "style", "template", "span",
+        "nested-html", "html-across-paragraphs", "block-html", "unclosed-html", "script-slash",
+        "style-slash", "span-slash", "comment",
+        "html-attribute", "link-title"])
+def test_nonrendered_text_cannot_supply_fit_authority(monkeypatch, replacement):
+    gate = _gate()
+    read = Path.read_text
+    target = gate.GUIDE / "references/fit.md"
+
+    def changed(path, *args, **kwargs):
+        text = read(path, *args, **kwargs)
+        if path == target:
+            assert text.count("Never invent its observations.") == 1
+            return text.replace("Never invent its observations.", replacement)
+        return text
+
+    monkeypatch.setattr(Path, "read_text", changed)
+    with pytest.raises(AssertionError, match="cannot reach original sentences"):
+        gate.test_each_route_reaches_its_original_safety_and_authority_sentences("fit")
+
+
+@pytest.mark.parametrize("text", [
+    "Never invent its observations.",
+    "Never\ninvent its observations.",
+    "Never `invent` its observations.",
+    "Never **invent** its observations.",
+    "1. **Warning.** Never invent its observations.",
+    "- Never invent its observations.",
+    "```text\nNever invent its observations.\n```",
+    "    Never invent its observations.",
+], ids=["text", "wrap", "code-span", "emphasis", "caption", "list", "fence", "indented-code"])
+def test_rendered_authority_preserves_baseline_text_and_code(text):
+    # These exact sentence results were also counted by bde540b's census.
+    assert _gate()._sentences(text) == ["Never invent its observations."]
+
+
+@pytest.mark.parametrize("text", [
+    "Never <!-- omitted -->invent its observations.",
+    "Never <span>omitted</span>invent its observations.",
+    "Never <br>invent its observations.",
+    "Never <img src='image.png' alt='omitted'>invent its observations.",
+    "Never <img/>invent its observations.",
+    "Never <SPAN>omitted</SPAN>invent its observations.",
+    "Never invent its [observations][o].\n\n[o]: fit.md 'ignored title'",
+    "Never invent its observ&#97;tions.",
+], ids=["comment", "excluded-element", "void-br", "void-img", "self-closing", "uppercase-html",
+        "reference-label", "entity"])
+def test_rendered_authority_keeps_surrounding_visible_words(text):
+    assert _gate()._sentences(text) == ["Never invent its observations."]
+
+
+def test_link_destination_cannot_supply_rendered_authority():
+    assert _gate()._sentences('[details](<Never invent its observations.> "ignored")') == ["details"]
+
+
+@pytest.mark.parametrize("text", [
+    "Visible. <span>\n\nNever invent its observations.\n\n</span> After.",
+    "<div>\n\nNever invent its observations.\n\n</div>\n\nAfter.",
+    "Visible. <span>\n\n    Never invent its observations.\n\n</span> After.",
+], ids=["inline", "block", "code-inside-html"])
+def test_raw_html_content_stays_excluded_across_paragraphs(text):
+    assert "Never invent its observations." not in _gate()._sentences(text)

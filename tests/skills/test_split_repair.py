@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -45,6 +46,53 @@ def _instructions(text: str) -> str:
     return re.sub(r"`references/([^`]+\.md)`", r"`\1`", text)
 
 
+def _rendered_paragraphs(text: str) -> list[str]:
+    """Read CommonMark text/code, excluding images and raw HTML with its content."""
+    class RawHTML(HTMLParser):
+        void = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
+                "param", "source", "track", "wbr"}
+
+        def __init__(self):
+            super().__init__()
+            self.elements = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag not in self.void:
+                self.elements.append(tag)
+
+        def handle_startendtag(self, tag, attrs):
+            # HTML ignores a self-closing slash on non-void elements.
+            self.handle_starttag(tag, attrs)
+
+        def handle_endtag(self, tag):
+            if tag in self.elements:
+                last = len(self.elements) - 1 - self.elements[::-1].index(tag)
+                del self.elements[last:]
+
+    # HTML can enclose Markdown across inline tokens, paragraphs and code blocks.
+    # An unclosed element excludes the rest; only void elements close themselves.
+    raw = RawHTML()
+    paragraphs = []
+    for token in MarkdownIt("commonmark").parse(text):
+        if token.type == "html_block":
+            raw.feed(token.content)
+        elif token.type == "inline":
+            parts = []
+            for child in token.children or []:
+                if child.type == "html_inline":
+                    raw.feed(child.content)
+                elif not raw.elements:
+                    if child.type in ("text", "code_inline"):
+                        parts.append(child.content)
+                    elif child.type in ("softbreak", "hardbreak"):
+                        parts.append(" ")
+                    # Image children are alt text; link targets/titles are attrs.
+            paragraphs.append("".join(parts))
+        elif token.type in ("fence", "code_block") and not raw.elements:
+            paragraphs.append(token.content)
+    return paragraphs
+
+
 def _sentences(text: str, *, verbatim: bool = False) -> list[str]:
     if text.startswith("---"):
         text = text.split("---", 2)[2]
@@ -60,18 +108,8 @@ def _sentences(text: str, *, verbatim: bool = False) -> list[str]:
     text = re.sub(r"^\s*(?:[-*+] |\d+\. )", "", text, flags=re.M)
     if not verbatim:
         text = _instructions(text)
-    # Compare CommonMark's rendered words: text and code content survive;
-    # emphasis, link destinations and inline markup do not supply words.
-    def plain(tokens):
-        return "".join(token.content if token.type in ("text", "code_inline") else
-                       " " if token.type in ("softbreak", "hardbreak") else
-                       plain(token.children) if token.children else "" for token in tokens)
-
-    paragraphs = [plain(token.children) if token.type == "inline" else token.content
-                  for token in MarkdownIt("commonmark").parse(text)
-                  if token.type in ("inline", "fence", "code_block")]
     sentences = []
-    for paragraph in paragraphs:
+    for paragraph in _rendered_paragraphs(text):
         sentences.extend(s for s in re.split(r"(?<=[.!?])\s+", _normal(paragraph)) if s)
     return sentences
 
@@ -231,8 +269,8 @@ def test_every_explicit_repair_step_keeps_the_roots_repair_owner_rule(detail):
     step = re.search(r"\d+\. \*\*Repair\.\*\*\s*(.*?)(?=\n\d+\. |\Z)",
                      detail.read_text(encoding="utf-8"), re.S)
     assert step
-    section = _normal(step.group(1))
-    assert all(rule.replace("`", "") in section.replace("`", "") for rule in rules), detail.name
+    section = _normal(" ".join(_rendered_paragraphs(step.group(1))))
+    assert all(rule in section for rule in rules), detail.name
 
 
 def test_validating_any_skill_route_reads_guidance_without_importing_components():
