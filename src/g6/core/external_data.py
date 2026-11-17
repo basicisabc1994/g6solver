@@ -10,10 +10,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from functools import wraps
 import json
+from typing import get_args, get_type_hints
 
 from g6.core.agent_guidance import (
-    _ExternalText, _MixedText, _MAX_GUIDANCE_DEPTH, _structured, guidance_role, is_external, reply_for_agent,
-    child_guidance_positions, guidance_positions, result_envelope,
+    _ExternalText, _GuidanceText, _MixedText, _MAX_GUIDANCE_DEPTH, _structured, guidance_role, is_external,
+    reply_for_agent, child_guidance_positions, guidance_positions, ENVELOPE_CONTRACT,
 )
 
 
@@ -21,27 +22,45 @@ class ExternalDataLimit(ValueError):
     """The host could not safely copy external text receipts."""
 
 
-def external_value(value, *, _component=False):
+def _model_values(item, depth=0):
+    """Serialize model values without assigning any semantic role to their type."""
+    from pydantic import BaseModel
+
+    if depth > _MAX_GUIDANCE_DEPTH:
+        raise ExternalDataLimit("[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person.")
+    if isinstance(item, BaseModel):
+        item = {name: getattr(item, name) for name in
+                (*type(item).model_fields, *type(item).model_computed_fields)}
+    if isinstance(item, Mapping):
+        return {key: _model_values(child, depth + 1) for key, child in item.items()}
+    if isinstance(item, (list, tuple)):
+        children = [_model_values(child, depth + 1) for child in item]
+        return tuple(children) if isinstance(item, tuple) else children
+    return item
+
+
+def external_value(value, *, _component=False, _schema=None):
     """Copy external JSON-like data, marking text without inspecting its words."""
     results, active = {}, set()
-    todo = [(value, False, 0, False, True, frozenset())]
+    root_positions = guidance_positions(value, schema=_schema)
+    todo = [(value, False, 0, False, True, root_positions)]
     while todo:
         item, opaque, guidance, done, at_root, pending = todo.pop()
-        positions = pending | (guidance_positions(item) if _component and not opaque else frozenset())
-        at_envelope = at_root or (not opaque and result_envelope(item))
+        positions = pending
         ident = (id(item), opaque, guidance, at_root, pending)
         if isinstance(item, str):
-            results[ident] = str.__str__(item) if guidance else _ExternalText(item)
+            results[ident] = (_GuidanceText(str.__str__(item))
+                              if guidance or isinstance(item, _GuidanceText) else _ExternalText(item))
         elif not isinstance(item, (Mapping, list, tuple)):
             results[ident] = item
         elif done:
             results[ident] = ({key: results[(id(child), _component and (opaque or _structured(key)),
-                                           guidance_role(key, guidance, opaque, at_root=at_envelope,
-                                                         positions=positions)
+                                           guidance_role(key, guidance, opaque, positions=positions)
                                            if _component else 0, False, child_guidance_positions(positions, key))]
                               for key, child in item.items()}
                              if isinstance(item, Mapping) else
-                             [results[(id(child), opaque, guidance, False, pending)] for child in item])
+                             [results[(id(child), opaque, guidance, False,
+                                       child_guidance_positions(pending, "*"))] for child in item])
             if isinstance(item, tuple):
                 results[ident] = tuple(results[ident])
             active.remove(ident)
@@ -52,26 +71,69 @@ def external_value(value, *, _component=False):
             todo.append((item, opaque, guidance, True, at_root, pending))
             if isinstance(item, Mapping):
                 todo.extend((child, _component and (opaque or _structured(key)),
-                             guidance_role(key, guidance, opaque, at_root=at_envelope, positions=positions)
+                             guidance_role(key, guidance, opaque, positions=positions)
                              if _component else 0, False, False, child_guidance_positions(positions, key))
                             for key, child in item.items())
             else:
-                todo.extend((child, opaque, guidance, False, False, pending) for child in item)
-    return results[(id(value), False, 0, True, frozenset())]
+                todo.extend((child, opaque, guidance, False, False,
+                             child_guidance_positions(pending, "*")) for child in item)
+    return results[(id(value), False, 0, True, root_positions)]
 
 
-def component_value(value, *, in_result=False):
+def component_value(value, *, in_result=False, schema=None):
     """Classify roles at their reply position before granting data receipts.
 
-    A component's payload sits under result. Its own complete result envelope
-    retains schema-defined guidance positions there; ordinary data role names
-    stay data. Warning cards remain guidance in either position.
+    A component payload is data unless its producer supplied a result contract.
+    Reply roots declare their own envelope; no nested object is recognised by
+    its keys. Private guidance receipts survive subsequent component wrappers.
     """
-    envelope = {"result": value} if in_result else value
-    shown = reply_for_agent(external_value(envelope, _component=True))
-    # A depth refusal replaces the whole envelope; retain that refusal as the
-    # component result rather than trying to unwrap a result that is absent.
-    return shown.get("result", shown) if in_result else shown
+    contract = schema if in_result or schema is not None else ENVELOPE_CONTRACT
+    try:
+        value = _model_values(value)
+    except ExternalDataLimit as exc:
+        return {"ok": False, "completion_state": "blocked-escalated", "error": str(exc)}
+    return reply_for_agent(external_value(value, _component=True, _schema=contract), _schema=contract)
+
+
+def producer_result_contract(fn):
+    """The producing route declares its return; runtime payloads are never read.
+
+    These legacy dictionary routes flatten G6's envelope beside their data.
+    Typed producers declare Result[T] in their annotation. Extensions can name
+    a serialized return model with result_contract on the producer or owner.
+    """
+    owner = getattr(fn, "__self__", None)
+    explicit = getattr(fn, "result_contract", getattr(owner, "result_contract", None))
+    if explicit is not None:
+        return explicit
+    from g6.goal_engine.block import GoalEngineBlock
+    from g6.coding_agent_gate.coding_agent_gate_block import CodingAgentGateBlock
+    from g6.action_gating.action_gating_block import ActionGatingBlock
+    from g6.algorithm_design.block import AlgorithmDesignBlock
+    from g6.complexity.block import ComplexityBlock
+    from g6.self_maintenance.block import SelfMaintenanceBlock
+    from g6.knowledge.ctx_elastic.block import CtxElasticBlock
+    from g6.knowledge.knowledge_fetcher.block import KnowledgeFetcherBlock
+    from g6.knowledge._index import Searched
+    from g6.knowledge.knowledge_fetcher.fetcher import FetchResult
+    contracts = {GoalEngineBlock: ENVELOPE_CONTRACT,
+                 CodingAgentGateBlock: ENVELOPE_CONTRACT,
+                 ActionGatingBlock: ENVELOPE_CONTRACT,
+                 AlgorithmDesignBlock: ENVELOPE_CONTRACT,
+                 ComplexityBlock: ENVELOPE_CONTRACT,
+                 SelfMaintenanceBlock: ENVELOPE_CONTRACT,
+                 CtxElasticBlock: (ENVELOPE_CONTRACT, Searched),
+                 KnowledgeFetcherBlock: (ENVELOPE_CONTRACT, FetchResult)}
+    if type(owner) in contracts:
+        return contracts[type(owner)]
+    try:
+        from g6.core.result import Result
+        annotation = get_type_hints(fn).get("return")
+        if getattr(annotation, "__origin__", None) is Result:
+            return next(iter(get_args(annotation)), None)
+    except (NameError, TypeError):
+        pass
+    return None
 
 
 def component_call(fn, *args, **kwargs):
@@ -83,7 +145,7 @@ def component_call(fn, *args, **kwargs):
         return Result.fail(external_value(str(exc)))
     if isinstance(outcome, Result):
         return (Result.fail(external_value(outcome.error)) if outcome.is_fail() else
-                Result.ok(component_value(outcome.value, in_result=True)))
+                Result.ok(component_value(outcome.value, in_result=True, schema=producer_result_contract(fn))))
     return outcome
 
 
@@ -95,50 +157,22 @@ def quoted_content(value):
     return external_value(value)
 
 
-def knowledge_quotes(value):
-    """Preserve knowledge data records, including paths and caller echoes.
+def knowledge_quotes(value, *, schema=None):
+    """Copy declared knowledge data without discovering contracts inside it.
 
-    The search schema declares data fields, including open payloads. Fetch uses
-    the same PassageItem/View, denied and withheld records. All their text is
-    data, not just passage text, except schema-declared outcome guidance.
-    Undeclared G6 prose retains the default filter;
-    cards and complete component envelopes retain their guidance positions.
+    None declares an entirely data payload. SearchResponse's declared fields
+    include the open payload: everything below it is data except payload.reason.
+    The MCP knowledge helper also declares passage/items as fetch/context data.
     """
-    from pydantic import BaseModel
-    from g6._context_engine._envelope import PassageItem, SearchResponse
-    from g6._context_engine._view import View
-
-    record_types = {name: field.annotation for name, field in PassageItem.model_fields.items()
-                    if isinstance(field.annotation, type) and issubclass(field.annotation, BaseModel)}
-
-    def walk(item, schema=None, depth=0):
-        if depth > _MAX_GUIDANCE_DEPTH:
-            raise ExternalDataLimit("[G6_E_RESOURCE_LIMIT] knowledge quotations are too deeply nested")
-        if isinstance(item, BaseModel):
-            schema = type(item)
-            item = {name: getattr(item, name) for name in
-                    (*type(item).model_fields, *type(item).model_computed_fields)}
-        if isinstance(item, Mapping):
-            out = {key: walk(child, record_types.get(key), depth + 1)
-                   for key, child in item.items()}
-            passage_view = any(name in item and kind is View for name, kind in record_types.items())
-            if (schema is not None or passage_view or guidance_positions(item) or
-                    SearchResponse.model_fields.keys() <= item.keys()):
-                return component_value(out, in_result=True)
-            if depth == 0:
-                # The knowledge result root follows SearchResponse's data
-                # positions even when the engine returns a partial dictionary.
-                out = {key: component_value(child, in_result=True)
-                       if key in SearchResponse.model_fields else child for key, child in out.items()}
-            return out
-        if isinstance(item, (list, tuple)):
-            children = [walk(child, schema, depth + 1) for child in item]
-            return tuple(children) if isinstance(item, tuple) else children
-        return item
-
-    # MCP also supplies partial SearchResponse dictionaries. Supply that schema
-    # explicitly rather than treating every reason-named data key as guidance.
-    return reply_for_agent(walk(value), _schema=SearchResponse)
+    from g6._context_engine._envelope import SearchResponse
+    out = _model_values(value)
+    if schema is SearchResponse and isinstance(out, Mapping):
+        # The helper's known result fields are data; its other host prose still
+        # receives the default guidance filter. No nested key selects a model.
+        data_fields = (*SearchResponse.model_fields, "passage", "items")
+        out = {key: external_value(child) if key in data_fields else child for key, child in out.items()}
+        return reply_for_agent(out, _schema=schema)
+    return component_value(out, in_result=True, schema=schema)
 
 
 def program_output(value):
@@ -250,7 +284,7 @@ class ComponentRegistryIngress:
                     if outcome.is_fail():
                         owner.failure = external_value(outcome.error)
                         return Result.fail(owner.failure)
-                    owner.value = component_value(outcome.value, in_result=True)
+                    owner.value = component_value(outcome.value, in_result=True, schema=producer_result_contract(fn))
                     return Result.ok(owner.value)
                 return outcome
             return invoke
@@ -284,7 +318,8 @@ class ComponentRegistryIngress:
             self.failure = external_value(str(exc))
             return Failure(self.failure)
         if outcome.__class__.__name__ == "Success":
-            self.value = component_value(outcome.unwrap(), in_result=True)
+            self.value = component_value(outcome.unwrap(), in_result=True,
+                                         schema=producer_result_contract(self.target.invoke))
             return Success(self.value)
         self.failure = external_value(str(outcome.failure()))
         return Failure(self.failure)

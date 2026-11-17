@@ -24,7 +24,8 @@ def test_result_envelope_schema_reasons_are_guidance_at_each_envelope_position()
         envelope[name] = WORDS
     # Matching names in ordinary data must never select a guidance position.
     value = {"steps": [{"result": envelope}], "detail": {name: WORDS for name in reasons}}
-    shown, _, _ = detached(component_value(value, in_result=True))
+    shown, _, _ = detached(component_value(
+        value, in_result=True, schema={("steps", "*", "result"): ReliabilityEnvelope}))
     for name in reasons:
         assert shown["steps"][0]["result"][name] == SAFE
         assert not is_external(shown["steps"][0]["result"][name])
@@ -139,7 +140,7 @@ def test_knowledge_outcome_reason_is_guidance_by_model_position(model, dumped):
     data = _poison_data(type(record), record)
     value = json.loads(json.dumps(data)) if dumped else type(record).model_construct(**data)
     # Both the knowledge boundary and component wrappers must retain the role.
-    result = _ok(value, ())
+    result = _ok(value, (), schema=type(record))
     shown, _, _ = detached(component_value({"steps": [result]}, in_result=True))
     outcome = shown["steps"][0]["result"]
     reason = outcome["payload"]["reason"] if model == "SearchResponse" else outcome["reason"]

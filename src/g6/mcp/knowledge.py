@@ -22,7 +22,7 @@ from pydantic import ValidationError
 
 from g6.core import cloud_consent as cloud
 from g6._context_engine import _engine as engine
-from g6._context_engine._envelope import MAX_TOP_K, SearchRequest
+from g6._context_engine._envelope import MAX_TOP_K, SearchRequest, SearchResponse
 from g6._context_engine._registry import ProjectStore, Refused
 from g6._context_engine._scope import ROOTS_ENV, UNKNOWN_DESTINATION, ScopeDenied, access, consent_scope, host_binding
 from g6._context_engine._view import label_view
@@ -41,11 +41,13 @@ def _destination() -> str:
     return capture.client[0] if capture is not None and capture.client is not None else UNKNOWN_DESTINATION
 
 
-def _ok(result: dict[str, Any], sources: tuple[cloud.Source, ...], evidence: list[dict[str, Any]] | None = None) -> dict:
+def _ok(result: dict[str, Any], sources: tuple[cloud.Source, ...], evidence: list[dict[str, Any]] | None = None,
+        *, schema=SearchResponse) -> dict:
     from g6.core.guidance_builders import envelope_fields, warning_card
     from g6.core.external_data import knowledge_quotes
 
-    reply = {"ok": True, "result": knowledge_quotes(result), **envelope_fields(
+    # The producing route supplies the contract even for serialized values.
+    reply = {"ok": True, "result": knowledge_quotes(result, schema=schema), **envelope_fields(
         reliability_label="qualified-draft", warning_card=warning_card(*CARD), evidence=evidence or [])}
     return cloud.bind_output(reply, sources)
 
@@ -170,10 +172,10 @@ def register(server: Any, context_type: Any) -> None:
             except Refused as exc:
                 result["job"] = {"state": "refused", "reason": f"[{exc.code}] {exc.reason}"}
         if result["sharing"] != "granted":
-            return _ok(result, ())
+            return _ok(result, (), schema=None)
         result.update(label=done["label"], files=done["files"], passages=done["passages"], unread=done["unread"],
                       excluded=done["excluded"])
-        return _ok(result, (_summary_source(result),))
+        return _ok(result, (_summary_source(result),), schema=None)
     g6_knowledge_add.__annotations__["ctx"] = context_type
     server.tool()(g6_knowledge_add)
 
@@ -190,7 +192,7 @@ def register(server: Any, context_type: Any) -> None:
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
         return _ok({"sources": rows, "roots_setting": ROOTS_ENV},
-                   tuple(_summary_source(r) for r in rows if r.get("shared_with_this_client") and "label" in r))
+                   tuple(_summary_source(r) for r in rows if r.get("shared_with_this_client") and "label" in r), schema=None)
 
     @server.tool()
     @declares("client_request")
@@ -227,7 +229,7 @@ def register(server: Any, context_type: Any) -> None:
             found = {**response.model_dump(), "decision": event.model_dump()}
             return _ok(found, _scope_sources(acc, found, refs), [{"kind": "knowledge_plan", "trust": "untrusted", "generation": response.generation,
                                       "items": len(found["payload"]["items"]), "rule": event.rule,
-                                      "chosen": list(event.chosen), "stop_reason": event.stop_reason}])
+                                      "chosen": list(event.chosen), "stop_reason": event.stop_reason}], schema=SearchResponse)
         try:
             request = SearchRequest(query=query, top_k=min(max(int(top_k), 1), MAX_TOP_K),
                                     sources=tuple(sources) if sources is not None else None,
@@ -241,7 +243,7 @@ def register(server: Any, context_type: Any) -> None:
         found = response.model_dump()
         return _ok(found, _scope_sources(acc, found, refs), [{"kind": "knowledge_search", "trust": "untrusted", "generation": response.generation,
                                   "items": len(found["payload"]["items"]),
-                                  "backends": {b.backend: b.state for b in response.backends}}])
+                                  "backends": {b.backend: b.state for b in response.backends}}], schema=SearchResponse)
 
     @server.tool()
     @declares("client_request")
@@ -260,7 +262,7 @@ def register(server: Any, context_type: Any) -> None:
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
         return _ok(found, _scope_sources(acc, found, refs), [{"kind": "knowledge_context", "trust": "untrusted", "items": len(found["items"]),
-                                  "tokens": found["tokens"], "omitted": found["omitted"]}])
+                                  "tokens": found["tokens"], "omitted": found["omitted"]}], schema=None)
 
     @server.tool()
     @declares("client_request")
@@ -278,7 +280,7 @@ def register(server: Any, context_type: Any) -> None:
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
         return _ok(found, refs, [{"kind": "knowledge_passage", "trust": "untrusted",
-                                  "returned": found["passage"] is not None}])
+                                  "returned": found["passage"] is not None}], schema=None)
 
     @server.tool()
     @declares("client_request")
@@ -288,7 +290,7 @@ def register(server: Any, context_type: Any) -> None:
         every G6 process, and every sharing grant for it is revoked. Text already delivered cannot be recalled."""
         try:
             acc = access(host_binding(), "revoke", _destination())
-            return _ok(engine.revoke(acc, source), ())
+            return _ok(engine.revoke(acc, source), (), schema=None)
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
 
@@ -312,13 +314,13 @@ def register(server: Any, context_type: Any) -> None:
             return _refused(exc.code, exc.reason)
         if not in_scope:   # scope first: outside it the reply holds states only, and nothing counted from the source
             return _ok({"job": job.id, "state": job.state, "unread_files": None,
-                        "backends": {name: {"state": entry.get("state", "")} for name, entry in job.backends.items()}}, ())
+                        "backends": {name: {"state": entry.get("state", "")} for name, entry in job.backends.items()}}, (), schema=None)
         shown = {"job": job.id, "source": job.registration_id, "generation": job.generation, "state": job.state,
                  "backends": {name: {k: v for k, v in entry.items() if k != "dry_run"}
                               for name, entry in job.backends.items()},
                  "unread_files": len(job.unread), "started_at": job.started_at, "finished_at": job.finished_at,
                  "unread": [{"path": label_view(e.relative), "why": e.why} for e in job.unread]}
-        return _ok(shown, (_summary_source({**shown, "source": job.registration_id}),))
+        return _ok(shown, (_summary_source({**shown, "source": job.registration_id}),), schema=None)
 
     @server.tool()
     @declares("client_request")
@@ -335,7 +337,7 @@ def register(server: Any, context_type: Any) -> None:
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
         counted = found.get("sources_counted") or []
-        return _ok(found, tuple(_summary_source({"source": rid, "count": found.get("answer")}) for rid in counted))
+        return _ok(found, tuple(_summary_source({"source": rid, "count": found.get("answer")}) for rid in counted), schema=None)
 
     @server.tool()
     @declares("client_request")
@@ -356,7 +358,7 @@ def register(server: Any, context_type: Any) -> None:
             return _refused(exc.code, exc.reason)
         found = response.model_dump()
         return _ok(found, _scope_sources(acc, found, refs), [{"kind": "knowledge_paths", "trust": "untrusted", "generation": response.generation,
-                                  "paths": len(found["payload"]["paths"])}])
+                                  "paths": len(found["payload"]["paths"])}], schema=SearchResponse)
 
     @server.tool()
     @declares("client_request")
@@ -376,7 +378,7 @@ def register(server: Any, context_type: Any) -> None:
         rows = list(done.get("sources", []))
         refs = tuple(_summary_source(row) for row in rows)
         rows += [{"source": rid, "withheld": True} for rid in done.pop("out_of_scope", [])]
-        return _ok({**done, "sources": rows}, refs)
+        return _ok({**done, "sources": rows}, refs, schema=None)
 
     @declares("client_request")
     @_guarded
@@ -418,7 +420,7 @@ def register(server: Any, context_type: Any) -> None:
                                                           attribution=consent.answer))
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
-        return _ok(done, ())
+        return _ok(done, (), schema=None)
     g6_knowledge_delete.__annotations__["ctx"] = context_type
     server.tool()(g6_knowledge_delete)
 
