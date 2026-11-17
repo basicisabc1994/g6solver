@@ -20,12 +20,12 @@ When a G6 reply carries `repair`, follow its step; if `by` is person, tell the p
 
 - **select.** Unsure which step fits or repairing a refused call: `g6_select`; [read selection and repair steps](references/find.md).
 - **question.** Task leaves behaviour undecided: `g6_confirm_behaviour`; [read before asking](references/question.md).
-- **mission.** Freeze a person-confirmed standard: `g6_premortem`, `g6_mission_*`; [read the mission steps](references/mission.md).
+- **mission.** A standard of done, fixed before the work and confirmed by the person: `g6_premortem`, then the `g6_mission_*` tools (`references/lifecycle.md`). [Read the mission steps](references/mission.md).
 - **consent.** Sharing or withdrawing sources: `g6_cloud_grant`, `g6_cloud_revoke`, `g6_cloud_grants`, `g6_disclosures`; [read the consent rules](references/consent.md).
 - **context.** Index or cite the person's documents: `g6_knowledge_add`, `g6_knowledge_search`, `g6_knowledge_context`; [read context admission and replies](references/context.md).
 - **improve.** Self-improvement on a folder: `g6_improve_enrol`, `g6_improve_start`, `g6_improve_resume`, `g6_improve_demote`, `g6_improve_status`, `g6_improve_stop`; [read before enrolling or running](references/improve.md).
 - **rules.** Derive answers from facts: `datalog`, `prolog`, `graph_reasoning` through `g6_invoke`; [read engine selection and sessions](references/rules.md).
-- **abstraction.** Separate person-registered server `python -P -m g6.abstraction.server`: [read its tool order](references/abstraction.md).
+- **abstraction.** Only where the person registered the separate server, `python -P -m g6.abstraction.server`: its tools search a design space for abstractions that hold up (`references/abstraction.md`). [Read its tool order](references/abstraction.md).
 - **workflow.** Local review record, off unless `G6_WORKFLOW_RECORD=on` is set where the server is registered: `g6_workflow_export`, `g6_workflow_correct`, `g6_workflow_delete`, `g6_suggestion_decide`, `g6_feedback`; [read record controls](references/workflow.md).
 - **review.** Deliver a Python task: `g6_review_patch`, `metaharness_job`, `g6_review_until_clean`; [read review, repair and verification search](references/deliver.md), [each lifecycle step](references/lifecycle.md), and [template bindings and instances](references/templates.md).
 - **discover.** Read `g6_allowances` before optional fan-out; `g6_help`, `g6_find`, `g6_describe`, `g6_components`, `g6_invoke`; [read discovery and withheld replies](references/find.md); for `g6_agentic_run`, [read substitution admission and labels](references/override.md).
@@ -44,3 +44,6 @@ artifact and check scope. Report the warning card and recovery; never turn a ref
 Ask the person when permissions, task meaning or evidence are missing. Local settings assume a trusted host;
 unrestricted same-user shell access defeats that separation.
 Superpowers lifecycle skills are optional companions, not prerequisites for using G6.
+
+Loop: in Claude Code with G6's plugin, its Stop hook runs the review-until-clean loop when you finish; elsewhere,
+call `g6_review_until_clean` (`references/lifecycle.md`).

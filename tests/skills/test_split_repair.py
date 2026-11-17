@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from markdown_it import MarkdownIt
 
 from g6.skills import corpus, routing
 
@@ -22,7 +23,8 @@ LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 # This closed table has two lead-reviewed navigation-only rows. Any row change
 # needs the lead's review and an update to this pin in the same change.
 EXCEPTION_ROWS_SHA256 = "570281c5f6754e065736f17e5acc6b4601daa6fcaa31767cd883d635031a415c"
-AUTHORITY_TERMS = ("never", "not", "do not", "person", "decides", "ask", "stop", "consent", "grant")
+AUTHORITY_TERMS = ("never", "not", "do not", "person", "decides", "ask", "stop", "consent", "grant",
+                   "cannot", "must", "only", "allow")
 TASKS = [
     ("write numbered requirements, acceptance tests and template instances for a hidden constraint", "verify",
      {"route:review"}),
@@ -43,16 +45,33 @@ def _instructions(text: str) -> str:
     return re.sub(r"`references/([^`]+\.md)`", r"`\1`", text)
 
 
-def _sentences(text: str) -> list[str]:
+def _sentences(text: str, *, verbatim: bool = False) -> list[str]:
     if text.startswith("---"):
         text = text.split("---", 2)[2]
     text = re.sub(r"^#{1,6} .*?$", "", text, flags=re.M)
     text = re.sub(r"^```[^\n]*$", "", text, flags=re.M)
+    # Numbered step captions are labels, not the instruction that follows.
+    # A complete bold sentence elsewhere must keep all its rendered words.
+    def caption(match):
+        return (match.group() if any(re.search(rf"\b{term}\b", match[2].casefold()) for term in AUTHORITY_TERMS)
+                else match[1])
+
+    text = re.sub(r"^(\s*\d+\. )\*\*([\w ]+\.)\*\*\s+(?=\S)", caption, text, flags=re.M)
     text = re.sub(r"^\s*(?:[-*+] |\d+\. )", "", text, flags=re.M)
-    text = re.sub(r"\*\*[\w ]+\.\*\*\s*", "", text)
-    text = _instructions(text).replace("`", "").replace("**", "")
+    if not verbatim:
+        text = _instructions(text)
+    # Compare CommonMark's rendered words: text and code content survive;
+    # emphasis, link destinations and inline markup do not supply words.
+    def plain(tokens):
+        return "".join(token.content if token.type in ("text", "code_inline") else
+                       " " if token.type in ("softbreak", "hardbreak") else
+                       plain(token.children) if token.children else "" for token in tokens)
+
+    paragraphs = [plain(token.children) if token.type == "inline" else token.content
+                  for token in MarkdownIt("commonmark").parse(text)
+                  if token.type in ("inline", "fence", "code_block")]
     sentences = []
-    for paragraph in re.split(r"\n\s*\n", text):
+    for paragraph in paragraphs:
         sentences.extend(s for s in re.split(r"(?<=[.!?])\s+", _normal(paragraph)) if s)
     return sentences
 
@@ -100,41 +119,40 @@ def _reviewed_exceptions(original):
     assert digest == EXCEPTION_ROWS_SHA256, (
         "cannot reach original sentences with unreviewed exception rows: lead review and pin update required")
     exceptions = _exceptions(original)
-    for sentence, replacement in exceptions.items():
-        if not replacement:
-            continue  # Only the pinned, reviewed rows may drop a sentence.
-        for term in AUTHORITY_TERMS:
-            pattern = rf"\b{term}\b"
-            old = len(re.findall(pattern, _normal(sentence).casefold()))
-            new = len(re.findall(pattern, _normal(replacement).casefold()))
-            assert new >= old, f"reworded exception loses authority term {term!r}: {sentence}"
+    for sentence in exceptions:
+        assert not any(re.search(rf"\b{term}\b", _normal(sentence).casefold()) for term in AUTHORITY_TERMS), (
+            f"authority sentence cannot have an exception: {sentence}")
     return exceptions
 
 
-def _navigation_links(text):
-    """Literal code examples are not rendered navigation, including onward links."""
-    rendered, fence = [], None
-    for line in text.splitlines():
-        if fence:
-            char, length = fence
-            if re.fullmatch(rf"\s*{re.escape(char)}{{{length},}}\s*", line):
-                fence = None
-            continue
-        marker = re.match(r"^\s*(`{3,}|~{3,})", line)
-        if marker:
-            fence = (marker[1][0], len(marker[1]))
-        else:
-            rendered.append(line)
-    # The closing backtick run must have the same length as the opening run.
-    prose = re.sub(r"(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)", "", "\n".join(rendered))
-    return LINK.findall(prose)
+def _navigation_links(text, *, document=None):
+    """Follow only links rendered by CommonMark, including reference-style links."""
+    def links(tokens):
+        for token in tokens:
+            if token.type == "link_open":
+                yield token.attrGet("href")
+            if token.children:
+                yield from links(token.children)
+
+    parser = MarkdownIt("commonmark")
+    if document is None:
+        return list(links(parser.parse(text)))
+    # Parse the entire document so reference definitions and container state
+    # (including HTML comments spanning a route) are both preserved. Source maps
+    # restrict navigation to this route's rendered inline tokens.
+    start = document.index(text)
+    first = document.count("\n", 0, start)
+    last = first + len(text.splitlines())
+    tokens = [token for token in parser.parse(document)
+              if token.type == "inline" and token.map and first <= token.map[0] and token.map[1] <= last]
+    return list(links(tokens))
 
 
 def _reachable(root, route):
     """Follow local reference links from this route only, including onward links."""
     line = routing.section(root, route.anchor)
     assert line, route.id
-    texts, seen, pending = [root], set(), [GUIDE / target for target in _navigation_links(line)]
+    texts, seen, pending = [root], set(), [GUIDE / target for target in _navigation_links(line, document=root)]
     while pending:
         path = pending.pop().resolve()
         assert path.is_relative_to(GUIDE.resolve()), path.name
@@ -159,7 +177,7 @@ def test_each_route_reaches_its_original_safety_and_authority_sentences(route_id
     """Every fixture sentence survives on every route that held it, or has a reviewed exception.
 
     Whole sentences are compared after whitespace and markup normalization. An
-    exception that rewords a sentence must name a reachable replacement sentence.
+    exception may cover only sentences without authority terms.
     """
     original = BASELINE.read_text(encoding="utf-8")
     exceptions = _reviewed_exceptions(original)
@@ -169,6 +187,15 @@ def test_each_route_reaches_its_original_safety_and_authority_sentences(route_id
     available = {s for text in reachable for s in _sentences(text)}
     missing = sorted(required - available)
     assert not missing, f"{route_id} cannot reach original sentences: {missing}"
+    # Authority text has no rewording path. Render both sides before comparing
+    # complete sentences so markup changes are harmless and word changes fail.
+    held = _held_sentences(original, route_id)
+    authority = {s for s in _sentences(original, verbatim=True)
+                 if any(re.search(rf"\b{term}\b", s.casefold()) for term in AUTHORITY_TERMS)
+                 and set(_sentences(s)) & held}
+    rendered = {s for text in reachable for s in _sentences(text, verbatim=True)}
+    verbatim_missing = sorted(authority - rendered)
+    assert not verbatim_missing, f"{route_id} cannot reach original sentences verbatim: {verbatim_missing}"
     qualified = sorted((s, candidate) for s in required for candidate in available
                        if candidate != s and re.match(re.escape(s.rstrip('.!?')) + r"\b", candidate))
     # An intact duplicate cannot hide a newly appended conditional exception,

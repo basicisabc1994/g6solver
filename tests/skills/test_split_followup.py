@@ -91,7 +91,12 @@ def test_code_link_cannot_supply_route_navigation(monkeypatch, example):
 
     monkeypatch.setattr(Path, "read_text", read_changed)
     texts = gate._reachable(root, gate.routing.load().routes["question"])
-    assert texts == [root, example], "literal code opened an unlinked reference"
+    if example == "    ```text\n[example](deliver.md)\n    ```":
+        # Four-space backticks are indented code, but the unindented middle
+        # line is a rendered CommonMark link and must supply navigation.
+        assert (gate.GUIDE / "references/deliver.md").read_text(encoding="utf-8") in texts
+    else:
+        assert texts == [root, example], "literal code opened an unlinked reference"
 
 
 @pytest.mark.parametrize("task,phase,expected,route", [

@@ -826,6 +826,50 @@ def _library_route(task: str, data: dict[str, Any], documents: dict[str, str], r
     return out[:LIBRARY_SLOTS]
 
 
+def _candidate_list(order: list[str], entries: dict[str, dict[str, Any]], acting: dict[str, str],
+                    first: str, scheduled: str, calls: list[str], slots: int, limit: int
+                    ) -> tuple[list[str], bool, str]:
+    # Fill slots, skipping duplicates: remedy; scheduler then considered calls;
+    # best remaining rank; discovery (limit >= 2, in corpus, not kept, route pool);
+    # highest-ranked route; remaining ranks. Emit remedy first, then rank/id,
+    # injected discovery last among non-acting calls, acting calls last; the
+    # caller appends library forms. Naturally kept discovery retains its rank.
+    reserved = list(dict.fromkeys(k for k in (first, scheduled, *calls) if k))
+    rank = {k: i for i, k in enumerate(order)}
+    pool = sorted(dict.fromkeys([*reserved, *order]),
+                  key=lambda k: (bool(acting[k]), rank.get(k, len(rank)), k))
+    chosen: list[str] = []
+
+    def keep(keys: list[str]) -> None:
+        for key in keys:
+            if len(chosen) < slots and key not in chosen:
+                chosen.append(key)
+
+    keep(reserved)
+    keep([k for k in pool if k not in chosen][:1])
+    fallback = "route:discover"
+    # Preserve bde540b's already-kept discovery check without windowing the pool:
+    # its position after the reservations tells whether natural filling keeps it.
+    natural_order = list(dict.fromkeys([*reserved, *pool]))
+    discovery_kept = fallback in natural_order and natural_order.index(fallback) < slots
+    fallback_added = (len(chosen) < slots and limit >= 2 and fallback in entries and fallback not in chosen
+                      and not discovery_kept
+                      and any(entries[k]["kind"] == "route" for k in pool))
+    if fallback_added:
+        keep([fallback])
+    keep([k for k in pool if k.startswith("route:")][:1])
+    keep(pool)
+    # This comparison explains displacement without restricting selection's pool.
+    natural = natural_order[:slots]
+    removed = next((k for k in natural if k not in chosen), "") if fallback_added else ""
+    result = ([first] if first in chosen else []) + [
+        k for k in pool if k in chosen and k != first and not (fallback_added and k == fallback)]
+    if fallback_added:
+        position = next((i for i, k in enumerate(result) if k != first and acting[k]), len(result))
+        result.insert(position, fallback)
+    return result, fallback_added, removed
+
+
 def select(task: str, phase: str = "", last_outcome: str = "", considering: Any = "", limit: int = 5,
            rerank: str = "lexical", *, corpus: dict[str, Any] | None = None,
            request_id: str = "", run_id: str = "") -> dict[str, Any]:
@@ -961,36 +1005,16 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
                                f"{remedy['tool']} is not registered on this server" if remedy["tool"] else
                                "change your own call")})
 
-    # the remedy first, then the scheduler's pick and the calls you are considering, kept within the limit; the rest
-    # by score, and all but the remedy in score order
     # the library route's Python forms take the last slots, after every call that runs now over MCP
     named_ops = list(dict.fromkeys(c["id"] for c in considered if c["kind"] == "call" and c.get("id")))
     library = _library_route(task, data, documents, remedy, named_ops)
     slots = max(1, limit - len(library))
-    must = list(dict.fromkeys(k for k in (first, scheduled, *calls) if k))[:slots]
-    rest = [k for k in order if k not in must][:slots - len(must)]
-    rank = {k: i for i, k in enumerate(order)}
-    chosen = ([first] if first else []) + sorted((k for k in must + rest if k != first),
-                                                 key=lambda k: (bool(acting[k]), rank.get(k, len(rank)), k))
-
-    # Route-list priority: (1) highest-ranked candidate; (2) discovery fallback
-    # when absent and limit >= 2; (3) highest-ranked route if a slot remains;
-    # (4) remaining candidates in rank order while slots remain. Emit kept
-    # candidates in their original rank order, then the discovery fallback last.
+    chosen, fallback_added, removed = _candidate_list(order, entries, acting, first, scheduled, calls, slots, limit)
     fallback = "route:discover"
-    fallback_added = False
-    removed = ""
-    if (limit >= 2 and fallback in entries and fallback not in chosen
-            and any(entries[k]["kind"] == "route" for k in chosen)):
-        routes = [k for k in chosen if entries[k]["kind"] == "route"]
-        priority = list(dict.fromkeys([chosen[0], fallback, *routes[:1], *chosen]))[:limit]
-        removed = next((k for k in chosen if k not in priority), "")
-        chosen = [k for k in chosen if k in priority] + [fallback]
-        fallback_added = True
     stage["why"] += "; " + ("limit=1: no discovery fallback is forced" if limit == 1 else
                             f"replaced {removed} with the discovery fallback" if removed else
                             "added the discovery fallback" if fallback_added else
-                            "discovery already ranked, no route list, or discovery absent from the corpus")
+                            "discovery already ranked, no route list, no free slot, or discovery absent from the corpus")
 
     # 6. validation
     candidates = []
