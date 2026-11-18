@@ -118,7 +118,9 @@ class Synthesizer:
     full (no unmeasured savings). The injected caller retains its own send gate.
     """
     def __init__(self, *, caller: LLMCaller | None = None, pacing=None, provider: str = "",
-                 worst_case: float | None = None, now=None):
+                 worst_case: float | None = None, now=None, policy=None):
+        from .meta.records import SynthesisPolicy
+        self.policy = SynthesisPolicy() if policy is None else SynthesisPolicy.model_validate_json(policy.model_dump_json())
         self.caller, self.pacing, self.provider = caller, pacing, provider
         self.worst_case = worst_case
         self.now = now or (lambda: datetime.now(timezone.utc))
@@ -146,8 +148,8 @@ class Synthesizer:
         except ValueError as error:
             refuse("G6_E_SYNTH_TRAINING_ONLY", str(error))
             return result()
-        if meter is None and self.caller is not None:
-            meter = MeteredCaller(self.caller, Budget(max_model_calls=3))
+        if meter is None and self.caller is not None and self.policy.max_synthesis_calls:
+            meter = MeteredCaller(self.caller, Budget(max_model_calls=self.policy.max_synthesis_calls))
             self._meters[concept.concept_id] = meter
         ids = [case.failure.case_ref for case in cases]
         entries = {entry.entry_id: entry for entry in sorted(library.list(), key=lambda e: e.entry_id)}
@@ -230,12 +232,15 @@ class Synthesizer:
                 if covers(composed):
                     return result(composed)
 
-        for name in sorted(SEED_TEMPLATES):
+        for name in self.policy.template_order:
             if SEED_TEMPLATES[name].supported:
                 method = candidate("template_instance", TemplateInstance(template=name, bindings={}))
                 if covers(method):
                     return result(method)
 
+        if self.policy.max_synthesis_calls == 0:
+            refuse("G6_E_SYNTH_CALL_LIMIT", "synthesis policy permits no model calls")
+            return result()
         if self.caller is None:
             refuse("G6_E_SYNTH_NO_CALLER", "no injected model caller; no provider was discovered")
             return result()
@@ -259,7 +264,8 @@ class Synthesizer:
             # Reserve enough for every possible inner retry before entering the caller.
             reservation = None
             if online:
-                reservation = self.pacing.reserve(self.provider, self.now(), self.worst_case * (3 - meter.calls))
+                reservation = self.pacing.reserve(self.provider, self.now(),
+                    self.worst_case * (self.policy.max_synthesis_calls - meter.calls))
                 if not reservation.admitted:
                     refuse("G6_E_SYNTH_PACING", reservation.reason)
                     terminal = True
@@ -271,8 +277,8 @@ class Synthesizer:
                 # MeteredCaller already charged the logical attempt. Extra sends
                 # are charged in its finally, so include them in this preflight.
                 with send_lock:
-                    if meter.calls + noted > 3:
-                        raise _Limit("next model send would exceed four calls including the concept")
+                    if meter.calls + noted > self.policy.max_synthesis_calls:
+                        raise _Limit("next model send would exceed the synthesis policy call cap")
                     if reservation is not None and (reservation.ends is None or self.now() >= reservation.ends):
                         raise ExecutionRefused("G6_E_SYNTH_PACING", "weekly reservation is unbound or expired")
                     noted += 1
@@ -299,9 +305,15 @@ class Synthesizer:
             return None
 
         # Exactly one bindings attempt, then predicate and one repair. No free-form tests.
-        stages = ["template bindings", "predicate", "predicate repair"]
+        stages = ["template bindings"]
+        if self.policy.try_predicate:
+            stages.append("predicate")
+            if self.policy.repair_budget:
+                stages.append("predicate repair")
         feedback = None
         for stage in stages:
+            if meter.calls >= self.policy.max_synthesis_calls:
+                break
             response = ask("Propose " + stage + ". Return JSON only: " + (
                 '{"template": "seed id", "bindings": {}}. Bindings are data, never source.' if stage == "template bindings"
                 else '{"source": "def solve(facts): ..."}. Return verdict and reason; no imports or case literals.'),
@@ -332,8 +344,8 @@ class Synthesizer:
                 refuse(error.code, str(error))
             except (ValueError, TypeError) as error:
                 refuse("G6_E_SYNTH_MODEL", str(error))
-        if meter.calls >= 3:
-            refuse("G6_E_SYNTH_CALL_LIMIT", "four-call concept budget spent; fifth call refused")
+        if meter.calls >= self.policy.max_synthesis_calls:
+            refuse("G6_E_SYNTH_CALL_LIMIT", "synthesis policy call budget spent; next call refused")
         return result()
 
 
