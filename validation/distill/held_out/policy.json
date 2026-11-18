@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "evidence": {
+    "min_cases": 30,
+    "min_discordant": 5,
+    "alpha": 0.05,
+    "max_evaluations": 5,
+    "call_tolerance": 1.0,
+    "max_eval_model_calls": 10000,
+    "demote_alpha": 0.05,
+    "looks": 1,
+    "false_accept_margin": 0.05,
+    "staged_evaluation": false,
+    "cost_margin": 0.05
+  },
+  "utility_fp_penalty": 3,
+  "fpr_margin": 0.02,
+  "batch_q": 0.05,
+  "registrations": {}
+}

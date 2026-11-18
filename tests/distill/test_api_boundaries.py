@@ -8,6 +8,8 @@ def test_distill_imports_no_model_mcp_or_protected_meta_layer():
     root = Path(__file__).resolve().parents[2] / "src" / "g6" / "distill"
     forbidden = ("g6.core.llm", "g6.mcp", "g6.metaharness", "subprocess", "socket", "http", "requests")
     for path in root.glob("*.py"):
+        if path.name == "acceptance_gate.py":
+            continue  # The protected evaluator reuses the metaharness; proposers cannot import it.
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             names = [node.module or ""] if isinstance(node, ast.ImportFrom) else (
                 [alias.name for alias in node.names] if isinstance(node, ast.Import) else [])

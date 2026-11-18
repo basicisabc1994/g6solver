@@ -34,7 +34,9 @@ def strict_json(data: bytes) -> Any:
 def oracle_digest() -> str:
     """Pin executable judging dependencies as well as the label function."""
     modules = (case_gate, oracle, mutation_check, repo_tests, confine, ledger)
-    files = {m.__name__: Path(m.__file__) for m in modules}
+    # Source-checkout callers use validation.distill; study entry points put
+    # validation on sys.path and use distill. These name the same pinned files.
+    files = {m.__name__.removeprefix("validation."): Path(m.__file__) for m in modules}
     files.update({"sealed_gate": Path(__file__).with_name("sealed_gate.py"),
                   "registration_gate": Path(__file__), "operators": Path(__file__).parents[1] / "operators.py"})
     return digest({name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in files.items()})

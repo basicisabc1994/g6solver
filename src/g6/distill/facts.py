@@ -89,6 +89,15 @@ def source_mapping(source):
 
 def extract_facts(before, after, *, split: Split, changed_functions=(), probe_outcomes=None):
     check_split(split)  # Always before even iterating over a source mapping.
+    return _extract_facts(before, after, changed_functions=changed_functions, probe_outcomes=probe_outcomes)
+
+
+def _extract_facts(before, after, *, changed_functions=(), probe_outcomes=None):
+    """Shared syntax extractor; protected evaluators supply their own explicit case mappings.
+
+    This has no storage reader and cannot obtain held-out content. The public
+    proposer interface above still rejects held-out split labels before access.
+    """
     before, after = source_mapping(before), source_mapping(after)
     probes = dict(probe_outcomes or {})
     if set(probes) - PROBE_NAMES:

@@ -135,6 +135,26 @@ Operator bytes, transformed tests and facts never leave this evaluator channel.
 The future acceptance/study slices own the two named entry modules.
 """
     _require_evaluator()  # must precede even opening a file or examining a case
+    return tuple(result for _, result in _evaluations(path, reference, case, policy=policy,
+                                                     workspace=workspace, registration=registration))
+
+
+def acceptance_observations(path: Path, reference: SealedRef, case: CaseRecord, *, policy: OraclePolicy,
+                            workspace: Path, registration: tuple[Path, str]) -> tuple[tuple[CaseRecord, OracleResult], ...]:
+    """Evaluator-only transformed inputs and labels, never a callback or mission API.
+
+    The two protected evaluator modules need these inputs to measure methods.
+    They must release only aggregate decisions and digests to the loop.
+    """
+    _require_evaluator()
+    return _evaluations(path, reference, case, policy=policy, workspace=workspace, registration=registration)
+
+
+def _evaluations(path, reference, case, *, policy, workspace, registration):
+    # Also bind this internal entry, so importing a private name grants nothing.
+    caller = inspect.currentframe().f_back
+    if caller.f_globals is not globals():
+        raise PermissionError("G6_E_DISTILL_SEALED_ACCESS: protected entry required")
     frozen = read_registration(registration[0], expected_digest=registration[1])
     if frozen.operator_digests["held_out"] != reference.sha256:
         raise ValueError("sealed operator is not the registered digest")
@@ -173,5 +193,5 @@ The future acceptance/study slices own the two named entry modules.
                     setattr(parent, field, [copy.deepcopy(replacement) if n is target else n for n in value])
         after = ast.unparse(ast.fix_missing_locations(tree)) + "\n"
         generated = CaseRecord.model_validate(case.model_dump(mode="json") | {"after_tests": after})
-        results.append(label(generated, policy=policy, workspace=workspace))
+        results.append((generated, label(generated, policy=policy, workspace=workspace)))
     return tuple(results)

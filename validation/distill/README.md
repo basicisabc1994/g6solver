@@ -62,7 +62,10 @@ AST pattern strings `before` and `after`, and an optional zero-based `occurrence
 (`-1` selects the last match). Patterns each contain one statement or expression;
 the interpreter substitutes matching AST nodes without executing the patterns.
 The transformation patterns themselves exist only in the opaque file. No generic
-callback can receive them, and no API returns them or transformed tests.
+callback can receive them. The ordinary API returns no patterns or transformed
+tests. `acceptance_observations` now returns transformed inputs and labels only
+to the same two protected evaluator modules, after the identical identity,
+registration and digest checks. It is not exported in `__all__`.
 
 `evaluate_sealed` requires a frozen registration path/digest, matching operator
 digest/policy, and a registered non-tuning case. It verifies the same bytes it
@@ -84,3 +87,81 @@ emit only tuning facts/failure records to synthesis. Never add a held-out value
 to `FailureRecord.split`. Acceptance must enforce registration-before-concept
 and the policy's five-evaluation spend limit; the study owns six blocks and its
 report-only unseen looks. Neither lifecycle is implemented in this wave-1 slice.
+
+Wave 2 acceptance lives in `src/g6/distill/acceptance_gate.py`. It is a
+source-checkout evaluator; it needs this validation package and protected policy.
+The public distill package does not import it. `decide(candidate, Library(),
+registration_digest)` is a batch of one; the runner must use `decide_batch` once
+for the complete predeclared tick batch. The gate writes reservations before
+evaluation, records every completed decision, and refuses spent or unfinished
+evaluations across process restarts. A stale writer lock requires owner recovery.
+
+`held_out/policy.json` keeps the unchanged default `EvidencePolicy`, utility
+penalty 3, paired FPR margin +.02 and BH q=.05. Its `registrations` map is empty:
+no live study is enabled by this build. Owner entries are keyed by registration
+digest and contain `path` (checkout-relative registration JSON), `commit` (full
+registration commit), and `concepts`, mapping concept digests to `{commit, path}`
+of the independently kept first concept JSON snapshot. The gate checks strict
+commit ancestry and exact committed registration/concept content. These are
+owner custody anchors, not caller claims about dates. The registration's study
+metadata must contain `acceptance_policy_sha256` (`_policy_digest()`),
+`acceptance_code_sha256` (`_judging_digest()`), and `acceptance_controls` (positive
+then negative case digests), plus `family` matching both concept and contract.
+All training cases named by the concept and candidate must be registered tuning
+cases; an absent or non-tuning training reference blocks. Policy digest excludes the anchor map so owner
+enrolment does not circularly alter the registration it pins.
+
+Case bodies are explicit content-addressed files at
+`$G6_HOME/distill/held_out/cases/<case_id>.json`. Sealed objects remain in the
+existing `objects/` custody. Independent oracle exclusions cannot become
+negatives. The gate runs each method three times, checks controls, compares the
+union against the entire active library through the existing metaharness gate,
+requires positive utility and the stricter FPR bound, replays every active
+entry's frozen suite, and checks dev plus monitor FPR. It applies BH to the
+complete batch as well as the unchanged alpha/K sign-test threshold. Candidate
+predicates additionally require `G6_REQUIRE_ISOLATION=1`; owner permission for
+unconfined exploratory scripts cannot admit a predicate. No executor or model
+runs inside the metaharness adapter. Unknown probe or applies_when semantics
+abstain; they are not treated as clean observations.
+
+Sign-test units, precision counts and negative-rate pairs aggregate by bug.
+Positive success requires every registered positive variant to fire; a false
+alarm on any negative variant counts as one refuted unit and cannot also count
+as a true-positive fire. This conservative aggregation prevents operator
+replication from shrinking intervals. Wilson intervals describe the measured
+precision/recall/FPR; admission uses the existing paired statistics. The reported
+minimum detectable gain is the optimistic all-wins/no-losses unit fraction at
+this split size and alpha/K, not a claim of 80% power.
+
+Authority is A0 for proposals and withdrawn/superseded entries; A1 probation
+after acceptance; A2 only after held-out precision lower95 >= .90, >=30 units,
+>=10 legitimate negative units, held-out FPR upper95 <= .05, >=20 labelled
+field fires with precision lower95 >= .85, and fresh whole-library regression.
+A0/A1 concerns support at most insufficient evidence. A2 concerns may support
+defect detection. Silence never passes a requirement at any authority.
+
+`promote` reads independent field rows from unmounted evaluator custody at
+`held_out/field/<candidate_id>.jsonl` (a ChainLedger, kind `field`). Bodies have
+exactly `candidate_id`, `fire_id`, `source` (person/maintainer/oracle), `label`
+(confirmed/refuted/unlabelled), and `receipt_sha256`. Unique fires prevent
+double counting. An unlabelled fire may later receive exactly one confirmed or
+refuted observation with the same fire id; the latest label replaces its
+unlabelled count, never adds another fire. Terminal relabelling is refused.
+The wire slice owns obtaining authentic labels and writing
+these receipts; predictions, extra fields and caller counters are refused.
+`monitor` demotes A2 to A1 at `demote_alpha`, using the existing exact binomial
+upper bound. Its reported p-value upper bound is the threshold, not an invented
+exact p-value. Owner `demote`/`withdraw` require the wire slice's consent dialog;
+the Python API records a name as given and does not authenticate it.
+
+`recheck` withdraws on reproduced own-suite drift, >10% weekly cost overruns,
+or an independently observed pre-stated withdrawal condition. Health rows at
+`held_out/health/<candidate_id>.jsonl` (kind `health`) contain `candidate_id`,
+`observation_id`, `source`, timezone-aware `observed_at`, `wall_s`,
+`withdrawal_condition`, and `receipt_sha256`; optional observations are null.
+`ablate` archives a redundant method only when removal loses no verdict on the
+family's complete frozen suite. Downward changes cascade to every dependent
+composition/reuse method at A0; re-admission needs a fresh unspent acceptance
+decision. Bodies and lineage are retained, never deleted. Decisions/reports
+are in `distill/acceptance_gate.jsonl` and `acceptance_gate_reports/`; library
+snapshots remain in the records slice's library ledger.
