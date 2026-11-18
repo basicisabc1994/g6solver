@@ -131,7 +131,8 @@ def test_real_runner_refuses_missing_isolation_without_starting_child(tmp_path, 
 
 @pytest.mark.parametrize("operator, expected", [("erase_assertion", "positive"), (None, "negative"),
                                               ("rename_test", "negative")])
-def test_real_confined_labels_on_planted_program(tmp_path, operator, expected):
+def test_real_confined_labels_on_planted_program(tmp_path, operator, expected, confined_python):
     after = apply_operator(BEFORE, operator) if operator else BEFORE
-    result = oracle.label(planted(after), policy=oracle.OraclePolicy(min_mutants=1, max_mutants=8), workspace=tmp_path)
+    result = oracle.label(planted(after), policy=oracle.OraclePolicy(min_mutants=1, max_mutants=8), workspace=tmp_path,
+                          python=confined_python)
     assert result.label == expected

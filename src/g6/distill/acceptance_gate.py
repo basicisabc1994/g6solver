@@ -123,7 +123,7 @@ def _bh(pairs, batch_size):
 
 
 def _policy():
-    from validation.distill.held_out.registration_gate import strict_json
+    from g6.distill.held_out.registration_gate import strict_json
 
     data = strict_json(_plain(POLICY_PATH, ROOT / "validation/distill/held_out").read_bytes())
     # A caller cannot relax EvidencePolicy, request sequential looks, or invent
@@ -182,7 +182,7 @@ def _chronology(anchor, registration, candidate):
         if not isinstance(rel, str) or ".." in Path(rel).parts or Path(rel).is_absolute() or ":" in rel:
             raise ValueError("invalid chronology path")
     _git("merge-base", "--is-ancestor", commit, later)
-    from validation.distill.held_out.registration_gate import strict_json
+    from g6.distill.held_out.registration_gate import strict_json
     if digest(strict_json(_git("show", f"{commit}:{anchor['path']}"))) != registration.registration_id:
         raise ValueError("registration commit does not bind this registration")
     recorded = strict_json(_git("show", f"{later}:{concept['path']}"))
@@ -194,9 +194,9 @@ def _chronology(anchor, registration, candidate):
 
 
 def _load(registration_id, candidate, library) -> EvaluationSet:
-    from validation.distill.held_out import oracle, sealed_gate
-    from validation.distill.held_out.case_gate import CaseRecord
-    from validation.distill.held_out.registration_gate import read_registration, strict_json
+    from g6.distill.held_out import oracle, sealed_gate
+    from g6.distill.held_out.case_gate import CaseRecord
+    from g6.distill.held_out.registration_gate import read_registration, strict_json
 
     _, settings = _policy()
     anchor = settings["registrations"].get(registration_id)
@@ -914,7 +914,7 @@ def promote(entry_id: str, library: Library, registration: str) -> AcceptanceDec
             if frozen.split_sha256 != evidence.split_sha256 or evidence.policy_sha256 != _policy_digest():
                 raise ValueError("A2 acceptance evidence changed")
             report_path = state_path("distill", "acceptance_gate_reports", f"{evidence.acceptance_report_sha256}.json")
-            from validation.distill.held_out.registration_gate import strict_json
+            from g6.distill.held_out.registration_gate import strict_json
             report = strict_json(report_path.read_bytes())
             if (digest(report) != evidence.acceptance_report_sha256 or report["candidate_id"] != entry.candidate_id
                     or report["counts"] != {k: getattr(evidence, k) for k in report["counts"]}
