@@ -63,6 +63,7 @@
     "debate": "g6.debate",
     "decision_making": "g6.cogarch.decision_making",
     "design_governance": "g6.code.design_governance",
+    "distill": "g6.distill",
     "distillation": "g6.distillation",
     "duty_of_care": "g6.jobs.duty_of_care",
     "epistemic_integrity": "g6.epistemic_integrity",

@@ -46,6 +46,7 @@ DIALOG_EXEMPT: dict[str, dict[str, str]] = {
 #: name is bound to: a module that sends a form and is not here fails it, so a new dialog's fields are read or the
 #: inventory stops.
 DIALOG_SCHEMAS: dict[str, str] = {
+    "g6.mcp.distill": "DECIDE_FORM: library authority changes require the person's client dialog",
     "g6.mcp.consent": "request_consent: the schema it hands the client, read from what it sends",
     "g6.mcp.behaviour": "the behaviour form: the schema behaviour_question.form returns",
     "g6.mcp.workflow": "the workflow record's forms: DELETE_FORM, DECIDE_FORM and FEEDBACK_FORM, the schemas it hands "
@@ -119,7 +120,7 @@ def dialog_fields() -> frozenset[str]:
     from types import SimpleNamespace
 
     from g6.harness import behaviour_question
-    from g6.mcp import consent, workflow
+    from g6.mcp import consent, workflow, distill
 
     sent: list[Any] = []
 
@@ -139,6 +140,7 @@ def dialog_fields() -> frozenset[str]:
         raise RegistrationError(f"the behaviour form could not be built to read its fields. {type(exc).__name__}: "
                                 f"{exc}") from exc
     forms += [getattr(workflow, name, None) for name in _WORKFLOW_FORMS]
+    forms.append(distill.DECIDE_FORM)
     if not sent or any(not _properties(schema) for schema in (*sent, *forms)):
         raise RegistrationError("a dialog's schema asks for no field: the dialogs' fields could not be read")
     return frozenset(name for schema in (*sent, *forms) for name in _properties(schema))

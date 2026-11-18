@@ -220,10 +220,9 @@ def _observe(repo, module, function, inputs, scratch, timeout: float | None = No
 
 def run(params: dict, *, venture: str | None) -> dict:
     scope = params["regression"]
-    if "learned" in scope:  # learned guards are deferred with the learning layer: never run, never a pass
-        return {"ok": True, "result": {"probe": {
-            "status": "not_run", "reason": LEARNED_NOT_RUN, "counterexamples": [], "functions": [], "authority": "A0",
-            "guard_id": scope["learned"].get("guard_id", "") if isinstance(scope["learned"], dict) else ""}}}
+    if "learned" in scope:
+        from g6.harness.library_review_gate import check_learned
+        return {"ok": True, "result": {"probe": check_learned(params, venture=venture)}}
     declared = {(d.get("module"), d.get("function")) for d in scope.get("declared") or [] if isinstance(d, dict)}
     probe = {"status": "not_run", "reason": NOT_RUN, "counterexamples": [], "functions": [], "authority": "A0"}
     bailed: set = set()

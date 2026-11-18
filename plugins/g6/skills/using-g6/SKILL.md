@@ -37,6 +37,8 @@ sections below are routes too: Deliver (review), Find (discover), Compose and Fi
 - **workflow.** G6's local record of its own review work, off unless `G6_WORKFLOW_RECORD=on` is set where the server
   is registered: `g6_workflow_export`, `g6_workflow_correct`, `g6_workflow_delete`, `g6_suggestion_decide` and
   `g6_feedback`. Never write its files or answer its dialogs for the person.
+- **learn.** To report a failure, inspect learned checking methods or ask G6 to adapt itself, read
+  `references/learning.md`. Authority is measured and can be withdrawn; a detector's silence never passes a requirement.
 
 ## Deliver a coding task with G6
 
