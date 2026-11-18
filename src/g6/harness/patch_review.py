@@ -535,7 +535,7 @@ def _names(check: str, files: set[str]) -> bool:
 
 
 def _inputs(task, claim, tests, sources, timeout_s, requirements, intent=None, proposed_checks=None,
-            template_instances=None, search=None) -> tuple[list[Requirement], list, list, list, list, dict | None]:
+            template_instances=None, search=None, *, candidate_ids=()) -> tuple[list[Requirement], list, list, list, list, dict | None]:
     """The requirements (with an intent's items mapped in), the intent's assumptions and its unknowns, the proposed
     checks, the template instances and the search configuration (None when no search setting or instance was given);
     a refusal for any invalid input."""
@@ -573,7 +573,7 @@ def _inputs(task, claim, tests, sources, timeout_s, requirements, intent=None, p
     if len({r.id for r in stated}) != len(stated):
         raise bad("requirement ids must be unique")
     proposed = []
-    assessed = {req.id for req in stated if req.provenance in NORMATIVE}
+    assessed = {req.id for req in stated if req.provenance in NORMATIVE} | set(candidate_ids)
     if proposed_checks is not None and proposed_checks != []:
         from g6.harness import verification_search   # only for proposed checks
         try:
@@ -928,7 +928,7 @@ def _grounding(claim: str, sources: dict[str, str] | None) -> dict:
             "note": "lexical support against caller-supplied text, not entailment; it does not decide the outcome"}
 
 
-def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests: list[str] | tuple[str, ...] = (),
+def review_patch(repo: str | Path, *, task: str, requirements: list[dict] | None = None, tests: list[str] | tuple[str, ...] = (),
                  claim: str = "", sources: dict[str, str] | None = None, base: str = "HEAD",
                  expected_artifact_digest: str = "", timeout_s: int = 300, intent: dict | None = None,
                  proposed_checks: list[dict] | None = None, template_instances: list[dict] | None = None,
@@ -955,6 +955,8 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
     Optional ``confirmed`` (Python only; over MCP, G6 reads it from the task's question store): the standard of the
     expectations the person confirmed for this task (``g6.harness.confirmed_expectation.ExpectationStandard``), each
     enforced on the patch as its one example.v1 check (``g6.harness.confirmed_checks``); with none, nothing of it runs.
+    Omitted requirements with no intent builds a shared task/model candidate standard and runs its mapped and
+    cheapest checks as proposals only. Explicit empty requirements retains the established empty-standard path.
     """
     started = time.monotonic()
     try:
@@ -963,8 +965,14 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
             if type(confirmed) is not ExpectationStandard:
                 raise _Refused("G6_E_INPUT_VALIDATION", "confirmed is the standard of the expectations the person "
                                                         "confirmed (an ExpectationStandard)")
+        thin = requirements is None and intent is None
+        # Validate shapes first with provisional ids; membership is checked again after the static reading.
+        provisional_ids = {c.get('requirement_id') for group in (proposed_checks, template_instances)
+                           if isinstance(group, (list, tuple)) for c in group
+                           if isinstance(c, dict) and isinstance(c.get('requirement_id'), str)} if thin else ()
         stated, assumed, unmapped, proposed, instances, config = _inputs(
-            task, claim, tests, sources, timeout_s, requirements, intent, proposed_checks, template_instances, search)
+            task, claim, tests, sources, timeout_s, [] if requirements is None else requirements, intent,
+            proposed_checks, template_instances, search, candidate_ids=provisional_ids)
         root = repo_tests.checked_repo(repo)
         roots = _import_roots(root, import_roots)
         opened = time.monotonic()
@@ -977,6 +985,27 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         if expected_artifact_digest and artifact != expected_artifact_digest:
             return blocked_reply("[G6_E_PATCH_STALE] working tree differs from the supplied artifact digest")
         change = repo_tests.change(root, base)
+        candidates, candidate_origins, candidate_skipped = None, {}, []
+        if thin:
+            from g6.harness import candidate_standard, verification_search
+            from g6.core import semantic
+            texts = candidate_standard.sources(root)
+            original = candidate_standard.baseline(root, change, texts)
+            # The existing request (including an injected fake/None) remains authoritative.
+            with semantic.use_request(**({'llm': llm} if llm is not None else {})):
+                candidates = candidate_standard.from_sources({**original, **texts}, task, repo=root)
+            stated, assumed, unmapped, proposed, instances, config = _inputs(
+                task, claim, tests, sources, timeout_s, [], None, proposed_checks, template_instances, search,
+                candidate_ids=[c['id'] for c in candidates['standard']])
+            instances = [one.model_copy(update={'provenance': 'model_hypothesis'}) for one in instances]
+            generated, compiled, candidate_origins, candidate_skipped = candidate_standard.checks(
+                candidates, texts, before=original,
+                budget=verification_search.MAX_CHECKS - len(proposed) - len(instances))
+            used = {c.id for c in proposed} | {c.id for c in instances}
+            proposed.extend(c for c in generated if c.id not in used)
+            instances.extend(c for c in compiled if c.id not in used)
+            candidate_origins = {key: value for key, value in candidate_origins.items() if key not in used}
+            config = config or verification_search.search_config(None)
         from g6.harness import outcome_history
 
         retained, retained_origins, retained_skipped = outcome_history.retained_checks(
@@ -1001,12 +1030,15 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         norm.update({raw: repo_tests.inside(root, raw, "test") for raw in tests})
         stated_ids = list(dict.fromkeys(norm[raw] for req in stated for raw in req.checks))
         ids = list(dict.fromkeys([*stated_ids, *(norm[raw] for raw in tests)]))
-        return _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources,
+        reviewed = _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources,
                        deadline=deadline, limit=limit, started=started, listed=listed, assumed=assumed,
                        unmapped=unmapped, proposed=proposed, placed=placed, instances=instances, config=config,
                        roots=roots, llm=llm, confirmed=confirmed if confirmed is not None and confirmed.expectations
                        else None, retained=retained, retained_origins=retained_origins,
-                       retained_skipped=retained_skipped)
+                       retained_skipped=retained_skipped, candidate_origins=candidate_origins,
+                       candidate_skipped=candidate_skipped, candidate_calls=candidates['model_calls'] if thin else 0,
+                       thin=thin)
+        return candidate_standard.annotate(reviewed, candidates, claim, confirmed) if candidates is not None else reviewed
     except LETS_THROUGH:
         raise   # an operator stop, a spent allowance or unconfirmed process cleanup must reach the enclosing door
     except repo_tests.RepoRefused as exc:
@@ -1050,7 +1082,7 @@ def _stage(stopped: list[dict], what: str, run, *args, **kwargs):
 def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, *, deadline, limit,
             started, listed=(), assumed=(), unmapped=(), proposed=(), placed=None, instances=(),
             config=None, roots=(), llm=None, confirmed=None, retained=(), retained_origins=None,
-            retained_skipped=()) -> dict:
+            retained_skipped=(), candidate_origins=None, candidate_skipped=(), candidate_calls=0, thin=False) -> dict:
     """``deadline``: when the checks stop; ``limit``: when the review ends, the closing steps (``_closing``) and the
     reply coming between the two."""
     reasons: list[dict] = []
@@ -1219,7 +1251,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     elif _left(deadline) < 1:
         skipped.append({"tier": 2, "check": "tests that touch the changed modules", "reason": "the time budget is spent"})
     else:
-        derived, more = repo_tests.derive_tests(change)
+        derived, more = ([], 0) if thin else repo_tests.derive_tests(change)
         derived = [rel for rel in derived if rel not in present]
         if more:
             unknowns.append(f"{more} more test file(s) touch the changed modules and were not run (the limit is "
@@ -1273,6 +1305,10 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         checks, where = [*compiled, *proposed, *retained], {**(prepared.placed if prepared else {}), **(placed or {})}
         origins = {**(prepared.origins if prepared is not None else {}), **(proposals.origins if proposals else {}),
                    **(retained_origins or {})}
+        for ident, origin in (candidate_origins or {}).items():
+            previous = origins.get(ident, verification_search.FREE_FORM)
+            origins[ident] = replace(previous, activity=origin.activity, proposed_by=origin.proposed_by,
+                label=origin.label, unconfirmed=origin.unconfirmed, about={**previous.about, **origin.about})
         if any(r["stage"] == "integrity" for r in reasons):
             search = verification_search.not_run(checks, where, INTEGRITY_SKIP, origins)
         else:
@@ -1289,6 +1325,10 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
 
         search = search or verification_search.Search()
         search.activities.extend(retained_skipped)
+    if candidate_skipped:
+        from g6.harness import verification_search
+        search = search or verification_search.Search()
+        search.activities.extend(candidate_skipped)
     adequacy = None
     if config is not None and config["test_adequacy"]:   # report only: it changes no outcome
         from g6.harness import verification_search
@@ -1409,7 +1449,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                                 SELF_CHECKED_ASK.format(ids=self_checked) if self_checked else ""),
                   prepared=prepared, adequacy=adequacy, config=config,
                   counts={"template_instances": len(instances), "proposed_checks": len(proposed),
-                          "model_calls": proposals.calls if proposals else 0}, roots=roots,
+                          "model_calls": (proposals.calls if proposals else 0) + candidate_calls}, roots=roots,
                   stopped=stopped, proposer=proposals,
                   issuer_inputs={"check_sha": check_sha, "written": lambda check: written.get(check, True),
                                  "again": again, "observed": observed},

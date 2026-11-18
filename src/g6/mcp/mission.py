@@ -363,11 +363,11 @@ def certificate(mission_id: str) -> dict:
 
 
 def premortem(repo: str, task: str, intent: dict | None = None) -> dict:
-    """Before the work, from what the caller gave and the repository's file names: no model, and nothing runs. The
-    intent contract, a proposed standard of done (a requirement that names one of the repository's test files has it
-    as its stated check; any other is not established), the competing ways the task can fail and at most three
-    questions. A proposal: nothing here is frozen, and the person confirms a standard only through a mission."""
-    if not task.strip():
+    """A candidate standard from task text, static repository mapping and the shared semantic reader.
+
+    No repository code runs. Only the person's behaviour confirmation can state a candidate case.
+    """
+    if not isinstance(task, str) or not task.strip():
         return blocked_reply("[G6_E_INPUT_VALIDATION] task must say what the change is for")
     try:
         root = repo_tests.checked_repo(repo)
@@ -382,14 +382,25 @@ def premortem(repo: str, task: str, intent: dict | None = None) -> dict:
         listed = repo_tests._git(root, "ls-files", "-z").decode("utf-8", "replace").split("\0")
         tests = [rel for rel in listed if rel and repo_tests.is_test_related(rel)]
         mapped = verification_search.requirements_from_intent(session.contract, [])
-        standard = [{"id": found.id, "text": found.text, "kind": found.kind,
+        explicit = [{"id": found.id, "text": found.text, "kind": found.kind,
                      "checks": (named := [rel for rel in tests if rel in found.text]),
                      "status": "stated_checks" if named else "not_established"} for found in mapped.requirements]
         questions = [q.question for q in session.questions[:verification_search.MAX_QUESTIONS]]
+        from g6.harness import candidate_standard
+        from g6.mcp import behaviour
+        candidates = candidate_standard.build(root, task)
+        candidates = candidate_standard.with_confirmed(candidates, behaviour.enforced(repo, task))
+        standard = candidates['standard']
+        # Preserve the representation and authority of an explicitly supplied intent contract.
+        standard = [*explicit, *standard]
+        question = candidates['question']
         shown = card(None, "G6_E_QUALIFIED_DRAFT", "g6_premortem: a proposal; nothing in it has been checked")
         return {"ok": True, "intent": session.contract.model_dump(mode="json"), "standard": standard,
-                "hypotheses": checklist.hypotheses(), "questions": questions, "test_files": tests[:MAX_TEST_FILES],
-                "unknowns": mapped.unknowns, "model_calls": 0,
+                "intent_standard": explicit,
+                "hypotheses": checklist.hypotheses(), "questions": [question['text']] if question else questions[:1],
+                "question": question, "more_questions": questions, "test_files": tests[:MAX_TEST_FILES],
+                "unknowns": [*mapped.unknowns, *candidates['unknowns']], "model_calls": candidates['model_calls'],
+                "mechanisms": candidates['mechanisms'],
                 **door_envelope("qualified-draft", who="g6_premortem", warning_card=shown)}
 
     return _guarded(work)

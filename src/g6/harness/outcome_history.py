@@ -12,6 +12,7 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
+from g6.core.git_name import shown
 from g6.core.ledger import ChainLedger, digest
 from g6.core.storage import state_path
 from g6.workforce import receipt_store
@@ -323,10 +324,10 @@ def check_sources(root: Path, nodes) -> dict[str, str]:
                 or not path.is_file()):
             continue
         if path.stat().st_size > 64 * 1024:
-            found[node] = ''   # retain its node and receipt-owned byte digest without raising the replay bound
+            found[shown(node)] = ''   # retain its node and receipt-owned byte digest without raising the replay bound
             continue
         try:
-            found[node] = path.read_bytes().decode('utf-8')
+            found[shown(node)] = path.read_bytes().decode('utf-8')
         except (OSError, UnicodeError):
             continue
     return found

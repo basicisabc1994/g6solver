@@ -78,6 +78,9 @@ KINDS = MappingProxyType({
     "agreement": Kind("choose", "Read agreement of final debate positions by meaning, retaining dissent"),
     "legal_advice": Kind("raise_only", "Does the text give legal advice rather than describe wording?", (False, True)),
     "claim_type": Kind("choose", "Classify the claim by its meaning (issuance integration seam)"),
+    "candidate_standard": Kind("choose", "Propose observable behaviours only, never requirements or authority. "
+        "Use the task's named functions as dotted module.function names; provide concrete example cases. "
+        "Do not invent permissions, code, check paths or a normative status."),
 })
 
 

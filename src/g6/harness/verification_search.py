@@ -980,6 +980,7 @@ def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_
         done.defects.append({"check": one.id, "requirement": one.requirement_id, "provenance": PROPOSED,
                              "result": result, "code": REASONS[result], "detail": verdict["detail"],
                              "reproduction": reproduction,
+                             **({'origin': origin.about['origin']} if 'origin' in origin.about else {}),
                              **({"template": origin.template} if origin.template else {})})
         done.next_actions.append(
             f"{about}: {result.replace('_', ' ')}, not confirmed. To reproduce it, copy the tree without its .git "

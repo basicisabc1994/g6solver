@@ -393,7 +393,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         # what the person confirmed for this task (g6_confirm_behaviour), read from G6's store, never an argument, and
         # read when the review executes, so an answer given while it waits is the one enforced
         return jobs.start(lambda: behaviour.reviewed(
-            review, repo, task, requirements=requirements or [], tests=tests or [], claim=claim, sources=sources,
+            review, repo, task, requirements=requirements, tests=tests or [], claim=claim, sources=sources,
             base=base, expected_artifact_digest=expected_artifact_digest, timeout_s=timeout_s, intent=intent,
             proposed_checks=proposed_checks, template_instances=template_instances, search=search,
             import_roots=import_roots or []), compact=workflow.finishing(finish, repo, task, intent))
@@ -571,12 +571,12 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         return mh.rollback(workflow, version, answer=consent.answer, binding=binding)
 
     def g6_premortem(repo: str, task: str, intent: dict | None = None) -> dict:
-        """Before the work: what done would mean and how the task can fail, with no model call and nothing run, from
-        the task, an optional intent contract ({goal, success_criteria, non_goals, failure_criteria, assumptions}) and
-        the repository's file names. It returns the intent contract; a proposed standard, each requirement with the
-        test file it names as its stated check, or marked not_established; the competing failure hypotheses, each with
-        what would test it, ranked by nothing; and the open questions it found, three at the most: one question per
-        task is the default for what you put to the person. It is a proposal: nothing is frozen or confirmed here."""
+        """Before the work: candidate observable behaviours from the task and the default model through G6's shared
+        reader and consent rules. Repository tests are mapped statically; no repository code runs. Each candidate
+        keeps its origin and missing checks have a cheapest_check call. question offers one input with competing
+        outputs; generic questions remain in more_questions. Only the person's answer through g6_confirm_behaviour
+        states that one case. An optional intent contract keeps its existing mapping alongside the candidates and
+        separately in intent_standard."""
         from g6.mcp import mission
         return mission.premortem(repo, task, intent)
 

@@ -669,7 +669,7 @@ ROOTS = ('g6.workforce.repo_tests', 'g6.harness.patch_review', 'g6.harness.compl
          # importers added on the 0.3 line: a918fd4 (behaviour), f562c31 (confirmed_checks), e15d9ad (behaviour_runner,
          # executable_scenario), 018b67b (workflow.adapters)
          'g6.mcp.behaviour', 'g6.harness.confirmed_checks', 'g6.harness.behaviour_runner',
-         'g6.harness.executable_scenario', 'g6.harness.workflow.adapters')
+         'g6.harness.executable_scenario', 'g6.harness.workflow.adapters', 'g6.harness.candidate_standard')
 
 
 def crossings(roots=ROOTS, allowed: dict[str, str] | None = None) -> list[str]:
