@@ -1,0 +1,9 @@
+{
+  "level": "off",
+  "research": false,
+  "push": false,
+  "draft_pr": false,
+  "merge": false,
+  "container_signin": false,
+  "digest": false
+}

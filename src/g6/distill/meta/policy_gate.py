@@ -10,7 +10,7 @@ No approval, activation, evaluator change or model discovery happens here.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import json
 from types import MappingProxyType
 from typing import Mapping
@@ -19,11 +19,26 @@ from g6.core.ledger import ChainLedger, canonical, digest
 from g6.core.storage import state_path
 from g6.metaharness.evaluate import evaluate
 from g6.metaharness.gate import decide
-from g6.metaharness.schema import Proposal, Suite, SuiteCase, Workflow, _source_sha
+from g6.metaharness.schema import EvidencePolicy, Proposal, Suite, SuiteCase, Workflow, _source_sha
 from g6.harness import Check
 from g6.distill.records import FailureRecord
 
 from .records import ReplayMeasurement, ReplaySequence, SynthesisPolicy
+
+# Owner-host runner bridge. Keep upwards judging dependencies in this existing
+# protected module; planning/runner modules receive data and never edit judges.
+FROZEN_MERGE_POLICY = EvidencePolicy()
+FROZEN_MERGE_POLICY_SHA256 = digest(asdict(FROZEN_MERGE_POLICY))
+
+
+def merge_judging_patterns():
+    from g6.metaharness.api import JUDGING_PATTERNS
+    return JUDGING_PATTERNS
+
+
+def diagnose_runner_tick(data):
+    from g6.metaharness.tick_rca import TickRecord, tick_rca
+    return tick_rca(TickRecord.from_dict(data))
 
 
 def _measurement(output):
