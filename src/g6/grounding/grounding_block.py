@@ -11,8 +11,10 @@ from g6.core.block_contract import BlockContract
 from g6.core.maturity import component_maturity
 from g6.core.reliability_envelope import warning_card
 from g6.core.result import Result
+from g6.core import semantic
 from g6.grounding.claims import check_claim, check_claims
 from g6.grounding.coverage import coverage
+from g6.grounding.model_reading import model_reading
 from g6.grounding.retrieval import TextRetriever
 
 #: Refusal codes.
@@ -45,6 +47,8 @@ class GroundingInput(BaseModel):
     text: str = ""
     sources: dict[str, str] = Field(default_factory=dict)
     top_k: int = Field(5, ge=1, le=50)
+    judge: Literal["lexical", "model"] = Field(
+        "lexical", description="Optional advisory reading on check_claim/check_claims; lexical status is unchanged")
     # coverage only; the caller's claim, recorded: finite numbers, one per source at most
     weights: dict[str, Annotated[float, Field(allow_inf_nan=False)]] = Field(default_factory=dict, max_length=1_000)
 
@@ -64,10 +68,26 @@ class GroundingBlock(AIBlock[GroundingInput, dict, dict]):
         verification_method="lexical_sentence_overlap", bad_at=("omissions", "stale sources", "proving behavioural correctness"),
         guarantees=("reports support against supplied source text only",))
 
-    def __init__(self, name: str = "grounding", state: dict | None = None) -> None:
+    def __init__(self, name: str = "grounding", state: dict | None = None, *, llm=None) -> None:
         super().__init__(name=name, state=state or {})
+        self.llm = llm
 
     def infer(self, data: GroundingInput) -> Result[dict]:
+        # Retrieval also has a semantic reader. The lexical floor must never
+        # depend on that model, even inside a request carrying an injected caller.
+        with semantic.request(llm=None):
+            result = self._lexical_infer(data)
+        if result.is_fail() or data.judge != "model" or data.op not in ("check_claim", "check_claims"):
+            return result
+        payload = result.value
+        checks = [payload["check"]] if data.op == "check_claim" else payload["checks"]
+        scope = semantic.use_request() if self.llm is None else semantic.use_request(llm=self.llm)
+        with scope:
+            for check in checks:
+                check["model_reading"] = model_reading(check["claim"], data.sources)
+        return result
+
+    def _lexical_infer(self, data: GroundingInput) -> Result[dict]:
         if data.op == "ops":
             return Result.ok({"component": self.name, "op": "ops", "ops": list(_OPS)})
         if data.op == "help":

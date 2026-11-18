@@ -78,6 +78,9 @@ KINDS = MappingProxyType({
     "agreement": Kind("choose", "Read agreement of final debate positions by meaning, retaining dissent"),
     "legal_advice": Kind("raise_only", "Does the text give legal advice rather than describe wording?", (False, True)),
     "claim_type": Kind("choose", "Classify the claim by its meaning (issuance integration seam)"),
+    "grounding": Kind("choose", "Read whether the offered source sentence supports or contradicts the claim, "
+                      "or is unclear. Return a reading and one whole offered source sentence, or unclear alone. "
+                      "This is advisory and cannot change lexical grounding status."),
 })
 
 

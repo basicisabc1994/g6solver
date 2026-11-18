@@ -48,6 +48,7 @@ from g6.grounding.tripwire import instruction_signals
 
 __g6_component__ = True
 __g6_block__ = "GroundingBlock"
+__g6_model__ = "llm"
 __g6_requires__: tuple[str, ...] = ()
 __g6_extras__ = {"nli": ("sentence_transformers",)}
 # Failure-mode codes (g6.core.failure_modes): what it guards against, and what its own use can cause.
