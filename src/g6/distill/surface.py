@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Local distillation surfaces. Missing later-wave backends refuse without side effects."""
+"""Local distillation record and library views; host execution lives in MCP's backend."""
 from __future__ import annotations
 
 import json
@@ -7,17 +7,11 @@ from datetime import datetime, timezone
 
 from pydantic import TypeAdapter
 
-from g6.core.door import blocked_reply
 from g6.core.ledger import ChainLedger, digest
 from g6.core.storage import state_path
 from .ledger import Stores
 from .library import Library
 from .records import FailureRecord, LibraryEntry, Sha256
-
-
-def unavailable(part: str) -> dict:
-    return blocked_reply(f"[G6_E_DISTILL_UNAVAILABLE] The {part} backend is not installed in this build. "
-                         "No experiment, simulation, restoration or research run was performed.")
 
 
 def library(op: str = "list", entry_id: str = "") -> dict:

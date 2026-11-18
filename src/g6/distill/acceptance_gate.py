@@ -15,7 +15,6 @@ import math
 import os
 import re
 import statistics
-import subprocess
 import time
 import threading
 from contextlib import contextmanager
@@ -167,15 +166,10 @@ def _plain(path: Path, root: Path) -> Path:
 
 
 def _git(*args):
-    # Read-only plumbing. No model, shell, git writes, repository hooks or network.
-    try:
-        result = subprocess.run(["git", "--no-optional-locks", "-C", str(ROOT), *args],
-                                capture_output=True, check=False, timeout=20)
-    except subprocess.TimeoutExpired:
-        raise ValueError("registration chronology timed out") from None
-    if result.returncode:
-        raise ValueError("registration chronology unavailable")
-    return result.stdout
+    # Same fixed environment, disabled programs/hooks and process window as review.
+    # RepoRefused is a ValueError with a stable code; do not replace it here.
+    from g6.workforce.repo_tests import _git as hardened_git
+    return hardened_git(ROOT, *args, timeout_s=20, isolated_config=True)
 
 
 def _chronology(anchor, registration, candidate):

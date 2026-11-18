@@ -3,10 +3,57 @@
 from __future__ import annotations
 
 from .ledger import Stores
-from .records import LibraryEntry, MethodContract, Status
+from .records import Concept, FailureRecord, LibraryEntry, MethodContract, Status, VerifierCandidate
 
 
 class Library:
+    def export(self, entry_id: str) -> dict:
+        """Repository export: every training ancestor must be G6 public archive.
+
+        User and unknown origins remain local, including through reuse/composition.
+        Raw failure sources and evaluator custody are never part of this bundle.
+        """
+        stores, entries, candidates, concepts, contracts = Stores(), {}, {}, {}, {}
+        visiting = set()
+        current = {e.candidate_id: e for e in self.list()}
+        def visit(ident):
+            if ident in visiting:
+                raise ValueError('cyclic export provenance')
+            if ident in entries:
+                return
+            visiting.add(ident)
+            entry = stores.for_model(LibraryEntry).get(ident)
+            latest = current.get(entry.candidate_id)
+            if entry.status != 'admitted' or latest is None or latest.status != 'admitted':
+                raise ValueError('only admitted methods may leave local custody')
+            candidate = stores.for_model(VerifierCandidate).get(entry.candidate_id)
+            concept = stores.for_model(Concept).get(candidate.concept_id)
+            failures = [stores.for_model(FailureRecord).get(i) for i in concept.from_failures]
+            training = {f.case_ref for f in failures}
+            # Candidate training can name additional failures beyond the concept.
+            for ref in set(candidate.training_case_ids) - training:
+                matching = [f for f in stores.for_model(FailureRecord).list() if f.case_ref == ref]
+                if not matching:
+                    raise ValueError('unknown training provenance stays local')
+                failures.extend(matching)
+            if not failures or any(f.provenance.get('scope') != 'g6_public_archive'
+                or f.observed_by != 'independent' or f.split != 'training' for f in failures):
+                raise ValueError('user or unknown provenance stays local')
+            parents = set(entry.parents) | set(candidate.lineage)
+            if candidate.form == 'reuse':
+                parents.add(candidate.body)
+            elif candidate.form == 'composition':
+                parents.update(candidate.body.entries)
+            for parent in sorted(parents):
+                visit(parent)
+            entries[ident], candidates[candidate.candidate_id] = entry, candidate
+            concepts[concept.concept_id], contracts[candidate.contract.content_id] = concept, candidate.contract
+            visiting.remove(ident)
+        visit(entry_id)
+        return {'scope': 'g6_public_archive', **{name: [value.model_dump(mode='json') for value in values.values()]
+            for name, values in (('entries', entries), ('candidates', candidates), ('concepts', concepts),
+                                 ('contracts', contracts))}}
+
     def list(self) -> list[LibraryEntry]:
         current = {}
         for entry in Stores().for_model(LibraryEntry).list():

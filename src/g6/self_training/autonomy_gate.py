@@ -9,7 +9,7 @@ from pathlib import Path
 import threading
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from g6.core.ledger import ChainLedger, digest
 
@@ -22,6 +22,8 @@ class Autonomy(BaseModel):
     draft_pr: bool = False
     merge: bool = False
     container_signin: bool = False
+    signin_mounts: bool = False
+    signin_mount_paths: dict[str, str] = Field(default_factory=dict)
     digest: bool = False
 
     def permits(self, action: str) -> bool:
@@ -30,7 +32,7 @@ class Autonomy(BaseModel):
         if action == 'merge':
             return (self.level == 'auto_merge' and self.merge and self.push and self.draft_pr
                     and self.container_signin)
-        return action in {'research', 'push', 'draft_pr', 'digest'} and getattr(self, action)
+        return action in {'research', 'push', 'draft_pr', 'digest', 'signin_mounts'} and getattr(self, action)
 
 
 def _pairs(items):

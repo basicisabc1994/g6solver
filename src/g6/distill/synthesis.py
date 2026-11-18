@@ -125,6 +125,7 @@ class Synthesizer:
         self.worst_case = worst_case
         self.now = now or (lambda: datetime.now(timezone.utc))
         self._meters: dict[str, MeteredCaller] = {}
+        self._concept_attempts: set[str] = set()
         self._lock = RLock()
 
     def synthesise(self, concept: Concept, cases: Sequence[SynthesisCase], *, library=None) -> SynthesisResult:
@@ -349,4 +350,68 @@ class Synthesizer:
         return result()
 
 
-__all__ = ["SynthesisCase", "SynthesisResult", "Synthesizer"]
+def propose_concept(cases: Sequence[SynthesisCase], *, synthesizer: Synthesizer):
+    """One bounded concept proposal from independent training inputs only.
+
+    Host caller retains disclosure admission; this adapter supplies no provider,
+    credentials or consent. One send plus S's three sends holds the four-call cap.
+    """
+    from g6.core.door import blocked_reply
+    def refused(code, reason):
+        return blocked_reply(f'[{code}] {reason}')
+    cases = tuple(cases)
+    if (not cases or any(c.failure.split != 'training' or c.failure.observed_by != 'independent' for c in cases)
+        or len({c.failure.family for c in cases}) != 1):
+        return refused('G6_E_SYNTH_TRAINING_ONLY', 'Concepts require independent training failures.')
+    caller = synthesizer.caller
+    if caller is None:
+        return refused('G6_E_SYNTH_NO_CALLER', 'No host model caller configured.')
+    online = not _offline(caller)
+    if online and (synthesizer.pacing is None or synthesizer.provider not in ('claude', 'codex')
+                   or type(synthesizer.worst_case) not in (int, float)
+                   or not math.isfinite(synthesizer.worst_case) or synthesizer.worst_case <= 0):
+        return refused('G6_E_SYNTH_PACING', 'Bound weekly meter and positive worst-case reservation required.')
+    with synthesizer._lock:
+        key = digest(sorted(c.failure.record_id for c in cases))
+        if key in synthesizer._concept_attempts:
+            return refused('G6_E_SYNTH_CALL_LIMIT', 'Concept proposal send already attempted for these failures.')
+        reservation = None
+        if online:
+            reservation = synthesizer.pacing.reserve(synthesizer.provider, synthesizer.now(), synthesizer.worst_case)
+            if not reservation.admitted:
+                return refused('G6_E_SYNTH_PACING', reservation.reason)
+        synthesizer._concept_attempts.add(key)
+        sends = 0
+        def before_send():
+            nonlocal sends
+            if sends >= 1:
+                raise _Limit('concept allows one send, inner retries included')
+            if reservation is not None and (reservation.ends is None or synthesizer.now() >= reservation.ends):
+                raise _Limit('concept reservation unbound or expired')
+            sends += 1
+        try:
+            user = canonical({'family': cases[0].failure.family, 'training': [
+                {'record_id': c.failure.record_id, 'facts': extract_facts(source_mapping(c.before), source_mapping(c.after),
+                    split='training')} for c in cases]})
+            system = ('Propose a general checking concept, JSON only: statement (at most 600 characters), '
+                      'observable_features (trusted facts names), falsifier, prediction '
+                      '({prediction_id, measure, before, expected}, with a direction), worth (0..1).')
+            with counting(before_call=before_send):
+                reply = caller.complete(system, user, max_tokens=2048)
+            data = json.loads(reply)
+            fields = {'statement', 'observable_features', 'falsifier', 'prediction', 'worth'}
+            if not isinstance(data, dict) or set(data) != fields:
+                raise ValueError('concept must contain exactly the requested data fields')
+            return Concept(**data, family=cases[0].failure.family,
+                from_failures=[c.failure.record_id for c in cases],
+                proposer={'provider': synthesizer.provider or 'offline',
+                          'model': type(caller).__name__, 'prompt_sha256': digest((system, user))},
+                origin='model_proposed', status='proposed')
+        except (ValueError, TypeError, LLMError, BudgetExhausted):
+            return refused('G6_E_SYNTH_MODEL', 'Concept proposal refused; no independent evidence created.')
+        finally:
+            if reservation is not None:
+                synthesizer.pacing.settle(reservation, reservation.amount)
+
+
+__all__ = ["SynthesisCase", "SynthesisResult", "Synthesizer", "propose_concept"]

@@ -63,20 +63,26 @@ def test_failure_intake_is_self_observed_and_refuses_held_out(surface):
         surface.failure_record("user_request", "test_weakening", '{"split":"held_out"}', "no")
 
 
-def test_future_backends_are_explicitly_unavailable(surface):
-    for name in ("distill", "self_model", "simulate", "extend", "research"):
-        result = surface.unavailable(name)
-        assert result["completion_state"] == "blocked-escalated"
-        assert result["warning_card"]["code"] == "G6_E_DISTILL_UNAVAILABLE"
+def test_unconfigured_host_backends_fail_closed():
+    from g6.mcp.distill_backend import Service
+    backend = Service()
+    result = backend.research_start()
+    assert result['completion_state'] == 'blocked-escalated'
+    assert result['warning_card']['code'] == 'G6_E_RESEARCH_AUTHORITY'
 
 
-def test_cli_library_and_future_routes(surface, capsys):
+def test_cli_library_and_installed_routes(surface, capsys):
     from g6.cli import main
     assert main(["library", "ls"]) == 0
     assert json.loads(capsys.readouterr().out) == {"entries": []}
-    for args in (["self-model"], ["research", "start"], ["research", "stop"], ["research", "status"]):
-        assert main(args) == 1
-        assert json.loads(capsys.readouterr().out)["warning_card"]["code"] == "G6_E_DISTILL_UNAVAILABLE"
+    assert main(['self-model']) == 0
+    assert json.loads(capsys.readouterr().out)['authority']['level'] == 'off'
+    assert main(['research', 'start']) == 1
+    assert json.loads(capsys.readouterr().out)['warning_card']['code'] == 'G6_E_RESEARCH_AUTHORITY'
+    assert main(['research', 'stop']) == 0
+    assert json.loads(capsys.readouterr().out)['status'] == 'stopped'
+    assert main(['research', 'status']) == 0
+    assert json.loads(capsys.readouterr().out)['status'] == 'stopped'
 
 
 def test_every_new_tool_is_discoverable_and_routed():
@@ -200,9 +206,12 @@ def test_cli_dispatch_without_persistence(monkeypatch, capsys):
     assert main(["library", "show", "a" * 64]) == 0
     capsys.readouterr()
     assert seen == [("list", ""), ("describe", "a" * 64)]
-    for args in (["self-model"], ["research", "start"], ["research", "stop"], ["research", "status"]):
-        assert main(args) == 1
-        assert json.loads(capsys.readouterr().out)["warning_card"]["code"] == "G6_E_DISTILL_UNAVAILABLE"
+    assert main(['self-model']) == 0
+    assert json.loads(capsys.readouterr().out)['authority']['level'] == 'off'
+    assert main(['research', 'start']) == 1
+    assert json.loads(capsys.readouterr().out)['warning_card']['code'] == 'G6_E_RESEARCH_AUTHORITY'
+    assert main(['research', 'status']) == 0
+    assert 'host_configured' in json.loads(capsys.readouterr().out)
 
 
 def test_sensitive_synthesis_never_runs_without_host_allowance(monkeypatch):
@@ -218,7 +227,7 @@ def test_sensitive_synthesis_never_runs_without_host_allowance(monkeypatch):
     # Synthetic host configuration, not a permission change on the person's server.
     monkeypatch.setenv("G6_MCP_SENSITIVE", "metaharness.distill_start")
     result = fns["g6_distill_start"]("test_weakening")
-    assert result["warning_card"]["code"] == "G6_E_DISTILL_UNAVAILABLE"
+    assert result["warning_card"]["code"] == "G6_E_SYNTH_TRAINING_ONLY"
 
 
 def test_library_decision_delegates_only_dialog_name_and_gate_refusal_blocks(monkeypatch):

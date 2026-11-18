@@ -846,7 +846,7 @@ def _argument(value: str | bytes) -> str | bytes:
 
 
 def _git(repo: Path, *args: str | bytes, ok: tuple[int, ...] = (0,), timeout_s: float = GIT_TIMEOUT_S,
-         index: Path | None = None) -> bytes:
+         index: Path | None = None, isolated_config: bool = False) -> bytes:
     """One read-only git command in ``repo`` (``_GIT``'s options first), in ``git_env.safe_git_env``'s clean
     environment (none of git's own redirections such as GIT_DIR, no transport, no lazy fetch) with every config key
     that would start a program switched off, the drivers any config defines included (one ``git_env.DRIVER_QUERY``
@@ -857,15 +857,20 @@ def _git(repo: Path, *args: str | bytes, ok: tuple[int, ...] = (0,), timeout_s: 
     if find_program("git") is None:
         raise RepoRefused("G6_E_GIT_MISSING_BINARY", SAID["no_git"])
     args = tuple(_argument(arg) for arg in args)
+    def environment(scratch, drivers=()):
+        env = git_env.safe_git_env(Path(scratch), drivers)
+        if isolated_config:
+            env.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_SYSTEM=os.devnull, GIT_CONFIG_GLOBAL=os.devnull)
+        return env
     try:
         with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors, \
                 tempfile.TemporaryDirectory(prefix="g6-git-") as scratch:
             with component_process.window(timeout_s):
                 code = component_process.run_process([git_env.git_program(), "-C", str(repo), *git_env.DRIVER_QUERY],
-                                                     env=git_env.safe_git_env(Path(scratch)), stdout=output,
+                                                     env=environment(scratch), stdout=output,
                                                      stderr=errors)
                 output.seek(0)
-                env = git_env.safe_git_env(Path(scratch), git_env.driver_settings(code, output.read()))
+                env = environment(scratch, git_env.driver_settings(code, output.read()))
                 if index is not None:
                     env["GIT_INDEX_FILE"] = str(index)
                 output.seek(0)

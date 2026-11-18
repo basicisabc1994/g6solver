@@ -16,6 +16,14 @@ from . import case_gate, oracle
 from .case_gate import CaseRecord, CaseRef, Record, SHA256, SPLIT_RULE, cut, unit_split
 
 
+def study_metadata(study: dict) -> dict:
+    """Owner's 2026-11-18 grant, consumed when freezing a study registration."""
+    budget = {'allowed': 42, 'total': 84}
+    if 'sealed_bug_budget' in study and study['sealed_bug_budget'] != budget:
+        raise ValueError('sealed bug budget differs from owner grant (42 of 84)')
+    return dict(study, sealed_bug_budget=budget)
+
+
 def strict_json(data: bytes) -> Any:
     def pairs(items):
         result = {}
@@ -106,7 +114,7 @@ An editable digest adjacent to a file is not a trust root.
     policy_ = oracle.OraclePolicy.model_validate(policy)
     registration = Registration(seed=seed, cases=refs, manifest_sha256=digest([c.model_dump(mode="json") for c in refs]),
                                 operator_digests=operator_digests, oracle_sha256=oracle_digest(), policy=policy_,
-                                policy_sha256=digest(policy_.model_dump(mode="json")), study=study)
+                                policy_sha256=digest(policy_.model_dump(mode="json")), study=study_metadata(study))
     with path.open("x", encoding="utf-8", newline="\n") as stream:
         stream.write(canonical(registration.model_dump(mode="json")) + "\n")
     return registration

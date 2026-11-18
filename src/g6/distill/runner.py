@@ -217,7 +217,14 @@ class Runner:
 
     step = tick
 
-    def daily_digest(self, *, now):
+    def digest_readout(self, *, now):
+        result = self.daily_digest(now=now, publish=False)
+        day = datetime.fromtimestamp(clock(now), timezone.utc).date()
+        cycles = [r for r in self.journal.entries() if r['kind'] == 'cycle'
+                  and datetime.fromtimestamp(r['body']['at'], timezone.utc).date() == day]
+        return {'ticks': len(cycles), **asdict(result)}
+
+    def daily_digest(self, *, now, publish=True):
         now = clock(now)
         day = datetime.fromtimestamp(now, timezone.utc).date().isoformat()
         self.journal.reload()
@@ -238,7 +245,7 @@ class Runner:
         if published:
             return Digest(published[-1]['body'], published[-1]['pr'])
         grants = authority(self.config)
-        if self.stopped() or not all(grants.permits(a) for a in ('digest', 'push', 'draft_pr')):
+        if not publish or self.stopped() or not all(grants.permits(a) for a in ('digest', 'push', 'draft_pr')):
             return Digest(body)
         if any(r['kind'] == 'digest_pending' and r['body']['day'] == day for r in rows):
             return Digest(body)  # ambiguous previous publication requires host reconciliation

@@ -202,8 +202,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd in {"library", "research", "self-model"}:
         from g6.distill import surface
         from g6.mcp.distill import _call
-        result = _call(surface.library, "list" if args.operation == "ls" else "describe",
-                       getattr(args, "entry_id", "")) if args.cmd == "library" else surface.unavailable(args.cmd)
+        from g6.mcp.distill_backend import Service, refused
+        backend = Service()
+        if args.cmd == 'library':
+            result = _call(surface.library, "list" if args.operation == "ls" else "describe", getattr(args, "entry_id", ""))
+        elif args.cmd == 'self-model':
+            result = _call(backend.self_model)
+        elif args.operation == 'start':
+            result = _call(backend.research_admission, args.folder) or refused(
+                'G6_E_DISTILL_DIALOG', 'Start research through the MCP client dialog.')
+        else:
+            result = _call(getattr(backend, 'research_' + args.operation), args.folder)
         _print(result)
         return 1 if result.get("completion_state") == "blocked-escalated" else 0
 

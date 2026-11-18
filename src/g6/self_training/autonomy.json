@@ -5,5 +5,7 @@
   "draft_pr": false,
   "merge": false,
   "container_signin": false,
+  "signin_mounts": false,
+  "signin_mount_paths": {},
   "digest": false
 }
