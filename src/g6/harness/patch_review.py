@@ -62,7 +62,8 @@ the stated checks with the extra tests in one confined run; tier 2, the tests th
 only when tier 1 found no integrity problem and no defect, and then, when nothing so far found a problem, the stated
 checks that passed run against the base commit's code in a copy: one that passes there too may not exercise the
 change, an unknown with a next action and never an outcome (review I8); tier 3 (mutation, old-against-new probes)
-is not run here, except mutation for test adequacy and old-against-new probes as template instances, when asked.
+is run for bounded automatic discovery where isolation exists, and for test adequacy or caller template instances
+when asked. Automatic discovery never passes a requirement or establishes a defect by itself.
 
 Each requirement and each check says where it came from (``provenance``). A request's requirements are ``stated``, of
 kind ``requirement``; only a ``stated``, ``repository_stated`` or ``person_confirmed`` one is assessed. An ``inferred``
@@ -105,8 +106,8 @@ re-run on the real code. Only a trace or an input that reproduces on the real co
 Proposed checks, compiled checks and mutant runs run as the stated checks do (the import roots, ``G6_REPO_PYTHON``,
 ``G6_REPO_ENV``); one of their runs that loaded a changed module from outside the tree, or cannot say what it loaded,
 is a ``check_error`` (a mutant: not run), never ``not_refuted`` or a counterexample.
-Every reply carries ``assessment.completion``, built from what ran; with no proposed checks, no template instance and
-no search setting, every decided field is as before.
+Every reply carries ``assessment.completion``, built from what ran. ``search={"discovery": false}`` disables automatic
+probes and keeps the previous decided fields; discovery is otherwise on by default, inside the shared budget.
 
 Last, each stated check of a requirement for new behaviour that passed on the patch and failed at the base commit runs
 once more on the patch (``_run_again``), so the evidence issuer has a pass that its control, the run at the base commit,
@@ -946,7 +947,9 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
     Optional ``template_instances`` (``[{id, template, requirement_id, intent, bindings}]``, counted with the
     proposed checks within the 20) fill G6's templates (``g6.harness.verification_templates``); an invalid one is
     refused before anything runs, and one the tree gives nothing to apply to is refused and reported only. Optional
-    ``search`` (``{"templates": bool, "test_adequacy": bool}``) runs free-form checks only, or measures test adequacy.
+    ``search`` (``{"templates": bool, "test_adequacy": bool, "discovery": bool}``) controls caller templates,
+    test adequacy and automatic input probes. Discovery defaults on where isolation exists; its generated checks
+    never pass a requirement. Preservation differences are unconfirmed counterexamples; other differences are questions.
     Optional ``import_roots`` (at most ``MAX_IMPORT_ROOTS`` folders inside the repository, such as ``lib``) go first on
     the import path of ordinary repository test runs and are recorded in its scope. G6-owned confirmed checks and
     behaviour probes use the fixed top/src import path instead.
@@ -981,12 +984,31 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
 
         retained, retained_origins, retained_skipped = outcome_history.retained_checks(
             change, next((req.id for req in stated if req.provenance in NORMATIVE), 'retained'))
-        if (confirmed is not None and confirmed.expectations) or any(
+        discovery_enabled = config is None or config['discovery']
+        discovery_skip = ''
+        if discovery_enabled:
+            from g6.harness import verification_search
+
+            room = max(0, verification_search.MAX_CHECKS - len(proposed) - len(instances))
+            retained_skipped = [*retained_skipped, *(
+                {'activity': 'retained check', 'check': check.id, 'requirement': check.requirement_id,
+                 'intent': check.intent, 'result': 'skipped', 'reason': 'shared 20-check limit',
+                 'seconds': 0.0, 'model_calls': 0} for check in retained[room:])]
+            retained = retained[:room]
+        if (discovery_enabled and change.sources) or (confirmed is not None and confirmed.expectations) or any(
                 one.template == 'differential.v1' for one in instances) or any(
                 origin.template == 'differential.v1' for origin in retained_origins.values()):
             from g6.harness import verification_search
 
-            before = verification_search.bind_execution(change, before, deadline=deadline)
+            try:
+                before = verification_search.bind_execution(change, before, deadline=deadline)
+            except (repo_tests.RepoRefused, repo_tests.CopyNotRun, OSError) as exc:   # OSError: EXECUTION_ARTIFACT_UNAVAILABLE
+                if not (discovery_enabled and change.sources) or (confirmed is not None and confirmed.expectations) or any(
+                        one.template == 'differential.v1' for one in instances) or any(
+                        origin.template == 'differential.v1' for origin in retained_origins.values()):
+                    raise   # a stated, confirmed or retained differential check needs the snapshot: that refusal is the review's
+                discovery_enabled = False   # only automatic discovery wanted it: its skip, never the review's
+                discovery_skip = str(exc)
         placed = {}
         if proposed or retained:
             from g6.harness import verification_search
@@ -1006,7 +1028,8 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
                        unmapped=unmapped, proposed=proposed, placed=placed, instances=instances, config=config,
                        roots=roots, llm=llm, confirmed=confirmed if confirmed is not None and confirmed.expectations
                        else None, retained=retained, retained_origins=retained_origins,
-                       retained_skipped=retained_skipped)
+                       retained_skipped=retained_skipped, discovery_enabled=discovery_enabled,
+                       discovery_skip=discovery_skip)
     except LETS_THROUGH:
         raise   # an operator stop, a spent allowance or unconfirmed process cleanup must reach the enclosing door
     except repo_tests.RepoRefused as exc:
@@ -1050,7 +1073,7 @@ def _stage(stopped: list[dict], what: str, run, *args, **kwargs):
 def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, *, deadline, limit,
             started, listed=(), assumed=(), unmapped=(), proposed=(), placed=None, instances=(),
             config=None, roots=(), llm=None, confirmed=None, retained=(), retained_origins=None,
-            retained_skipped=()) -> dict:
+            retained_skipped=(), discovery_enabled=True, discovery_skip='') -> dict:
     """``deadline``: when the checks stop; ``limit``: when the review ends, the closing steps (``_closing``) and the
     reply coming between the two."""
     reasons: list[dict] = []
@@ -1166,13 +1189,17 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     # from the files, never imported; one the tree gives nothing to apply to is refused alone, and one G6's own
     # reading fails on is an activity's error (review I2).
     stopped: list[dict] = []   # each search stage that stopped on an error in G6's own work
+    if discovery_skip:   # its snapshot was refused (copy cap, isolation): discovery's skip, never the review's
+        stopped.append({'activity': 'automatic discovery', 'target': '', 'result': 'skipped', 'reason': discovery_skip,
+                        'model_calls': 0, 'seconds': 0.0})
     instances, proposed, placed = list(instances), list(proposed), dict(placed or {})
     proposer = proposals = None
     if config is not None and config["propose"]:   # VS-5: what a model proposes joins the caller's, as untrusted data
         from g6.harness import verification_proposer, verification_search
         proposer = _stage(stopped, "the proposer", verification_proposer.Proposer,
                           root, change, stated, config, llm=llm, deadline=deadline,
-                          room=verification_search.MAX_CHECKS - len(instances) - len(proposed),
+                          room=verification_search.MAX_CHECKS - len(instances) - len(proposed)
+                          - (len(retained) if discovery_enabled else 0),
                           skip=INTEGRITY_SKIP if any(r["stage"] == "integrity" for r in reasons) else "")
         if proposer is not None:
             proposals = proposer.found
@@ -1266,13 +1293,35 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         formal = _stage(
             stopped, "the formal path", verification_formal.run, prepared, deadline=deadline,
             skip=INTEGRITY_SKIP if any(r["stage"] == "integrity" for r in reasons) else "",
-            budget=verification_search.MAX_CHECKS - prepared.instances - len(proposed))
+            budget=verification_search.MAX_CHECKS - prepared.instances - len(proposed)
+            - (len(retained) if discovery_enabled else 0))
     compiled = list(prepared.checks) if prepared is not None else []
-    if proposed or compiled or retained:   # retained checks keep proposed authority
+    discovery = None
+    if discovery_enabled:
+        from g6.harness import defect_discovery, verification_search
+
+        try:   # extra, G6-generated, proposal-only: a refusal here (copy cap, isolation, submodules) is its skip, never the review's
+            discovery = _stage(stopped, 'automatic discovery', defect_discovery.discover, change, [*stated, *listed],
+                               room=verification_search.MAX_CHECKS - len(instances) - len(proposed) - len(retained)
+                               - max(0, len(compiled) - len(instances)),
+                               deadline=deadline, roots=roots, llm=llm,
+                               reserved_ids={c.id for c in [*instances, *compiled, *proposed, *retained]},
+                               confirmed=[e.question for e in confirmed.expectations] if confirmed is not None else (),
+                               model_budget=(config or verification_search.search_config(None))['max_model_calls']
+                               - (proposals.calls if proposals else 0),
+                               skip=INTEGRITY_SKIP if any(r['stage'] == 'integrity' for r in reasons) else '')
+        except (repo_tests.RepoRefused, repo_tests.CopyNotRun) as exc:
+            stopped.append({'activity': 'automatic discovery', 'target': '', 'result': 'skipped', 'reason': str(exc),
+                            'model_calls': 0, 'seconds': 0.0})
+        if discovery is not None:
+            stopped.extend(discovery.activities)
+    discovered = discovery.checks if discovery is not None else []
+    if proposed or compiled or retained or discovered:   # generated checks keep proposed authority
         from g6.harness import verification_search   # checks, each on the patch and at the base commit
-        checks, where = [*compiled, *proposed, *retained], {**(prepared.placed if prepared else {}), **(placed or {})}
+        checks, where = [*compiled, *proposed, *retained, *discovered], {
+            **(prepared.placed if prepared else {}), **(placed or {}), **(discovery.placed if discovery else {})}
         origins = {**(prepared.origins if prepared is not None else {}), **(proposals.origins if proposals else {}),
-                   **(retained_origins or {})}
+                   **(retained_origins or {}), **(discovery.origins if discovery else {})}
         if any(r["stage"] == "integrity" for r in reasons):
             search = verification_search.not_run(checks, where, INTEGRITY_SKIP, origins)
         else:
@@ -1409,7 +1458,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                                 SELF_CHECKED_ASK.format(ids=self_checked) if self_checked else ""),
                   prepared=prepared, adequacy=adequacy, config=config,
                   counts={"template_instances": len(instances), "proposed_checks": len(proposed),
-                          "model_calls": proposals.calls if proposals else 0}, roots=roots,
+                          "model_calls": (proposals.calls if proposals else 0) + sum(
+                              a.get('model_calls', 0) for a in (discovery.activities if discovery else [])),
+                          **({'discovery': True, 'discovery_checks': len(discovered)} if discovery_enabled else {})}, roots=roots,
                   stopped=stopped, proposer=proposals,
                   issuer_inputs={"check_sha": check_sha, "written": lambda check: written.get(check, True),
                                  "again": again, "observed": observed},

@@ -959,7 +959,7 @@ def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_
     result, about = verdict["result"], f"{one.id} ({origin.label} for {one.requirement_id}, intent {one.intent})"
     if result in REASONS:
         node = activity["node"]
-        reproduction = {"check": one.id, "file": activity["placed"], "text": one.source, "sha256": activity["sha256"],
+        reproduction = {"check": one.id, "file": activity["placed"], "text": str(one.source), "sha256": activity["sha256"],
                         "node": node, **reproduce(node, on_patch), "how": HOW, "caution": origin.caution,
                         "patched_tree_digest": on_patch["tree_digest"],
                         "base_tree_digest": at_base["tree_digest"] if at_base else "",
@@ -972,6 +972,10 @@ def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_
             reproduction["template"] = origin.template
         if "differences" in verdict:
             reproduction.update(differences=verdict["differences"], compare=COMPARE)
+        if origin.activity == 'automatic discovery probe' and verdict.get('differences'):
+            first = verdict['differences'][0]
+            reproduction.update(generated_by='G6 automatic discovery', function=origin.about['target'], one_line=(
+                f"{origin.about['target']} input {first['input']}: base {first['base']}; patch {first['patch']}"))
         shape = verdict.get("shape") or (DIFFERS if "differences" in verdict else SHAPE[result])
         # review 10: in G6's own words only; what the check printed or failed with stays in assessment.completion
         said = "observed" if "differences" in verdict else "failed with"
@@ -986,6 +990,8 @@ def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_
             f"folder, write the check's text (sha256 {activity['sha256']}) to {activity['placed']}, and run "
             f"{reproduction['command']} from the copy's top folder; the text and the digests of the trees it ran on "
             f"are in assessment.completion.defects_reproduced. {origin.caution}")
+        if reproduction.get('one_line'):
+            done.next_actions[-1] = reproduction['one_line'] + '. ' + done.next_actions[-1]
     elif result == CHECK_ERROR and not _to_a_result(on_patch) and at_base is not None and _to_a_result(at_base):
         # reviewer B's B2: an error on the patch alone may be the patch's doing (code that raises what a refused access
         # raises), so it is compared with the base commit's result and never read as nothing
@@ -1058,8 +1064,9 @@ PROPOSER_LIMITS = {"max_model_calls": (1, 64), "max_input_chars": (2_000, 400_00
 
 def search_config(value) -> dict:
     """``value`` (the review's ``search``) as its settings (``SEARCH_SETTINGS`` and ``PROPOSER_SETTINGS``, with their
-    defaults), or a ``ValueError`` that says what is wrong; None gives the defaults."""
-    settings = {**SEARCH_SETTINGS, **PROPOSER_SETTINGS}
+    defaults), plus automatic ``discovery`` (on), or a ``ValueError`` that says what is wrong; None gives the defaults.
+    Discovery's off configuration is omitted by shown_config to preserve the legacy wire shape."""
+    settings = {**SEARCH_SETTINGS, **PROPOSER_SETTINGS, 'discovery': True}
     if value is None:
         return settings
     if not isinstance(value, dict):

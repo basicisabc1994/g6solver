@@ -260,8 +260,14 @@ def _findings(assessment: dict) -> list[list[str]]:
                     else "not run at the base commit")
             how = f"  - Reproduce: {_plain(reproduction.get('node', found.get('check', '')))}; {base}. {EXACT}."
         items.append([head, how])
+    discovery_items = []
     for found in defects.get("proposed_checks", []):
         reproduction = found.get("reproduction") or {}
+        if reproduction.get('generated_by') == 'G6 automatic discovery':
+            discovery_items.append([
+                f"- **G6 reproduced a counterexample, not confirmed** ({found.get('code')}): {code(found.get('check', ''))}",
+                f"  - Reproduce: {code(reproduction.get('one_line', ''))}. G6 generated the check; compare both trees. {CAUTION}"])
+            continue
         head = (f"- **{UNCONFIRMED.get(found.get('result'), 'A proposed check found a difference, not confirmed')}** "
                 f"({found.get('code')}) for {code(found.get('requirement', ''))}: {code(found.get('check', ''))}")
         if found.get("result") == "counterexample":
@@ -274,7 +280,8 @@ def _findings(assessment: dict) -> list[list[str]]:
                f"to {code(reproduction.get('file', ''), 80)}, then {_plain(reproduction.get('node', ''))}; {base}. "
                f"{EXACT}. The check is code someone other than G6 wrote: {CAUTION}")
         items.append([head, how])
-    return items
+    integrity_count = sum(r.get('stage') == 'integrity' for r in assessment.get('reasons', []))
+    return [*items[:integrity_count], *discovery_items, *items[integrity_count:]]
 
 
 def _missing(assessment: dict) -> list[list[str]]:
@@ -351,7 +358,7 @@ def _proposed(assessment: dict) -> str:
     """The proposed checks and template instances that ran, each with its result; none of them passes a
     requirement."""
     own = [a for a in (assessment.get("completion") or {}).get("activities", [])
-           if a.get("activity") in ("proposed check", "template instance") and a.get("check")]
+           if a.get("activity") in ("proposed check", "template instance", "automatic discovery probe") and a.get("check")]
     if not own:
         return ""
     shown = [f"{code(a['check'], 40)}" + (f" for {code(a['requirement'], 40)}" if a.get("requirement") else "")
@@ -369,6 +376,8 @@ def _steps(assessment: dict) -> list[str]:
         who.append("template instances and proposed checks")
     if search.get("model_calls"):
         who.append("G6's proposer, a model whose proposals decide nothing")
+    if search.get('discovery'):
+        who.append('G6 automatic discovery, whose probes decide no requirement')
     runs = scope.get("checks_run") or []
     shown = []
     for run in runs[:3]:
