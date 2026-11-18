@@ -45,6 +45,7 @@ code as it was. L9's runner waits for the agent inside the loop, and a hook cann
 ``Repairs`` replays the rounds in the state, and hands back when a new round's failures must go to the agent.
 """
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import bisect
 import difflib
@@ -60,7 +61,9 @@ from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict
 
 from g6.cegis import InputDomain, SearchResult, cegis
 from g6.context.redact import MASK, mask_paths, secret_spans
@@ -122,7 +125,7 @@ UNREPRODUCED = "a defect was claimed and could not be reproduced"
 MASKED_NOTE = (f"G6 put {MASK} in place of each value above that looks like a secret, so none of them left this machine. {MASK} "
                "is never the code's own value: write no test that reads it or compares with it.")
 WOULD_NOT_RUN = ("\n\nThe test in your last reply would not run, so it showed nothing. G6 ran it and got:\n{error}\n\nAnswer again "
-                 "in the same form: a test that runs, or VERDICT: none if you no longer find a defect.")
+                 "in the same JSON schema: a test that runs, or verdict none if you no longer find a defect.")
 #: What a file of a reviewer's test says when it showed nothing.
 SHOWED_NOTHING = ("did not run", patch_report.NOT_JUDGED)
 NO_REASON = "no reason was given"
@@ -307,6 +310,7 @@ def review_note(found: Mapping[str, str], shipped: Harness) -> str:
     return shipped.critic_note.format(**{k: found.get(k, "") for k in ("rule", "why", "test")}) + shipped.review_ask
 
 
+@scoped
 def asks(said: str) -> bool:
     """Whether the agent's reply asks anything: a question mark that ends a sentence, anywhere in it, outside quoted code. It
     reads punctuation and no wording, as a list of what people say around a question knows only the sayings on the list.
@@ -317,10 +321,11 @@ def asks(said: str) -> bool:
 
     What it still gets wrong: a request with no question mark ("I need your decision") reads as a refusal. Its words stay in
     the row for the maintainers' label to put right, and a person's yes to it is reviewed by the loop their prompt arms."""
-    return bool(_ASKS.search(_QUOTED.sub(" ", said)))
+    from g6.core import semantic
+    return semantic.decide("asks_question", said, bool(_ASKS.search(_QUOTED.sub(" ", said)))).value
 
 
-def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
+def _floor_critic_report(said: str, *, proof: str = "") -> dict[str, str]:
     """The critic's reply: its rule, verdict, reasons and test. Only what follows any progress lines counts, and a test
     comes with a verdict of defect or not at all. ``proof``: the line it must quote from its pack, because a critic that
     could not read the pack still answers, and "none" from it looks like a clean review."""
@@ -954,7 +959,7 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
             refs += told_sources or (cloud.UNKNOWN,)
         with cloud.request_sources(refs):
             found = critic_report(consent.guard(caller).complete(
-                system, sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), proof=proof)
+                system + critic_protocol_prompt(), sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), proof=proof)
     except (LLMError, OSError) as exc:
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
     if hidden and found["verdict"] == "none":
@@ -1656,3 +1661,53 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
     elif got.status == "counterexample_budget_exhausted":
         reason = RAN_OUT
     return _review_end(root, task, base, session, state, reason, said)
+
+
+@scoped
+def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
+    from g6.core import semantic
+
+    class Reply(BaseModel):
+        model_config = ConfigDict(extra="forbid", strict=True)
+        value: _CriticValue
+        reason: str = ""
+
+    body = said[said.rfind("[codex]"):].split("\n", 1)[-1] if "[codex]" in said else said
+    try:
+        protocol = _CriticProtocol.model_validate_json(body, strict=True)
+    except ValueError:
+        protocol = None
+    if protocol is not None:
+        if proof and protocol.read != proof:
+            return {"verdict": "unread", "rule": "", "why": "", "test": "", "error": f"the reply does not quote {proof}"}
+        value = protocol.model_dump(exclude={"read"})
+        return value if value["verdict"] == "defect" else {**value, "test": ""}
+    floor = _floor_critic_report(said, proof=proof)
+    if floor["verdict"] == "unread":
+        return floor
+    if floor["verdict"] in READ_VERDICTS:
+        return floor  # explicit protocol identifiers cannot be reinterpreted by a model
+    reading = semantic.read(semantic.Question("critic", said, Reply, lambda: floor, "choose"))
+    value = reading.value.model_dump() if isinstance(reading.value, BaseModel) else reading.value
+    if value["verdict"] != "defect":
+        value = {**value, "test": ""}
+    return value
+
+
+class _CriticValue(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    verdict: Literal["defect", "none", "unreadable"]
+    rule: str
+    why: str
+    test: str = ""
+    error: Literal[""] = ""  # only host failures may create a protocol error
+
+
+class _CriticProtocol(_CriticValue):
+    read: str = ""
+
+
+def critic_protocol_prompt() -> str:
+    return ("\nReturn one JSON object matching this schema. In read, quote the exact review token from issue.txt. "
+            "Put the reproducing Python test in test. The error field is always empty.\n"
+            + json.dumps(_CriticProtocol.model_json_schema()))

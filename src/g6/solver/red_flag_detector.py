@@ -5,6 +5,7 @@ A flag is evidence the output is unusable; the absence of flags is not evidence 
 counts "no flags" as a passing check.
 """
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import re
 from dataclasses import dataclass
@@ -23,7 +24,7 @@ class RedFlag:
     detail: str
 
 
-def is_refusal(text: str) -> bool:
+def _floor_is_refusal(text: str) -> bool:
     return any(p.search(text) for p in _REFUSALS)
 
 
@@ -46,6 +47,7 @@ def _repeated_phrase(words: list[str], threshold: int) -> str | None:
     return None
 
 
+@scoped
 def red_flags(text: str | None, *, step_number: int = 0) -> list[RedFlag]:
     """``EMPTY_OUTPUT``, ``REFUSAL`` and ``REPETITION`` flags for ``text``.
 
@@ -69,3 +71,8 @@ def red_flags(text: str | None, *, step_number: int = 0) -> list[RedFlag]:
 
 
 __all__ = ["RedFlag", "is_refusal", "red_flags"]
+
+
+def is_refusal(text: str) -> bool:
+    from g6.core import semantic
+    return semantic.decide("refusal", text, _floor_is_refusal(text)).value

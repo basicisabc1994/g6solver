@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Reciprocal-rank fusion, near-duplicate provenance and the existing budget floor."""
+from g6.core.semantic import scoped
+import json
 import re
 from dataclasses import dataclass, field
 
@@ -17,6 +19,7 @@ class _Ranked:
     sources: list[str] = field(default_factory=list)
 
 
+@scoped
 def fuse(ranked_lists: list[list[ContextItem]], budget_tokens: int) -> list[ContextItem]:
     """Fuse ranks (1 / (60 + rank)), never raw scores, then deduplicate and budget.
 
@@ -38,6 +41,8 @@ def fuse(ranked_lists: list[list[ContextItem]], budget_tokens: int) -> list[Cont
                 continue
             seen.add(identity)
             ranked.setdefault(identity, _Ranked(item)).score += 1 / (60 + rank)
+    from g6.core import semantic
+
     ordered = sorted(ranked.values(), key=lambda row: -row.score)
     kept: list[tuple[_Ranked, set[str], tuple[frozenset[str], bool]]] = []
     for row in ordered:
@@ -45,7 +50,9 @@ def fuse(ranked_lists: list[list[ContextItem]], budget_tokens: int) -> list[Cont
         words = set(re.findall(r"\w+", text))
         facts = (frozenset(_NUMBER.findall(text)), _NEGATION.search(text) is not None)
         duplicate = next((other for other, terms, said in kept if row.item.value == other.item.value or
-                          said == facts and words and terms and len(words & terms) / len(words | terms) > 0.7), None)
+                          said == facts and words and terms and len(words & terms) / len(words | terms) > 0.7
+                          and not semantic.decide("conflict", json.dumps(
+                              [row.item.value, other.item.value]), False).value), None)
         if duplicate is not None:
             duplicate.sources.append(row.item.source)
         else:

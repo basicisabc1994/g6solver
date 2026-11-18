@@ -16,6 +16,7 @@ carry it. A grant is a stored consumer: it registers a dependent and stops count
 changed or deleted. A grant never becomes an issuer receipt; this module does not call the certificate issuer.
 """
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import hashlib
 import json
@@ -108,6 +109,7 @@ def _live_grants(store: ProjectStore, repository: str, at: Any) -> list[Normativ
             and store.invalidated("normative_grant", g.id, at=at) == []]
 
 
+@scoped
 def support_for(acc: Access, candidate_record: Mapping[str, Any], *, top_k: int = 3,
                 clock: engine.Clock = engine._utc) -> list[Support]:
     """The passages that may accompany ``candidate_record``: found by search under ``acc`` (so scope, revocation,
@@ -148,7 +150,7 @@ def support_for(acc: Access, candidate_record: Mapping[str, Any], *, top_k: int 
             alike = facts[n][2] and facts[m][2] and len(facts[n][2] & facts[m][2]) / len(facts[n][2] | facts[m][2]) > 0.7
             differ = facts[n][0] != facts[m][0] or facts[n][1] != facts[m][1]
             both_normative = support.authority == other.authority == "normative" and support.outcome != other.outcome
-            if (alike and differ) or both_normative:
+            if conflict_signal(support.view.text, other.view.text, bool((alike and differ) or both_normative)):
                 conflicts.append(other.passage_id)
         out.append(support.model_copy(update={"conflicts": tuple(conflicts)}))
     return out
@@ -210,3 +212,8 @@ def designate(acc: Access, state: Any, answer: Any, *, supersedes: str = "") -> 
 
 __all__ = ["DESIGNATION", "NOT_DESIGNATED", "NormativeGrant", "Support", "designate", "designation_rule",
            "may_suppress", "scenario_sha256", "settling", "support_for"]
+
+
+def conflict_signal(left: str, right: str, floor: bool) -> bool:
+    from g6.core import semantic
+    return semantic.decide("conflict", json.dumps([left, right]), floor).value

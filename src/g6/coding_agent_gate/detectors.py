@@ -9,33 +9,12 @@ which does not depend on how the agent phrased its answer. Semantic shortcuts (a
 test body made to return True) are out of reach of both.
 """
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import re
+from g6.core import semantic
 
-_RISK_FORMS: dict[str, str] = {
-    "auth": r"(?:re|un)?auth(?:n|z|ed)?",
-    "authentication": r"(?:re|un)?authenticat(?:e|ed|es|ing|ion|ions)",
-    "authorization": r"(?:re|un|de)?authori[sz](?:e|ed|es|ing|ation|ations)",
-    "oauth": r"oauth\d*",
-    "credential": r"credentials?",
-    "secret": r"secrets?",
-    "key material": r"(?:signing|private|api|access|encryption)[- ]keys?",
-    "deploy": r"(?:re|un)?deploy(?:s|ed|ing|ment|ments)?",
-    "production": r"production(?:i[sz](?:e|ed|es|ing))?",
-    "medical": r"(?:bio)?medical(?:ly)?",
-    "dosage": r"dosages?",
-    "legal": r"legal(?:ly)?",
-    "payment": r"(?:re)?payments?",
-    "security": r"security",
-    "destructive data operation": r"(?:drop|truncate)\s+(?:the\s+)?(?:\w+\s+)?(?:tables?|databases?|schemas?)"
-                                  r"|truncat(?:e|es|ed|ing)|delet(?:e|es|ed|ing)\s+(?:all\s+)?(?:the\s+)?"
-                                  r"(?:data|records|rows|users|customers|accounts)",
-    "rm -rf": r"rm\s+-(?:rf|fr|r\s+-f)",
-    "data migration": r"(?:schema|database|db|data)\s+migrations?|migrat(?:e|es|ed|ing)\s+(?:the\s+)?"
-                      r"(?:schema|database|db|data)",
-    "force push": r"force[- ]?push(?:es|ed|ing)?|push\s+(?:--force|-f)",
-}
-_RISK = {term: re.compile(rf"(?<![a-z0-9])(?:{form})(?![a-z])") for term, form in _RISK_FORMS.items()}
+from g6.core.risk_terms import RISK_PATTERNS as _RISK
 
 _NEGATORS = frozenset({"no", "not", "never", "without", "nor", "neither", "none", "nothing", "cannot", "non"})
 _CLAUSE_BREAK = re.compile(r"[.;:!?,()\n]|\b(?:and|but|then|however|although|though|yet|except|so|while|because)\b")
@@ -53,7 +32,7 @@ def negated(text: str, start: int) -> bool:
     return any(w in _NEGATORS or w.endswith(("n't", "n’t")) for w in words)
 
 
-def risk_hits(fields: str, said: str = "") -> list[str]:
+def _floor_risk_hits(fields: str, said: str = "") -> list[str]:
     """Risk terms named as words: anywhere in ``fields`` (the task and declared material), and in ``said`` (the
     agent's own answer and claims) only where no negation governs the mention."""
     fields, said = fields.lower(), said.lower()
@@ -90,7 +69,7 @@ _MARKER_LABELS = frozenset({"skip the test", "--no-verify", "continue-on-error"}
 _REPAIR = re.compile(r"\b(?:remov|delet|drop|revert|undo|undid|unskip|re-?enabl|restor|fix|investigat|why)\w*")
 
 
-def shortcut_hits(text: str) -> list[str]:
+def _floor_shortcut_hits(text: str) -> list[str]:
     """The text tripwire: shortcut labels named in ``text`` that no negation (or, for a marker, a repair verb)
     governs. A tripwire, not a detector: an empty list says nothing about whether a shortcut was taken."""
     text = text.lower()
@@ -191,7 +170,7 @@ _READINESS = re.compile(r"\b(?:fully\s+)?verified\b|\bproduction[- ]ready\b|\b(?
 _UNVERIFIED = re.compile(r"\bunverified\b|\bnot\s+(?:been\s+|yet\s+)?(?:independently\s+)?(?:verified|checked|confirmed)\b")
 
 
-def overclaims(text: str) -> list[str]:
+def _floor_overclaims(text: str) -> list[str]:
     """Readiness or verification claims in ``text`` that no negation governs ("not verified" is not a claim)."""
     text = text.lower()
     return sorted({m.group(0) for m in _READINESS.finditer(text) if not negated(text, m.start())})
@@ -203,3 +182,36 @@ def acknowledges_unverified(text: str) -> bool:
 
 
 __all__ = ["NEW_TEST_MARKER", "acknowledges_unverified", "negated", "overclaims", "risk_hits", "scan_diff", "shortcut_hits"]
+
+
+@scoped
+def shortcut_hits(text: str) -> list[str]:
+    floor = _floor_shortcut_hits(text)
+    return semantic.decide("shortcuts", text, floor, tuple(label for label, _ in _SHORTCUTS)).value
+
+
+@scoped
+def overclaims(text: str) -> list[str]:
+    floor = _floor_overclaims(text)
+    reading = semantic.decide("overclaim", text, bool(floor))
+    return floor or (["semantic readiness claim"] if reading.value else [])
+
+
+@scoped
+def risk_hits(fields: str, said: str = "") -> list[str]:
+    import json
+    from g6.core.risk_terms import TIER_TERMS
+    found = set(_floor_risk_hits(fields, said))
+    # Keep each consumer's existing word/negation floor; add the shared union conservatively.
+    for tier, terms, _ in TIER_TERMS:
+        if tier < "R2":
+            continue
+        for term in terms:
+            pattern = re.compile(r"(?<![a-z0-9])" + re.escape(term) + r"(?:e?s)?(?![a-z0-9])")
+            if pattern.search(fields.lower()) or any(not negated(said.lower(), m.start()) for m in pattern.finditer(said.lower())):
+                found.add(term)
+    reading = semantic.decide("risk", json.dumps({"fields": fields, "answer": said}), "R3" if found else "R1",
+                              ("R0", "R1", "R2", "R3"))
+    if reading.value in ("R2", "R3") and not found:
+        found.add("semantic risk")
+    return sorted(found)

@@ -4,9 +4,10 @@
 G6 needs no model to select: the calling agent is the semantic engine. Given the agent's situation, G6 returns a short
 ranked list of next calls, each with its exact call template, what it establishes and what it needs, checked before
 the agent makes it; the agent chooses, and the door checks the call it makes. A refusal passed back as
-``last_outcome`` reroutes. Pure and deterministic: it reads G6's own corpus (``g6.skills.corpus``) and the agent's
-arguments; by default it runs nothing, calls no model and reads no repository. The MCP adapter may supply a private
-reader of evaluator-admitted operational history, evaluated only after argument validation. A fact about the host (whether an op is allowed,
+``last_outcome`` reroutes. Its ranking floor reads G6's own corpus (``g6.skills.corpus``) and the agent's
+arguments. The shared reader can add safety suggestions and raise reported risk, with fallback and disagreement
+recorded in mechanisms. The MCP adapter may supply a private reader of evaluator-admitted operational history,
+evaluated only after argument validation. It runs no proposed call and reads no repository. A fact about the host (whether an op is allowed,
 whether a grant exists, whether a model is configured, whether a run can be confined) is never reported: it is unknown
 until observed, and the refusal that observes it is what the agent passes back.
 
@@ -62,18 +63,21 @@ checks. Several considered operations may be offered as ``g6.invoke`` calls. A b
 candidate. These rank after MCP calls, take at most ``LIBRARY_SLOTS``, and are never ``next``.
 """
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import copy
 import itertools
 import json
 import math
 import re
+from g6.core import semantic
+from g6.core.risk_terms import SAFETY_WORDS, SAFETY_VERBS, SAFETY_IRREGULAR as _IRREGULAR
 from collections import Counter
 from typing import Any
 
 from g6.core.discovery import _tokens
 
-STAGES = ("facts", "model_check", "candidates", "next_action", "reroute", "validation")
+STAGES = ("facts", "model_check", "candidates", "next_action", "reroute", "validation", "semantic", "semantic_risk")
 #: ``lexical`` only ranks; ``colbert`` is kept so a call that names it is not broken, and is answered lexically.
 RERANKS = ("lexical", "colbert")
 NOT_OFFERED = ("not offered here: a semantic rerank would depend on what this machine has installed and cached, "
@@ -112,22 +116,9 @@ PRIORS: dict[str, dict[str, float]] = {
 #: should be done or is risky, or names an outward or destructive act. Fixed, reviewed data, listed in the module
 #: docstring; each is matched as whole words in the task, lower-cased, and a verb in ``SAFETY_VERBS`` in its word
 #: forms too (``_forms``: pushes, pushed, pushing; deleting; dropping; and "safely").
-SAFETY_WORDS = ("safe", "should i", "should we", "can i", "can we", "risky", "dangerous", "allowed", "okay to",
-                "ok to", "fine to", "is it ok", "production", "prod", "live", "delete", "rm", "overwrite", "reset",
-                "push", "commit", "merge", "pay", "migrate", "migration", "drop", "deploy", "send", "publish", "wipe",
-                "erase", "truncate", "destroy", "terminate", "remove", "upload", "email", "transfer", "ship",
-                "release", "roll back", "rollback", "revoke", "rotate", "tear down", "teardown", "kill", "refund",
-                "charge", "shut down", "shutdown", "rewrite history", "force")
-SAFETY_VERBS = frozenset({"delete", "overwrite", "reset", "push", "commit", "merge", "pay", "migrate", "drop",
-                          "deploy", "send", "publish", "wipe", "erase", "truncate", "destroy", "terminate", "remove",
-                          "upload", "email", "transfer", "ship", "release", "revoke", "rotate", "kill", "refund",
-                          "charge", "force"})
-_IRREGULAR = {"pay": ("paid",), "send": ("sent",), "safe": ("safely",), "migration": ("migrations",),
-              "roll back": ("rolls back", "rolled back", "rolling back"),
-              "tear down": ("tears down", "tore down", "torn down", "tearing down"),
-              "shut down": ("shuts down", "shutting down"),
-              "rewrite history": ("rewrote history", "rewriting history", "rewrite the history",
-                                  "rewrite the git history", "rewrite git history")}
+
+
+
 
 
 def _forms(word: str) -> set[str]:
@@ -826,6 +817,7 @@ def _library_route(task: str, data: dict[str, Any], documents: dict[str, str], r
     return out[:LIBRARY_SLOTS]
 
 
+@scoped
 def select(task: str, phase: str = "", last_outcome: str = "", considering: Any = "", limit: int = 5,
            rerank: str = "lexical", *, corpus: dict[str, Any] | None = None,
            request_id: str = "", run_id: str = "", _history=None) -> dict[str, Any]:
@@ -917,7 +909,13 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     for key, value in PRIORS.get(phase, {}).items():
         add(key, value, "phase_prior")
     words = " ".join(task.lower().split())
+    from g6.core.risk_signals import _floor_classify
+    risk_reading = semantic.decide("risk", task, _floor_classify(task)[0], ("R0", "R1", "R2", "R3"))
     intents = [name for name, (pattern, _) in INTENTS.items() if pattern.search(words)]
+    safety = semantic.decide("safety_checks", task,
+                             ["action_safety"] if "action_safety" in intents else [], ("action_safety",))
+    if "action_safety" in safety.value and "action_safety" not in intents:
+        intents.append("action_safety")
     for name in intents:
         by_phase = INTENTS[name][1]
         for key, value in {**by_phase.get("*", {}), **by_phase.get(phase, {})}.items():
@@ -1046,13 +1044,17 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     else:
         nxt = {"id": None, "call": None, "tell_person": False, "say": "Nothing matched: describe the task in other "
                "words, or call g6_find.", "why": "no candidate", "fill": []}
+    rankers = "fixed rules with semantic safety suggestions" if safety.by != "floor" else "fixed rules"
+    activity = "no proposed call ran" if safety.by != "floor" or risk_reading.by != "floor" else "nothing ran"
     card = warning_card("G6_E_QUALIFIED_DRAFT",
-                        "g6_select: a proposal ranked by fixed rules over G6's own text; nothing ran and nothing "
+                        f"g6_select: a proposal ranked by {rankers} over G6's own text; {activity} and nothing "
                         "about your task is checked",
                         "Choose a call and make it; the door checks it then. Pass a refusal back as last_outcome to "
                         "reroute.")
     if _history is not None and _history.rows:
         card['message'] = 'g6_select: fixed rules and ' + _history.note + '; no check ran on this task'
+    mechanisms.append(safety.mechanism())
+    mechanisms.append({**risk_reading.mechanism(), "stage": "semantic_risk"})
     evidence = [{"kind": "selection", "corpus_entries": len(entries), "corpus_release": data.get("release", ""),
                  "stages_run": [m["stage"] for m in mechanisms if m["ran"]]}]
     # a deep copy: candidates hold the cached corpus's own objects, which a caller filling in a template must not

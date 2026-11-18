@@ -340,10 +340,15 @@ def derive(objective: str, declared: str, floors: Iterable[Mapping] = ()) -> tup
         raise ValueError(f"risk tier must be one of {list(TIERS)}, got {declared!r}")
     # COPY: why each source set the stakes (the "Why these stakes" line and the Standard line read these).
     derived = [_source("declared", declared, "the stakes the mission was created with")]
-    found = risk_signals.signals(objective)
+    reading, found = risk_signals.read_signals(objective)
     if found:
         top = found[0][0]
         derived += [_source("objective", tier, f"the task mentions '{term}'") for tier, term in found if tier == top]
+    literal_tier = max((tier for tier, _ in found), default="R0")
+    if reading.by != "floor" and reading.model_value > literal_tier:
+        derived.append(_source("objective", reading.model_value,
+                               f"a model reading rated task risk {reading.model_value}; "
+                               f"the literal signal floor is {literal_tier}"))
     for extra in floors:
         if extra.get("source") not in SOURCES or extra.get("tier") not in RISK_TIERS:
             raise ValueError(f"a floor is {{source, tier, why}}, a source one of {list(SOURCES)}")

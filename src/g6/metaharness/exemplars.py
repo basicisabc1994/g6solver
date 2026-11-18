@@ -11,6 +11,7 @@ The match reads only the part of the task that varies: the workflow's template a
 are taken out first, so a label list in every task cannot pull the same examples to the top each time (V6b-F1).
 """
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import json
 import math
@@ -57,6 +58,7 @@ class Bank:
         df = Counter(w for words, _, _, _ in self._docs for w in words)
         self._idf = {w: math.log((1 + len(self._docs)) / (1 + c)) + 1e-6 for w, c in df.items()}
 
+    @scoped
     def nearest(self, task: str, k: int) -> list[tuple[str, str]]:
         """The ``k`` examples sharing the rarest words with ``task``, best first; never one whose input is in it."""
         if k <= 0 or not self._docs:
@@ -68,7 +70,11 @@ class Bank:
                 continue
             scored.append((-sum(self._idf.get(w, 0.0) for w in words & doc_words), order, shown, answer))
         scored.sort()
-        return [(shown, answer) for _, _, shown, answer in scored[:k]]
+        from g6.core import semantic
+        by_id = {str(order): (shown, answer) for _, order, shown, answer in scored}
+        reading = semantic.decide("exemplars", self._varying(task), [str(order) for _, order, _, _ in scored[:k]],
+                                  [semantic.Candidate(str(order), shown) for _, order, shown, _ in scored])
+        return [by_id[key] for key in dict.fromkeys(reading.value)][:k]
 
     def _varying(self, task: str) -> str:
         """The input the template wraps (the whole task if it does not fit the template), without the shared lines."""

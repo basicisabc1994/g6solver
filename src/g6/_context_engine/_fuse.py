@@ -16,9 +16,11 @@ contributions are kept and recorded with weight zero, so a lexical fallback is n
 More than :data:`MAX_CANDIDATES` candidates is refused, not truncated; so is a budget the best item alone exceeds.
 """
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import json
 import re
+from itertools import combinations, islice
 from collections.abc import Callable, Sequence
 
 from pydantic import BaseModel, ConfigDict
@@ -66,6 +68,7 @@ def _facts(text: str) -> tuple[frozenset[str], bool, frozenset[str]]:
     return frozenset(_NUMBER.findall(folded)), _NEGATION.search(folded) is not None, frozenset(re.findall(r"\w+", folded))
 
 
+@scoped
 def fuse(results: Sequence[tuple[BackendReport, Sequence[Hit], int]], *, top_k: int,
          budget_tokens: int | None = None, render: Render | None = None,
          query: str = "") -> Fused:
@@ -126,6 +129,14 @@ def fuse(results: Sequence[tuple[BackendReport, Sequence[Hit], int]], *, top_k: 
         if len({facts[p][0] for p in group}) > 1:
             cautions.append({"kind": "number", "passages": list(group),
                              "note": "these passages read alike and state different numbers; both are cited"})
+    from g6.core import semantic
+    # An additional semantic caution may only keep uncertainty visible. It never merges citations.
+    for left, right in islice(combinations(ranked, 2), 8):
+        texts = [first[left].passage.text, first[right].passage.text]
+        conflict = semantic.decide("conflict", json.dumps(texts), False)
+        if conflict.value:
+            cautions.append({"kind": "semantic", "passages": [left, right],
+                             "note": "semantic reading suggests disagreement; both citations retained"})
     items: list[PassageItem] = []
     spent = omitted = 0
     refused = ""

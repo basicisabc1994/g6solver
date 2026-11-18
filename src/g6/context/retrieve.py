@@ -13,6 +13,7 @@ so a caller cannot load an arbitrary file through a forged handle, and labels th
 ``trust="untrusted"`` (CTX-007, CTX-011).
 """
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import os
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -126,23 +127,30 @@ class Retriever:
                 break
         return sorted(files), truncated, tuple(missing), skipped
 
+    @scoped
     def retrieve(self, query: str, *, budget: int = 2000) -> Retrieval:
         """The keyword candidates for ``query`` in file order, at most ``max(64, budget)`` of them."""
         terms = query_terms(query)
         files, truncated, missing, skipped = self._files()
         cap = max(64, int(budget))
         handles: list[RepositoryHandle] = []
+        offered: list[RepositoryHandle] = []
         unreadable = 0
         capped = False
         for path in files if terms else []:
             rel = path.relative_to(self.base).as_posix()
             name_match = any(term in rel.lower() for term in terms)
+            offered.append(_handle("file_path", rel))
             lines: list[tuple[int, str]] = []
             try:
                 text = path.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 unreadable += 1
                 text = ""
+            # The semantic candidate pool is masked and bounded, within the same roots/suffixes.
+            for number, line in enumerate(text.splitlines()[:_LINES_PER_FILE], start=1):
+                if len(offered) < cap:
+                    offered.append(_handle("grep_result", rel, number, self.mask(line.strip())[:_SNIPPET_CHARS]))
             for number, line in enumerate(text.splitlines(), start=1):
                 if any(term in line.lower() for term in terms):
                     # masked before truncation, so a cut cannot leave half a secret unrecognised
@@ -155,6 +163,16 @@ class Retriever:
             if len(handles) >= cap:
                 capped = True
                 break
+        from g6.core import semantic
+        # Lexical candidates are retained in the offered pool, including later matching lines.
+        pool = {h.identity: h for h in [*handles, *offered]}
+        choices = list(pool.values())[:cap]
+        ids = {h.identity: str(n) for n, h in enumerate(choices)}
+        floor = [ids[h.identity] for h in handles if h.identity in ids]
+        reading = semantic.decide("retrieval", query, floor,
+                    [semantic.Candidate(str(n), h.summary) for n, h in enumerate(choices)])
+        if reading.by != "floor":
+            handles = [choices[int(key)] for key in dict.fromkeys(reading.value)][:cap]
         return Retrieval(query=query, candidates=tuple(handles), files_scanned=len(files), truncated=truncated,
                          capped=capped, unreadable=unreadable, missing_roots=missing, skipped_suffix=skipped,
                          suffixes=tuple(sorted(self.suffixes)))

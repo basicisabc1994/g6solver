@@ -7,6 +7,7 @@ sim_users/ground_truth pattern); a missing or failing test is False, never an ex
 a broken seed cannot stop a round silently. Extraction is code: a claim's phrases, or an
 assertive shape with no binding (certified, approved, used by N, N%)."""
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import json
 import os
@@ -541,6 +542,7 @@ class Truth:
         # audit 011, VEN-002: the default is the isolated runner, which installs the network guard first
         return bool((runner or run_isolated)(claim["test"], self.repo))
 
+    @scoped
     def extract(self, text: str) -> Extraction:
         low = (text or "").lower()
         bound = [cid for cid, c in self.claims.items() if any(p.lower() in low for p in c["phrases"])]
@@ -553,6 +555,11 @@ class Truth:
             else:
                 merged.append([start, end])
         unbound = [text[s:e].strip() for s, e in merged]
+        from g6.core import semantic
+        # A model can add an unbound concern, never a test binding or a passing claim.
+        reading = semantic.decide("overclaim", text or "", bool(unbound))
+        if reading.value and not unbound:
+            unbound.append("semantic unbound claim")
         return Extraction(bound, unbound)
 
 

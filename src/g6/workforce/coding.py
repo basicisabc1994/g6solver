@@ -3,6 +3,7 @@
 
 """Compile a bounded Python repository objective into the existing workforce."""
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import ast
 import difflib
@@ -118,7 +119,7 @@ def _without(text: str) -> str:
     return re.sub("|".join(CHANGE_ACCESS_TERMS), " ", _SEPARATORS.sub(" ", str(text or "").lower()))
 
 
-def names_access(intake) -> bool:
+def _floor_names_access(intake) -> bool:
     """The objective mentions an access term in any spelling ("private-key", "private_key", "privatekey"), negated or
     not: on a code change that is the F-2 route or the refusal, never the plain risky route."""
     contract = intake.metadata.get("task_contract")
@@ -128,6 +129,7 @@ def names_access(intake) -> bool:
     return any(term in spaced or term.replace(" ", "") in spaced.replace(" ", "") for term in ACCESS_TERMS)
 
 
+@scoped
 def access_terms(intake) -> list[str]:
     """The access terms that send this code change to R3 instead of the refusal (F-2): the feasibility answer is
     ``risky`` (an access term is a tripwire signal there, audit 030 FEA-002) and every access term the objective
@@ -1507,3 +1509,16 @@ def harness_pack(wf, mission_id: str, standard: dict, checks: list[dict]) -> dic
         "learning": {"promotion": "none", "record": "Existing task-local runs preserve failures and later checks.",
                      "effectiveness": "Unmeasured beyond these observations; an invocation is not a causal comparison."},
     }
+
+
+@scoped
+def names_access(intake) -> bool:
+    from g6.core import semantic
+    contract = intake.metadata.get("task_contract")
+    if contract is None:
+        return False
+    floor = _floor_names_access(intake)
+    reading = semantic.decide("risk", classified_text(contract.intent), "R3" if floor else "R1",
+                              ("R0", "R1", "R2", "R3"))
+    # Conservatively keep R3 additions out of the ordinary code path. This never grants access.
+    return floor or reading.value == "R3"

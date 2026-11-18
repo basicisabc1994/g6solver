@@ -28,10 +28,10 @@ def register(server: Any) -> None:
         withheld reply to g6_cloud_grant (the person answers in their dialog; never grant for them), a sensitive
         refusal to the person to decide themselves, an input refusal to g6_describe. Whether an op is allowed here, a
         grant exists or a model is configured is unknown until a call observes it: pass that refusal back. Ranking is
-        fixed rules over G6's own text, no model; rerank is lexical (a semantic rerank is not offered here, and
-        "colbert" is answered lexically). Receipt-admitted history from the host workspace can inform the candidate
-        ranking; learned reports its counts. No check or model runs; qualified-draft. You choose, and the call you
-        make is checked then."""
+        fixed rules over G6's own text. The shared reader may add safety suggestions or raise reported risk through
+        the configured model and consent checks; every reading and fallback is in mechanisms. Rerank is lexical
+        ("colbert" is answered lexically). Receipt-admitted history from the host workspace can inform the candidate
+        ranking; learned reports its counts. No proposed call runs; qualified-draft. You choose the checked call."""
         from g6.core.selector import select
         from pathlib import Path
         from g6.harness.outcome_history import read

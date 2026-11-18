@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Bounded hierarchical extraction; offsets always refer to the input item's value."""
+from g6.core.semantic import scoped
 import re
 from collections import Counter
 
@@ -17,14 +18,27 @@ def _select(text: str, spans: list[tuple[int, int]], budget: int) -> list[tuple[
         if (chars + cost + 3) // 4 <= budget:   # estimate_tokens of that many characters, without building them
             selected.append((start, end))
             chars += cost
-    return sorted(selected)
+    from g6.core import semantic
+    ids = {str(n): span for n, span in enumerate(spans)}
+    reading = semantic.decide("compression", text, [str(spans.index(span)) for span in selected],
+                              [semantic.Candidate(key, text[a:b]) for key, (a, b) in ids.items()])
+    chosen, chars = [], 0
+    for key in dict.fromkeys(reading.value):
+        start, end = ids[key]
+        cost = end - start + bool(chosen)
+        if (chars + cost + 3) // 4 <= budget:
+            chosen.append((start, end))
+            chars += cost
+    return sorted(chosen or selected)
 
 
+@scoped
 def compress(item: ContextItem, budget_tokens: int) -> ContextItem:
     """Keep whole sentences, recursively reducing groups of 32, then selecting to budget.
 
-    This measures word frequency, not importance or truth. No model is used. The
-    returned item is untrusted data, even when the input was an instruction.
+    Word frequency is the floor. The shared reader may choose offered sentences;
+    offsets and the budget are checked outside it. The returned item is untrusted
+    data, even when the input was an instruction.
     """
     if type(budget_tokens) is not int or budget_tokens < 1 or len(item.value) > 1_000_000:
         raise ValueError("[G6_E_CONTEXT_COMPRESSION_INPUT] positive token budget and at most 1000000 characters")
