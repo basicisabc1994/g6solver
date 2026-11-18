@@ -674,12 +674,12 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [
-      "adapt_physical_ai"
-    ],
+    "guarded_by": [],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": []
+    "awaiting_review": [
+      "adapt_physical_ai"
+    ]
   },
   {
     "code": "hallucinated_failure",
@@ -800,12 +800,12 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [
-      "adapt_bayesian"
-    ],
+    "guarded_by": [],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": []
+    "awaiting_review": [
+      "adapt_bayesian"
+    ]
   },
   {
     "code": "ignored_warning",
@@ -828,14 +828,14 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [
-      "adapt_sklearn"
-    ],
+    "guarded_by": [],
     "introduced_by": [],
     "planned": [
       "g6.ml.adapt_algo_selector"
     ],
-    "awaiting_review": []
+    "awaiting_review": [
+      "adapt_sklearn"
+    ]
   },
   {
     "code": "illusion_of_competence",
@@ -984,12 +984,12 @@
     "severity": "high",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [
-      "adapt_physical_ai"
-    ],
+    "guarded_by": [],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": []
+    "awaiting_review": [
+      "adapt_physical_ai"
+    ]
   },
   {
     "code": "insecure_code_shipped",
@@ -1351,12 +1351,12 @@
     "severity": "high",
     "requires_human_review": true,
     "aliases": [],
-    "guarded_by": [
-      "duty_of_care"
-    ],
+    "guarded_by": [],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": []
+    "awaiting_review": [
+      "duty_of_care"
+    ]
   },
   {
     "code": "missed_service_level",
@@ -1578,7 +1578,8 @@
       "cegis"
     ],
     "introduced_by": [
-      "adapt_healing"
+      "adapt_healing",
+      "distill"
     ],
     "planned": [],
     "awaiting_review": []
@@ -1623,7 +1624,8 @@
       "graph_reasoning"
     ],
     "introduced_by": [
-      "adapt_bayesian"
+      "adapt_bayesian",
+      "self_model"
     ],
     "planned": [
       "g6.ml.science_harness"
@@ -1851,7 +1853,9 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "self_model"
+    ],
     "introduced_by": [],
     "planned": [],
     "awaiting_review": []
@@ -1958,12 +1962,12 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [
-      "adapt_automl"
-    ],
+    "guarded_by": [],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": []
+    "awaiting_review": [
+      "adapt_automl"
+    ]
   },
   {
     "code": "single_sensor_decision",
@@ -2057,7 +2061,8 @@
     "guarded_by": [
       "australian_legal_corpus",
       "ctx_ace",
-      "ctx_contexthub"
+      "ctx_contexthub",
+      "self_model"
     ],
     "introduced_by": [],
     "planned": [],
@@ -2146,7 +2151,9 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "distill"
+    ],
     "introduced_by": [],
     "planned": [],
     "awaiting_review": []
@@ -2184,13 +2191,13 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [
-      "adapt_automl",
-      "adapt_sklearn"
-    ],
+    "guarded_by": [],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": []
+    "awaiting_review": [
+      "adapt_automl",
+      "adapt_sklearn"
+    ]
   },
   {
     "code": "training_loop_bug",
@@ -2716,6 +2723,7 @@
     "requires_human_review": false,
     "aliases": [],
     "guarded_by": [
+      "distill",
       "learning"
     ],
     "introduced_by": [],
@@ -3122,12 +3130,12 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [
-      "adapt_automl"
-    ],
+    "guarded_by": [],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": []
+    "awaiting_review": [
+      "adapt_automl"
+    ]
   },
   {
     "code": "untested_agent_design",
