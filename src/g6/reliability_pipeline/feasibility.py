@@ -24,8 +24,11 @@ words (``tests/reliability_pipeline/test_feasibility_measured.py`` records both)
 verdict, never relax it (:func:`at_least`).
 """
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import re
+import json
+from g6.core.risk_terms import ACCESS_TERMS, CONTEXT_TERMS, DESTRUCTIVE_TERMS
 import unicodedata
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -78,6 +81,7 @@ class FeasibilityReport(BaseModel):
     signals: list[str] = Field(default_factory=list)
     #: ``rule`` (this module), ``assessor`` (an injected one), or ``assessor, risk held to rule``.
     source: str = "assessor"
+    mechanisms: list[dict] = Field(default_factory=list)
 
 
 # Explicit permissiveness order. Larger values are stricter / more blocking.
@@ -118,6 +122,7 @@ class FeasibilityClassificationDecision:
     blockers: list[str] = field(default_factory=list)
     confidence: float | None = None
     completion_state: str = field(default="qualified-draft", init=False)
+    mechanisms: list[dict] = field(default_factory=list)
 
 
 def recommended_next_step(classification: str) -> str:
@@ -135,11 +140,11 @@ def recommended_next_step(classification: str) -> str:
 
 #: Secret and access terms: each makes a goal ``risky``. ``g6.workforce.coding`` reads the same list (F-2: there a
 #: password or credential change takes the high-consequence route and the other two refuse).
-ACCESS_TERMS: tuple[str, ...] = ("password", "credential", "private key", "production access")
+
 #: The terms that name context the task depends on: ``blocked_missing_context`` unless the caller attached it.
-CONTEXT_TERMS: tuple[str, ...] = ("missing context", "unknown api", "unavailable file", "attached document")
+
 #: Actions that destroy data or history: each one alone makes a goal ``risky``, whatever system it names.
-DESTRUCTIVE_TERMS: tuple[str, ...] = ("drop table", "wipe", "destroy", "purge", "rm rf", "force push")
+
 #: Each one alone makes a goal ``risky`` (the archive's single-term rules, now matched as words).
 _HIGH_STAKES: dict[str, tuple[str, ...]] = {
     "access": ACCESS_TERMS,
@@ -232,7 +237,7 @@ def _unchecked(contract: IntentContract) -> list[tuple[str, str]]:
     return found
 
 
-def deterministic_classify(contract: IntentContract, *, context_attached: bool = False) -> FeasibilityClassificationDecision:
+def _floor_deterministic_classify(contract: IntentContract, *, context_attached: bool = False) -> FeasibilityClassificationDecision:
     """The rule verdict. Structure decides the hard blocks; tripwire signals decide ``risky``, ``too_large`` and
     ``underspecified``; with ``context_attached`` a context phrase is resolved and classification continues."""
     text = _normalised(classified_text(contract))
@@ -307,9 +312,11 @@ def report_from_decision(
         reduction_to_practice_questions=prompts,
         signals=decision.signals,
         source="rule",
+        mechanisms=decision.mechanisms,
     )
 
 
+@scoped
 def deterministic_assess(contract: IntentContract, *, context_attached: bool = False) -> FeasibilityReport:
     """The rule report."""
     return report_from_decision(contract, deterministic_classify(contract, context_attached=context_attached))
@@ -348,3 +355,27 @@ class FeasibilityAssessor:
         if self.planner is None:
             return floor
         return at_least(self.planner.assess(contract), floor, context_attached=context_attached)
+
+
+@scoped
+def deterministic_classify(contract: IntentContract, *, context_attached: bool = False) -> FeasibilityClassificationDecision:
+    from dataclasses import replace
+    from g6.core import semantic
+    floor = _floor_deterministic_classify(contract, context_attached=context_attached)
+    risk_floor = {"low": "R0", "medium": "R1", "high": "R2", "critical": "R3"}[floor.risk_level]
+    text = json.dumps({"intent": contract.model_dump(mode="json", exclude={"success_checks", "failure_checks"}),
+                       "context_attached": context_attached})
+    risk = semantic.decide("risk", text, risk_floor, ("R0", "R1", "R2", "R3"))
+    reading = semantic.decide("feasibility", text, floor.classification, tuple(CLASSIFICATION_STRICTNESS))
+    classification = reading.value
+    if risk.value in ("R2", "R3") and CLASSIFICATION_STRICTNESS[classification] < CLASSIFICATION_STRICTNESS["risky"]:
+        classification = "risky"
+    risk_level = max((floor.risk_level, {"R0":"low", "R1":"medium", "R2":"high", "R3":"critical"}[risk.value]),
+                     key=RISK_STRICTNESS.__getitem__)
+    if classification == floor.classification and risk_level == floor.risk_level:
+        return replace(floor, mechanisms=semantic.mechanisms())
+    signals = [*floor.signals, "semantic concern: " + classification]
+    return replace(floor, classification=classification, risk_level=risk_level, signals=signals,
+                   mechanisms=semantic.mechanisms(),
+                   rationale=floor.rationale + "; semantic concern raised the floor",
+                   blockers=[*floor.blockers, *([classification] if classification.startswith("blocked_") else [])])

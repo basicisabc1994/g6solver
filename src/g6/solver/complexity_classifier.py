@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Deterministic task-complexity heuristic: simple, moderate or complex, from the goal's wording. No model call.
+"""Task complexity through the shared reader, with the original deterministic heuristic as floor.
 
 It reads surface features (length, multi-part markers, domain words, question or imperative openings), so it
 misjudges reworded tasks; it decides how many steps run, not whether an answer is right.
 """
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import re
+import json
 from enum import Enum
 
 
@@ -40,7 +42,7 @@ _QUESTION = re.compile(
 _LIST_ITEM = re.compile(r"(?:^|\n)\s*(?:\d+[.)]|-|\*)\s")
 
 
-def classify_task(goal: str, context: str | None = None) -> TaskComplexity:
+def _floor_classify_task(goal: str, context: str | None = None) -> TaskComplexity:
     """Classify a goal by surface heuristics. An empty or very short goal is ``moderate``."""
     goal = (goal or "").strip()
     if len(goal) < 3:
@@ -72,3 +74,11 @@ def classify_task(goal: str, context: str | None = None) -> TaskComplexity:
 
 
 __all__ = ["TaskComplexity", "classify_task"]
+
+
+@scoped
+def classify_task(goal: str, context: str | None = None) -> TaskComplexity:
+    from g6.core import semantic
+    floor = _floor_classify_task(goal, context)
+    text = json.dumps({"goal": goal, "context": context})
+    return TaskComplexity(semantic.decide("effort", text, floor.value, tuple(v.value for v in TaskComplexity)).value)

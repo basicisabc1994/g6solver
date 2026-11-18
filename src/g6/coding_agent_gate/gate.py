@@ -4,10 +4,12 @@
 Every rule emits a coded ``Finding``; ``SEVERITY`` maps each code to the verdict it forces, and the verdict is the
 strictest of them, decided in one place (audit 019 PY-006). With no finding the verdict is ``pass``, which needs at
 least one counted evidence item, so a call that checked nothing never passes (PY-002). Nothing here reads the
-environment (PY-008), writes a file (PY-010) or calls a model (CAG-008: the reviewer is the opt-in ``review``
-module). A verdict maps down-only to ``qualified-draft`` or ``blocked-escalated``, never ``verified``.
+environment directly (PY-008) or writes a file (PY-010). The shared guarded reader may add risk and concerns;
+it cannot remove a floor finding. A verdict maps down-only to ``qualified-draft`` or ``blocked-escalated``, never ``verified``.
 """
 from __future__ import annotations
+from g6.core.semantic import scoped
+from g6.core import semantic
 
 import uuid
 from collections.abc import Iterable
@@ -111,6 +113,7 @@ def surface_state(verdict: str) -> str:
     return "qualified-draft" if str(verdict or "").strip().lower() in _DRAFT_VERDICTS else "blocked-escalated"
 
 
+@scoped
 def tier_of(declared: str, fields: str, said: str = "") -> tuple[str, tuple[str, ...]]:
     """The tier and the risk terms behind it. A declared tier may raise the computed one, never lower it; an
     unrecognised word reads ``high``. No risk term computes ``medium``: an absent keyword is not evidence of low risk."""
@@ -134,6 +137,7 @@ class GateDecision:
     detected: dict[str, Any] = field(default_factory=dict)
     checks_run: tuple[str, ...] = ()
     reviewer: str = "off"
+    mechanisms: tuple[dict[str, Any], ...] = ()
 
     @property
     def completion_state(self) -> str:
@@ -164,6 +168,7 @@ class GateDecision:
     def to_dict(self) -> dict[str, Any]:
         return {
             "op": self.op, "verdict": self.verdict, "completion_state": self.completion_state,
+            "mechanisms": list(self.mechanisms),
             "risk_tier": self.risk_tier, "risk_terms": list(self.risk_terms),
             "requires_human_review": self.requires_human_review, "review_satisfied": self.review_satisfied,
             "findings": [{"code": f.code, "severity": f.severity, "message": f.message} for f in self.findings],
@@ -256,6 +261,7 @@ def _protected(paths, policy, evidence: tuple[Evidence, ...], author: str) -> tu
         return [_finding("protected_policy_failed", "G6_E_PROTECTED_POLICY_FAILED: paths or policy could not be checked.")], {}
 
 
+@scoped
 def preflight(task: str, *, proposed_action: str = "", evidence: Iterable[Evidence] = (), risk_tier: str = "",
               constraints: Iterable[str] = (), author: str = "", touched_paths: Iterable[str] | None = None,
               protected_paths_policy: ProtectedPathsPolicy | None = None) -> GateDecision:
@@ -281,11 +287,13 @@ def preflight(task: str, *, proposed_action: str = "", evidence: Iterable[Eviden
         findings.append(_finding("evidence_needed", "No evidence counted yet; a proposed action is a plan, not evidence."))
     checks = ("evidence_structure", "risk_tier", "review_required", "shortcut_tripwire(proposed_action)")
     return GateDecision("preflight", strictest("preflight", findings), tier, terms, tuple(findings), counted, rejected,
+                        mechanisms=tuple(semantic.mechanisms()),
                         detected={"shortcuts_text": text_hits, "shortcuts_diff": diff_hits, "protected_paths": path_status},
                         checks_run=checks + (("protected_paths",) if touched_paths is not None or protected_paths_policy is not None else ())
                         + (("shortcut_scan(diff)",) if diff else ()))
 
 
+@scoped
 def verify_answer(task: str, answer: str, *, evidence: Iterable[Evidence] = (),
                   verifier: VerifierResult | str | None = None, claims: Iterable[str] = (), task_contract: str = "",
                   risk_tier: str = "", author: str = "", require_task_contract: bool = True,
@@ -351,6 +359,7 @@ def verify_answer(task: str, answer: str, *, evidence: Iterable[Evidence] = (),
     checks = ("answer_present", "task_contract", "evidence_structure", "test_exit_codes", "verifier_status",
               "claims_have_files", "readiness_claims", "risk_tier", "review_required", "shortcut_tripwire(text)")
     return GateDecision("verify_answer", strictest("verify_answer", f), tier, terms, tuple(f), counted, rejected,
+                        mechanisms=tuple(semantic.mechanisms()),
                         verifier=None if verifier is None else v, verifier_counted=v_counted,
                         detected={"shortcuts_text": text_hits, "shortcuts_diff": diff_hits, "readiness_claims": claimed,
                                   "acknowledges_unverified": acknowledges_unverified(said), "protected_paths": path_status},

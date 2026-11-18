@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """The ``Retriever`` protocol and a stdlib BM25 retriever over caller-supplied text."""
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import math
 import re
@@ -49,6 +50,7 @@ class Passage:
 
 @runtime_checkable
 class Retriever(Protocol):
+    @scoped
     def search(self, query: str, top_k: int = 3) -> list[Passage]: ...
 
 
@@ -90,6 +92,7 @@ class TextRetriever:
     def __len__(self) -> int:
         return len(self._docs)
 
+    @scoped
     def search(self, query: str, top_k: int = 3) -> list[Passage]:
         terms = content_terms(query)
         scored = []
@@ -104,4 +107,13 @@ class TextRetriever:
             if score > 0:
                 scored.append(Passage(txt, src, round(score, 4)))
         scored.sort(key=lambda p: -p.score)
-        return scored[:top_k]
+        from g6.core import semantic
+        # Offer only passages already supplied to this retriever; preserve their source identities.
+        offered = [Passage(txt, src, 0.0, "semantic", "caller_supplied") for src, txt, _ in self._docs]
+        index = {(p.source, p.text): str(n) for n, p in enumerate(offered)}
+        floor = [index[(p.source, p.text)] for p in scored[:top_k]]
+        reading = semantic.decide("retrieval", query, floor,
+                   [semantic.Candidate(str(n), p.text) for n, p in enumerate(offered)])
+        if reading.by == "floor":
+            return scored[:top_k]
+        return [offered[int(key)] for key in dict.fromkeys(reading.value)][:max(0, top_k)]

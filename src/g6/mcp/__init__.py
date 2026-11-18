@@ -76,6 +76,7 @@ import os
 import re
 import uuid
 from typing import Any
+from g6.core.semantic import reply_scope
 
 # The server's own setting, the sensitive components or ops (``component.op``) the person allows: the same setting,
 # read the same way, as ``g6 invoke`` and ``g6.invoke`` (``g6.core.door``).
@@ -125,6 +126,7 @@ def describe_reply(component: str, *, allow_sensitive: frozenset[str] | None = N
     return info
 
 
+@reply_scope
 def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: Any = None,
                  allow_sensitive: frozenset[str] | None = None) -> dict[str, Any]:
     """The ``g6_invoke`` reply: the component's answer (or why there is none) inside the library envelope, through the

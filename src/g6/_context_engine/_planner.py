@@ -2,8 +2,8 @@
 """The search planner (design 12.4): choose routes by fixed priorities, track coverage against evidence needs
 declared before the search, and record the decision.
 
-``_``-prefixed, so it never registers as a component. Nothing here is learned. :func:`features_of` reads a query
-with regular expressions only and says ``None`` for what it cannot tell; :func:`plan` orders the routes by a fixed
+``_``-prefixed, so it never registers as a component. Nothing here is learned. :func:`features_of` uses the shared
+semantic reader with the original regular expressions as its floor; :func:`plan` orders the routes by a fixed
 rule in which every feature changes the order or what is admissible; :func:`run` executes inside limits fixed
 before the run and inside the access's scope (every read goes through the engine's own checks, so the planner
 cannot widen a grant), and returns a :class:`DecisionEvent`.
@@ -22,6 +22,7 @@ The decision log (``search_decisions.jsonl`` in the project's folder) keeps hash
 passage text and no passage ids. A log of chosen actions alone is not training data for a router.
 """
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import json
 import re
@@ -33,7 +34,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from g6.core import cloud_consent
-from g6.core.consent_callers import guard
 from g6._context_engine import _engine as engine
 from g6._context_engine._envelope import MAX_TOP_K, PassageItem, SearchRequest, SearchResponse
 from g6._context_engine._fuse import tokens_of
@@ -96,7 +96,7 @@ class DecisionEvent(_Record):
     stop_reason: Literal["needs_met", "no_new_passage", "budget", "refused", "unavailable"]
 
 
-def features_of(query: str) -> Features:
+def _floor_features_of(query: str) -> Features:
     """What the query's shape says, by regular expressions only. What a query is too short to tell is ``None``
     (unknown), never a guess."""
     words = _WORD.findall(query or "")
@@ -181,8 +181,10 @@ def _record(store: ProjectStore, public: dict[str, Any]) -> None:
         stream.write(json.dumps(public, sort_keys=True) + "\n")
 
 
-def run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFAULT_LIMITS, top_k: int = 8,
+@scoped
+def _run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFAULT_LIMITS, top_k: int = 8,
         reformulate: Any = None, clock: Callable[[], datetime] = engine._utc,
+        semantic_scope: Any = None,
         ) -> tuple[SearchResponse, DecisionEvent, tuple[cloud_consent.Source, ...]]:
     """Plan and run a search for ``query`` against the evidence ``needs`` declared now, inside ``limits`` fixed
     before the run. ``reformulate`` is a model caller, used only when ``limits.model_calls`` allows; see the module
@@ -191,7 +193,8 @@ def run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFAU
 
     started = time.monotonic()
     store = ProjectStore(acc.binding)
-    features = features_of(query)
+    calls_before = semantic_scope.calls
+    features = features_of(query) if limits.model_calls else _floor_features_of(query)
     if features.is_relation_question:
         _graph.ensure(store)   # derived on this machine from the indexed files; what a traversal returns is scoped
     generation = store.published()
@@ -211,7 +214,8 @@ def run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFAU
     sources: dict[str, cloud_consent.Source] = {}
     path_sources: tuple[cloud_consent.Source, ...] = ()
     items: dict[str, dict[str, Any]] = {}
-    searches = model_calls = 0
+    searches = 0
+    model_calls = semantic_scope.calls - calls_before
     stop = "unavailable"
     asked: dict[str, Any] = {"query": query, "top_k": top_k, "routes": passage_routes}
     paths: list[dict[str, Any]] = []
@@ -246,17 +250,10 @@ def run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFAU
             stop = "no_new_passage" if limits.model_calls == 0 else "budget"
             break
         open_needs = [n.text for n in declared if not _covered(n.text, list(items.values()))]
-        try:   # the model's question depends on what was retrieved, so it is sent under those sources' consent
-            with cloud_consent.request_sources(tuple(sources.values())):
-                reply = guard(reformulate).complete(REFORMULATE, json.dumps({"query": query, "unmet_needs": open_needs}),
-                                                    max_tokens=400)
-        except Exception as exc:  # noqa: BLE001 - the consent refusal is told apart by its code; anything else is raised on
-            if cloud_consent.REQUIRED not in str(exc):
-                raise
-            stop = "refused"
-            break
-        model_calls += 1
-        proposal = _typed(reply)
+        before_call = semantic_scope.calls
+        with cloud_consent.request_sources(tuple(sources.values())):
+            proposal = reformulation_of(json.dumps({"query": query, "unmet_needs": open_needs}), reformulate)
+        model_calls += semantic_scope.calls - before_call
         if proposal is None:
             stop = "no_new_passage"
             break
@@ -321,3 +318,58 @@ def run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFAU
 
 __all__ = ["COVERAGE", "EXPECTED", "LOG", "PASSAGE_ROUTES", "DecisionEvent", "Features", "Limits", "Need",
            "admissible_routes", "features_of", "plan", "run"]
+
+
+@scoped
+def features_of(query: str) -> Features:
+    from g6.core import semantic
+    from pydantic import create_model
+    floor = _floor_features_of(query)
+    reply = create_model("QueryIntentReply", __config__=ConfigDict(extra="forbid", strict=True), value=(Features, ...))
+    reading = semantic.read(semantic.Question("query_intent", query or "", reply, lambda: floor, "choose"))
+    return reading.value
+
+
+def reformulation_of(text: str, caller: Any) -> dict[str, Any] | None:
+    from pydantic import Field, field_validator, model_validator
+    from g6.core import semantic
+
+    class Proposal(_Record):
+        query: str = Field(min_length=1, max_length=400)
+        routes: list[Literal["exact", "meaning", "structure"]] = Field(default_factory=list, max_length=3)
+        top_k: int = Field(default=8, ge=1, le=MAX_TOP_K)
+
+        @field_validator("query")
+        @classmethod
+        def nonblank(cls, value):
+            if not value.strip():
+                raise ValueError("a reformulation query must not be blank")
+            return value
+
+    class Reply(_Record):
+        value: Proposal | None = None
+        query: str | None = None
+        routes: list[Literal["exact", "meaning", "structure"]] = Field(default_factory=list, max_length=3)
+        top_k: int = Field(default=8, ge=1, le=MAX_TOP_K)
+
+        @model_validator(mode="after")
+        def one_layout(self):
+            if self.value is not None:
+                if self.query is not None or self.routes or self.top_k != 8:
+                    raise ValueError("ambiguous reformulation layouts")
+            else:
+                object.__setattr__(self, "value", Proposal(query=self.query, routes=self.routes, top_k=self.top_k))
+            return self
+
+    with semantic.use_request(llm=caller):
+        reading = semantic.read(semantic.Question("reformulation", text, Reply, lambda: None, "choose"))
+    return reading.value.model_dump() if reading.by != "floor" else None
+
+
+def run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFAULT_LIMITS, top_k: int = 8,
+        reformulate: Any = None, clock: Callable[[], datetime] = engine._utc,
+        ) -> tuple[SearchResponse, DecisionEvent, tuple[cloud_consent.Source, ...]]:
+    from g6.core import semantic
+    with semantic.use_request() as scope:
+        return _run(acc, query, needs, limits=limits, top_k=top_k, reformulate=reformulate, clock=clock,
+                    semantic_scope=scope)

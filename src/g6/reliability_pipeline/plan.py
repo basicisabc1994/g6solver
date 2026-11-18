@@ -15,6 +15,7 @@ A report's ``completion_state`` is what a caller obeys (PC-003): only ``pass`` m
 (PC-006); one may be merged in through ``merge_reports``, where it can only tighten.
 """
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import re
 from typing import Literal
@@ -67,6 +68,7 @@ class CritiqueReport(BaseModel):
 
     verdict: Verdict
     findings: list[CritiqueFinding] = Field(default_factory=list)
+    mechanisms: list[dict] = Field(default_factory=list)
 
     @property
     def completion_state(self) -> str:
@@ -82,7 +84,8 @@ class CritiqueReport(BaseModel):
         code = {"pass": "G6_E_PLAN_STRUCTURE_ONLY", "revise": "G6_E_PLAN_REVISE", "block": "G6_E_PLAN_BLOCKED"}
         message = "; ".join(f"{f.category}: {f.what}" for f in self.findings) or "structurally complete; not evidence"
         envelope["warning_card"] = warning_card(code[self.verdict], message)
-        return {**envelope, "verdict": self.verdict, "findings": [f.model_dump() for f in self.findings]}
+        return {**envelope, "verdict": self.verdict, "findings": [f.model_dump() for f in self.findings],
+                "mechanisms": self.mechanisms}
 
 
 def stricter_verdict(*verdicts: str) -> str:
@@ -124,7 +127,7 @@ def critique_structure(plan: Plan) -> CritiqueReport:
     return CritiqueReport(verdict=severity_verdict(findings), findings=findings)
 
 
-def lexical_tripwire(plan: Plan, *, terms: dict[str, tuple[str, ...]] = DEFAULT_TERMS) -> list[CritiqueFinding]:
+def _floor_lexical_tripwire(plan: Plan, *, terms: dict[str, tuple[str, ...]] = DEFAULT_TERMS) -> list[CritiqueFinding]:
     """Categories whose terms appear as whole words in the goal, steps or risks; ``medium`` (revise) at most."""
     text = " ".join([plan.goal, *plan.steps, *plan.risks]).lower()
     found = []
@@ -153,12 +156,26 @@ def merge_reports(floor: CritiqueReport, other: CritiqueReport, *, other_source:
                           findings=findings)
 
 
+@scoped
 def critique(plan: Plan) -> CritiqueReport:
     """The deterministic floor: the structure checks with the tripwire merged in."""
     floor = critique_structure(plan)
     trip = lexical_tripwire(plan)
-    return merge_reports(floor, CritiqueReport(verdict=severity_verdict(trip), findings=trip), other_source="tripwire")
+    from g6.core import semantic
+    result = merge_reports(floor, CritiqueReport(verdict=severity_verdict(trip), findings=trip), other_source="tripwire")
+    return result.model_copy(update={"mechanisms": semantic.mechanisms()})
 
 
 __all__ = ["DEFAULT_TERMS", "CritiqueFinding", "CritiqueReport", "Plan", "critique", "critique_structure",
            "lexical_tripwire", "merge_reports", "severity_verdict", "stricter_verdict"]
+
+
+@scoped
+def lexical_tripwire(plan: Plan, *, terms: dict[str, tuple[str, ...]] = DEFAULT_TERMS) -> list[CritiqueFinding]:
+    from g6.core import semantic
+    floor = _floor_lexical_tripwire(plan, terms=terms)
+    found = {f.category: f for f in floor}
+    reading = semantic.decide("plan_findings", plan.model_dump_json(), list(found),
+                              tuple(semantic.Candidate(k, k.replace("_", " ")) for k in terms))
+    return [found.get(k) or CritiqueFinding(category=k, what="Semantic reading suggests this concern.",
+             better_plan="Check this concern before running.", source="semantic") for k in reading.value]

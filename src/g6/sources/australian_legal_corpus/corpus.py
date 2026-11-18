@@ -8,6 +8,7 @@ the counts by type; its ``LICENCE.md`` gives the terms (CC BY 4.0 for the corpus
 terms, three of them custom). G6 hosts and publishes none of it.
 """
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import re
 from dataclasses import dataclass
@@ -124,7 +125,7 @@ def jurisdiction(name: str) -> str:
     return code if code in JURISDICTIONS or code in NOT_COVERED else ""
 
 
-def uncovered_named(query: str) -> str:
+def _floor_uncovered_named(query: str) -> str:
     """The jurisdiction the corpus lacks that ``query`` names, or ``""``."""
     if (found := _UNCOVERED_WORDS.search(query or "")) is not None:
         word = found.group(0).lower()
@@ -143,3 +144,14 @@ def covered() -> str:
 
 __all__ = ["ATTRIBUTION", "COUNTS", "DOI", "JURISDICTIONS", "LEGISLATION", "NOT_COVERED", "PINNED", "SOURCES", "TYPES",
            "Pin", "Source", "covered", "jurisdiction", "uncovered_named"]
+
+
+@scoped
+def uncovered_named(query: str) -> str:
+    from g6.core import semantic
+    floor = _floor_uncovered_named(query)
+    code = next((k for k, v in NOT_COVERED.items() if v == floor), "none")
+    reading = semantic.decide("jurisdiction", query or "", code,
+                              (semantic.Candidate("none", "No offered uncovered jurisdiction is intended"),
+                               *(semantic.Candidate(k, v) for k, v in NOT_COVERED.items())))
+    return NOT_COVERED.get(reading.value, "")

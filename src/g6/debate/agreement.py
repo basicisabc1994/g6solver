@@ -12,9 +12,9 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from g6.core.llm import DEFAULT_MAX_TOKENS, LLMCaller, extract_json
+from g6.core.llm import DEFAULT_MAX_TOKENS, LLMCaller
 from g6.core.reliability_envelope import envelope_fields, warning_card
-from g6.debate.debate import Transcript, error_text
+from g6.debate.debate import Transcript
 
 LEVELS = ("none", "weak", "moderate", "strong")
 
@@ -201,11 +201,52 @@ def judge_agreement(transcript: Transcript, llm: LLMCaller | None, *,
     positions, _ = _final_positions(transcript)
     payload = {"question": transcript.question, "context": transcript.context[:2000],
                "positions": [{"agent": a, "role": r, "position": t[:_POSITION_CHARS]} for a, r, t in positions]}
-    try:
-        reply = extract_json(llm.complete(_JUDGE_SYSTEM, json.dumps(payload), max_tokens=max_tokens))
-        level, dominant, dissent, rationale = _read_reply(reply)
-    except Exception as exc:  # noqa: BLE001 - any failure leaves the lexical floor standing
-        return JudgeResult(floor.level, floor, "degraded", floor.dominant, floor.dissent, error=error_text(exc))
+    from typing import Literal
+    from pydantic import BaseModel, ConfigDict, Field, model_validator
+    from g6.core import semantic
+
+    class Position(BaseModel):
+        model_config = ConfigDict(extra="forbid", strict=True)
+        agreement_level: Literal["none", "weak", "moderate", "strong"]
+        dominant_position: str
+        dissenting_views: list[str] = Field(max_length=3)
+        rationale: str = Field(min_length=1, max_length=1000)
+
+        @model_validator(mode="after")
+        def dominant_required(self):
+            if self.agreement_level != "none" and not self.dominant_position.strip():
+                raise ValueError("agreement needs a dominant position")
+            return self
+
+    class Reply(BaseModel):
+        model_config = ConfigDict(extra="forbid", strict=True)
+        value: Position | None = None
+        # Explicit legacy positions, never searched for inside model data.
+        agreement_level: Literal["none", "weak", "moderate", "strong"] | None = None
+        dominant_position: str = ""
+        dissenting_views: list[str] = Field(default_factory=list, max_length=3)
+        rationale: str = ""
+        # Legacy label/score positions are declared but never consumed as authority.
+        completion_state: Any = None
+        confidence: Any = None
+
+        @model_validator(mode="after")
+        def one_layout(self):
+            if self.value is not None:
+                if self.agreement_level is not None or self.dominant_position or self.dissenting_views or self.rationale:
+                    raise ValueError("ambiguous reply layouts")
+            else:
+                self.value = Position(agreement_level=self.agreement_level, dominant_position=self.dominant_position,
+                                      dissenting_views=self.dissenting_views, rationale=self.rationale)
+            return self
+
+    with semantic.use_request(llm=llm):
+        lexical = Position(agreement_level=floor.level, dominant_position=floor.dominant,
+                           dissenting_views=list(floor.dissent), rationale=_LEXICAL_NOTE)
+        reading = semantic.read(semantic.Question("agreement", json.dumps(payload), Reply, lambda: lexical, "choose"))
+    if reading.by == "floor":
+        return JudgeResult(floor.level, floor, "degraded", floor.dominant, floor.dissent, error=reading.reason)
+    level, dominant, dissent, rationale = _read_reply(reading.value.model_dump())
     return JudgeResult(level, floor, "applied", dominant, dissent, rationale, level != floor.level)
 
 

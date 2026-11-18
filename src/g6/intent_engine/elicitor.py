@@ -162,7 +162,14 @@ class IntentElicitor:
         negated = bool(tokens & _NEGATIONS) or any(token.endswith("n't") for token in tokens)
         # "anything but high" and "low to medium" name a level without choosing it: keep the words, not a guess
         if len(named) == 1 and not negated:
-            return named[0]
+            floor = named[0]
+        else:
+            floor = fallback
+        from g6.core import semantic
+        reading = semantic.decide("level", json.dumps({"field": field_label, "answer": text}), floor,
+                                  (*allowed, "unknown"))
+        if reading.by != "floor" or floor != fallback:
+            return reading.value
         assumptions.append(Assumption(
             statement=f"User's {field_label} answer (free text): {text}",
             confidence=0.6,

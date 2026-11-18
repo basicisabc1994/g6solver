@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 The G6 authors
 """Curated, unmeasured failure-mode skills; data never grants execution authority."""
+from g6.core.semantic import scoped
 import re
 from dataclasses import dataclass
 
@@ -84,8 +85,18 @@ SKILLS = (FailureModeSkill(
 ),)
 
 
-def relevant(objective: str) -> tuple[FailureModeSkill, ...]:
+def _floor_relevant(objective: str) -> tuple[FailureModeSkill, ...]:
     """Match whole lower-case objective terms; retired skills never propose questions."""
     task = objective.lower()
     return tuple(skill for skill in SKILLS if not skill.retired and any(
         re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", task) for term in skill.triggers))
+
+
+@scoped
+def relevant(objective: str) -> tuple[FailureModeSkill, ...]:
+    from g6.core import semantic
+    active = {skill.failure_id: skill for skill in SKILLS if not skill.retired}
+    floor = [skill.failure_id for skill in _floor_relevant(objective)]
+    choices = [semantic.Candidate(key, skill.decision + " " + skill.consequence) for key, skill in active.items()]
+    reading = semantic.decide("failure_modes", objective, floor, choices)
+    return tuple(active[key] for key in reading.value)

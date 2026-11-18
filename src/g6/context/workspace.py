@@ -13,6 +13,7 @@ The compaction lists test failures and open bugs from structured verification it
 ``"unresolved"``), not from words in the text (CTX-012).
 """
 from __future__ import annotations
+from g6.core.semantic import scoped
 
 import json
 import os
@@ -155,12 +156,14 @@ class Workspace:
                "aging" if age_days >= self.aging_after_days else "fresh")
         return cls, stale_after.replace(microsecond=0).isoformat()
 
+    @scoped
     def _notes(self, directory: Path, section: str, authority: str, query: str, run_id: str,
                limit: int) -> list[ContextItem]:
         if not directory.is_dir():
             return []
         terms = query_terms(query)
         items: list[ContextItem] = []
+        matched: list[str] = []
         for note in sorted(directory.glob("*.md")):
             if not note.is_file() or not note.resolve().is_relative_to(self.root):
                 continue
@@ -169,8 +172,11 @@ class Workspace:
                 mtime = note.stat().st_mtime
             except OSError:
                 continue
-            if terms and not any(t in text.lower() or t in note.name.lower() for t in terms):
+            is_match = not terms or any(t in text.lower() or t in note.name.lower() for t in terms)
+            if not is_match and len(items) >= 64:
                 continue
+            if is_match:
+                matched.append(str(len(items)))
             value = scrub(text)[:_NOTE_CHARS]
             freshness, stale_after = self.freshness(mtime)  # audit 032, CTX-001: freshness from mtime
             items.append(ContextItem(
@@ -179,9 +185,12 @@ class Workspace:
                 freshness_class=freshness, stale_after=stale_after,  # type: ignore[arg-type]
                 retrieved_by="g6.context.Workspace", included_because="note matched the task",
                 token_estimate=estimate_tokens(value), metadata={"run_id": run_id}))
-            if len(items) >= limit:
+            if len(matched) >= limit:
                 break
-        return items
+        from g6.core import semantic
+        reading = semantic.decide("retrieval", query, matched[:limit],
+                    [semantic.Candidate(str(n), item.value) for n, item in enumerate(items)])
+        return [items[int(key)] for key in dict.fromkeys(reading.value)][:limit]
 
 
 __all__ = ["Workspace", "budget_ratio"]

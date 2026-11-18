@@ -74,8 +74,8 @@ TOOL_DATA: dict[str, dict[str, Any]] = {
     "g6_select": _tool(
         "what to do next, which G6 step fits now, after a refusal or when stuck",
         "a short ranked list of checked next calls with their templates, and a reroute after a refusal",
-        "nothing ran; the ranking is fixed rules over G6's own text, a proposal for you to choose from",
-        PHASES),
+        "no proposed call ran; fixed rules with optional semantic safety suggestions, a proposal for you to choose from",
+        PHASES, model="optional"),
     "g6_help": _tool(
         "how to use G6 from an agent; start here",
         "G6's own instructions for an agent", "nothing about the task", ("plan", "stuck")),

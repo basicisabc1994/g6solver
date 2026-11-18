@@ -521,7 +521,7 @@ def _model_review(text: str, focus: list[str], llm: Any) -> tuple[list[dict], st
             dropped["no usable quote"] += 1
         elif quote not in flat:
             dropped["quote not in the document"] += 1
-        elif any(p in f"{issue} {why}".lower() for p in _FORBIDDEN):
+        elif advice_signal(f"{issue} {why}", any(p in f"{issue} {why}".lower() for p in _FORBIDDEN)):
             dropped["worded as legal advice"] += 1
         elif _is_opinion(f"{issue}. {why}"):
             rows.append(_row(f"AI model: {issue}", OPINION, why or "—", quote,
@@ -613,3 +613,9 @@ BUNDLE = Bundle(
                "lawyer must review the document before you rely on it. 'Not found' means these words were not found, "
                "not that the document lacks the clause.",
 )
+
+
+def advice_signal(text: str, floor: bool) -> bool:
+    """A model may add an advice signal; the reproducible guard is never relaxed."""
+    from g6.core import semantic
+    return semantic.decide("legal_advice", text, floor).value
