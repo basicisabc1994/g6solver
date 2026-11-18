@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """g6-mcp — a stdio MCP server exposing G6's progressive discovery surface.
 
-58 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
+70 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
 ``g6_select``, the staged selector: checked next calls for the agent's situation, and a reroute after a refusal
 (``g6.mcp.selector``);
 ``g6_allowances`` for both providers' quota windows and advisory pacing (``g6.allowance``);
@@ -34,6 +34,12 @@ correct and delete what G6 recorded about its own review work, through files the
 ``g6_suggestion_decide`` asks the person to adopt, dismiss or reopen one suggestion G6 showed, and takes no decision
 itself; ``g6_feedback`` keeps feedback the person volunteers and, only if they opted in, may ask them one question a
 week in the client's dialog (``g6.mcp.workflow``).
+Twelve distillation routes (``g6.mcp.distill``): ``g6_failure_record`` records field failures;
+``g6_distill_start`` and ``g6_distill_job`` manage training-only synthesis jobs; ``g6_library`` and
+``g6_library_decide`` inspect methods and request library decisions; ``g6_self_model`` and ``g6_simulate``
+read measured state and predict without granting authority; ``g6_extend`` records capability requests;
+``g6_research_start``, ``g6_research_stop``, ``g6_research_status`` and ``g6_research_digest`` control
+bounded host research. Research needs owner authority and trusted host capabilities.
 Install
 with ``pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"`` and register with ``claude mcp add g6 -- g6-mcp`` (or, for Codex,
 ``codex mcp add g6 -- g6-mcp``). There is no account, key or network service.
