@@ -108,7 +108,8 @@ def test_every_superpowers_skill_it_pairs_a_stage_with_is_vendored() -> None:
     named = set(re.findall(r"`([a-z]+(?:-[a-z]+)+)`", LIFECYCLE)) - {"qualified-draft"}
     named |= {n for n in ("brainstorming",) if f"`{n}`" in LIFECYCLE}
     assert len(named) >= 12 and named <= vendored, named - vendored
-    assert "optional companions, not prerequisites" in TEXT and "using-superpowers" in vendored
+    assert "software engineering work in general" in TEXT and "using-superpowers" in vendored
+    assert "G6 checks the work they produce" in TEXT
 
 
 def test_it_names_only_templates_review_parameters_and_bindings_that_exist() -> None:

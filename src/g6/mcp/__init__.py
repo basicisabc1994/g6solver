@@ -240,8 +240,8 @@ def build_server(surface: Any = None) -> Any:
 
     @server.tool()
     def g6_find(query: str, limit: int = 5) -> list[dict]:
-        """Rank components for a task description; empty list means nothing matched."""
-        return discovery.find(query, limit, names=shown_components())
+        """Rank G6 workflows, tools, skills and runnable ops for a task; an empty list means no G6 tool fits."""
+        return discovery.find(query, limit)
 
     @server.tool()
     def g6_describe(component: str) -> dict:

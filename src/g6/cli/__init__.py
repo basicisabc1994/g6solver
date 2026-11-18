@@ -53,9 +53,9 @@ def _state(args: argparse.Namespace) -> int:
     return 0
 
 
-def _superpowers_plugin(home: Path) -> bool:
-    """Whether Claude Code already has the superpowers plugin, so its skills need no second copy."""
-    plugins = home / ".claude" / "plugins"
+def _superpowers_plugin(home: Path, client: str = "claude") -> bool:
+    """Whether this client already has the superpowers plugin, so its skills need no second copy."""
+    plugins = home / f".{client}" / "plugins"
     if any(p.is_dir() for p in plugins.glob("cache/*/superpowers")):
         return True
     try:
@@ -76,7 +76,7 @@ def _skills(args: argparse.Namespace) -> int:
         for component, name in components.items():
             print(f"{name:36} the {component} component's own skill")
         for name in vendored:
-            print(f"{name:36} superpowers, for a coding agent's lifecycle (--with-superpowers)")
+            print(f"{name:36} superpowers, for software engineering work (--with-superpowers)")
         return 0
 
     sources = {skills.GUIDE: skills.guide_dir(), **{name: skills.skill_dir(c) for c, name in components.items()},
@@ -92,16 +92,27 @@ def _skills(args: argparse.Namespace) -> int:
     else:
         wanted = [skills.GUIDE]
     if args.with_superpowers:
-        if _superpowers_plugin(Path.home()):
-            print("The superpowers plugin is installed, so its skills are not copied a second time.")
+        if _superpowers_plugin(Path.home(), args.client):
+            print(f"The superpowers plugin is installed; using its copy in {Path.home() / ('.' + args.client) / 'plugins'}.")
         else:
             wanted += [n for n in vendored if n not in wanted]
 
     dest = (Path.home() if args.user else Path.cwd()) / f".{args.client}" / "skills"
     for name in wanted:
         target = dest / name
-        if target.exists() and not args.force:
-            print(f"{name}: already in {dest}, left as is (--force replaces it)")
+        if name in vendored:
+            # Codex and Claude also load the cross-runtime .agents skill directory. A current copy there takes
+            # precedence over adding a competing vendored one, in either project or user scope.
+            roots = (Path.cwd(), Path.home())
+            alternatives = [root / ".agents" / "skills" / name for root in roots]
+            alternatives += [root / ".agents" / "skills" / "superpowers" / name for root in roots]
+            alternatives += [root / f".{args.client}" / "skills" / name for root in roots]
+            existing = next((p for p in alternatives if (p / "SKILL.md").is_file()), None)
+            if existing is not None:
+                print(f"{name}: using existing copy in {existing}; left as is")
+                continue
+        if target.exists() and (name in vendored or not args.force):
+            print(f"{name}: using existing copy in {target}; left as is")
             continue
         if target.exists():
             shutil.rmtree(target)

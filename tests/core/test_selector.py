@@ -173,7 +173,9 @@ def test_an_agent_that_keeps_failing_is_sent_to_the_meta_harness() -> None:
     reply = selector.select("my agent keeps failing on the same kind of task", "stuck", limit=5)
     assert {"tool:metaharness_diagnose", "tool:metaharness_start"} & set(_ids(reply, 3)), _ids(reply, 5)
     stage = next(m for m in reply["mechanisms"] if m["stage"] == "candidates")
-    assert "workflow_improvement" in stage["intents"]
+    assert "workflow_improvement" not in stage["intents"]
+    assert any("lexical" in candidate["ranked_by"] for candidate in reply["candidates"]
+               if candidate["id"] in {"tool:metaharness_diagnose", "tool:metaharness_start"})
 
 
 def test_an_ordinary_task_matches_no_intent() -> None:

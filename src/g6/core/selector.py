@@ -21,8 +21,8 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
    ``g6_confirm_behaviour`` are raised (``RAISE_BONUS``); each ``considering`` entry is validated.
 3. ``candidates``: a log-IDF word overlap over the corpus (``discovery._tokens``, the scoring ``g6_find`` uses), as
    a share of a full match, times ``LEXICAL_WEIGHT`` (``ROUTE_WEIGHT`` more for a route), plus the fixed phase priors ``PRIORS`` (and ``PHASE_TAG_BONUS`` for a matched entry
-   tagged with the phase) and the fixed intent priors ``INTENTS`` (a safety question raises the action gate; an
-   agent that keeps failing, the meta-harness). A safety question is a task holding one of ``SAFETY_WORDS``, fixed
+   tagged with the phase) and the fixed safety prior ``INTENTS`` (a safety question raises the action gate).
+   Workflow improvements match the corpus's use-when text. A safety question holds one of ``SAFETY_WORDS``, fixed
    and reviewed, a verb among them in any of its word forms (pushing, deleted, dropping, rolled back, tore down;
    "safely"): "safe", "should i", "should we", "can i", "can we", "risky", "dangerous", "allowed", "okay to",
    "ok to", "fine to", "is it ok", "production", "prod", "live", "delete", "rm", "overwrite", "reset", "push",
@@ -34,7 +34,8 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
    every call that does not, and is never ``next``; ``g6_cloud_grant`` is ``next`` only as the remedy for the
    consent code. Where the rankers disagree it is listed. A semantic rerank (the local ColBERT rung) is
    deferred: it would make the reply depend on what the host has installed and cached, so ``rerank="colbert"`` is
-   kept for compatibility and answered lexically (``NOT_OFFERED``).
+   kept for compatibility and answered lexically (``NOT_OFFERED``). Otherwise an available model may reorder only
+   the shared ranker's offered ids through the semantic reader; a refusal keeps the lexical order and its code.
 4. ``next_action``: with open hypotheses in ``considering``, ``verification_controller.next_experiment`` picks the
    call with the most severity-weighted open-hypothesis coverage per cost unit (``COST_UNITS``) within
    ``BUDGET_UNITS``; otherwise the first candidate.
@@ -67,17 +68,13 @@ from g6.core.semantic import scoped
 import copy
 import itertools
 import json
-import math
 import re
 from g6.core import semantic
 from g6.core.risk_terms import SAFETY_WORDS, SAFETY_VERBS, SAFETY_IRREGULAR as _IRREGULAR
-from collections import Counter
 from typing import Any
 
-from g6.core.discovery import _tokens
-
 STAGES = ("facts", "model_check", "candidates", "next_action", "reroute", "validation", "semantic", "semantic_risk")
-#: ``lexical`` only ranks; ``colbert`` is kept so a call that names it is not broken, and is answered lexically.
+#: ``lexical`` uses the shared lexical floor with optional model ordering; ``colbert`` stays lexical for compatibility.
 RERANKS = ("lexical", "colbert")
 NOT_OFFERED = ("not offered here: a semantic rerank would depend on what this machine has installed and cached, "
                "which this reply never says; ranked lexically")
@@ -134,17 +131,13 @@ def _forms(word: str) -> set[str]:
 #: Fixed, documented intent priors, read by a reviewer: name -> (a pattern over the task's words, {phase, or "*" for
 #: every phase: {entry id: bonus}}). ``action_safety`` is the task holding a ``SAFETY_WORDS`` word or phrase: the
 #: action gate that decides allow, confirm, review or block is raised first, and the premortem with it while
-#: planning. ``workflow_improvement`` is ``g6_find``'s own workflow-intent pattern (an agent that keeps failing on a
-#: kind of task): the meta-harness's diagnosis, its start and the self-improvement loop's status. A test keeps every
-#: id in the corpus.
+#: planning. Workflow-improvement discovery is corpus text without a query-pattern route. A test keeps every id
+#: in the corpus.
 INTENTS: dict[str, tuple[re.Pattern[str], dict[str, dict[str, float]]]] = {
     "action_safety": (
         re.compile(r"\b(" + "|".join(sorted((re.escape(f) for w in SAFETY_WORDS for f in _forms(w)), key=len,
                                             reverse=True)) + r")\b"),
         {"*": {"op:action_gating.evaluate": GATE_BONUS}, "plan": {"tool:g6_premortem": 2.0}}),
-    "workflow_improvement": (
-        re.compile(r"\b(tune|improve|keeps failing|make my agent better)\b"),
-        {"*": {"tool:metaharness_diagnose": 4.0, "tool:metaharness_start": 3.5, "tool:g6_improve_status": 2.0}}),
 }
 #: Words in an op's name that say it acts outside G6 (publishes, sends, pays, deletes, deploys, writes, removes),
 #: so the op acts even when its component does not list it among its sensitive ops.
@@ -474,26 +467,18 @@ def _refuse(message: str, request_id: str, run_id: str) -> dict[str, Any]:
 
 def _documents(data: dict[str, Any], entries: dict[str, dict[str, Any]]) -> dict[str, str]:
     """The words each entry is ranked by: its text, what it establishes and, for an op, its component's text."""
-    components = data["components"]
-    return {key: " ".join([e["text"], e["establishes"], components.get(e.get("component", ""), {}).get("text", "")])
-            for key, e in entries.items()}
+    from g6.core.corpus_ranking import documents
+
+    return documents(data, entries)
 
 
 def _lexical(task: str, documents: dict[str, str]) -> dict[str, float]:
     """``g6_find``'s scoring over the corpus (sum over the query's words of min(count in query, count in entry) times
     log(1 + entries / entries holding the word)), as a share of what an entry holding every query word the corpus
     has would score: 1.0 matches all of them, and a weak overlap stays weak however poor the best match is."""
-    query = Counter(_tokens(task))
-    docs = {key: Counter(_tokens(text)) for key, text in documents.items()}
-    df = Counter(t for d in docs.values() for t in set(d))
-    n = max(1, len(docs))
-    ideal = sum(query[t] * math.log(1 + n / df[t]) for t in query if df.get(t))
-    out = {}
-    for key, d in docs.items():
-        score = sum(min(query[t], d[t]) * math.log(1 + n / df[t]) for t in query if d.get(t))
-        if score > 0:
-            out[key] = score / ideal
-    return out
+    from g6.core.corpus_ranking import lexical
+
+    return lexical(task, documents)
 
 
 class _Refusal(ValueError):
@@ -740,6 +725,12 @@ def _fill_say(candidate: dict[str, Any]) -> str:
 
 
 def _validate(entry: dict[str, Any], call: dict[str, Any]) -> tuple[bool, list[str]]:
+    if entry["kind"] == "skill":
+        from g6.core.skills import vendored
+
+        name = entry["id"].split(":", 1)[1]
+        found = name in vendored() and call == entry["call"]
+        return found, [] if found else ["load the shipped skill instruction as given"]
     if entry["kind"] == "tool":
         issues = _check_tool(entry, call.get("arguments", {}))
         return not issues, issues
@@ -914,12 +905,18 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         add(key, CONSIDERED_BONUS, "considering")
     # a call that acts outside G6 ranks below every call that does not, whatever its score
     acting = {key: _acts(entries[key]) for key in entries}
-    order = sorted(scores, key=lambda k: (bool(acting[k]), -scores[k], k))
+    from g6.core.corpus_ranking import rank as rank_corpus
+
+    ranking = rank_corpus(task, data, scores=scores, acting=acting, model=rerank != "colbert")
+    order = ranking.order
     lexical_order = sorted(lexical, key=lambda k: (-lexical[k], k))
     stage: dict[str, Any] = {"stage": "candidates", "ran": True, "intents": intents,
                              "rankers": ["lexical"] + (["phase_prior"] if phase else [])
                              + (["intent_prior"] if intents else [])}
-    stage["rerank"] = NOT_OFFERED if rerank == "colbert" else "not asked (rerank=lexical)"
+    stage["ranked_by"] = ranking.ranked_by
+    stage["rerank"] = NOT_OFFERED if rerank == "colbert" else ranking.ranked_by
+    if ranking.rerank_code:
+        stage["rerank_code"] = ranking.rerank_code
     top = order[:limit]
     disagreements = []
     for key in sorted(set(top) | set(lexical_order[:limit])):
@@ -976,6 +973,8 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         entry = entries[key]
         call = remedy["call"] if key == first else entry["call"]
         by = ["remedy"] if key == first else list(ranked_by.get(key, []))
+        if key != first and ranking.ranked_by == "model":
+            by.append("model")
         if key == scheduled and "scheduler" not in by:
             by.append("scheduler")
         valid, issues = _validate(entry, call)
@@ -1029,7 +1028,10 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         nxt = {"id": None, "call": None, "tell_person": False, "say": "Nothing matched: describe the task in other "
                "words, or call g6_find.", "why": "no candidate", "fill": []}
     rankers = "fixed rules with semantic safety suggestions" if safety.by != "floor" else "fixed rules"
-    activity = "no proposed call ran" if safety.by != "floor" or risk_reading.by != "floor" else "nothing ran"
+    if ranking.ranked_by == "model":
+        rankers += " then a model reorder of offered candidates"
+    activity = ("no proposed call ran" if ranking.ranked_by == "model" or safety.by != "floor"
+                or risk_reading.by != "floor" else "nothing ran")
     card = warning_card("G6_E_QUALIFIED_DRAFT",
                         f"g6_select: a proposal ranked by {rankers} over G6's own text; {activity} and nothing "
                         "about your task is checked",

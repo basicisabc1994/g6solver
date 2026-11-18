@@ -117,4 +117,6 @@ Preserve `verified`, `qualified-draft` and `blocked-escalated` exactly as return
 artifact and check scope. Report the warning card and recovery; never turn a refusal into a success.
 Ask the person when permissions, task meaning or evidence are missing. Local settings assume a trusted host;
 unrestricted same-user shell access defeats that separation.
-Superpowers lifecycle skills are optional companions, not prerequisites for using G6.
+Use the superpowers skills for software engineering work in general: design and programming in the large as well
+as routine coding. They establish a way of working; G6 checks the work they produce. Load a skill offered by
+g6_select or g6_find from its installed name or its path inside the G6 package. A skill is never a G6 check or evidence.

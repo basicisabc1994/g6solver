@@ -523,6 +523,7 @@ def inputs(repo: Path | None = None) -> dict[str, Any]:
     the inventory test, and any change that adds a tool or an op runs it."""
     import g6
     from g6.skills import corpus, routing
+    from g6.core.skills import vendored
 
     package = package_root()
     texts = guidance(repo)
@@ -533,4 +534,6 @@ def inputs(repo: Path | None = None) -> dict[str, Any]:
     return {"registrations": registered, "ops": component_ops(), "texts": texts, "details": details,
             "root_words": routing.root_words(texts[routing.ROOT]), "version": g6.__version__, "files": files,
             "sources": server_sources(package), "servers": dict(SERVERS), "identifiers": identifiers(sorted(wanted)),
-            "selectable": corpus.selectable(registered)}
+            "selectable": corpus.selectable(registered),
+            "skills": {f"skill:{name}": folder.relative_to(package).as_posix() + "/SKILL.md"
+                       for name, folder in vendored().items()}}

@@ -11,6 +11,7 @@ import pytest
 
 from g6.mcp import registrations
 from g6.skills import corpus, routing
+from g6.core.skills import vendored
 
 
 def test_the_checked_in_corpus_is_what_the_code_builds() -> None:
@@ -26,7 +27,7 @@ def test_it_holds_every_tool_of_g6_mcp_every_route_and_every_runnable_built_in_o
     assert {f"route:{route}" for route in routing.load().routes} <= ids
     ops = {f"op:{component}.{op}" for component, listed in registrations.component_ops().items() for op in listed}
     assert ops and ops <= ids
-    assert len(ids) == len(data["entries"]) == len(tools) + len(routing.load().routes) + len(ops)
+    assert len(ids) == len(data["entries"]) == len(tools) + len(routing.load().routes) + len(ops) + len(vendored())
     # the separate abstraction server is registered by the person alone, not by g6-mcp: none of its tools is here
     assert not any(entry["call"].get("server") == "abstraction" for entry in data["entries"])
     assert set(corpus.SERVERS_NOT_SELECTED) == set(registrations.SERVERS) - {"g6"}
@@ -36,7 +37,7 @@ def test_every_entry_has_text_and_says_what_it_establishes_and_what_it_does_not(
     full = corpus.entries()
     assert len(full) == len(corpus.load()["entries"])
     for entry in full:
-        assert entry["kind"] in ("tool", "route", "op"), entry["id"]
+        assert entry["kind"] in ("tool", "route", "skill", "op"), entry["id"]
         assert entry["text"].strip() and entry["establishes"].strip() and entry["not_established"].strip(), entry["id"]
         assert set(entry["phases"]) <= set(corpus.PHASES), entry["id"]
         assert entry["cost"] in corpus.COSTS, entry["id"]

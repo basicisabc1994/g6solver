@@ -1,6 +1,19 @@
 {
   "description": "G6's completion loop: records the task, then tests the work when the agent finishes.",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": ["-P", "-m", "g6", "skills", "install", "--user", "--client", "claude", "--with-superpowers"],
+            "timeout": 30,
+            "statusMessage": "G6 is checking installed workflow skills"
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

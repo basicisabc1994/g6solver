@@ -52,6 +52,7 @@ class Kind:
 
 # Only trusted host code registers policy. A Question cannot redefine it.
 KINDS = MappingProxyType({
+    "workflow_ranking": Kind("choose", "Order or choose only offered workflow ids by fitness for the task"),
     "risk": Kind("raise_only", "Worst credible consequence: R0 low stakes through R3 irreversible or critical",
                  ("R0", "R1", "R2", "R3")),
     "effort": Kind("choose", "Reasoning effort required: simple, moderate, complex"),
@@ -106,13 +107,14 @@ class Reading:
     by: Literal["model", "floor", "both"]
     disagreement: bool
     reason: str
+    code: str = ""
 
     def mechanism(self) -> dict[str, Any]:
         def data(value):
             return deepcopy(_JSON_DATA.dump_python(value, mode="json"))
         return {"stage": "semantic", "ran": True, "kind": self.kind, "value": data(self.value), "floor_value": data(self.floor_value),
                 "model_value": data(self.model_value), "by": self.by, "disagreement": self.disagreement,
-                "reason": self.reason}
+                "reason": self.reason, **({"code": self.code} if self.code else {})}
 
 
 @dataclass
@@ -277,10 +279,10 @@ def read(question: Question) -> Reading:
     q = question
     floor = q.floor()
 
-    def finish(value=floor, model=None, by="floor", reason=""):
+    def finish(value=floor, model=None, by="floor", reason="", code=""):
         actual = _JSON_DATA.dump_python(model, mode="json")
         base = _JSON_DATA.dump_python(floor, mode="json")
-        reading = Reading(q.kind, value, floor, model, by, by != "floor" and actual != base, reason)
+        reading = Reading(q.kind, value, floor, model, by, by != "floor" and actual != base, reason, code)
         if scope.active:
             scope.mechanisms.append(reading.mechanism())
         return reading
@@ -345,7 +347,11 @@ def read(question: Question) -> Reading:
                 reason = ("consent not given" if isinstance(raw, LLMError) and "CONSENT" in str(raw) else
                           "model send budget exhausted" if isinstance(raw, _SendBudget) else
                           "model timeout" if timed_out else "model failed")
-                return finish(reason=reason)
+                # Only known consent control codes leave this boundary, never exception details.
+                code = next((code for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)
+                             if isinstance(raw, LLMError) and (str(raw) == code or str(raw).startswith(
+                                 (code + ":", "[" + code + "]")))), "")
+                return finish(reason=reason, code=code)
             try:
                 if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_REPLY:
                     raise ValueError("invalid reply length")

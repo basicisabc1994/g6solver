@@ -321,7 +321,8 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
           details: Mapping[str, str] | None = None, sources: Collection[str] = (),
           servers: Mapping[str, str] | None = None,
           identifiers: Mapping[str, Collection[str]] | None = None,
-          selectable: Mapping[str, str] | None = None) -> list[Problem]:
+          selectable: Mapping[str, str] | None = None,
+          skills: Mapping[str, str] | None = None) -> list[Problem]:
     """Every problem in the join of the manifest with the code, sorted; ``[]`` when each MCP tool and each typed op
     resolves to a route or a reasoned exemption and the guidance names nothing else.
 
@@ -351,6 +352,11 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
         problems.append(Problem(code, key, said))
 
     have = members(registrations, ops)
+    for key, path in sorted((skills or {}).items()):
+        if path not in files:
+            add("LINK", key, "the vendored skill instruction is missing")
+        if selectable is not None and selectable.get(key) != IN_CORPUS:
+            add("UNSELECTABLE", key, "the vendored skill has no corpus entry")
     for key in sorted(have - set(manifest.entries)):
         add("MISSING", key, "the code has this member and the manifest has no entry for it")
     for key in sorted(set(manifest.entries) - have):

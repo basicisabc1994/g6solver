@@ -1,16 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Progressive discovery for agents: find → describe → ops → invoke.
+"""Progressive discovery: find a workflow, read its call, describe an op, then invoke it.
 
-Built only on what components declare about themselves (package docstring, block, ``ops`` /
-``help`` answers, maturity), so it cannot drift from the code the way a hand-maintained catalogue
-does (audit 016, NAV-004/007). Ranking is a transparent token-overlap score over each package's
-docstring, its skill's description (when to use it) and the titles of the failure modes it declares it guards
-against, all read from its source without importing it, so a component that is slow or fails to import cannot
-break ``find``, and an agent
-can find a guard by the failure it is worried about (D6); ``describe`` imports only the one component
-asked for. Ties break by score
-then name, scores are returned, and an empty result means nothing matched. Nothing here composes,
-validates or labels a pipeline — discovery never says anything is ``verified``.
+Default discovery uses the selector's shipped corpus and shared ranker, with a deterministic coverage floor and
+optional closed-candidate ordering through the shared semantic reader. Explicit names= searches retain the
+component-only source profiles, including blockless libraries. An empty list means no G6 tool fits. Discovery
+proposes work; it establishes no check result or reliability state.
 """
 from __future__ import annotations
 
@@ -125,14 +119,17 @@ def _extras(extras: dict[str, tuple[str, ...]]) -> list[dict[str, Any]]:
 
 
 def find(query: str, limit: int = 5, *, names: list[str] | None = None) -> list[dict[str, Any]]:
-    """Components ranked by overlap with ``query``. Returns ``[]`` when nothing matches. Each hit says whether it can
-    run (``runnable``: it names a block) and through what (``via``: ``g6_invoke``, or ``python`` for a library with no
-    block, which ``g6_invoke`` refuses). ``names`` ranks only those components (by default every registered one), so
-    a component left out does not weigh in the scores either."""
+    """Rank the selector's workflows; ``[]`` means no G6 tool fits the task above the lexical coverage floor.
+
+    A workflow carries its call template and the ranker that ran. ``names=`` explicitly opts into the historical
+    component-only overlap search, including blockless Python libraries; omitted components never weigh in its
+    scores. Discovery proposes work and establishes no reliability state.
+    """
+    if names is None:
+        return _find_workflows(query, limit)
     q = Counter(_tokens(query))
     if not q:
         return []
-    names = get_registry().names() if names is None else names
     docs = {n: Counter(_tokens(_profile(n))) for n in names}
     df = Counter(t for d in docs.values() for t in set(d))
     n_docs = max(1, len(docs))
@@ -145,18 +142,44 @@ def find(query: str, limit: int = 5, *, names: list[str] | None = None) -> list[
             matched = sorted(t for t in q if d.get(t))
             scored.append({"component": name, "score": round(score, 3), "matched": matched})
     scored.sort(key=lambda r: (-r["score"], r["component"]))
-    if re.search(r"\b(tune|improve|keeps failing|make my agent better)\b", query.lower()):
-        # Explicit workflow intent routing, reported separately from the lexical score.
-        score = max((row["score"] for row in scored), default=0) + 1
-        scored = [{"component": "metaharness", "score": score, "matched": ["workflow-improvement-intent"],
-                   "route": "metaharness_start", "basis": "explicit workflow intent", "runnable": False,
-                   "via": "metaharness_start"},
-                  *(row for row in scored if row["component"] != "metaharness")]
     for row in scored[:limit]:
         if "via" not in row:
             row["runnable"] = runnable(row["component"])
             row["via"] = "g6_invoke" if row["runnable"] else "python"
     return scored[:limit]
+
+
+def _find_workflows(query: str, limit: int) -> list[dict[str, Any]]:
+    from copy import deepcopy
+
+    from g6.core import semantic
+    from g6.core.corpus_ranking import FIND_FLOOR, documents, rank
+    from g6.skills import corpus
+
+    if not isinstance(query, str) or not query.strip() or type(limit) is not int or limit <= 0:
+        return []
+    data = corpus.load()
+    entries = {e["id"]: e for e in corpus._expanded(data)}
+    with semantic.use_request():
+        ranking = rank(query, data, model=True, floor=FIND_FLOOR)
+    docs = documents(data, entries)
+    hits = []
+    for key in ranking.order[:limit]:
+        entry = entries[key]
+        call = deepcopy(entry["call"])
+        tool = call.get("tool", "")
+        component = entry.get("component", "")
+        if not component and tool == "metaharness_start":
+            component = "metaharness"
+        row = {"id": key, "kind": entry["kind"], "component": component,
+               "score": round(ranking.scores[key], 3), "matched": sorted(set(_tokens(query)) & set(_tokens(docs[key]))),
+               "runnable": entry["kind"] in ("tool", "op"), "via": tool or "skill",
+               "call": call, "ranked_by": ranking.ranked_by}
+        row["tool"] = tool or None
+        if ranking.rerank_code:
+            row["rerank_code"] = ranking.rerank_code
+        hits.append(row)
+    return hits
 
 
 def describe(name: str) -> dict[str, Any]:
@@ -204,8 +227,8 @@ HELP = (
     "change to a standard fixed first: g6_mission_create freezes it, g6_mission_confirm asks the person in the client's "
     "own dialog, and g6_mission_submit checks the working tree against it, with host permission workforce.mission. "
     "Only the person confirms: no argument does, and there is no terminal fallback. "
-    "G6 discovery, in order: find(query) ranks components by what they say about themselves and the failures "
-    "they guard against; describe(component) gives maturity, ops, dependencies, the failure modes it guards "
+    "G6 discovery, in order: find(query) ranks tools, skill instructions and runnable ops from the selector's corpus; "
+    "an empty list means no G6 tool fits; describe(component) gives maturity, ops, dependencies, the failure modes it guards "
     "against and can cause, the programs and extras it needs from outside G6, and the component's skill; "
     "invoke(component, op, params_json), with params_json a JSON object of the op's parameters, runs one op through "
     "the component's typed input; the reply carries ok, result or error, completion_state and a warning_card, and ok "

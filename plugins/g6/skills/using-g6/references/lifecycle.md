@@ -2,7 +2,10 @@
 
 Each stage of a coding agent's work is paired with its superpowers skill, its G6 step, and the principle from G6's
 essays (`/essays/`) that it puts into practice. The superpowers skills say how to work; G6 checks the work at each
-point, independently of the agent doing it.
+point, independently of the agent doing it. Use these skills for software engineering work in general: design and
+programming in the large as well as routine coding. They establish a way of working, never evidence or a reliability
+state. G6 checks the work they produce. Setup installs the vendored skills when superpowers is absent, preserves
+existing copies and reports which copy is used.
 
 | Stage | Superpowers skill | G6 step | Principle (essay) |
 |---|---|---|---|

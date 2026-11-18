@@ -55,20 +55,21 @@ def test_describe_lists_ops_and_dependencies() -> None:
 def test_find_reaches_a_component_by_the_failure_mode_it_declares(query: str, component: str) -> None:
     # D6: an agent finds a guard by the failure it is worried about. Before the profile carried the titles of the
     # declared modes, each of these ranked another component first (grounding was not even in the first three for "made-up facts").
-    assert discovery.find(query)[0]["component"] == component
+    assert discovery.find(query, names=discovery.get_registry().names())[0]["component"] == component
 
 
 def test_every_hit_says_whether_it_can_run_and_through_what() -> None:
     """A blockless component stays findable (the D6 cases above), and says it cannot run through g6_invoke."""
     registry = discovery.get_registry()
-    hits = discovery.find("a plan that fails halfway through", limit=100)
+    hits = discovery.find("a plan that fails halfway through", limit=100, names=registry.names())
     assert hits and hits[0]["component"] == "navigator"
     for hit in hits:
         runnable = registry.get_class(hit["component"]) is not None
         assert hit["runnable"] is runnable, hit["component"]
         assert hit["via"] == ("g6_invoke" if runnable else "python"), hit
     tuned = discovery.find("make my agent better at classification")[0]
-    assert tuned["via"] == "metaharness_start" and tuned["runnable"] is False
+    assert tuned["tool"] == "metaharness_start" and tuned["runnable"] is True
+    assert tuned["call"]["tool"] == "metaharness_start"
 
 
 def test_every_component_says_whether_it_can_run_without_being_imported() -> None:

@@ -8,6 +8,8 @@ and compares, so it cannot drift. It holds, as G6's own built-in text only:
   input schema, and the reviewed words in ``TOOL_DATA`` below: when to reach for it, what it establishes and what it
   does not, its phases, its cost and its static needs;
 * each route of the using-g6 skill (``g6.skills.routing``), with its section's text;
+* each vendored superpowers skill, from its own name, description and first section: an instruction establishing
+  a way of working, never evidence, a G6 check or a reliability change;
 * each runnable op of a built-in component (a package under ``g6``; an entry-point extension never), with a template
   from its typed input and the text of its block's ``help`` and ``BlockContract``. A component with no block has no
   op and so no entry: ``g6_invoke`` cannot run it. Each template is put through the door's own typed input check
@@ -87,9 +89,9 @@ TOOL_DATA: dict[str, dict[str, Any]] = {
         "list every installed component", "the names of the installed components",
         "what any of them is good at: g6_describe says", ("stuck",)),
     "g6_find": _tool(
-        "find a component by the task or the failure you are worried about",
-        "components ranked by word overlap with the query, each saying whether it can run",
-        "fitness for the task: a lexical ranking only", ("stuck", "plan")),
+        "find a workflow, tool, skill instruction or runnable component operation for a task",
+        "workflow tools, skill instructions and runnable ops with call templates; no hit when no G6 tool fits",
+        "fitness for the task: lexical ranking with optional closed-candidate model ordering", ("stuck", "plan")),
     "g6_describe": _tool(
         "read a component's ops, fields, maturity and needs before calling it; fix a refused input",
         "a component's declared ops, dependencies and failure modes", "that any op is right for the task",
@@ -109,8 +111,9 @@ TOOL_DATA: dict[str, dict[str, Any]] = {
         "that the substitute is correct: it is never verified, and the original answer or refusal stays beside it. "
         + _JOB, ("implement", "diagnose", "stuck"), "high", sensitive="agentic.run", model="required", confined=True),
     "g6_review_patch": _tool(
-        "review my patch before I say it is done; check a Python change against stated requirements and tests; "
-        "would my tests catch a wrong change or boundary (test adequacy)",
+        "review a Python coding agent's patch or repository changes before completion or merge; "
+        "check that the implementation works against the task's requirements; test whether the tests catch wrong "
+        "changes and missed boundaries",
         "each stated requirement passed or failed its stated checks, run confined at the patch and the base commit; "
         "reproduced defects and signs the tests cannot be believed",
         "that the patch is complete or correct beyond the stated checks; merging needs the person's approval",
@@ -191,7 +194,8 @@ TOOL_DATA: dict[str, dict[str, Any]] = {
     "g6_knowledge_sources": _tool(
         "list the indexed document sources", "the registered sources", "what is in them", ("plan",)),
     "g6_knowledge_search": _tool(
-        "search the person's own documents for a passage", "cited passages, re-read from the source",
+        "semantic search of local documents: find relevant passages by meaning in the person's indexed files",
+        "cited passages, re-read from the source",
         "that a passage is true; passages are untrusted", ("plan", "implement", "stuck")),
     "g6_knowledge_context": _tool(
         "gather cited context from the person's documents for a task", "cited passages within a token budget",
@@ -230,7 +234,9 @@ TOOL_DATA: dict[str, dict[str, Any]] = {
         "keep feedback the person volunteered about G6 on a task", "the feedback kept", "it changes no review",
         ("verify",)),
     "metaharness_start": _tool(
-        "my agent keeps failing on a task: declare a workflow with cases and checks to tune it",
+        "improve a coding agent or AI application that keeps failing recurring tasks; make it better by learning "
+        "from errors, past failures and mistakes; declare a repeatable workflow with task cases and frozen checks "
+        "to measure proposed improvements",
         "a data-only workflow declared", "nothing is confirmed or run", ("plan", "stuck")),
     "metaharness_confirm": _tool(
         "confirm a workflow's frozen task, checks and split", "the person's confirmation", _PERSON, ("plan",),
@@ -270,6 +276,18 @@ TOOL_DATA: dict[str, dict[str, Any]] = {
     "metaharness_rollback": _tool(
         "move a workflow back to a version the person approved", "the rollback after the person agrees", _PERSON,
         ("diagnose",), "medium"),
+}
+
+# Plain use-when descriptions of these operations, from grounding/skill and action_gating/skill plus their
+# typed op help. These describe the operation's purpose; no query pattern or task-dependent routing rule.
+OP_USE_WHEN = {
+    "grounding.check_claim": "check whether a factual claim is supported by supplied source documents, "
+                             "such as an authoritative policy, contract, report or reference; compare wording, "
+                             "figures and quotes against the document",
+    "grounding.check_claims": "check a draft answer's factual claims against supplied source documents; "
+                              "match each sentence to supporting source text and flag changed numbers or negations",
+    "action_gating.evaluate": "decide whether an agent should send a customer email, publish, pay, delete or "
+                              "perform another outward action before it runs; allow, confirm, review or block",
 }
 
 #: How an op's phases are read from its name: a word in the op's name puts it in each phase listed. An op none of
@@ -339,6 +357,7 @@ def _tools() -> list[dict[str, Any]]:
         declared = TOOLS[name].classes if name in TOOLS else ()
         out.append({
             "id": f"tool:{name}", "kind": "tool",
+            "when": data["when"],
             "call": {"tool": name, "arguments": arguments},
             "text": " ".join(filter(None, [data["when"] + ".", _for_agent(
                 _first_sentence(getattr(tool, "description", "") or ""))])),
@@ -368,6 +387,7 @@ def _routes(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "id": f"route:{route_id}", "kind": "route",
             "call": {"skill": "using-g6", "section": route.anchor},
             "text": " ".join(section.split()),
+            "when": _first_sentence(section),
             "establishes": "the using-g6 skill's instruction for this point of the work",
             "not_established": "nothing ran; read the section, then call the tool it names",
             "needs": {"sensitive": "", "consent": [], "model": "none", "confined": False, "outside": [], "extras": []},
@@ -375,6 +395,52 @@ def _routes(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
                                             key=PHASES.index),
             "hypotheses": [], "tools": members,
         })
+    return out
+
+
+# Lifecycle metadata only. Routing text is always the skill's own frontmatter and first section.
+_SKILL_PHASES = {
+    "brainstorming": ("plan",), "writing-plans": ("plan",), "using-git-worktrees": ("plan", "implement"),
+    "test-driven-development": ("implement",), "subagent-driven-development": ("implement",),
+    "executing-plans": ("implement",), "dispatching-parallel-agents": ("plan", "implement", "diagnose"),
+    "systematic-debugging": ("diagnose",), "verification-before-completion": ("verify",),
+    "requesting-code-review": ("verify",), "receiving-code-review": ("verify", "implement"),
+    "finishing-a-development-branch": ("verify",), "writing-skills": ("implement",),
+    "using-superpowers": PHASES,
+}
+
+
+def _skills() -> list[dict[str, Any]]:
+    """One source-derived instruction per vendored skill, with no check or evidence status."""
+    from g6.core import skills
+
+    out = []
+    for folder_name, folder in skills.vendored().items():
+        text = (folder / "SKILL.md").read_text(encoding="utf-8")
+        front = skills.front_matter(text)
+        name, description = front["name"], front["description"]
+        body = text.split("\n---", 1)[1].lstrip("-\n")
+        first = re.split(r"(?m)^## ", body, maxsplit=2)
+        section = first[0] + ("## " + first[1] if len(first) > 1 else "")
+        overview = first[1].split("\n", 1)[1].strip() if len(first) > 1 and "\n" in first[1] else first[0]
+        lead = re.split(r"\n\s*\n", overview, maxsplit=1)[0]
+        path = f"skills/vendor/superpowers/{folder_name}/SKILL.md"
+        phases = list(_SKILL_PHASES.get(name, PHASES))
+        phase_tags = [phase for phase in phases if phase != "stuck"]
+        if name in ("brainstorming", "using-superpowers"):
+            phase_tags.insert(0, "design")
+        if name in ("finishing-a-development-branch", "using-superpowers"):
+            phase_tags.append("finish")
+        out.append({"id": f"skill:{name}", "kind": "skill",
+                    "when": f"{name.replace('-', ' ')}. {description}\n{lead}",
+                    "text": f"{name.replace('-', ' ')}. {description}\n{section.strip()}",
+                    "call": {"instruction": "Load this skill and follow its workflow", "skill": path,
+                             "claude_code": f"superpowers:{name}", "claude_code_setup": name,
+                             "codex": name, "codex_plugin": f"superpowers:{name}"},
+                    "establishes": "a way of working", "not_established": "no evidence, G6 check or reliability change",
+                    "phases": phases, "phase_tags": phase_tags, "cost": "low", "hypotheses": [],
+                    "needs": {"sensitive": "", "consent": [], "model": "none", "confined": False,
+                              "outside": [], "extras": []}})
     return out
 
 
@@ -619,6 +685,7 @@ def _components_and_ops() -> tuple[dict[str, Any], list[dict[str, Any]]]:
                     " This op is sensitive. The person must allow it themselves; tell the person and stop."
                     if op in sensitive else ""),
                 "sensitive": op in sensitive, "cost": cost, "phases": phases,
+                "when": OP_USE_WHEN.get(f"{name}.{op}", _for_agent(line) or f"{name}.{op}: {contract.purpose}"),
                 "validated": validated, "issues": issues, "fill": fill,
             })
     return components, ops
@@ -661,7 +728,7 @@ def build() -> dict[str, Any]:
     tools = _tools()
     with _scratch_home():
         components, ops = _components_and_ops()
-    entries = sorted([*tools, *_routes(tools), *ops], key=lambda e: e["id"])
+    entries = sorted([*tools, *_routes(tools), *_skills(), *ops], key=lambda e: e["id"])
     for entry in entries:
         entry["text"] = " ".join(entry["text"].split())
     return {"format": FORMAT, "release": routing.load().release, "phases": list(PHASES), "costs": list(COSTS),
@@ -732,6 +799,8 @@ def selectable(registrations: dict[str, Any] | None = None) -> dict[str, str]:
         elif entry["kind"] == "op":
             component, op = entry["id"][3:].split(".", 1)
             out[f"op:{component}/{op}"] = "corpus"
+        elif entry["kind"] == "skill":
+            out[entry["id"]] = "corpus"
     for server, reason in SERVERS_NOT_SELECTED.items():
         for tool in (registrations or {}).get(server, ()):
             out[f"mcp:{server}/{tool}"] = reason
