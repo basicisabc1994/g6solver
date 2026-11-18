@@ -124,6 +124,7 @@ def runtime_cases():
     for kind in ('information', 'ml', 'method'):
         cases['affordability:' + kind] = lambda mp, kind=kind: limits.test_unaffordable_candidate_never_scored(kind)
     cases['reply'] = lambda mp: late.test_json_reply_cap_precedes_text_conversion(True)
+    cases['ranking:caller-data'] = ranking_caller_data
     cases['arguments'] = lambda mp: late.test_tool_argument_one_over_precedes_encoding(mp)
     cases['model'] = lambda mp: late.test_declarative_model_one_over_precedes_encoding(mp)
     for kind, cap, error in [('critique', 25000, 'critique prompt'), ('claims', 15000, 'prompt cap')]:
@@ -153,6 +154,32 @@ def runtime_cases():
         cases[f'length:{kind}'] = lambda mp, kind=kind: single.test_a_collection_is_refused_by_its_native_length_before_it_is_taken(kind)
     cases['array:format'] = lambda mp: roots.test_a_buffer_format_that_is_not_one_native_scalar_is_refused('T{<i:x:<d:y:}', mp)
     return cases
+
+
+def ranking_caller_data(monkeypatch):
+    """The review-kind restriction admits G6 engines, never caller success claims or trials."""
+    from g6.cognitive_bridge.block import CognitiveBridgeBlock
+    from g6.harness import outcome_history
+
+    monkeypatch.setattr(outcome_history, 'read', lambda root: outcome_history.History())
+    variants = [{'id': name, 'method': 'review', 'representation': 'pytest', 'engine': engine,
+                 'op': 'review', 'estimated_cost': 1.0, 'kind': 'reviewer'} for name, engine in
+                [('a', 'g6_review_patch'), ('b', 'g6_review_until_clean')]]
+    params = {'op': 'rank_methods', 'variants': variants, 'required_methods': ['review'],
+              'context': {'domain': 'software_engineering', 'uncertainty': 'bug_fix',
+                          'claim_kind': 'patch', 'risk': 1, 'budget': 10.0}}
+    def rank(value):
+        return CognitiveBridgeBlock().infer(value).value
+    before = rank(params)
+    assert before.get('ordered_variants')
+    for key, value in [('trials', [{'resolved': True, 'variant_id': 'b'}]),
+                       ('success', True), ('history', {'admitted': 100})]:
+        assert rank({**params, key: value})['code'] == 'G6_E_COGNITIVE_BRIDGE_INPUT'
+    for field, value in [('method', 'formal'), ('representation', 'arbitrary'),
+                         ('engine', 'caller_reviewer'), ('op', 'caller_review')]:
+        forged = [{**variants[0], field: value}, variants[1]]
+        assert rank({**params, 'variants': forged})['code'] == 'G6_E_COGNITIVE_BRIDGE_INPUT'
+    assert rank(params) == before
 
 
 def generated_output_size(monkeypatch):

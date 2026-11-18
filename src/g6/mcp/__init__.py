@@ -254,11 +254,17 @@ def build_server(surface: Any = None) -> Any:
             return unloadable(component, exc)
         return host_facts(info)    # this computer's facts only with host_configuration shared
 
-    @server.tool()
-    def g6_invoke(component: str, op: str, params_json: str = "{}") -> dict:
+    async def g6_invoke(component: str, op: str, ctx: Any, params_json: str = "{}") -> dict:
         """Run one op of a component. ``params_json`` is a JSON object of the op's parameters. The reply carries
         ``completion_state`` (verified / qualified-draft / blocked-escalated) and a ``warning_card``: read them."""
+        if component == 'learning_history' and op == 'forget':
+            from g6.mcp.learning_history import forget_reply
+
+            return await forget_reply(ctx, params_json, allow=allowed_sensitive())
         return invoke_reply(component, op, params_json)
+
+    g6_invoke.__annotations__['ctx'] = Context
+    server.tool()(g6_invoke)
 
     @server.tool()
     def g6_compose(composition_json: str) -> dict:

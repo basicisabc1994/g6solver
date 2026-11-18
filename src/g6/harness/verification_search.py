@@ -512,7 +512,7 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
     overlay = {} if owned else {placed: source}
     if at_base and not owned:
         return repo_tests.run_at_base(change, [node], roots=roots, timeout_s=timeout_s, overlay=overlay,
-                                     require_isolation=True)
+                                     require_isolation=True, receipt=True)
     deadline = time.monotonic() + timeout_s
     refused = {"verdict": "not_run", "said": NOT_THE_ARTEFACT, NOT_THE_ARTEFACT_KEY: True}
     try:
@@ -539,7 +539,8 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
                 else:
                     ran = repo_tests._run(copy, [node], roots=roots, timeout_s=timeout_s, network=False, copied=True,
                                           python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
-                                          deadline=deadline, require_isolation=True, links=report)
+                                          deadline=deadline, require_isolation=True, links=report, receipt=True,
+                                          _receipt_repository=change.repo)
             if expected is not None and ran.get("source_before") and ran["source_before"] != digest(copied):
                 return refused
             if expected is not None and not ran.get('source_before') and ran.get('verdict') in {'passed', 'failed'}:
@@ -548,6 +549,13 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
             if expected is not None:
                 ran['execution_artifact'] = {'version': 'execution-run.v1', 'artifact_digest': digest(artefact),
                     'base_commit': change.base_commit if at_base else '', 'files': copied}
+            if owned:
+                from g6.workforce import receipt_store
+
+                try:
+                    ran['receipt'] = receipt_store._record_observation(change.repo, node, source, ran)
+                except (OSError, ValueError):
+                    pass   # no receipt means no admitted learning; the observation's existing authority is unchanged
             return ran
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
@@ -765,6 +773,8 @@ class Search:
     next_actions: list[str] = field(default_factory=list)
     defects: list[dict] = field(default_factory=list)
     questions: list[dict] = field(default_factory=list)
+    # Private Python execution records, deliberately excluded from completion's wire fields.
+    outcomes: list[tuple] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -831,6 +841,8 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
     of the order given. It is off by default, ``search_config`` has no key for it and no review sets it: Gate C (V11)
     must show the selector helps before any caller does."""
     done = Search()
+    # Execution records remain private to this invocation, never filled from tool arguments.
+    observed_runs = {}
     stopped = False
     rooted = {"roots": tuple(roots)} if roots else {}
     if select:
@@ -841,6 +853,7 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
         ran = _run_check(change, activity["placed"], one.source, node, at_base=at_base,
                          timeout_s=_bound(deadline - _clock()), **rooted,
                          **({'artefact': before} if before is not None and origin.template == 'differential.v1' else {}))
+        observed_runs[at_base] = ran
         found = _guarded(change, ran, reading(ran, node))
         if origin.template == "differential.v1":   # the binding as the run's reading read it from its record
             activity.owned_runs.append(found.get("owned_probe") is True and bool(found.get('execution_artifact')))
@@ -851,6 +864,7 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
         return found
 
     for one in checks:
+        observed_runs.clear()
         origin = (origins or {}).get(one.id, FREE_FORM)
         activity = _activity(one, placed[one.id], origin)
         done.activities.append(activity)
@@ -860,10 +874,22 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
             continue
         node = activity["node"]
         try:   # what G6's own reading of the runs raises is this check's error, never the review's (review I2)
+            retained_base = read(at_base=True) if origin.label == 'retained' else None
+            if retained_base is not None:
+                activity['runs'].append({'on': 'base commit', **_summary(retained_base)})
+                if retained_base.get('collection'):
+                    activity.update(result='stale', reason='retained check no longer imports or applies at the base',
+                                    seconds=retained_base.get('seconds', 0))
+                    continue
+                if deadline - _clock() < MIN_RUN_S:
+                    activity.update(result='skipped', reason=OUT_OF_TIME, seconds=retained_base.get('seconds', 0))
+                    continue
             on_patch = read(at_base=False)
             activity["runs"].append({"on": "patch", **_summary(on_patch)})
             at_base, skip = None, ""
-            if origin.patch_only:
+            if retained_base is not None:
+                at_base = retained_base
+            elif origin.patch_only:
                 skip = PATCH_ONLY
             elif deadline - _clock() < MIN_RUN_S:   # a patch run that errored is run at the base too (B2)
                 skip = OUT_OF_TIME
@@ -890,6 +916,10 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
             activity.update(verdict)
             activity["seconds"] = round(sum(run.get("seconds", 0.0) for run in activity["runs"]), 3)
             _found(done, one, activity, on_patch, at_base, verdict, artifact, change.base_commit, origin)
+            done.outcomes.append((one, node, observed_runs.get(False, {}), observed_runs.get(True),
+                                  verdict['result'], 'retained' if origin.label == 'retained' else
+                                  'template' if origin.template else origin.label,
+                                  origin.refuted_by_difference))
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, repo_tests.RepoRefused):
             raise   # an operator stop, unconfirmed cleanup or a refusal (no boundary) still reaches the door
         except Exception as exc:

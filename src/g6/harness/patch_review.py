@@ -977,16 +977,21 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         if expected_artifact_digest and artifact != expected_artifact_digest:
             return blocked_reply("[G6_E_PATCH_STALE] working tree differs from the supplied artifact digest")
         change = repo_tests.change(root, base)
+        from g6.harness import outcome_history
+
+        retained, retained_origins, retained_skipped = outcome_history.retained_checks(
+            change, next((req.id for req in stated if req.provenance in NORMATIVE), 'retained'))
         if (confirmed is not None and confirmed.expectations) or any(
-                one.template == 'differential.v1' for one in instances):
+                one.template == 'differential.v1' for one in instances) or any(
+                origin.template == 'differential.v1' for origin in retained_origins.values()):
             from g6.harness import verification_search
 
             before = verification_search.bind_execution(change, before, deadline=deadline)
         placed = {}
-        if proposed:
+        if proposed or retained:
             from g6.harness import verification_search
             try:
-                placed = verification_search.placements(root, proposed)
+                placed = verification_search.placements(root, [*proposed, *retained])
             except ValueError as exc:
                 raise _Refused("G6_E_INPUT_VALIDATION", str(exc)) from exc
         # Rule 11: only a normative requirement is assessed; the others are listed, and their checks never run.
@@ -1000,7 +1005,8 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
                        deadline=deadline, limit=limit, started=started, listed=listed, assumed=assumed,
                        unmapped=unmapped, proposed=proposed, placed=placed, instances=instances, config=config,
                        roots=roots, llm=llm, confirmed=confirmed if confirmed is not None and confirmed.expectations
-                       else None)
+                       else None, retained=retained, retained_origins=retained_origins,
+                       retained_skipped=retained_skipped)
     except LETS_THROUGH:
         raise   # an operator stop, a spent allowance or unconfirmed process cleanup must reach the enclosing door
     except repo_tests.RepoRefused as exc:
@@ -1043,7 +1049,8 @@ def _stage(stopped: list[dict], what: str, run, *args, **kwargs):
 
 def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, *, deadline, limit,
             started, listed=(), assumed=(), unmapped=(), proposed=(), placed=None, instances=(),
-            config=None, roots=(), llm=None, confirmed=None) -> dict:
+            config=None, roots=(), llm=None, confirmed=None, retained=(), retained_origins=None,
+            retained_skipped=()) -> dict:
     """``deadline``: when the checks stop; ``limit``: when the review ends, the closing steps (``_closing``) and the
     reply coming between the two."""
     reasons: list[dict] = []
@@ -1123,6 +1130,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     # G6 0.3: each stated check's identity, the bytes its runs will execute, read before any of them; the final integrity
     # snapshot comes after the last read of the tree, so a change in between is the review's integrity problem
     check_sha = _check_shas(Path(root), stated_ids)
+    from g6.harness import outcome_history
+
+    history_sources = outcome_history.check_sources(root, ids)
     scanned = _test_diff(repo_tests.diff_text(change), related)   # what the coding gate scans, of this tree too
     # Tier 1: the stated checks and the extra tests, in one confined run.
     present = [i for i in ids if (root / i.partition("::")[0]).exists()]
@@ -1218,6 +1228,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             skipped.append({"tier": 2, "check": "tests that touch the changed modules",
                             "reason": "no other test file names a changed module"})
         else:
+            history_sources.update(outcome_history.check_sources(root, derived))
             second = _confined(_execute(root, derived, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
             runs.append(_record(2, "tests that touch the changed modules", derived, second, provenance=DERIVED))
             seen = {"run": ["derived"], "verdicts": _observed(stated_ids, second)}   # a stated check it collected
@@ -1257,10 +1268,11 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             skip=INTEGRITY_SKIP if any(r["stage"] == "integrity" for r in reasons) else "",
             budget=verification_search.MAX_CHECKS - prepared.instances - len(proposed))
     compiled = list(prepared.checks) if prepared is not None else []
-    if proposed or compiled:   # verification search: compiled template instances first, then the caller's proposed
+    if proposed or compiled or retained:   # retained checks keep proposed authority
         from g6.harness import verification_search   # checks, each on the patch and at the base commit
-        checks, where = [*compiled, *proposed], {**(prepared.placed if prepared else {}), **(placed or {})}
-        origins = {**(prepared.origins if prepared is not None else {}), **(proposals.origins if proposals else {})}
+        checks, where = [*compiled, *proposed, *retained], {**(prepared.placed if prepared else {}), **(placed or {})}
+        origins = {**(prepared.origins if prepared is not None else {}), **(proposals.origins if proposals else {}),
+                   **(retained_origins or {})}
         if any(r["stage"] == "integrity" for r in reasons):
             search = verification_search.not_run(checks, where, INTEGRITY_SKIP, origins)
         else:
@@ -1272,6 +1284,11 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         follow_ups = [*follow_ups, *(search.next_actions if search is not None else ())]
     if formal is not None:
         verification_formal.finish(formal, search)
+    if retained_skipped:
+        from g6.harness import verification_search
+
+        search = search or verification_search.Search()
+        search.activities.extend(retained_skipped)
     adequacy = None
     if config is not None and config["test_adequacy"]:   # report only: it changes no outcome
         from g6.harness import verification_search
@@ -1396,7 +1413,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                   stopped=stopped, proposer=proposals,
                   issuer_inputs={"check_sha": check_sha, "written": lambda check: written.get(check, True),
                                  "again": again, "observed": observed},
-                  confirmed=(confirmed, enforced) if confirmed is not None else None)
+                  confirmed=(confirmed, enforced) if confirmed is not None else None,
+                  history_sources=history_sources, history_task=task)
 
 
 def _authored(check: str, change, root: Path) -> bool:
@@ -1708,7 +1726,7 @@ def _one_line(text: object) -> str:
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
            sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=(), prepared=None,
            adequacy=None, config=None, counts=None, roots=(), stopped=(), proposer=None, first_action="",
-           issuer_inputs=None, confirmed=None) -> dict:
+           issuer_inputs=None, confirmed=None, history_sources=None, history_task='') -> dict:
     """The reply. ``first_action``: the next action that stands first for an insufficient-evidence outcome in place of
     the general one (the launch review's I6: a module the patch imports that is not installed here).
     ``issuer_inputs``: each stated check's SHA-256 and whether the patch wrote it, every other run that observed a
@@ -1802,10 +1820,36 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                 standard, enforced, artifact=artifact, base_commit=change.base_commit, environment=confirmed_environment,
                 integrity=[r["code"] for r in reasons if r["stage"] == "integrity"])}
     from g6.harness import patch_report   # A1: the readable report, derived from the fields above; it decides nothing
+    from g6.harness import outcome_history, resolution
+
+    interventions = resolution.build(assessment, repo=str(change.repo), task=history_task)
+    if interventions:
+        assessment['resolution'] = interventions
+    if search is not None and outcome != INTEGRITY:
+        for one, node, patch, base, classification, origin, differs in search.outcomes:
+            try:
+                outcome_history.record_check(change, one, node, patch, base, classification, origin=origin,
+                                              refuted_by_difference=differs)
+            except LETS_THROUGH:
+                raise
+            except (OSError, ValueError):
+                assessment['completion']['activities'].append({'activity': 'outcome history', 'result': 'error',
+                    'reason': 'history could not be written; evidence authority unchanged', 'model_calls': 0,
+                    'seconds': 0.0})
+    if outcome != INTEGRITY and history_sources:
+        try:
+            outcome_history.record_stated(change, history_sources, runs, artifact=artifact)
+        except LETS_THROUGH:
+            raise
+        except (OSError, ValueError):
+            assessment['completion']['activities'].append({'activity': 'outcome history', 'result': 'error',
+                'reason': 'stated history could not be written', 'model_calls': 0, 'seconds': 0.0})
+    learned = outcome_history.read(change.repo).learned(assessment['completion']['activities'])
     assessment["report"] = patch_report.safe_render(assessment)
     card = warning_card(CODE, summary, next_actions[0])
-    return {**envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
+    reply = {**envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
                               request_id=uuid.uuid4().hex[:12], degradation_reason=summary[:300]),
-            "ok": True, "assessment": assessment,
+            "ok": True, "assessment": assessment, "learned": learned,
             "merge": {"status": "requires_separate_approval", "reason": MERGE_REASON, "reasons": merge_reasons},
             "gate": gate, "grounding": _grounding(claim, sources), "artifact_digest": artifact}
+    return outcome_history.disclose(reply, change.repo)

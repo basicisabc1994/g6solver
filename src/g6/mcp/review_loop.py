@@ -70,6 +70,14 @@ def _evidence(state: dict, base: str) -> list[dict[str, Any]]:
             for n, one in enumerate(state.get("reviews") or [], 1)]
 
 
+def _learning(state: dict) -> dict:
+    """Expose the last round's executed retained checks, without altering the loop's decision."""
+    reviews = state.get('reviews') or []
+    if not reviews or 'learned' not in reviews[-1]:
+        return {}
+    return {'learned': reviews[-1]['learned'], 'completion': reviews[-1].get('completion', {'activities': []})}
+
+
 def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
     """One step of the loop, for a job over MCP: see the module's docstring."""
     from g6.core.door import blocked_reply
@@ -114,6 +122,9 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
             reliability_label="qualified-draft", warning_card=warning_card(CODE, *card), evidence=evidence, request_id=request_id,
             run_id=folder.name, degradation_reason=card[0][:300])}
     from g6.core.cloud_consent import bind_output
+    result.update(_learning(state))
+    from g6.harness import outcome_history
+    outcome_history.disclose(result, Path(asked['repo']))
     return bind_output(result, loop.source_refs(state))
 
 

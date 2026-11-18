@@ -502,6 +502,8 @@
     "op:lean/lean_version": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
     "op:lean/prove": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
     "op:lean/sketch": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
+    "op:learning_history/forget": {"agent_facing": true, "route": "review", "since": "0.3.0"},
+    "op:learning_history/list": {"agent_facing": true, "route": "review", "since": "0.3.0"},
     "op:llm_router/delete_model": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
     "op:llm_router/estimate_cost": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
     "op:llm_router/fetch_openrouter_catalogue": {"agent_facing": true, "route": "discover", "since": "0.1.0"},

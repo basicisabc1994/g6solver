@@ -5,7 +5,8 @@ G6 needs no model to select: the calling agent is the semantic engine. Given the
 ranked list of next calls, each with its exact call template, what it establishes and what it needs, checked before
 the agent makes it; the agent chooses, and the door checks the call it makes. A refusal passed back as
 ``last_outcome`` reroutes. Pure and deterministic: it reads G6's own corpus (``g6.skills.corpus``) and the agent's
-arguments, runs nothing, calls no model and reads no repository. A fact about the host (whether an op is allowed,
+arguments; by default it runs nothing, calls no model and reads no repository. The MCP adapter may supply a private
+reader of evaluator-admitted operational history, evaluated only after argument validation. A fact about the host (whether an op is allowed,
 whether a grant exists, whether a model is configured, whether a run can be confined) is never reported: it is unknown
 until observed, and the refusal that observes it is what the agent passes back.
 
@@ -827,7 +828,7 @@ def _library_route(task: str, data: dict[str, Any], documents: dict[str, str], r
 
 def select(task: str, phase: str = "", last_outcome: str = "", considering: Any = "", limit: int = 5,
            rerank: str = "lexical", *, corpus: dict[str, Any] | None = None,
-           request_id: str = "", run_id: str = "") -> dict[str, Any]:
+           request_id: str = "", run_id: str = "", _history=None) -> dict[str, Any]:
     """The selection for the agent's situation (module docstring). ``corpus`` stands in for the shipped corpus in
     tests."""
     from g6.core.reliability_envelope import envelope_fields, warning_card
@@ -855,8 +856,17 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         items = _items(considering)
     except _Refusal as refused:
         return _refuse(str(refused), request_id, run_id)
+    # The adapter's host-repository reader runs only after all caller argument validation.
+    if callable(_history):
+        _history = _history()
     data = corpus if corpus is not None else _corpus()
     entries = {e["id"]: e for e in expanded(data)}
+    # History controls stay discoverable when asked for, but adding them must not change an ordinary cold
+    # selection's IDF population or evidence count. Admission, never caller text, enables history-based ranking.
+    history_requested = re.search(r'\b(?:learning_history|history|retained|forget)\b', task, re.IGNORECASE)
+    history_considered = any('learning_history' in json.dumps(item) for item in items)
+    if not (_history is not None and _history.rows) and not history_requested and not history_considered:
+        entries = {key: entry for key, entry in entries.items() if entry.get('component') != 'learning_history'}
     tools = {e["call"]["tool"]: e["id"] for e in data["entries"] if e["kind"] == "tool"}
     mechanisms: list[dict[str, Any]] = []
 
@@ -914,6 +924,12 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
             add(key, value, "intent_prior")
     for key in calls:
         add(key, CONSIDERED_BONUS, "considering")
+    # Python-only evaluator input supplied by the MCP adapter, never a tool argument.
+    if _history is not None and _history.rows:
+        for key, value in _history.candidate_scores(entries, phase).items():
+            if key in scores:
+                scores[key] += value
+                ranked_by.setdefault(key, []).append(_history.note)
     # a call that acts outside G6 ranks below every call that does not, whatever its score
     acting = {key: _acts(entries[key]) for key in entries}
     order = sorted(scores, key=lambda k: (bool(acting[k]), -scores[k], k))
@@ -1035,6 +1051,8 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
                         "about your task is checked",
                         "Choose a call and make it; the door checks it then. Pass a refusal back as last_outcome to "
                         "reroute.")
+    if _history is not None and _history.rows:
+        card['message'] = 'g6_select: fixed rules and ' + _history.note + '; no check ran on this task'
     evidence = [{"kind": "selection", "corpus_entries": len(entries), "corpus_release": data.get("release", ""),
                  "stages_run": [m["stage"] for m in mechanisms if m["ran"]]}]
     # a deep copy: candidates hold the cached corpus's own objects, which a caller filling in a template must not
@@ -1044,6 +1062,9 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         "considering": considered, "mechanisms": mechanisms, "unknown_until_observed": list(UNKNOWN_UNTIL_OBSERVED),
         **envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
                           request_id=request_id, run_id=run_id)})
+    if _history is not None and (_history.rows or _history.rejected):
+        reply['learned'] = _history.learned()
+        reply['evidence_note'] = _history.note
     if len(json.dumps(reply)) > MAX_REPLY_BYTES:       # the input bounds keep a reply well within it; this says so
         return _refuse(f"the reply would be over {MAX_REPLY_BYTES // 1024} KB: pass fewer or shorter entries in "
                        "considering", request_id, run_id)

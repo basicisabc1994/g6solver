@@ -34,6 +34,10 @@ The limit: the store is a file on this computer, owned by the same user as G6. I
 (an evidence item cannot make itself G6-observed by naming an id, a digest or a receipt's body), not against code
 running as that user, which can write the file, or call ``_record``, itself.
 
+Coding outcome learning also retains ``g6.observation_receipt/1`` records for G6's confined observation runner.
+These bind its bootstrap, input observation and check text, and are never counted as passing stated pytest checks
+by ``counts_as_pass``. They only support reuse of proposed counterexamples, including observed differences.
+
 A store whose chain does not check out (a torn last line after a crash, an edit) is ``store_unreadable`` to every
 check, and takes no more receipts. To recover, move the file aside: G6 starts a new store, and the receipts in the
 old one no longer count.
@@ -56,6 +60,7 @@ from g6.core.outside import find_program
 from g6.core.storage import state_path
 
 SCHEMA = "g6.test_receipt/1"
+OBSERVATION_SCHEMA = 'g6.observation_receipt/1'
 KIND = "test-receipt"
 #: Why an evidence item that cites a receipt is, or is not, G6-observed (``check``). Not "verified": that word is a
 #: reliability state, and the door rewrites it wherever it appears in a result.
@@ -68,6 +73,19 @@ RECOVERY = ("move $G6_HOME/evidence/test_receipts.jsonl aside: G6 starts a new s
 def store_path() -> Path:
     """The store: ``$G6_HOME/evidence/test_receipts.jsonl``."""
     return state_path("evidence", "test_receipts.jsonl")
+
+
+def repository_id(root: Path) -> str:
+    """SHA-256 of sorted root commit ids; no path, URL or uncommitted repository identity."""
+    from g6.workforce import repo_tests
+
+    try:
+        roots = sorted(repo_tests._git(root, 'rev-list', '--max-parents=0', 'HEAD').decode('ascii').splitlines())
+        if not roots or any(len(one) not in (40, 64) or any(c not in '0123456789abcdef' for c in one) for one in roots):
+            return ''
+        return hashlib.sha256('\n'.join(roots).encode('ascii')).hexdigest()
+    except (OSError, ValueError, repo_tests.RepoRefused):
+        return ''
 
 
 def receipt_id(body: dict) -> str:
@@ -108,7 +126,7 @@ def _locked(path: Path) -> Iterator[None]:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def _record(body: dict) -> str:
+def _record(body: dict, *, learning: dict | None = None) -> str:
     """Append ``body`` to the store and return its id. Private by convention: only ``repo_tests.run`` calls it, after
     a confined run it watched. Raises ``OSError`` or ``ValueError`` (``g6.core.ledger.LedgerError``) when the receipt
     cannot be written; a store whose chain does not check out takes nothing further."""
@@ -116,13 +134,26 @@ def _record(body: dict) -> str:
     path = store_path()
     with _locked(path):
         try:
-            ChainLedger(path).append(KIND, ident, body)
+            ledger = ChainLedger(path)
+            # The receipt id binds the whole body. Reusing the same observed run is harmless;
+            # it must not turn a retained base control into an execution error.
+            if not any(e['kind'] == KIND and e['id'] == ident for e in ledger.entries()):
+                ledger.append(KIND, ident, body)
         except (RecursionError, MemoryError):
             raise LedgerError("a stored JSON record exceeds decoder limits") from None
+    if learning is not None:
+        binding = {'receipt': ident, **{key: learning[key] for key in
+                   ('repository_id', 'check_digests', 'test_outcomes') if key in learning}}
+        sidecar = state_path('evidence', 'test_learning_bindings.jsonl')
+        with _locked(sidecar):
+            ledger = ChainLedger(sidecar)
+            key = digest(binding)
+            if not any(e['id'] == key for e in ledger.entries()):
+                ledger.append('test-learning-binding', key, binding)
     return ident
 
 
-def check(receipt: str, *, artifact_digest: str) -> tuple[str, dict | None]:
+def check(receipt: str, *, artifact_digest: str, _observations: bool = False) -> tuple[str, dict | None]:
     """``("matched", body)`` when the store holds a receipt with this id, in a chain that checks out, whose body still
     hashes to the id and whose run began on ``artifact_digest`` (its ``source_before``); ``("artifact_mismatch",
     None)`` when it holds such a receipt but ``artifact_digest`` is empty or another; ``("store_unreadable", None)``
@@ -141,14 +172,36 @@ def check(receipt: str, *, artifact_digest: str) -> tuple[str, dict | None]:
         return UNKNOWN, None
     if receipt_id(body) != receipt:
         return UNKNOWN, None
+    if body.get('schema') == OBSERVATION_SCHEMA and not _observations:
+        return UNKNOWN, None
     if not (isinstance(artifact_digest, str) and artifact_digest) or body.get("source_before") != artifact_digest:
         return ARTIFACT_MISMATCH, None
     return MATCHED, body
 
 
-def lookup(receipt_id: str, *, artifact_digest: str) -> dict | None:
+def lookup(receipt_id: str, *, artifact_digest: str, _observations: bool = False) -> dict | None:
     """The stored receipt with this id when it binds ``artifact_digest`` (``check``'s ``matched``), else None."""
-    return check(receipt_id, artifact_digest=artifact_digest)[1]
+    return check(receipt_id, artifact_digest=artifact_digest, _observations=_observations)[1]
+
+
+def lookup_learning(receipt_id: str, *, artifact_digest: str, _observations: bool = False) -> dict | None:
+    """Learning-only view: extra execution bindings live beside the unchanged test receipt."""
+    body = lookup(receipt_id, artifact_digest=artifact_digest, _observations=_observations)
+    if body is None:
+        return None
+    # Older execution-owned rows and the separate observation schema carry their bindings themselves.
+    if body.get('repository_id'):
+        return body
+    try:
+        entries = ChainLedger(state_path('evidence', 'test_learning_bindings.jsonl')).entries()
+    except (OSError, ValueError):
+        return None
+    bindings = [e['body'] for e in entries if e['kind'] == 'test-learning-binding'
+                and e['id'] == digest(e['body']) and e['body'].get('receipt') == receipt_id]
+    if len(bindings) != 1:
+        return None
+    return {**body, **{key: bindings[0][key] for key in
+                      ('repository_id', 'check_digests', 'test_outcomes') if key in bindings[0]}}
 
 
 def _executable(python: str) -> dict:
@@ -210,9 +263,33 @@ def _body(*, started_at: str, finished_at: str, before: dict, after: dict, base_
 def counts_as_pass(body: dict) -> bool:
     """Whether a receipt's run is a pass: pytest's verdict ``passed`` with at least one test, nothing skipped or left
     unrun, the run complete and not degraded (the patch review's rule). "1 passed, 50 skipped" is not a pass."""
+    # An observation is learning evidence only, never a passing stated pytest requirement or gate check.
+    if body.get('schema') == OBSERVATION_SCHEMA:
+        return False
     result = body.get("result") if isinstance(body.get("result"), dict) else {}
     return (result.get("verdict") == "passed" and isinstance(result.get("total"), int) and result["total"] > 0
             and result.get("not_passed") == 0 and result.get("completed") is True and not result.get("degraded"))
+
+
+def _record_observation(root: Path, node: str, source, ran: dict) -> str:
+    """Receipt for G6's own confined observation runner, kept separate from pytest-pass authority."""
+    from g6.harness.behaviour_runner import ExecutableSource
+    from g6.workforce import repo_tests
+
+    found = repo_tests.read_observation(ran)
+    if (type(source) is not ExecutableSource or found is None or not found.get('source_before')
+            or not found.get('isolation', {}).get('backend')):
+        return ''
+    reading = found['g6_observation']
+    body = {'schema': OBSERVATION_SCHEMA, 'execution_id': uuid.uuid4().hex,
+            'repository_id': repository_id(root), 'source_before': found['source_before'],
+            'source_after': found['source_before'], 'bootstrap_sha256': found.get('bootstrap_sha256', ''),
+            'check_digests': {node.partition('::')[0]: hashlib.sha256(source.encode('utf-8')).hexdigest()},
+            'observation_digest': digest(source.observation), 'tests': {'requested': [node], 'collected': [node]},
+            'isolation': found['isolation'], 'result': {'verdict': found['verdict'],
+                'completed': reading['result'] in {'passed', 'failed'}, 'degraded': reading['result'] == 'error',
+                'observations': reading.get('observations')}}
+    return _record(body)
 
 
 __all__ = ["ARTIFACT_MISMATCH", "KIND", "MATCHED", "RECOVERY", "SCHEMA", "STORE_UNREADABLE", "UNKNOWN", "check",

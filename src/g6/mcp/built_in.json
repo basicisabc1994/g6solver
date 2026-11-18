@@ -82,6 +82,7 @@
     "knowledge_manifest": "g6.knowledge.knowledge_manifest",
     "lean": "g6.lean",
     "learning": "g6.learning",
+    "learning_history": "g6.learning_history",
     "llm_router": "g6.llm_router",
     "meta_programming": "g6.code.meta_programming",
     "metaharness": "g6.metaharness",

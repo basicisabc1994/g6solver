@@ -434,7 +434,7 @@ REPORT_FIELDS["execution_limit"] = ReportField(str, "", "what the observation ru
 OBSERVATION_FIELDS = {"verdict": True, "said": True, "g6_observation": True, "source_before": True, "seconds": True,
                       "output": False, "isolation": False, "execution_limit": False, "python": False,
                       "interpreter_source": False, "import_path": False, "own_config": False, "command": False,
-                      "bootstrap_sha256": False, "execution_artifact": False}
+                      "bootstrap_sha256": False, "execution_artifact": False, "receipt": False}
 OBSERVATION_ONLY = frozenset({"g6_observation", "bootstrap_sha256", "execution_artifact", "execution_limit"})
 
 REPORT_LISTINGS = {"test_outcomes": dict, "failed_ids": list, "setup_errors": dict,
@@ -3039,7 +3039,8 @@ def _test_id(repo: Path, test: str, what: str = "test") -> str:
 def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int, network: bool,
          mutant: tuple[str, str] | None = None, copied: bool = False, python: str = "",
          scratch_dir: Path | None = None, deadline: float | None = None, receipt: bool = False,
-         require_isolation: bool = False, links: dict | None = None, observation: dict | None = None) -> dict:
+         require_isolation: bool = False, links: dict | None = None, observation: dict | None = None,
+         _receipt_repository: Path | None = None) -> dict:
     """The shared execution path; only old-test replay uses a copy without git metadata. ``require_isolation``: a run
     no backend confines is refused (``G6_E_ISOLATION_UNAVAILABLE``) before it starts, even where the person allowed
     unconfined runs (verification search's proposed checks). ``links``: what the copy (``repository_copy``'s
@@ -3074,7 +3075,18 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
     take_snapshot = (lambda: _copy_snapshot(repo, deadline=deadline)) if copied else (lambda: snapshot(repo, untracked))
     before, started = take_snapshot(), time.monotonic()
     began = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
-    head = _git(repo, "rev-parse", "--verify", "-q", "HEAD", ok=(0, 1)).decode().strip() if receipt else ""
+    head = (_git(repo, "rev-parse", "--verify", "-q", "HEAD", ok=(0, 1)).decode().strip()
+            if receipt and not copied else "")
+    receipt_repository = receipt_store.repository_id(_receipt_repository or repo) if receipt else ''
+    # Bind the exact test bytes before execution, including unchanged tracked tests absent from sparse snapshots.
+    check_digests = {}
+    if receipt:
+        for node in ids:
+            relative = node.partition('::')[0]
+            path = _disk(repo, relative)
+            if (path is not None and not path.is_symlink() and path.resolve().is_relative_to(repo.resolve())
+                    and path.is_file()):
+                check_digests[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
     command = f"pytest {len(ids)} test id(s) in place"
     isolation = confine.summary([])
     own_config: list[str] = []   # the arguments of the empty configuration G6 names when the repository has none
@@ -3195,7 +3207,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         return found
     if receipt and isolation.get("backend"):   # only a run G6 confined and watched start is given a receipt
         try:
-            scan = ignored_inputs(repo)
+            scan = Ignored((), {}, True) if copied else ignored_inputs(repo)
         except RepoRefused:   # git could not list them: nothing says the digest covers what the run loaded
             scan = Ignored((), {}, False)
         found["ignored_inputs"] = {_recorded(rel): sha for rel, sha in scan.other.items()}
@@ -3209,7 +3221,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
             return found
         # review M1: receipts are reusable evidence, so none vouches for a run that loaded the tree's own modules from
         # elsewhere (an installed copy), or that cannot say what it loaded
-        elsewhere = shadowed([rel for rel in _paths(_git(repo, "ls-files", "-co", "--exclude-standard", "-z"))
+        paths = list(before) if copied else _paths(_git(repo, "ls-files", "-co", "--exclude-standard", "-z"))
+        elsewhere = shadowed([rel for rel in paths
                               if rel.endswith(".py")], found)
         if elsewhere is None or elsewhere:
             found["receipt_withheld"] = (SAID["loaded_unknown_withheld"] if elsewhere is None else
@@ -3218,10 +3231,13 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                                              for where in list(elsewhere.values())[:5])))
             return found
         try:
-            found["receipt"] = receipt_store._record(receipt_store._body(
+            body = receipt_store._body(
                 started_at=began, finished_at=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                 before=before, after=after, base_commit=head, python=python, requested=ids, found=found,
-                ignored=scan.other))
+                ignored=scan.other)
+            found["receipt"] = receipt_store._record(body, learning={
+                'repository_id': receipt_repository, 'check_digests': check_digests,
+                'test_outcomes': found.get('test_outcomes')})
         except (OSError, ValueError) as exc:
             found["receipt_error"] = (f"the test receipt could not be recorded ({type(exc).__name__}); if the store is "
                                       f"unreadable, move it aside ({receipt_store.RECOVERY})")
@@ -4054,12 +4070,14 @@ OLD_TEST_LIMIT = "the limit of {n} old test file(s) was reached"
 
 
 def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = (), timeout_s: int = DEFAULT_TIMEOUT_S,
-                network: bool = False, overlay: dict[str, str] | None = None, require_isolation: bool = False) -> dict:
+                network: bool = False, overlay: dict[str, str] | None = None, require_isolation: bool = False,
+                receipt: bool = False) -> dict:
     """``tests`` (files, folders or ``file::test`` ids) as they are now, run against the base commit's code: in a copy
     (``repository_copy``, with its caps), every file the change touched is put back as it was at the base commit
     (``_base_revision``) except the files and folders ``tests`` name, which keep their text now. A check that passes
-    here does not need the patch to pass (review I8). The repository itself is never written, and the run gets no
-    receipt (it is not the artifact under review). An explicit ``not_run`` report when the copy or the run
+    here does not need the patch to pass (review I8). The repository itself is never written. With ``receipt=True``
+    the copied run gets its own digest-bound receipt for outcome learning, never one for the original artifact.
+    An explicit ``not_run`` report when the copy or the run
     could not be made. ``overlay`` ({path: text}) adds files to the copy only, as ``repository_copy``'s ``before``
     does; ``require_isolation`` refuses a run no backend confines (``_run``), and that refusal is raised, not returned."""
     bound = max(1, min(int(timeout_s), MAX_TIMEOUT_S))
@@ -4072,7 +4090,8 @@ def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = ()
             with _base_revision(change, copy, deadline, keep=keep, materialised=report.get("links_materialised")):
                 return _run(copy, tests, roots=roots, timeout_s=bound, network=network, copied=True,
                             python=interpreter(change.repo), scratch_dir=copy.parent, deadline=deadline,
-                            require_isolation=require_isolation, links=report)
+                            require_isolation=require_isolation, links=report, receipt=receipt,
+                            _receipt_repository=change.repo)
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
     except (OSError, RepoRefused, CopyNotRun) as exc:

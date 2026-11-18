@@ -110,16 +110,23 @@ class MethodVariantInput(BaseModel):
     model_config = _STRICT
     _admit_size = model_validator(mode='before')(classmethod(_admit_model_input))
     id: str = Field(min_length=1, max_length=100)
-    method: Literal["graph", "causal", "formal", "predictive", "optimisation"]
+    method: Literal["graph", "causal", "formal", "predictive", "optimisation", "review"]
     representation: str = Field(min_length=1, max_length=100)
     engine: str = Field(min_length=1, max_length=100)
     op: str = Field(min_length=1, max_length=100)
     estimated_cost: float = Field(ge=0, allow_inf_nan=False)
     expects: list[str] = Field(default_factory=list, max_length=50)
-    # Over MCP a variant is a G6 solver op; reviewer and arm variants are ranked from Python, with their trials.
-    kind: Literal["engine"] = "engine"
+    # Review variants only name the two G6-owned coding execution paths; arbitrary reviewers stay Python-only.
+    kind: Literal["engine", "reviewer"] = "engine"
     # A strategy's content digest belongs to a heuristic, which is not a variant over MCP: only the empty one is taken.
     content_digest: Literal[""] = ""
+
+    @model_validator(mode='after')
+    def _review_variant(self):
+        if self.kind == 'reviewer' and (self.method != 'review' or self.representation != 'pytest'
+                or self.engine not in {'g6_review_patch', 'g6_review_until_clean'} or self.op != 'review'):
+            raise ValueError('a review variant names a G6 coding review path with representation pytest and op review')
+        return self
 
 
 #: Each op the block answers, with what it does (its ``help`` answer).
@@ -139,7 +146,7 @@ class CognitiveInput(BaseModel):
     claims: list[ClaimInput] = Field(default_factory=list, max_length=20)
     context: ProblemSignatureInput | None = None
     variants: list[MethodVariantInput] = Field(default_factory=list, max_length=30)
-    required_methods: list[Literal["graph", "causal", "formal", "predictive", "optimisation"]] = Field(default_factory=list, max_length=5)
+    required_methods: list[Literal["graph", "causal", "formal", "predictive", "optimisation", "review"]] = Field(default_factory=list, max_length=5)
     hypotheses: list[HypothesisInput] = Field(default_factory=list, max_length=32)
     probes: list[ProbeInput] = Field(default_factory=list, max_length=100)
     budget: float = Field(default=0, ge=0)
@@ -331,10 +338,17 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
                     raise ValueError("rank_methods requires a typed context")
                 context = ProblemSignature(**d.context.model_dump())
                 variants = [MethodVariant(**{**v.model_dump(), "expects": tuple(v.expects)}) for v in d.variants]
-                decision = MetacognitiveMethodSelector().select(context, variants,
+                from pathlib import Path
+                from g6.harness.outcome_history import read
+
+                history = read(Path.cwd())
+                selector = history.selector(context, variants) if history.rows else MetacognitiveMethodSelector()
+                decision = selector.select(context, variants,
                                      required_methods=d.required_methods)
                 return publish(_answered({"component": self.name, "op": d.op, **decision.to_dict(),
-                                  "evidence_note": "no past trial data admitted over stateless MCP; cold-start ranking only"}), where="CognitiveBridgeBlock.infer")
+                                  **({'ranked_by': history.note, 'learned': history.learned()} if history.rows or history.rejected else {}),
+                                  "evidence_note": history.note if history.rows or history.rejected else
+                                      "no past trial data admitted over stateless MCP; cold-start ranking only"}), where="CognitiveBridgeBlock.infer")
             if d.op == "plan_methods":
                 claims = [ClaimIR(id=c.id, statement=c.statement,
                                   evidence_needs=tuple(c.evidence_needs), models=c.models,

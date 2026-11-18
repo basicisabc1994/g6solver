@@ -2825,6 +2825,71 @@
   {
     "source": [
       "block.py",
+      "MethodVariantInput._review_variant",
+      "comparison",
+      "self.kind == 'reviewer'"
+    ],
+    "disposition": "semantic",
+    "reason": "Restricts caller review variants to the two G6 coding execution paths; caller trials and success claims never train ranking.",
+    "probes": [
+      "ranking:caller-data"
+    ]
+  },
+  {
+    "source": [
+      "block.py",
+      "MethodVariantInput._review_variant",
+      "comparison",
+      "self.method != 'review'"
+    ],
+    "disposition": "semantic",
+    "reason": "Restricts caller review variants to the two G6 coding execution paths; caller trials and success claims never train ranking.",
+    "probes": [
+      "ranking:caller-data"
+    ]
+  },
+  {
+    "source": [
+      "block.py",
+      "MethodVariantInput._review_variant",
+      "comparison",
+      "self.representation != 'pytest'"
+    ],
+    "disposition": "semantic",
+    "reason": "Restricts caller review variants to the two G6 coding execution paths; caller trials and success claims never train ranking.",
+    "probes": [
+      "ranking:caller-data"
+    ]
+  },
+  {
+    "source": [
+      "block.py",
+      "MethodVariantInput._review_variant",
+      "comparison",
+      "self.engine not in {'g6_review_patch', 'g6_review_until_clean'}"
+    ],
+    "disposition": "semantic",
+    "reason": "Restricts caller review variants to the two G6 coding execution paths; caller trials and success claims never train ranking.",
+    "probes": [
+      "ranking:caller-data"
+    ]
+  },
+  {
+    "source": [
+      "block.py",
+      "MethodVariantInput._review_variant",
+      "comparison",
+      "self.op != 'review'"
+    ],
+    "disposition": "semantic",
+    "reason": "Restricts caller review variants to the two G6 coding execution paths; caller trials and success claims never train ranking.",
+    "probes": [
+      "ranking:caller-data"
+    ]
+  },
+  {
+    "source": [
+      "block.py",
       "CognitiveInput",
       "declared-bound",
       "max_length=20"

@@ -506,6 +506,49 @@ def _snapshot_probe(value):
         raise ValueError("a JSON record exceeds decoder limits") from None
 
 
+_recording_review = contextvars.ContextVar('g6_recording_review', default=None)
+
+
+def record_reproductions(change: repo_tests.Change, probes: Path, *, deadline: float, only: str = '',
+                         _observed=None) -> list[dict]:
+    """K reproductions need G6's own failing patch run and passing base run, both with receipts."""
+    from g6.harness import outcome_history
+
+    checks, placed, refused = _checks(probes, change.repo, only)
+    activities = []
+    for one in checks:
+        node = placed[one.id]
+        patch = (_observed or {}).get(one.id)
+        if patch is None:
+            if deadline - _clock() < 2 * vs.MIN_RUN_S:
+                continue
+            patch = vs._run_check(change, node, one.source, node, at_base=False,
+                                   timeout_s=int(min(RUN_S, deadline - _clock())))
+        # Recorded synthetic old fixtures have no receipts: they cannot add learning or spend a base run.
+        if not patch.get('receipt') or vs._guarded(change, patch, vs.reading(patch, node))['result'] != 'failed':
+            continue
+        if deadline - _clock() < vs.MIN_RUN_S:
+            activities.append({'activity': 'K reproduction control', 'check': one.id, 'result': 'skipped',
+                               'reason': 'time budget spent before base run', 'model_calls': 0, 'seconds': 0})
+            continue
+        base = vs._run_check(change, node, one.source, node, at_base=True,
+                             timeout_s=int(min(RUN_S, deadline - _clock())))
+        _, refs, _ = cloud.freeze_output(base)
+        cloud.record_sources(refs or (cloud.UNKNOWN,))
+        passed = vs._guarded(change, base, vs.reading(base, node))['result'] == 'passed'
+        activities.append({'activity': 'K reproduction control', 'check': one.id,
+                           'result': 'reproduced' if passed else 'not_reproduced',
+                           'reason': 'patch fails and base passes' if passed else 'base did not pass',
+                           'model_calls': 0, 'seconds': base.get('seconds', 0)})
+        if passed:
+            try:
+                outcome_history.record_check(change, one.model_copy(update={'intent': 'preserve'}), node, patch,
+                    base, 'counterexample', origin='k_loop', engine='g6_review_until_clean')
+            except (OSError, ValueError):
+                activities[-1]['history_note'] = 'outcome history could not be written'
+    return activities
+
+
 def run_set(change: repo_tests.Change, probes: Path, *, at_base: bool, deadline: float, only: str = "") -> ProbeRun:
     """The probes in ``probes`` (``only`` that file, if named) on the tree or at the base commit: each file in its own confined
     copy, with no network. A file with no time left before ``deadline`` is not started, so the set is unusable and says
@@ -519,7 +562,11 @@ def run_set(change: repo_tests.Change, probes: Path, *, at_base: bool, deadline:
         if left < vs.MIN_RUN_S:
             runs.append({"verdict": "timed_out", "said": "G6's time for this hook ran out before this file ran"})
             break
-        runs.append(vs._run_check(change, placed[one.id], one.source, placed[one.id], at_base=at_base, timeout_s=left))
+        ran = vs._run_check(change, placed[one.id], one.source, placed[one.id], at_base=at_base, timeout_s=left)
+        runs.append(ran)
+        if not at_base and _recording_review.get() is not None:
+            _recording_review.get().extend(record_reproductions(change, probes, deadline=deadline, only=one.file,
+                                                                _observed={one.id: ran}))
     return _read(change, runs)
 
 
@@ -958,9 +1005,36 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     kept.write_bytes(patch.encode("utf-8"))
     (where / mine).unlink(missing_ok=True)
     said = run_critic(change, task, critic, shipped.critic, where, n, patch=read, whole=True, system_sources=shipped.sources)
+    from g6.harness import outcome_history
+
+    retained, origins, skipped = outcome_history.retained_checks(change, REQUIREMENT)
+    retained_before = repo_tests.snapshot(change.repo) if retained else None
+    if retained_before is not None and any(origin.template == 'differential.v1' for origin in origins.values()):
+        retained_before = vs.bind_execution(change, retained_before, deadline=deadline)
+    retained_search = (vs.search(change, retained, vs.placements(change.repo, retained), deadline=deadline,
+                                artifact=digest(retained_before), origins=origins, before=retained_before)
+                       if retained else vs.Search())
+    retained_search.activities.extend(skipped)
+    for one, node, patch_run, base_run, classification, origin, differs in retained_search.outcomes:
+        try:
+            outcome_history.record_check(change, one, node, patch_run, base_run, classification,
+                                          origin=origin, engine='g6_review_until_clean', refuted_by_difference=differs)
+        except (OSError, ValueError):
+            retained_search.activities.append({'activity': 'outcome history', 'result': 'error',
+                'reason': 'retained history could not be written', 'model_calls': 0, 'seconds': 0})
+    # A retained finding stays proposed evidence; it never joins the K loop's repair findings.
+    said['completion'] = {'activities': retained_search.activities,
+                          'defects_reproduced': retained_search.defects}
+    said['learned'] = outcome_history.read(change.repo).learned(retained_search.activities)
 
     def run(name: str) -> None:
-        got, diagnostics[name] = _snapshot_probe(run_set(change, where, at_base=False, deadline=deadline, only=name))
+        k_activities = []
+        token = _recording_review.set(k_activities)
+        try:
+            got, diagnostics[name] = _snapshot_probe(run_set(change, where, at_base=False, deadline=deadline, only=name))
+        finally:
+            _recording_review.reset(token)
+        said['completion']['activities'].extend(k_activities)
         cloud.record_sources(diagnostics[name])
         found = failures_of([("critic", got, None)])[0] if got.usable else set()    # one that will not run says nothing
         failing.update(found)
@@ -990,6 +1064,7 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     if any(code in said.get("error", "") for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)):
         raise LLMError(said["error"])
     said.update(n=n, patch=digest(patch), file=mine, results=results, failed=failed)
+    said['learned'] = outcome_history.read(change.repo).learned(retained_search.activities)
     reviews.append(said)
     if said["verdict"] not in READ_VERDICTS or not failing:
         return set(), ""

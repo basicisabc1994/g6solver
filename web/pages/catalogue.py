@@ -119,6 +119,10 @@ PLAIN: dict[str, tuple[str, str, str]] = {
              "Has Lean, a proof assistant, check a proof you wrote of a theorem you name, and confirms that it leaves "
              "no step unproved, assumes nothing beyond the standard rules and proves exactly the statement you give",
              "a proof that only looks finished, or one that proves a different statement from the one you meant"),
+    "learning_history": ("Repository check history",
+                         "Shows G6's locally retained checks and results for one repository, and erases that history "
+                         "only after agreement in the client's dialog",
+                         "retained check results nobody can inspect or erase"),
     "learning": ("Learned hints",
                  "Learns hints from an agent's failures, and keeps one only when side-by-side runs show it helps",
                  "repeating the same mistake, or lessons that sound right and do not help"),
@@ -176,7 +180,8 @@ PLAIN: dict[str, tuple[str, str, str]] = {
 # one in the single column that says what it is for. A test fails when a registered core component is in no column, or
 # in two, or a column names one that is not registered.
 TABLE: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Learn", ("metaharness", "learning", "distillation", "abstraction", "cegis", "self_maintenance", "cognitive_bridge")),
+    ("Learn", ("metaharness", "learning", "learning_history", "distillation", "abstraction", "cegis",
+               "self_maintenance", "cognitive_bridge")),
     ("Know", ("context", "grounding", "causal", "graph_reasoning", "complexity")),
     ("Reason", ("formal", "lean", "algebra", "datalog", "prolog", "model_checking", "optimisation", "reasoning",
                 "solver", "debate", "algorithm_design")),

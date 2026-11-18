@@ -60,6 +60,9 @@ For a Python task, work in this order (each step in full: `references/lifecycle.
    and stop; never change permissions yourself. Show the reply's `assessment["report"]` verbatim.
    To have the model the person configured for G6 propose more checks, add `search: {"propose": true}`: what it
    proposes runs as your proposed checks do, never passes a requirement, and gives at most insufficient evidence.
+   Read learned: G6 retains reproduced checks for this repository; retained checks keep proposed authority.
+   Inspect with `learning_history.list` or erase with `learning_history.forget` through `g6_invoke`, passing
+   `{"repo": "<repository>"}`; erasure requires the person's agreement in the client dialog.
 6. **Repair.** Fix what G6 reproduced, add each reproduction as a stated check, and review again. Stop after 3
    rounds, when a round changes nothing, or when the report says only the person can decide.
 7. **Honesty.** Never call a patch `verified`, and never merge for the person. The result rests on your own tests:

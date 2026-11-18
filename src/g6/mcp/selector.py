@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """``g6_select``, the staged selector over MCP (``g6.core.selector``; plan revision 8, phase B).
 
-It takes no repository and reads none: its reply is built from the client's own arguments and G6's built-in text
-(the corpus shipped with G6), so its declaration is ``client_request`` and ``g6_operational`` and a client that has
-granted nothing gets it. Nothing runs.
+It takes no repository argument. After validation it reads the host workspace's root-commit identity and G6's
+receipt-admitted operational history. No repository content is sent to a model and no check runs. Its declaration
+stays ``client_request`` and ``g6_operational`` (the owner's 2026-11-17 operational-data ruling).
 """
 from __future__ import annotations
 
@@ -29,11 +29,15 @@ def register(server: Any) -> None:
         refusal to the person to decide themselves, an input refusal to g6_describe. Whether an op is allowed here, a
         grant exists or a model is configured is unknown until a call observes it: pass that refusal back. Ranking is
         fixed rules over G6's own text, no model; rerank is lexical (a semantic rerank is not offered here, and
-        "colbert" is answered lexically). Runs nothing; qualified-draft. You choose, and the call you make is checked then."""
+        "colbert" is answered lexically). Receipt-admitted history from the host workspace can inform the candidate
+        ranking; learned reports its counts. No check or model runs; qualified-draft. You choose, and the call you
+        make is checked then."""
         from g6.core.selector import select
+        from pathlib import Path
+        from g6.harness.outcome_history import read
 
         return select(task, phase, last_outcome, considering, limit, rerank, request_id=uuid.uuid4().hex[:12],
-                      run_id="")
+                      run_id="", _history=lambda: read(Path.cwd()))
 
     g6_select._g6_declaration = TOOLS["g6_select"]
     server.tool()(g6_select)
