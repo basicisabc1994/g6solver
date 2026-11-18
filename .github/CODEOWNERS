@@ -5,6 +5,7 @@
 # Repository control
 .github/  @basicisabc1994
 /CODEOWNERS  @basicisabc1994
+
 # The self-improvement loop's protected set
 /validation/distill/  @basicisabc1994
 /src/g6/self_training/merge_gate.py  @basicisabc1994
@@ -20,6 +21,7 @@
 /src/g6/core/cloud_consent.py  @basicisabc1994
 /src/g6/mcp/consent.py  @basicisabc1994
 **/certificate/  @basicisabc1994
+
 # Certificate-bound files (95, from **/certificate/certificate.json)
 /src/g6/__init__.py  @basicisabc1994
 /src/g6/action_gating/__init__.py  @basicisabc1994
