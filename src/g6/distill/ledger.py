@@ -11,8 +11,8 @@ from pydantic import ValidationError
 
 from g6.core.ledger import ChainLedger, LedgerCorrupt, LedgerError, canonical
 from g6.core.storage import state_path
-from .records import (RECORD_KINDS, CapabilityExtension, Concept, FailureRecord, LibraryEntry,
-                      MethodContract, Record, VerifierCandidate)
+from .records import (RECORD_KINDS, CapabilityExtension, Concept, FailureMode, FailureRecord, LibraryEntry,
+                      MethodContract, Record, Rectification, VerifierCandidate)
 
 
 class Stores:
@@ -134,6 +134,33 @@ class RecordStore:
                     raise LedgerError("library version must increase for a candidate")
         if isinstance(record, CapabilityExtension):
             get(FailureRecord, record.gap_record)
+        if isinstance(record, FailureMode) and record.removing_check is not None:
+            removal = get(Rectification, record.removing_check)
+            if (removal.failure_mode != record.mode_code or not removal.class_removed or removal.outcome != "held"):
+                raise LedgerError("removing check reference does not name a held class removal")
+        if isinstance(record, Rectification):
+            from .intake import class_key, earlier
+            if record.pinning is not None:
+                for ident in record.pinning.replayed:
+                    if class_key(get(FailureRecord, ident)) != record.failure_mode:
+                        raise LedgerError("replay references a different failure class")
+            if writing:
+                # Legacy unpinned open rows can be read, but no new unpinned
+                # rectification (even an open proposal) can enter the log.
+                from .rectify_gate import Rectifier
+                Rectifier(self.stores)._pinning(record, require_current=record.outcome != "failed")
+                failures = self.stores.for_model(FailureRecord)._read(references=False)
+                same = [row for row in failures if class_key(row) == record.failure_mode]
+                met = any(row.met_before or earlier([f for f in failures if f != row], row) for row in same)
+                if met and record.instance_or_class != "class":
+                    raise LedgerError("a class met before requires class removal")
+                if record.class_removed:
+                    if record.instance_or_class != "class":
+                        raise LedgerError("an instance patch cannot claim class removal")
+                    if not record.pinning.fixed_passed:
+                        raise LedgerError("class replay must pass the fixed code")
+                    if not same or set(record.pinning.replayed) != {row.record_id for row in same}:
+                        raise LedgerError("class removal requires replay of every known failure")
 
     def put(self, value: Record) -> str:
         if type(value) is not self.model:

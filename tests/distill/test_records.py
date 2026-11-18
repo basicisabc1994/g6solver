@@ -48,7 +48,9 @@ def bodies():
                 removing_check=None, recurrences_after_removal=0)
     rect = dict(failure_mode="boundary_case", instance_or_class="class",
                 change=dict(kind="library", branch=None, commit=None, pr=None), prediction=PREDICTION,
-                gate_decision_sha256=D, class_removed=False, outcome="open", rollback_ref=None)
+                gate_decision_sha256=D, class_removed=False, outcome="open", rollback_ref=None,
+                removal="Add a shared bounds check", pinning=dict(test_ref="tests/test_bounds.py",
+                    replayed=[f.record_id], fixed_passed=True, receipt_sha256=D))
     return [(r.FailureRecord, failure), (r.Concept, concept), (r.MethodContract, contract),
             (r.VerifierCandidate, candidate), (r.LibraryEntry, entry), (r.CapabilityExtension, extension),
             (r.FailureMode, mode), (r.Rectification, rect)]

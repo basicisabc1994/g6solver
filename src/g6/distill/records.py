@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Annotated, ClassVar, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_serializer, model_validator
 
 from g6.core.ledger import digest
 
@@ -347,7 +347,9 @@ class FailureMode(Record):
     def registered_code(self) -> Self:
         from typing import get_args
         from g6.core.failure_modes import FailureModeRegistry
-        if self.mode_code not in get_args(FindingClass) and not FailureModeRegistry.is_registered(self.mode_code):
+        named_other = self.mode_code.startswith("other: ") and bool(self.mode_code[7:].strip())
+        if (self.mode_code not in get_args(FindingClass) and not named_other
+                and not FailureModeRegistry.is_registered(self.mode_code)):
             raise ValueError("unknown failure mode code or finding class")
         return self
 
@@ -357,6 +359,24 @@ class Change(Model):
     branch: str | None
     commit: str | None
     pr: str | None
+
+
+class RemovalCheck(Model):
+    """Gate-supplied replay receipt, not a test executor or an authenticated assertion.
+
+    `replayed` names failures on which this check failed before the change. The same
+    check must pass the fixed code. The independent gate owns the receipt bytes.
+    """
+    test_ref: Annotated[str, Field(min_length=1, pattern=r"\S")]
+    replayed: list[Sha256]
+    fixed_passed: Annotated[bool, Field(strict=True)]
+    receipt_sha256: Sha256
+
+    @model_validator(mode="after")
+    def unique(self) -> Self:
+        if len(set(self.replayed)) != len(self.replayed):
+            raise ValueError("duplicate replay evidence")
+        return self
 
 
 class Rectification(Record):
@@ -370,6 +390,24 @@ class Rectification(Record):
     class_removed: bool
     outcome: Literal["held", "failed", "open"]
     rollback_ref: str | None
+    removal: str | None = None
+    pinning: RemovalCheck | None = None
+
+    @model_validator(mode="after")
+    def pinned_claim(self) -> Self:
+        if self.class_removed and (self.pinning is None or not self.removal or not self.removal.strip()):
+            raise ValueError("class removal requires a removal and pinning test")
+        return self
+
+    @model_serializer(mode="wrap")
+    def compatible_body(self, handler):
+        # Older open rows retain their original content ids; new workflow rows
+        # carry the removal and test in their hashed body.
+        body = handler(self)
+        for name in ("removal", "pinning"):
+            if body.get(name) is None:
+                body.pop(name, None)
+        return body
 
 
 RECORD_KINDS = {"failure": FailureRecord, "concept": Concept, "contract": MethodContract,
