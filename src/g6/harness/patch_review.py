@@ -260,7 +260,7 @@ NORMATIVE = frozenset({"stated", "repository_stated", "person_confirmed"})
 #: Where a check came from: ``stated`` (the caller cited it) or ``derived`` (tier 2's tests of the changed modules); a
 #: check the caller proposes is ``proposed`` (``assessment.completion``). ``structural`` and ``adopted_proposal`` are
 #: kept for verification search's later phases; no check has them yet.
-CheckProvenance = Literal["stated", "derived", "structural", "proposed", "adopted_proposal"]
+CheckProvenance = Literal["stated", "derived", "structural", "proposed", "adopted_proposal", "library"]
 STATED, DERIVED, STRUCTURAL = "stated", "derived", "structural"
 #: A structural check of a stated contract that found an import the patch adds and the contract forbids: a defect.
 STRUCTURAL_DEFECT = "forbidden_dependency_added"
@@ -269,7 +269,8 @@ CONFIRMED_FAILED, CONFIRMED_NOT_RUN = "confirmed_expectation_failed", "confirmed
 CONFIRMED_NOTE = ("each expectation is a question G6 asked and the option the person chose in the client's dialog; G6 "
                   "compiled it into one example.v1 check and ran it on the patch. It is enforced on that one case "
                   "only, whatever scope was confirmed, and a model's result is never among these")
-DEFECT_CODES = frozenset({"check_failed", "derived_test_regressed", STRUCTURAL_DEFECT, CONFIRMED_FAILED})
+DEFECT_CODES = frozenset({"check_failed", "derived_test_regressed", STRUCTURAL_DEFECT, CONFIRMED_FAILED,
+                          "library_defect_detected"})
 INTEGRITY_SKIP = ("the review found an integrity problem, so the checks would run under tests or a test runner that "
                   "may be weakened")
 TIER_3_ADEQUACY = ("tier 3: mutation of the changed lines ran only for test adequacy (assessment.completion."
@@ -1080,6 +1081,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     related = repo_tests.test_related(change, ids)
     for finding in detect_test_weakening(*repo_tests.related_texts(change, related), tests=related).reasons:
         reason("integrity", "test_weakened", finding)
+    from g6.harness.library_review_gate import apply_review
+    apply_review(*repo_tests.related_texts(change, related), reasons, runs)
     runner = _runner_changes(change)
     if runner:
         reason("integrity", "runner_configuration_changed", "; ".join(runner))
@@ -1747,7 +1750,8 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                    "repo_env": ran.get("repo_env"), "env_set_by_g6": ran.get("env_set_by_g6"),
                    "host_python_version": platform.python_version(), "platform": platform.platform()}
     # the envelope's evidence items are as they were before checks carried a provenance (in scope.checks_run)
-    evidence = [{"source": "g6.workforce.repo_tests", "summary": f"tier {run['tier']}: {run['command']}: "
+    evidence = [{"source": "g6.distill" if run.get("provenance") == "library" else "g6.workforce.repo_tests",
+                 "summary": f"tier {run['tier']}: {run['command']}: "
                  f"{run['verdict']}"[:200], "authority": "host-observed", "artifact_digest": artifact,
                  "base_commit": change.base_commit,
                  "scope": "these test outcomes on this working tree; not complete correctness",
@@ -1804,7 +1808,9 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
     from g6.harness import patch_report   # A1: the readable report, derived from the fields above; it decides nothing
     assessment["report"] = patch_report.safe_render(assessment)
     card = warning_card(CODE, summary, next_actions[0])
-    return {**envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
+    library_block = "library_defect_detected" in codes
+    return {**envelope_fields(reliability_label="blocked-escalated" if library_block else "qualified-draft",
+                              warning_card=card, evidence=evidence,
                               request_id=uuid.uuid4().hex[:12], degradation_reason=summary[:300]),
             "ok": True, "assessment": assessment,
             "merge": {"status": "requires_separate_approval", "reason": MERGE_REASON, "reasons": merge_reasons},

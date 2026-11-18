@@ -188,7 +188,24 @@ def main(argv: list[str] | None = None) -> int:
     si.add_argument("--user", action="store_true", help="into ~/.claude/skills, for every project")
     si.add_argument("--client", choices=("claude", "codex"), default="claude", help="client skill directory")
     si.add_argument("--force", action="store_true", help="replace a skill folder that is already there")
+    lib = sub.add_parser("library", help="inspect checked methods and measured authority")
+    lib_sub = lib.add_subparsers(dest="operation", required=True)
+    lib_sub.add_parser("ls", help="list current library entries")
+    show = lib_sub.add_parser("show", help="describe the current version of a method")
+    show.add_argument("entry_id")
+    research = sub.add_parser("research", help="the gated research runner")
+    research.add_argument("operation", choices=("start", "stop", "status"))
+    research.add_argument("--folder", default="")
+    sub.add_parser("self-model", help="inspect G6's self-model")
     args = ap.parse_args(argv)
+
+    if args.cmd in {"library", "research", "self-model"}:
+        from g6.distill import surface
+        from g6.mcp.distill import _call
+        result = _call(surface.library, "list" if args.operation == "ls" else "describe",
+                       getattr(args, "entry_id", "")) if args.cmd == "library" else surface.unavailable(args.cmd)
+        _print(result)
+        return 1 if result.get("completion_state") == "blocked-escalated" else 0
 
     if args.cmd == "workflow":
         from g6.metaharness.surface import Surface, dialog_only

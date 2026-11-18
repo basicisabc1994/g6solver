@@ -783,6 +783,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         server.tool()(tool)
     from g6.mcp import agentic
     agentic.register(server, context_type, jobs)   # the override kernel's jobs are polled through metaharness_job
+    from g6.mcp import distill
+    distill.register(server, context_type, jobs)
 
 
 def main() -> None:
