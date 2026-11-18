@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Annotated, ClassVar, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_serializer, model_validator
 
 from g6.core.ledger import digest
 
@@ -211,6 +211,17 @@ class VerifierCandidate(Record):
     lineage: list[Sha256]
     synthesised_by: SynthesisedBy
     training_case_ids: list[Sha256]
+    authority: Literal["proposed"] = "proposed"
+    model_calls: Annotated[int, Field(ge=0, le=4, strict=True)] = 0
+
+    @model_serializer(mode="wrap")
+    def provenance(self, handler):
+        # Preserve old content-addressed bodies; S explicitly sets both fields.
+        body = handler(self)
+        for name in ("authority", "model_calls"):
+            if name not in self.model_fields_set:
+                body.pop(name, None)
+        return body
 
     @model_validator(mode="after")
     def shape(self) -> Self:
