@@ -2,11 +2,17 @@
 """Protected evaluator storage for sealed splits, freeze receipts and detector censuses.
 
 The host keeps this store and evaluator capabilities outside learner mounts and
-processes. Capabilities and Vault do not confine arbitrary same-user code.
+processes. ACCESS CONTROL is the binding barrier against held-out leakage: the
+learner and proposer never hold the evaluator capability. Capabilities and Vault
+do not confine arbitrary same-user code; host/process isolation is an assumption.
+Screens and canaries are DETECTORS of accidental copies under the fixed views in
+contamination_gate, without a claim about deliberate adversarial obfuscation by
+a party controlling the encoding. Raw-container marker and positive-probe
+incidents commit before schema/status validation. Public content commitments are
+domain-separated HMACs under the host's sealed secret.
 """
 from __future__ import annotations
 
-import hashlib
 import hmac
 import json
 import re
@@ -14,7 +20,7 @@ import secrets
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 
@@ -22,7 +28,7 @@ from g6.core.vault import Vault
 from g6.metaharness.domain import SealedSplit, cut_pool
 from g6.metaharness.schema import SuiteCase
 from g6.recursion.contamination_gate import (
-    CanaryProbe, MembershipProbe, ScreenReport, canary_matches, scan_texts, screen,
+    CanaryProbe, MembershipProbe, ScreenReport, canary_matches, incident_scan, screen,
 )
 from g6.recursion.evaluator_entry import EvaluatorCapability
 from g6.recursion.tasks import TaskSpec
@@ -52,8 +58,26 @@ def _json(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
-def _public_ref(data, domain, *values):
-    return hmac.digest(bytes.fromhex(data["salt"]), _json([domain, *values]).encode("utf-8"), "sha256").hex()
+def _public_ref(capability, domain, *values):
+    return capability.commitment(domain, *values)
+
+
+@dataclass(frozen=True)
+class _KeyedVault(Vault):
+    """Public commitments are keyed; private integrity hashes serve the Vault seam."""
+
+    _integrity_manifest: Mapping[str, str] = field(default_factory=dict, repr=False)
+
+    def verify_unchanged(self, *, ledger=None):
+        return Vault.verify_unchanged(replace(self, manifest=self._integrity_manifest), ledger=ledger)
+
+
+def _keyed_vault(capability, roots, vault_id):
+    vault = Vault.seal(roots, ledger=None, vault_id=vault_id)
+    return _KeyedVault(vault.vault_id, vault.roots, capability.commitment("vault", vault.digest),
+                       MappingProxyType({name: capability.commitment("vault-file", name, value)
+                                         for name, value in vault.manifest.items()}),
+                       vault.identities, vault.manifest)
 
 
 @dataclass(frozen=True)
@@ -218,7 +242,7 @@ class HeldOutSlicer:
         root.mkdir(parents=True, exist_ok=True)
         if any((root / name).exists() for name in ("rule.json", "state.sqlite3", "pool.json")):
             raise HeldOutError("G6_E_RSI_ALREADY_REGISTERED")
-        rule = {"rule": RULE, "seed": seed, "pool_digest": content_digest([t.to_record() for t in tasks]),
+        rule = {"rule": RULE, "seed": seed, "pool_digest": capability.commitment("pool", [t.to_record() for t in tasks]),
                 "detectors": list(detectors)}
         # The rule is closed before partitioning, including on an interrupted registration.
         with (root / "rule.json").open("x", encoding="utf-8") as stream:
@@ -226,20 +250,20 @@ class HeldOutSlicer:
         partitions = partition_pool(tasks, seed)
         positions = {t.task_id: i for i, t in enumerate(tasks)}
         parts = [[positions[t.task_id] for t in part] for part in partitions]
-        partition_digest = content_digest(parts)
+        partition_digest = capability.commitment("partitions", parts)
         data = {"tasks": [t.to_record() for t in tasks], "partitions": parts,
                 "authority_binding": capability.binding(root),
                 "salt": secrets.token_hex(32), "canaries": [secrets.token_hex(16) for _ in range(6)]}
         # Exclusive creation arbitrates concurrent registration before any state is published.
         with (root / "pool.json").open("x", encoding="utf-8") as stream:
             stream.write(_json(data))
-        vault = Vault.seal([root / "pool.json", root / "rule.json"], ledger=None,
-                           vault_id=content_digest([seed, partition_digest]))
+        vault = _keyed_vault(capability, [root / "pool.json", root / "rule.json"],
+                             capability.commitment("vault-id", seed, partition_digest))
         registration = {**rule, "partition_digest": partition_digest, "count": len(tasks),
-                        "rule_sha256": hashlib.sha256((root / "rule.json").read_bytes()).hexdigest(),
-                        "pool_sha256": hashlib.sha256((root / "pool.json").read_bytes()).hexdigest(),
+                        "rule_sha256": capability.commitment("rule-file", (root / "rule.json").read_bytes().hex()),
+                        "pool_sha256": capability.commitment("pool-file", (root / "pool.json").read_bytes().hex()),
                         "vault_digest": vault.digest, "vault_id": vault.vault_id,
-                        "salt_commitment": content_digest(data["salt"])}
+                        "salt_commitment": capability.commitment("salt", data["salt"])}
         with handle._db() as db:
             db.execute("CREATE TABLE registration (record TEXT NOT NULL)")
             db.execute("CREATE TABLE freezes (digest TEXT PRIMARY KEY, generation INTEGER UNIQUE, record TEXT NOT NULL)")
@@ -249,7 +273,7 @@ class HeldOutSlicer:
             db.execute("CREATE TABLE attempts (slice TEXT, key TEXT, result TEXT, PRIMARY KEY(slice, key))")
             db.execute("INSERT INTO registration VALUES (?)", (_json(registration),))
             for generation in range(6):
-                sid = content_digest([registration["pool_digest"], seed, generation])
+                sid = capability.commitment("slice-id", registration["pool_digest"], seed, generation)
                 db.execute("INSERT INTO slices (id,generation,status) VALUES (?,?,'sealed')", (sid, generation))
             handle._event(db, "registered", count=len(tasks), partition_digest=partition_digest)
         return cls(root, role=role, capability=capability)
@@ -268,10 +292,19 @@ class HeldOutSlicer:
     def _data(self, db):
         registration = self._registration(db)
         raw = (self._root / "pool.json").read_bytes()
-        if (hashlib.sha256(raw).hexdigest() != registration["pool_sha256"]
-                or hashlib.sha256((self._root / "rule.json").read_bytes()).hexdigest() != registration["rule_sha256"]):
+        # Integrity before authority: the store's own sealed capability keys the commitment, so a changed
+        # pool reads as changed, whatever its bytes now claim about authority.
+        _evaluator("evaluator", self._capability)
+        if (self._capability.commitment("pool-file", raw.hex()) != registration["pool_sha256"]
+                or self._capability.commitment("rule-file", (self._root / "rule.json").read_bytes().hex())
+                != registration["rule_sha256"]):
             raise HeldOutError("G6_E_RSI_POOL_CHANGED")
-        data = json.loads(raw)
+        try:
+            data = json.loads(raw)
+        except (ValueError, UnicodeError):
+            raise HeldOutError("G6_E_RSI_POOL_CHANGED") from None
+        if type(data) is not dict:
+            raise HeldOutError("G6_E_RSI_POOL_CHANGED")
         if "authority_binding" not in data:
             raise HeldOutError("G6_E_RSI_EVALUATOR_CAPABILITY_REQUIRED")
         self._authorize("evaluator", self._capability, data)
@@ -290,7 +323,7 @@ class HeldOutSlicer:
         if not isinstance(record, FreezeRecord):
             raise HeldOutError("G6_E_RSI_FREEZE_INVALID")
         payload = record.to_record()
-        receipt = content_digest(payload)
+        receipt = self._capability.commitment("freeze", payload)
         with self._db() as db:
             old = db.execute("SELECT digest FROM freezes WHERE generation=?", (record.generation,)).fetchone()
             if old is not None and old[0] != receipt:
@@ -332,9 +365,9 @@ class HeldOutSlicer:
             tasks = self._tasks(data, generation, freeze_digest)
             if not tasks:
                 raise HeldOutError("G6_E_RSI_SLICE_EMPTY")
-            seed_commitment = content_digest([freeze_digest, data["salt"]])
+            seed_commitment = self._capability.commitment("slice-seed", freeze_digest, data["salt"])
             item = Slice(row["id"], generation, freeze_digest, len(tasks), seed_commitment,
-                         content_digest([t.to_record() for t in tasks]))
+                         self._capability.commitment("slice-content", [t.to_record() for t in tasks]))
             db.execute("UPDATE slices SET status='open', freeze=?, summary=? WHERE id=?",
                        (freeze_digest, _json(item.to_record()), row["id"]))
             self._event(db, "cut", **item.to_record())
@@ -381,14 +414,14 @@ class HeldOutSlicer:
             row = self._row(db, slice_id, opened=True)
             data, registration = self._data(db), self._registration(db)
             self._authorize(role, capability, data)
-            vault = Vault.seal([self._root / "pool.json", self._root / "rule.json"], ledger=None,
-                               vault_id=registration["vault_id"])
+            vault = _keyed_vault(self._capability, [self._root / "pool.json", self._root / "rule.json"],
+                                 registration["vault_id"])
             if vault.digest != registration["vault_digest"]:
                 raise HeldOutError("G6_E_RSI_POOL_CHANGED")
             refs = tuple(MappingProxyType({
-                "case_id": _public_ref(data, "item-id", t.task_id),
-                "input_sha256": _public_ref(data, "item-input", t.prompt),
-                "expected_sha256": _public_ref(data, "item-expected", _case(t).expected),
+                "case_id": _public_ref(self._capability, "item-id", t.task_id),
+                "input_sha256": _public_ref(self._capability, "item-input", t.prompt),
+                "expected_sha256": _public_ref(self._capability, "item-expected", _case(t).expected),
             })
                          for t in self._tasks(data, row["generation"], row["freeze"]))
             return SealedSplit(vault, refs)
@@ -407,19 +440,28 @@ class HeldOutSlicer:
                 self._void(db, sid)
         return bool(matched)
 
-    def _commit_incidents(self, slice_id, training=(), model_outputs=()):
-        texts = scan_texts(training, model_outputs, strict=False)
+    def _commit_incidents(self, slice_id, training=(), model_outputs=(), canary_probes=(), membership=None):
+        texts, probes, limited = incident_scan(training, model_outputs, canary_probes, membership)
         with self._db() as db:
             data = self._data(db)
             row = (db.execute("SELECT status FROM slices WHERE id=?", (slice_id,)).fetchone()
                    if _hex(slice_id) else None)
             current = slice_id if row is not None else None
             hit = self._canary_incidents(db, data, texts, current)
-            return hit, row[0] if row is not None else None
+            probe_flags = sum(p.flagged for p in probes)
+            if probe_flags:
+                self._event(db, "canary_probe", slice_id=current, canary_probe_flags=probe_flags)
+                if current is not None:
+                    self._void(db, current)
+                hit = True
+            previous = row[0] if row is not None else None
+        if limited:
+            raise HeldOutError("G6_E_RSI_SCREEN_LIMIT")
+        return hit, previous
 
     def screen(self, slice_id: str, training: Sequence[SuiteCase], *, membership: Mapping[str, MembershipProbe],
                model_outputs: Sequence[str] = (), canary_probes: Sequence[CanaryProbe] = ()) -> ScreenReport:
-        hit, previous = self._commit_incidents(slice_id, training, model_outputs)
+        hit, previous = self._commit_incidents(slice_id, training, model_outputs, canary_probes, membership)
         with self._db() as db:
             row = self._row(db, slice_id, opened=not hit)
             if hit and previous != "open":
@@ -445,7 +487,7 @@ class HeldOutSlicer:
         with self._db() as db:
             row = self._row(db, slice_id)
             data = self._data(db)
-            key = _public_ref(data, "attempt", case_id, arm, attempt)
+            key = _public_ref(self._capability, "attempt", case_id, arm, attempt)
             # A leaked marker is still an incident on a duplicate or closed attempt.
             if hit:
                 result = PassResult(False, "contamination", 0)
@@ -471,7 +513,7 @@ class HeldOutSlicer:
                 if observations:
                     self._event(db, "detector_census", slice_id=slice_id, attempt_digest=key,
                                 detector_count=count, clean_count=sum(o["clean"] for o in observations),
-                                output_digest=content_digest(output), detectors=list(observations))
+                                output_digest=self._capability.commitment("output", output), detectors=list(observations))
             if reason == "passed" and not anchor_pass:
                 reason = "anchor_failed"
             result = PassResult(reason == "passed", reason, count)

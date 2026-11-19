@@ -493,3 +493,87 @@ def test_host_capability_binds_secret_and_store_and_hides_secret(api):
     with pytest.raises(api.HeldOutError, match="EVALUATOR_CAPABILITY_REQUIRED"):
         store._authorize("evaluator", host, data)
     assert "0123456789abcdef" not in repr(host)
+
+
+@pytest.mark.parametrize("boundary", ["screen", "evaluate", "nested_training"])
+def test_fixed_whitespace_canary_view_durably_voids(api, tmp_path, boundary):
+    from g6.metaharness.schema import SuiteCase
+
+    store, item = opened(api, tmp_path)
+    clean_screen(store, item.slice_id)
+    task = store.evaluator_items(item.slice_id, role="evaluator", capability=authority())[0]
+    marker = store.canaries(item.slice_id, role="evaluator", capability=authority())[0]
+    output = marker[:16] + " \n " + marker[16:]
+    if boundary == "evaluate":
+        result = store.evaluate_pass(item.slice_id, task.task_id, output, arm="G0", attempt="one",
+                                     anchor_pass=True, detectors={n: lambda t, o: False for n in store.detector_names})
+        assert not result.passed and result.reason == "contamination"
+    elif boundary == "screen":
+        assert store.screen(item.slice_id, (), model_outputs=(output,), membership={}).voided
+    else:
+        assert store.screen(item.slice_id, (SuiteCase("train", "other", {"nested": [output]}),),
+                            membership={}).voided
+    again = api.HeldOutSlicer(tmp_path / "evaluator", role="evaluator", capability=authority())
+    assert again.status(item.slice_id) == "void"
+
+
+@pytest.mark.parametrize("location", ["training", "output", "membership", "probes"])
+def test_raw_container_marker_incident_survives_schema_refusal(api, tmp_path, location):
+    from g6.recursion.contamination_gate import ContaminationError
+
+    store, item = opened(api, tmp_path)
+    marker = json.loads((tmp_path / "evaluator" / "pool.json").read_text(encoding="utf-8"))["canaries"][1]
+    args = {"training": (), "membership": {}, "model_outputs": (), "canary_probes": ()}
+    args[location if location in ("training", "membership") else
+         "model_outputs" if location == "output" else "canary_probes"] = ({"input": [marker]},)
+    with pytest.raises((api.HeldOutError, ContaminationError)):
+        store.screen(item.slice_id, **args)
+    again = api.HeldOutSlicer(tmp_path / "evaluator", role="evaluator", capability=authority())
+    assert again.status(item.slice_id) == "void"
+    with pytest.raises(api.HeldOutError, match="SLICE_REUSED"):
+        again.cut(1, again.record_freeze(freeze(api, 1)))
+
+
+@pytest.mark.parametrize("closed", [False, True])
+def test_positive_probe_incident_survives_unrelated_refusal(api, tmp_path, closed):
+    from g6.recursion.contamination_gate import CanaryProbe, ContaminationError
+
+    store, item = opened(api, tmp_path)
+    clean_screen(store, item.slice_id)
+    task = store.evaluator_items(item.slice_id, role="evaluator", capability=authority())[0]
+    if closed:
+        store.spend(item.slice_id)
+    with pytest.raises((api.HeldOutError, ContaminationError)):
+        store.screen(item.slice_id, (), membership={}, model_outputs=(None,),
+                     canary_probes=(None, CanaryProbe(.2, .1)))
+    again = api.HeldOutSlicer(tmp_path / "evaluator", role="evaluator", capability=authority())
+    assert again.status(item.slice_id) == "void"
+    with pytest.raises(api.HeldOutError, match="SLICE_CLOSED"):
+        again.evaluate_pass(item.slice_id, task.task_id, "clean", arm="G0", attempt="later",
+                            anchor_pass=True, detectors={n: lambda t, o: False for n in again.detector_names})
+
+
+def test_public_content_commitments_use_sealed_secret_and_domains(api, tmp_path):
+    from g6.rsi.records import content_digest
+
+    tasks = tuple(pool()[i * 3] for i in range(6))
+    seed = next(seed for seed in range(10000) if _feasible(api, tasks, seed))
+    store = api.HeldOutSlicer.register(tmp_path / "singletons", tasks, seed=seed, detectors=("clean",),
+                                      role="evaluator", capability=authority())
+    for generation in range(6):
+        item = store.cut(generation, store.record_freeze(freeze(api, generation)))
+        assert item.count == 1
+        public = json.dumps([item.to_record(), store.records(), store.registration()])
+        assert all(content_digest([t.to_record()]) not in public for t in tasks)
+        data = json.loads((tmp_path / "singletons" / "pool.json").read_text(encoding="utf-8"))
+        records = [data["tasks"][i] for i in data["partitions"][generation]]
+        assert item.opened_digest == authority().commitment("slice-content", records)
+        assert item.seed_commitment != item.opened_digest
+
+
+def _feasible(api, tasks, seed):
+    try:
+        api.partition_pool(tasks, seed)
+        return True
+    except api.HeldOutError:
+        return False
