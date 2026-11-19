@@ -264,7 +264,7 @@ def test_unclosed_meter_blocks_cost_reconciliation(sample, monkeypatch):
     g._append(g._journal(), "replacement_attempt_start", {"registration": frozen.registration_sha256,
         "candidate_id": candidate.candidate_id, "phase": "assessment"})
     answer = g.decide_replacement(candidate, g.Library(), frozen.registration_sha256)
-    assert answer.verdict == "refuse", answer.reasons
+    assert answer.verdict in {"refuse", "block"}, answer.reasons
     assert "owner cost recovery" in " ".join(answer.reasons)
 
 

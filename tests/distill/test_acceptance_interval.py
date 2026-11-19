@@ -14,7 +14,7 @@ def sample():
 
 
 @pytest.mark.parametrize("stage", ["writer", "post_seal", "release"])
-def test_interval_charges_boundary_delay_and_retry(sample, monkeypatch, stage):
+def test_interval_bounds_boundary_bookkeeping_and_retry(sample, monkeypatch, stage):
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
     calls = [0]
     @contextmanager
@@ -42,7 +42,10 @@ def test_interval_charges_boundary_delay_and_retry(sample, monkeypatch, stage):
     monkeypatch.setattr(g, "_validation_total", read)
     first = g.decide_replacement(candidate, g.Library(), frozen.registration_sha256)
     assert first.verdict in {"block", "refuse"}, first.reasons
-    assert total(frozen.registration_sha256, None) >= 20000.
+    with pytest.raises(ValueError, match="cost recovery"):
+        total(frozen.registration_sha256, None)
+    assert any(d["latency_s"] == 20000. for r in g._journal().entries()
+               for d in r["body"].get("bookkeeping", []))
     second = g.decide_replacement(candidate, g.Library(), frozen.registration_sha256)
     assert second.verdict in {"block", "refuse"}, second.reasons
     assert "cost" in " ".join(second.reasons)
@@ -177,9 +180,11 @@ def test_reader_requires_final_close_and_accepts_exact_zero(sample, monkeypatch)
         "candidate_id": candidate.candidate_id, "replacement": replacement}})
     clock[0] = 20.
     assert not g._replacement_authorized(entry)
-    g._append(g._journal(), "registration_closed", opening | {"attempt": attempt,
+    close = g._append(g._journal(), "registration_closed", opening | {"attempt": attempt,
         "validation_s": 20., "monotonic_end": 20., "wall_end": 20.,
         "candidate_ids": [candidate.candidate_id], "activation_receipts": [receipt]})
+    assert not g._replacement_authorized(entry)
+    g._confirm_interval(g._journal(), close)
     assert g._replacement_authorized(entry)
     next_attempt = g._append(g._journal(), "replacement_attempt_start", opening | {"monotonic_start": 20.})
     assert not g._replacement_authorized(entry)
@@ -203,9 +208,10 @@ def test_interval_rows_bracket_writer_and_lease_release(sample, monkeypatch):
     monkeypatch.setattr(g, "_writer", writer)
     assert g.decide_replacement(candidate, g.Library(), frozen.registration_sha256).verdict == "admit_probation"
     rows = g._journal().entries()
-    assert rows[-1]["kind"] == "registration_closed"
-    assert rows[-1]["body"]["validation_s"] == 5.
-    assert g._validation_total(frozen.registration_sha256, None) == 15.
+    assert rows[-1]["kind"] == "authority_confirmed"
+    assert rows[-1]["body"]["validation_s"] == 0.
+    assert g._validation_total(frozen.registration_sha256, None) == 10.
+    assert {d["latency_s"] for d in rows[-1]["body"]["bookkeeping"]} >= {2., 3.}
 
 
 @pytest.mark.parametrize("bound", [True, False])
@@ -224,9 +230,10 @@ def test_failed_close_requires_bound_cost_recovery(sample, monkeypatch, bound):
     failed = g._journal().entries()[-1]
     closed = [row for row in g._journal().entries() if row["kind"] == "registration_closed"][-1]
     clock[0] = 7.
-    append(g._journal(), "registration_closed", closed["body"] | {"recovery_of": failed["id"] if bound else "f"*64,
+    close = append(g._journal(), "registration_closed", closed["body"] | {"recovery_of": failed["id"] if bound else "f"*64,
         "validation_s": 7., "monotonic_end": 7., "activation_receipts": []})
     if bound:
+        g._confirm_interval(g._journal(), close)
         assert g._validation_total(frozen.registration_sha256, None) == 17.
     else:
         with pytest.raises(ValueError, match="cost recovery"):
@@ -250,7 +257,10 @@ def test_real_lease_unlink_delay_leaves_no_usable_replacement(sample, monkeypatc
     answer = g.decide_replacement(candidate, g.Library(), frozen.registration_sha256)
     assert answer.verdict in {"block", "refuse"}
     assert not g._active(g.Library().list())
-    assert g._validation_total(frozen.registration_sha256, None) >= 20000.
+    with pytest.raises(ValueError, match="cost recovery"):
+        g._validation_total(frozen.registration_sha256, None)
+    assert any(d["latency_s"] == 20000. for r in g._journal().entries()
+               for d in r["body"].get("bookkeeping", []))
     retry = g.decide_replacement(candidate, g.Library(), frozen.registration_sha256)
     assert retry.verdict in {"block", "refuse"}
     assert "cost" in " ".join(retry.reasons)

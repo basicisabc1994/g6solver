@@ -13,7 +13,7 @@ def sample():
     return repair.sample.__wrapped__()
 
 
-def active_receipt(journal, candidate, registration, attempt):
+def active_receipt(journal, candidate, registration, attempt, upper=-1e9):
     entry = SimpleNamespace(entry_id="e" * 64, candidate_id=candidate.candidate_id,
         noninferiority="f" * 64, teacher="c" * 64, replacement_scope=[],
         replacement="R", authority="A1", status="probation")
@@ -21,7 +21,7 @@ def active_receipt(journal, candidate, registration, attempt):
         "candidate_id": entry.candidate_id, "attempt": attempt, "pending_receipt": entry.noninferiority,
         "report": {"registration": registration, "candidate_id": entry.candidate_id,
             "replacement": {"state": "active", "teacher": entry.teacher, "scope": [],
-                            "cpu_weight": 1., "validation_s": 0., "cost": {"upper_95": -1e9}}}})
+                            "cpu_weight": 1., "validation_s": 0., "cost": {"upper_95": upper}}}})
     return entry, receipt
 
 

@@ -7,11 +7,23 @@ are adapted to the existing metaharness gate; no executor/model is called there.
 Host custody and mission mounts must enforce the OS boundary: Python module
 identity and hash chains do not protect against arbitrary same-user shell access.
 
-Endpoint writes use the registration's d_append_s deadline (default five seconds).
-Each interval is charged its measured duration plus twice that deadline. An
-overrun or raised write leaves an incomplete interval until owner recovery. An
-opening write that raises without leaving any row can be unrecorded: no assessment
-has begun and the supported writer must bound that cost by d_append_s.
+R4 charges assessment work: evidence loading, measurement, guarded execution,
+regression replay, and the fixed registered endpoint allowance once per interval.
+Gate journal setup, acquisition and all endpoint, failure, recovery and confirmation
+writes are fixed overhead outside R4. Their observed latencies are diagnostic
+fields, carried by the next row; the terminal observation remains in process.
+Every operation uses the registration's d_append_s deadline (default five seconds).
+An observed overrun or raised operation leaves the interval incomplete until owner
+recovery. Recovery charges the continuous opening clock through recovery start,
+even when the last failure marker is missing.
+
+A bookkeeping latency is bounded by its deadline only when observed. A slow close
+that still lands grants no authority: a separate authority_confirmed row must
+reference the returned close and checked R4 totals. The confirmation's own return
+must also be observed within deadline in this process. Cold readers withhold
+authority until owner recovery/reconfirmation; no invalidation write is needed.
+If setup leaves no opening row, a process obligation also withholds prior
+authority and retries until the owner records and closes that opening.
 """
 from __future__ import annotations
 
@@ -21,6 +33,7 @@ import math
 import os
 import re
 import statistics
+import sys
 import time
 import threading
 from contextlib import contextmanager
@@ -55,6 +68,10 @@ ROOT = Path(__file__).resolve().parents[3]
 POLICY_PATH = ROOT / "validation/distill/held_out/policy.json"
 VERSION = "distill-acceptance-v1"
 _MUTEX = threading.RLock()
+_BOOKKEEPING = threading.local()
+_RETURNED_CONFIRMATIONS = {}
+_BOOKKEEPING_DIAGNOSTICS = {}
+_UNRECORDED_BOOKKEEPING = {}
 
 
 @contextmanager
@@ -699,15 +716,14 @@ def _measure_entry(entry, observations, entries):
         return ["abstain"] * len(observations), [0.] * (3 * len(observations))
     if entry.replacement != "R":
         return _measure(_candidate(entry), observations, entries)
-    verdicts, costs = [], []
-    for observation in observations:
-        if not _case_in_scope(entry.replacement_scope, observation.case):
-            verdicts.append("abstain")
-            costs.extend([0., 0., 0.])
-        else:
-            values, measured = _measure(_candidate(entry), (observation,), entries)
-            verdicts.extend(values)
-            costs.extend(measured)
+    inside = [i for i, observation in enumerate(observations)
+              if _case_in_scope(entry.replacement_scope, observation.case)]
+    verdicts, costs = ["abstain"] * len(observations), [0.] * (3 * len(observations))
+    if inside:
+        values, measured = _measure(_candidate(entry), [observations[i] for i in inside], entries)
+        for offset, index in enumerate(inside):
+            verdicts[index] = values[offset]
+            costs[3*index:3*index+3] = measured[3*offset:3*offset+3]
     return verdicts, costs
 
 
@@ -899,9 +915,99 @@ def _journal():
     return ChainLedger(state_path("distill", "acceptance_gate.jsonl"))
 
 
+def _unrecorded_key(registration):
+    return str(state_path("distill", "acceptance_gate.intervals")), _journal, registration
+
+
+def _bookkeeping_call(operation, call, *, deadline=None, enforce=True):
+    meter = getattr(_BOOKKEEPING, "meter", None)
+    if meter is None and deadline is None:
+        return call()
+    began = time.monotonic()
+    failed = True
+    if meter is not None:
+        meter["depth"] += 1
+    overhead_before = meter["overhead_s"] if meter is not None else 0.
+    try:
+        result = call()
+        failed = False
+    finally:
+        elapsed = time.monotonic() - began
+        limit = deadline if deadline is not None else meter["deadline"]
+        bad = failed or not math.isfinite(elapsed) or not 0 <= elapsed <= limit
+        if meter is not None:
+            meter["depth"] -= 1
+            nested = meter["overhead_s"] - overhead_before
+            meter["overhead_s"] += max(0., elapsed - nested)
+            meter["diagnostics"].append({"operation": operation, "latency_s": elapsed,
+                                         "failed": failed, "deadline_exceeded": bad})
+            meter["bad"] |= bad
+        else:
+            _BOOKKEEPING_DIAGNOSTICS[uuid4().hex] = [{"operation": operation, "latency_s": elapsed,
+                                                      "failed": failed, "deadline_exceeded": bad}]
+    if bad and enforce:
+        raise ValueError("registration bookkeeping deadline exceeded; owner cost recovery required")
+    return result
+
+
+def _gate_journal():
+    return _bookkeeping_call("journal_acquisition", _journal)
+
+
+@contextmanager
+def _bookkeeping_writer():
+    manager = _writer()
+    entered = False
+    def enter():
+        nonlocal entered
+        lease = manager.__enter__()
+        entered = True
+        return lease
+    try:
+        lease = _bookkeeping_call("writer_acquisition", enter)
+    except BaseException:
+        error = sys.exc_info()
+        if entered:
+            _bookkeeping_call("writer_release", lambda: manager.__exit__(*error))
+        raise
+    try:
+        yield lease
+    except BaseException:
+        error = sys.exc_info()
+        if not _bookkeeping_call("writer_release", lambda: manager.__exit__(*error)):
+            raise
+    else:
+        _bookkeeping_call("writer_release", lambda: manager.__exit__(None, None, None))
+
+
+def _reconcile_validation(registration, active):
+    return _bookkeeping_call("journal_reconciliation", lambda: _validation_total(registration, active))
+
+
+def _acquire_interval(ident=None, *, enforce=True):
+    return _bookkeeping_call("interval_acquisition", lambda: _interval_journal(ident), enforce=enforce)
+
+
+def _assessment_elapsed(started):
+    meter = getattr(_BOOKKEEPING, "meter", None)
+    overhead = meter["overhead_s"] if meter is not None else 0.
+    return max(0., time.monotonic() - started - overhead)
+
+
+def _diagnostic_body(body):
+    meter = getattr(_BOOKKEEPING, "meter", None)
+    if meter is None:
+        return body
+    return body | {"bookkeeping": list(meter["diagnostics"]), "bookkeeping_s": meter["overhead_s"]}
+
+
+def _write(journal, kind, body):
+    return _bookkeeping_call("write:" + kind, lambda: _append(journal, kind, _diagnostic_body(body)))
+
+
 def _append(journal, kind, body):
     if body.get("interval_version") == 1 and kind in {"replacement_attempt_start", "registration_open_failed",
-            "registration_closed", "registration_close_failed", "registration_meter_failure"}:
+            "registration_closed", "registration_close_failed", "registration_meter_failure", "authority_confirmed"}:
         return _endpoint_append(journal, kind, body, raw=True)
     return _append_row(journal, kind, body)
 
@@ -913,7 +1019,7 @@ def _append_row(journal, kind, body):
 
 
 def _look_available(registration):
-    journal = _journal()
+    journal = _gate_journal()
     rows = journal.entries()
     pending = {r["id"] for r in rows if r["kind"] == "reserve"}
     pending -= {r["body"]["reservation"] for r in rows if r["kind"] == "decision" and r["body"].get("reservation")}
@@ -927,7 +1033,7 @@ def _look_available(registration):
 
 def _spend(registration, candidate, meter=None):
     journal, index = _look_available(registration)
-    reservation = _append(journal, "reserve", {"registration": registration, "candidate_id": candidate.candidate_id,
+    reservation = _write(journal, "reserve", {"registration": registration, "candidate_id": candidate.candidate_id,
                                               "reuse_index": index, **({"meter": meter} if meter else {})})
     return index, reservation
 
@@ -940,10 +1046,10 @@ def _interval_journal(ident=None):
 
 
 def _interval_rows():
-    journal = _interval_journal()
+    journal = _acquire_interval()
     if isinstance(journal, Path):
-        return [row | {"interval_chain": str(path)} for path in sorted(journal.glob("*.jsonl"))
-                for row in ChainLedger(path).entries()]
+        return _bookkeeping_call("interval_read", lambda: [row | {"interval_chain": str(path)}
+            for path in sorted(journal.glob("*.jsonl")) for row in ChainLedger(path).entries()])
     return [row | {"interval_chain": "memory"} for row in journal.entries()]
 
 
@@ -963,15 +1069,13 @@ def _endpoint_allowance(opening):
 
 
 def _endpoint_append(journal, kind, body, *, raw=False):
-    began = time.monotonic()
+    if raw and kind == "registration_closed" and body.get("recovery_of") is not None:
+        body = body | {"recovery_elapsed_s": _interval_elapsed(body, recovery=True),
+                       "recovery_started": time.monotonic()}
     try:
-        try:
-            ident = _append_row(journal, kind, body) if raw else _append(journal, kind, body)
-        finally:
-            elapsed = time.monotonic() - began
-        if not math.isfinite(elapsed) or elapsed < 0 or elapsed > _endpoint_allowance(body) / 2:
-            raise ValueError("registration endpoint deadline exceeded; owner cost recovery required")
-        return ident
+        return _bookkeeping_call("write:" + kind,
+            lambda: _append_row(journal, kind, _diagnostic_body(body)) if raw else _append(journal, kind, body),
+            deadline=_endpoint_allowance(body) / 2)
     except Exception:
         if raw:
             attempt = body.get("attempt")
@@ -987,16 +1091,13 @@ def _invalidate_endpoint(journal, opening, attempt_id):
     for _ in range(2):
         try:
             path = getattr(journal, "path", None)
-            current = ChainLedger(path) if path is not None else journal
+            current = _bookkeeping_call("failure_acquisition", lambda: ChainLedger(path)) if path is not None else journal
             body = opening | {"state": "incomplete", "attempt": attempt_id,
                 "validation_s": _interval_elapsed(opening), "monotonic_end": time.monotonic()}
-            began = time.monotonic()
-            try:
-                _append_row(current, "registration_close_failed", body)
-            finally:
-                elapsed = time.monotonic() - began
-            if math.isfinite(elapsed) and 0 <= elapsed <= _endpoint_allowance(opening) / 2:
-                return
+            _bookkeeping_call("write:registration_close_failed",
+                lambda: _append_row(current, "registration_close_failed", _diagnostic_body(body)),
+                deadline=_endpoint_allowance(opening) / 2)
+            return
         except Exception:
             continue
 
@@ -1004,7 +1105,7 @@ def _invalidate_endpoint(journal, opening, attempt_id):
 def _interval_failure(interval_id, opening, attempt_id):
     for _ in range(2):
         try:
-            _endpoint_append(_interval_journal(interval_id), "registration_close_failed", opening | {
+            _endpoint_append(_acquire_interval(interval_id), "registration_close_failed", opening | {
                 "attempt": attempt_id, "validation_s": _interval_elapsed(opening),
                 "monotonic_end": time.monotonic()})
             return
@@ -1017,13 +1118,17 @@ def _interval_elapsed(body, *, recovery=False):
     wall = time.time() - body["wall_start"]
     if not math.isfinite(elapsed) or not math.isfinite(wall):
         raise ValueError("registration clock requires owner cost recovery")
-    return max(elapsed, wall, 0.) if recovery else max(elapsed, 0.)
+    if recovery:
+        if elapsed < 0:
+            raise ValueError("registration continuous clock unavailable; owner cost recovery required")
+        return elapsed
+    return _assessment_elapsed(body["monotonic_start"]) if body.get("assessment_cost_only") else max(elapsed, 0.)
 
 
 def _legacy_validation_total(registration, active):
     intervals = {r["id"] for r in _interval_rows() if r["body"].get("interval_version") == 1
                  and r["kind"] == "replacement_attempt_start" and r["body"].get("registration") == registration}
-    rows = [r for r in _journal().entries() if r["body"].get("registration") == registration
+    rows = [r for r in _gate_journal().entries() if r["body"].get("registration") == registration
             and not r["body"].get("interval_version") and r["body"].get("meter") not in intervals]
     starts = {r["id"]: r["body"] for r in rows if r["kind"] == "replacement_attempt_start"}
     finished = {}
@@ -1082,10 +1187,17 @@ def _legacy_validation_total(registration, active):
 
 
 def _validation_total(registration, active):
+    unrecorded = _UNRECORDED_BOOKKEEPING.get(_unrecorded_key(registration))
+    if unrecorded is not None:
+        openings = [r["body"] for r in _interval_rows() if active is not None and r["id"] == active
+                    and r["kind"] == "registration_open_failed"] if active is not None else []
+        if not openings or any(openings[0].get(key) != unrecorded.get(key)
+                               for key in ("interval_id", "registration", "monotonic_start", "wall_start", "d_append_s")):
+            raise ValueError("unrecorded registration opening requires owner cost recovery")
     total = _legacy_validation_total(registration, active)
     rows = [r for r in _interval_rows() if r["body"].get("registration") == registration
             and r["body"].get("interval_version") == 1]
-    starts, owners, closed, failed, floors, ends, members = {}, {}, {}, {}, {}, {}, {}
+    starts, owners, closed, failed, floors, ends, members, proposals = {}, {}, {}, {}, {}, {}, {}, {}
     for row in rows:
         body = row["body"]
         if row["kind"] in {"replacement_attempt_start", "registration_open_failed"}:
@@ -1103,7 +1215,7 @@ def _validation_total(registration, active):
             if row["kind"] == "registration_open_failed":
                 failed[ident] = ident
             continue
-        if row["kind"] not in {"replacement_attempt", "registration_meter_closed",
+        if row["kind"] not in {"replacement_attempt", "registration_meter_closed", "authority_confirmed",
                 "registration_meter_failure", "registration_close_failed", "registration_closed"}:
             continue
         ident = body["attempt"]
@@ -1115,13 +1227,38 @@ def _validation_total(registration, active):
         if not math.isfinite(elapsed) or not math.isfinite(end) or elapsed < 0:
             raise ValueError("registration elapsed cost invalid; owner cost recovery required")
         if row["kind"] == "registration_closed":
-            if (ident in closed or body.get("recovery_of") != failed.get(ident)
+            if (ident in closed or (ident in proposals and not body.get("recovery_of"))
+                    or body.get("recovery_of") != failed.get(ident)
                     or elapsed < floors[ident] or end < ends[ident]
-                    or elapsed < end - starts[ident]["monotonic_start"]):
+                    or elapsed < end - starts[ident]["monotonic_start"] - (
+                        body.get("bookkeeping_s", 0.) if starts[ident].get("assessment_cost_only") else 0.)):
                 raise ValueError("registration interval closure invalid; owner cost recovery required")
-            closed[ident] = elapsed + _endpoint_allowance(starts[ident])
+            if body.get("recovery_of") is not None:
+                recovery = body.get("recovery_elapsed_s")
+                recovery_start = body.get("recovery_started")
+                if (not isinstance(recovery, (int, float)) or not math.isfinite(recovery)
+                        or not isinstance(recovery_start, (int, float)) or not math.isfinite(recovery_start)
+                        or recovery < max(elapsed, recovery_start - starts[ident]["monotonic_start"])):
+                    raise ValueError("registration continuous recovery clock invalid; owner cost recovery required")
+                elapsed = recovery
+            proposals[ident] = (row["id"], elapsed, body)
+            if starts[ident].get("authority_required") is False and body.get("authority_required") is False:
+                closed[ident] = elapsed + _endpoint_allowance(starts[ident])
             members[ident] = body["candidate_ids"]
-            failed.pop(ident, None)
+        elif row["kind"] == "authority_confirmed":
+            proposal = proposals.get(ident)
+            latency, checked = body.get("close_latency_s"), body.get("validation_total_s")
+            if (proposal is None or body.get("close") != proposal[0] or ident in closed
+                    or body.get("candidate_ids") != proposal[2].get("candidate_ids")
+                    or body.get("activation_receipts") != proposal[2].get("activation_receipts")
+                    or not isinstance(latency, (int, float)) or not math.isfinite(latency)
+                    or not 0 <= latency <= _endpoint_allowance(starts[ident]) / 2
+                    or not isinstance(checked, (int, float)) or not math.isfinite(checked)
+                    or elapsed < proposal[1] or checked < elapsed + _endpoint_allowance(starts[ident])):
+                raise ValueError("registration confirmation invalid; owner cost recovery required")
+            if _RETURNED_CONFIRMATIONS.get(body.get("confirmation_nonce")) == row["id"]:
+                closed[ident] = elapsed + _endpoint_allowance(starts[ident])
+                failed.pop(ident, None)
         elif row["kind"] == "registration_close_failed":
             closed.pop(ident, None)
             failed[ident] = row["id"]
@@ -1130,7 +1267,7 @@ def _validation_total(registration, active):
     unfinished = starts.keys() - closed.keys() - {active}
     total += math.fsum(closed.values())
     used = set()
-    for row in _journal().entries():
+    for row in _gate_journal().entries():
         body = row["body"]
         meter = body.get("meter")
         if row["kind"] != "reserve" or body.get("registration") != registration or meter not in starts:
@@ -1147,8 +1284,48 @@ def _validation_total(registration, active):
     return total
 
 
+def _confirm_interval(journal, close, *, close_latency_s=0., pending=()):
+    """Confirm a returned close; cold processes require owner reconfirmation."""
+    if getattr(_BOOKKEEPING, "meter", None) is None:
+        began = time.monotonic()
+        row = next(r for r in journal.entries() if r["id"] == close and r["kind"] == "registration_closed")
+        deadline = _append_deadline(row["body"]["registration"])
+        elapsed = time.monotonic() - began
+        bad = not math.isfinite(elapsed) or not 0 <= elapsed <= deadline
+        meter = {"deadline": deadline, "depth": 0, "overhead_s": max(0., elapsed), "bad": bad,
+                 "diagnostics": [{"operation": "confirmation_setup", "latency_s": elapsed,
+                                  "failed": False, "deadline_exceeded": bad}]}
+        _BOOKKEEPING.meter = meter
+        try:
+            return _confirm_interval(journal, close, close_latency_s=close_latency_s, pending=pending)
+        finally:
+            _BOOKKEEPING_DIAGNOSTICS[uuid4().hex] = list(meter["diagnostics"])
+            _BOOKKEEPING.meter = None
+    rows = _bookkeeping_call("confirmation_read", journal.entries)
+    row = next(r for r in rows if r["id"] == close and r["kind"] == "registration_closed")
+    body = row["body"]
+    meter = getattr(_BOOKKEEPING, "meter", None)
+    if meter is not None and meter["bad"]:
+        raise ValueError("registration bookkeeping incomplete; owner cost recovery required")
+    prior = _reconcile_validation(body["registration"], body["attempt"])
+    elapsed = max(body["validation_s"], body.get("recovery_elapsed_s", 0.), _interval_elapsed(body))
+    total = prior + elapsed + _endpoint_allowance(body)
+    for _, frozen, data in pending:
+        _final_replacement_cost(data, frozen.replacement, total)
+    nonce = uuid4().hex
+    confirmation = body | {"close": close, "validation_s": elapsed, "validation_total_s": total,
+                            "close_latency_s": close_latency_s, "confirmation_nonce": nonce}
+    ident = _write(journal, "authority_confirmed", confirmation)
+    _RETURNED_CONFIRMATIONS[nonce] = ident
+    key = _unrecorded_key(body["registration"])
+    unrecorded = _UNRECORDED_BOOKKEEPING.get(key)
+    if unrecorded is not None and body.get("interval_id") == unrecorded["interval_id"]:
+        _UNRECORDED_BOOKKEEPING.pop(key)
+    return ident
+
+
 def _record(answer, reservation=""):
-    _append(_journal(), "decision", asdict(answer) | {"reservation": reservation, "gate_version": VERSION})
+    _write(_gate_journal(), "decision", asdict(answer) | {"reservation": reservation, "gate_version": VERSION})
     return answer
 
 
@@ -1269,9 +1446,9 @@ def _final_replacement_cost(data, study, validation_s):
 
 
 def _replacement_authorized(entry):
-    """An activation receipt needs its final interval closure and reconciled R4."""
+    """An activation receipt needs a returned confirmation and reconciled R4."""
     try:
-        rows = _journal().entries()
+        rows = _gate_journal().entries()
         states = [r for r in rows if r["kind"] == "replacement_state"
                   and (r["body"].get("entry_id") == entry.entry_id
                        or (r["body"].get("pending_receipt") == entry.noninferiority
@@ -1282,13 +1459,14 @@ def _replacement_authorized(entry):
         receipt = row["body"]
         report = receipt["report"]
         replacement = report["replacement"]
-        closed = [r["body"] for r in _interval_rows() if r["kind"] == "registration_closed"
+        closed = [r["body"] for r in _interval_rows() if r["kind"] == "authority_confirmed"
                   and r["body"].get("interval_version") == 1
+                  and _RETURNED_CONFIRMATIONS.get(r["body"].get("confirmation_nonce")) == r["id"]
                   and r["body"].get("attempt") == receipt.get("attempt")]
         if (not closed or row["id"] not in closed[-1]["activation_receipts"]
                 or closed[-1]["registration"] != report["registration"]):
             return False
-        total = _validation_total(report["registration"], None)
+        total = _reconcile_validation(report["registration"], None)
         upper = replacement["cost"]["upper_95"] + (
             total - replacement["validation_s"]) * replacement["cpu_weight"]
         return (entry.candidate_id in closed[-1]["candidate_ids"]
@@ -1303,7 +1481,7 @@ def _replacement_authorized(entry):
 
 def _activate_replacement(candidate, library, frozen, evidence, batch_bar, attempt):
     registration = frozen.registration_sha256
-    prior = _validation_total(registration, attempt[1])
+    prior = _reconcile_validation(registration, attempt[1])
     answer, evidence, own, data = _assess_replacement(candidate, library.list(), frozen,
         evidence.reuse_index, prior_validation_s=prior, validation_started=attempt[0])
     if answer.p_value > batch_bar:
@@ -1317,7 +1495,7 @@ def _activate_replacement(candidate, library, frozen, evidence, batch_bar, attem
     for prepare in (True, "activation"):
         if prepare == "activation":
             _final_replacement_cost(data, frozen.replacement,
-                prior + max(0., time.monotonic() - attempt[0]) + 2 * _append_deadline(registration))
+                prior + _assessment_elapsed(attempt[0]) + 2 * _append_deadline(registration))
             if not getattr(Library, "replacement_state_checked", False):
                 raise ValueError("pending replacement reader issuance required")
         entry = _persist(candidate, answer, evidence, own, frozen, data, library, prepare=prepare)
@@ -1355,26 +1533,64 @@ def decide_batch(candidates, library: Library, registration: str) -> tuple[Accep
 
 
 def _decide_batch(candidates, library, registration, *, replacement):
-    started, wall = time.monotonic(), time.time()
+    if not replacement:
+        return _decide_batch_metered(candidates, library, registration, replacement=False)
+    if _unrecorded_key(registration) in _UNRECORDED_BOOKKEEPING:
+        return tuple(AcceptanceDecision("block", ("unrecorded registration opening requires owner cost recovery",))
+                     for _ in candidates)
+    clocks = time.monotonic(), time.time()
+    try:
+        deadline = _append_deadline(registration)
+    except (ValueError, OSError):
+        return tuple(AcceptanceDecision("block", ("registered endpoint deadline unavailable",)) for _ in candidates)
+    latency = time.monotonic() - clocks[0]
+    bad = not math.isfinite(latency) or not 0 <= latency <= deadline
+    meter = {"deadline": deadline, "depth": 0, "overhead_s": max(0., latency), "bad": bad,
+             "diagnostics": [{"operation": "deadline_lookup", "latency_s": latency,
+                              "failed": False, "deadline_exceeded": bad}]}
+    previous = getattr(_BOOKKEEPING, "meter", None)
+    _BOOKKEEPING.meter = meter
+    try:
+        return _decide_batch_metered(candidates, library, registration, replacement=True, opening_clocks=clocks)
+    finally:
+        _BOOKKEEPING_DIAGNOSTICS[meter.get("interval_id", uuid4().hex)] = list(meter["diagnostics"])
+        _BOOKKEEPING.meter = previous
+
+
+def _decide_batch_metered(candidates, library, registration, *, replacement, opening_clocks=None):
+    started, wall = opening_clocks if opening_clocks is not None else (time.monotonic(), time.time())
     interval_id = uuid4().hex
     opening = {"registration": registration, "monotonic_start": started, "wall_start": wall,
-               "interval_version": 1, "state": "opened", "phase": "assessment"}
-    journal = _interval_journal(interval_id)
+               "interval_version": 1, "state": "opened", "phase": "assessment",
+               "assessment_cost_only": replacement, "authority_required": replacement, "interval_id": interval_id}
+    meter = getattr(_BOOKKEEPING, "meter", None)
+    if meter is not None:
+        meter["interval_id"] = interval_id
+    journal = None
     try:
         opening["d_append_s"] = _append_deadline(registration)
     except (ValueError, OSError):
         return tuple(AcceptanceDecision("block", ("registered endpoint deadline unavailable",)) for _ in candidates)
     try:
+        journal = _acquire_interval(interval_id, enforce=False)
         attempt_id = _endpoint_append(journal, "replacement_attempt_start", opening)
+        if meter is not None and meter["bad"]:
+            raise ValueError("registration bookkeeping incomplete; owner cost recovery required")
     except Exception:
+        recorded = False
         try:
+            if journal is None:
+                journal = _acquire_interval(interval_id, enforce=False)
             starts = [r for r in journal.entries() if r["kind"] == "replacement_attempt_start"
-                      and r["body"] == opening]
+                      and r["body"].get("monotonic_start") == opening["monotonic_start"]]
             attempt_id = starts[-1]["id"] if starts else _endpoint_append(journal, "registration_open_failed",
                 opening | {"validation_s": _interval_elapsed(opening), "monotonic_end": time.monotonic()})
+            recorded = True
             _interval_failure(interval_id, opening, attempt_id)
         except Exception:
             pass
+        if replacement and not recorded:
+            _UNRECORDED_BOOKKEEPING[_unrecorded_key(registration)] = _diagnostic_body(opening)
         return tuple(AcceptanceDecision("block", ("interval opening requires owner cost recovery",),
                      c.candidate_id if type(c) is VerifierCandidate else "") for c in candidates)
     candidates = tuple(candidates)
@@ -1383,30 +1599,30 @@ def _decide_batch(candidates, library, registration, *, replacement):
     results, meter_error = None, None
     completion_attempted = False
     try:
-        with _writer():
+        with _bookkeeping_writer():
             results = _decide_batch_inner(candidates, library, registration, replacement=replacement,
                 attempt=(started, attempt_id), pending=pending, published=published)
             completion_attempted = True
-            _append(_interval_journal(interval_id), "replacement_attempt", opening | {
+            _write(_acquire_interval(interval_id), "replacement_attempt", opening | {
                 "attempt": attempt_id, "validation_s": _interval_elapsed(opening)})
-            _append(_interval_journal(interval_id), "registration_meter_closed", opening | {
+            _write(_acquire_interval(interval_id), "registration_meter_closed", opening | {
                 "state": "assessed", "attempt": attempt_id, "validation_s": _interval_elapsed(opening)})
             if replacement and pending:
-                _validation_total(registration, attempt_id)
+                _reconcile_validation(registration, attempt_id)
             for index, ident in enumerate(candidate_ids):
                 if ident not in pending:
                     continue
                 answer, frozen, data = pending[ident]
                 try:
-                    total = (_validation_total(registration, attempt_id) + _interval_elapsed(opening)
+                    total = (_reconcile_validation(registration, attempt_id) + _interval_elapsed(opening)
                              + _endpoint_allowance(opening))
                     active = _final_replacement_cost(data, frozen.replacement, total)
                     active["replacement"]["state"] = "active"
-                    receipt = _append(_journal(), "replacement_state", {
+                    receipt = _write(_gate_journal(), "replacement_state", {
                         "state": "active", "entry_id": answer.entry_id, "registration": registration,
                         "attempt": attempt_id, "candidate_id": ident,
                         "pending_receipt": digest(data["replacement"]), "report": active})
-                    _validation_total(registration, attempt_id)
+                    _reconcile_validation(registration, attempt_id)
                     receipts.append(receipt)
                 except ValueError as error:
                     answer = replace(answer, verdict="refuse", reasons=(str(error),))
@@ -1426,19 +1642,19 @@ def _decide_batch(candidates, library, registration, *, replacement):
         can_close = True
         if not completion_attempted:
             try:
-                _append(_interval_journal(interval_id), "replacement_attempt", opening | {
+                _write(_acquire_interval(interval_id), "replacement_attempt", opening | {
                     "attempt": attempt_id, "validation_s": _interval_elapsed(opening)})
             except Exception as error:
                 meter_error = type(error).__name__
         if meter_error is not None:
             try:
-                _endpoint_append(_interval_journal(interval_id), "registration_meter_failure", opening | {
+                _endpoint_append(_acquire_interval(interval_id), "registration_meter_failure", opening | {
                     "attempt": attempt_id, "error_type": meter_error})
             except Exception:
                 can_close = False
         try:
             if replacement and pending and results is not None:
-                total = (_validation_total(registration, attempt_id) + _interval_elapsed(opening)
+                total = (_reconcile_validation(registration, attempt_id) + _interval_elapsed(opening)
                          + _endpoint_allowance(opening))
                 for index, ident in enumerate(candidate_ids):
                     if ident not in pending:
@@ -1461,13 +1677,18 @@ def _decide_batch(candidates, library, registration, *, replacement):
             if not can_close:
                 raise ValueError("registration journal requires owner cost recovery")
             ended, wall_end = time.monotonic(), time.time()
-            elapsed = ended - started
+            elapsed = _interval_elapsed(opening)
             if not math.isfinite(elapsed) or elapsed < 0:
                 raise ValueError("registration clock requires owner cost recovery")
-            _endpoint_append(_interval_journal(interval_id), "registration_closed", opening | {
+            journal = _acquire_interval(interval_id)
+            close_started = time.monotonic()
+            close = _endpoint_append(journal, "registration_closed", opening | {
                 "state": "closed", "attempt": attempt_id, "validation_s": elapsed,
                 "monotonic_end": ended, "wall_end": wall_end,
                 "candidate_ids": candidate_ids, "activation_receipts": receipts})
+            if replacement:
+                _confirm_interval(journal, close, close_latency_s=time.monotonic() - close_started,
+                                  pending=pending.values() if receipts else ())
         except Exception:
             _interval_failure(interval_id, opening, attempt_id)
             if replacement and results is not None:
@@ -1502,7 +1723,7 @@ def _decide_batch_inner(candidates, library, registration, *, replacement, attem
             reservation = ""
             try:
                 if replacement:
-                    _validation_total(registration, attempt[1])
+                    _reconcile_validation(registration, attempt[1])
                 _look_available(registration)  # A spent split never reaches the oracle again.
                 frozen = _load(registration, candidate, library, True) if replacement else _load(registration, candidate, library)
                 if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:
@@ -1512,7 +1733,7 @@ def _decide_batch_inner(candidates, library, registration, *, replacement, attem
                 index, reservation = _spend(registration, candidate, attempt[1])
                 if replacement:
                     answer, evidence, own, data = assess(candidate, library.list(), frozen, index,
-                        prior_validation_s=_validation_total(registration, attempt[1]), validation_started=attempt[0])
+                        prior_validation_s=_reconcile_validation(registration, attempt[1]), validation_started=attempt[0])
                 else:
                     answer, evidence, own, data = assess(candidate, library.list(), frozen, index)
                 evaluated[candidate.candidate_id] = (answer, evidence, own, frozen, data)
@@ -2115,7 +2336,7 @@ def _assess_replacement(candidate, entries, frozen, reuse_index, *, prior_valida
     savings = [(rows[o.case.case_id].teacher_s * study.teacher_weight * (1 - study.shadow_rate)
                 if q != "abstain" else 0.) - c * study.cpu_weight - rows[o.case.case_id].maintenance_delta_s
                for o, q, c in zip(frozen.acceptance, all_own, serving)]
-    validation_s = prior_validation_s + max(0., time.monotonic() - started) + 2 * _append_deadline(frozen.registration_sha256)
+    validation_s = prior_validation_s + _assessment_elapsed(started) + 2 * _append_deadline(frozen.registration_sha256)
     cost_result = _replacement_cost(study.fixed_new_s - study.fixed_base_s + validation_s * study.cpu_weight,
                                     _cluster_differences(frozen.acceptance, rows, savings),
                                     value_bounds=study.task_saving_bounds)

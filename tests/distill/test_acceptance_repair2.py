@@ -271,11 +271,14 @@ def test_tail_overrun_requires_cost_recovery_before_retry(sample, monkeypatch, w
                    for row in g._journal().entries())
     second = g.decide_replacement(candidate, Library(), frozen.registration_sha256)
     assert second.verdict in {"refuse", "block"}, second.reasons
-    assert "cumulative cost" in " ".join(second.reasons)
+    assert "cost" in " ".join(second.reasons)
+    if work == "completion_append":
+        assert any(d["latency_s"] == 20000. for row in g._journal().entries()
+                   for d in row["body"].get("bookkeeping", []))
 
 
 def test_activation_follows_completed_outer_meter_and_final_cost(sample, monkeypatch):
-    # Interval contract: authority waits for the final close after activation and lease release.
+    # Authority waits for a returned confirmation after activation and lease release.
     from contextlib import contextmanager
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
     published = []
@@ -317,8 +320,9 @@ def test_activation_follows_completed_outer_meter_and_final_cost(sample, monkeyp
         if kind == "registration_closed":
             closed.append(result)
             assert body["activation_receipts"] == activated
-            assert body["validation_s"] == clock[0] == 1.75
-            assert g._replacement_authorized(entry)
+            assert clock[0] == 1.75
+            assert body["validation_s"] == .5
+            assert not g._replacement_authorized(entry)
         return result
     monkeypatch.setattr(g, "_append", activate)
     answer = g.decide_replacement(candidate, Library(), frozen.registration_sha256)
@@ -329,7 +333,9 @@ def test_activation_follows_completed_outer_meter_and_final_cost(sample, monkeyp
     assert g._replacement_authorized(entry)
     assert g._active([entry]) == [entry]
     total = g._validation_total(frozen.registration_sha256, None)
-    assert total == clock[0] + 10. == 11.75
+    assert total == 10.5
+    assert any(d["latency_s"] == .75 for row in g._journal().entries()
+               for d in row["body"].get("bookkeeping", []))
     receipt = next(row["body"] for row in g._journal().entries() if row["id"] == activated[0])
     replacement = receipt["report"]["replacement"]
     reconciled = g._final_replacement_cost(receipt["report"], frozen.replacement, total)["replacement"]
