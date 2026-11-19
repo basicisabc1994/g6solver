@@ -19,6 +19,8 @@ from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.workforce import mutation_check, repo_tests
 
+from .cost_ledger import _id, consume_resources
+from .graph_records import CostVector
 from .records import Model, Record, Sha256
 
 PROBE_NAMES_V2 = frozenset({"kill_set.v2", "discriminates_at_base.v2"})
@@ -60,6 +62,12 @@ class ProbeTemplateInstance(Model):
         return value
 
 
+DEFAULT_PROBE_INSTANCES = (
+    ProbeTemplateInstance(template="kill_set.v2", bindings={}),
+    ProbeTemplateInstance(template="discriminates_at_base.v2", bindings={}),
+)
+
+
 class ProbeBudget(Model):
     wall_s: Annotated[float, Field(gt=0, le=180)]
     probe_runs: Annotated[int, Field(strict=True, ge=0, le=512)]
@@ -99,6 +107,11 @@ class ProbeInput(Model):
     changed_lines: tuple[Count, ...] = Field(min_length=1, max_length=4096)
     base_implementation: str | None = Field(default=None, max_length=131072)
     new_tests: dict[str, str] | None = None
+
+    @classmethod
+    def from_case(cls, case):
+        """Copy explicit CaseRecord program inputs without inferring a base."""
+        return cls(files=dict(case.files), target=case.target, changed_lines=case.changed_lines)
 
     @model_validator(mode="after")
     def paths(self):
@@ -208,6 +221,7 @@ def _run_probe(instance, before, after, *, split, probe_input, workspace, cost_b
         raise ValueError("sealed custody cannot be an execution workspace")
     observations, old_kills, new_kills = [], set(), set()
     settled = 0
+    execution_id = _id()
     bindings = instance.bindings
     fixed = inputs.files[inputs.target]
 
@@ -236,8 +250,9 @@ def _run_probe(instance, before, after, *, split, probe_input, workspace, cost_b
         remaining = int(deadline - time.monotonic())
         if len(observations) >= budget.probe_runs or remaining < 1:
             refused()
-        raw = _stage_run(inputs, implementation, suite, workspace=workspace, timeout_s=min(20, remaining),
-                         python=python, deadline=deadline)
+        with consume_resources(CostVector(probe_runs=1), execution_id=execution_id, child_process=True):
+            raw = _stage_run(inputs, implementation, suite, workspace=workspace, timeout_s=min(20, remaining),
+                             python=python, deadline=deadline)
         check_time()
         isolation = raw.get("isolation")
         if not isinstance(isolation, dict) or not isolation.get("backend") or isolation.get("network") is not False:
