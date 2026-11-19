@@ -253,18 +253,16 @@ def _tier2(monkeypatch, second, replay=lambda rel: {"verdict": "not_run", "said"
     'output': '', 'rootdir': '', 'test_outcomes': None,
     'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
     'omitted_ids': []}, spend=False):
-    """The stated checks pass; the tests that touch the changed module give ``second`` (with ``spend``, after the
-    whole time they were given, so the review's time budget is spent whatever the set-up took); each replay at the
-    base commit and on the patch gives ``replay(file)``."""
-    import time
-
+    """The stated checks pass; the tests that touch the changed module give ``second`` (with ``spend``, no check
+    time remains once that run returns, whatever the set-up took); each replay at the base commit and on the patch
+    gives ``replay(file)``."""
     def execute(root, ids, *, timeout_s, change=None, **_):
         if change is not None:
             return {rel: replay(rel) for rel in ids}
         if all("::" in node for node in ids):
             return result(ids)
         if spend:
-            time.sleep(timeout_s + 0.2)
+            monkeypatch.setattr(patch_review, "_left", lambda deadline: 0)
         return second
 
     monkeypatch.setattr(patch_review, "_execute", execute)
@@ -335,7 +333,9 @@ def test_the_copy_over_its_cap_is_insufficient_evidence(tmp_path, monkeypatch):
 def test_the_time_budget_spent_before_the_replay_is_insufficient_evidence(tmp_path, monkeypatch):
     root = _touched(tmp_path)
     _tier2(monkeypatch, FAILING, spend=True)
-    got = review_patch(root, task="Repair add.", requirements=STATED, timeout_s=5)
+    # db861331 reserves closing work before any checks. Allow setup to finish;
+    # the tier-2 fixture then spends the checks' budget before the replay.
+    got = review_patch(root, task="Repair add.", requirements=STATED, timeout_s=120)
     found = [r["detail"] for r in got["assessment"]["reasons"] if r["code"] == "derived_test_not_compared"]
     assert found and "time budget was spent" in found[0], got["assessment"]["reasons"]
     assert got["assessment"]["outcome"] == "insufficient_evidence"

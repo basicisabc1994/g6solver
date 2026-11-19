@@ -135,16 +135,17 @@ class Tiers:
 class Stage:
     """Stands in for each proposed check's run (``verification_search._run_check``): ``outcomes`` maps a check's text
     to what its run on the patch and at the base commit gives ("passed", "failed", "error", or a recorded result).
-    Records each run asked for; ``advance`` seconds pass on G6's clock with each run."""
+    Records each run asked for; ``advance`` seconds pass on G6's clock with each run, or its allotted timeout when
+    ``spend_run_budget`` is set."""
 
-    def __init__(self, monkeypatch, outcomes, *, advance=0.0):
+    def __init__(self, monkeypatch, outcomes, *, advance=0.0, spend_run_budget=False):
         self.calls: list[tuple[str, bool, int]] = []
         clock = [verification_search._clock()]
         monkeypatch.setattr(verification_search, "_clock", lambda: clock[0])
 
         def run_check(change, placed, source, node, *, at_base, timeout_s):
             self.calls.append((node, at_base, timeout_s))
-            clock[0] += advance
+            clock[0] += timeout_s if spend_run_budget else advance
             spec = outcomes[source]["base" if at_base else "patch"]
             if isinstance(spec, dict):
                 return spec
@@ -617,8 +618,10 @@ def test_a_change_check_that_failed_on_the_patch_keeps_its_failure_when_the_base
     """Review 1: the time out override applies only where the base run would have decided the result."""
     (repo / "calc.py").write_text(INCOMPLETE)
     Tiers(monkeypatch)
-    stage = Stage(monkeypatch, {NEGATIVE["source"]: {"patch": "failed", "base": "passed"}}, advance=10.0)
-    got = review(repo, timeout_s=12, proposed_checks=[NEGATIVE])
+    # db861331 reserves closing work, so a fixed 12 s review may never reach this
+    # stage. Spend the patch run's allotted time, leaving no budget for the base.
+    stage = Stage(monkeypatch, {NEGATIVE["source"]: {"patch": "failed", "base": "passed"}}, spend_run_budget=True)
+    got = review(repo, timeout_s=60, proposed_checks=[NEGATIVE])
     found = _activity(got, "c-neg")
     assert found["result"] == "unconfirmed_failure", found
     assert found["runs"][1]["result"] == "skipped" and "time" in found["runs"][1]["reason"]
