@@ -155,3 +155,26 @@ recheck, HTTP attempts, SDK handoff), `host_models.py` (after command/environmen
 preparation), `consent_callers.py` (early checks and direct SDK resources), and
 `cloud_consent.py` (capture expiry and admission-basis recheck). No certificate,
 issuance hash or certificate manifest changes belong to this repair.
+
+## Repair 3: conservative send census and SDK retries
+
+The census discovers transport primitives throughout every source module,
+including aliased HTTP helpers, SDK create/stream methods, process launchers
+with arbitrary arguments and subprocess/os spawns. Computed executables remain
+visible and need explicit reviewed dispositions. Non-model tool launches and
+generic transport forwarding sites have named dispositions with exact call
+counts and reviewed AST-body pins. Changing a computed program invalidates its
+disposition; a new site cannot silently inherit an owner-name exclusion.
+
+Only direct gate statements and direct context-manager entries establish
+authority in the structural walk. Conditional expressions, short-circuiting,
+comprehensions, lambdas, defaults and uncovered branches cannot establish it.
+Shared gate helpers are checked at their continuations; the process helper's
+documented local inspection path is outside the model-send analysis.
+
+Both Anthropic clients G6 constructs need `max_retries=0`: the SDK's own
+retries otherwise resend after G6's gate. A real SDK with an in-memory HTTP
+transport reproduces that risk without network traffic. The study constructor
+sets the option directly; the bound `core/llm.py` constructor change remains
+a proposed issuance hunk until the lead applies the batch. G6's existing
+retry/fallback paths continue to re-enter the backend's gate.
