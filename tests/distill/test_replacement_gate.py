@@ -55,6 +55,7 @@ def study(sample, **updates):
     rows = [{"case_id": o.case.case_id, "repository": o.case.unit_id,
              "teacher_verdict": "concern" if o.label == "positive" else "no_concern",
              "teacher_s": 10., "maintenance_delta_s": .01} for o in (*frozen.acceptance, *frozen.monitor)]
+    updates = {"scope": [], "task_saving_bounds": (-2., 12.)} | updates
     return g.ReplacementStudy(teacher="c" * 64, candidate_id=sample[1].candidate_id,
                               registration_sha256=frozen.registration_sha256,
                               shadow_seed="e" * 64,
@@ -63,7 +64,12 @@ def study(sample, **updates):
 
 def replacement_sample(sample, monkeypatch, **updates):
     _, candidate, frozen, _ = sample
-    receipt = study(sample, **updates)
+    def independent(group):
+        return tuple(replace(o, case=o.case.model_copy(update={"unit_id": o.case.unit_id + f"-repo-{i}"}))
+                     if i else o for label in ("positive", "negative") for i in range(3)
+                     for o in group if o.label == label)
+    frozen = replace(frozen, acceptance=independent(frozen.acceptance), monitor=independent(frozen.monitor))
+    receipt = study((sample[0], candidate, frozen, sample[3]), **updates)
     def labelled(o):
         return replace(o, oracle_result={"case_id": o.case.case_id,
             "label": o.label, "reason": "known_wrong_witness" if o.label == "positive" else "negative",
@@ -105,13 +111,16 @@ def test_fn_breach_refuses(sample, monkeypatch):
     (10, .001, "break_even"), (10, 1, "break_even"), (10, 0, "never"), (10, -1, "never"),
     (-10, -1, "crossover"), (-1000, -1, "crossover"), (0, 0, "dominates"), (0, -1, "never")])
 def test_cost_upper_bound_decides_every_sign_case(fixed, saving, kind):
-    result = g._replacement_cost(fixed, [saving] * 100)
+    limit = abs(saving) + 1
+    result = g._replacement_cost(fixed, [saving] * 100, value_bounds=(-limit, limit))
     assert result["kind"] == kind
-    assert result["admissible"] == (fixed - 1000 * saving < 0)
+    assert result["point"] == pytest.approx(fixed - 1000 * saving)
+    assert result["upper_95"] > result["point"]
+    assert result["admissible"] == (result["upper_95"] < 0)
 
 
 def test_cost_upper_bound_can_refuse_favorable_point():
-    result = g._replacement_cost(1, [-10., 10.1])
+    result = g._replacement_cost(1, [-10., 10.1] * 50, value_bounds=(-11., 11.))
     assert result["point"] < 0 < result["upper_95"]
     assert not result["admissible"]
 
@@ -183,6 +192,8 @@ def public_rig(candidate, frozen, monkeypatch):
     monkeypatch.setattr(g, "_load", lambda *a: frozen)
     monkeypatch.setattr(g, "_look_available", lambda *a: (None, 1))
     monkeypatch.setattr(g, "_spend", lambda *a: (1, "reservation"))
+    journal = g.ChainLedger()
+    monkeypatch.setattr(g, "_journal", lambda: journal)
     monkeypatch.setattr(g, "Stores", lambda: SimpleNamespace(for_model=lambda cls: SimpleNamespace(get=lambda ident: candidate)))
     monkeypatch.setattr(g.Library, "list", lambda self: [])
     monkeypatch.setattr(g, "_persist", lambda *a: pytest.fail("non-admission persisted authority"))
@@ -227,7 +238,7 @@ def test_shared_cases_cannot_inflate_coverage(sample, monkeypatch):
     candidate, frozen = replacement_sample(sample, monkeypatch)
     own_measure = g._measure
     extra = tuple(replace(o, oracle_result=o.oracle_result | {"wrong_witnesses": []},
-        case=o.case.model_copy(update={"unit_id": f"shared-{i}"})) for i, o in enumerate(frozen.acceptance[:100]))
+        case=o.case.model_copy(update={"unit_id": f"shared-{i}"})) for i, o in enumerate(frozen.acceptance[:300]))
     extra = tuple(replace(o, oracle_result=o.oracle_result | {"case_id": o.case.case_id}) for o in extra)
     rows = frozen.replacement.rows + [g.TeacherObservation(case_id=o.case.case_id, repository=o.case.unit_id,
         teacher_verdict="concern", teacher_s=10, maintenance_delta_s=0) for o in extra]
@@ -245,7 +256,7 @@ def test_abstention_falls_back_to_teacher_in_whole_graph(sample, monkeypatch):
     candidate, frozen = replacement_sample(sample, monkeypatch)
     changed = []
     for i, row in enumerate(frozen.replacement.rows):
-        changed.append(row.model_copy(update={"teacher_verdict": "no_concern" if i < 100 and i % 5 == 1 else row.teacher_verdict}))
+        changed.append(row.model_copy(update={"teacher_verdict": "no_concern" if i < 300 and i % 5 == 1 else row.teacher_verdict}))
     frozen = replace(frozen, replacement=frozen.replacement.model_copy(update={"rows": changed}))
     original = g._measure
     def misses(c, observations, entries):

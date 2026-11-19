@@ -17,7 +17,7 @@ import re
 import statistics
 import time
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -149,6 +149,7 @@ class ReplacementStudy(Model):
     fixed_base_s: Nonnegative
     rows: list[TeacherObservation]
     scope: list[FeaturePredicate] | None = None
+    task_saving_bounds: tuple[float, float] | None = None
 
 
 class FieldOutcome(Model):
@@ -246,7 +247,27 @@ def _chronology(anchor, registration, candidate):
         raise ValueError("concept commit does not bind this concept")
 
 
-def _load(registration_id, candidate, library) -> EvaluationSet:
+def _registered_replacement(frozen, registration_id, candidate, custody, *, required):
+    from g6.distill.held_out.registration_gate import strict_json
+
+    replacement = None
+    if "replacement_protocol_sha256" in frozen.study:
+        ident = frozen.study["replacement_protocol_sha256"]
+        if not isinstance(ident, str) or not re.fullmatch(r"[0-9a-f]{64}", ident):
+            raise ValueError("invalid registered replacement digest")
+        data = strict_json(_plain(custody / "replacement" / f"{candidate.candidate_id}.json", custody).read_bytes())
+        replacement = ReplacementStudy.model_validate(data)
+        protocol = replacement.model_dump(mode="json", include={"teacher", "teacher_model", "topology",
+            "normalization", "horizon", "shadow_rate", "shadow_seed", "scope", "cpu_weight", "teacher_weight",
+            *({"task_saving_bounds"} if required or replacement.task_saving_bounds is not None else set())})
+        if digest(protocol) != ident or replacement.registration_sha256 != registration_id:
+            raise ValueError("registered replacement protocol changed")
+    if required:
+        _replacement_scope(candidate, replacement)
+    return replacement
+
+
+def _load(registration_id, candidate, library, replacement_mode=False) -> EvaluationSet:
     from g6.distill.held_out import oracle, sealed_gate
     from g6.distill.held_out.case_gate import CaseRecord
     from g6.distill.held_out.registration_gate import read_registration, strict_json
@@ -272,6 +293,7 @@ def _load(registration_id, candidate, library) -> EvaluationSet:
     if frozen.study.get("acceptance_code_sha256") != _judging_digest():
         raise ValueError("registration acceptance judging code digest changed")
     custody = state_path("distill", "held_out")
+    replacement = _registered_replacement(frozen, registration_id, candidate, custody, required=True) if replacement_mode else None
     workspace = state_path("distill", "evaluation-work")
     workspace.mkdir(parents=True, exist_ok=True)
     controls = tuple(frozen.study["acceptance_controls"])
@@ -326,17 +348,8 @@ def _load(registration_id, candidate, library) -> EvaluationSet:
             groups[name] = [replace(o, case=ProbeCase(o.case, inputs[o.case.case_id]))
                             if o.case.case_id in inputs else o for o in group]
         observations = tuple(groups["acceptance"])
-    replacement = None
-    if "replacement_protocol_sha256" in frozen.study:
-        ident = frozen.study["replacement_protocol_sha256"]
-        if not isinstance(ident, str) or not re.fullmatch(r"[0-9a-f]{64}", ident):
-            raise ValueError("invalid registered replacement digest")
-        data = strict_json(_plain(custody / "replacement" / f"{candidate.candidate_id}.json", custody).read_bytes())
-        replacement = ReplacementStudy.model_validate(data)
-        protocol = replacement.model_dump(mode="json", include={"teacher", "teacher_model", "topology",
-            "normalization", "horizon", "shadow_rate", "shadow_seed", "scope", "cpu_weight", "teacher_weight"})
-        if digest(protocol) != ident or replacement.registration_sha256 != registration_id:
-            raise ValueError("registered replacement protocol changed")
+    if not replacement_mode:
+        replacement = _registered_replacement(frozen, registration_id, candidate, custody, required=False)
     return EvaluationSet(registration_id, digest([o.case.case_id for o in observations]), observations,
                          tuple(groups["monitor"]), tuple(groups["regression"]), controls, replacement, frozen.policy)
 
@@ -453,6 +466,11 @@ def _normal_form(source):
     tree.body = kept
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            bindings = {a.asname or (a.name.split(".")[0] if isinstance(node, ast.Import) else a.name)
+                        for a in node.names}
+            if "*" in bindings or bindings & (constants.keys() | names.keys()):
+                raise ValueError("normalised name shadowed by import")
         if isinstance(node, (ast.Global, ast.Nonlocal, ast.ClassDef, ast.Lambda, ast.AsyncFunctionDef)):
             raise ValueError("dynamic normalisation form")
         if isinstance(node, ast.FunctionDef) and node not in kept:
@@ -830,6 +848,39 @@ def _spend(registration, candidate):
     return index, reservation
 
 
+@contextmanager
+def _attempt_meter(registration, candidate, phase):
+    started = time.monotonic()
+    body = {"registration": registration, "candidate_id": candidate.candidate_id, "phase": phase}
+    attempt = _append(_journal(), "replacement_attempt_start", body)
+    try:
+        yield started, attempt
+    finally:
+        elapsed = time.monotonic() - started
+        if not math.isfinite(elapsed) or elapsed < 0:
+            raise ValueError("invalid replacement attempt duration")
+        _append(_journal(), "replacement_attempt", body | {"attempt": attempt, "validation_s": elapsed})
+
+
+def _validation_total(registration, active):
+    rows = [r for r in _journal().entries() if r["body"].get("registration") == registration]
+    starts = {r["id"]: r["body"] for r in rows if r["kind"] == "replacement_attempt_start"}
+    finished = {}
+    for row in rows:
+        if row["kind"] != "replacement_attempt":
+            continue
+        body = row["body"]
+        ident, elapsed = body["attempt"], body["validation_s"]
+        if ident not in starts or ident in finished or not math.isfinite(elapsed) or elapsed < 0:
+            raise ValueError("replacement attempt cost history invalid")
+        finished[ident] = elapsed
+    if starts.keys() - finished.keys() - {active}:
+        raise ValueError("unfinished replacement attempt requires owner cost recovery")
+    if sum(r["kind"] == "reserve" for r in rows) > sum(s["phase"] == "assessment" for s in starts.values()):
+        raise ValueError("unmetered earlier evaluation requires owner cost recovery")
+    return math.fsum(finished.values())
+
+
 def _record(answer, reservation=""):
     _append(_journal(), "decision", asdict(answer) | {"reservation": reservation, "gate_version": VERSION})
     return answer
@@ -883,7 +934,7 @@ def _persist(candidate, answer, evidence, own, frozen, data, library):
                 stream.write(text)
     now = datetime.now(timezone.utc).isoformat()
     certificate = {"gate": VERSION, "candidate": candidate.candidate_id, "report": _save_report(data),
-                   "authority": "A1", "scope": "checked on the registered held-out cases"}
+                   "authority": "A1", "scope": "checked on the registered held-out cases; not proof"}
     replacement = data.get("replacement")
     fields = {} if replacement is None else {
         "replacement": "R", "replacement_scope": replacement["scope"], "teacher": replacement["teacher"],
@@ -946,52 +997,59 @@ def _decide_batch(candidates, library, registration, *, replacement):
             # No evidence-bearing callback, configurable runner or external report.
             for candidate in candidates:
                 reservation = ""
-                try:
-                    _look_available(registration)  # A spent split never reaches the oracle again.
-                    frozen = _load(registration, candidate, library)
-                    if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:
-                        raise ValueError("candidate differs from persisted proposal")
-                    if replacement and frozen.replacement is None:
-                        raise ValueError("registered replacement traces required")
-                    index, reservation = _spend(registration, candidate)
-                    answer, evidence, own, data = assess(candidate, library.list(), frozen, index)
-                    evaluated[candidate.candidate_id] = (answer, evidence, own, frozen, data)
-                except Inconclusive as error:
-                    answer = AcceptanceDecision("inconclusive", (str(error),), candidate.candidate_id)
-                except (ValueError, KeyError, FileNotFoundError) as error:
-                    # Do not echo corpus bodies, subprocess stderr or model output.
-                    reason = str(error) if isinstance(error, ValueError) else "registered input missing"
-                    verdict = "refuse" if reservation or "split spent" in reason else "block"
-                    answer = AcceptanceDecision(verdict, (reason,), candidate.candidate_id)
-                results[candidate.candidate_id] = (answer, reservation)
-                # Close the reservation before spending the next look. A later
-                # activation is a separate append-only decision row.
-                _record(replace(answer, verdict="evaluated") if answer.verdict in {"admit_probation", "admit_scoped"}
-                        else answer, reservation)
+                with _attempt_meter(registration, candidate, "assessment") if replacement else nullcontext() as attempt:
+                    try:
+                        _look_available(registration)  # A spent split never reaches the oracle again.
+                        frozen = _load(registration, candidate, library, True) if replacement else _load(registration, candidate, library)
+                        if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:
+                            raise ValueError("candidate differs from persisted proposal")
+                        if replacement and frozen.replacement is None:
+                            raise ValueError("registered replacement traces required")
+                        index, reservation = _spend(registration, candidate)
+                        if replacement:
+                            answer, evidence, own, data = assess(candidate, library.list(), frozen, index,
+                                prior_validation_s=_validation_total(registration, attempt[1]), validation_started=attempt[0])
+                        else:
+                            answer, evidence, own, data = assess(candidate, library.list(), frozen, index)
+                        evaluated[candidate.candidate_id] = (answer, evidence, own, frozen, data)
+                    except Inconclusive as error:
+                        answer = AcceptanceDecision("inconclusive", (str(error),), candidate.candidate_id)
+                    except (ValueError, KeyError, FileNotFoundError) as error:
+                        # Do not echo corpus bodies, subprocess stderr or model output.
+                        reason = str(error) if isinstance(error, ValueError) else "registered input missing"
+                        verdict = "refuse" if reservation or "split spent" in reason else "block"
+                        answer = AcceptanceDecision(verdict, (reason,), candidate.candidate_id)
+                    results[candidate.candidate_id] = (answer, reservation)
+                    # Close the reservation before spending the next look. A later
+                    # activation is a separate append-only decision row.
+                    _record(replace(answer, verdict="evaluated") if answer.verdict in {"admit_probation", "admit_scoped"}
+                            else answer, reservation)
             accepted = _bh(((v[0].p_value, ident) for ident, v in evaluated.items()), len(candidates))
             for candidate in sorted(candidates, key=lambda c: c.candidate_id):
                 ident = candidate.candidate_id
                 if ident not in evaluated:
                     continue
                 answer, evidence, own, frozen, data = evaluated[ident]
-                try:
-                    if ident not in accepted:
-                        raise ValueError("batch Benjamini-Hochberg bar not met")
-                    # Earlier members of this batch may already have changed L_t.
-                    if replacement:
-                        answer, evidence, own, data = _assess_replacement(candidate, library.list(), frozen,
-                            evidence.reuse_index, prior_validation_s=data["replacement"]["validation_s"])
-                    else:
-                        answer, evidence, own, data = assess(candidate, library.list(), frozen, evidence.reuse_index)
-                    if answer.p_value > .05 * len(accepted) / len(candidates):
-                        raise ValueError("batch bar not met after library changed")
-                    answer = _persist(candidate, answer, evidence, own, frozen, data, library)
-                except Inconclusive as error:
-                    answer = replace(answer, verdict="inconclusive", reasons=(str(error),))
-                except ValueError as error:
-                    answer = replace(answer, verdict="refuse", reasons=(str(error),))
-                results[ident] = (answer, "")
-                _record(answer)
+                with _attempt_meter(registration, candidate, "activation") if replacement else nullcontext() as attempt:
+                    try:
+                        if ident not in accepted:
+                            raise ValueError("batch Benjamini-Hochberg bar not met")
+                        # Earlier members of this batch may already have changed L_t.
+                        if replacement:
+                            answer, evidence, own, data = _assess_replacement(candidate, library.list(), frozen,
+                                evidence.reuse_index, prior_validation_s=_validation_total(registration, attempt[1]),
+                                validation_started=attempt[0])
+                        else:
+                            answer, evidence, own, data = assess(candidate, library.list(), frozen, evidence.reuse_index)
+                        if answer.p_value > .05 * len(accepted) / len(candidates):
+                            raise ValueError("batch bar not met after library changed")
+                        answer = _persist(candidate, answer, evidence, own, frozen, data, library)
+                    except Inconclusive as error:
+                        answer = replace(answer, verdict="inconclusive", reasons=(str(error),))
+                    except ValueError as error:
+                        answer = replace(answer, verdict="refuse", reasons=(str(error),))
+                    results[ident] = (answer, "")
+                    _record(answer)
             return tuple(results[c.candidate_id][0] for c in candidates)
     except (ValueError, FileNotFoundError) as error:
         reason = str(error) if isinstance(error, ValueError) else "evaluator input unavailable"
@@ -1262,40 +1320,108 @@ def _lower(entry_id, library, *, action, reason, person):
         return AcceptanceDecision("refuse", (str(error) if isinstance(error, ValueError) else "entry unavailable",))
 
 
-def _replacement_cost(fixed_difference, savings):
-    if (not savings or not math.isfinite(fixed_difference)
-            or any(not math.isfinite(s) for s in savings)):
+@dataclass(frozen=True)
+class _ClusterValue:
+    value: float
+    repository: str
+    weight: float = 1.
+
+
+def _kl_upper(point, budget):
+    if point >= 1:
+        return 1.
+    if point <= 0:
+        return -math.expm1(-budget)
+    low, high = point, 1.
+    for _ in range(60):
+        middle = (low + high) / 2
+        if middle == 1.:
+            break
+        divergence = point * math.log(point / middle) + (1 - point) * math.log((1 - point) / (1 - middle))
+        if divergence <= budget:
+            low = middle
+        else:
+            high = middle
+    return high
+
+
+def _margin_bound(values, margin, alpha, *, value_bounds=(-1., 1.)):
+    """Unit-weighted mean with repository sandwich and bounded tail intervals.
+
+    Repository sizes and value limits are fixed before observing outcomes.
+    For independent clusters, bounded Chernoff tails remain valid with unequal
+    weights: their KL budget is max(cluster weight) * log(1 / tail level).
+    Split positive and negative parts share the tail level by a union bound.
+    The sandwich interval can only widen the bounded interval.
+    """
+    samples = [v if isinstance(v, _ClusterValue) else _ClusterValue(v, str(i)) for i, v in enumerate(values)]
+    lo, hi = value_bounds
+    if (not samples or not all(math.isfinite(v) for v in (lo, hi, margin)) or not lo < hi
+            or not 0 < alpha < .5 or any(not math.isfinite(s.value) or not lo <= s.value <= hi
+            or not math.isfinite(s.weight) or s.weight <= 0 for s in samples)):
+        raise ValueError("finite measurements within registered bounds required")
+    total = math.fsum(s.weight for s in samples)
+    groups = {}
+    for sample in samples:
+        groups.setdefault(sample.repository, []).append(sample)
+    m = len(groups)
+    if m < EvidencePolicy().min_cases:
+        raise Inconclusive("registered minimum independent repositories unavailable")
+    clusters = []
+    for group in groups.values():
+        mass = math.fsum(s.weight for s in group)
+        clusters.append((mass / total, math.fsum(s.weight * s.value for s in group) / mass))
+    point = math.fsum(w * v for w, v in clusters)
+    se = math.sqrt(m / (m - 1) * math.fsum((w * (v - point)) ** 2 for w, v in clusters))
+    max_weight = max(w for w, _ in clusters)
+    positive_scale, negative_scale = max(hi, 0.), max(-lo, 0.)
+    positive = math.fsum(w * max(v, 0.) for w, v in clusters) / positive_scale if positive_scale else 0.
+    negative = math.fsum(w * max(-v, 0.) for w, v in clusters) / negative_scale if negative_scale else 0.
+
+    def limits(level):
+        budget = max_weight * math.log(2 / level)
+        upper = positive_scale * _kl_upper(positive, budget) - negative_scale * (1 - _kl_upper(1 - negative, budget))
+        lower = positive_scale * (1 - _kl_upper(1 - positive, budget)) - negative_scale * _kl_upper(negative, budget)
+        z = statistics.NormalDist().inv_cdf(1 - level)
+        return max(lo, min(lower, point - z * se)), min(hi, max(upper, point + z * se))
+
+    lower, upper = limits(alpha)
+    p = 1.
+    if margin > point and limits(.499999)[1] <= margin:
+        low, high = 1e-15, .499999
+        for _ in range(48):
+            middle = (low + high) / 2
+            if limits(middle)[1] <= margin:
+                high = middle
+            else:
+                low = middle
+        p = high
+    return {"point": point, "lower": lower, "upper": upper, "p_value": p,
+            "repositories": m, "margin": margin, "max_repository_weight": max_weight,
+            "cluster_se": se, "value_bounds": [lo, hi]}
+
+
+def _replacement_cost(fixed_difference, savings, *, value_bounds):
+    if not math.isfinite(fixed_difference):
         raise ValueError("finite cumulative cost measurements required")
-    point = fixed_difference - 1000 * statistics.fmean(savings)
-    se = 1000 * statistics.stdev(savings) / math.sqrt(len(savings)) if len(savings) > 1 else math.inf
-    upper = point + statistics.NormalDist().inv_cdf(.95) * se
-    saving = statistics.fmean(savings)
+    samples = [v if isinstance(v, _ClusterValue) else _ClusterValue(v, str(i)) for i, v in enumerate(savings)]
+    if any(not value_bounds[0] <= s.value <= value_bounds[1] for s in samples):
+        raise ValueError("cumulative cost measurements exceed registered task saving bounds")
+    interval = _margin_bound([replace(s, value=-s.value) for s in samples], -fixed_difference / 1000, .05,
+                             value_bounds=(-value_bounds[1], -value_bounds[0]))
+    saving = -interval["point"]
+    point = fixed_difference + 1000 * interval["point"]
+    upper = fixed_difference + 1000 * interval["upper"]
     kind = ("dominates" if fixed_difference <= 0 <= saving else
             "break_even" if fixed_difference > 0 and saving > 0 else
             "crossover" if fixed_difference < 0 and saving < 0 else "never")
     return {"horizon": 1000, "fixed_difference": fixed_difference, "per_task_saving": saving,
-            "point": point, "upper_95": upper, "admissible": upper < 0,
+            "point": point, "upper_95": upper, "admissible": upper < 0, "interval": interval,
             "kind": kind, "crossing": fixed_difference / saving if kind in {"break_even", "crossover"} else None}
 
 
 def _cluster_differences(observations, rows, values):
-    units, repositories = {}, {}
-    for o, value in zip(observations, values):
-        key = (rows[o.case.case_id].repository, o.case.unit_id)
-        units.setdefault(key, []).append(value)
-    for (repository, _), group in units.items():
-        repositories.setdefault(repository, []).append(statistics.fmean(group))
-    return [statistics.fmean(group) for group in repositories.values()]
-
-
-def _margin_bound(values, margin, alpha):
-    if len(values) < 2:
-        raise Inconclusive("registered minimum independent repositories unavailable")
-    point = statistics.fmean(values)
-    se = statistics.stdev(values) / math.sqrt(len(values))
-    upper = point + statistics.NormalDist().inv_cdf(1 - alpha) * se
-    p = 1 - statistics.NormalDist().cdf((margin - point) / se) if se else float(point >= margin)
-    return {"point": point, "upper": upper, "p_value": p, "repositories": len(values), "margin": margin}
+    return [_ClusterValue(value, rows[o.case.case_id].repository) for o, value in zip(observations, values)]
 
 
 def _headline(observations, policy):
@@ -1312,50 +1438,76 @@ def _headline(observations, policy):
     return tuple(headline), strata
 
 
+def _error_differences(observations, rows, indices, before, proposed, expected, *, fp=False):
+    units = {}
+    for i in indices:
+        o = observations[i]
+        units.setdefault((rows[o.case.case_id].repository, o.case.unit_id), []).append((before[i], proposed[i]))
+    differences = []
+    for (repository, _), pairs in units.items():
+        old, new = zip(*pairs)
+        old_error = any(v == "concern" if fp else v != expected for v in old)
+        new_error = any(v == "concern" if fp else v != expected for v in new)
+        differences.append(_ClusterValue(float(new_error) - float(old_error), repository))
+    return differences
+
+
 def _replacement_quality(observations, rows, teacher, base, after, own, scope, alpha):
-    bounds, class_values = {}, []
-
-    def differences(indices, before, proposed, expected, *, fp=False):
-        units, repositories = {}, {}
-        for i in indices:
-            o = observations[i]
-            units.setdefault((rows[o.case.case_id].repository, o.case.unit_id), []).append((before[i], proposed[i]))
-        for (repository, _), pairs in units.items():
-            old, new = zip(*pairs)
-            old_error = any(v == "concern" if fp else v != expected for v in old)
-            new_error = any(v == "concern" if fp else v != expected for v in new)
-            repositories.setdefault(repository, []).append(float(new_error) - float(old_error))
-        return [statistics.fmean(v) for v in repositories.values()]
-
+    bounds, graph_values = {}, []
     for label, error in (("positive", "FN"), ("negative", "FP")):
         indices = [i for i, o in enumerate(observations) if o.label == label]
         if not indices:
             raise Inconclusive("registered minimum positive and negative units unavailable")
         expected = "concern" if label == "positive" else "no_concern"
-        # A positive loss is adverse for both error differences and graph quality.
-        class_values.append(differences(indices, base, after, expected))
+        values = _error_differences(observations, rows, indices, base, after, expected)
+        graph_values.extend(replace(v, weight=.5 / len(values)) for v in values)
         inside = [i for i in indices if scope[i]]
-        values = differences(inside, teacher, own, expected, fp=label == "negative")
+        values = _error_differences(observations, rows, inside, teacher, own, expected, fp=label == "negative")
+        if not values:
+            raise Inconclusive("registered minimum independent repositories unavailable")
         bounds[error] = _margin_bound(values, .02, .05)
         if bounds[error]["point"] > .02:
             raise ValueError(f"replacement {error} difference breach")
         if bounds[error]["upper"] > .02:
             raise Inconclusive(f"replacement {error} bound exceeds margin")
-    # Sum class standard errors conservatively when a repository has both labels.
-    point = .5 * sum(statistics.fmean(v) for v in class_values)
-    se = .5 * sum(statistics.stdev(v) / math.sqrt(len(v)) for v in class_values)
-    upper = point + statistics.NormalDist().inv_cdf(1 - alpha) * se
-    p = 1 - statistics.NormalDist().cdf((.03 - point) / se) if se else float(point >= .03)
-    bounds["graph_loss"] = {"point": point, "upper": upper, "p_value": p, "margin": .03}
-    if point > .03:
+    bounds["graph_loss"] = _margin_bound(graph_values, .03, alpha)
+    if bounds["graph_loss"]["point"] > .03:
         raise ValueError("whole-graph non-inferiority breach")
-    if upper > .03:
+    if bounds["graph_loss"]["upper"] > .03:
         raise Inconclusive("whole-graph non-inferiority unresolved")
-    return bounds, max(p, bounds["FN"]["p_value"], bounds["FP"]["p_value"])
+    return bounds, max(b["p_value"] for b in bounds.values())
 
 
-def _assess_replacement(candidate, entries, frozen, reuse_index, *, prior_validation_s=0.):
-    started = time.monotonic()
+def _replacement_fpr(observations, rows, base, after, name):
+    indices = [i for i, o in enumerate(observations) if o.label == "negative"]
+    values = _error_differences(observations, rows, indices, base, after, "no_concern", fp=True)
+    if not values:
+        raise Inconclusive("registered minimum monitor negatives unavailable")
+    bound = _margin_bound(values, .02, .05)
+    if bound["point"] > .02:
+        raise ValueError(f"{name} library FPR margin exceeded")
+    if bound["upper"] > .02:
+        raise Inconclusive(f"{name} library FPR margin unresolved")
+    return bound | {"diff_upper_95": bound["upper"]}
+
+
+def _replacement_scope(candidate, study):
+    if study is None:
+        raise ValueError("registered replacement traces required")
+    if study.candidate_id != candidate.candidate_id:
+        raise ValueError("replacement traces bind a different candidate")
+    if study.scope is None:
+        raise ValueError("explicit registered effective scope required")
+    if any(p not in study.scope for p in candidate.contract.applies_when):
+        raise ValueError("registered replacement scope must narrow the proposed scope")
+    limits = study.task_saving_bounds
+    if limits is None or not all(math.isfinite(v) for v in limits) or not limits[0] < limits[1]:
+        raise ValueError("registered finite task saving bounds required")
+    return study.scope
+
+
+def _assess_replacement(candidate, entries, frozen, reuse_index, *, prior_validation_s=0., validation_started=None):
+    started = time.monotonic() if validation_started is None else validation_started
     _candidate_boundary(candidate)
     policy, _ = _policy()
     if not 1 <= reuse_index <= policy.max_evaluations:
@@ -1368,9 +1520,7 @@ def _assess_replacement(candidate, entries, frozen, reuse_index, *, prior_valida
     if study.registration_sha256 != frozen.registration_sha256:
         raise ValueError("replacement traces bind a different registration")
     proposed = candidate.contract.applies_when
-    scope = proposed if study.scope is None else study.scope
-    if any(p not in scope for p in proposed):
-        raise ValueError("registered replacement scope must narrow the proposed scope")
+    scope = _replacement_scope(candidate, study)
     rows = {r.case_id: r for r in study.rows}
     if len(rows) != len(study.rows):
         raise ValueError("duplicate teacher case trace")
@@ -1424,9 +1574,7 @@ def _assess_replacement(candidate, entries, frozen, reuse_index, *, prior_valida
     if coverage.point < .10:
         raise ValueError("replacement coverage below 0.10")
     bounds, p = _replacement_quality(observations, rows, teacher, base, combined, own, inside, policy.threshold)
-    fpr = _paired(_negative_rates(observations, base), _negative_rates(observations, combined))
-    if fpr["diff_upper_95"] > .02:
-        raise ValueError("held-out library FPR margin exceeded")
+    fpr = _replacement_fpr(observations, rows, base, combined, "held-out")
     planted = {o.case.case_id: (o.label, v) for o, v in zip(observations, own)}
     if (planted.get(frozen.controls[0]) != ("positive", "concern")
             or planted.get(frozen.controls[1]) != ("negative", "no_concern")):
@@ -1441,9 +1589,7 @@ def _assess_replacement(candidate, entries, frozen, reuse_index, *, prior_valida
     _, _, _, _, monitor_base, monitor_after = measure(monitor)
     if not any(o.label == "negative" for o in monitor):
         raise Inconclusive("registered minimum monitor negatives unavailable")
-    margin = _paired(_negative_rates(monitor, monitor_base), _negative_rates(monitor, monitor_after))
-    if margin["diff_upper_95"] > .02:
-        raise ValueError("dev plus monitor library FPR margin exceeded")
+    margin = _replacement_fpr(monitor, rows, monitor_base, monitor_after, "dev plus monitor")
     # Three runs per case are measured by the gate, including failed probe time.
     serving = [statistics.fmean(all_costs[3*i:3*i+3]) for i in range(len(frozen.acceptance))]
     savings = [(rows[o.case.case_id].teacher_s * study.teacher_weight * (1 - study.shadow_rate)
@@ -1451,7 +1597,8 @@ def _assess_replacement(candidate, entries, frozen, reuse_index, *, prior_valida
                for o, q, c in zip(frozen.acceptance, all_own, serving)]
     validation_s = prior_validation_s + max(0., time.monotonic() - started)
     cost_result = _replacement_cost(study.fixed_new_s - study.fixed_base_s + validation_s * study.cpu_weight,
-                                    _cluster_differences(frozen.acceptance, rows, savings))
+                                    _cluster_differences(frozen.acceptance, rows, savings),
+                                    value_bounds=study.task_saving_bounds)
     if not cost_result["admissible"]:
         raise ValueError("cumulative cost upper bound at H is not lower")
     measured = _counts(observations, own)
