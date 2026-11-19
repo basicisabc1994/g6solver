@@ -9,7 +9,8 @@ Screens and canaries are DETECTORS of accidental copies under the fixed views in
 contamination_gate, without a claim about deliberate adversarial obfuscation by
 a party controlling the encoding. Raw-container marker and positive-probe
 incidents commit before schema/status validation. Public content commitments are
-domain-separated HMACs under the host's sealed secret.
+domain-separated HMACs under the host's sealed secret. Partition seeds stay in the
+evaluator; registrations containing a previously public raw seed are refused.
 """
 from __future__ import annotations
 
@@ -242,7 +243,8 @@ class HeldOutSlicer:
         root.mkdir(parents=True, exist_ok=True)
         if any((root / name).exists() for name in ("rule.json", "state.sqlite3", "pool.json")):
             raise HeldOutError("G6_E_RSI_ALREADY_REGISTERED")
-        rule = {"rule": RULE, "seed": seed, "pool_digest": capability.commitment("pool", [t.to_record() for t in tasks]),
+        rule = {"rule": RULE, "partition_seed_commitment": capability.commitment("partition-seed", seed),
+                "pool_digest": capability.commitment("pool", [t.to_record() for t in tasks]),
                 "detectors": list(detectors)}
         # The rule is closed before partitioning, including on an interrupted registration.
         with (root / "rule.json").open("x", encoding="utf-8") as stream:
@@ -283,7 +285,10 @@ class HeldOutSlicer:
         row = db.execute("SELECT record FROM registration").fetchone()
         if row is None:
             raise HeldOutError("G6_E_RSI_REGISTRATION_REQUIRED")
-        return json.loads(row[0])
+        record = json.loads(row[0])
+        if "seed" in record:
+            raise HeldOutError("G6_E_RSI_REGISTRATION_INVALID")
+        return record
 
     @staticmethod
     def _event(db, kind, **values):

@@ -7,7 +7,14 @@ under NFKC/casefold/escape fixed points with default-ignorables removed or space
 plus a whitespace-free view for short identity and canaries. They make no claim
 about deliberate adversarial obfuscation by a party controlling the encoding.
 Adjacent fragments carry both empty and space boundaries in a token graph;
-matching tracks at most 13 tokens, without enumerating whole-case alternatives.
+matching tracks at most 13 tokens, without enumerating whole-case alternatives
+(linear in fields, so ordinary cases with many meta fields are screened, not refused).
+Fixed views are computed per field and on the two whole-case joins (all empty,
+all space). STATED LIMIT: an escape, percent or combining sequence cut by a field
+boundary is recomposed only when every boundary of the case is of one kind; under
+mixed boundaries it is not, since such a copy is constructed rather than accidental.
+Traversal is bounded to depth 32, 16384 nodes and 1048576 raw string characters;
+crossing a bound refuses the screen, never skips it.
 """
 from __future__ import annotations
 
@@ -91,31 +98,65 @@ class ScreenReport:
         return record | {"excluded_count": self.excluded_count, "voided": self.voided}
 
 
-def _strings(value: object, *, strict=True, keys=True, _depth=0, _budget=None):
-    if _budget is None:
-        _budget = [16384, 1048576]
-    _budget[0] -= 1
-    if _depth > 32 or _budget[0] < 0:
-        raise ContaminationError("G6_E_RSI_SCREEN_LIMIT")
+@dataclass
+class _Traversal:
+    nodes: int = 16384
+    characters: int = 1048576
+    limited: bool = False
+    invalid: bool = False
+
+
+def _walk(value, state, *, depth=0, is_key=False):
+    """One leaf traversal for validation and the durable incident prepass."""
+    state.nodes -= 1
+    if depth > 32 or state.nodes < 0:
+        state.limited = True
+        return
     if isinstance(value, str):
-        _budget[1] -= len(value)
-        if _budget[1] < 0:
-            raise ContaminationError("G6_E_RSI_SCREEN_LIMIT")
-        yield value
+        remaining = max(0, state.characters)
+        state.characters -= len(value)
+        state.limited |= state.characters < 0
+        yield value[:remaining], is_key
+    elif isinstance(value, CanaryProbe):
+        rates = (getattr(value, "completion_rate", None), getattr(value, "chance_rate", None))
+        if all(_number(v) and v <= 1 for v in rates):
+            yield CanaryProbe(*rates), is_key
+        else:
+            state.invalid = True
+    elif isinstance(value, SuiteCase):
+        yield from _walk((value.case_id, value.input, value.expected, value.meta), state,
+                         depth=depth + 1, is_key=is_key)
     elif isinstance(value, Mapping):
         for key, item in value.items():
-            if keys:
-                yield from _strings(key, strict=strict, keys=keys, _depth=_depth + 1, _budget=_budget)
-            yield from _strings(item, strict=strict, keys=keys, _depth=_depth + 1, _budget=_budget)
-    elif isinstance(value, (tuple, list)):
+            if state.nodes < 0:
+                break
+            yield from _walk(key, state, depth=depth + 1, is_key=True)
+            yield from _walk(item, state, depth=depth + 1, is_key=is_key)
+    elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
         for item in value:
-            yield from _strings(item, strict=strict, keys=keys, _depth=_depth + 1, _budget=_budget)
-    elif strict and value is not None and type(value) not in (bool, int, float):
+            if state.nodes < 0:
+                break
+            yield from _walk(item, state, depth=depth + 1, is_key=is_key)
+    elif value is not None and type(value) not in (bool, int, float):
+        state.invalid = True
+
+
+def _strings(value: object, *, strict=True, keys=True):
+    state = _Traversal()
+    for leaf, is_key in _walk(value, state):
+        if isinstance(leaf, str):
+            if keys or not is_key:
+                yield leaf
+        else:
+            state.invalid = True
+    if state.limited:
+        raise ContaminationError("G6_E_RSI_SCREEN_LIMIT")
+    if strict and state.invalid:
         raise ContaminationError("G6_E_RSI_SCREEN_INVALID")
 
 
 def case_strings(case: SuiteCase) -> tuple[str, ...]:
-    return tuple(_strings((case.case_id, case.input, case.expected, case.meta)))
+    return tuple(_strings(case))
 
 
 # Unicode Default_Ignorable_Code_Point, including its reserved ranges.
@@ -156,6 +197,7 @@ def canonical_text(text: str) -> str:
 
 
 def _fragment_texts(fragments):
+    # Each field, then the two whole-case joins; linear in the number of fields.
     for fragment in fragments:
         yield from canonical_views(fragment)
     for separator in ("", " "):
@@ -178,10 +220,8 @@ def scan_texts(training, model_outputs=(), *, strict=True) -> tuple[str, ...]:
             if strict:
                 raise ContaminationError("G6_E_RSI_SCREEN_INVALID")
             continue
-        value = (case.case_id, case.input, case.expected, case.meta)
-        fields = tuple(_strings(value, strict=strict))
-        values = tuple(_strings(value, strict=strict, keys=False))
-        found.extend(view for s in fields for view in canonical_views(s))
+        fields = tuple(_strings(case, strict=strict))
+        values = tuple(_strings(case, strict=strict, keys=False))
         for fragments in (fields, values):
             found.extend(_fragment_texts(fragments))
     for output in model_outputs:
@@ -201,45 +241,21 @@ def incident_scan(*sources):
     texts, probes = [], []
     limited = False
     for source in sources:
-        budget = [16384, 1048576]
-
-        def walk(value, depth=0, is_key=False):
-            nonlocal limited
-            budget[0] -= 1
-            if depth > 32 or budget[0] < 0:
-                limited = True
-                return
-            if type(value) is str:
-                remaining = max(0, budget[1])
-                budget[1] -= len(value)
-                limited |= budget[1] < 0
-                yield value[:remaining], is_key
-            elif type(value) is CanaryProbe:
-                # Recheck numeric validity even if a caller bypassed construction.
-                rates = (getattr(value, "completion_rate", None), getattr(value, "chance_rate", None))
-                if all(_number(v) and v <= 1 for v in rates):
-                    probes.append(CanaryProbe(*rates))
-            elif isinstance(value, SuiteCase):
-                yield from walk((value.case_id, value.input, value.expected, value.meta), depth + 1, is_key)
-            elif type(value) is dict:
-                for key, item in value.items():
-                    if budget[0] < 0:
-                        break
-                    yield from walk(key, depth + 1, True)
-                    yield from walk(item, depth + 1, is_key)
-            elif type(value) in (list, tuple):
-                for item in value:
-                    if budget[0] < 0:
-                        break
-                    yield from walk(item, depth + 1, is_key)
-
-        groups = source if type(source) in (list, tuple) else (source,)
+        state = _Traversal()
+        groups = (source if isinstance(source, Sequence) and not isinstance(source, (str, bytes, bytearray))
+                  else (source,))
         for group in groups:
-            if budget[0] < 0:
+            if state.nodes < 0:
                 break
-            fragments = tuple(walk(group))
-            texts.extend(_fragment_texts(tuple(s for s, _ in fragments)))
-            texts.extend(_fragment_texts(tuple(s for s, key in fragments if not key)))
+            leaves = tuple(_walk(group, state))
+            probes.extend(leaf for leaf, _ in leaves if isinstance(leaf, CanaryProbe))
+            fragments = tuple((leaf, key) for leaf, key in leaves if isinstance(leaf, str))
+            for fields in (tuple(s for s, _ in fragments), tuple(s for s, key in fragments if not key)):
+                try:
+                    texts.extend(_fragment_texts(fields))
+                except ContaminationError:
+                    limited = True
+        limited |= state.limited
     return tuple(texts), tuple(probes), limited
 
 
@@ -271,7 +287,7 @@ def _token_graph(fragments):
 
 def _graphs(case):
     for keys in (True, False):
-        fields = tuple(_strings((case.case_id, case.input, case.expected, case.meta), keys=keys))
+        fields = tuple(_strings(case, keys=keys))
         for view in (0, 1):
             yield _token_graph([canonical_views(s)[view] for s in fields])
             for separator in ("", " "):

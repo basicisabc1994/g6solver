@@ -78,7 +78,8 @@ def test_seed_rule_registered_before_cut_and_same_seed_pool_same_partitions(api,
     first = make(api, tmp_path / "first")
     second = make(api, tmp_path / "second", tasks=tuple(reversed(pool())))
     assert first.registration()["rule"] == "cut_pool-strata-six-sha256-v1"
-    assert first.registration()["seed"] == 17
+    assert first.registration()["partition_seed_commitment"] == authority().commitment("partition-seed", 17)
+    assert "seed" not in first.registration()
     assert first.registration()["partition_digest"] == second.registration()["partition_digest"]
     all_ids, families = set(), set()
     for generation in range(6):
@@ -102,7 +103,9 @@ def test_seed_and_rule_are_durable_before_partition_code_runs(api, tmp_path, mon
     def partition(tasks, seed):
         rule = json.loads((tmp_path / "evaluator" / "rule.json").read_text(encoding="utf-8"))
         observed.append(rule)
-        assert rule["seed"] == seed == 17 and rule["rule"] == module.RULE
+        assert seed == 17 and rule["rule"] == module.RULE
+        assert "seed" not in rule
+        assert rule["partition_seed_commitment"] == authority().commitment("partition-seed", seed)
         return original(tasks, seed)
 
     monkeypatch.setattr(module, "partition_pool", partition)
@@ -426,6 +429,28 @@ def test_screen_refusals_commit_known_canary_incidents(api, tmp_path, refusal):
                             anchor_pass=True, detectors={n: lambda t, o: False for n in again.detector_names})
 
 
+@pytest.mark.parametrize("mapping_kind", ["dict", "ordered", "proxy"])
+@pytest.mark.parametrize("bad_first", [False, True])
+def test_mapping_marker_incident_is_durable_after_refusal(api, tmp_path, mapping_kind, bad_first):
+    from collections import OrderedDict
+    from types import MappingProxyType
+    from g6.metaharness.schema import SuiteCase
+    from g6.recursion.contamination_gate import ContaminationError
+
+    store, item = opened(api, tmp_path)
+    marker = json.loads((tmp_path / "evaluator" / "pool.json").read_text(encoding="utf-8"))["canaries"][1]
+    pairs = [("marker", marker), ("bad", set())]
+    payload = dict(reversed(pairs) if bad_first else pairs)
+    payload = {"dict": dict, "ordered": OrderedDict, "proxy": MappingProxyType}[mapping_kind](payload)
+    with pytest.raises(ContaminationError, match="SCREEN_INVALID"):
+        store.screen(item.slice_id, (SuiteCase("t", "other", payload),), membership={})
+    again = api.HeldOutSlicer(tmp_path / "evaluator", role="evaluator", capability=authority())
+    assert again.status(item.slice_id) == "void"
+    with pytest.raises(api.HeldOutError, match="SLICE_REUSED"):
+        again.cut(1, again.record_freeze(freeze(api, 1)))
+    assert sum(r["kind"] == "contamination" for r in again.records()) == 2
+
+
 def test_learner_cannot_claim_evaluator_role_at_constructor(api, tmp_path):
     opened(api, tmp_path)
     with pytest.raises(api.HeldOutError, match="^G6_E_RSI_EVALUATOR_CAPABILITY_REQUIRED$"):
@@ -577,3 +602,25 @@ def _feasible(api, tasks, seed):
         return True
     except api.HeldOutError:
         return False
+
+
+def test_public_records_hide_partition_seed_from_candidate_observer(api, tmp_path):
+    from g6.rsi.records import content_digest
+
+    tasks = tuple(pool()[i] for i in (0, 3, 6, 9, 12, 15))
+    store = api.HeldOutSlicer.register(tmp_path / "observer", tasks, seed=96, detectors=("clean",),
+                                      role="evaluator", capability=authority())
+    cuts = [store.cut(g, store.record_freeze(freeze(api, g))) for g in range(6)]
+    assert all(item.count == 1 for item in cuts)
+    public = [store.registration(), store.records(), [item.to_record() for item in cuts]]
+    public_text = json.dumps(public)
+    assert "seed" not in store.registration()
+    assert store.registration()["partition_seed_commitment"] == authority().commitment("partition-seed", 96)
+    assert authority().commitment("partition-seed", 96) != authority().commitment("slice-seed", 96)
+    assert all(content_digest(seed) not in public_text for seed in range(100))
+    assert all(task.task_id not in public_text for task in tasks)
+    # The public field inventory contains no raw seed, membership or unkeyed seed digest.
+    assert set(store.registration()) == {
+        "rule", "partition_seed_commitment", "pool_digest", "detectors", "partition_digest", "count",
+        "rule_sha256", "pool_sha256", "vault_digest", "vault_id", "salt_commitment",
+    }

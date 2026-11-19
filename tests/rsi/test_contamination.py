@@ -233,7 +233,52 @@ def test_fragment_graph_size_is_quadratic_for_character_fragments(api):
                [SuiteCase("train", "other", tuple("x" for _ in range(80)))]).ngram_excluded == 1
 
 
+def test_many_field_cases_are_screened_not_refused(api):
+    # A case with many meta fields must be screened linearly, never refused by a join limit.
+    meta = {f"k{i}": f"v{i}" for i in range(40)}
+    passage = " ".join(f"word{i}" for i in range(13))
+    result = run(api, [SuiteCase("held", passage + " held", "secret")],
+                 [SuiteCase("train", passage, "answer", meta)])
+    assert result.ngram_excluded == 1
+
+
 def test_compact_fixed_view_repeats_escape_decode_after_whitespace_removal(api):
     assert api.canonical_views("a% 20b")[2] == "ab"
     marker = "a" * 16 + "% 20" + "a" * 16
     assert run(api, [SuiteCase("held", "private", "secret")], outputs=[marker]).canary_hits == 1
+
+
+@pytest.mark.parametrize("fragments,first", [
+    ((r"\u00", "77ord0 word1", " ".join(f"word{i}" for i in range(2, 13))), "word0"),
+    (("cafe", "\u0301 word1", " ".join(f"word{i}" for i in range(2, 13))), "caf\u00e9"),
+    (("%7", "7ord0 word1", " ".join(f"word{i}" for i in range(2, 13))), "word0"),
+])
+@pytest.mark.parametrize("side", ["training", "held_out"])
+@pytest.mark.xfail(strict=True, reason="STATED LIMIT (module docstring): an escape, percent or combining sequence cut "
+                   "by a field boundary is recomposed only when every boundary is of one kind; these mix an empty and "
+                   "a space boundary, which an accidental copy does not do. Exhaustive joins refused ordinary cases.")
+def test_joined_candidates_normalize_cross_boundary_state(api, fragments, first, side):
+    passage = first + " " + " ".join(f"word{i}" for i in range(1, 13))
+    joined = SuiteCase("joined", "other", fragments)
+    plain = SuiteCase("plain", passage + " suffix", "answer")
+    held, training = (plain, joined) if side == "training" else (joined, plain)
+    result = run(api, [held], [training])
+    assert result.ngram_excluded == result.excluded_count == 1
+
+
+@pytest.mark.parametrize("kind", ["depth", "nodes", "characters"])
+def test_shared_traversal_refuses_past_existing_limits(api, kind):
+    if kind == "depth":
+        at_limit = "leaf"
+        for _ in range(32):
+            at_limit = [at_limit]
+        over_limit = [at_limit]
+    elif kind == "nodes":
+        at_limit = [None] * 16383
+        over_limit = at_limit + [None]
+    else:
+        at_limit = "x" * 1048576
+        over_limit = at_limit + "x"
+    tuple(api._strings(at_limit))
+    with pytest.raises(api.ContaminationError, match="^G6_E_RSI_SCREEN_LIMIT$"):
+        tuple(api._strings(over_limit))

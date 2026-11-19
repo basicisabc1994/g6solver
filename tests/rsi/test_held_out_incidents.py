@@ -1,14 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit checks for incident ordering and the sealed commitment primitive."""
 import sqlite3
+from collections import OrderedDict, UserList
 from contextlib import contextmanager
 from io import BytesIO
+from types import MappingProxyType
 
 import pytest
 
 from g6.recursion.contamination_gate import CanaryProbe
 from g6.recursion.evaluator_entry import evaluator_capability
 from g6.recursion.held_out_slicer import HeldOutSlicer
+from g6.metaharness.schema import SuiteCase
 
 
 @pytest.fixture
@@ -67,6 +70,39 @@ def test_raw_fragment_values_are_scanned_without_dictionary_keys(incident_store)
     store, db = incident_store
     store._commit_incidents("a" * 64, ({"first": "d" * 16, "second": "d" * 16},))
     assert db.execute("SELECT status FROM slices WHERE generation=1").fetchone()[0] == "void"
+
+
+@pytest.mark.parametrize("mapping", [dict, OrderedDict, MappingProxyType])
+@pytest.mark.parametrize("bad_first", [False, True])
+def test_mapping_marker_commits_both_slices_before_schema_refusal(incident_store, mapping, bad_first):
+    from g6.recursion.contamination_gate import ContaminationError, scan_texts
+
+    store, db = incident_store
+    pairs = [("marker", "d" * 32), ("bad", set())]
+    case = SuiteCase("t", "other", mapping(dict(reversed(pairs) if bad_first else pairs)))
+    store._commit_incidents("a" * 64, (case,))
+    with pytest.raises(ContaminationError, match="SCREEN_INVALID"), store._db():
+        scan_texts((case,))
+    assert list(db.execute("SELECT status FROM slices")) == [("void",), ("void",)]
+    assert db.execute("SELECT count(*) FROM events").fetchone()[0] == 2
+
+
+def test_incident_and_main_entry_points_visit_same_mixed_leaves():
+    from g6.recursion.contamination_gate import incident_scan, scan_texts
+
+    class Text(str):
+        pass
+
+    value = MappingProxyType(OrderedDict([
+        ("first", UserList([Text("alpha"), ("beta",)])),
+        ("malformed", set()),
+        ("last", {"nested": "gamma"}),
+    ]))
+    case = SuiteCase("t", "other", value)
+    texts, probes, limited = incident_scan((case,))
+    assert texts == scan_texts((case,), strict=False)
+    assert all(s in texts for s in ("alpha", "beta", "gamma"))
+    assert not probes and not limited
 
 
 def test_raw_limit_refuses_after_committing_available_marker(incident_store):
@@ -130,3 +166,51 @@ def test_changed_pool_bytes_keep_content_free_integrity_refusal(monkeypatch, raw
     monkeypatch.setattr(Path, "read_bytes", lambda path: raw)
     with pytest.raises(HeldOutError, match="^G6_E_RSI_POOL_CHANGED$"):
         store._data(None)
+
+
+def test_registration_rule_publishes_only_keyed_partition_seed(monkeypatch):
+    from io import StringIO
+    from pathlib import Path
+    import json
+    import g6.recursion.held_out_slicer as module
+    from g6.recursion.tasks import TaskSpec
+    from g6.rsi.licences import licence_for
+    from g6.rsi.records import CheckSpec
+
+    class RuleCapture(StringIO):
+        def close(self):
+            pass
+
+    class StopAfterRule(Exception):
+        pass
+
+    stream = RuleCapture()
+    task = TaskSpec("livecodebench:synthetic", "family", "livecodebench", licence_for("livecodebench"),
+                    "prompt", CheckSpec("stdin_stdout", inputs=("in",), outputs=("out",)),
+                    "ref", "medium", "2024-10-01", "held_out")
+    capability = evaluator_capability(BytesIO(b"a" * 32))
+    monkeypatch.setattr(HeldOutSlicer, "_check_root", lambda self: None)
+    monkeypatch.setattr(Path, "mkdir", lambda *args, **kwargs: None)
+    monkeypatch.setattr(Path, "exists", lambda self: False)
+    monkeypatch.setattr(Path, "open", lambda *args, **kwargs: stream)
+
+    def stop_partition(*args):
+        raise StopAfterRule
+
+    monkeypatch.setattr(module, "partition_pool", stop_partition)
+    with pytest.raises(StopAfterRule):
+        HeldOutSlicer.register("unused-unit-store", (task,), seed=96, detectors=("clean",),
+                              role="evaluator", capability=capability)
+    rule = json.loads(stream.getvalue())
+    assert "seed" not in rule
+    assert rule["partition_seed_commitment"] == capability.commitment("partition-seed", 96)
+
+
+def test_legacy_public_seed_registration_is_refused():
+    from g6.recursion.held_out_slicer import HeldOutError
+
+    with sqlite3.connect(":memory:") as db:
+        db.execute("CREATE TABLE registration (record TEXT NOT NULL)")
+        db.execute('INSERT INTO registration VALUES (\'{"seed":96}\')')
+        with pytest.raises(HeldOutError, match="^G6_E_RSI_REGISTRATION_INVALID$"):
+            HeldOutSlicer._registration(db)
