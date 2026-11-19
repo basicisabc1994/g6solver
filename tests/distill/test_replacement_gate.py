@@ -55,7 +55,7 @@ def study(sample, **updates):
     rows = [{"case_id": o.case.case_id, "repository": o.case.unit_id,
              "teacher_verdict": "concern" if o.label == "positive" else "no_concern",
              "teacher_s": 10., "maintenance_delta_s": .01} for o in (*frozen.acceptance, *frozen.monitor)]
-    updates = {"scope": [], "task_saving_bounds": (-2., 12.)} | updates
+    updates = {"scope": [], "task_saving_bounds": (-2., 12.), "activation_allowance_s": 1.} | updates
     return g.ReplacementStudy(teacher="c" * 64, candidate_id=sample[1].candidate_id,
                               registration_sha256=frozen.registration_sha256,
                               shadow_seed="e" * 64,
@@ -196,6 +196,8 @@ def public_rig(candidate, frozen, monkeypatch):
     monkeypatch.setattr(g, "_journal", lambda: journal)
     monkeypatch.setattr(g, "Stores", lambda: SimpleNamespace(for_model=lambda cls: SimpleNamespace(get=lambda ident: candidate)))
     monkeypatch.setattr(g.Library, "list", lambda self: [])
+    monkeypatch.setattr(g, "_stage_replacement", lambda entry: (None, None, None))
+    monkeypatch.setattr(g, "_publish_replacement", lambda *a: None)
     monkeypatch.setattr(g, "_persist", lambda *a: pytest.fail("non-admission persisted authority"))
 
 
@@ -372,12 +374,12 @@ def test_public_replacement_passes_bh_without_superiority(sample, monkeypatch):
     candidate, frozen = replacement_sample(sample, monkeypatch)
     public_rig(candidate, frozen, monkeypatch)
     captured = []
-    def persist(candidate, answer, evidence, own, frozen, data, library):
+    def persist(candidate, answer, evidence, own, frozen, data, library, **kwargs):
         captured.append(data)
         return replace(answer, entry_id="f" * 64)
     monkeypatch.setattr(g, "_persist", persist)
     answer = g.decide_replacement(candidate, g.Library(), frozen.registration_sha256)
     assert answer.verdict == "admit_probation"
     assert answer.entry_id == "f" * 64
-    assert captured[0]["replacement"]["teacher"] == "c" * 64
-    assert captured[0]["replacement"]["validation_s"] > 0
+    assert captured[-1]["replacement"]["teacher"] == "c" * 64
+    assert captured[-1]["replacement"]["validation_s"] >= 1.

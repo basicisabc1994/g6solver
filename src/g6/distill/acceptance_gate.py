@@ -22,13 +22,14 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Literal
+from uuid import uuid4
 
 from pydantic import Field
 
 from g6.core import stop
 from g6.core.adaptation_gate import is_automated
 from g6.core.binomial import upper_bound
-from g6.core.ledger import ChainLedger, canonical, digest
+from g6.core.ledger import ChainLedger, LedgerError, canonical, digest
 from g6.core.storage import state_path
 from g6.distillation.sandbox import run_batch
 from g6.metaharness import gate as meta_gate
@@ -96,6 +97,7 @@ class EvaluationSet:
     controls: tuple[str, str]
     replacement: ReplacementStudy | None = None
     oracle_policy: object | None = None
+    tuning: tuple[Observation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -150,6 +152,7 @@ class ReplacementStudy(Model):
     rows: list[TeacherObservation]
     scope: list[FeaturePredicate] | None = None
     task_saving_bounds: tuple[float, float] | None = None
+    activation_allowance_s: Annotated[float, Field(gt=0, allow_inf_nan=False)] | None = None
 
 
 class FieldOutcome(Model):
@@ -259,7 +262,8 @@ def _registered_replacement(frozen, registration_id, candidate, custody, *, requ
         replacement = ReplacementStudy.model_validate(data)
         protocol = replacement.model_dump(mode="json", include={"teacher", "teacher_model", "topology",
             "normalization", "horizon", "shadow_rate", "shadow_seed", "scope", "cpu_weight", "teacher_weight",
-            *({"task_saving_bounds"} if required or replacement.task_saving_bounds is not None else set())})
+            *({"task_saving_bounds"} if required or replacement.task_saving_bounds is not None else set()),
+            *({"activation_allowance_s"} if replacement.activation_allowance_s is not None else set())})
         if digest(protocol) != ident or replacement.registration_sha256 != registration_id:
             raise ValueError("registered replacement protocol changed")
     if required:
@@ -300,7 +304,7 @@ def _load(registration_id, candidate, library, replacement_mode=False) -> Evalua
     if len(controls) != 2 or controls[0] == controls[1]:
         raise ValueError("registered planted controls required")
     wanted = {c.case_ref for e in library.list() if e.authority in {"A1", "A2"} for c in e.regression_suite}
-    groups = {"acceptance": [], "monitor": [], "regression": []}
+    groups = {"acceptance": [], "monitor": [], "regression": [], "tuning": []}
     for ref in frozen.cases:
         if ref.split not in {"acceptance", "tuning", "monitor"} and ref.case_id not in wanted:
             continue
@@ -310,9 +314,11 @@ def _load(registration_id, candidate, library, replacement_mode=False) -> Evalua
             raise ValueError("registered case digest changed")
         result = oracle.label(case, policy=frozen.policy, workspace=workspace)
         target = "acceptance" if ref.split == "acceptance" else "monitor"
+        if replacement_mode and ref.split not in {"acceptance", "monitor"}:
+            target = "tuning" if ref.split == "tuning" else "regression"
         if result.label != "excluded":
             groups[target].append(Observation(case, result.label, ref.split, result.model_dump(mode="json")))
-        if ref.case_id in wanted:
+        if ref.case_id in wanted and target != "regression":
             groups["regression"].append(Observation(case, result.label, "regression", result.model_dump(mode="json")))
         if ref.split in {"acceptance", "monitor"}:
             reference = sealed_gate.SealedRef(sha256=frozen.operator_digests["held_out"])
@@ -351,7 +357,8 @@ def _load(registration_id, candidate, library, replacement_mode=False) -> Evalua
     if not replacement_mode:
         replacement = _registered_replacement(frozen, registration_id, candidate, custody, required=False)
     return EvaluationSet(registration_id, digest([o.case.case_id for o in observations]), observations,
-                         tuple(groups["monitor"]), tuple(groups["regression"]), controls, replacement, frozen.policy)
+                         tuple(groups["monitor"]), tuple(groups["regression"]), controls, replacement, frozen.policy,
+                         tuple(groups["tuning"]))
 
 
 def _interval(k, n):
@@ -465,12 +472,12 @@ def _normal_form(source):
             raise ValueError("unsupported normalisation form")
     tree.body = kept
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    normalised = constants.keys() | names.keys()
+    for node, binding in _name_bindings(tree):
+        if binding == "*" or binding in constants or (binding in normalised and not
+                (isinstance(node, ast.FunctionDef) and node in kept)):
+            raise ValueError("normalised name shadowed")
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            bindings = {a.asname or (a.name.split(".")[0] if isinstance(node, ast.Import) else a.name)
-                        for a in node.names}
-            if "*" in bindings or bindings & (constants.keys() | names.keys()):
-                raise ValueError("normalised name shadowed by import")
         if isinstance(node, (ast.Global, ast.Nonlocal, ast.ClassDef, ast.Lambda, ast.AsyncFunctionDef)):
             raise ValueError("dynamic normalisation form")
         if isinstance(node, ast.FunctionDef) and node not in kept:
@@ -482,10 +489,6 @@ def _normal_form(source):
                 raise ValueError("name-sensitive operation")
             if node.id in names and not (isinstance(parents.get(node), ast.Call) and parents[node].func is node):
                 raise ValueError("function name escapes direct call")
-            if node.id in constants and not isinstance(node.ctx, ast.Load):
-                raise ValueError("constant rebound")
-        if isinstance(node, ast.arg) and node.arg in names.keys() | constants.keys():
-            raise ValueError("normalised name shadowed")
 
     class Normalise(ast.NodeTransformer):
         def visit_FunctionDef(self, node):
@@ -499,6 +502,31 @@ def _normal_form(source):
             return node
 
     return ast.dump(Normalise().visit(tree), include_attributes=False)
+
+
+def _name_bindings(tree):
+    """Collect lexical bindings, including names stored as AST string fields."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            yield node, node.id
+        elif isinstance(node, ast.arg):
+            yield node, node.arg
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            yield node, node.name
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
+            yield node, node.name
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            yield node, node.rest
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                yield node, name
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                yield node, alias.asname or (alias.name.split(".")[0] if isinstance(node, ast.Import) else alias.name)
+        elif isinstance(node, ast.TypeVar):
+            yield node, node.name
+        elif isinstance(node, (ast.ParamSpec, ast.TypeVarTuple)):
+            yield node, node.name
 
 
 def _normal_equivalent(before, after):
@@ -841,10 +869,10 @@ def _look_available(registration):
     return journal, index
 
 
-def _spend(registration, candidate):
+def _spend(registration, candidate, meter=None):
     journal, index = _look_available(registration)
     reservation = _append(journal, "reserve", {"registration": registration, "candidate_id": candidate.candidate_id,
-                                              "reuse_index": index})
+                                              "reuse_index": index, **({"meter": meter} if meter else {})})
     return index, reservation
 
 
@@ -874,10 +902,40 @@ def _validation_total(registration, active):
         if ident not in starts or ident in finished or not math.isfinite(elapsed) or elapsed < 0:
             raise ValueError("replacement attempt cost history invalid")
         finished[ident] = elapsed
+    for row in rows:
+        if row["kind"] != "replacement_prepared":
+            continue
+        receipt = row["body"]["completion"]
+        ident, reserved = receipt["attempt"], receipt["activation_reserved_s"]
+        if ident not in starts or not math.isfinite(reserved) or reserved < 0:
+            raise ValueError("replacement activation cost history invalid")
+        if ident in finished:
+            finished[ident] = max(finished[ident], reserved)
     if starts.keys() - finished.keys() - {active}:
         raise ValueError("unfinished replacement attempt requires owner cost recovery")
-    if sum(r["kind"] == "reserve" for r in rows) > sum(s["phase"] == "assessment" for s in starts.values()):
-        raise ValueError("unmetered earlier evaluation requires owner cost recovery")
+    reservations = {r["id"]: r["body"] for r in rows if r["kind"] == "reserve"}
+    recovered = {}
+    for row in rows:
+        if row["kind"] != "reservation_meter_recovery":
+            continue
+        body = row["body"]
+        reservation, meter = body["reservation"], body["meter"]
+        original = reservations.get(reservation)
+        start = starts.get(meter)
+        if (original is None or original.get("meter") or reservation in recovered or meter not in finished
+                or start is None or start["candidate_id"] != original.get("candidate_id")):
+            raise ValueError("reservation cost recovery binding invalid")
+        recovered[reservation] = meter
+    used = set()
+    for row in rows:
+        if row["kind"] != "reserve":
+            continue
+        meter = row["body"].get("meter") or recovered.get(row["id"])
+        start = starts.get(meter)
+        if (start is None or meter in used or start["phase"] != "assessment"
+                or start["candidate_id"] != row["body"].get("candidate_id")):
+            raise ValueError("unmetered earlier evaluation requires owner cost recovery")
+        used.add(meter)
     return math.fsum(finished.values())
 
 
@@ -909,7 +967,7 @@ def _snapshot(library, entry_id):
     return entry
 
 
-def _persist(candidate, answer, evidence, own, frozen, data, library):
+def _persist(candidate, answer, evidence, own, frozen, data, library, *, prepare=False):
     if any(e.candidate_id == candidate.candidate_id and e.status in {"probation", "admitted"} for e in library.list()):
         raise ValueError("candidate already active")
     contracts = Stores().for_model(MethodContract)
@@ -947,8 +1005,106 @@ def _persist(candidate, answer, evidence, own, frozen, data, library):
         field=FieldEvidence(fired=0, confirmed=0, refuted=0, unlabelled=0, precision=None),
         decided_by=DecidedBy(gate_version=VERSION, person=None), certificate_sha256=_save_report(certificate),
         created_at=now, changed_at=now, reason="; ".join(answer.reasons), **fields)
+    if prepare:
+        return entry
     Stores().for_model(LibraryEntry).put(entry)
     return replace(answer, entry_id=entry.entry_id)
+
+
+def _stage_replacement(entry):
+    """Prepare a complete library chain without changing its published path."""
+    store = Stores().for_model(LibraryEntry)
+    target = store.path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    head = store.chain.head()
+    staged = target.with_name(target.name + ".pending-" + uuid4().hex)
+    try:
+        with staged.open("xb") as stream:
+            stream.write(target.read_bytes() if target.exists() else b"")
+        store.path = staged
+        store.chain = ChainLedger(staged, validate=store._validate)
+        store.put(entry)
+        return staged, target, head
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
+
+
+def _publish_replacement(staged, target, head, deadline):
+    if ChainLedger(target).head() != head:
+        raise ValueError("library changed during replacement preparation")
+    if time.monotonic() > deadline:
+        raise ValueError("activation allowance exceeded; owner cost recovery required")
+    os.replace(staged, target)
+
+
+def _final_replacement_cost(data, study, validation_s):
+    """Shift the fixed cost while retaining the task-weighted sampling bounds."""
+    replacement = data["replacement"]
+    cost = dict(replacement["cost"])
+    fixed = study.fixed_new_s - study.fixed_base_s + validation_s * study.cpu_weight
+    shift = fixed - cost["fixed_difference"]
+    cost.update(fixed_difference=fixed, point=cost["point"] + shift, upper_95=cost["upper_95"] + shift)
+    saving = cost["per_task_saving"]
+    kind = ("dominates" if fixed <= 0 <= saving else "break_even" if fixed > 0 and saving > 0
+            else "crossover" if fixed < 0 and saving < 0 else "never")
+    cost.update(kind=kind, crossing=fixed / saving if kind in {"break_even", "crossover"} else None,
+                admissible=cost["upper_95"] < 0)
+    # The fixed-cost null changed; retain a conservative descriptive p value.
+    cost["interval"] = cost["interval"] | {"margin": -fixed / 1000, "p_value": 1.}
+    if not math.isfinite(fixed) or not cost["admissible"]:
+        raise ValueError("cumulative cost upper bound at H is not lower after activation")
+    return data | {"replacement": replacement | {"cost": cost, "validation_s": validation_s}}
+
+
+def _activate_replacement(candidate, library, frozen, evidence, batch_bar):
+    registration = frozen.registration_sha256
+    staged = None
+    try:
+        with _attempt_meter(registration, candidate, "activation") as attempt:
+            prior = _validation_total(registration, attempt[1])
+            answer, evidence, own, data = _assess_replacement(candidate, library.list(), frozen,
+                evidence.reuse_index, prior_validation_s=prior, validation_started=attempt[0])
+            if answer.p_value > batch_bar:
+                raise ValueError("batch bar not met after library changed")
+            allowance = frozen.replacement.activation_allowance_s
+            if allowance is None:
+                raise ValueError("registered activation allowance required")
+            # Archive cases and prepare reports before taking the final cost snapshot.
+            _persist(candidate, answer, evidence, own, frozen, data, library, prepare=True)
+            validation_s = prior + max(0., time.monotonic() - attempt[0]) + allowance
+            data = _final_replacement_cost(data, frozen.replacement, validation_s)
+            completion = {"attempt": attempt[1], "registration": registration,
+                          "validation_s": validation_s, "activation_allowance_s": allowance,
+                          "activation_reserved_s": validation_s - prior}
+            data["replacement"]["activation_completion"] = completion
+            evidence = AcceptanceEvidence.model_validate(evidence.model_dump(mode="json") |
+                {"acceptance_report_sha256": digest(data)})
+            answer = replace(answer, report_sha256=digest(data))
+            entry = _persist(candidate, answer, evidence, own, frozen, data, library, prepare=True)
+            staged, target, head = _stage_replacement(entry)
+            answer = replace(answer, entry_id=entry.entry_id)
+            _append(_journal(), "replacement_prepared", asdict(answer) |
+                    {"registration": registration, "completion": completion})
+        # Completion append and all preparation must fit the registered tail budget.
+        reconciled = _validation_total(registration, None)
+        if (reconciled > validation_s or prior + time.monotonic() - attempt[0] > validation_s):
+            _append(_journal(), "replacement_attempt_start", {"registration": registration,
+                "candidate_id": candidate.candidate_id, "phase": "cost_recovery"})
+            raise ValueError("activation allowance exceeded; owner cost recovery required")
+        # The single path swap commits R and its cost-completion receipt together.
+        try:
+            _publish_replacement(staged, target, head, attempt[0] + validation_s - prior)
+        except ValueError:
+            if prior + time.monotonic() - attempt[0] > validation_s:
+                _append(_journal(), "replacement_attempt_start", {"registration": registration,
+                    "candidate_id": candidate.candidate_id, "phase": "cost_recovery"})
+            raise
+        staged = None
+        return answer
+    finally:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
 
 
 def decide(candidate: VerifierCandidate, library: Library, registration: str) -> AcceptanceDecision:
@@ -999,13 +1155,16 @@ def _decide_batch(candidates, library, registration, *, replacement):
                 reservation = ""
                 with _attempt_meter(registration, candidate, "assessment") if replacement else nullcontext() as attempt:
                     try:
+                        if replacement:
+                            _validation_total(registration, attempt[1])
                         _look_available(registration)  # A spent split never reaches the oracle again.
                         frozen = _load(registration, candidate, library, True) if replacement else _load(registration, candidate, library)
                         if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:
                             raise ValueError("candidate differs from persisted proposal")
                         if replacement and frozen.replacement is None:
                             raise ValueError("registered replacement traces required")
-                        index, reservation = _spend(registration, candidate)
+                        index, reservation = (_spend(registration, candidate, attempt[1]) if replacement
+                                              else _spend(registration, candidate))
                         if replacement:
                             answer, evidence, own, data = assess(candidate, library.list(), frozen, index,
                                 prior_validation_s=_validation_total(registration, attempt[1]), validation_started=attempt[0])
@@ -1017,7 +1176,7 @@ def _decide_batch(candidates, library, registration, *, replacement):
                     except (ValueError, KeyError, FileNotFoundError) as error:
                         # Do not echo corpus bodies, subprocess stderr or model output.
                         reason = str(error) if isinstance(error, ValueError) else "registered input missing"
-                        verdict = "refuse" if reservation or "split spent" in reason else "block"
+                        verdict = "refuse" if reservation or "split spent" in reason or "cost recovery" in reason else "block"
                         answer = AcceptanceDecision(verdict, (reason,), candidate.candidate_id)
                     results[candidate.candidate_id] = (answer, reservation)
                     # Close the reservation before spending the next look. A later
@@ -1030,17 +1189,28 @@ def _decide_batch(candidates, library, registration, *, replacement):
                 if ident not in evaluated:
                     continue
                 answer, evidence, own, frozen, data = evaluated[ident]
-                with _attempt_meter(registration, candidate, "activation") if replacement else nullcontext() as attempt:
+                if replacement:
+                    try:
+                        if ident not in accepted:
+                            raise ValueError("batch Benjamini-Hochberg bar not met")
+                        answer = _activate_replacement(candidate, library, frozen, evidence,
+                            .05 * len(accepted) / len(candidates))
+                    except Inconclusive as error:
+                        answer = replace(answer, verdict="inconclusive", reasons=(str(error),))
+                        _record(answer)
+                    except LedgerError:
+                        raise
+                    except ValueError as error:
+                        answer = replace(answer, verdict="refuse", reasons=(str(error),))
+                        _record(answer)
+                    results[ident] = (answer, "")
+                    continue
+                with nullcontext():
                     try:
                         if ident not in accepted:
                             raise ValueError("batch Benjamini-Hochberg bar not met")
                         # Earlier members of this batch may already have changed L_t.
-                        if replacement:
-                            answer, evidence, own, data = _assess_replacement(candidate, library.list(), frozen,
-                                evidence.reuse_index, prior_validation_s=_validation_total(registration, attempt[1]),
-                                validation_started=attempt[0])
-                        else:
-                            answer, evidence, own, data = assess(candidate, library.list(), frozen, evidence.reuse_index)
+                        answer, evidence, own, data = assess(candidate, library.list(), frozen, evidence.reuse_index)
                         if answer.p_value > .05 * len(accepted) / len(candidates):
                             raise ValueError("batch bar not met after library changed")
                         answer = _persist(candidate, answer, evidence, own, frozen, data, library)
@@ -1524,14 +1694,15 @@ def _assess_replacement(candidate, entries, frozen, reuse_index, *, prior_valida
     rows = {r.case_id: r for r in study.rows}
     if len(rows) != len(study.rows):
         raise ValueError("duplicate teacher case trace")
-    all_observations = (*frozen.acceptance, *frozen.monitor, *frozen.regression)
+    fresh = (*frozen.acceptance, *frozen.monitor)
+    all_observations = (*fresh, *frozen.regression, *frozen.tuning)
     if any(o.label not in {"positive", "negative"} for o in all_observations):
         raise ValueError("settled replacement cases required")
-    if set(candidate.training_case_ids) & {o.case.case_id for o in all_observations}:
+    if set(candidate.training_case_ids) & {o.case.case_id for o in fresh}:
         raise ValueError("training cases cannot be replacement evidence")
-    if _leaks(candidate, all_observations):
+    if _leaks(candidate, fresh):
         raise ValueError("candidate leakage guard refused")
-    required = {o.case.case_id for o in (*frozen.acceptance, *frozen.monitor)}
+    required = {o.case.case_id for o in (*fresh, *frozen.tuning)}
     if required - rows.keys():
         raise ValueError("teacher trace missing for registered cases")
     unit_repositories = {}
@@ -1545,6 +1716,7 @@ def _assess_replacement(candidate, entries, frozen, reuse_index, *, prior_valida
         raise ValueError("replacement acceptance and monitor repositories overlap")
     observations, strata = _headline(frozen.acceptance, frozen.oracle_policy)
     monitor, monitor_strata = _headline(frozen.monitor, frozen.oracle_policy)
+    tuning, tuning_strata = _headline(frozen.tuning, frozen.oracle_policy)
     if len({rows[o.case.case_id].repository for o in observations}) < policy.min_cases:
         raise Inconclusive("registered minimum independent repositories unavailable")
     if not monitor:
@@ -1586,10 +1758,11 @@ def _assess_replacement(candidate, entries, frozen, reuse_index, *, prior_valida
         if test["wins"] <= test["losses"] or test["p_one_sided"] > policy.alpha:
             raise ValueError("trivial controls do not fail the acceptance bar")
     _regress(entries, all_observations, candidate)
-    _, _, _, _, monitor_base, monitor_after = measure(monitor)
+    dev_monitor = (*tuning, *monitor)
+    _, _, _, _, monitor_base, monitor_after = measure(dev_monitor)
     if not any(o.label == "negative" for o in monitor):
         raise Inconclusive("registered minimum monitor negatives unavailable")
-    margin = _replacement_fpr(monitor, rows, monitor_base, monitor_after, "dev plus monitor")
+    margin = _replacement_fpr(dev_monitor, rows, monitor_base, monitor_after, "dev plus monitor")
     # Three runs per case are measured by the gate, including failed probe time.
     serving = [statistics.fmean(all_costs[3*i:3*i+3]) for i in range(len(frozen.acceptance))]
     savings = [(rows[o.case.case_id].teacher_s * study.teacher_weight * (1 - study.shadow_rate)
@@ -1606,6 +1779,7 @@ def _assess_replacement(candidate, entries, frozen, reuse_index, *, prior_valida
     replacement = {"teacher": study.teacher, "scope": [s.model_dump(mode="json") for s in scope],
                    "noninferiority": bounds, "coverage": coverage.model_dump(mode="json"),
                    "cost": cost_result, "strata": strata, "monitor_strata": monitor_strata,
+                   "tuning_strata": tuning_strata,
                    "shadow_rate": study.shadow_rate, "shadow_seed": study.shadow_seed,
                    "cpu_weight": study.cpu_weight, "teacher_weight": study.teacher_weight,
                    "trace_sha256": digest(study.model_dump(mode="json")),

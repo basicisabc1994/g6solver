@@ -113,7 +113,7 @@ def test_loader_checks_registered_scope_before_case_access(sample, monkeypatch):
     from .test_replacement_gate import study
     receipt = study(sample, scope=None)
     protocol_keys = {"teacher", "teacher_model", "topology", "normalization", "horizon", "shadow_rate",
-                     "shadow_seed", "scope", "cpu_weight", "teacher_weight", "task_saving_bounds"}
+                     "shadow_seed", "scope", "cpu_weight", "teacher_weight", "task_saving_bounds", "activation_allowance_s"}
     registration = SimpleNamespace(cases=[SimpleNamespace(split="tuning", case_id=ident)
                                          for ident in candidate.training_case_ids], study={"family": candidate.contract.family,
         "acceptance_policy_sha256": "p", "acceptance_code_sha256": "j",
@@ -148,7 +148,7 @@ def meter_rig(sample, monkeypatch):
     monkeypatch.setattr(g, "_measure", measure)
     # These tests isolate metering from the independently tested intervals.
     monkeypatch.setattr(g, "_replacement_quality", lambda *a: ({}, .001))
-    monkeypatch.setattr(g, "_persist", lambda c, answer, *a: answer)
+    monkeypatch.setattr(g, "_persist", lambda c, answer, *a, **kw: answer)
     return candidate, frozen, clock
 
 
@@ -204,13 +204,13 @@ def test_activation_reconciles_both_measurements_once(sample, monkeypatch):
         return measure(*args)
     monkeypatch.setattr(g, "_measure", timed_measure)
     captured = []
-    def persist(c, answer, evidence, own, frozen, data, library):
+    def persist(c, answer, evidence, own, frozen, data, library, **kw):
         captured.append(data["replacement"])
         return answer
     monkeypatch.setattr(g, "_persist", persist)
     answer = g.decide_replacement(candidate, g.Library(), frozen.registration_sha256)
     assert answer.verdict == "admit_probation", answer.reasons
-    assert captured[0]["validation_s"] == 8.
+    assert captured[-1]["validation_s"] == 9.
     costs = [r["body"] for r in g._journal().entries() if r["kind"] == "replacement_attempt"]
     assert [r["validation_s"] for r in costs] == [4., 4.]
 
@@ -232,8 +232,9 @@ def test_attempt_completion_uses_current_journal_after_decision_rows(sample, mon
             self.rows = backing.entries()
 
     monkeypatch.setattr(g, "_journal", Snapshot)
-    def spend(registration, c):
-        ident = g._append(g._journal(), "reserve", {"registration": registration, "candidate_id": c.candidate_id})
+    def spend(registration, c, meter=None):
+        ident = g._append(g._journal(), "reserve", {"registration": registration,
+            "candidate_id": c.candidate_id, "meter": meter})
         return 1, ident
     def record(answer, reservation=""):
         g._append(g._journal(), "decision", {"reservation": reservation, "verdict": answer.verdict})
