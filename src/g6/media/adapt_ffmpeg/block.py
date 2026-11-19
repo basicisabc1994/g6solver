@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import secrets
 from pathlib import Path
 from typing import Any, Literal
@@ -205,7 +204,22 @@ def _ffmpeg(where: str, args: list[str], d: FFmpegInput, *, info: bool = False) 
     return _programs.run(where, [*head, *args], seconds=d.timeout, cwd=media_root(), name="ffmpeg")
 
 
-_JSON = re.compile(r"\{[^{}]*\"input_i\"[^{}]*\}", re.DOTALL)
+def _json_records(text: str) -> list[dict]:
+    """Read complete JSON objects from the log without interpreting brace syntax."""
+    decoder, records, at = json.JSONDecoder(), [], 0
+    while at < len(text):
+        start = text.find("{", at)
+        if start < 0:
+            break
+        try:
+            value, end = decoder.raw_decode(text, start)
+        except (ValueError, RecursionError, MemoryError):
+            at = start + 1
+            continue
+        if isinstance(value, dict) and "input_i" in value:
+            records.append(value)
+        at = end
+    return records
 
 
 def _loudness(where: str, name: str, d: FFmpegInput) -> dict[str, str]:
@@ -213,11 +227,11 @@ def _loudness(where: str, name: str, d: FFmpegInput) -> dict[str, str]:
     :class:`MediaError` when ffmpeg measured nothing: no measurement is ever made up."""
     ran = _ffmpeg(where, [*commands.inputs(name), "-map", "0:a:0", "-af", commands.loudness_pass(d), "-f", "null",
                           "-"], d, info=True)
-    found = _JSON.findall(ran.err.decode("utf-8", "replace"))
+    found = _json_records(ran.err.decode("utf-8", "replace"))
     if ran.code != 0 or not found:
         raise MediaError(BACKEND_FAILED, f"ffmpeg measured no loudness for {name}: {ran.text(300) or f'exit {ran.code}'}")
     try:
-        measured = {k: str(v) for k, v in json.loads(found[-1]).items()}
+        measured = {k: str(v) for k, v in found[-1].items()}
     except (ValueError, RecursionError, MemoryError):
         raise MediaError(BACKEND_FAILED, f"ffmpeg's loudness measurement of {name} is not JSON") from None
     if measured.get("input_i", "").lstrip("-") in ("inf", "") or measured.get("input_tp", "").lstrip("-") == "inf":

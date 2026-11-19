@@ -354,8 +354,10 @@ class BraveSearcher:
                 exc = ValueError("a JSON record exceeds decoder limits")
             return SearchResult(self.name, query, "parse_failed", reason=f"Brave's reply is not its JSON: {exc}",
                                 evidence={"gate": decided})
-        items = [(_plain(re.sub(r"<[^>]+>", "", r["title"]), 500), _web_address(r["url"]),
-                  _plain(re.sub(r"<[^>]+>", "", r.get("description") or "")), _plain(r.get("page_age"), 40))
+        from g6.knowledge._html import html_to_text
+
+        items = [(_plain(html_to_text(r["title"])[1], 500), _web_address(r["url"]),
+                  _plain(html_to_text(r.get("description") or "")[1]), _plain(r.get("page_age"), 40))
                  for r in raw[:n]]
         return _result(self.name, query, reply.body, address, items,
                        evidence={"gate": decided, "spent": "one Brave Search request; its cost is on your Brave "

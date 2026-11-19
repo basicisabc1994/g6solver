@@ -180,17 +180,24 @@ def _page(path: Path, d: ChartInput) -> tuple[Inspection, str]:
     if not text:
         return Inspection(inspector=inspector, kind="page", checks=(
             Check(name="exists", passed=False, code=NO_OUTPUT, detail="no page was written"),)), ""
-    found = re.search(r"<svg\b.*?</svg>", text, re.DOTALL)
+    from g6.core.html import svg_blocks
+    from g6.core.xml import parse_xml
+
+    found = svg_blocks(text)
     checks = [Check(name="exists", passed=True, detail=f"{path.stat().st_size} bytes")]
-    if found is None:
-        checks.append(Check(name="parses", passed=False, code=UNDECODABLE, detail="the page holds no chart"))
+    try:
+        if len(found) != 1:
+            raise ValueError("the page must hold exactly one chart")
+        svg = found[0]
+        root = parse_xml(svg.encode("utf-8"))
+        size = (int(root.get("width", "")), int(root.get("height", "")))
+    except ValueError:
+        checks.append(Check(name="parses", passed=False, code=UNDECODABLE, detail="the page holds no readable chart"))
         return Inspection(inspector=inspector, kind="page", checks=tuple(checks)), ""
-    svg = found.group(0)
-    size = re.match(r'<svg[^>]*\swidth="(\d+)"[^>]*\sheight="(\d+)"', svg)
-    ok = bool(size) and (int(size.group(1)), int(size.group(2))) == (d.width, d.height)
+    ok = size == (d.width, d.height)
     checks += [Check(name="parses", passed=True, detail="an HTML page holding one SVG chart"),
                Check(name="size_matches_request", passed=ok, code="" if ok else SIZE_MISMATCH,
-                     detail=f"the chart is {size.group(1)}x{size.group(2)}" if size else "the chart has no size")]
+                     detail=f"the chart is {size[0]}x{size[1]}")]
     return Inspection(inspector=inspector, kind="page", checks=tuple(checks), mime="text/html",
                       measured={"width": d.width, "height": d.height} if ok else {}), svg
 

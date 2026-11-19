@@ -190,8 +190,18 @@ def _text(d: DiagramInput) -> MediaResult:
 
 
 def _svg_size(svg: str) -> tuple[float, float] | None:
-    match = re.search(r'<svg[^>]*\swidth="([\d.]+)pt"[^>]*\sheight="([\d.]+)pt"', svg)
-    return (float(match.group(1)), float(match.group(2))) if match else None
+    from g6.core.xml import parse_xml
+
+    try:
+        root = parse_xml(svg.encode("utf-8"))
+        if root.tag.rsplit("}", 1)[-1].rsplit(":", 1)[-1] != "svg":
+            return None
+        width, height = root.get("width", ""), root.get("height", "")
+        if not (width.endswith("pt") and height.endswith("pt")):
+            return None
+        return float(width[:-2]), float(height[:-2])
+    except (ValueError, OverflowError):
+        return None
 
 
 def _same_shape(svg: str, measured: dict[str, Any]) -> Check:

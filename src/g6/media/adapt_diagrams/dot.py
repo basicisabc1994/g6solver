@@ -300,20 +300,27 @@ def run_dot(source: str, formats: tuple[str, ...], *, seconds: float = DEFAULT_S
     return run
 
 
-_DOCTYPE = re.compile(r'<!DOCTYPE svg PUBLIC "[^"<>]*"\s+"[^"<>]*">\s*')
 _SVG = "{http://www.w3.org/2000/svg}"
 _DRAWN = ("polygon", "ellipse", "path", "polyline", "text", "rect", "circle", "line")
 
 
 def without_doctype(svg: bytes) -> bytes:
     """dot's SVG with its ``<!DOCTYPE svg PUBLIC …>`` line removed (only that line; any other is left, and refused)."""
-    text = svg.decode("utf-8", "replace")
-    return _DOCTYPE.sub("", text, count=1).encode("utf-8")
+    from g6.core.xml import parse_xml
+
+    try:
+        # Only Graphviz's fixed external declaration is accepted, never fetched.
+        # Serialising the parsed tree drops that declaration structurally.
+        return ET.tostring(parse_xml(svg, svg_public_doctype=True), encoding="utf-8")
+    except ValueError:
+        return svg  # the inspector refuses the unmodified unsafe/unreadable XML
 
 
 def drawn(svg: str) -> tuple[list[str], list[str]]:
     """The names of the node groups that draw something and the titles of the edge groups that do, in dot's SVG."""
-    root = ET.fromstring(svg)
+    from g6.core.xml import parse_xml
+
+    root = parse_xml(svg.encode("utf-8"))
     nodes, edges = [], []
     for group in root.iter(f"{_SVG}g"):
         kind = group.get("class", "")
@@ -396,8 +403,10 @@ def loads_nothing(svg: str) -> Check:
     no ``url(…)`` but one to a fragment of the file itself (``url(#…)``), no ``@import`` and no style sheet
     instruction."""
     try:
-        root = ET.fromstring(svg)
-    except ET.ParseError as exc:
+        from g6.core.xml import parse_xml
+
+        root = parse_xml(svg.encode("utf-8"))
+    except ValueError as exc:
         return Check(name="loads_nothing", passed=False, code=NO_OUTPUT, detail=f"not XML: {exc}"[:500])
     hits: list[str] = ["<?xml-stylesheet?>"] if "<?xml-stylesheet" in svg.lower() else []
     for element in root.iter():
