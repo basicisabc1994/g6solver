@@ -6,7 +6,7 @@ import ast
 import re
 import textwrap
 
-_FENCES = re.compile(r"```([^\n]*)\n(.*?)```", re.DOTALL)
+from g6.core.markdown import parse
 _HEADERS = re.compile(r"(?m)^\s*(?:async\s+def|def|class|import|from)\b")
 _ALLOWED_CALLS = {"abs", "all", "any", "bool", "enumerate", "float", "int", "len", "list", "max", "min",
                   "range", "reversed", "round", "sorted", "str", "sum", "tuple", "zip"}
@@ -19,22 +19,29 @@ def skill_text_problems(text: str) -> tuple[str, ...]:
         return ()
     if _DANGEROUS.search(text):
         return ("G6_E_META_SKILL_CODE: file, dynamic execution or process capability",)
-    blocks = list(_FENCES.finditer(text))
+    document = parse(text)
+    blocks = document.code_blocks
     regions = []
-    if "```" in text and text.count("```") != len(blocks) * 2:
-        return ("G6_E_META_SKILL_CODE: unclosed code fence",)
     for block in blocks:
-        if block[1].strip().lower() not in ("", "py", "python"):
+        if not block.closed:
+            return ("G6_E_META_SKILL_CODE: unclosed code fence",)
+        if block.info.lower() not in ("", "py", "python"):
             return ("G6_E_META_SKILL_CODE: only Python code examples can be scanned",)
-        regions.append(block[2])
-    rest = _FENCES.sub("", text)
+        regions.append(block.content)
+    # The whole source is always pre-scanned above; parsed code also gets the
+    # capability pre-scan, since CommonMark can join/dedent its source lines.
+    if any(_DANGEROUS.search(region) for region in regions):
+        return ("G6_E_META_SKILL_CODE: file, dynamic execution or process capability",)
+    rest = text
+    for block in reversed(blocks):
+        rest = rest[:block.start] + "\n" + rest[block.end:]
     if _HEADERS.search(rest):
         regions.append(rest)
     if not blocks and not regions:
         try:
-            tree = ast.parse(text)
-        except (SyntaxError, ValueError):
-            return ()  # ordinary prose
+            tree = ast.parse(textwrap.dedent(text))
+        except (SyntaxError, ValueError, RecursionError):
+            return ()  # ordinary prose, after the whole-text capability pre-scan
         if any(isinstance(n, (ast.Call, ast.Attribute)) for n in ast.walk(tree)):
             regions.append(text)
     for region in regions:

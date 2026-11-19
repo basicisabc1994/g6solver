@@ -16,14 +16,13 @@ from __future__ import annotations
 import ast
 import re
 import warnings
+import textwrap
 from collections.abc import Sequence
 from typing import Any
 
 from g6.metaharness.schema import PipelineStep
 
-_FENCE = re.compile(r"```[ \t]*[A-Za-z0-9_+-]*[ \t]*\r?\n(.*?)```", re.DOTALL)
-_DEF = re.compile(r"(?m)^[ \t]*def[ \t]+\w+[ \t]*\(")
-_IMPORT = re.compile(r"^\s*(?:import\s+\w|from\s+[\w.]+\s+import\s)")
+from g6.core.markdown import parse
 PRELUDE = "import sys\nsys.path.insert(0, '.')\n"
 REPAIR_SYSTEM = "You fix Python code. Reply with the complete corrected code in one Python code block, and nothing else."
 
@@ -34,21 +33,46 @@ def _caller(ctx: Any) -> Any:
 
 def python_code(text: str) -> str:
     """The first fenced block that defines a function, else the first fenced block, else the whole reply."""
-    blocks = _FENCE.findall(text or "")
-    return next((b for b in blocks if _DEF.search(b)), blocks[0] if blocks else (text or ""))
+    blocks = [b.content for b in parse(text or "").code_blocks]
+    return next((b for b in blocks if _has_function(b)), blocks[0] if blocks else (text or ""))
+
+
+def _has_function(source: str) -> bool:
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError):
+        return False
+    return any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) for node in ast.walk(tree))
 
 
 def shown_tests(task: str) -> tuple[list[str], list[str]]:
-    """(import lines, assert lines) the task text shows: the only tests ``repair_with_tests`` ever runs."""
-    lines = [line.strip() for line in (task or "").splitlines()]
-    return [x for x in lines if _IMPORT.match(x)], [x for x in lines if x.startswith("assert ")]
+    """Shown imports and assertions, parsed as Python statements, never run here."""
+    doc = parse(task or "")
+    regions = [b.content for b in doc.code_blocks]
+    rest = task or ""
+    for block in reversed(doc.code_blocks):
+        rest = rest[:block.start] + "\n" + rest[block.end:]
+    regions += rest.splitlines()
+    imports, assertions = [], []
+    for region in regions:
+        source = textwrap.dedent(region)
+        try:
+            tree = ast.parse(source)
+        except (SyntaxError, ValueError, RecursionError):
+            continue
+        for node in tree.body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                imports.append(ast.get_source_segment(source, node))
+            elif isinstance(node, ast.Assert):
+                assertions.append(ast.get_source_segment(source, node))
+    return imports, assertions
 
 
 def run_shown(code: str, imports: Sequence[str], asserts: Sequence[str], *, timeout_s: float) -> str:
     """'' when the code parses, defines a function and passes the shown asserts out of process; else the failure. A
     run no operating-system boundary could confine, where isolation is required, raises ``confine.IsolationRefused``:
     the code never ran, so there is no failure for the model to fix."""
-    if not _DEF.search(code):
+    if not _has_function(code):
         return "the reply has no Python function"
     try:
         with warnings.catch_warnings():

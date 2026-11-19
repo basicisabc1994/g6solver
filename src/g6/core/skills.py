@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 
 from g6.core.registry import get_registry
+from g6.core.markdown import parse
 
 GUIDE = "using-g6"
 #: The sections every component's skill has, in this order (D7, FW-01); ``tests/core/test_component_skills.py`` holds
@@ -34,11 +35,6 @@ OPEN_PROBLEMS = ("Learning signals", "Evaluators the model cannot influence", "T
                  "Enough held-out cases")
 #: The most words a skill has.
 MAX_WORDS = 1800
-_OPS =re.compile(r"^## Ops[ \t]*\n(.*?)(?=^## |\Z)", re.MULTILINE | re.DOTALL)
-_OP_LINE = re.compile(r"^- `([a-z_][a-z0-9_]*)`", re.MULTILINE)
-_EXAMPLE = re.compile(r"^```g6-example op=([a-z_][a-z0-9_]*)[ \t]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
-_API_LINE = re.compile(r"^- `([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)`", re.MULTILINE)
-_PYTHON = re.compile(r"^```python[ \t]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
 
 
 def skill_name(component: str) -> str:
@@ -113,32 +109,36 @@ def front_matter(text: str) -> dict[str, str]:
 
 def skill_ops(text: str) -> list[str]:
     """The ops a skill's ``## Ops`` section lists, in order; ``[]`` when it has none."""
-    found = _OPS.search(text)
-    return _OP_LINE.findall(found.group(1)) if found else []
+    return [name for name in parse(section(text, "Ops")).list_code_names()
+            if re.fullmatch(r"[a-z_][a-z0-9_]*", name)]
 
 
 def section(text: str, heading: str) -> str:
-    """The body of a skill's ``## <heading>`` section, up to the next ``## `` heading; ``""`` when it has none."""
-    found = re.search(rf"^## {re.escape(heading)}[ \t]*\n(.*?)(?=^## |\Z)", text, re.MULTILINE | re.DOTALL)
-    return found.group(1).strip("\n") + "\n" if found and found.group(1).strip() else ""
+    body = parse(text).section(heading)
+    return body.strip("\n") + "\n" if body and body.strip() else ""
 
 
 def skill_api(text: str) -> list[str]:
     """The names a blockless component's ``## Python API`` section lists (``- `name```, dotted for a submodule's),
     in order; ``[]`` when it has none."""
-    return _API_LINE.findall(section(text, "Python API"))
+    return [name for name in parse(section(text, "Python API")).list_code_names()
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", name)]
 
 
 def skill_python_examples(text: str) -> list[str]:
     """Each fenced ``python`` block in a skill's ``## Examples`` section, which the tests run."""
-    return _PYTHON.findall(section(text, "Examples"))
+    return [b.content for b in parse(section(text, "Examples")).code_blocks if b.info == "python"]
 
 
 def skill_examples(text: str) -> list[tuple[str, dict]]:
     """Each ``g6-example`` block as ``(op, params)``. Raises ``ValueError``, naming the op, for one whose body is not a
     JSON object."""
     out = []
-    for op, body in _EXAMPLE.findall(text):
+    for block in parse(text).code_blocks:
+        match = re.fullmatch(r"g6-example op=([a-z_][a-z0-9_]*)", block.info)
+        if not match:
+            continue
+        op, body = match[1], block.content
         try:
             try:
                 params = json.loads(body)

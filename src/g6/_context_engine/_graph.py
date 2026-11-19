@@ -16,8 +16,9 @@ path never shows that a withheld or revoked node exists. Hop and path limits ref
 """
 from __future__ import annotations
 
+from g6.core.markdown import parse
+
 import ast
-import re
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Literal
@@ -37,7 +38,6 @@ GRAPH = "G6_E_KNOWLEDGE_GRAPH"
 RELATIONS = ("contains", "imports")
 MAX_HOPS = 6
 MAX_PATHS = 200
-_HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*$", re.MULTILINE)
 
 
 class Node(BaseModel):
@@ -150,15 +150,15 @@ def build(store: ProjectStore, generation: int, *, clock: Callable[[], datetime]
                     registration_id=member.registration_id, label=member.relative)
         nodes[here.id] = here
         if kind == "document":
-            for found in _HEADING.finditer(text):
-                passage = _passage_at(member, found.start())
+            for found in parse(text).headings:
+                passage = _passage_at(member, found.start)
                 if not passage:
                     continue
-                label = f"{member.relative}#{found.group(2)}"
-                section = Node(id=node_id(member.registration_id, "section", f"{label}@{found.start()}"),
+                label = f"{member.relative}#{found.title}"
+                section = Node(id=node_id(member.registration_id, "section", f"{label}@{found.start}"),
                                kind="section", registration_id=member.registration_id, label=label)
                 nodes[section.id] = section
-                made = _edge(here.id, section.id, "contains", passage, (found.start(), found.end()), text,
+                made = _edge(here.id, section.id, "contains", passage, (found.start, found.end), text,
                              member.file_sha256)
                 edges[made.id] = made
             continue

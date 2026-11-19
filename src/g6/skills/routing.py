@@ -57,7 +57,6 @@ _PAIR = re.compile(r"`([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)`")
 _INVOKE = re.compile(r'g6_invoke\(\s*"([a-z_][a-z0-9_]*)"\s*,\s*"([a-z_][a-z0-9_]*)"')
 _BARE = re.compile(r"`([a-z][a-z0-9_]*)(?:\([^`\n]*\))?`")
 _CLIENT = re.compile(r"(?<![\w.])mcp__([a-z0-9_-]+?)__([A-Za-z0-9_]+)")
-_HEADING = re.compile(r"(#{1,6}) \S")
 _ITEM = re.compile(r"\s*(?:[-*+]|\d+\.) ")
 
 
@@ -150,7 +149,9 @@ def loads(text: str) -> Manifest:
             raise ManifestError(f"route id {route_id!r} is not a lower-case name")
         raw = _fields(f"route {route_id}", raw, {"anchor", "detail"})
         anchor = _text(raw["anchor"], f"route {route_id}: anchor")
-        heading = bool(_HEADING.match(anchor)) and "\n" not in anchor
+        from g6.core.markdown import parse
+
+        heading = bool(parse(anchor).headings) and "\n" not in anchor
         lead = anchor.startswith("**") and anchor.endswith("**") and len(anchor) > 4 and "\n" not in anchor
         if not (heading or lead):
             raise ManifestError(f"route {route_id}: the anchor is a heading line or a bold lead, not {anchor!r}")
@@ -229,7 +230,11 @@ def named(texts: Mapping[str, str]) -> dict[str, frozenset[str]]:
     name ending ``_*`` as a prefix (kept with its star), and a ``component.op`` pair written in backticks or as the
     first two arguments of ``g6_invoke(...)``."""
     out: dict[str, frozenset[str]] = {}
+    from g6.core.markdown import parse
+
     for surface, text in texts.items():
+        doc = parse(text)
+        text = doc.prose() + "\n" + "\n".join(b.content for b in doc.code_blocks)
         names = {name + "*" if star or name.endswith("_") else name for name, star in _TOOL.findall(text)}
         names |= {f"{component}.{op}" for component, op in _PAIR.findall(text) + _INVOKE.findall(text)}
         out[surface] = frozenset(names)
@@ -241,41 +246,26 @@ def root_words(text: str) -> int:
     return len(text.split("---", 2)[2].split()) if text.startswith("---") and text.count("---") >= 2 else len(text.split())
 
 
-def _lines(text: str) -> list[tuple[str, bool]]:
-    """Each line with whether it stands inside a fenced block (where ``#`` is not a heading)."""
-    out, fenced = [], False
-    for line in text.splitlines():
-        fence = line.lstrip().startswith("```")
-        out.append((line, fenced or fence))
-        fenced = fenced != fence
-    return out
-
-
 def section(root: str, anchor: str) -> str | None:
-    """The part of the root skill a route's anchor heads: for a heading, down to the next heading of its level or
-    above; for a bold lead, its own list item or paragraph. ``None`` when the anchor is absent or stands twice."""
-    lines = _lines(root)
-    heading = _HEADING.match(anchor)
-    if heading:
-        at = [i for i, (line, fenced) in enumerate(lines) if not fenced and line.rstrip() == anchor]
-    else:
-        at = [i for i, (line, fenced) in enumerate(lines)
-              if not fenced and (line.lstrip().startswith(anchor) or _ITEM.sub("", line, count=1).startswith(anchor))]
-    if len(at) != 1:
-        return None
-    start, end = at[0], len(lines)
-    for i in range(start + 1, len(lines)):
-        line, fenced = lines[i]
-        if fenced:
-            continue
-        found = _HEADING.match(line)
-        if heading and found and len(found.group(1)) <= len(heading.group(1)):
-            end = i
-            break
-        if not heading and (found or not line.strip() or _ITEM.match(line)):
-            end = i
-            break
-    return "\n".join(line for line, _ in lines[start:end])
+    """A unique real heading's section, or the real list item/paragraph with a bold lead."""
+    from g6.core.markdown import parse
+
+    doc = parse(root)
+    head = parse(anchor).headings
+    if head:
+        return_value = doc.section(head[0].title, head[0].level, include_heading=True)
+        return return_value.rstrip("\n") if return_value is not None else None
+    candidates = []
+    stack = []
+    for token in doc.tokens:
+        if token.type == "list_item_open":
+            stack.append(token)
+        elif token.type == "list_item_close":
+            stack.pop()
+        elif token.type == "inline" and token.content.startswith(anchor):
+            start, end = doc.span(stack[-1] if stack else token)
+            candidates.append(root[start:end].rstrip("\n"))
+    return candidates[0] if len(candidates) == 1 else None
 
 
 @dataclass(frozen=True)
@@ -294,6 +284,10 @@ class Forms:
 def forms(text: str) -> Forms:
     """The one reading of "this text names a tool". The client's form is read first and is not read again as a
     bare name; a name the prefix marks is a prefixed name, in backticks or out of them."""
+    from g6.core.markdown import parse
+
+    doc = parse(text)
+    text = doc.prose() + "\n" + "\n".join(b.content for b in doc.code_blocks)
     client = frozenset(_CLIENT.findall(text))
     rest = _CLIENT.sub(" ", text)
     return Forms(frozenset(name + "*" if star or name.endswith("_") else name for name, star in _TOOL.findall(rest)),

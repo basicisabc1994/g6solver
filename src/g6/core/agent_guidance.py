@@ -2,6 +2,8 @@
 """Program guidance for agents never teaches them to lift the person's block."""
 from __future__ import annotations
 
+from g6.core.markdown import parse
+
 import re
 
 PERSON = "This op is sensitive. The person must allow it themselves. Tell the person and stop."
@@ -10,41 +12,26 @@ _AUTHORITY = re.compile(
     r"allow\s*=|G6_MCP_SENSITIVE|G6_ALLOW_UNCONFINED|allow_execution|\ballow_sensitive\b|"
     r"\b(?:confirm|approve|grant|promote)\s*\(|\bapprover\b|autonomous_low_risk|"
     r"\bg6\s+setup\b|--allow|allow parameter", re.I)
-_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 
 
 def skill_for_agent(text: str | None) -> str | None:
-    """Keep safe prose and examples; remove authority paragraphs and whole matching fenced blocks."""
+    """Remove authority-bearing CommonMark blocks, preserving all other source bytes."""
     if text is None or not _AUTHORITY.search(text):
         return text
-    kept, chunk = [], []
-    fence = ""
-
-    def finish():
-        part = "".join(chunk)
-        if not _AUTHORITY.search(part):
-            kept.append(part)
-        chunk.clear()
-
-    for line in text.splitlines(keepends=True):
-        marker = _FENCE.match(line)
-        if fence:
-            chunk.append(line)
-            if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) \
-                    and not line[marker.end():].strip():
-                finish()
-                fence = ""
-        elif marker:
-            finish()
-            fence = marker[1]
-            chunk.append(line)
-        elif not line.strip():
-            finish()
-            kept.append(line)
-        else:
-            chunk.append(line)
-    finish()
-    return "".join(kept)
+    doc = parse(text)
+    spans = [doc.span(t) for t in doc.tokens
+             if t.type in ("paragraph_open", "heading_open", "fence", "code_block", "html_block")]
+    cuts = [(a, b) for a, b in spans if _AUTHORITY.search(text[a:b])]
+    # A match spanning blocks also removes every block it intersects.
+    cuts += [(a, b) for m in _AUTHORITY.finditer(text) for a, b in spans if a < m.end() and b > m.start()]
+    kept, end = [], 0
+    for a, b in sorted(set(cuts)):
+        if a > end:
+            kept.append(text[end:a])
+        end = max(end, b)
+    kept.append(text[end:])
+    filtered = "".join(kept)
+    return "" if _AUTHORITY.search(filtered) else filtered
 
 
 def help_for_agent(component: str, help_text: object = None) -> str:

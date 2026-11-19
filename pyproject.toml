@@ -20,7 +20,7 @@ classifiers = [
   "Topic :: Software Development :: Quality Assurance",
 ]
 # Core stays tiny: every component must import with only these installed.
-dependencies = ["pydantic>=2.6", "returns>=0.22"]
+dependencies = ["pydantic>=2.6", "returns>=0.22", "markdown-it-py>=4,<5"]
 
 [project.optional-dependencies]
 # Optional local NLI (Apache-2.0 sentence-transformers; same closure as embeddings).

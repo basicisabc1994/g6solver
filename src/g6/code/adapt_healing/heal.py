@@ -19,6 +19,8 @@ card: it may have been fitted to the examples.
 """
 from __future__ import annotations
 
+from g6.core.markdown import parse
+
 import ast
 import re
 from typing import Any
@@ -39,7 +41,6 @@ MAX_ROUNDS = 3
 MAX_PATCH_CHARS = 200_000
 SYSTEM = ("You repair one piece of Python code. Reply with the complete corrected code in one ```python block and "
           "nothing else. Fix the cause of the error; do not special-case the inputs the tests use.")
-_FENCE = re.compile(r"```[ \t]*(?:python|py)?[ \t]*\r?\n(.*?)```", re.DOTALL)
 _ERROR = re.compile(r"^(?:\w+\.)*(\w+(?:Error|Exception|Exit|Interrupt|Warning)|\w+)\s*:\s*(.*)$")
 #: Literals too common to say anything when a patch spells them.
 _PLAIN = {0, 1, -1, True, False, None, "", 2}
@@ -57,7 +58,7 @@ def error_parts(error: str) -> tuple[str, str]:
 
 def proposed_code(reply: str) -> str:
     """The first fenced Python block of a reply, else the whole reply."""
-    blocks = _FENCE.findall(reply or "")
+    blocks = [b.content for b in parse(reply or "").code_blocks if b.info in ("", "py", "python")]
     return (blocks[0] if blocks else reply or "").strip() + "\n"
 
 
