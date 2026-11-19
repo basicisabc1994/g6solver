@@ -282,3 +282,46 @@ def test_shared_traversal_refuses_past_existing_limits(api, kind):
     tuple(api._strings(at_limit))
     with pytest.raises(api.ContaminationError, match="^G6_E_RSI_SCREEN_LIMIT$"):
         tuple(api._strings(over_limit))
+
+
+@pytest.mark.parametrize("separator", ["\n", "\t", "\r", "\f"])
+@pytest.mark.parametrize("side", ["training", "held_out"])
+def test_json_dumped_passage_is_excluded(api, separator, side):
+    words = [f"word{i}" for i in range(13)]
+    plain = SuiteCase("plain", " ".join(words) + " suffix", "answer")
+    encoded = SuiteCase("encoded", "other", json.dumps(separator.join(words)))
+    held, training = (plain, encoded) if side == "training" else (encoded, plain)
+    assert run(api, [held], [training]).ngram_excluded == 1
+
+
+@pytest.mark.parametrize("raw,plain", [
+    (r"short\nword", "short word"), (r"short\tword", "short word"),
+    (r"short\rword", "short word"), (r'short\"word', 'short"word'),
+    (r"short\bword", "short\bword"),
+    (r"short\\word", "short\\word"), (r"short\/word", "short/word"),
+    (r"\\u0073hortword", "shortword"),
+])
+def test_json_simple_escapes_reach_all_fixed_views(api, raw, plain):
+    assert api.canonical_views(raw) == api.canonical_views(plain)
+    result = run(api, [SuiteCase("held", plain, "secret")], [SuiteCase("train", raw, "other")])
+    assert result.identity_excluded == 1
+
+
+@pytest.mark.parametrize("mode", ["newline", "tab", "double_unicode"])
+@pytest.mark.parametrize("source", ["training", "output"])
+def test_json_escaped_canary_voids(api, mode, source):
+    marker = "a" * 32
+    encoded = (json.dumps("".join(f"\\u{ord(c):04x}" for c in marker))[1:-1]
+               if mode == "double_unicode" else marker[:16] + {"newline": r"\n", "tab": r"\t"}[mode] + marker[16:])
+    result = run(api, [SuiteCase("held", "private", "secret")],
+                 [SuiteCase("train", encoded, "other")] if source == "training" else (),
+                 [encoded] if source == "output" else ())
+    assert result.voided and result.canary_hits == 1
+
+
+@pytest.mark.parametrize("depth", [2, 3, 4])
+def test_nested_json_backslashes_decode_without_stranding_prefixes(api, depth):
+    encoded = "".join(f"\\u{ord(c):04x}" for c in "a" * 32)
+    for _ in range(depth):
+        encoded = json.dumps(encoded)[1:-1]
+    assert run(api, [SuiteCase("held", "private", "secret")], outputs=[encoded]).canary_hits == 1

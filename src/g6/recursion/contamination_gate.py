@@ -22,7 +22,7 @@ import math
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from statistics import mean, stdev
 from urllib.parse import unquote
 
@@ -74,8 +74,10 @@ class CanaryProbe:
         return self.completion_rate > self.chance_rate
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class ScreenReport:
+    """Evaluator-private findings; public serialization carries no slice outcomes."""
+
     total: int
     excluded_indices: tuple[int, ...] = field(repr=False)
     identity_excluded: int
@@ -93,9 +95,7 @@ class ScreenReport:
         return bool(self.canary_hits or self.canary_probe_flags or self.membership_excluded)
 
     def to_record(self) -> dict:
-        record = asdict(self)
-        record.pop("excluded_indices")
-        return record | {"excluded_count": self.excluded_count, "voided": self.voided}
+        return {}
 
 
 @dataclass
@@ -166,16 +166,25 @@ _IGNORABLE = re.compile(
     "\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3"
     "\U0001d173-\U0001d17a\U000e0000-\U000e0fff]"
 )
-_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
-_SURROGATE_ESCAPE = re.compile(r"\\u(d[89ab][0-9a-f]{2})\\u(d[cdef][0-9a-f]{2})", re.IGNORECASE)
+_ESCAPE = re.compile(
+    r"\\u(?P<high>d[89ab][0-9a-f]{2})\\u(?P<low>d[cdef][0-9a-f]{2})"
+    r"|\\u(?P<code>[0-9a-f]{4})|\\(?P<simple>[\"\\/bfnrt])", re.IGNORECASE)
+_JSON_CHARACTERS = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+
+
+def _unescape(match):
+    if match["high"] is not None:
+        return chr(0x10000 + ((int(match["high"], 16) - 0xD800) << 10) + int(match["low"], 16) - 0xDC00)
+    if match["code"] is not None:
+        return chr(int(match["code"], 16))
+    return _JSON_CHARACTERS[match["simple"]]
 
 
 def _canonical(text: str, replacement: str, *, compact=False) -> str:
     while True:
         normalized = _IGNORABLE.sub(replacement, unicodedata.normalize("NFKC", text).casefold())
-        paired = _SURROGATE_ESCAPE.sub(
-            lambda m: chr(0x10000 + ((int(m[1], 16) - 0xD800) << 10) + int(m[2], 16) - 0xDC00), normalized)
-        decoded = unquote(_ESCAPE.sub(lambda m: chr(int(m[1], 16)), paired))
+        # One left-to-right pass keeps escaped backslashes intact until the next layer.
+        decoded = unquote(_ESCAPE.sub(_unescape, normalized))
         result = ("" if compact else " ").join(decoded.split())
         if result == text:
             return result

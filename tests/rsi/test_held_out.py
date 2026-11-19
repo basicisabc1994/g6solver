@@ -134,7 +134,7 @@ def test_roles_cannot_open_evaluator_store_or_read_items_canaries_or_sealed_refs
             getter(item.slice_id, role=role)
 
 
-def test_only_digest_and_count_records_cross_boundary_and_vault_seam_is_used(api, tmp_path, caplog):
+def test_only_keyed_references_cross_boundary_and_vault_seam_is_used(api, tmp_path, caplog):
     store, item = opened(api, tmp_path)
     sealed = store.sealed(item.slice_id, role="evaluator", capability=authority())
     assert isinstance(sealed, SealedSplit)
@@ -162,7 +162,7 @@ def test_canary_void_is_durable_and_recorded_without_the_marker(api, tmp_path, s
     assert report.voided
     again = api.HeldOutSlicer(tmp_path / "evaluator", role="evaluator", capability=authority())
     assert again.status(item.slice_id) == "void"
-    assert any(r["kind"] == "contamination" for r in again.records())
+    assert any(r["kind"] == "contamination" for r in again.evaluator_records(role="evaluator", capability=authority()))
     assert marker not in json.dumps(again.records())
 
 
@@ -182,7 +182,7 @@ def test_pass_without_census_fails_and_complete_census_runs_every_detector(api, 
     complete = store.evaluate_pass(item.slice_id, task.task_id, "output", arm="G0", attempt="two",
                                    anchor_pass=True, detectors={name: detector for name in store.detector_names})
     assert complete.passed and complete.census_count == 3 and len(called) == 3
-    assert any(r["kind"] == "detector_census" for r in store.records())
+    assert any(r["kind"] == "detector_census" for r in store.evaluator_records(role="evaluator", capability=authority()))
 
 
 @pytest.mark.parametrize("mode", ["partial", "hack", "raises", "unknown", "nonbool"])
@@ -310,7 +310,7 @@ def test_canary_is_recorded_without_membership_and_prevents_any_later_open(api, 
     marker = store.canaries(item.slice_id, role="evaluator", capability=authority())[0]
     result = store.screen(item.slice_id, (), model_outputs=(marker,), membership={})
     assert result.voided and store.status(item.slice_id) == "void"
-    assert any(r["kind"] == "contamination" for r in store.records())
+    assert any(r["kind"] == "contamination" for r in store.evaluator_records(role="evaluator", capability=authority()))
 
 
 def test_model_output_canary_voids_its_target_even_before_target_is_opened(api, tmp_path):
@@ -366,10 +366,14 @@ def encoded_marker(marker, mode):
         return "".join(chr(ord(c) + 0xFEE0) for c in marker)
     if mode == "unicode_escape":
         return "".join(f"\\u{ord(c):04x}" for c in marker)
+    if mode == "json_newline":
+        return marker[:16] + r"\n" + marker[16:]
+    if mode == "double_unicode":
+        return json.dumps("".join(f"\\u{ord(c):04x}" for c in marker))[1:-1]
     return "".join(f"%{ord(c):02X}" for c in marker)
 
 
-@pytest.mark.parametrize("mode", ["uppercase", "nfkc", "unicode_escape", "percent"])
+@pytest.mark.parametrize("mode", ["uppercase", "nfkc", "unicode_escape", "percent", "json_newline", "double_unicode"])
 @pytest.mark.parametrize("boundary", ["screen", "evaluate"])
 def test_encoded_canary_durably_voids_through_both_apis(api, tmp_path, mode, boundary):
     store, item = opened(api, tmp_path)
@@ -421,7 +425,7 @@ def test_screen_refusals_commit_known_canary_incidents(api, tmp_path, refusal):
         store.screen(item.slice_id, training, model_outputs=outputs, membership={})
     again = api.HeldOutSlicer(tmp_path / "evaluator", role="evaluator", capability=authority())
     assert again.status(item.slice_id) == "void"
-    assert any(r["kind"] == "contamination" for r in again.records())
+    assert any(r["kind"] == "contamination" for r in again.evaluator_records(role="evaluator", capability=authority()))
     with pytest.raises(api.HeldOutError, match="SLICE_REUSED"):
         again.cut(1, again.record_freeze(freeze(api, 1)))
     with pytest.raises(api.HeldOutError, match="SLICE_CLOSED"):
@@ -448,7 +452,8 @@ def test_mapping_marker_incident_is_durable_after_refusal(api, tmp_path, mapping
     assert again.status(item.slice_id) == "void"
     with pytest.raises(api.HeldOutError, match="SLICE_REUSED"):
         again.cut(1, again.record_freeze(freeze(api, 1)))
-    assert sum(r["kind"] == "contamination" for r in again.records()) == 2
+    assert sum(r["kind"] == "contamination"
+               for r in again.evaluator_records(role="evaluator", capability=authority())) == 2
 
 
 def test_learner_cannot_claim_evaluator_role_at_constructor(api, tmp_path):
@@ -621,6 +626,6 @@ def test_public_records_hide_partition_seed_from_candidate_observer(api, tmp_pat
     assert all(task.task_id not in public_text for task in tasks)
     # The public field inventory contains no raw seed, membership or unkeyed seed digest.
     assert set(store.registration()) == {
-        "rule", "partition_seed_commitment", "pool_digest", "detectors", "partition_digest", "count",
+        "rule", "partition_seed_commitment", "pool_digest", "detectors", "partition_digest",
         "rule_sha256", "pool_sha256", "vault_digest", "vault_id", "salt_commitment",
     }

@@ -11,6 +11,9 @@ a party controlling the encoding. Raw-container marker and positive-probe
 incidents commit before schema/status validation. Public content commitments are
 domain-separated HMACs under the host's sealed secret. Partition seeds stay in the
 evaluator; registrations containing a previously public raw seed are refused.
+Public records allow only lifecycle references and keyed commitments. Exact
+sizes, screen findings, incidents and pass/census outcomes stay evaluator-private,
+including the presence of conditional audit events.
 """
 from __future__ import annotations
 
@@ -38,6 +41,18 @@ from g6.rsi.records import TaskError, content_digest
 FROZEN_COMPONENTS = ("improver", "adapter", "library", "self_model", "curriculum", "prompt_library",
                      "harness_memory", "context_indexes")
 RULE = "cut_pool-strata-six-sha256-v1"
+_PUBLIC_REGISTRATION = ("rule", "partition_seed_commitment", "pool_digest", "detectors", "partition_digest",
+                        "rule_sha256", "pool_sha256", "vault_digest", "vault_id", "salt_commitment")
+_PUBLIC_SLICE = ("slice_id", "generation", "freeze_digest", "seed_commitment", "opened_digest")
+_PUBLIC_EVENTS = {
+    "registered": ("partition_digest",),
+    "freeze": ("generation", "freeze_digest"),
+    "cut": (*_PUBLIC_SLICE, "cut_after_generation"),
+}
+
+
+def _project(record, fields):
+    return {name: record[name] for name in fields if name in record}
 
 
 class HeldOutError(ValueError):
@@ -104,19 +119,23 @@ class FreezeRecord:
 
 @dataclass(frozen=True)
 class Slice:
+    """Evaluator slice handle; only to_record() and its count-free repr may be shared."""
+
     slice_id: str
     generation: int
     freeze_digest: str
-    count: int
+    count: int = field(repr=False)
     seed_commitment: str
     opened_digest: str
 
     def to_record(self):
-        return asdict(self) | {"cut_after_generation": self.generation}
+        return _project(asdict(self), _PUBLIC_SLICE) | {"cut_after_generation": self.generation}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class PassResult:
+    """Evaluator-private decision; neither fields nor asdict output may be shared."""
+
     passed: bool
     reason: str
     census_count: int
@@ -172,7 +191,10 @@ def detector_census(task: TaskSpec, output: str, names: Sequence[str],
 
 
 class HeldOutSlicer:
-    """An evaluator handle. Only registration, slice summaries and records may be shared."""
+    """An evaluator handle. Share only registration(), records() and Slice.to_record().
+
+    All other results, including status, screening and pass decisions, are private.
+    """
 
     def __init__(self, root: str | Path, *, role: str, capability: EvaluatorCapability | None = None):
         _evaluator(role, capability)
@@ -317,10 +339,19 @@ class HeldOutSlicer:
 
     def registration(self) -> dict:
         with self._db() as db:
-            return self._registration(db)
+            return _project(self._registration(db), _PUBLIC_REGISTRATION)
 
     def records(self) -> list[dict]:
         with self._db() as db:
+            records = (json.loads(row[0]) for row in db.execute("SELECT record FROM events ORDER BY sequence"))
+            return [{"kind": record["kind"], **_project(record, _PUBLIC_EVENTS[record["kind"]])}
+                    for record in records if record.get("kind") in _PUBLIC_EVENTS]
+
+    def evaluator_records(self, *, role: str, capability: EvaluatorCapability | None = None) -> list[dict]:
+        """Read the complete private audit, including conditional events and findings."""
+        _evaluator(role, capability)
+        with self._db() as db:
+            self._authorize(role, capability, self._data(db))
             return [json.loads(row[0]) for row in db.execute("SELECT record FROM events ORDER BY sequence")]
 
     def record_freeze(self, record: FreezeRecord) -> str:
@@ -374,8 +405,8 @@ class HeldOutSlicer:
             item = Slice(row["id"], generation, freeze_digest, len(tasks), seed_commitment,
                          self._capability.commitment("slice-content", [t.to_record() for t in tasks]))
             db.execute("UPDATE slices SET status='open', freeze=?, summary=? WHERE id=?",
-                       (freeze_digest, _json(item.to_record()), row["id"]))
-            self._event(db, "cut", **item.to_record())
+                       (freeze_digest, _json(asdict(item)), row["id"]))
+            self._event(db, "cut", **asdict(item), cut_after_generation=generation)
             return item
 
     def status(self, slice_id: str) -> str:
@@ -477,7 +508,8 @@ class HeldOutSlicer:
                             canaries=tuple(data["canaries"]), canary_probes=canary_probes)
             excluded = sorted(set(json.loads(row["excluded"])) | set(result.excluded_indices))
             db.execute("UPDATE slices SET excluded=?, screened=1 WHERE id=?", (_json(excluded), slice_id))
-            self._event(db, "screen", slice_id=slice_id, **result.to_record())
+            self._event(db, "screen", slice_id=slice_id, **asdict(result),
+                        excluded_count=result.excluded_count, voided=result.voided)
             if result.voided and not hit:
                 self._void(db, slice_id)
             return result

@@ -47,6 +47,20 @@ def test_raw_marker_prepass_commits_before_later_transaction_rolls_back(incident
     assert db.execute("SELECT count(*) FROM events").fetchone()[0] == 2
 
 
+@pytest.mark.parametrize("mode", ["newline", "double_unicode"])
+def test_json_escape_incident_commits_before_later_refusal(incident_store, mode):
+    import json
+
+    store, db = incident_store
+    marker = "d" * 32
+    encoded = (marker[:16] + r"\n" + marker[16:] if mode == "newline" else
+               json.dumps("".join(f"\\u{ord(c):04x}" for c in marker))[1:-1])
+    store._commit_incidents("a" * 64, model_outputs=(encoded, None))
+    with pytest.raises(ValueError), store._db():
+        raise ValueError("later refusal")
+    assert list(db.execute("SELECT status FROM slices")) == [("void",), ("void",)]
+
+
 def test_positive_probe_prepass_commits_despite_malformed_siblings(incident_store):
     store, db = incident_store
     store._commit_incidents("a" * 64, model_outputs=(None,),
