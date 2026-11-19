@@ -41,7 +41,7 @@ from .facts import _extract_facts
 from .ledger import Stores
 from .library import Library
 from .records import (AcceptanceEvidence, Cost, DecidedBy, FieldEvidence,
-                      Interval, LibraryEntry, MethodContract, Model, RegressionCase, Sha256,
+                      FeaturePredicate, Interval, LibraryEntry, MethodContract, Model, RegressionCase, Sha256,
                       TemplateInstance, VerifierCandidate)
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -73,6 +73,17 @@ class Observation:
     case: object
     label: str
     split: str
+    oracle_result: dict | None = None
+
+
+@dataclass(frozen=True)
+class ProbeCase:
+    """Source case with evaluator-owned, registration-bound probe inputs."""
+    source_case: object
+    probe_input: object
+
+    def __getattr__(self, name):
+        return getattr(self.source_case, name)
 
 
 @dataclass(frozen=True)
@@ -83,6 +94,8 @@ class EvaluationSet:
     monitor: tuple[Observation, ...]
     regression: tuple[Observation, ...]
     controls: tuple[str, str]
+    replacement: ReplacementStudy | None = None
+    oracle_policy: object | None = None
 
 
 @dataclass(frozen=True)
@@ -96,6 +109,46 @@ class AcceptanceDecision:
     minimum_detectable_gain: float = 1.0
     p_value_upper_bound: float | None = None
     minimum_detectable_precision_difference: float | None = None
+
+
+class Inconclusive(ValueError):
+    """Registered evidence cannot resolve the admission margin."""
+
+
+Nonnegative = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+
+
+class TeacherObservation(Model):
+    case_id: Sha256
+    repository: Annotated[str, Field(min_length=1, max_length=256)]
+    teacher_verdict: Literal["concern", "no_concern", "abstain"]
+    teacher_s: Nonnegative
+    maintenance_delta_s: float
+
+
+class ReplacementStudy(Model):
+    """Owner-registered, evaluator-custodied traces; never a proposal argument.
+
+    Fixed costs and maintenance are booked in registered weighted seconds.
+    CPU and teacher durations use the registered resource prices. Fixed costs
+    include acquisition and prior validation, including discarded attempts.
+    The supported graph is the current library union with one teacher judge.
+    """
+    teacher: Sha256
+    teacher_model: Literal["gpt-oss-20b"] = "gpt-oss-20b"
+    candidate_id: Sha256
+    registration_sha256: Sha256
+    topology: Literal["library_any_teacher.v1"] = "library_any_teacher.v1"
+    normalization: Literal["alpha_functions_inline_constants.v1"] = "alpha_functions_inline_constants.v1"
+    horizon: Literal[1000] = 1000
+    shadow_rate: Literal[0.05] = .05
+    shadow_seed: Sha256
+    cpu_weight: Annotated[float, Field(gt=0)] = 1.
+    teacher_weight: Annotated[float, Field(gt=0)] = 1.
+    fixed_new_s: Nonnegative
+    fixed_base_s: Nonnegative
+    rows: list[TeacherObservation]
+    scope: list[FeaturePredicate] | None = None
 
 
 class FieldOutcome(Model):
@@ -236,9 +289,9 @@ def _load(registration_id, candidate, library) -> EvaluationSet:
         result = oracle.label(case, policy=frozen.policy, workspace=workspace)
         target = "acceptance" if ref.split == "acceptance" else "monitor"
         if result.label != "excluded":
-            groups[target].append(Observation(case, result.label, ref.split))
+            groups[target].append(Observation(case, result.label, ref.split, result.model_dump(mode="json")))
         if ref.case_id in wanted:
-            groups["regression"].append(Observation(case, result.label, "regression"))
+            groups["regression"].append(Observation(case, result.label, "regression", result.model_dump(mode="json")))
         if ref.split in {"acceptance", "monitor"}:
             reference = sealed_gate.SealedRef(sha256=frozen.operator_digests["held_out"])
             sealed = custody / "objects" / f"{reference.sha256}.json"
@@ -246,9 +299,9 @@ def _load(registration_id, candidate, library) -> EvaluationSet:
                     sealed, reference, case, policy=frozen.policy, workspace=workspace,
                     registration=(path, registration_id)):
                 if labelled.label != "excluded":
-                    groups[target].append(Observation(generated, labelled.label, ref.split))
+                    groups[target].append(Observation(generated, labelled.label, ref.split, labelled.model_dump(mode="json")))
                 if generated.case_id in wanted:
-                    groups["regression"].append(Observation(generated, labelled.label, "regression"))
+                    groups["regression"].append(Observation(generated, labelled.label, "regression", labelled.model_dump(mode="json")))
     observations = tuple(groups["acceptance"])
     found = {o.case.case_id for group in groups.values() for o in group}
     for ident in sorted(wanted - found):
@@ -259,9 +312,33 @@ def _load(registration_id, candidate, library) -> EvaluationSet:
         if case.case_id != ident:
             raise ValueError("archived regression digest changed")
         result = oracle.label(case, policy=frozen.policy, workspace=workspace)
-        groups["regression"].append(Observation(case, result.label, "regression"))
+        groups["regression"].append(Observation(case, result.label, "regression", result.model_dump(mode="json")))
+    if "probe_inputs_sha256" in frozen.study:
+        ident = frozen.study["probe_inputs_sha256"]
+        if not isinstance(ident, str) or not re.fullmatch(r"[0-9a-f]{64}", ident):
+            raise ValueError("invalid registered probe input digest")
+        raw = strict_json(_plain(custody / "probe_inputs" / f"{ident}.json", custody).read_bytes())
+        if not isinstance(raw, dict) or digest(raw) != ident:
+            raise ValueError("registered probe inputs changed")
+        from .probes import ProbeInput
+        inputs = {key: ProbeInput.model_validate(value) for key, value in raw.items()}
+        for name, group in groups.items():
+            groups[name] = [replace(o, case=ProbeCase(o.case, inputs[o.case.case_id]))
+                            if o.case.case_id in inputs else o for o in group]
+        observations = tuple(groups["acceptance"])
+    replacement = None
+    if "replacement_protocol_sha256" in frozen.study:
+        ident = frozen.study["replacement_protocol_sha256"]
+        if not isinstance(ident, str) or not re.fullmatch(r"[0-9a-f]{64}", ident):
+            raise ValueError("invalid registered replacement digest")
+        data = strict_json(_plain(custody / "replacement" / f"{candidate.candidate_id}.json", custody).read_bytes())
+        replacement = ReplacementStudy.model_validate(data)
+        protocol = replacement.model_dump(mode="json", include={"teacher", "teacher_model", "topology",
+            "normalization", "horizon", "shadow_rate", "shadow_seed", "scope", "cpu_weight", "teacher_weight"})
+        if digest(protocol) != ident or replacement.registration_sha256 != registration_id:
+            raise ValueError("registered replacement protocol changed")
     return EvaluationSet(registration_id, digest([o.case.case_id for o in observations]), observations,
-                         tuple(groups["monitor"]), tuple(groups["regression"]), controls)
+                         tuple(groups["monitor"]), tuple(groups["regression"]), controls, replacement, frozen.policy)
 
 
 def _interval(k, n):
@@ -287,21 +364,175 @@ def _candidate(entry):
     return Stores().for_model(VerifierCandidate).get(entry.candidate_id)
 
 
+def _candidate_boundary(candidate):
+    body = canonical(candidate.model_dump(mode="json"))
+    if any(token in body for token in ("held_out", "evaluator_only", "_evaluator_mutants")):
+        raise ValueError("candidate uses evaluator-only operators")
+
+
+def _in_scope(predicates, facts):
+    for predicate in predicates:
+        value, other = facts.get(predicate.feature), predicate.value
+        if value is None:
+            return False
+        try:
+            if predicate.op == "eq":
+                matches = value == other
+            elif predicate.op == "ne":
+                matches = value != other
+            elif predicate.op == "contains":
+                matches = other in value
+            elif type(value) not in (int, float) or type(other) not in (int, float):
+                return False
+            elif predicate.op == "gt":
+                matches = value > other
+            elif predicate.op == "ge":
+                matches = value >= other
+            elif predicate.op == "lt":
+                matches = value < other
+            else:
+                matches = value <= other
+        except (TypeError, ValueError):
+            return False
+        if not matches:
+            return False
+    return True
+
+
+def _probe_verdict(candidate, case):
+    from . import probes
+
+    body, contract = candidate.body, candidate.contract
+    if candidate.form != "template_instance" or body.template not in probes.PROBE_NAMES_V2:
+        raise ValueError("registered v2 probe template required")
+    if len(contract.probes) != 1 or contract.probes[0].name != body.template:
+        raise ValueError("probe template differs from registered probe")
+    inputs = {"files": case.files, "target": case.target, "changed_lines": case.changed_lines}
+    if body.template == "discriminates_at_base.v2":
+        bound = getattr(case, "probe_input", None)
+        if bound is None:
+            return "abstain"
+        bound = probes.ProbeInput.model_validate(bound.model_dump(mode="json"))
+        if (bound.files != case.files or bound.target != case.target or bound.changed_lines != case.changed_lines
+                or bound.base_implementation not in case.known_wrong
+                or bound.new_tests != {"tests/test_case.py": case.after_tests}):
+            raise ValueError("registered base probe inputs differ from source case")
+        inputs = bound.model_dump(mode="json")
+    probe = contract.probes[0]
+    workspace = state_path("distill", "evaluation-work")
+    workspace.mkdir(parents=True, exist_ok=True)
+    outcome = probes._run_probe(probes.ProbeTemplateInstance.model_validate(body.model_dump(mode="json")),
+        {"tests/test_case.py": case.before_tests}, {"tests/test_case.py": case.after_tests}, split="acceptance",
+        probe_input=inputs,
+        workspace=workspace, cost_bound={"wall_s": min(probe.wall_s, contract.cost_bound.wall_s),
+            "probe_runs": min(probe.runs, contract.cost_bound.probe_runs), "model_calls": 0})
+    return outcome.verdict
+
+
+def _normal_form(source):
+    """A deliberately small normalisation with direct function calls only."""
+    tree = ast.parse(source)
+    names, constants, kept = {}, {}, []
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and not node.decorator_list:
+            if node.name.startswith(("pytest_", "setup_", "teardown_")):
+                raise ValueError("normalisation excludes test hooks")
+            if node.name in names or node.args.defaults or node.args.kw_defaults:
+                raise ValueError("normalisation excludes decorated or defaulted functions")
+            names[node.name] = ("test_" if node.name.startswith("test_") else "helper_") + str(len(names))
+            kept.append(node)
+        elif (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+              and node.targets[0].id.isupper() and isinstance(node.value, ast.Constant)):
+            if node.targets[0].id in constants:
+                raise ValueError("reassigned constant")
+            constants[node.targets[0].id] = node.value
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            kept.append(node)
+        else:
+            raise ValueError("unsupported normalisation form")
+    tree.body = kept
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Global, ast.Nonlocal, ast.ClassDef, ast.Lambda, ast.AsyncFunctionDef)):
+            raise ValueError("dynamic normalisation form")
+        if isinstance(node, ast.FunctionDef) and node not in kept:
+            raise ValueError("nested function")
+        if isinstance(node, ast.Attribute) and (node.attr.startswith("__") or node.attr in names):
+            raise ValueError("name-sensitive attribute")
+        if isinstance(node, ast.Name):
+            if node.id in {"globals", "locals", "eval", "exec", "getattr", "setattr", "vars", "dir"}:
+                raise ValueError("name-sensitive operation")
+            if node.id in names and not (isinstance(parents.get(node), ast.Call) and parents[node].func is node):
+                raise ValueError("function name escapes direct call")
+            if node.id in constants and not isinstance(node.ctx, ast.Load):
+                raise ValueError("constant rebound")
+        if isinstance(node, ast.arg) and node.arg in names.keys() | constants.keys():
+            raise ValueError("normalised name shadowed")
+
+    class Normalise(ast.NodeTransformer):
+        def visit_FunctionDef(self, node):
+            node.name = names[node.name]
+            return self.generic_visit(node)
+
+        def visit_Name(self, node):
+            if node.id in constants:
+                return constants[node.id]
+            node.id = names.get(node.id, node.id)
+            return node
+
+    return ast.dump(Normalise().visit(tree), include_attributes=False)
+
+
+def _normal_equivalent(before, after):
+    try:
+        return _normal_form(before) == _normal_form(after)
+    except (SyntaxError, ValueError, RecursionError):
+        return False
+
+
+def _negative_justification(case, policy):
+    if _normal_equivalent(case.before_tests, case.after_tests):
+        return "n1"
+    from .held_out import oracle
+
+    policy = policy or oracle.OraclePolicy()
+    workspace = state_path("distill", "evaluation-work")
+    workspace.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + policy.wall_s
+    if not case.known_wrong:
+        return "shared_mechanism"
+    for source in case.known_wrong:
+        results = []
+        for suite in (case.before_tests, case.after_tests):
+            remaining = int(deadline - time.monotonic())
+            if remaining < 1:
+                return "shared_mechanism"
+            results.append(oracle._run(case, source, suite, workspace=workspace,
+                                       timeout_s=min(remaining, policy.per_run_s)))
+        if results[0] not in {"passed", "failed"} or results[0] != results[1]:
+            return "shared_mechanism"
+    return "n2"
+
+
 def _run(candidate, case, entries, stack=frozenset()):
+    _candidate_boundary(candidate)
     if candidate.candidate_id in stack:
         raise ValueError("cyclic method dependency")
     stack = stack | {candidate.candidate_id}
     contract = candidate.contract
-    if contract.applies_when or contract.probes:
-        # Feature predicate aggregation/probe receipts have no registered semantics
-        # in wave 1. Do not guess or treat a missing probe as a clean verdict.
+    facts = _extract_facts({"tests/test_case.py": case.before_tests}, {"tests/test_case.py": case.after_tests})
+    if not _in_scope(contract.applies_when, facts):
         return "abstain"
+    if contract.probes or (isinstance(candidate.body, TemplateInstance) and candidate.body.template.endswith(".v2")):
+        verdict = _probe_verdict(candidate, case)
+        if verdict not in contract.verdict_kinds:
+            raise ValueError("method verdict outside contract")
+        return verdict
     if candidate.form == "predicate":
         # Admission cannot inherit an owner's permission for unconfined exploratory
         # scripts. This setting only tightens execution and is restored afterwards.
         if os.environ.get("G6_REQUIRE_ISOLATION") != "1":
             raise ValueError("acceptance predicates require G6_REQUIRE_ISOLATION=1")
-        facts = _extract_facts({"tests/test_case.py": case.before_tests}, {"tests/test_case.py": case.after_tests})
         outcomes = run_batch(candidate.body, [facts], timeout_s=contract.cost_bound.wall_s)
         if len(outcomes) != 1 or not outcomes[0].ok:
             raise ValueError("confined method run unavailable")
@@ -330,7 +561,10 @@ def _run(candidate, case, entries, stack=frozenset()):
             current = next((e for e in _active(entries) if e.candidate_id == historical.candidate_id), None)
             if current is None:
                 raise ValueError("method dependency has lost authority")
-            children.append(_run(_candidate(current), case, entries, stack))
+            if current.replacement == "R" and not _case_in_scope(current.replacement_scope, case):
+                children.append("abstain")
+            else:
+                children.append(_run(_candidate(current), case, entries, stack))
         if candidate.form == "reuse":
             verdict = children[0]
         elif body.op == "sequence":
@@ -371,8 +605,21 @@ def _union(verdicts):
     return "concern" if "concern" in verdicts else "abstain" if "abstain" in verdicts else "no_concern"
 
 
+def _case_in_scope(scope, case):
+    return _in_scope(scope, _extract_facts({"tests/test_case.py": case.before_tests},
+                                          {"tests/test_case.py": case.after_tests}))
+
+
+def _measure_entry(entry, observations, entries):
+    verdicts, costs = _measure(_candidate(entry), observations, entries)
+    if entry.replacement == "R":
+        verdicts = [v if _case_in_scope(entry.replacement_scope, o.case) else "abstain"
+                    for o, v in zip(observations, verdicts)]
+    return verdicts, costs
+
+
 def _library_verdicts(entries, observations):
-    methods = [_measure(_candidate(e), observations, entries)[0] for e in _active(entries)]
+    methods = [_measure_entry(e, observations, entries)[0] for e in _active(entries)]
     return [_union([v[i] for v in methods]) for i in range(len(observations))]
 
 
@@ -401,7 +648,7 @@ def _regress(entries, observations, added=None, *, targets=None):
             observation = cases.get(expected.case_ref)
             if observation is None or observation.label == "excluded":
                 raise ValueError("regression case unavailable")
-            own = _measure(_candidate(entry), (observation,), entries)[0][0]
+            own = _measure_entry(entry, (observation,), entries)[0][0]
             if own != expected.verdict:
                 raise ValueError("entry regression no longer reproduces")
             before = _library_verdicts(entries, (observation,))[0]
@@ -482,6 +729,7 @@ def _equal(output, expected):
 
 
 def _assess(candidate, entries, frozen, reuse_index):
+    _candidate_boundary(candidate)
     observations = frozen.acceptance
     if not observations or any(o.label not in {"positive", "negative"} for o in observations):
         raise ValueError("settled acceptance cases required")
@@ -635,7 +883,11 @@ def _persist(candidate, answer, evidence, own, frozen, data, library):
                 stream.write(text)
     now = datetime.now(timezone.utc).isoformat()
     certificate = {"gate": VERSION, "candidate": candidate.candidate_id, "report": _save_report(data),
-                   "authority": "A1", "scope": "checked on the registered held-out cases; not proof"}
+                   "authority": "A1", "scope": "checked on the registered held-out cases"}
+    replacement = data.get("replacement")
+    fields = {} if replacement is None else {
+        "replacement": "R", "replacement_scope": replacement["scope"], "teacher": replacement["teacher"],
+        "noninferiority": _save_report(replacement)}
     entry = LibraryEntry(candidate_id=candidate.candidate_id, contract_sha256=candidate.contract.content_id,
         concept_id=candidate.concept_id, family=candidate.contract.family,
         version=max((e.version for e in previous), default=0) + 1, parents=candidate.lineage,
@@ -643,7 +895,7 @@ def _persist(candidate, answer, evidence, own, frozen, data, library):
         regression_suite=[RegressionCase(case_ref=o.case.case_id, verdict=v) for o, v in zip(frozen.acceptance, own)],
         field=FieldEvidence(fired=0, confirmed=0, refuted=0, unlabelled=0, precision=None),
         decided_by=DecidedBy(gate_version=VERSION, person=None), certificate_sha256=_save_report(certificate),
-        created_at=now, changed_at=now, reason="; ".join(answer.reasons))
+        created_at=now, changed_at=now, reason="; ".join(answer.reasons), **fields)
     Stores().for_model(LibraryEntry).put(entry)
     return replace(answer, entry_id=entry.entry_id)
 
@@ -653,12 +905,27 @@ def decide(candidate: VerifierCandidate, library: Library, registration: str) ->
     return decide_batch((candidate,), library, registration)[0]
 
 
+def decide_replacement(candidate: VerifierCandidate, library: Library, registration: str) -> AcceptanceDecision:
+    """Judge a singleton replacement using registered evaluator-custodied traces."""
+    return decide_replacement_batch((candidate,), library, registration)[0]
+
+
+def decide_replacement_batch(candidates, library: Library, registration: str) -> tuple[AcceptanceDecision, ...]:
+    """Spend one look per proposal and apply BH to the complete replacement tick."""
+    return _decide_batch(candidates, library, registration, replacement=True)
+
+
 def decide_batch(candidates, library: Library, registration: str) -> tuple[AcceptanceDecision, ...]:
     """Seal the complete tick batch before measuring; BH q=.05 in addition to alpha/K.
 
     A runner must call this once per tick, rather than adaptively submitting a
     series of singleton batches. Every attempt consumes one registered look.
     """
+    return _decide_batch(candidates, library, registration, replacement=False)
+
+
+def _decide_batch(candidates, library, registration, *, replacement):
+    assess = _assess_replacement if replacement else _assess
     originals = tuple(candidates)
     try:
         if any(type(c) is not VerifierCandidate for c in originals):
@@ -684,9 +951,13 @@ def decide_batch(candidates, library: Library, registration: str) -> tuple[Accep
                     frozen = _load(registration, candidate, library)
                     if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:
                         raise ValueError("candidate differs from persisted proposal")
+                    if replacement and frozen.replacement is None:
+                        raise ValueError("registered replacement traces required")
                     index, reservation = _spend(registration, candidate)
-                    answer, evidence, own, data = _assess(candidate, library.list(), frozen, index)
+                    answer, evidence, own, data = assess(candidate, library.list(), frozen, index)
                     evaluated[candidate.candidate_id] = (answer, evidence, own, frozen, data)
+                except Inconclusive as error:
+                    answer = AcceptanceDecision("inconclusive", (str(error),), candidate.candidate_id)
                 except (ValueError, KeyError, FileNotFoundError) as error:
                     # Do not echo corpus bodies, subprocess stderr or model output.
                     reason = str(error) if isinstance(error, ValueError) else "registered input missing"
@@ -695,7 +966,8 @@ def decide_batch(candidates, library: Library, registration: str) -> tuple[Accep
                 results[candidate.candidate_id] = (answer, reservation)
                 # Close the reservation before spending the next look. A later
                 # activation is a separate append-only decision row.
-                _record(replace(answer, verdict="evaluated") if answer.verdict == "admit_probation" else answer, reservation)
+                _record(replace(answer, verdict="evaluated") if answer.verdict in {"admit_probation", "admit_scoped"}
+                        else answer, reservation)
             accepted = _bh(((v[0].p_value, ident) for ident, v in evaluated.items()), len(candidates))
             for candidate in sorted(candidates, key=lambda c: c.candidate_id):
                 ident = candidate.candidate_id
@@ -706,10 +978,16 @@ def decide_batch(candidates, library: Library, registration: str) -> tuple[Accep
                     if ident not in accepted:
                         raise ValueError("batch Benjamini-Hochberg bar not met")
                     # Earlier members of this batch may already have changed L_t.
-                    answer, evidence, own, data = _assess(candidate, library.list(), frozen, evidence.reuse_index)
+                    if replacement:
+                        answer, evidence, own, data = _assess_replacement(candidate, library.list(), frozen,
+                            evidence.reuse_index, prior_validation_s=data["replacement"]["validation_s"])
+                    else:
+                        answer, evidence, own, data = assess(candidate, library.list(), frozen, evidence.reuse_index)
                     if answer.p_value > .05 * len(accepted) / len(candidates):
                         raise ValueError("batch bar not met after library changed")
                     answer = _persist(candidate, answer, evidence, own, frozen, data, library)
+                except Inconclusive as error:
+                    answer = replace(answer, verdict="inconclusive", reasons=(str(error),))
                 except ValueError as error:
                     answer = replace(answer, verdict="refuse", reasons=(str(error),))
                 results[ident] = (answer, "")
@@ -868,6 +1146,8 @@ def _change(entry, *, status, authority, reason, person=None, field=None):
         "decided_by": {"gate_version": VERSION, "person": person}}
     if field is not None:
         data["field"] = field.model_dump(mode="json")
+    if authority == "A0" and entry.replacement == "R":
+        data.update(replacement="none", replacement_scope=None, teacher=None, noninferiority=None)
     result = LibraryEntry(**data)
     Stores().for_model(LibraryEntry).put(result)
     return result
@@ -980,3 +1260,222 @@ def _lower(entry_id, library, *, action, reason, person):
             return _record(AcceptanceDecision(action, (reason,), entry.candidate_id, entry_id=changed.entry_id))
     except (ValueError, KeyError) as error:
         return AcceptanceDecision("refuse", (str(error) if isinstance(error, ValueError) else "entry unavailable",))
+
+
+def _replacement_cost(fixed_difference, savings):
+    if (not savings or not math.isfinite(fixed_difference)
+            or any(not math.isfinite(s) for s in savings)):
+        raise ValueError("finite cumulative cost measurements required")
+    point = fixed_difference - 1000 * statistics.fmean(savings)
+    se = 1000 * statistics.stdev(savings) / math.sqrt(len(savings)) if len(savings) > 1 else math.inf
+    upper = point + statistics.NormalDist().inv_cdf(.95) * se
+    saving = statistics.fmean(savings)
+    kind = ("dominates" if fixed_difference <= 0 <= saving else
+            "break_even" if fixed_difference > 0 and saving > 0 else
+            "crossover" if fixed_difference < 0 and saving < 0 else "never")
+    return {"horizon": 1000, "fixed_difference": fixed_difference, "per_task_saving": saving,
+            "point": point, "upper_95": upper, "admissible": upper < 0,
+            "kind": kind, "crossing": fixed_difference / saving if kind in {"break_even", "crossover"} else None}
+
+
+def _cluster_differences(observations, rows, values):
+    units, repositories = {}, {}
+    for o, value in zip(observations, values):
+        key = (rows[o.case.case_id].repository, o.case.unit_id)
+        units.setdefault(key, []).append(value)
+    for (repository, _), group in units.items():
+        repositories.setdefault(repository, []).append(statistics.fmean(group))
+    return [statistics.fmean(group) for group in repositories.values()]
+
+
+def _margin_bound(values, margin, alpha):
+    if len(values) < 2:
+        raise Inconclusive("registered minimum independent repositories unavailable")
+    point = statistics.fmean(values)
+    se = statistics.stdev(values) / math.sqrt(len(values))
+    upper = point + statistics.NormalDist().inv_cdf(1 - alpha) * se
+    p = 1 - statistics.NormalDist().cdf((margin - point) / se) if se else float(point >= margin)
+    return {"point": point, "upper": upper, "p_value": p, "repositories": len(values), "margin": margin}
+
+
+def _headline(observations, policy):
+    headline, strata = [], {"witness_positive": 0, "n1": 0, "n2": 0, "shared_mechanism": 0}
+    for o in observations:
+        result = o.oracle_result
+        if not result or result.get("case_id") != o.case.case_id or result.get("label") != o.label:
+            raise ValueError("independent oracle receipt missing or mismatched")
+        kind = ("witness_positive" if result.get("wrong_witnesses") else "shared_mechanism") if o.label == "positive" else (
+            _negative_justification(o.case, policy))
+        strata[kind] += 1
+        if kind != "shared_mechanism":
+            headline.append(o)
+    return tuple(headline), strata
+
+
+def _replacement_quality(observations, rows, teacher, base, after, own, scope, alpha):
+    bounds, class_values = {}, []
+
+    def differences(indices, before, proposed, expected, *, fp=False):
+        units, repositories = {}, {}
+        for i in indices:
+            o = observations[i]
+            units.setdefault((rows[o.case.case_id].repository, o.case.unit_id), []).append((before[i], proposed[i]))
+        for (repository, _), pairs in units.items():
+            old, new = zip(*pairs)
+            old_error = any(v == "concern" if fp else v != expected for v in old)
+            new_error = any(v == "concern" if fp else v != expected for v in new)
+            repositories.setdefault(repository, []).append(float(new_error) - float(old_error))
+        return [statistics.fmean(v) for v in repositories.values()]
+
+    for label, error in (("positive", "FN"), ("negative", "FP")):
+        indices = [i for i, o in enumerate(observations) if o.label == label]
+        if not indices:
+            raise Inconclusive("registered minimum positive and negative units unavailable")
+        expected = "concern" if label == "positive" else "no_concern"
+        # A positive loss is adverse for both error differences and graph quality.
+        class_values.append(differences(indices, base, after, expected))
+        inside = [i for i in indices if scope[i]]
+        values = differences(inside, teacher, own, expected, fp=label == "negative")
+        bounds[error] = _margin_bound(values, .02, .05)
+        if bounds[error]["point"] > .02:
+            raise ValueError(f"replacement {error} difference breach")
+        if bounds[error]["upper"] > .02:
+            raise Inconclusive(f"replacement {error} bound exceeds margin")
+    # Sum class standard errors conservatively when a repository has both labels.
+    point = .5 * sum(statistics.fmean(v) for v in class_values)
+    se = .5 * sum(statistics.stdev(v) / math.sqrt(len(v)) for v in class_values)
+    upper = point + statistics.NormalDist().inv_cdf(1 - alpha) * se
+    p = 1 - statistics.NormalDist().cdf((.03 - point) / se) if se else float(point >= .03)
+    bounds["graph_loss"] = {"point": point, "upper": upper, "p_value": p, "margin": .03}
+    if point > .03:
+        raise ValueError("whole-graph non-inferiority breach")
+    if upper > .03:
+        raise Inconclusive("whole-graph non-inferiority unresolved")
+    return bounds, max(p, bounds["FN"]["p_value"], bounds["FP"]["p_value"])
+
+
+def _assess_replacement(candidate, entries, frozen, reuse_index, *, prior_validation_s=0.):
+    started = time.monotonic()
+    _candidate_boundary(candidate)
+    policy, _ = _policy()
+    if not 1 <= reuse_index <= policy.max_evaluations:
+        raise ValueError("held-out split spent")
+    if frozen.replacement is None:
+        raise ValueError("registered replacement traces required")
+    study = ReplacementStudy.model_validate(frozen.replacement.model_dump(mode="json"))
+    if study.candidate_id != candidate.candidate_id:
+        raise ValueError("replacement traces bind a different candidate")
+    if study.registration_sha256 != frozen.registration_sha256:
+        raise ValueError("replacement traces bind a different registration")
+    proposed = candidate.contract.applies_when
+    scope = proposed if study.scope is None else study.scope
+    if any(p not in scope for p in proposed):
+        raise ValueError("registered replacement scope must narrow the proposed scope")
+    rows = {r.case_id: r for r in study.rows}
+    if len(rows) != len(study.rows):
+        raise ValueError("duplicate teacher case trace")
+    all_observations = (*frozen.acceptance, *frozen.monitor, *frozen.regression)
+    if any(o.label not in {"positive", "negative"} for o in all_observations):
+        raise ValueError("settled replacement cases required")
+    if set(candidate.training_case_ids) & {o.case.case_id for o in all_observations}:
+        raise ValueError("training cases cannot be replacement evidence")
+    if _leaks(candidate, all_observations):
+        raise ValueError("candidate leakage guard refused")
+    required = {o.case.case_id for o in (*frozen.acceptance, *frozen.monitor)}
+    if required - rows.keys():
+        raise ValueError("teacher trace missing for registered cases")
+    unit_repositories = {}
+    for o in (*frozen.acceptance, *frozen.monitor):
+        repo = rows[o.case.case_id].repository
+        if unit_repositories.setdefault(o.case.unit_id, repo) != repo:
+            raise ValueError("unit spans conflicting repositories")
+    acceptance_repos = {rows[o.case.case_id].repository for o in frozen.acceptance}
+    monitor_repos = {rows[o.case.case_id].repository for o in frozen.monitor}
+    if acceptance_repos & monitor_repos:
+        raise ValueError("replacement acceptance and monitor repositories overlap")
+    observations, strata = _headline(frozen.acceptance, frozen.oracle_policy)
+    monitor, monitor_strata = _headline(frozen.monitor, frozen.oracle_policy)
+    if len({rows[o.case.case_id].repository for o in observations}) < policy.min_cases:
+        raise Inconclusive("registered minimum independent repositories unavailable")
+    if not monitor:
+        raise Inconclusive("registered minimum monitor evidence unavailable")
+
+    def measure(group):
+        own, costs = _measure(candidate, group, entries)
+        inside = [_in_scope(scope, _extract_facts({"tests/test_case.py": o.case.before_tests},
+                   {"tests/test_case.py": o.case.after_tests})) for o in group]
+        own = [v if s else "abstain" for v, s in zip(own, inside)]
+        teacher = [rows[o.case.case_id].teacher_verdict for o in group]
+        library = _library_verdicts(entries, group)
+        before = [_union([lib, t]) for lib, t in zip(library, teacher)]
+        after = [_union([lib, t if q == "abstain" else q]) for lib, t, q in zip(library, teacher, own)]
+        return own, costs, inside, teacher, before, after
+
+    all_own, all_costs, all_inside, all_teacher, all_base, all_combined = measure(frozen.acceptance)
+    indices = [i for i, o in enumerate(frozen.acceptance) if o in observations]
+    own, inside, teacher, base, combined = ([values[i] for i in indices] for values in
+                                           (all_own, all_inside, all_teacher, all_base, all_combined))
+    costs = [v for i in indices for v in all_costs[3*i:3*i+3]]
+    coverage_groups = {}
+    for o, v in zip(frozen.acceptance, all_own):
+        coverage_groups.setdefault(o.case.unit_id, []).append(v != "abstain")
+    covered = sum(all(v) for v in coverage_groups.values())
+    coverage = _interval(covered, len(coverage_groups))
+    if coverage.point < .10:
+        raise ValueError("replacement coverage below 0.10")
+    bounds, p = _replacement_quality(observations, rows, teacher, base, combined, own, inside, policy.threshold)
+    fpr = _paired(_negative_rates(observations, base), _negative_rates(observations, combined))
+    if fpr["diff_upper_95"] > .02:
+        raise ValueError("held-out library FPR margin exceeded")
+    planted = {o.case.case_id: (o.label, v) for o, v in zip(observations, own)}
+    if (planted.get(frozen.controls[0]) != ("positive", "concern")
+            or planted.get(frozen.controls[1]) != ("negative", "no_concern")):
+        raise ValueError("registered planted controls failed")
+    _, success = _unit_pairs(observations, base, combined)
+    for trivial in ("concern", "no_concern"):
+        control, _ = _unit_pairs(observations, [trivial] * len(observations), combined)
+        test = _sign(control, success)
+        if test["wins"] <= test["losses"] or test["p_one_sided"] > policy.alpha:
+            raise ValueError("trivial controls do not fail the acceptance bar")
+    _regress(entries, all_observations, candidate)
+    _, _, _, _, monitor_base, monitor_after = measure(monitor)
+    if not any(o.label == "negative" for o in monitor):
+        raise Inconclusive("registered minimum monitor negatives unavailable")
+    margin = _paired(_negative_rates(monitor, monitor_base), _negative_rates(monitor, monitor_after))
+    if margin["diff_upper_95"] > .02:
+        raise ValueError("dev plus monitor library FPR margin exceeded")
+    # Three runs per case are measured by the gate, including failed probe time.
+    serving = [statistics.fmean(all_costs[3*i:3*i+3]) for i in range(len(frozen.acceptance))]
+    savings = [(rows[o.case.case_id].teacher_s * study.teacher_weight * (1 - study.shadow_rate)
+                if q != "abstain" else 0.) - c * study.cpu_weight - rows[o.case.case_id].maintenance_delta_s
+               for o, q, c in zip(frozen.acceptance, all_own, serving)]
+    validation_s = prior_validation_s + max(0., time.monotonic() - started)
+    cost_result = _replacement_cost(study.fixed_new_s - study.fixed_base_s + validation_s * study.cpu_weight,
+                                    _cluster_differences(frozen.acceptance, rows, savings))
+    if not cost_result["admissible"]:
+        raise ValueError("cumulative cost upper bound at H is not lower")
+    measured = _counts(observations, own)
+    cost = Cost(median_s=statistics.median(costs), p95_s=sorted(costs)[math.ceil(.95 * len(costs)) - 1])
+    replacement = {"teacher": study.teacher, "scope": [s.model_dump(mode="json") for s in scope],
+                   "noninferiority": bounds, "coverage": coverage.model_dump(mode="json"),
+                   "cost": cost_result, "strata": strata, "monitor_strata": monitor_strata,
+                   "shadow_rate": study.shadow_rate, "shadow_seed": study.shadow_seed,
+                   "cpu_weight": study.cpu_weight, "teacher_weight": study.teacher_weight,
+                   "trace_sha256": digest(study.model_dump(mode="json")),
+                   "validation_s": validation_s}
+    data = {"candidate_id": candidate.candidate_id, "registration": frozen.registration_sha256,
+            "split": frozen.split_sha256, "policy": _policy_digest(), "reuse_index": reuse_index,
+            "judging_sha256": _judging_digest(), "counts": measured, "cost": cost.model_dump(mode="json"),
+            "replacement": replacement, "fpr": fpr, "regression_fpr": margin,
+            "meta": {"n": len(acceptance_repos)}}
+    evidence = AcceptanceEvidence(acceptance_report_sha256=digest(data), policy_sha256=_policy_digest(),
+        split_sha256=frozen.split_sha256, reuse_index=reuse_index, **measured,
+        precision=_interval(measured["tp"], measured["tp"] + measured["fp"]),
+        recall=_interval(measured["tp"], measured["n_pos"]),
+        false_rejection=_interval(measured["fp"], measured["n_neg"]), cost=cost)
+    narrowed = scope != proposed
+    answer = AcceptanceDecision("admit_scoped" if narrowed else "admit_probation",
+        ("independent replacement bounds and cost at H met; scoped authority only",),
+        candidate.candidate_id, digest(data), p_value=p)
+    # Archive all cases, including shared-mechanism cases, with their actual verdict.
+    return answer, evidence, all_own, data

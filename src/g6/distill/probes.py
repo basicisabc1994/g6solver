@@ -130,7 +130,7 @@ class ProbeProvenance(Model):
     after_sha256: Sha256
     bindings_sha256: Sha256
     budget_sha256: Sha256
-    split: Literal["training", "dev", "monitor", "field"]
+    split: Literal["training", "dev", "monitor", "field", "acceptance"]
     observations: tuple[RunObservation, ...]
 
 
@@ -178,6 +178,12 @@ def run_probe(instance, before, after, *, split, probe_input, workspace, cost_bo
     from .facts import check_split
 
     check_split(split)
+    return _run_probe(instance, before, after, split=split, probe_input=probe_input,
+                      workspace=workspace, cost_bound=cost_bound, python=python)
+
+
+def _run_probe(instance, before, after, *, split, probe_input, workspace, cost_bound, python=None):
+    """Execution seam also used by the protected evaluator on its own inputs."""
     instance = ProbeTemplateInstance.model_validate(instance.model_dump(mode="json"))
     budget = ProbeBudget.model_validate(cost_bound)
     started = time.monotonic()
@@ -290,8 +296,10 @@ def run_probe(instance, before, after, *, split, probe_input, workspace, cost_bo
         for _ in range(bindings.reruns - 1):
             if (run(sample[ident], before), run(sample[ident], after)) != ("failed", "passed"):
                 return answer("abstain", "lost_kill_unsettled")
-    return answer("concern" if old_kills - new_kills else "no_concern",
-                  "lost_kill" if old_kills - new_kills else "no_lost_kill_on_sample")
+    if old_kills - new_kills and new_kills - old_kills:
+        return answer("abstain", "kills_lost_and_gained")
+    return answer("concern" if new_kills < old_kills else "no_concern",
+                  "lost_kill" if new_kills < old_kills else "no_lost_kill_on_sample")
 
 
 def outcome_facts(outcomes, before, after):
