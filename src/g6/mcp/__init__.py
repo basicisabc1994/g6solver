@@ -133,6 +133,12 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
     model (``__g6_model__``) is given the one the person configured, built once for the call; with none configured,
     nothing is passed."""
     from g6.core.door import blocked_reply, invoke_checked
+    from g6.core.decision_summary import summarise
+
+    def invalid(message: str) -> dict[str, Any]:
+        reply = blocked_reply(message, request_id=request_id)
+        reply["decision"] = summarise(None, op, None)
+        return reply
 
     request_id = uuid.uuid4().hex[:12]
     try:
@@ -140,10 +146,10 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
             params = json.loads(params_json or "{}")
         except (RecursionError, MemoryError):
             raise ValueError("a JSON record exceeds decoder limits") from None
-    except json.JSONDecodeError as exc:
-        return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id)
+    except (ValueError, TypeError) as exc:
+        return invalid(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}")
     if not isinstance(params, dict):
-        return blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id)
+        return invalid("[G6_E_INPUT_VALIDATION] params_json must be a JSON object")
     allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
     from g6.core.consent_registry import GuardedRegistry
     from g6.core.registry import ComponentRegistry, get_registry
@@ -166,7 +172,9 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
         sensitive = getattr(module, '__g6_sensitive_ops__', ())
         if op in sensitive and not _allowed(component, op, allow):
             from g6.mcp.consent_controls import public_instructions
-            return public_instructions(reply)
+            reply = public_instructions(reply)
+    producer = target.get_module(component) if type(target) is ComponentRegistry and component in target.names() else None
+    reply["decision"] = summarise(producer, op, reply.get("result"))
     return reply
 
 

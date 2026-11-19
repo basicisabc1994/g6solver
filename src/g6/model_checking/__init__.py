@@ -72,6 +72,17 @@ from g6.model_checking.tlc import sany_parse, tlc_check
 from g6.model_checking.tlc_output import parse_sany_output, parse_tlc_output, parse_value
 
 __g6_component__ = True
+__g6_decision__ = {
+    "check_invariant": {"field": ("verdict",), "values": {"no_violation_within_bound": True, "violated": False}},
+    "prove_invariant": {"field": ("verdict",), "values": {"k_inductive": True, "violated": False, "not_inductive": False}},
+    "check_deadlock": {"field": ("verdict",), "values": {"no_deadlock_within_bound": True, "deadlock": False}},
+    "reachable": {"field": ("verdict",), "values": {"reached": True, "not_reached_within_bound": None}},
+    "tlc_check": {"field": ("verdict",), "values": {
+        "no_error": True, "invariant_violated": False, "property_violated": False, "deadlock": False,
+        "assumption_violated": False, "assertion_failed": False, "evaluation_error": False,
+        "spec_error": False, "failed": False}},
+    "sany_parse": {"field": ("verdict",), "values": {"no_error": True, "errors": False}},
+}
 __g6_block__ = "ModelCheckingBlock"
 __g6_sensitive_ops__: tuple[str, ...] = SENSITIVE_OPS  # they run TLC or SANY on your spec
 __g6_requires__: tuple[str, ...] = ("formal",)

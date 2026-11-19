@@ -27,6 +27,10 @@ from g6.knowledge.knowledge_manifest.block import SENSITIVE_OPS, KnowledgeManife
 from g6.knowledge.knowledge_manifest.manifest import Store, StoreError, Verdict, verify_passage
 
 __g6_component__ = True
+__g6_decision__ = {
+    "verify_passage": {"field": ("outcome",), "values": {
+        "matches": True, "changed": False, "source_unavailable": False, "unverifiable": False}}
+}
 __g6_block__ = "KnowledgeManifestBlock"
 __g6_family__ = "knowledge"
 __g6_sensitive_ops__: tuple[str, ...] = SENSITIVE_OPS  # record writes only the manifest in G6's own state folder

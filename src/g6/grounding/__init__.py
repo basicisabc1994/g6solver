@@ -47,6 +47,14 @@ from g6.grounding.staleness import SourceAge, StalenessReport, check_staleness
 from g6.grounding.tripwire import instruction_signals
 
 __g6_component__ = True
+__g6_decision__ = {
+    "check_claim": {"field": ("check", "status"), "values": {
+        "quoted": True, "supported": True, "partial": False, "conflict": False, "not_found": False}},
+    "check_claims": {"field": ("checks", "*", "status"), "values": {
+        "quoted": True, "supported": True, "partial": False, "conflict": False, "not_found": False}},
+    "coverage": {"field": ("coverage", "claims", "*", "status"), "values": {
+        "SUPPORTED": True, "ASSERTED": False, "CONTESTED": False, "UNVERIFIABLE": False}},
+}
 __g6_block__ = "GroundingBlock"
 __g6_requires__: tuple[str, ...] = ()
 __g6_extras__ = {"nli": ("sentence_transformers",)}

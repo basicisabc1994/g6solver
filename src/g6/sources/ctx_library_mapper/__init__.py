@@ -29,6 +29,10 @@ from g6.sources.ctx_library_mapper.block import SENSITIVE_OPS, CtxLibraryMapperB
 from g6.sources.ctx_library_mapper.sources import SOURCES, Candidate, CandidateSource, SourceAnswer
 
 __g6_component__ = True
+__g6_decision__ = {
+    "licence_check": {"field": ("results", "*", "verdict"), "values": {
+        "compatible": True, "conditions": False, "incompatible": False, "unknown": None}}
+}
 __g6_block__ = "CtxLibraryMapperBlock"
 __g6_family__ = "sources"
 __g6_sensitive_ops__: tuple[str, ...] = SENSITIVE_OPS  # search_candidates reaches the network

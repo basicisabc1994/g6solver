@@ -42,6 +42,9 @@ is safe to repeat yet), the lifecycle mixin, the JSON logger, the MCP surface ov
 from g6.agents.agent_runtime.agent_runtime_block import SENSITIVE_OPS, AgentRuntimeBlock, AgentRuntimeInput
 
 __g6_component__ = True
+__g6_decision__ = {
+    "decide": {"field": ("decision", "verdict"), "values": {"run": True, "dry_run": None, "refused": False}}
+}
 __g6_block__ = "AgentRuntimeBlock"
 __g6_sensitive_ops__: tuple[str, ...] = SENSITIVE_OPS
 __g6_read_only_ops__: tuple[str, ...] = ("check_task", "ops", "help")  # decide writes the action gate's audit trail

@@ -106,12 +106,14 @@ def input_refusal(tool: str, fields, *, arguments=None, session=None) -> dict:
     Only published field names and G6's program text are returned; no argument value is read back.
     """
     from g6.core.door import blocked_reply
+    from g6.core.decision_summary import summarise
     from g6.mcp.repair import observe
 
     reply = blocked_reply('[G6_E_INPUT_VALIDATION] Undeclared tool argument; use only the declared arguments.')
     reply = observe(tool, arguments, reply, session)
     if reply.get('repair') is not None and reply['repair']['by'] == 'agent':
         reply['repair']['fill'] = sorted(fields)
+    reply['decision'] = summarise(None, '', None)
     return reply
 
 
@@ -173,6 +175,7 @@ async def request_grant(ctx: Any, source: str, provider: str, *, description: st
 
 def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unknown', sources=(), session=None):
     from g6.core.door import blocked_reply
+    from g6.core.decision_summary import summarise
     from g6.core.ledger import digest
     result = result if isinstance(result, dict) else {}
     control = dict(metadata or {})
@@ -185,6 +188,8 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
     message = ('Results were withheld from a source not shared with this provider. Tell the person. ' +
                policy.withheld_message(provider, sources).removeprefix(policy.WITHHELD).lstrip())
     refused = {**blocked_reply(f'[{code}] {message}'), **control}
+    # A withheld component output supplies no decision to this recipient.
+    refused['decision'] = summarise(None, '', None)
     refused['cloud_consent_code'] = policy.REQUIRED
     from g6.mcp.repair import consent_block
     refused['repair'] = consent_block(session, sources, provider)
@@ -200,7 +205,7 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
             refused.update(action='stop', ending='untested', report=f'The review was not sent{recipient}. ' + message)
         if job['status'] == 'completed':
             return {'ok': True, 'job_id': job['job_id'], 'status': 'completed', 'result': refused,
-                    'repair': refused['repair']}
+                    'repair': refused['repair'], 'decision': refused['decision']}
         return {**refused, 'job_id': job['job_id'], 'status': job['status']}
     return refused
 
