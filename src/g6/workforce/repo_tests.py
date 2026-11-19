@@ -1098,11 +1098,12 @@ def inside(repo: Path, value: str, what: str) -> str:
     return head + sep + rest
 
 
-def is_test_file(rel: str) -> bool:
-    """pytest's default test files, ``test_*.py`` (the rule ``verify.run_set`` uses), named with the case rule pytest
-    matches them by on this system (``fnmatch``, through ``os.path.normcase``: Windows ignores case; review 14b)."""
-    name = os.path.normcase(PurePosixPath(rel).name)
-    return name.endswith(".py") and name.startswith("test_")
+def is_test_file(rel: str, *, repo: Path | None = None) -> bool:
+    """Match pytest's declared python_files, or its declared default patterns."""
+    patterns = python_files(repo) if repo is not None else ()
+    patterns = patterns or ("test_*.py", "*_test.py")
+    return os.path.normcase(rel).endswith(".py") and (any(_python_file(rel, pattern) for pattern in patterns)
+        or repo is not None and any(_python_file(rel, path) for path in testpaths(repo) if path.endswith(".py")))
 
 
 #: Folders whose Python files are the tests' own (``g6.safety_engine.weakening``'s rule), and the files pytest or
@@ -1111,7 +1112,7 @@ _TEST_FOLDERS = frozenset({"tests", "test", "testing"})
 _START_UP = frozenset({"conftest.py", "sitecustomize.py", "usercustomize.py"})
 
 
-def is_test_related(rel: str) -> bool:
+def is_test_related(rel: str, *, repo: Path | None = None) -> bool:
     """A Python file the tests are made of, by its path alone: a test file by pytest's default names (``test_*.py``,
     ``*_test.py``) or unittest's and Django's (``test*.py``, ``tests.py``), with ``is_test_file``'s case rule;
     ``conftest.py`` or a start-up file; or any Python file under a ``tests``, ``test`` or ``testing`` folder, such as a
@@ -1120,7 +1121,8 @@ def is_test_related(rel: str) -> bool:
     name = os.path.normcase(path.name)
     return name.endswith(".py") and (name.startswith("test") or name.endswith("_test.py")
                                      or path.name.lower() in _START_UP
-                                     or any(part.lower() in _TEST_FOLDERS for part in path.parts[:-1]))
+                                     or any(part.lower() in _TEST_FOLDERS for part in path.parts[:-1])
+                                     or repo is not None and _in_testpaths(rel, repo))
 
 
 def test_related(change: Change, ids: Iterable[str] = ()) -> tuple[str, ...]:
@@ -1130,7 +1132,7 @@ def test_related(change: Change, ids: Iterable[str] = ()) -> tuple[str, ...]:
     ids = list(ids)
     named = {node.partition("::")[0].replace("\\", "/").strip("/") for node in ids}
     patterns = python_files(change.repo, ids)
-    return tuple(rel for rel in change.files if is_test_related(rel) or rel.endswith(".py") and (
+    return tuple(rel for rel in change.files if is_test_related(rel, repo=change.repo) or rel.endswith(".py") and (
         rel in named or any(_python_file(rel, pattern) for pattern in patterns)))
 
 
@@ -1146,7 +1148,7 @@ def _python_file(rel: str, pattern: str) -> bool:
 def python_files(repo: Path, ids: Iterable[str] = ()) -> tuple[str, ...]:
     """The repository's own ``python_files`` patterns: from the pytest configuration that applies to ``ids`` (pytest's
     search, as ``_config_args`` follows it: from the folder the tests named share, or the repository's top when none
-    is named, up to the top), as that file holds them now; () when none applies, it sets none or it cannot be read."""
+    is named, up to the top), as that file holds them now; () when none applies, it sets none; an unreadable or invalid config refuses the decision."""
     ids = list(ids)
     folder = repo
     if ids:
@@ -1161,8 +1163,27 @@ def python_files(repo: Path, ids: Iterable[str] = ()) -> tuple[str, ...]:
         folder = folder.parent
 
 
+def testpaths(repo: Path) -> tuple[str, ...]:
+    """Declared pytest collection roots, read only from this repository's config."""
+    config = _config_file(repo)
+    return _pytest_patterns_in(config, "testpaths") if config is not None else ()
+
+
+def _in_testpaths(rel: str, repo: Path) -> bool:
+    """Potential evaluators beneath a declared test root; root '.' adds no filename authority."""
+    for value in testpaths(repo):
+        pattern = value.replace("\\", "/").removeprefix("./").rstrip("/")
+        if pattern and pattern != "." and (fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(rel, pattern + "/*")):
+            return True
+    return False
+
+
 def _python_files_in(path: Path) -> tuple[str, ...]:
-    """``python_files`` as one pytest configuration file sets it (a TOML list or string, an ini line of patterns)."""
+    return _pytest_patterns_in(path, "python_files")
+
+
+def _pytest_patterns_in(path: Path, setting: str) -> tuple[str, ...]:
+    """A declared pytest field as a TOML list/string or ini list, never inferred from prose."""
     name = path.name.lower()
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -1170,16 +1191,21 @@ def _python_files_in(path: Path) -> tuple[str, ...]:
             data = tomllib.loads(text)
             table = data.get("tool", {}).get("pytest", {}) if name == "pyproject.toml" else data.get("pytest", {})
             table = table.get("ini_options", table) if isinstance(table, dict) else {}
-            value = table.get("python_files") if isinstance(table, dict) else None
+            value = table.get(setting) if isinstance(table, dict) else None
         else:
             parser = configparser.ConfigParser(interpolation=None, strict=False)
             parser.read_string(text)
-            value = parser.get("tool:pytest" if name == "setup.cfg" else "pytest", "python_files", fallback=None)
-    except (OSError, ValueError, configparser.Error, AttributeError):
+            value = parser.get("tool:pytest" if name == "setup.cfg" else "pytest", setting, fallback=None)
+    except (OSError, ValueError, configparser.Error, AttributeError) as exc:
+        raise RepoRefused("G6_E_INPUT_VALIDATION", "pytest collection configuration is unreadable or invalid; "
+                          "test roles are unknown, so no test-role decision was made") from exc
+    if value is None:
         return ()
     if isinstance(value, str):
         return tuple(value.split())
-    return tuple(item for item in value if isinstance(item, str)) if isinstance(value, list) else ()
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return tuple(value)
+    raise RepoRefused("G6_E_INPUT_VALIDATION", "pytest collection fields must be text or a list of text")
 
 
 @dataclass(frozen=True)
@@ -1241,14 +1267,14 @@ def change(repo: Path, base: str = "HEAD", paths: tuple[str, ...] = (), *,
                               ("ls-files", "--others", "--exclude-standard", "-z", *spec))
     files = tuple(sorted((set(_paths(diffed)) | set(_paths(others)) | _tracked_new(repo, commit, spec) | set(held))
                          - set(unseen)))
-    tests = [rel for rel in files if is_test_file(rel)]
+    tests = [rel for rel in files if is_test_file(rel, repo=repo)]
     before = _texts_listed(repo, commit, tests)
     reader = read_file or (lambda path: path.read_text(encoding="utf-8", errors="replace"))
     outside = tuple(rel for rel in files if links_outside(repo, rel))
     disk = {rel: _disk(repo, rel) for rel in files}    # each read where git looks (``_on_disk``), or never
     after = {rel: reader(disk[rel]) for rel in tests   # a caller's own ``read_file`` judges a link itself
              if (read_file is not None or rel not in outside) and disk[rel] is not None and disk[rel].is_file()}
-    sources = tuple(rel for rel in files if rel.endswith(".py") and not is_test_file(rel)
+    sources = tuple(rel for rel in files if rel.endswith(".py") and not is_test_file(rel, repo=repo)
                     and PurePosixPath(rel).name != "conftest.py" and rel not in outside and disk[rel] is not None
                     and disk[rel].is_file())
     runner = tuple(rel for rel in files if PurePosixPath(rel).name.lower() in RUNNER_FILES or rel.endswith(".pth"))

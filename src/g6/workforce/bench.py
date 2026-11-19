@@ -166,8 +166,8 @@ def run(op: str, params: dict, *, venture: str | None = None) -> dict:
         return patch_checks.run(params, venture=venture)
     try:
         tests = _tests(params.get("tests"))
-        files = _files(params.get("files") or {})
         source = _repo(params.get("repo"), venture)
+        files = _files(params.get("files") or {}, repo=source)
     except ValueError as exc:
         return _refused(str(exc))
     before = _digest(source)
@@ -377,13 +377,20 @@ def _tests(tests: Any) -> list[str]:
     return list(dict.fromkeys(tests))
 
 
-def _files(files: Any) -> dict[str, str]:
+def _is_test_path(relative: str, repo: Path | None = None) -> bool:
+    from g6.workforce import repo_tests
+
+    return (bool(_TEST_FILE.search(relative)) or repo_tests.is_test_file(relative, repo=repo)
+            or repo is not None and repo_tests._in_testpaths(relative, repo))
+
+
+def _files(files: Any, *, repo: Path | None = None) -> dict[str, str]:
     if not isinstance(files, dict):
         raise ValueError("files maps a path inside the repository to its new text")  # noqa: TRY004 - one refusal type
     out = {}
     for relative, text in files.items():
         path = _inside(relative)
-        if _TEST_FILE.search(str(path)):
+        if _is_test_path(path.as_posix(), repo):
             raise ValueError(f"{relative!r} is a test file: a patch may not edit a test")
         top = path.parts[0].lower().removesuffix(".py")
         if (path.name.lower() in _RUNNER_CONFIG or path.suffix.lower() == ".pth" or top in _RUNNER_MODULES
@@ -444,7 +451,7 @@ def _tests_altered(source: Path | None, copy: Path) -> str:
         return ""
     for path in source.rglob("*"):
         relative = path.relative_to(source).as_posix()
-        if (path.is_file() and _TEST_FILE.search(relative) and not _IGNORED_PART.intersection(path.parts)
+        if (path.is_file() and _is_test_path(relative, source) and not _IGNORED_PART.intersection(path.parts)
                 and not _through_link(source, path) and (copy / relative).read_bytes() != path.read_bytes()):
             return relative
     return ""
@@ -460,7 +467,7 @@ def _test_snapshot(repo: Path) -> dict[str, str]:
     """Freeze scratch test paths/bytes before execution, including additions and deletions."""
     return {p.relative_to(repo).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in repo.rglob("*") if p.is_file() and not _IGNORED_PART.intersection(p.parts)
-            and _TEST_FILE.search(p.relative_to(repo).as_posix())}
+            and _is_test_path(p.relative_to(repo).as_posix(), repo)}
 
 
 def _test_files(source: Path | None, copy: Path) -> int:
@@ -471,7 +478,7 @@ def _test_files(source: Path | None, copy: Path) -> int:
     if source is None:
         return 0
     return sum(1 for path in copy.rglob("*") if path.is_file() and not _IGNORED_PART.intersection(path.parts)
-               and _TEST_FILE.search(path.relative_to(copy).as_posix()))
+               and _is_test_path(path.relative_to(copy).as_posix(), source))
 
 
 def _write(copy: Path, files: dict[str, str]) -> None:
