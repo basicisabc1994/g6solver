@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from typing import Annotated, ClassVar, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_serializer, model_validator
+from pydantic_core import PydanticCustomError
 
 from g6.core.ledger import digest
 
@@ -25,7 +26,8 @@ FindingClass = Literal["identity_from_rendering", "one_fact_two_rules", "own_par
                        "untrusted_input_given_authority", "boundary_case", "guard_covers_less_than_it_guards", "other"]
 FACT_NAMES = frozenset({"assertions", "compared_literals", "markers", "mocks", "try_blocks", "parametrize_counts",
                         "calls", "diff_hunks", "probe_outcomes"})
-PROBE_NAMES = frozenset({"discriminates_at_base.v1", "kill_set.v1"})
+PROBE_NAMES = frozenset({"discriminates_at_base.v1", "kill_set.v1",
+                         "discriminates_at_base.v2", "kill_set.v2"})
 
 
 class Model(BaseModel):
@@ -51,6 +53,7 @@ class Record(Model):
 
 
 class Evidence(Model):
+    """An oracle_label item addresses the canonical OracleResult body by digest."""
     kind: str
     digest: Sha256
     receipt: str
@@ -96,6 +99,70 @@ class FailureRecord(Record):
                             independently_observed=self.observed_by == "independent")
 
 
+class OracleReceipt(Model):
+    """Data-only OracleResult body; keeps evaluator code outside proposer imports."""
+    case_id: Sha256
+    label: Literal["positive", "negative", "excluded"]
+    reason: str
+    before_kills: tuple[str, ...] = ()
+    after_kills: tuple[str, ...] = ()
+    wrong_witnesses: tuple[str, ...] = ()
+    policy_sha256: Sha256
+
+
+class OracleBoundCase(Model):
+    """V2 training input with a target derived from an evaluator-supplied receipt.
+
+    The caller obtains the result and registered policy digest from evaluator
+    custody. Matching these bytes does not authenticate who supplied them.
+    """
+    schema_version: Literal[2] = 2
+    failure: FailureRecord
+    before: dict[str, str]
+    after: dict[str, str]
+    oracle_result: OracleReceipt | None = None
+    registered_policy_sha256: Sha256
+    expected: str | None = None
+    language: str = "python"
+    framework: str = "pytest"
+
+    @field_validator("oracle_result", mode="before")
+    @classmethod
+    def receipt_body(cls, value):
+        if isinstance(value, BaseModel):
+            return value.model_dump(mode="json")
+        return value
+
+    @model_validator(mode="after")
+    def bind_label(self) -> Self:
+        def refuse(reason):
+            raise PydanticCustomError("G6_E_SYNTH_UNBOUND_LABEL", reason)
+
+        if self.oracle_result is None:
+            refuse("oracle receipt required")
+        try:
+            failure = FailureRecord.model_validate_json(self.failure.model_dump_json())
+            result = OracleReceipt.model_validate_json(self.oracle_result.model_dump_json())
+        except ValueError:
+            refuse("invalid oracle receipt or failure body")
+        receipts = [item for item in failure.evidence if item.kind == "oracle_label"]
+        if len(receipts) != 1 or not receipts[0].receipt.strip():
+            refuse("exactly one recorded oracle_label receipt required")
+        if receipts[0].digest != digest(result.model_dump(mode="json")):
+            refuse("oracle receipt digest differs from recorded evidence")
+        if result.case_id != failure.case_ref:
+            refuse("oracle receipt belongs to a different case")
+        if result.policy_sha256 != self.registered_policy_sha256:
+            refuse("oracle policy differs from registered policy")
+        target = {"positive": "concern", "negative": "no_concern"}.get(result.label)
+        if target is None:
+            refuse("excluded oracle result cannot supply a target")
+        if self.expected is not None and self.expected != target:
+            refuse("caller target conflicts with oracle label")
+        object.__setattr__(self, "expected", target)
+        return self
+
+
 class Proposer(Model):
     provider: str
     model: str
@@ -136,7 +203,7 @@ class FeaturePredicate(Model):
 
 
 class Probe(Model):
-    name: Literal["discriminates_at_base.v1", "kill_set.v1"]
+    name: Literal["discriminates_at_base.v1", "kill_set.v1", "discriminates_at_base.v2", "kill_set.v2"]
     runs: Count
     wall_s: Positive
 
@@ -171,7 +238,8 @@ class MethodContract(Record):
 
 class TemplateInstance(Model):
     template: Literal["weakening.v1", "assert_strength.v1", "skip_gate.v1", "swallow.v1", "self_reference.v1",
-                      "mock_target.v1", "discriminates_at_base.v1", "kill_set.v1"]
+                      "mock_target.v1", "discriminates_at_base.v1", "kill_set.v1",
+                      "discriminates_at_base.v2", "kill_set.v2"]
     bindings: dict[str, JsonValue]
 
 
@@ -322,6 +390,18 @@ class LibraryEntry(Record):
     created_at: str
     changed_at: str
     reason: str
+    replacement: Literal["none", "R"] = "none"
+    replacement_scope: list[FeaturePredicate] | None = None
+    teacher: Sha256 | None = None
+    noninferiority: Sha256 | None = None
+
+    @model_serializer(mode="wrap")
+    def compatible_body(self, handler):
+        body = handler(self)
+        for name in ("replacement", "replacement_scope", "teacher", "noninferiority"):
+            if name not in self.model_fields_set:
+                body.pop(name, None)
+        return body
 
     @model_validator(mode="after")
     def authority_shape(self) -> Self:
@@ -329,6 +409,9 @@ class LibraryEntry(Record):
                    "withdrawn": {"A0"}, "superseded": {"A0"}}
         if self.authority not in allowed[self.status]:
             raise ValueError("authority does not match the recorded status")
+        if self.replacement == "R" and (self.authority == "A0" or self.replacement_scope is None
+                                        or self.teacher is None or self.noninferiority is None):
+            raise ValueError("replacement requires authority, scope, teacher and a noninferiority receipt digest")
         return self
 
 
