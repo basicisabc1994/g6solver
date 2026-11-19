@@ -19,13 +19,19 @@ boundary is recomposed only when every boundary of the case is of one kind; unde
 mixed boundaries it is not, since such a copy is constructed rather than accidental.
 Traversal is bounded to depth 32, 16384 nodes and 1048576 raw string characters;
 crossing a bound refuses the screen, never skips it.
+Serialized string containers are bounded to 262144 text characters, depth 32,
+16384 nodes and 1 MiB of expanded strings per field. Crossing a container bound
+retains the plain text and sets an evaluator-private limit flag without refusal.
 """
 from __future__ import annotations
 
+import ast
 import html
+import json
 import math
 import re
 import unicodedata
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from statistics import mean, stdev
@@ -89,6 +95,7 @@ class ScreenReport:
     membership_excluded: int
     canary_hits: int
     canary_probe_flags: int
+    serialization_limited: bool = field(default=False, repr=False)
 
     @property
     def excluded_count(self) -> int:
@@ -177,6 +184,16 @@ _LITERAL_ESCAPE = re.compile(
     r"|\\[0-7]{1,3}|\\N\{[^{}]*\}"
 )
 _PERCENT_RUN = re.compile(r"(?:%[0-9a-fA-F]{2})+")
+_ENTITY = re.compile(r"&(#[0-9]+;?|#[xX][0-9a-fA-F]+;?|[^\t\n\f <&#;]{1,32};?)")
+_SURROGATE_PAIR = re.compile("[\ud800-\udbff][\udc00-\udfff]")
+
+
+def _decode_region(decoder, text):
+    """A failed region keeps its text; other regions still get decoded."""
+    try:
+        return decoder(text)
+    except Exception:
+        return text
 
 
 def _literal_text(text: str) -> tuple[str, bool]:
@@ -187,14 +204,12 @@ def _literal_text(text: str) -> tuple[str, bool]:
             return "/"
         if token[1] in "01234567":
             return chr(int(token[1:], 8))
-        try:
-            return token.encode("ascii").decode("unicode_escape")
-        except UnicodeError:
-            return token
+        return token.encode("ascii").decode("unicode_escape")
 
-    decoded = _LITERAL_ESCAPE.sub(decode, text)
+    decoded = _LITERAL_ESCAPE.sub(lambda m: _decode_region(lambda _: decode(m), m.group()), text)
     # JSON represents astral scalars as adjacent UTF-16 surrogates.
-    decoded = decoded.encode("utf-16", "surrogatepass").decode("utf-16", "surrogatepass")
+    decoded = _SURROGATE_PAIR.sub(lambda m: _decode_region(
+        lambda s: s.encode("utf-16", "surrogatepass").decode("utf-16", "surrogatepass"), m.group()), decoded)
     return decoded, "\\" not in decoded
 
 
@@ -213,24 +228,27 @@ def _percent_text(text: str) -> str:
                 offset += 3 * len(char.encode("utf-8"))
         return "".join(parts)
 
-    return _PERCENT_RUN.sub(decode, text.replace("+", " "))
+    return _PERCENT_RUN.sub(lambda m: _decode_region(lambda _: decode(m), m.group()), text.replace("+", " "))
 
 
-def _canonical(text: str, replacement: str, *, compact=False) -> str:
+def _canonical(text: str, replacement: str, *, compact=False, snapshots=None) -> str:
     while True:
+        if snapshots is not None:
+            snapshots.append(text)
         normalized = unicodedata.normalize("NFKC", text)
-        decoded, literal_valid = _literal_text(normalized)
+        decoded, _ = _literal_text(normalized)
+        if snapshots is not None:
+            snapshots.extend((normalized, decoded))
         decoded = _percent_text(decoded)
-        decoded = html.unescape(decoded)
+        if snapshots is not None:
+            snapshots.append(decoded)
+        decoded = _ENTITY.sub(lambda m: _decode_region(html.unescape, m.group()), decoded)
+        if snapshots is not None:
+            snapshots.append(decoded)
         result = ("" if compact else " ").join(_IGNORABLE.sub(replacement, decoded).split())
         # Finish decoding and boundary changes before folding case-sensitive escapes.
         if result == text:
-            if literal_valid:
-                result = result.casefold()
-            else:
-                # Keep undecoded escape markers intact while folding surrounding text.
-                head, *tails = result.split("\\")
-                result = "\\".join((head.casefold(), *(s[:1] + s[1:].casefold() for s in tails)))
+            result = unicodedata.normalize("NFKC", result.casefold())
         if result == text:
             return result
         text = result
@@ -250,15 +268,141 @@ def canonical_text(text: str) -> str:
     return canonical_views(text)[0]
 
 
-def _fragment_texts(fragments):
-    # Each field, then the two whole-case joins; linear in the number of fields.
-    for fragment in fragments:
-        yield from canonical_views(fragment)
-    for separator in ("", " "):
-        yield from canonical_views(separator.join(fragments))
+@dataclass
+class _Serialization:
+    limited: bool = False
+    parsed: dict = field(default_factory=dict, repr=False)
+    groups: dict = field(default_factory=dict, repr=False)
+    views: dict = field(default_factory=dict, repr=False)
 
 
-def scan_texts(training, model_outputs=(), *, strict=True) -> tuple[str, ...]:
+def _literal_depth(text):
+    nesting, quote_char, escaped = 0, "", False
+    for char in text:
+        if quote_char:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote_char:
+                quote_char = ""
+        elif char in "\"'":
+            quote_char = char
+        elif char in "[{(":
+            nesting += 1
+            if nesting > 32:
+                return False
+        elif char in "]})":
+            nesting -= 1
+    return True
+
+
+def _serialized_value(text, state):
+    """Read syntax before region decoding; failed parses retain their text."""
+    if text in state.parsed:
+        return state.parsed[text]
+    state.parsed[text] = None
+    if len(text) > 262144:
+        state.limited = True
+        return None
+    snapshots = []
+    for replacement in ("", " "):
+        _canonical(text, replacement, snapshots=snapshots)
+    for candidate in dict.fromkeys(snapshots):
+        candidate = candidate.strip()
+        if not candidate or candidate[0] not in "[{(\"'":
+            continue
+        if len(candidate) > 262144 or not _literal_depth(candidate):
+            state.limited = True
+            continue
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", (SyntaxWarning, DeprecationWarning))
+                    value = parser(candidate)
+            except (RecursionError, MemoryError):
+                state.limited = True
+                continue
+            except Exception:
+                continue
+            if isinstance(value, (str, list, tuple, dict, set)):
+                state.parsed[text] = value
+                return value
+            break
+    return None
+
+
+def _literal_leaves(value, state, budget, *, depth=0, is_key=False):
+    budget.nodes -= 1
+    if depth > 32 or budget.nodes < 0:
+        budget.limited = True
+        return
+    if isinstance(value, str):
+        budget.characters -= len(value)
+        if budget.characters < 0:
+            budget.limited = True
+            return
+        nested = _serialized_value(value, state)
+        if nested is None or isinstance(nested, str) and nested == value:
+            yield value, is_key
+        else:
+            yield from _literal_leaves(nested, state, budget, depth=depth + 1, is_key=is_key)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            if budget.nodes < 0:
+                break
+            yield from _literal_leaves(key, state, budget, depth=depth + 1, is_key=True)
+            yield from _literal_leaves(item, state, budget, depth=depth + 1, is_key=is_key)
+    elif isinstance(value, (list, tuple, set)):
+        for item in value:
+            if budget.nodes < 0:
+                break
+            yield from _literal_leaves(item, state, budget, depth=depth + 1, is_key=is_key)
+
+
+def _container_groups(text, state):
+    if text not in state.groups:
+        value = _serialized_value(text, state)
+        budget = _Traversal()
+        leaves = tuple(_literal_leaves(value, state, budget)) if value is not None else ()
+        state.limited |= budget.limited
+        fields = tuple(s for s, _ in leaves)
+        values = tuple(s for s, key in leaves if not key)
+        state.groups[text] = (() if budget.limited else
+                              tuple(group for group in dict.fromkeys((fields, values)) if group))
+    yield from state.groups[text]
+
+
+def _views(text, state):
+    if text not in state.views:
+        state.views[text] = canonical_views(text)
+    return state.views[text]
+
+
+def _fragment_groups(fragments, state):
+    yield fragments
+    for text in dict.fromkeys((*fragments, "".join(fragments), " ".join(fragments))):
+        yield from _container_groups(text, state)
+
+
+def _fragment_texts(fragments, *, serialization=None):
+    state = serialization if serialization is not None else _Serialization()
+    # Each leaf and two whole-container joins; no boundary combinations.
+    for group in _fragment_groups(fragments, state):
+        for fragment in group:
+            yield from _views(fragment, state)
+        for separator in ("", " "):
+            yield from _views(separator.join(group), state)
+
+
+def _input_views(text, state):
+    yield from _views(text, state)
+    for group in _container_groups(text, state):
+        for separator in ("", " "):
+            yield from _views(separator.join(group), state)
+
+
+def scan_texts(training, model_outputs=(), *, strict=True, serialization=None) -> tuple[str, ...]:
     """Scan fields and ordered joins per case; never join independent cases or outputs."""
     if not isinstance(training, Sequence) or isinstance(training, (str, bytes)):
         if strict:
@@ -277,16 +421,16 @@ def scan_texts(training, model_outputs=(), *, strict=True) -> tuple[str, ...]:
         fields = tuple(_strings(case, strict=strict))
         values = tuple(_strings(case, strict=strict, keys=False))
         for fragments in (fields, values):
-            found.extend(_fragment_texts(fragments))
+            found.extend(_fragment_texts(fragments, serialization=serialization))
     for output in model_outputs:
         if isinstance(output, str):
-            found.extend(canonical_views(output))
+            found.extend(_fragment_texts((output,), serialization=serialization))
         elif strict:
             raise ContaminationError("G6_E_RSI_SCREEN_INVALID")
     return tuple(found)
 
 
-def incident_scan(*sources):
+def incident_scan(*sources, decode=True, serialization=None):
     """Read raw supported containers before validation; return partial evidence on limits.
 
     Each source is bounded to depth 32, 16384 nodes and 1 MiB of strings. Top-level
@@ -306,15 +450,20 @@ def incident_scan(*sources):
             fragments = tuple((leaf, key) for leaf, key in leaves if isinstance(leaf, str))
             for fields in (tuple(s for s, _ in fragments), tuple(s for s, key in fragments if not key)):
                 try:
-                    texts.extend(_fragment_texts(fields))
+                    if decode:
+                        texts.extend(_fragment_texts(fields, serialization=serialization))
+                    else:
+                        texts.extend((*fields, "".join(fields), " ".join(fields)))
                 except ContaminationError:
                     limited = True
         limited |= state.limited
     return tuple(texts), tuple(probes), limited
 
 
-def canary_matches(canaries: Sequence[str], texts: Sequence[str]) -> tuple[int, ...]:
+def canary_matches(canaries: Sequence[str], texts: Sequence[str], *, decode=True) -> tuple[int, ...]:
     """Return marker positions only; text comes from the shared canonical scanner."""
+    if not decode:
+        return tuple(i for i, marker in enumerate(canaries) if any(marker in text for text in texts))
     compact = tuple(canonical_views(text)[2] for text in texts)
     return tuple(i for i, marker in enumerate(canaries)
                  if any(canonical_views(marker)[2] in text for text in compact))
@@ -339,13 +488,15 @@ def _token_graph(fragments):
     return graph
 
 
-def _graphs(case):
+def _graphs(case, serialization=None):
+    state = serialization if serialization is not None else _Serialization()
     for keys in (True, False):
         fields = tuple(_strings(case, keys=keys))
-        for view in (0, 1):
-            yield _token_graph([canonical_views(s)[view] for s in fields])
-            for separator in ("", " "):
-                yield _token_graph([canonical_views(separator.join(fields))[view]])
+        for group in _fragment_groups(fields, state):
+            for view in (0, 1):
+                yield _token_graph([_views(s, state)[view] for s in group])
+                for separator in ("", " "):
+                    yield _token_graph([_views(separator.join(group), state)[view]])
 
 
 def _shared_13(left, right):
@@ -380,28 +531,32 @@ def screen(training: Sequence[SuiteCase], held_out: Sequence[SuiteCase], *, cana
             or any(type(s) is not str for s in model_outputs)
             or any(not isinstance(p, CanaryProbe) for p in canary_probes)):
         raise ContaminationError("G6_E_RSI_SCREEN_INVALID")
-    training_texts = scan_texts(training)
-    hits = len(canary_matches(tuple(set(canaries)), (*training_texts, *scan_texts((), model_outputs))))
+    serialization = _Serialization()
+    training_texts = scan_texts(training, serialization=serialization)
+    hits = len(canary_matches(tuple(set(canaries)),
+                             (*training_texts, *scan_texts((), model_outputs, serialization=serialization))))
     probe_flags = sum(p.flagged for p in canary_probes)
     # A known leak takes precedence over absent statistical readings.
     if hits or probe_flags:
-        return ScreenReport(len(held_out), (), 0, 0, 0, hits, probe_flags)
+        return ScreenReport(len(held_out), (), 0, 0, 0, hits, probe_flags, serialization.limited)
     if (not isinstance(membership, Mapping) or set(membership) != {c.case_id for c in held_out}
             or any(not isinstance(p, MembershipProbe) for p in membership.values())):
         raise ContaminationError("G6_E_RSI_MEMBERSHIP_REQUIRED")
-    graphs = [graph for case in training for graph in _graphs(case)]
+    graphs = [graph for case in training for graph in _graphs(case, serialization)]
     for output in model_outputs:
-        graphs.extend(_graphs(SuiteCase("", output, "")))
-    inputs = {view for c in training for view in canonical_views(c.input)}
+        graphs.extend(_graphs(SuiteCase("", output, ""), serialization))
+    inputs = {view for c in training for view in _input_views(c.input, serialization)}
     excluded, identities, overlaps, members = set(), 0, 0, 0
     for index, case in enumerate(held_out):
-        identity = (bool(set(canonical_views(case.input)) & inputs)
+        identity = (bool(set(_input_views(case.input, serialization)) & inputs)
                     or any(code == NOT_HELD_OUT for code, _ in Suite(tuple(training), (case,)).problems()))
-        overlap = any(_shared_13(held_graph, train_graph) for held_graph in _graphs(case) for train_graph in graphs)
+        overlap = any(_shared_13(held_graph, train_graph)
+                      for held_graph in _graphs(case, serialization) for train_graph in graphs)
         member = membership[case.case_id].flagged
         identities += identity
         overlaps += overlap
         members += member
         if identity or overlap or member:
             excluded.add(index)
-    return ScreenReport(len(held_out), tuple(sorted(excluded)), identities, overlaps, members, 0, 0)
+    return ScreenReport(len(held_out), tuple(sorted(excluded)), identities, overlaps, members, 0, 0,
+                        serialization.limited)

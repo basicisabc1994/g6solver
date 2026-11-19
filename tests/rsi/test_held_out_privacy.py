@@ -398,17 +398,107 @@ def test_family_decoders_preserve_unicode_and_escape_case(raw, plain):
     assert canonical_views(raw) == canonical_views(plain)
 
 
-@pytest.mark.parametrize("raw", ["\\", r"\x", r"\xgg", r"\u12", r"\U00110000", r"\N{bad}",
-                                 "%", "%zz", "&missing;", "\ud800", "\udfff"])
-def test_malformed_serialised_text_never_raises_and_reaches_fixed_views(raw):
+@pytest.mark.parametrize("raw,expected", [
+    ("\\", "\\"), (r"\x", r"\x"), (r"\xgg", r"\xgg"), (r"\u12", r"\u12"),
+    (r"\U00110000", "\x110000"), (r"\N{bad}", "{bad}"),
+    ("%", "%"), ("%zz", "%zz"), ("&missing;", "&missing;"), ("\ud800", "\ud800"), ("\udfff", "\udfff"),
+])
+def test_malformed_serialised_text_never_raises_and_reaches_fixed_views(raw, expected):
     views = canonical_views(raw)
-    assert views[0] == raw
+    assert views[0] == expected
     assert canonical_views(views[0]) == views
 
 
-@pytest.mark.parametrize("malformed", [r"\x", r"\U00110000", r"\N{bad}"])
-def test_malformed_literal_does_not_disable_casefold_for_sibling_text(malformed):
-    assert canonical_views("TEXT " + malformed)[0] == "text " + malformed
+@pytest.mark.parametrize("malformed,expected", [(r"\x", r"\x"), (r"\U00110000", "\x110000"), (r"\N{bad}", "{bad}")])
+def test_malformed_literal_does_not_disable_casefold_for_sibling_text(malformed, expected):
+    assert canonical_views("TEXT " + malformed)[0] == "text " + expected
     result = screen((), (SuiteCase("held", "private", "answer"),), canaries=("a" * 32,),
                     membership={}, model_outputs=(malformed + " | " + "A" * 32,))
     assert result.voided and result.canary_hits == 1
+
+
+FRAGMENT_CONTAINERS = {
+    "json_list": lambda leaves: json.dumps(leaves),
+    "json_dict": lambda leaves: json.dumps({"first": leaves[:1], "rest": leaves[1:]}),
+    "python_list": repr,
+    "python_dict": lambda leaves: repr({"first": leaves[:1], "rest": leaves[1:]}),
+}
+
+
+@pytest.mark.parametrize("serialise", FRAGMENT_CONTAINERS.values(), ids=FRAGMENT_CONTAINERS)
+@pytest.mark.parametrize("outer", [str, json.dumps, repr, quote, html.escape])
+@pytest.mark.parametrize("source", ["training", "output", "held_out"])
+def test_followup3_container_property_matrix_excludes_passage(serialise, outer, source):
+    words = [f"caféword{i}" for i in range(13)]
+    encoded, passage = outer(serialise(words)), " ".join(words)
+    held = SuiteCase("held", "private", encoded if source == "held_out" else passage)
+    training = ((SuiteCase("train", "other", encoded if source == "training" else passage),)
+                if source != "output" else ())
+    result = screen(training, (held,), canaries=("a" * 32,),
+                    membership={"held": MembershipProbe(1, 1, (1, 1), (1, 1))},
+                    model_outputs=(encoded,) if source == "output" else ())
+    assert result.ngram_excluded == result.excluded_count == 1
+
+
+@pytest.mark.parametrize("serialise", FRAGMENT_CONTAINERS.values(), ids=FRAGMENT_CONTAINERS)
+@pytest.mark.parametrize("outer", [str, json.dumps, repr, quote, html.escape])
+@pytest.mark.parametrize("boundary", ["training_screen", "output_screen", "evaluate"])
+def test_followup3_container_property_matrix_voids_durably(stores, serialise, outer, boundary):
+    store, db = stores()
+    item = cut(store)
+    marker = store._data(None)["canaries"][0]
+    encoded = outer(serialise([marker[:16], marker[16:]]))
+    store.screen(item.slice_id, (), membership=probes(store, item))
+    if boundary == "evaluate":
+        task = store._tasks(store._data(None), 0, item.freeze_digest)[0]
+        result = store.evaluate_pass(item.slice_id, task.task_id, encoded, arm="G0", attempt="one",
+                                     anchor_pass=True, detectors={"clean": lambda t, o: False})
+        assert not result.passed and result.reason == "contamination"
+    else:
+        training = (SuiteCase("train", encoded, "other"),) if boundary == "training_screen" else ()
+        assert store.screen(item.slice_id, training, membership={},
+                            model_outputs=(encoded,) if boundary == "output_screen" else ()).voided
+    with pytest.raises(ValueError), store._db():
+        raise ValueError("later rollback")
+    assert store.status(item.slice_id) == "void"
+    assert db.execute("SELECT count(*) FROM events WHERE record LIKE '%contamination%'").fetchone()[0] > 0
+
+
+@pytest.mark.parametrize("boundary", ["screen_canary", "evaluate_canary", "screen_probe"])
+def test_followup3_oversized_entity_incident_survives_api_refusal_and_rollback(stores, boundary):
+    from g6.recursion.held_out_slicer import HeldOutError
+
+    store, _ = stores()
+    item = cut(store)
+    marker = store._data(None)["canaries"][0]
+    store.screen(item.slice_id, (), membership=probes(store, item))
+    task = store._tasks(store._data(None), 0, item.freeze_digest)[0]
+    output = ("clean" if boundary == "screen_probe" else marker) + " &#" + "9" * 4301 + ";"
+    if boundary == "evaluate_canary":
+        result = store.evaluate_pass(item.slice_id, task.task_id, output, arm="G0", attempt="one",
+                                     anchor_pass=True, detectors={"clean": lambda t, o: False})
+        assert not result.passed and result.reason == "contamination"
+    else:
+        result = store.screen(item.slice_id, (), membership={}, model_outputs=(output,),
+                              canary_probes=(CanaryProbe(.2, .1),) if boundary == "screen_probe" else ())
+        assert result.voided
+    with pytest.raises(ValueError), store._db():
+        raise ValueError("later rollback")
+    assert store.status(item.slice_id) == "void"
+    with pytest.raises(HeldOutError, match="SLICE_CLOSED"):
+        store.evaluate_pass(item.slice_id, task.task_id, "clean", arm="G0", attempt="two",
+                            anchor_pass=True, detectors={"clean": lambda t, o: False})
+
+
+@pytest.mark.parametrize("kind", ["depth", "nodes", "size"])
+def test_followup3_bounded_container_fallback_stays_private_and_open(stores, kind):
+    store, _ = stores()
+    item = cut(store)
+    before = store.records()
+    output = ('[' * 34 + '"leaf"' + ']' * 34 if kind == "depth" else
+              json.dumps([None] * 16384) if kind == "nodes" else json.dumps(["x" * 262145]))
+    result = store.screen(item.slice_id, (), membership=probes(store, item), model_outputs=(output,))
+    assert result.serialization_limited and not result.voided
+    assert store.status(item.slice_id) == "open" and store.records() == before
+    assert any(r["kind"] == "serialization_limit"
+               for r in store.evaluator_records(role="evaluator", capability=store._capability))

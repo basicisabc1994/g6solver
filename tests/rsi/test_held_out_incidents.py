@@ -69,6 +69,46 @@ def test_positive_probe_prepass_commits_despite_malformed_siblings(incident_stor
     assert db.execute("SELECT count(*) FROM events").fetchone()[0] == 2
 
 
+@pytest.mark.parametrize("evidence", ["marker", "probe"])
+def test_followup3_oversized_entity_cannot_discard_incident(incident_store, evidence):
+    store, db = incident_store
+    output = ("d" * 32 if evidence == "marker" else "clean") + " &#" + "9" * 4301 + ";"
+    store._commit_incidents("a" * 64, model_outputs=(output,),
+                            canary_probes=(CanaryProbe(.2, .1),) if evidence == "probe" else ())
+    with pytest.raises(ValueError), store._db():
+        raise ValueError("later rollback")
+    assert db.execute("SELECT status FROM slices WHERE generation=0").fetchone()[0] == "void"
+
+
+@pytest.mark.parametrize("evidence", ["marker", "probe"])
+def test_followup3_raw_incident_commits_before_decoding_refusal(incident_store, monkeypatch, evidence):
+    import g6.recursion.contamination_gate as gate
+    from g6.recursion.held_out_slicer import HeldOutError
+
+    store, db = incident_store
+
+    def refuse(fragments, **kwargs):
+        assert db.execute("SELECT status FROM slices WHERE generation=0").fetchone()[0] == "void"
+        raise gate.ContaminationError("G6_E_RSI_SCREEN_LIMIT")
+
+    monkeypatch.setattr(gate, "_fragment_texts", refuse)
+    with pytest.raises(HeldOutError, match="SCREEN_LIMIT"):
+        store._commit_incidents("a" * 64, model_outputs=("d" * 32 if evidence == "marker" else "clean",),
+                                canary_probes=(CanaryProbe(.2, .1),) if evidence == "probe" else ())
+    assert db.execute("SELECT status FROM slices WHERE generation=0").fetchone()[0] == "void"
+
+
+def test_followup3_serialization_limit_is_recorded_without_closing_slice(incident_store):
+    import json
+
+    store, db = incident_store
+    hit, previous = store._commit_incidents("a" * 64, model_outputs=(json.dumps(["x" * 262145]),))
+    assert not hit and previous == "open"
+    assert db.execute("SELECT status FROM slices WHERE generation=0").fetchone()[0] == "open"
+    events = [json.loads(row[0]) for row in db.execute("SELECT record FROM events")]
+    assert events == [{"kind": "serialization_limit", "slice_id": "a" * 64}]
+
+
 def test_sealed_commitments_bind_secret_and_domain():
     first = evaluator_capability(BytesIO(b"a" * 32))
     second = evaluator_capability(BytesIO(b"b" * 32))

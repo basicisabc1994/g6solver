@@ -33,6 +33,7 @@ from g6.metaharness.domain import SealedSplit, cut_pool
 from g6.metaharness.schema import SuiteCase
 from g6.recursion.contamination_gate import (
     CanaryProbe, MembershipProbe, ScreenReport, canary_matches, incident_scan, screen,
+    _Serialization,
 )
 from g6.recursion.evaluator_entry import EvaluatorCapability
 from g6.recursion.tasks import TaskSpec
@@ -467,8 +468,8 @@ class HeldOutSlicer:
         if changed.rowcount:
             self._event(db, "contamination", slice_id=slice_id)
 
-    def _canary_incidents(self, db, data, texts, current):
-        matched = canary_matches(data["canaries"], texts)
+    def _canary_incidents(self, db, data, texts, current, *, decode=True):
+        matched = canary_matches(data["canaries"], texts, decode=decode)
         if matched:
             ids = {current} if current is not None else set()
             ids.update(row[0] for i in matched for row in db.execute("SELECT id FROM slices WHERE generation=?", (i,)))
@@ -477,13 +478,14 @@ class HeldOutSlicer:
         return bool(matched)
 
     def _commit_incidents(self, slice_id, training=(), model_outputs=(), canary_probes=(), membership=None):
-        texts, probes, limited = incident_scan(training, model_outputs, canary_probes, membership)
+        sources = (training, model_outputs, canary_probes, membership)
+        texts, probes, limited = incident_scan(*sources, decode=False)
         with self._db() as db:
             data = self._data(db)
             row = (db.execute("SELECT status FROM slices WHERE id=?", (slice_id,)).fetchone()
                    if _hex(slice_id) else None)
             current = slice_id if row is not None else None
-            hit = self._canary_incidents(db, data, texts, current)
+            hit = self._canary_incidents(db, data, texts, current, decode=False)
             probe_flags = sum(p.flagged for p in probes)
             if probe_flags:
                 self._event(db, "canary_probe", slice_id=current, canary_probe_flags=probe_flags)
@@ -493,6 +495,16 @@ class HeldOutSlicer:
             previous = row[0] if row is not None else None
         if limited:
             raise HeldOutError("G6_E_RSI_SCREEN_LIMIT")
+        # Raw evidence is durable before any decoder or later screen can refuse.
+        serialization = _Serialization()
+        texts, _, limited = incident_scan(*sources, serialization=serialization)
+        with self._db() as db:
+            decoded_hit = self._canary_incidents(db, self._data(db), texts, current)
+            if serialization.limited:
+                self._event(db, "serialization_limit", slice_id=current)
+        if limited:
+            raise HeldOutError("G6_E_RSI_SCREEN_LIMIT")
+        hit |= decoded_hit
         return hit, previous
 
     def screen(self, slice_id: str, training: Sequence[SuiteCase], *, membership: Mapping[str, MembershipProbe],
