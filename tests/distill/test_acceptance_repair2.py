@@ -329,7 +329,7 @@ def test_activation_follows_completed_outer_meter_and_final_cost(sample, monkeyp
     assert g._replacement_authorized(entry)
     assert g._active([entry]) == [entry]
     total = g._validation_total(frozen.registration_sha256, None)
-    assert total == clock[0] == 1.75
+    assert total == clock[0] + 10. == 11.75
     receipt = next(row["body"] for row in g._journal().entries() if row["id"] == activated[0])
     replacement = receipt["report"]["replacement"]
     reconciled = g._final_replacement_cost(receipt["report"], frozen.replacement, total)["replacement"]

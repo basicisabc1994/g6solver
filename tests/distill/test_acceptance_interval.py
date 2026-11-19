@@ -170,7 +170,7 @@ def test_reader_requires_final_close_and_accepts_exact_zero(sample, monkeypatch)
     entry = SimpleNamespace(entry_id="e"*64, candidate_id=candidate.candidate_id,
         noninferiority="f"*64, teacher="c"*64, replacement_scope=[])
     replacement = {"state": "active", "teacher": entry.teacher, "scope": [],
-                   "cpu_weight": 1., "validation_s": 20., "cost": {"upper_95": 0.}}
+                   "cpu_weight": 1., "validation_s": 30., "cost": {"upper_95": 0.}}
     receipt = g._append(g._journal(), "replacement_state", {"state": "active",
         "entry_id": entry.entry_id, "candidate_id": candidate.candidate_id, "attempt": attempt,
         "pending_receipt": entry.noninferiority, "report": {"registration": registration,
@@ -205,7 +205,7 @@ def test_interval_rows_bracket_writer_and_lease_release(sample, monkeypatch):
     rows = g._journal().entries()
     assert rows[-1]["kind"] == "registration_closed"
     assert rows[-1]["body"]["validation_s"] == 5.
-    assert g._validation_total(frozen.registration_sha256, None) == 5.
+    assert g._validation_total(frozen.registration_sha256, None) == 15.
 
 
 @pytest.mark.parametrize("bound", [True, False])
@@ -227,7 +227,7 @@ def test_failed_close_requires_bound_cost_recovery(sample, monkeypatch, bound):
     append(g._journal(), "registration_closed", closed["body"] | {"recovery_of": failed["id"] if bound else "f"*64,
         "validation_s": 7., "monotonic_end": 7., "activation_receipts": []})
     if bound:
-        assert g._validation_total(frozen.registration_sha256, None) == 7.
+        assert g._validation_total(frozen.registration_sha256, None) == 17.
     else:
         with pytest.raises(ValueError, match="cost recovery"):
             g._validation_total(frozen.registration_sha256, None)

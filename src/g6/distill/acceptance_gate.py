@@ -6,6 +6,12 @@ never reports, labels, policies or predictions. All statistics used for admissio
 are adapted to the existing metaharness gate; no executor/model is called there.
 Host custody and mission mounts must enforce the OS boundary: Python module
 identity and hash chains do not protect against arbitrary same-user shell access.
+
+Endpoint writes use the registration's d_append_s deadline (default five seconds).
+Each interval is charged its measured duration plus twice that deadline. An
+overrun or raised write leaves an incomplete interval until owner recovery. An
+opening write that raises without leaving any row can be unrecorded: no assessment
+has begun and the supported writer must bound that cost by d_append_s.
 """
 from __future__ import annotations
 
@@ -473,12 +479,6 @@ def _normal_form(source, reserved=()):
             if node.targets[0].id in constants:
                 raise ValueError("reassigned constant")
             constants[node.targets[0].id] = node.value
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            sensitive = {"inspect", "globals", "locals", "vars", "getattr", "hasattr", "setattr", "modules"}
-            if (getattr(node, "module", "") or "").split(".")[0] == "inspect" or any(
-                    alias.name.split(".")[0] in sensitive for alias in node.names):
-                raise ValueError("namespace introspection import")
-            kept.append(node)
         else:
             raise ValueError("unsupported normalisation form")
     tree.body = kept
@@ -488,16 +488,26 @@ def _normal_form(source, reserved=()):
         if binding == "*" or binding in constants or (binding in normalised and not
                 (isinstance(node, ast.FunctionDef) and node in kept)):
             raise ValueError("normalised name shadowed")
+    allowed_nodes = {ast.Module, ast.FunctionDef, ast.arguments, ast.arg, ast.Return,
+        ast.Assert, ast.If, ast.Pass, ast.Expr, ast.Call, ast.Name, ast.Constant,
+        ast.Load, ast.Compare, ast.BoolOp, ast.UnaryOp, ast.BinOp,
+        ast.List, ast.Tuple, ast.Set, ast.Dict, ast.Subscript, ast.Slice,
+        ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Is, ast.IsNot,
+        ast.In, ast.NotIn, ast.And, ast.Or, ast.Not, ast.UAdd, ast.USub,
+        ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow}
+    allowed_names = set(names) | set(constants) | {
+        "answer", "abs", "all", "any", "bool", "float", "int", "len", "max", "min",
+        "range", "round", "str", "sum", "tuple"}
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Global, ast.Nonlocal, ast.ClassDef, ast.Lambda, ast.AsyncFunctionDef)):
-            raise ValueError("dynamic normalisation form")
+        if type(node) not in allowed_nodes:
+            raise ValueError("unsupported normalisation node")
+        if isinstance(node, ast.arg) and (node.arg not in allowed_names or node.annotation is not None):
+            raise ValueError("unsupported normalisation argument")
         if isinstance(node, ast.FunctionDef) and node not in kept:
             raise ValueError("nested function")
-        if isinstance(node, ast.Attribute) and (node.attr.startswith("__") or node.attr in names or node.attr in {"modules", "inspect", "globals", "locals", "vars", "getattr", "hasattr", "setattr"}):
-            raise ValueError("name-sensitive attribute")
         if isinstance(node, ast.Name):
-            if node.id in {"globals", "locals", "eval", "exec", "getattr", "hasattr", "setattr", "vars", "dir", "inspect", "__builtins__"}:
-                raise ValueError("name-sensitive operation")
+            if node.id not in allowed_names:
+                raise ValueError("unsupported normalisation name")
             if node.id in names and not (isinstance(parents.get(node), ast.Call) and parents[node].func is node):
                 raise ValueError("function name escapes direct call")
 
@@ -687,10 +697,17 @@ def _case_in_scope(scope, case):
 def _measure_entry(entry, observations, entries):
     if entry.replacement == "R" and not _replacement_authorized(entry):
         return ["abstain"] * len(observations), [0.] * (3 * len(observations))
-    verdicts, costs = _measure(_candidate(entry), observations, entries)
-    if entry.replacement == "R":
-        verdicts = [v if _case_in_scope(entry.replacement_scope, o.case) else "abstain"
-                    for o, v in zip(observations, verdicts)]
+    if entry.replacement != "R":
+        return _measure(_candidate(entry), observations, entries)
+    verdicts, costs = [], []
+    for observation in observations:
+        if not _case_in_scope(entry.replacement_scope, observation.case):
+            verdicts.append("abstain")
+            costs.extend([0., 0., 0.])
+        else:
+            values, measured = _measure(_candidate(entry), (observation,), entries)
+            verdicts.extend(values)
+            costs.extend(measured)
     return verdicts, costs
 
 
@@ -883,6 +900,13 @@ def _journal():
 
 
 def _append(journal, kind, body):
+    if body.get("interval_version") == 1 and kind in {"replacement_attempt_start", "registration_open_failed",
+            "registration_closed", "registration_close_failed", "registration_meter_failure"}:
+        return _endpoint_append(journal, kind, body, raw=True)
+    return _append_row(journal, kind, body)
+
+
+def _append_row(journal, kind, body):
     ident = digest([kind, len(journal.entries()), body])
     journal.append(kind, ident, body)
     return ident
@@ -918,8 +942,74 @@ def _interval_journal(ident=None):
 def _interval_rows():
     journal = _interval_journal()
     if isinstance(journal, Path):
-        return [row for path in sorted(journal.glob("*.jsonl")) for row in ChainLedger(path).entries()]
-    return journal.entries()
+        return [row | {"interval_chain": str(path)} for path in sorted(journal.glob("*.jsonl"))
+                for row in ChainLedger(path).entries()]
+    return [row | {"interval_chain": "memory"} for row in journal.entries()]
+
+
+def _append_deadline(registration):
+    _, policy = _policy()
+    value = policy["registrations"].get(registration, {}).get("d_append_s", 5.)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ValueError("registered endpoint deadline required")
+    return float(value)
+
+
+def _endpoint_allowance(opening):
+    value = opening.get("d_append_s", 5.)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ValueError("registration endpoint deadline invalid; owner cost recovery required")
+    return 2 * value
+
+
+def _endpoint_append(journal, kind, body, *, raw=False):
+    began = time.monotonic()
+    try:
+        try:
+            ident = _append_row(journal, kind, body) if raw else _append(journal, kind, body)
+        finally:
+            elapsed = time.monotonic() - began
+        if not math.isfinite(elapsed) or elapsed < 0 or elapsed > _endpoint_allowance(body) / 2:
+            raise ValueError("registration endpoint deadline exceeded; owner cost recovery required")
+        return ident
+    except Exception:
+        if raw:
+            attempt = body.get("attempt")
+            if attempt is None:
+                starts = [r for r in journal.entries() if r["kind"] == kind and r["body"] == body]
+                attempt = starts[-1]["id"] if starts else None
+            if attempt is not None:
+                _invalidate_endpoint(journal, body, attempt)
+        raise
+
+
+def _invalidate_endpoint(journal, opening, attempt_id):
+    for _ in range(2):
+        try:
+            path = getattr(journal, "path", None)
+            current = ChainLedger(path) if path is not None else journal
+            body = opening | {"state": "incomplete", "attempt": attempt_id,
+                "validation_s": _interval_elapsed(opening), "monotonic_end": time.monotonic()}
+            began = time.monotonic()
+            try:
+                _append_row(current, "registration_close_failed", body)
+            finally:
+                elapsed = time.monotonic() - began
+            if math.isfinite(elapsed) and 0 <= elapsed <= _endpoint_allowance(opening) / 2:
+                return
+        except Exception:
+            continue
+
+
+def _interval_failure(interval_id, opening, attempt_id):
+    for _ in range(2):
+        try:
+            _endpoint_append(_interval_journal(interval_id), "registration_close_failed", opening | {
+                "attempt": attempt_id, "validation_s": _interval_elapsed(opening),
+                "monotonic_end": time.monotonic()})
+            return
+        except Exception:
+            continue
 
 
 def _interval_elapsed(body, *, recovery=False):
@@ -995,30 +1085,50 @@ def _validation_total(registration, active):
     total = _legacy_validation_total(registration, active)
     rows = [r for r in _interval_rows() if r["body"].get("registration") == registration
             and r["body"].get("interval_version") == 1]
-    starts = {r["id"]: r["body"] for r in rows if r["kind"] == "replacement_attempt_start"}
-    closed, failed = {}, {}
+    starts, owners, closed, failed, floors, ends, members = {}, {}, {}, {}, {}, {}, {}
     for row in rows:
         body = row["body"]
-        if row["kind"] == "registration_close_failed":
-            ident = body["attempt"]
-            if ident not in starts:
-                raise ValueError("registration failure binding invalid; owner cost recovery required")
+        if row["kind"] in {"replacement_attempt_start", "registration_open_failed"}:
+            ident = row["id"]
+            if ident in starts:
+                raise ValueError("registration opening duplicated; owner cost recovery required")
+            starts[ident], owners[ident] = body, row["interval_chain"]
+            floors[ident] = body.get("validation_s", 0.)
+            ends[ident] = body.get("monotonic_end", body["monotonic_start"] + floors[ident])
+            if (not math.isfinite(floors[ident]) or floors[ident] < 0 or not math.isfinite(ends[ident])
+                    or ends[ident] < body["monotonic_start"]):
+                raise ValueError("registration opening cost invalid; owner cost recovery required")
+            if _endpoint_allowance(body) != 2 * _append_deadline(registration):
+                raise ValueError("registration endpoint deadline changed; owner cost recovery required")
+            if row["kind"] == "registration_open_failed":
+                failed[ident] = ident
+            continue
+        if row["kind"] not in {"replacement_attempt", "registration_meter_closed",
+                "registration_meter_failure", "registration_close_failed", "registration_closed"}:
+            continue
+        ident = body["attempt"]
+        if (ident not in starts or row["interval_chain"] != owners[ident]
+                or body.get("d_append_s", 5.) != starts[ident].get("d_append_s", 5.)):
+            raise ValueError("registration endpoint chain binding invalid; owner cost recovery required")
+        elapsed = body.get("validation_s", floors[ident])
+        end = body.get("monotonic_end", starts[ident]["monotonic_start"] + elapsed)
+        if not math.isfinite(elapsed) or not math.isfinite(end) or elapsed < 0:
+            raise ValueError("registration elapsed cost invalid; owner cost recovery required")
+        if row["kind"] == "registration_closed":
+            if (ident in closed or body.get("recovery_of") != failed.get(ident)
+                    or elapsed < floors[ident] or end < ends[ident]
+                    or elapsed < end - starts[ident]["monotonic_start"]):
+                raise ValueError("registration interval closure invalid; owner cost recovery required")
+            closed[ident] = elapsed + _endpoint_allowance(starts[ident])
+            members[ident] = body["candidate_ids"]
+            failed.pop(ident, None)
+        elif row["kind"] == "registration_close_failed":
             closed.pop(ident, None)
             failed[ident] = row["id"]
-        if row["kind"] != "registration_closed":
-            continue
-        ident, elapsed = body["attempt"], body["validation_s"]
-        if (ident not in starts or ident in closed or not math.isfinite(elapsed) or elapsed < 0
-                or body.get("recovery_of") != failed.get(ident)
-                or body["monotonic_end"] < starts[ident]["monotonic_start"]
-                or elapsed < body["monotonic_end"] - starts[ident]["monotonic_start"]):
-            raise ValueError("registration interval closure invalid; owner cost recovery required")
-        closed[ident] = elapsed
-        failed.pop(ident, None)
+        floors[ident] = max(floors[ident], elapsed)
+        ends[ident] = max(ends[ident], end)
     unfinished = starts.keys() - closed.keys() - {active}
     total += math.fsum(closed.values())
-    members = {r["body"]["attempt"]: r["body"]["candidate_ids"] for r in rows
-               if r["kind"] == "registration_closed"}
     used = set()
     for row in _journal().entries():
         body = row["body"]
@@ -1031,7 +1141,8 @@ def _validation_total(registration, active):
             raise ValueError("registration interval reservation binding invalid; owner cost recovery required")
         used.add(key)
     if unfinished:
-        total += math.fsum(_interval_elapsed(starts[ident], recovery=True) for ident in unfinished)
+        total += math.fsum(max(floors[ident], _interval_elapsed(starts[ident], recovery=True))
+                           + _endpoint_allowance(starts[ident]) for ident in unfinished)
         raise ValueError(f"unfinished registration interval requires owner cost recovery; elapsed total {total}")
     return total
 
@@ -1206,7 +1317,7 @@ def _activate_replacement(candidate, library, frozen, evidence, batch_bar, attem
     for prepare in (True, "activation"):
         if prepare == "activation":
             _final_replacement_cost(data, frozen.replacement,
-                prior + max(0., time.monotonic() - attempt[0]))
+                prior + max(0., time.monotonic() - attempt[0]) + 2 * _append_deadline(registration))
             if not getattr(Library, "replacement_state_checked", False):
                 raise ValueError("pending replacement reader issuance required")
         entry = _persist(candidate, answer, evidence, own, frozen, data, library, prepare=prepare)
@@ -1248,7 +1359,24 @@ def _decide_batch(candidates, library, registration, *, replacement):
     interval_id = uuid4().hex
     opening = {"registration": registration, "monotonic_start": started, "wall_start": wall,
                "interval_version": 1, "state": "opened", "phase": "assessment"}
-    attempt_id = _append(_interval_journal(interval_id), "replacement_attempt_start", opening)
+    journal = _interval_journal(interval_id)
+    try:
+        opening["d_append_s"] = _append_deadline(registration)
+    except (ValueError, OSError):
+        return tuple(AcceptanceDecision("block", ("registered endpoint deadline unavailable",)) for _ in candidates)
+    try:
+        attempt_id = _endpoint_append(journal, "replacement_attempt_start", opening)
+    except Exception:
+        try:
+            starts = [r for r in journal.entries() if r["kind"] == "replacement_attempt_start"
+                      and r["body"] == opening]
+            attempt_id = starts[-1]["id"] if starts else _endpoint_append(journal, "registration_open_failed",
+                opening | {"validation_s": _interval_elapsed(opening), "monotonic_end": time.monotonic()})
+            _interval_failure(interval_id, opening, attempt_id)
+        except Exception:
+            pass
+        return tuple(AcceptanceDecision("block", ("interval opening requires owner cost recovery",),
+                     c.candidate_id if type(c) is VerifierCandidate else "") for c in candidates)
     candidates = tuple(candidates)
     candidate_ids = [c.candidate_id if type(c) is VerifierCandidate else "invalid" for c in candidates]
     pending, published, receipts = {}, {}, []
@@ -1270,7 +1398,8 @@ def _decide_batch(candidates, library, registration, *, replacement):
                     continue
                 answer, frozen, data = pending[ident]
                 try:
-                    total = _validation_total(registration, attempt_id) + _interval_elapsed(opening)
+                    total = (_validation_total(registration, attempt_id) + _interval_elapsed(opening)
+                             + _endpoint_allowance(opening))
                     active = _final_replacement_cost(data, frozen.replacement, total)
                     active["replacement"]["state"] = "active"
                     receipt = _append(_journal(), "replacement_state", {
@@ -1303,13 +1432,14 @@ def _decide_batch(candidates, library, registration, *, replacement):
                 meter_error = type(error).__name__
         if meter_error is not None:
             try:
-                _append(_interval_journal(interval_id), "registration_meter_failure", opening | {
+                _endpoint_append(_interval_journal(interval_id), "registration_meter_failure", opening | {
                     "attempt": attempt_id, "error_type": meter_error})
             except Exception:
                 can_close = False
         try:
             if replacement and pending and results is not None:
-                total = _validation_total(registration, attempt_id) + _interval_elapsed(opening)
+                total = (_validation_total(registration, attempt_id) + _interval_elapsed(opening)
+                         + _endpoint_allowance(opening))
                 for index, ident in enumerate(candidate_ids):
                     if ident not in pending:
                         continue
@@ -1334,16 +1464,12 @@ def _decide_batch(candidates, library, registration, *, replacement):
             elapsed = ended - started
             if not math.isfinite(elapsed) or elapsed < 0:
                 raise ValueError("registration clock requires owner cost recovery")
-            _append(_interval_journal(interval_id), "registration_closed", opening | {
+            _endpoint_append(_interval_journal(interval_id), "registration_closed", opening | {
                 "state": "closed", "attempt": attempt_id, "validation_s": elapsed,
                 "monotonic_end": ended, "wall_end": wall_end,
                 "candidate_ids": candidate_ids, "activation_receipts": receipts})
         except Exception:
-            try:
-                _append(_interval_journal(interval_id), "registration_close_failed", opening | {
-                    "attempt": attempt_id, "validation_s": _interval_elapsed(opening)})
-            except Exception:
-                pass  # The unclosed interval remains the recovery obligation.
+            _interval_failure(interval_id, opening, attempt_id)
             if replacement and results is not None:
                 results = tuple(replace(answer, verdict="block", reasons=("interval close requires owner cost recovery",))
                                 for answer in results)
@@ -1989,7 +2115,7 @@ def _assess_replacement(candidate, entries, frozen, reuse_index, *, prior_valida
     savings = [(rows[o.case.case_id].teacher_s * study.teacher_weight * (1 - study.shadow_rate)
                 if q != "abstain" else 0.) - c * study.cpu_weight - rows[o.case.case_id].maintenance_delta_s
                for o, q, c in zip(frozen.acceptance, all_own, serving)]
-    validation_s = prior_validation_s + max(0., time.monotonic() - started)
+    validation_s = prior_validation_s + max(0., time.monotonic() - started) + 2 * _append_deadline(frozen.registration_sha256)
     cost_result = _replacement_cost(study.fixed_new_s - study.fixed_base_s + validation_s * study.cpu_weight,
                                     _cluster_differences(frozen.acceptance, rows, savings),
                                     value_bounds=study.task_saving_bounds)

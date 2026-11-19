@@ -63,7 +63,7 @@ def record_fire(found: dict, before: dict, after: dict) -> None:
 
 
 def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", tests=()) -> list[dict]:
-    from g6.distill.acceptance_gate import _run
+    from g6.distill.acceptance_gate import _case_in_scope, _run
     from g6.workforce.repo_tests import is_test_related
 
     entries = Library().list()
@@ -88,7 +88,8 @@ def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", 
                 continue
             case = SimpleNamespace(before_tests=before.get(path, ""), after_tests=after.get(path, ""))
             try:
-                verdicts.append(_run(candidate, case, entries))
+                verdicts.append("abstain" if entry.replacement == "R" and not
+                                _case_in_scope(entry.replacement_scope, case) else _run(candidate, case, entries))
             except (ValueError, KeyError, LedgerError):
                 verdicts.append("abstain")
         if verdicts:

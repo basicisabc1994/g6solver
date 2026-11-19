@@ -175,7 +175,7 @@ def test_failed_seal_append_requires_recovery_even_after_row_was_written(sample,
     assert any(row["kind"] == "registration_meter_closed" for row in rows)
     assert rows[-1]["kind"] == "registration_closed"
     assert rows[-1]["body"]["validation_s"] == clock[0] == 20000.
-    assert g._validation_total(frozen.registration_sha256, None) == 20000.
+    assert g._validation_total(frozen.registration_sha256, None) == 20010.
 
     def failed_close(journal, kind, body):
         result = append(journal, kind, body)
@@ -204,7 +204,7 @@ def test_failed_seal_append_requires_recovery_even_after_row_was_written(sample,
         with pytest.raises(ValueError, match="cost recovery"):
             g._validation_total(frozen.registration_sha256, None)
     append(journal, "registration_closed", recovery | {"recovery_of": failed["id"]})
-    assert g._validation_total(frozen.registration_sha256, None) == clock[0] == 20007.
+    assert g._validation_total(frozen.registration_sha256, None) == clock[0] + 20. == 20027.
 
 
 def test_replacement_batch_refuses_until_joint_activation_is_supported(sample, monkeypatch):
@@ -273,7 +273,7 @@ def test_activation_flip_overrun_stays_pending_for_readers(sample, monkeypatch):
     assert "cumulative cost" in " ".join(answer.reasons)
     assert not locked[0]
     total = g._validation_total(frozen.registration_sha256, None)
-    assert total == clock[0] == 20001.
+    assert total == clock[0] + 20. == 20021.
     rows = g._journal().entries()
     closes = [row["body"] for row in rows if row["kind"] == "registration_closed"]
     assert [body["validation_s"] for body in closes] == [1., 20000.]
@@ -377,7 +377,7 @@ def test_slow_refusal_tail_cannot_be_forgotten_by_retry(sample, monkeypatch):
     assert rows[-1]["kind"] == "registration_closed"
     tail = rows[-1]["body"]["validation_s"]
     assert tail == clock[0] == 20000.
-    assert g._validation_total(frozen.registration_sha256, None) == tail
+    assert g._validation_total(frozen.registration_sha256, None) == tail + 10.
     monkeypatch.setattr(g, "_append", append)
     assess = g._assess_replacement
     retry_costs = []
@@ -388,8 +388,8 @@ def test_slow_refusal_tail_cannot_be_forgotten_by_retry(sample, monkeypatch):
     retry = g.decide_replacement(candidate, Library(), frozen.registration_sha256)
     assert retry.verdict == "refuse", retry.reasons
     assert "cumulative cost" in " ".join(retry.reasons)
-    assert retry_costs == [tail]
+    assert retry_costs == [tail + 10.]
     closes = [row["body"] for row in g._journal().entries() if row["kind"] == "registration_closed"]
     assert [body["validation_s"] for body in closes] == [tail, 0.]
     assert g._validation_total(frozen.registration_sha256, None) == sum(
-        body["validation_s"] for body in closes) == tail
+        body["validation_s"] + 10. for body in closes) == tail + 20.

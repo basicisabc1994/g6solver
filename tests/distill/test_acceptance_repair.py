@@ -212,8 +212,8 @@ def test_activation_reconciles_both_measurements_once(sample, monkeypatch):
     answer = g.decide_replacement(candidate, g.Library(), frozen.registration_sha256)
     assert answer.verdict == "admit_probation", answer.reasons
     receipts = [row["body"] for row in g._journal().entries() if row["kind"] == "replacement_state"]
-    assert [data["validation_s"] for data in captured] == [8., 8.]
-    assert receipts[-1]["report"]["replacement"]["validation_s"] == 8.
+    assert [data["validation_s"] for data in captured] == [18., 18.]
+    assert receipts[-1]["report"]["replacement"]["validation_s"] == 18.
     rows = g._journal().entries()
     closes = [row["body"] for row in rows if row["kind"] == "registration_closed"]
     assert [body["validation_s"] for body in closes] == [8.]
@@ -221,7 +221,7 @@ def test_activation_reconciles_both_measurements_once(sample, monkeypatch):
                    if row["kind"] in {"replacement_attempt", "registration_meter_closed"}]
     assert diagnostics == [8., 8.]
     total = g._validation_total(frozen.registration_sha256, None)
-    assert total == sum(body["validation_s"] for body in closes) == clock[0] == 8.
+    assert total == sum(body["validation_s"] + 10. for body in closes) == clock[0] + 10. == 18.
     reconciled = receipts[-1]["report"]["replacement"]["cost"]
     study = frozen.replacement
     assert reconciled["fixed_difference"] == pytest.approx(
