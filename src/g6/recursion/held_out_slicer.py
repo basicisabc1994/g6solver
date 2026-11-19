@@ -33,7 +33,7 @@ from g6.metaharness.domain import SealedSplit, cut_pool
 from g6.metaharness.schema import SuiteCase
 from g6.recursion.contamination_gate import (
     CanaryProbe, MembershipProbe, ScreenReport, canary_matches, incident_scan, screen,
-    _Serialization,
+    ContaminationError, _Comparison,
 )
 from g6.recursion.evaluator_entry import EvaluatorCapability
 from g6.recursion.tasks import TaskSpec
@@ -377,6 +377,8 @@ class HeldOutSlicer:
         row = db.execute("SELECT * FROM slices WHERE id=?", (slice_id,)).fetchone()
         if row is None:
             raise HeldOutError("G6_E_RSI_SLICE_INVALID")
+        if opened and row["status"] == "blocked":
+            raise HeldOutError("G6_E_RSI_SCREEN_LIMIT")
         if opened and row["status"] != "open":
             raise HeldOutError("G6_E_RSI_SLICE_CLOSED")
         return row
@@ -468,14 +470,32 @@ class HeldOutSlicer:
         if changed.rowcount:
             self._event(db, "contamination", slice_id=slice_id)
 
-    def _canary_incidents(self, db, data, texts, current, *, decode=True):
-        matched = canary_matches(data["canaries"], texts, decode=decode)
+    def _canary_incidents(self, db, data, texts, current, *, decode=True, serialization=None):
+        matched = canary_matches(data["canaries"], texts, decode=decode, serialization=serialization)
         if matched:
             ids = {current} if current is not None else set()
             ids.update(row[0] for i in matched for row in db.execute("SELECT id FROM slices WHERE generation=?", (i,)))
             for sid in sorted(ids):
                 self._void(db, sid)
         return bool(matched)
+
+    def _block(self, db, slice_id):
+        if slice_id is not None:
+            db.execute("UPDATE slices SET status='blocked' WHERE id=? AND status IN ('open','sealed')", (slice_id,))
+            self._event(db, "screen_limit", slice_id=slice_id)
+
+    def clear_screen_block(self, slice_id: str, *, role: str,
+                           capability: EvaluatorCapability | None = None):
+        """Only the bound evaluator can clear a limit; screening must then run again."""
+        _evaluator(role, capability)
+        with self._db() as db:
+            self._authorize(role, capability, self._data(db))
+            row = self._row(db, slice_id)
+            if row["status"] != "blocked":
+                raise HeldOutError("G6_E_RSI_SLICE_CLOSED")
+            status = "open" if row["freeze"] is not None else "sealed"
+            db.execute("UPDATE slices SET status=?, screened=0 WHERE id=?", (status, slice_id))
+            self._event(db, "screen_limit_cleared", slice_id=slice_id)
 
     def _commit_incidents(self, slice_id, training=(), model_outputs=(), canary_probes=(), membership=None):
         sources = (training, model_outputs, canary_probes, membership)
@@ -493,16 +513,16 @@ class HeldOutSlicer:
                     self._void(db, current)
                 hit = True
             previous = row[0] if row is not None else None
-        if limited:
-            raise HeldOutError("G6_E_RSI_SCREEN_LIMIT")
+        raw_limited = limited
         # Raw evidence is durable before any decoder or later screen can refuse.
-        serialization = _Serialization()
+        serialization = _Comparison(partial=True)
         texts, _, limited = incident_scan(*sources, serialization=serialization)
         with self._db() as db:
-            decoded_hit = self._canary_incidents(db, self._data(db), texts, current)
-            if serialization.limited:
-                self._event(db, "serialization_limit", slice_id=current)
-        if limited:
+            decoded_hit = self._canary_incidents(db, self._data(db), texts, current, serialization=serialization)
+            limited |= serialization.limited
+            if limited or raw_limited:
+                self._block(db, current)
+        if limited or raw_limited:
             raise HeldOutError("G6_E_RSI_SCREEN_LIMIT")
         hit |= decoded_hit
         return hit, previous
@@ -516,15 +536,26 @@ class HeldOutSlicer:
                 raise HeldOutError("G6_E_RSI_SLICE_CLOSED")
             data = self._data(db)
             cases = tuple(_case(t) for t in self._tasks(data, row["generation"], row["freeze"]))
-            result = screen(training, cases, membership=membership, model_outputs=model_outputs,
-                            canaries=tuple(data["canaries"]), canary_probes=canary_probes)
-            excluded = sorted(set(json.loads(row["excluded"])) | set(result.excluded_indices))
-            db.execute("UPDATE slices SET excluded=?, screened=1 WHERE id=?", (_json(excluded), slice_id))
-            self._event(db, "screen", slice_id=slice_id, **asdict(result),
-                        excluded_count=result.excluded_count, voided=result.voided)
-            if result.voided and not hit:
-                self._void(db, slice_id)
-            return result
+        held_hit, _ = self._commit_incidents(slice_id, cases)
+        hit |= held_hit
+        try:
+            with self._db() as db:
+                row = self._row(db, slice_id, opened=not hit)
+                result = screen(training, cases, membership=membership, model_outputs=model_outputs,
+                                canaries=tuple(data["canaries"]), canary_probes=canary_probes)
+                excluded = sorted(set(json.loads(row["excluded"])) | set(result.excluded_indices))
+                db.execute("UPDATE slices SET excluded=?, screened=1 WHERE id=?", (_json(excluded), slice_id))
+                self._event(db, "screen", slice_id=slice_id, **asdict(result),
+                            excluded_count=result.excluded_count, voided=result.voided)
+                if result.voided and not hit:
+                    self._void(db, slice_id)
+                return result
+        except ContaminationError as error:
+            if str(error) != "G6_E_RSI_SCREEN_LIMIT":
+                raise
+            with self._db() as db:
+                self._block(db, slice_id)
+            raise HeldOutError("G6_E_RSI_SCREEN_LIMIT") from None
 
     def evaluate_pass(self, slice_id: str, case_id: str, output: str, *, arm: str, attempt: str,
                       anchor_pass: bool, detectors: Mapping[str, Callable[[TaskSpec, str], bool]] | None) -> PassResult:
@@ -542,6 +573,8 @@ class HeldOutSlicer:
                 result = PassResult(False, "contamination", 0)
                 self._event(db, "pass", slice_id=slice_id, attempt_digest=key, **asdict(result))
                 return result
+            if row["status"] == "blocked":
+                raise HeldOutError("G6_E_RSI_SCREEN_LIMIT")
             if row["status"] != "open":
                 raise HeldOutError("G6_E_RSI_SLICE_CLOSED")
             tasks = self._tasks(data, row["generation"], row["freeze"])

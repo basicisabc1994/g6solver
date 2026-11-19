@@ -86,6 +86,31 @@ def probes(store, item):
             for t in store._tasks(store._data(None), item.generation, item.freeze_digest)}
 
 
+@pytest.mark.parametrize("incident", [False, True])
+def test_small_gap_bound_records_incident_before_durable_block(stores, monkeypatch, incident):
+    from g6.recursion import contamination_gate as gate
+    from g6.recursion.held_out_slicer import HeldOutError
+
+    store, db = stores()
+    item = cut(store)
+    marker = store._data(None)["canaries"][0]
+    output = json.dumps({"0": marker[:16], "1": marker[16:]}) if incident else "ordinary text"
+    original_bound = getattr(gate, "_MAX_MATCH_STEPS", 4194304)
+    monkeypatch.setattr(gate, "_MAX_MATCH_STEPS", 5000, raising=False)
+    with pytest.raises(HeldOutError, match="SCREEN_LIMIT"):
+        store.screen(item.slice_id, (), membership=probes(store, item),
+                     model_outputs=(output, "z" * 10000))
+    status = db.execute("SELECT status FROM slices WHERE id=?", (item.slice_id,)).fetchone()[0]
+    assert status == ("void" if incident else "blocked")
+    events = [json.loads(row[0])["kind"] for row in db.execute("SELECT record FROM events ORDER BY sequence")]
+    assert "screen_limit" in events
+    if incident:
+        assert events.index("contamination") < events.index("screen_limit")
+    monkeypatch.setattr(gate, "_MAX_MATCH_STEPS", original_bound)
+    with pytest.raises(HeldOutError, match="SLICE_CLOSED" if incident else "SCREEN_LIMIT"):
+        store.screen(item.slice_id, (), membership=probes(store, item))
+
+
 def test_distinct_family_sizes_stay_out_of_shared_summaries_and_events(stores):
     store, db = stores()
     items = [cut(store, g) for g in range(6)]
@@ -491,14 +516,194 @@ def test_followup3_oversized_entity_incident_survives_api_refusal_and_rollback(s
 
 
 @pytest.mark.parametrize("kind", ["depth", "nodes", "size"])
-def test_followup3_bounded_container_fallback_stays_private_and_open(stores, kind):
+def test_followup3_former_container_bounds_leave_complete_scans_open(stores, kind):
     store, _ = stores()
     item = cut(store)
     before = store.records()
     output = ('[' * 34 + '"leaf"' + ']' * 34 if kind == "depth" else
               json.dumps([None] * 16384) if kind == "nodes" else json.dumps(["x" * 262145]))
     result = store.screen(item.slice_id, (), membership=probes(store, item), model_outputs=(output,))
-    assert result.serialization_limited and not result.voided
+    assert not result.serialization_limited and not result.voided
     assert store.status(item.slice_id) == "open" and store.records() == before
-    assert any(r["kind"] == "serialization_limit"
-               for r in store.evaluator_records(role="evaluator", capability=store._capability))
+    assert not any(r["kind"] in ("serialization_limit", "screen_limit")
+                   for r in store.evaluator_records(role="evaluator", capability=store._capability))
+
+
+@pytest.mark.parametrize("serialise", [json.dumps, repr])
+@pytest.mark.parametrize("wrap", [lambda s: "Result: " + s, lambda s: s + "\nDone",
+                                   lambda s: "```python\n" + s + "\n```"])
+@pytest.mark.parametrize("boundary", ["training", "output", "evaluate", "held_out"])
+def test_review_r4_logged_or_fenced_canary_voids_durably(stores, serialise, wrap, boundary):
+    from g6.recursion.held_out_slicer import HeldOutError
+
+    store, _ = stores()
+    item = cut(store)
+    task = store._tasks(store._data(None), 0, item.freeze_digest)[0]
+    marker = store._data(None)["canaries"][0]
+    encoded = wrap(serialise([marker[:16], marker[16:]]))
+    store.screen(item.slice_id, (), membership=probes(store, item))
+    if boundary == "evaluate":
+        result = store.evaluate_pass(item.slice_id, task.task_id, encoded, arm="G0", attempt="one",
+                                     anchor_pass=True, detectors={"clean": lambda t, o: False})
+        assert not result.passed and result.reason == "contamination"
+    elif boundary == "held_out":
+        data = store._data(None)
+        index = data["partitions"][0][0]
+        data["tasks"][index] = replace(TaskSpec.from_record(data["tasks"][index]), prompt=encoded, provenance=None).to_record()
+        assert store.screen(item.slice_id, (), membership=probes(store, item)).voided
+    else:
+        assert store.screen(item.slice_id,
+                            (SuiteCase("train", encoded, "other"),) if boundary == "training" else (),
+                            membership={}, model_outputs=(encoded,) if boundary == "output" else ()).voided
+    with pytest.raises(ValueError), store._db():
+        raise ValueError("later rollback")
+    assert store.status(item.slice_id) == "void"
+    with pytest.raises(HeldOutError, match="SLICE_CLOSED"):
+        store.evaluate_pass(item.slice_id, task.task_id, "clean", arm="G0", attempt="later",
+                            anchor_pass=True, detectors={"clean": lambda t, o: False})
+
+
+@pytest.mark.parametrize("kind", ["depth", "nodes", "size"])
+@pytest.mark.parametrize("boundary", ["training", "output", "evaluate", "held_out"])
+def test_review_r4_large_container_cannot_hide_canary(stores, kind, boundary):
+    from g6.recursion.held_out_slicer import HeldOutError
+
+    store, _ = stores()
+    item = cut(store)
+    task = store._tasks(store._data(None), 0, item.freeze_digest)[0]
+    marker = store._data(None)["canaries"][0]
+    encoded = ("[" * 34 + json.dumps([marker[:16], marker[16:]]) + "]" * 34 if kind == "depth" else
+               json.dumps([marker[:16], marker[16:]] + [None] * 16384) if kind == "nodes" else
+               json.dumps([marker[:16], marker[16:], "x" * 262145]))
+    store.screen(item.slice_id, (), membership=probes(store, item))
+    if boundary == "evaluate":
+        result = store.evaluate_pass(item.slice_id, task.task_id, encoded, arm="G0", attempt="one",
+                                     anchor_pass=True, detectors={"clean": lambda t, o: False})
+        assert not result.passed and result.reason == "contamination"
+    elif boundary == "held_out":
+        data = store._data(None)
+        index = data["partitions"][0][0]
+        data["tasks"][index] = replace(TaskSpec.from_record(data["tasks"][index]), prompt=encoded, provenance=None).to_record()
+        assert store.screen(item.slice_id, (), membership=probes(store, item)).voided
+    else:
+        assert store.screen(item.slice_id,
+                            (SuiteCase("train", encoded, "other"),) if boundary == "training" else (),
+                            membership={}, model_outputs=(encoded,) if boundary == "output" else ()).voided
+    with pytest.raises(ValueError), store._db():
+        raise ValueError("later rollback")
+    assert store.status(item.slice_id) == "void"
+    with pytest.raises(HeldOutError, match="SLICE_CLOSED"):
+        store.evaluate_pass(item.slice_id, task.task_id, "clean", arm="G0", attempt="later",
+                            anchor_pass=True, detectors={"clean": lambda t, o: False})
+
+
+@pytest.mark.parametrize("kind", ["raw", "decode", "view"])
+@pytest.mark.parametrize("boundary", ["training", "output", "evaluate", "held_out"])
+def test_scan_bound_blocks_until_capability_holder_clears(stores, monkeypatch, kind, boundary):
+    from g6.recursion import contamination_gate as gate
+    from g6.recursion.held_out_slicer import HeldOutError
+
+    store, db = stores()
+    item = cut(store)
+    task = store._tasks(store._data(None), 0, item.freeze_digest)[0]
+    store.screen(item.slice_id, (), membership=probes(store, item))
+    encoded = {"raw": "x" * 1048577, "decode": "&" + "amp;" * 80,
+               "view": "\ufdfa" * 60000}[kind]
+    if kind == "view":
+        monkeypatch.setattr(gate, "_MAX_VIEW_CHARS", 1048576, raising=False)
+    if boundary == "held_out":
+        data = store._data(None)
+        index = data["partitions"][0][0]
+        original_record = data["tasks"][index]
+        data["tasks"][index] = replace(TaskSpec.from_record(data["tasks"][index]), prompt=encoded, provenance=None).to_record()
+    with pytest.raises((HeldOutError, gate.ContaminationError), match="SCREEN_LIMIT"):
+        if boundary == "evaluate":
+            store.evaluate_pass(item.slice_id, task.task_id, encoded, arm="G0", attempt="one",
+                                anchor_pass=True, detectors={"clean": lambda t, o: False})
+        else:
+            store.screen(item.slice_id,
+                         (SuiteCase("train", encoded, "other"),) if boundary == "training" else (),
+                         membership=probes(store, item), model_outputs=(encoded,) if boundary == "output" else ())
+    with pytest.raises(ValueError), store._db():
+        raise ValueError("later rollback")
+    assert store.status(item.slice_id) == "blocked"
+    with pytest.raises(HeldOutError, match="SCREEN_LIMIT"):
+        store.evaluate_pass(item.slice_id, task.task_id, "clean", arm="G0", attempt="two",
+                            anchor_pass=True, detectors={"clean": lambda t, o: False})
+    assert db.execute("SELECT count(*) FROM attempts").fetchone()[0] == 0
+    assert all(r["kind"] != "screen_limit" for r in store.records())
+    with pytest.raises(HeldOutError, match="CAPABILITY"):
+        store.clear_screen_block(item.slice_id, role="evaluator")
+    with pytest.raises(HeldOutError, match="CAPABILITY"):
+        store.clear_screen_block(item.slice_id, role="evaluator", capability=evaluator_capability(BytesIO(b"b" * 32)))
+    store.clear_screen_block(item.slice_id, role="evaluator", capability=store._capability)
+    assert store.status(item.slice_id) == "open"
+    result = store.evaluate_pass(item.slice_id, task.task_id, "clean", arm="G0", attempt="three",
+                                 anchor_pass=True, detectors={"clean": lambda t, o: False})
+    assert not result.passed and result.reason == "screen_missing"
+    if boundary == "held_out":
+        data["tasks"][index] = original_record
+    store.screen(item.slice_id, (), membership=probes(store, item))
+    result = store.evaluate_pass(item.slice_id, task.task_id, "clean", arm="G0", attempt="four",
+                                 anchor_pass=True, detectors={"clean": lambda t, o: False})
+    assert result.passed
+
+
+@pytest.mark.parametrize("kind", ["raw", "decode", "view"])
+@pytest.mark.parametrize("evidence", ["marker", "probe"])
+def test_each_scan_bound_commits_available_incidents_first(stores, monkeypatch, kind, evidence):
+    from g6.recursion import contamination_gate as gate
+    from g6.recursion.held_out_slicer import HeldOutError
+
+    store, db = stores()
+    item = cut(store)
+    marker = store._data(None)["canaries"][0]
+    if kind == "view":
+        monkeypatch.setattr(gate, "_MAX_VIEW_CHARS", 1048576)
+    large = {"raw": "x" * 1048577, "decode": "&" + "amp;" * 80,
+             "view": "\ufdfa" * 60000}[kind]
+    # Marker is character-escaped so the decoded prepass must keep its evidence.
+    outputs = (("".join(f"\\u{ord(c):04x}" for c in marker), large)
+               if evidence == "marker" else (large,))
+    with pytest.raises(HeldOutError, match="SCREEN_LIMIT"):
+        store.screen(item.slice_id, (), membership={}, model_outputs=outputs,
+                     canary_probes=(CanaryProbe(.2, .1),) if evidence == "probe" else ())
+    with pytest.raises(ValueError), store._db():
+        raise ValueError("later rollback")
+    assert store.status(item.slice_id) == "void"
+    assert db.execute("SELECT count(*) FROM events WHERE record LIKE '%contamination%'").fetchone()[0] > 0
+
+
+@pytest.mark.parametrize("kind", ["depth", "nodes"])
+def test_raw_traversal_bound_blocks_even_without_an_incident(stores, kind):
+    from g6.recursion.held_out_slicer import HeldOutError
+
+    store, _ = stores()
+    item = cut(store)
+    nested = "leaf"
+    for _ in range(34):
+        nested = [nested]
+    source = nested if kind == "depth" else [None] * 16384
+    with pytest.raises(HeldOutError, match="SCREEN_LIMIT"):
+        store.screen(item.slice_id, (SuiteCase("train", "other", source),), membership={})
+    assert store.status(item.slice_id) == "blocked"
+    with pytest.raises(HeldOutError, match="SCREEN_LIMIT"):
+        store.screen(item.slice_id, (), membership=probes(store, item))
+
+
+@pytest.mark.parametrize("kind", ["depth", "nodes", "size"])
+@pytest.mark.parametrize("source", ["training", "output", "held_out"])
+@pytest.mark.parametrize("serialise", [json.dumps, repr])
+def test_review_r4_large_container_passage_exclusion(kind, source, serialise):
+    words = [f"word{i}" for i in range(13)]
+    passage = " ".join(words)
+    encoded = ("[" * 34 + serialise(words) + "]" * 34 if kind == "depth" else
+               serialise(words + [None] * 16384) if kind == "nodes" else
+               serialise(words + ["x" * 262145]))
+    held = SuiteCase("held", "private", encoded if source == "held_out" else passage)
+    training = ((SuiteCase("train", "other", encoded if source == "training" else passage),)
+                if source != "output" else ())
+    result = screen(training, (held,), canaries=("a" * 32,),
+                    membership={"held": MembershipProbe(1, 1, (1, 1), (1, 1))},
+                    model_outputs=(encoded,) if source == "output" else ())
+    assert result.ngram_excluded == result.excluded_count == 1

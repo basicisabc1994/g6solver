@@ -98,7 +98,7 @@ def test_followup3_raw_incident_commits_before_decoding_refusal(incident_store, 
     assert db.execute("SELECT status FROM slices WHERE generation=0").fetchone()[0] == "void"
 
 
-def test_followup3_serialization_limit_is_recorded_without_closing_slice(incident_store):
+def test_followup3_former_serialization_limit_is_not_a_view_limit(incident_store):
     import json
 
     store, db = incident_store
@@ -106,7 +106,7 @@ def test_followup3_serialization_limit_is_recorded_without_closing_slice(inciden
     assert not hit and previous == "open"
     assert db.execute("SELECT status FROM slices WHERE generation=0").fetchone()[0] == "open"
     events = [json.loads(row[0]) for row in db.execute("SELECT record FROM events")]
-    assert events == [{"kind": "serialization_limit", "slice_id": "a" * 64}]
+    assert events == []
 
 
 def test_sealed_commitments_bind_secret_and_domain():
