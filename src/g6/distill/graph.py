@@ -12,6 +12,7 @@ import json
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from functools import wraps
 from datetime import datetime, timezone
 
 from pydantic import JsonValue, TypeAdapter
@@ -20,7 +21,7 @@ from g6.core.ledger import canonical, digest
 from g6.core.llm import LLMError
 from g6.core.model_calls import counting
 
-from .cost_ledger import MODEL_FIELDS, _id, capture_attempt_sends, consume_resources, resource_owner, scoped_caller
+from .cost_ledger import RESOURCE_FIELDS, CostLedger, MODEL_FIELDS, _id, _model_cost, _select_cost, capture_attempt_sends, consume_resources, resource_owner, scoped_caller
 from .execution import ExecutionRefused, Observation, run_candidate
 from .graph_lowering import LoweringRefused, lower, validated
 from .graph_records import AttemptRecord, CostVector, ExecutionRecord, Model, NodeRun, Terminal
@@ -81,8 +82,8 @@ def attempt_meter(what, *, update_id=None, execution_id=None):
                 finally:
                     # Own consumption is registered even if result validation fails.
                     own_fields = {*MODEL_FIELDS, "cpu_s", "wall_s"}
-                    usage.cost = CostVector(**meter.reported_cost.model_dump(include=own_fields))
-                    runner_fields = set(CostVector.model_fields) - own_fields
+                    usage.cost = _select_cost(meter.reported_cost, own_fields)
+                    runner_fields = set(RESOURCE_FIELDS) - own_fields
                     if any(getattr(meter.reported_cost, name) for name in runner_fields):
                         referenced = (owner.ledger.cost_for((), meter.reported_execution_ids)
                                       if owner is not None and meter.reported_execution_ids else None)
@@ -104,14 +105,17 @@ def attempt_meter(what, *, update_id=None, execution_id=None):
             with capture.lock:
                 meter.own_execution_ids = set(capture.consumed_ids)
             measured = proxy_cost.model_dump() if owner is not None else (usage.cost + usage.descendant_cost).model_dump()
-            if capture.ledger is not None:
+            if capture.ledger is not None and capture.ledger._track_model_sends:
                 for name in MODEL_FIELDS:
                     measured[name] = getattr(proxy_cost, name)
             else:
                 measured["llm_calls"] = sends()
+                for name in MODEL_FIELDS[1:]:
+                    measured[name] = getattr(meter.reported_cost, name) if sends() else 0
             if sends() > measured["llm_calls"]:
                 meter.outcome = "unmetered_send"
             meter.record = AttemptRecord(what=what, cost=CostVector(**measured), model_sends=measured["llm_calls"],
+                operation_id=usage.operation_id, time_booking=usage.time_booking,
                 send_ids=send_ids, execution_ids=event_ids,
                 resource_gaps=owner.ledger.gaps_for(event_ids) if owner is not None else sorted(usage.resource_gaps),
                 outcome=meter.outcome, update_id=update_id,
@@ -214,6 +218,46 @@ def _llm(p, inputs, *, caller, config, timeout_s):
     return result
 
 
+def _graph_operation(fn):
+    @wraps(fn)
+    def execute(*args, **kwargs):
+        if resource_owner() is not None:
+            return fn(*args, **kwargs)
+        ledger = CostLedger()
+        ledger._track_model_sends = False
+        store = kwargs.get("store")
+        kwargs["store"] = _TraceStore(store) if store is not None else None
+        with ledger.measure("standalone_graph", category="serving") as scope:
+            record = fn(*args, **kwargs)
+        operation = next(row for row in ledger.resource_events if row.time_booking == "operation")
+        # Standalone results expose the single operation interval as their booked time.
+        body = record.model_dump(exclude={"run_id"})
+        body["runs"] = [row.model_copy(update={"cost": row.cost._counts_only(), "diagnostic_cost": row.cost}) for row in record.runs]
+        body["attempts"] = [AttemptRecord(**(row.model_dump(exclude={"attempt_id"}) |
+                            {"cost": row.cost._counts_only(), "diagnostic_cost": row.cost})) for row in record.attempts]
+        body["referenced_cost"] = record.referenced_cost._counts_only()
+        body["operation_cost"] = operation.cost
+        body["operation_id"] = scope.record.operation_id
+        body["cost"] = record.cost._counts_only() + operation.cost
+        record = ExecutionRecord(**body)
+        if store is not None:
+            store.put(record)
+        return record
+    return execute
+
+
+class _TraceStore:
+    def __init__(self, store):
+        self.store = store
+
+    def __getattr__(self, name):
+        return getattr(self.store, name)
+
+    def put(self, record):
+        pass
+
+
+@_graph_operation
 def execute(graph, x, *, primitives, unit_ref, split, request_id, g6_commit, seed=0,
             caller=None, llm_configs=None, kernels=None, resolve=None, entries=None,
             budget=None, cache=None, store=None):
@@ -380,6 +424,8 @@ def execute(graph, x, *, primitives, unit_ref, split, request_id, g6_commit, see
             fresh_sends = set(meter.record.send_ids) - attributed_sends
             fresh_events = meter.own_execution_ids - owned_events
             cost = owner.ledger.cost_for(fresh_sends, fresh_events)
+            if not owner.ledger._track_model_sends:
+                cost = cost + _model_cost(meter.record.cost)
             meter.record = AttemptRecord(**(meter.record.model_dump(exclude={"attempt_id"}) | {
                 "cost": cost, "model_sends": cost.llm_calls, "send_ids": sorted(fresh_sends),
                 "execution_ids": sorted(fresh_events),
@@ -388,14 +434,17 @@ def execute(graph, x, *, primitives, unit_ref, split, request_id, g6_commit, see
             attributed_events.update(meter.record.execution_ids)
             attributed_events.update(meter.record.referenced_execution_ids)
             owned_events.update(fresh_events)
+            accumulated_model = _model_cost(spent) + _model_cost(cost)
             spent = owner.ledger.cost_for(attributed_sends, attributed_events)
+            if not owner.ledger._track_model_sends:
+                spent = spent + accumulated_model
         else:
             cost = full_cost
             spent = spent + cost
         if not full_cost.within(p.budget) or not full_cost.within(n.budget) or not spent.within(limit):
             result = replace(result, output=None, terminal="refused")
             meter.outcome = "budget_exhausted"
-        elif cost.wall_s > p.stop.timeout_s:
+        elif full_cost.interval("wall_s")[1] > p.stop.timeout_s:
             result = replace(result, output=None, terminal="timeout")
             meter.outcome = "failed"
         result = replace(result, cost=cost)

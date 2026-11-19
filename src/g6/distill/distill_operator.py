@@ -498,8 +498,8 @@ def distill(graph, teacher_node, *, primitives, cases, traces, oracle_store, tra
                         total = Resources()
                         for c in teacher_costs:
                             total = total + Resources.measured(c)
-                        saved = total.scaled(1 / len(dev))
-                        qcost = Resources.measured(cost).scaled(1 / len(dev))
+                        saved = total.divided(len(dev))
+                        qcost = Resources.measured(cost).divided(len(dev))
                         update = DistillationUpdate(q=q, phi_s=scope, mode=mode, teacher=teacher,
                             teacher_node=teacher_node, acquisition=CostVector(), base_graph=graph.graph_id,
                             new_graph=new_graph, coverage=kappa, calls_saved_per_task=saved.llm_calls,

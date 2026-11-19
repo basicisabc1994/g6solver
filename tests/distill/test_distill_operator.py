@@ -5,6 +5,8 @@ import json
 
 import pytest
 
+from .operation_helpers import assert_diagnostic_cpu
+
 from g6.core.ledger import digest
 from g6.core.llm import FakeLLM
 from g6.distill.graph import execute
@@ -414,7 +416,7 @@ def test_probe_resources_enter_acquisition_and_per_task_delta():
     assert result.update is not None, result.error
     assert result.update.delta_c.cpu_s <= -0.4 and result.update.delta_c.probe_runs == -2
     assert result.attempt.cost.probe_runs == 2
-    assert ledger.total("acquisition").cpu_s >= 0.4
+    assert_diagnostic_cpu(ledger, 0.4)
 
 
 def savings_attempt(*, reached=(True, True), tokens=(100, 900), outputs=("concern", "abstain"),
@@ -512,7 +514,7 @@ def test_rejected_replay_retains_reported_resources_and_counts_sends_once(observ
     assert result.update is None and result.attempt.outcome == "failed"
     assert result.attempt.cost.probe_runs == 3
     assert result.attempt.cost.sandbox_runs == 2
-    assert result.attempt.cost.cpu_s >= 7
+    assert_diagnostic_cpu(ledger, 7)
     assert result.attempt.cost.llm_calls == 1 + int(observed)
     assert ledger.total("acquisition").llm_calls == 1 + int(observed)
     assert ledger.total("acquisition").probe_runs == 3

@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from .operation_helpers import assert_diagnostic_cpu, assert_operation_booking, operation_clock
+
 from g6.distill import cost_ledger as costs
 from g6.distill.graph import KernelResult, execute
 from g6.distill.graph_records import CostVector
@@ -39,7 +41,7 @@ def test_kernel_runner_counts_cross_check_references_without_duplicate_booking(r
                 graph_run(kernel)
     assert getattr(ledger.total("acquisition"), resource) == 3
     assert sum(getattr(e.cost, resource) for e in ledger.resource_events) == 3
-    assert ledger.total("acquisition").cpu_s >= 0.25
+    assert_diagnostic_cpu(ledger, 0.25)
 
 
 @pytest.mark.parametrize("resource", ["probe_runs", "sandbox_runs", "solver_calls"])
@@ -60,7 +62,7 @@ def _assert_referenced_runner_total_refused(resource, reported_total):
             graph_run(kernel)
     assert getattr(ledger.total("acquisition"), resource) == 3
     assert sum(getattr(e.cost, resource) for e in ledger.resource_events) == 3
-    assert ledger.total("acquisition").cpu_s >= 0.25
+    assert_diagnostic_cpu(ledger, 0.25)
 
 
 @pytest.mark.parametrize("resource", ["probe_runs", "sandbox_runs", "solver_calls"])
@@ -90,7 +92,7 @@ def test_referenced_runner_totals_cross_check_unique_events_across_aliases():
     assert sum(e.cost.probe_runs for e in ledger.resource_events) == 3
     assert sum(e.cost.sandbox_runs for e in ledger.resource_events) == 2
     assert sum(e.cost.solver_calls for e in ledger.resource_events) == 4
-    assert total.cpu_s >= 0.25
+    assert_diagnostic_cpu(ledger, 0.25)
 
 
 def test_referenced_runner_cross_check_refuses_omitted_nonzero_field():
@@ -105,7 +107,7 @@ def test_referenced_runner_cross_check_refuses_omitted_nonzero_field():
             graph_run(kernel)
     total = ledger.total("acquisition")
     assert (total.probe_runs, total.sandbox_runs) == (3, 2)
-    assert total.cpu_s >= 0.25
+    assert_diagnostic_cpu(ledger, 0.25)
 
 
 @pytest.mark.parametrize("invalid", ["output", "trace", "terminal"])
@@ -134,12 +136,14 @@ def test_review1_kernel_own_consumption_separate_from_child_references(refuse):
     with ledger.measure("own"):
         rec = graph_run(kernel)
     assert ledger.total("acquisition").probe_runs == rec.cost.probe_runs == 5
-    assert rec.cost.cpu_s >= 2
+    assert rec.cost.interval("cpu_s")[1] >= 2
+    assert_diagnostic_cpu(ledger, 2)
     assert rec.terminal == ("refused" if refuse else "ok")
 
 
 def test_review1_nested_probe_in_sandbox_charges_one_interval(monkeypatch):
     clock = [0.0]
+    operation_clock(monkeypatch, clock)
     monkeypatch.setattr(time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(time, "perf_counter", lambda: clock[0])
     monkeypatch.setattr(time, "thread_time", lambda: clock[0])
@@ -156,7 +160,8 @@ def test_review1_nested_probe_in_sandbox_charges_one_interval(monkeypatch):
     child = next(e for e in ledger.resource_events if e.cost.probe_runs)
     assert parent.cost.cpu_s == parent.cost.wall_s == 0
     assert parent.child_event_ids == [child.event_id]
-    assert ledger.cost_for((), (parent.execution_id,)).cpu_s == pytest.approx(0.12)
+    assert ledger.cost_for((), (parent.execution_id,)).interval("cpu_s")[1] >= 0.12
+    assert_operation_booking(ledger)
 
 
 def test_review1_concurrent_workers_do_not_share_process_cpu():
@@ -181,8 +186,10 @@ def test_review1_concurrent_workers_do_not_share_process_cpu():
     events = ledger.resource_events
     burner = next(e for e in events if e.cost.probe_runs)
     waiter = next(e for e in events if e.cost.sandbox_runs)
-    assert burner.cost.cpu_s == pytest.approx(own[True], abs=0.02)
-    assert waiter.cost.cpu_s < 0.02
+    assert burner.diagnostic_cost.cpu_s == pytest.approx(own[True], abs=0.02)
+    assert waiter.diagnostic_cost.cpu_s < 0.02
+    assert burner.cost.cpu_ns == waiter.cost.cpu_ns == 0
+    assert_operation_booking(ledger)
     assert ledger.total("acquisition").cpu_s <= independent + 0.02
 
 
@@ -206,9 +213,10 @@ def test_review1_child_cpu_is_reported_or_explicitly_unmeasured(measured, exit_k
     event = next(e for e in ledger.resource_events if e.cost.probe_runs)
     if measured:
         assert event.child_cpu_s == child_cpu
-        assert event.cost.cpu_s >= child_cpu > 0
+        assert event.diagnostic_cost.cpu_s >= child_cpu > 0
         assert event.child_cpu_status == "measured"
-        assert not scope.record.resource_gaps
+        assert scope.record.resource_gaps
+        assert ledger.total("acquisition").interval("cpu_ns")[1] > ledger.total("acquisition").cpu_ns
     else:
         assert event.child_cpu_s is None
         assert event.child_cpu_status == "unmeasured"
@@ -246,7 +254,7 @@ def test_bad_reference_does_not_discard_kernel_own_consumption():
         with pytest.raises(ValueError, match="unknown|event"):
             graph_run(kernel)
     assert ledger.total("acquisition").probe_runs == 2
-    assert ledger.total("acquisition").cpu_s >= 0.25
+    assert_diagnostic_cpu(ledger, 0.25)
 
 
 def test_bare_workers_inherit_scope_and_book_their_thread_cpu():
@@ -264,7 +272,8 @@ def test_bare_workers_inherit_scope_and_book_their_thread_cpu():
             pool.submit(burn).result()
     total = ledger.total("acquisition").cpu_s
     assert 0.10 <= total <= time.process_time() - start + 0.02
-    assert sum(e.cost.cpu_s >= 0.05 for e in ledger.resource_events) == 2
+    assert sum(e.diagnostic_cost.cpu_s >= 0.05 for e in ledger.resource_events if e.time_booking == "diagnostic") >= 2
+    assert_operation_booking(ledger)
 
 
 @pytest.mark.parametrize("kind", ["probe", "sandbox"])
@@ -314,7 +323,8 @@ def test_child_backend_completion_survives_runner_validation(monkeypatch, kind, 
     assert (event.cost.probe_runs, event.cost.sandbox_runs) == ((1, 0) if kind == "probe" else (0, 1))
     assert event.child_cpu_status == ("measured" if measured else "unmeasured")
     assert event.child_cpu_s == (child_cpu[0] if measured else None)
-    assert bool(scope.record.resource_gaps) is not measured
+    assert scope.record.resource_gaps
+    assert_operation_booking(ledger)
     assert event.child_wall_s > 0
 
 
@@ -358,12 +368,14 @@ def test_kernel_own_work_and_shared_reference_remain_separate(terminal):
     assert rec.cost.probe_runs == ledger.total("acquisition").probe_runs == 5
     assert rec.referenced_cost.probe_runs == 3
     assert sum(n.cost.probe_runs for n in rec.runs) == 2
-    assert rec.cost.cpu_s >= 2
+    assert rec.cost.interval("cpu_s")[1] >= 2
+    assert_diagnostic_cpu(ledger, 2)
     assert rec.terminal == ("fail" if terminal == "bad_output" else terminal)
 
 
 def test_standalone_graph_retains_nested_completion_time(monkeypatch):
     clock = [0.0]
+    operation_clock(monkeypatch, clock)
     monkeypatch.setattr(time, "perf_counter", lambda: clock[0])
     monkeypatch.setattr(time, "thread_time", lambda: clock[0])
     def kernel(*args, **kwargs):

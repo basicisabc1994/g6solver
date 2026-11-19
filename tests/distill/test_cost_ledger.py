@@ -4,6 +4,8 @@ import importlib.util
 
 import pytest
 
+from .operation_helpers import assert_operation_booking, operation_clock
+
 from g6.core.llm import FakeLLM
 from g6.distill.graph_records import CostVector
 
@@ -95,7 +97,8 @@ def test_maintenance_amortisation_and_registered_frontier_prices():
                 caller.complete("", "")
     profile = ledger.profile(deployment_tasks=100)
     assert profile.variable.llm_calls == 0.25
-    assert profile.maintenance_per_task.cpu_s >= 0.1
+    assert profile.maintenance_per_task.cpu_ns == ledger.total("maintenance").cpu_ns // 100
+    assert_operation_booking(ledger, "maintenance")
     price = a.RegisteredPrice(registration_sha256=digest("registered"), rates=a.Resources(llm_calls=2, cpu_s=1))
     assert price.frontier_cost(a.Resources(llm_calls=25, cpu_s=10)) == 60
     with pytest.raises(ValueError):
@@ -301,6 +304,9 @@ def test_random_interleavings_booked_sends_equal_actual_inner_calls(seed, monkey
     from g6.distill.cost_ledger import consume_resources, report_child_resources
     rng, ledger, deferred = random.Random(seed), api().CostLedger(), []
     clock, independent, lock = threading.local(), [], threading.Lock()
+    operation_cpu, operation_wall = [0], [0]
+    monkeypatch.setattr(api().time, "process_time_ns", lambda: operation_cpu[0])
+    monkeypatch.setattr(api().time, "perf_counter_ns", lambda: operation_wall[0])
     monkeypatch.setattr(api().time, "thread_time", lambda: getattr(clock, "cpu", 0.0))
     monkeypatch.setattr(api().time, "perf_counter", lambda: getattr(clock, "wall", 0.0))
     def tick(cpu, wall):
@@ -308,6 +314,8 @@ def test_random_interleavings_booked_sends_equal_actual_inner_calls(seed, monkey
         clock.wall = getattr(clock, "wall", 0.0) + wall
         with lock:
             independent.append((cpu, wall))
+            operation_cpu[0] += round(cpu * 1_000_000_000)
+            operation_wall[0] += round(wall * 1_000_000_000)
     def reply(system, user):
         if user == "fail":
             raise RuntimeError("after send")
@@ -360,10 +368,11 @@ def test_random_interleavings_booked_sends_equal_actual_inner_calls(seed, monkey
     assert total.probe_runs == sum(job[3] for job in jobs)
     assert total.sandbox_runs == sum(job[4] for job in jobs)
     assert total.solver_calls == 20
-    assert total.cpu_s == pytest.approx(sum(cpu for cpu, _ in independent))
+    assert total.cpu_ns == operation_cpu[0]
+    assert total.interval("cpu_s")[0] <= sum(cpu for cpu, _ in independent) <= total.interval("cpu_s")[1]
     assert total.wall_s == pytest.approx(sum(wall for _, wall in independent))
     for name in ("cpu_s", "wall_s", "solver_calls", "probe_runs", "sandbox_runs"):
-        assert getattr(total, name) == pytest.approx(sum(getattr(e.cost, name) for e in ledger.resource_events))
+        assert getattr(total, name) == pytest.approx(sum(getattr(e.cost, name) for e in ledger.resource_events if name not in {"cpu_s", "wall_s"} or e.time_booking == "operation"))
 
 
 
@@ -390,7 +399,9 @@ def test_concurrent_completion_snapshot_books_in_canonical_id_order(resource_fie
     monkeypatch.setattr(module.time, "perf_counter", lambda: 0.0)
     small_first, small_second, large = _colliding_completion_ids()
     first_done, second_done, errors = Event(), Event(), []
-    costs = {small_first: 2 ** -53, small_second: 2 ** -53, large: 1.0}
+    monkeypatch.setattr(module.time, "process_time_ns", lambda: 0)
+    monkeypatch.setattr(module.time, "perf_counter_ns", lambda: 0)
+    costs = {small_first: 1e-9, small_second: 1e-9, large: 1.0}
 
     with ledger.measure("interleaved completions") as meter:
         # Use stable event ids as well as one execution alias for the completions.
@@ -424,17 +435,17 @@ def test_concurrent_completion_snapshot_books_in_canonical_id_order(resource_fie
             started_at="snapshot", ended_at="snapshot")
         ledger.book_attempt(record)
         ledger.book_attempt(record)
-        assert getattr(record.cost, resource_field) == 1.0000000000000002
+        assert getattr(record.cost, resource_field) == 1.000000002
         assert ledger.cost_for((), ["f" * 64, *reversed(sorted(completion_ids))]) == cost
     total = ledger.total("acquisition")
-    assert getattr(total, resource_field) == 1.0000000000000002
+    assert getattr(total, resource_field) == 0
+    assert_operation_booking(ledger)
     assert total.probe_runs == 3
     assert len([event for event in ledger.resource_events if event.cost.probe_runs]) == 3
 
 
 @pytest.mark.parametrize("resource_field", ["cpu_s", "wall_s"])
-def test_attempt_rejects_one_ulp_resource_difference(resource_field, monkeypatch):
-    import math
+def test_attempt_rejects_one_nanosecond_resource_difference(resource_field, monkeypatch):
     from g6.distill.graph_records import AttemptRecord
 
     module, ledger = api(), api().CostLedger()
@@ -443,19 +454,21 @@ def test_attempt_rejects_one_ulp_resource_difference(resource_field, monkeypatch
     with ledger.measure("exact resource check") as meter:
         completed_resources(meter, CostVector(**{resource_field: 1.0}))
     body = meter.record.model_dump(exclude={"attempt_id"})
-    body["cost"][resource_field] = math.nextafter(1.0, 2.0)
+    ns_field = resource_field.replace("_s", "_ns")
+    body["cost"][ns_field] += 1
+    body["cost"][resource_field] = body["cost"][ns_field] / 1_000_000_000
     altered = AttemptRecord(**body)
     with pytest.raises(ValueError, match="attempt resources differ"):
         ledger.book_attempt(altered)
-    assert getattr(ledger.total("acquisition"), resource_field) == 1.0
+    assert_operation_booking(ledger)
 
 
 def test_worker_finishing_after_attempt_creates_separate_late_event(monkeypatch):
     from threading import Event, Thread, local
 
     module, ledger, clock = api(), api().CostLedger(), local()
-    monkeypatch.setattr(module.time, "thread_time", lambda: getattr(clock, "cpu", 0.0))
-    monkeypatch.setattr(module.time, "perf_counter", lambda: getattr(clock, "wall", 0.0))
+    monkeypatch.setattr(module.time, "thread_time_ns", lambda: round(getattr(clock, "cpu", 0.0) * 1_000_000_000))
+    monkeypatch.setattr(module.time, "perf_counter_ns", lambda: round(getattr(clock, "wall", 0.0) * 1_000_000_000))
     ready, finish, errors = Event(), Event(), []
 
     def worker():
@@ -484,11 +497,13 @@ def test_worker_finishing_after_attempt_creates_separate_late_event(monkeypatch)
     assert len(late_ids) == 1
     late = next(attempt for attempt in ledger.attempts if attempt.what == "worker:late completion")
     assert set(late.execution_ids) == late_ids
-    assert late.cost.cpu_s == 0.25 and late.cost.wall_s == 0.5
+    assert late.cost.cpu_ns == late.cost.wall_ns == 0
+    assert late.operation_id == meter.record.operation_id
+    assert events[next(iter(late_ids))].diagnostic_cost.cpu_s == 0.25
+    assert events[next(iter(late_ids))].diagnostic_cost.wall_s == 0.5
     for record in (meter.record, late):
         ledger.book_attempt(record)
-    assert ledger.total("acquisition").cpu_s == 0.25
-    assert ledger.total("acquisition").wall_s == 0.5
+    assert_operation_booking(ledger)
 
 
 def test_hook_counts_are_only_a_cross_check_and_unmetered_send_fails_closed():
@@ -593,6 +608,7 @@ def test_unidentified_booking_cannot_create_model_spend():
 def test_review4_probe_report_cannot_erase_measured_time(monkeypatch):
     a = api()
     clock = [0.0]
+    operation_clock(monkeypatch, clock)
     monkeypatch.setattr(a.time, "perf_counter", lambda: clock[0])
     monkeypatch.setattr(a.time, "thread_time", lambda: clock[0])
     ledger = a.CostLedger()
@@ -761,6 +777,7 @@ def test_review4_historical_references_cannot_cover_a_new_measured_interval(monk
                 KernelResult(output="concern", cost=CostVector(cpu_s=7, wall_s=9))})
     before = ledger.total("acquisition")
     clock = [0.0]
+    operation_clock(monkeypatch, clock)
     monkeypatch.setattr(a.time, "perf_counter", lambda: clock[0])
     monkeypatch.setattr(a.time, "thread_time", lambda: clock[0])
     with ledger.measure("later") as meter:
@@ -771,5 +788,5 @@ def test_review4_historical_references_cannot_cover_a_new_measured_interval(monk
             meter.record_resources(event.cost, execution_id=event.execution_id, event_id=event.event_id)
         clock[0] += 0.12
     total = ledger.total("acquisition")
-    assert total.cpu_s >= before.cpu_s + 0.12
-    assert total.wall_s >= before.wall_s + 0.12
+    assert total.cpu_ns == before.cpu_ns + 120_000_000
+    assert total.wall_ns == before.wall_ns + 120_000_000

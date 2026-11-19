@@ -124,6 +124,6 @@ def test_attempt_rows_refuse_send_and_execution_cost_mismatches():
     attempt = rec.attempts[0].model_dump(exclude={"attempt_id"})
     with pytest.raises(ValidationError, match="measured model sends"):
         r.AttemptRecord(**(attempt | {"model_sends": 1}))
-    attempt["cost"] = r.CostVector()
+    attempt["cost"] = r.CostVector(cpu_ns=1)
     with pytest.raises(ValidationError, match="attempt totals"):
         r.ExecutionRecord(**(rec.model_dump(exclude={"run_id"}) | {"attempts": [attempt]}))

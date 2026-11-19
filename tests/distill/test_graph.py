@@ -5,6 +5,8 @@ from itertools import product
 
 import pytest
 
+from .operation_helpers import operation_clock
+
 from g6.core.ledger import digest, canonical
 from g6.core.llm import FakeLLM, EmptyRetry
 from g6.distill.execution import Observation, run_candidate
@@ -113,7 +115,8 @@ def test_actual_overspend_refuses_and_is_not_cached():
     rec = run(graph_for([p]), [p], cache=cache, kernels={p.impl_ref: lambda *args, **kw: a.KernelResult(
         output="no_concern", cost=r.CostVector(cpu_s=6))})
     assert rec.terminal == "refused" and rec.root_output is None
-    assert rec.cost.cpu_s >= 6 and len(cache) == 0
+    assert rec.runs[0].diagnostic_cost.interval("cpu_s")[1] >= 6 and len(cache) == 0
+    assert rec.cost.cpu_ns == rec.operation_cost.cpu_ns
 
 
 def test_replay_edit_reexecutes_only_changed_node_and_descendants():
@@ -135,7 +138,8 @@ def test_replay_edit_reexecutes_only_changed_node_and_descendants():
     assert sorted(calls) == ["a", "b", "c"]
     calls.clear()
     replay = run(g, ps, kernels=kernels, cache=cache)
-    assert calls == [] and replay.cost == r.CostVector()
+    assert calls == [] and replay.cost._counts_only() == r.CostVector()
+    assert replay.cost.wall_ns == replay.operation_cost.wall_ns > 0
     changed = primitive(impl_ref="a", impl_version=digest("v2"))
     body["nodes"][0]["primitive_id"] = changed.primitive_id
     calls.clear()
@@ -215,6 +219,9 @@ def test_primitive_budget_remains_binding_inside_larger_node_reservation():
     body = graph_for([p]).model_dump(exclude={"graph_id"})
     body["nodes"][0]["budget"]["cpu_s"] = 10
     body["budget"]["cpu_s"] = 10
+    for cost in (body["nodes"][0]["budget"], body["budget"]):
+        for stem in ("cpu", "wall"):
+            cost[stem + "_ns"] = round(cost[stem + "_s"] * 1_000_000_000)
     rec = run(r.ProgramGraph(**body), [p], kernels={p.impl_ref: lambda *args, **kw: a.KernelResult(
         output="no_concern", cost=r.CostVector(cpu_s=6))})
     assert rec.terminal == "refused" and rec.root_output is None
@@ -486,6 +493,7 @@ def test_exception_books_measured_time_and_actual_sends(monkeypatch, sent):
     from g6.core.model_calls import counting
     a, r = api(), records()
     clock = [10.0]
+    operation_clock(monkeypatch, clock)
     monkeypatch.setattr(a.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(a.time, "perf_counter", lambda: clock[0])
     monkeypatch.setattr(a.time, "thread_time", lambda: clock[0])
@@ -502,7 +510,7 @@ def test_exception_books_measured_time_and_actual_sends(monkeypatch, sent):
     assert rec.terminal == "fail" and rec.root_output is None
     assert rec.cost.wall_s == rec.cost.cpu_s == 0.25
     assert rec.cost.llm_calls == counter() == int(sent)
-    assert rec.attempts[0].cost == rec.cost
+    assert rec.attempts[0].cost + rec.operation_cost == rec.cost
     assert rec.attempts[0].outcome == "failed"
 
 
@@ -510,6 +518,7 @@ def test_kernel_failure_keeps_send_count_and_time(monkeypatch):
     from g6.core.model_calls import counting
     a, r = api(), records()
     clock = [10.0]
+    operation_clock(monkeypatch, clock)
     monkeypatch.setattr(a.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(a.time, "perf_counter", lambda: clock[0])
     monkeypatch.setattr(a.time, "thread_time", lambda: clock[0])
@@ -530,6 +539,7 @@ def test_attempt_meter_retains_exception_record(monkeypatch):
     from g6.core.model_calls import counting
     a, r = api(), records()
     clock = [10.0]
+    operation_clock(monkeypatch, clock)
     monkeypatch.setattr(a.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(a.time, "perf_counter", lambda: clock[0])
     monkeypatch.setattr(a.time, "thread_time", lambda: clock[0])
@@ -543,7 +553,9 @@ def test_attempt_meter_retains_exception_record(monkeypatch):
     row = meter.record
     assert row.what == "fixture" and row.outcome == "failed"
     assert row.model_sends == row.cost.llm_calls == sends() == 1
-    assert row.cost.wall_s == row.cost.cpu_s == 0.25
+    assert row.cost.interval("wall_s")[1] == 0.25
+    assert row.cost.cpu_ns == row.cost.wall_ns == 250_000_000
+    assert row.time_booking == "operation" and row.operation_id is not None
     assert r.AttemptRecord.model_validate_json(row.model_dump_json()) == row
 
 
@@ -553,7 +565,9 @@ def test_execution_retains_metered_attempts():
     rec = run(graph_for([p]), [p], kernels={p.impl_ref: lambda *args, **kw: a.KernelResult(output="concern")})
     assert len(rec.attempts) == 1
     assert rec.attempts[0].what == "n0"
-    assert rec.attempts[0].cost == rec.cost == rec.runs[0].cost
+    assert rec.attempts[0].cost == rec.runs[0].cost
+    assert rec.attempts[0].cost + rec.operation_cost == rec.cost
+    assert rec.operation_cost.wall_ns > 0
     assert rec.attempts[0].outcome == "screened"
 
 

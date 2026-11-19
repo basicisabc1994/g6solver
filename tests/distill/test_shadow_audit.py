@@ -4,6 +4,8 @@ import importlib.util
 
 import pytest
 
+from .operation_helpers import assert_diagnostic_cpu
+
 from g6.core.ledger import digest
 from g6.core.llm import FakeLLM
 
@@ -232,7 +234,8 @@ def test_review3_mismatched_graph_keeps_cpu_probe_sandbox_costs():
         audit.run(chosen, program_verdict="concern", admitted_replacement=True,
                   in_scope=True, teacher=teacher)
     total = ledger.total("maintenance")
-    assert total.cpu_s >= 7 and total.probe_runs == 3 and total.sandbox_runs == 2
+    assert total.probe_runs == 3 and total.sandbox_runs == 2
+    assert_diagnostic_cpu(ledger, 7, "maintenance")
 
 
 def resource_teacher_graph():

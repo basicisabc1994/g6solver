@@ -6,6 +6,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, JsonValue, model_serializer, model_validator
 
+from .resource_math import Resources
 from .records import (Count, FeaturePredicate, Finite, Interval, Model, Positive, Prediction,
                       Proposer, Record, Sha256, Split)
 
@@ -15,25 +16,25 @@ Terminal = Literal["ok", "fail", "timeout", "abstain", "refused"]
 Nonnegative = Annotated[Finite, Field(ge=0)]
 
 
-class CostVector(Model):
+class CostVector(Resources):
     llm_calls: Count = 0
     llm_tokens_in: Count = 0
     llm_tokens_out: Count = 0
-    cpu_s: Nonnegative = 0
-    wall_s: Nonnegative = 0
     solver_calls: Count = 0
     probe_runs: Count = 0
     sandbox_runs: Count = 0
 
+    @model_validator(mode="after")
+    def whole_count_bounds(self):
+        for name in ("llm_calls", "llm_tokens_in", "llm_tokens_out", "solver_calls", "probe_runs", "sandbox_runs"):
+            value = self.canonical_upper[name]
+            if type(value) is not int:
+                raise ValueError("record count bounds require integer counts")
+        return self
+
     @classmethod
     def zero(cls) -> CostVector:
         return cls()
-
-    def __add__(self, other: CostVector) -> CostVector:
-        return CostVector(**{name: getattr(self, name) + getattr(other, name) for name in type(self).model_fields})
-
-    def within(self, limit: CostVector) -> bool:
-        return all(getattr(self, name) <= getattr(limit, name) for name in type(self).model_fields)
 
 
 class StopRule(Model):
@@ -154,6 +155,7 @@ class NodeRun(Model):
     output: JsonValue
     terminal: Terminal
     cost: CostVector
+    diagnostic_cost: CostVector = Field(default_factory=CostVector)
     trace_ref: Sha256 | None
     replayable: bool
 
@@ -171,6 +173,9 @@ class AttemptRecord(Record):
     identity_field = "attempt_id"
     attempt_id: Sha256 | None = None
     what: str
+    operation_id: Sha256 | None = None
+    time_booking: Literal["operation", "shared_operation", "diagnostic"] = "diagnostic"
+    diagnostic_cost: CostVector = Field(default_factory=CostVector)
     cost: CostVector
     model_sends: Count
     send_ids: list[Sha256] = Field(default_factory=list)
@@ -190,6 +195,12 @@ class AttemptRecord(Record):
         for name in ("send_ids", "execution_ids", "referenced_execution_ids", "resource_gaps"):
             if not body.get(name):
                 body.pop(name, None)
+        if self.diagnostic_cost == CostVector():
+            body.pop("diagnostic_cost", None)
+        if self.operation_id is None:
+            body.pop("operation_id", None)
+        if self.time_booking == "diagnostic":
+            body.pop("time_booking", None)
         return body
 
     @model_validator(mode="after")
@@ -214,6 +225,8 @@ class ExecutionRecord(Record):
     root_output: JsonValue
     terminal: Terminal
     cost: CostVector
+    operation_id: Sha256 | None = None
+    operation_cost: CostVector = Field(default_factory=CostVector)
     referenced_cost: CostVector = Field(default_factory=CostVector)
     referenced_execution_ids: list[Sha256] = Field(default_factory=list)
     completion_state: Literal["verified", "qualified-draft", "blocked-escalated"]
@@ -239,13 +252,13 @@ class ExecutionRecord(Record):
             raise ValueError("referenced execution cost must contain non-model resources")
         if len(self.referenced_execution_ids) != len(set(self.referenced_execution_ids)):
             raise ValueError("referenced execution ids must be unique")
-        total = self.referenced_cost
+        total = self.referenced_cost + self.operation_cost
         for run in self.runs:
             total = total + run.cost
         if total != self.cost:
             raise ValueError("execution cost differs from node run totals")
         if self.attempts:
-            measured = self.referenced_cost
+            measured = self.referenced_cost + self.operation_cost
             for attempt in self.attempts:
                 measured = measured + attempt.cost
             if measured != self.cost:
