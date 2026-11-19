@@ -32,7 +32,8 @@ def test_exception_refusal_and_discard_are_measured_and_booked():
 @pytest.mark.parametrize("fixed,saving,kind,point", [(0, 0, "dominates_from_zero", None),
     (-1, 2, "dominates_from_zero", None), (20, 2, "break_even", 10),
     (20, 0, "never_breaks_even", None), (20, -2, "never_breaks_even", None),
-    (-20, -2, "crossover", 10), (0, -2, "crossover", 0)])
+    (-20, -2, "crossover", 10), (0, -2, "never_breaks_even", None),
+    (-20, 0, "dominates_from_zero", None), (0, 2, "dominates_from_zero", None)])
 def test_sign_cases(fixed, saving, kind, point):
     result = api().sign_case(fixed, saving)
     assert result.kind == kind and result.tasks == point
@@ -83,3 +84,23 @@ def test_maintenance_amortisation_and_registered_frontier_prices():
     assert price.frontier_cost(profile.total(100)) == 60
     with pytest.raises(ValueError):
         ledger.profile(deployment_tasks=0)
+
+
+def test_nested_measurement_is_rejected_before_work_and_ledger_recovers():
+    ledger = api().CostLedger()
+    caller = FakeLLM()
+    with ledger.measure("outer"):
+        caller.complete("", "")
+        with pytest.raises(ValueError, match="nested|active"):
+            with ledger.measure("inner"):
+                caller.complete("", "")
+    assert len(caller.calls) == 1
+    assert ledger.total("acquisition").llm_calls == 1
+    assert len(ledger.attempts) == 1
+    with pytest.raises(RuntimeError):
+        with ledger.measure("failure"):
+            raise RuntimeError("failed")
+    with ledger.measure("later"):
+        caller.complete("", "")
+    assert ledger.total("acquisition").llm_calls == 2
+    assert len(ledger.attempts) == 3

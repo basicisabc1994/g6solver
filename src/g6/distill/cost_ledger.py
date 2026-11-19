@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import time
 from contextlib import contextmanager
+from threading import Lock
 from typing import Annotated, Literal
 
 from pydantic import Field
@@ -96,9 +97,8 @@ def sign_case(delta_fixed: float, saving: float) -> Crossing:
         return Crossing(kind="dominates_from_zero")
     if delta_fixed > 0 and saving > 0:
         return Crossing(kind="break_even", tasks=delta_fixed / saving)
-    if delta_fixed > 0 and saving <= 0:
+    if delta_fixed >= 0 and saving <= 0:
         return Crossing(kind="never_breaks_even")
-    # At zero fixed cost and a negative saving, X loses as soon as N > 0.
     return Crossing(kind="crossover", tasks=delta_fixed / saving)
 
 
@@ -145,6 +145,7 @@ class CostLedger:
         self.attempts: list[AttemptRecord] = []
         self.entries: list[tuple[str, Resources]] = []
         self.sink = sink
+        self._measurement = Lock()
 
     def book(self, category: Category, cost: Resources):
         if category not in CATEGORIES:
@@ -164,6 +165,8 @@ class CostLedger:
     def measure(self, what: str, *, category: Category = "acquisition"):
         if category not in CATEGORIES:
             raise ValueError("unknown cost category")
+        if not self._measurement.acquire(blocking=False):
+            raise ValueError("nested or active measurement on this ledger")
         with_record = None
         try:
             with attempt_meter(what) as meter:
@@ -176,8 +179,11 @@ class CostLedger:
                         "wall_s": max(meter.cost.wall_s, time.perf_counter() - wall),
                         "cpu_s": max(meter.cost.cpu_s, time.process_time() - cpu)}))
         finally:
-            if with_record is not None and with_record.record is not None:
-                self.book_attempt(with_record.record, category=category)
+            try:
+                if with_record is not None and with_record.record is not None:
+                    self.book_attempt(with_record.record, category=category)
+            finally:
+                self._measurement.release()
 
     def total(self, category: Category):
         if category not in CATEGORIES:

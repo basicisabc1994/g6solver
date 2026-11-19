@@ -62,3 +62,60 @@ def test_failed_shadow_call_is_still_costed():
                   in_scope=True, teacher=lambda: caller.complete("", ""))
     assert ledger.attempts[0].outcome == "failed"
     assert ledger.total("maintenance").llm_calls == 1 and not audit.records
+
+
+@pytest.mark.parametrize("field,value", [("seed", 8), ("rate", 1.0), ("teacher_graph", digest("changed"))])
+def test_registered_shadow_settings_cannot_be_reassigned(field, value):
+    from g6.distill.cost_ledger import CostLedger
+    audit = api().ShadowAudit(seed=7, ledger=CostLedger())
+    with pytest.raises(AttributeError):
+        setattr(audit, field, value)
+
+
+def test_shadow_record_for_another_unit_is_refused_and_costed():
+    from g6.distill.cost_ledger import CostLedger
+    from .test_distill_operator import case, trace
+    c, _ = case(ident="another-unit")
+    record, _ = trace(c)
+    ledger = CostLedger()
+    audit = api().ShadowAudit(seed=7, ledger=ledger, teacher_graph=record.graph_id)
+    chosen = next(digest(str(i)) for i in range(1000) if api().shadow_selected(digest(str(i)), seed=7))
+    with pytest.raises(ValueError, match="unit|case"):
+        audit.run(chosen, program_verdict="concern", admitted_replacement=True,
+            in_scope=True, teacher=lambda: record)
+    assert not audit.records
+    assert ledger.attempts[0].outcome == "failed"
+
+
+@pytest.mark.parametrize("binding", ["matching", "different", "missing"])
+def test_shadow_execution_requires_the_bound_teacher_graph(binding):
+    from g6.distill.cost_ledger import CostLedger
+    from g6.distill.distill_operator import DistillationCase
+    from g6.distill.records import FailureRecord
+    from .test_distill_operator import case, trace
+    chosen = next(digest(str(i)) for i in range(1000) if api().shadow_selected(digest(str(i)), seed=7))
+    c, _ = case()
+    c = DistillationCase(**(c.__dict__ | {"failure": FailureRecord(**(
+        c.failure.model_dump(exclude={"record_id"}) | {"case_ref": chosen}))}))
+    record, _ = trace(c)
+    ledger = CostLedger()
+    options = {} if binding == "missing" else {
+        "teacher_graph": record.graph_id if binding == "matching" else digest("other-graph")}
+    audit = api().ShadowAudit(seed=7, ledger=ledger, **options)
+    caller = FakeLLM(default="concern")
+
+    def teacher():
+        caller.complete("", "")
+        return record
+
+    if binding == "matching":
+        row = audit.run(chosen, program_verdict="concern", admitted_replacement=True,
+            in_scope=True, teacher=teacher)
+        assert row is not None and not row.disagrees
+    else:
+        with pytest.raises(ValueError, match="graph|bound"):
+            audit.run(chosen, program_verdict="concern", admitted_replacement=True,
+                in_scope=True, teacher=teacher)
+        assert not audit.records
+    assert ledger.total("maintenance").wall_s > 0
+    assert ledger.total("maintenance").llm_calls == 1

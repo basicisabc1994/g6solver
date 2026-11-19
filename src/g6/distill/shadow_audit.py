@@ -2,6 +2,8 @@
 """Seeded maintenance sampling for admitted replacements on decided scope."""
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from pydantic import TypeAdapter
 
 from g6.core.ledger import digest
@@ -28,12 +30,19 @@ class ShadowRecord(Model):
     attempt_id: Sha256
 
 
+@dataclass(frozen=True, kw_only=True)
 class ShadowAudit:
-    def __init__(self, *, seed: int, ledger):
-        if type(seed) is not int:
+    seed: int
+    ledger: object
+    teacher_graph: str | None = None
+    rate: float = field(default=SHADOW_RATE, init=False)
+    records: list[ShadowRecord] = field(default_factory=list, init=False)
+
+    def __post_init__(self):
+        if type(self.seed) is not int:
             raise ValueError("integer seed required")
-        self.seed, self.ledger = seed, ledger
-        self.records: list[ShadowRecord] = []
+        if self.teacher_graph is not None:
+            TypeAdapter(Sha256).validate_python(self.teacher_graph)
 
     @property
     def disagreements(self):
@@ -52,8 +61,12 @@ class ShadowAudit:
         with self.ledger.measure("shadow:" + case_id, category="maintenance") as meter:
             result = teacher()
             if isinstance(result, ExecutionRecord):
-                result = ExecutionRecord.model_validate_json(result.model_dump_json())
                 meter.cost = result.cost
+                result = ExecutionRecord.model_validate_json(result.model_dump_json())
+                if result.unit_ref != case_id:
+                    raise ValueError("shadow execution unit differs from selected case")
+                if self.teacher_graph is None or result.graph_id != self.teacher_graph:
+                    raise ValueError("shadow execution differs from bound teacher graph")
                 if result.terminal not in {"ok", "abstain"}:
                     meter.outcome = "failed"
                     return None

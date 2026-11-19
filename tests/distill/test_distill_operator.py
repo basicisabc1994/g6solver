@@ -392,3 +392,120 @@ def test_probe_resources_enter_acquisition_and_per_task_delta():
     assert result.update.delta_c.cpu_s <= -0.4 and result.update.delta_c.probe_runs == -2
     assert result.attempt.cost.probe_runs == 2
     assert ledger.total("acquisition").cpu_s >= 0.4
+
+
+def savings_attempt(*, reached=(True, True), tokens=(100, 900), outputs=("concern", "abstain"),
+                    mode="replace", replay=None, duplicate_dev=False):
+    from g6.distill.cost_ledger import CostLedger
+    from g6.distill.graph_records import Edge, Node, ProgramGraph
+    from g6.distill.synthesis import SynthesisResult
+
+    c, receipts = case()
+    dev = [case(split="dev", ident=f"dev-{i}") for i in range(2)]
+    for _, store in dev:
+        receipts.values.update(store.values)
+    base, p, _ = teacher_graph()
+    guard = Node(node_id="guard", primitive_id=None, combinator="guard",
+        guard=[dict(feature="diff_hunks", op="ne", value={})], budget=CostVector())
+    g = ProgramGraph(**(base.model_dump(exclude={"graph_id"}) | {
+        "nodes": [*base.nodes, guard], "root": "guard", "edges": [
+            Edge(src="n0", src_port="out", dst="guard", dst_port="0", type_sha256=D)]}))
+    train, reader = trace(c, verdict="concern" if mode == "replace" else "no_concern", graph=g)
+    records = [train]
+    for i, (d, _) in enumerate(dev):
+        rec, store = trace(d, graph=g)
+        reader.values.update(store.values)
+        if reached[i]:
+            cost = CostVector(llm_calls=1, llm_tokens_in=tokens[i])
+            run = NodeRun(**(rec.runs[0].model_dump() | {"cost": cost}))
+        else:
+            cost = CostVector()
+            run = NodeRun(node_id="guard", input_sha256=D, output_sha256=digest("abstain"),
+                output="abstain", terminal="abstain", cost=cost, trace_ref=None, replayable=False)
+        records.append(ExecutionRecord(**(rec.model_dump(exclude={"run_id"}) | {
+            "runs": [run], "cost": cost, "root_output": run.output, "terminal": run.terminal})))
+
+    class S(Synthesizer):
+        def synthesise(self, concept, cases, *, library=None):
+            q = VerifierCandidate(**(bodies()[3][1] | {"concept_id": concept.concept_id,
+                "training_case_ids": [c.failure.case_ref for c in cases]}))
+            return SynthesisResult(candidates=[q], model_calls=1, synthesis_calls=0, refusals=[])
+
+    ledger = CostLedger()
+    seen = []
+
+    def run(q, cases):
+        seen.extend(c.failure.case_ref for c in cases)
+        return replay(q, cases) if replay is not None else list(outputs[:len(cases)])
+
+    if duplicate_dev:
+        records.append(records[1])
+    result = api().distill(g, "n0", primitives={p.primitive_id: p}, cases=[c, *(d for d, _ in dev)],
+        traces=records, oracle_store=receipts, trace_store=reader, registered_policy_sha256=D,
+        synthesizer=S(caller=FakeLLM(default=concept_reply())), ledger=ledger, mode=mode,
+        replay=run, scope=[dict(feature="diff_hunks", op="ne", value={})])
+    return result, ledger, seen
+
+
+@pytest.mark.parametrize("mode", ["replace", "add"])
+def test_savings_include_dev_units_whose_teacher_was_skipped(mode):
+    result, _, seen = savings_attempt(reached=(True, False), outputs=("concern", "concern"), mode=mode)
+    assert result.update is not None, result.error
+    assert result.update.calls_saved_per_task == 0.5
+    assert len(seen) == 2
+    assert len(result.update.provenance["dev_cases"]) == 2
+
+
+@pytest.mark.parametrize("mode", ["replace", "add"])
+def test_savings_sum_only_the_costs_of_skipped_teacher_calls(mode):
+    result, _, _ = savings_attempt(mode=mode)
+    assert result.update is not None, result.error
+    assert result.update.delta_c.llm_tokens_in == 50
+    assert result.update.calls_saved_per_task == 0.5
+
+
+def test_no_reached_teacher_has_zero_savings_without_dropping_cohort():
+    result, _, seen = savings_attempt(reached=(False, False), outputs=("concern", "concern"))
+    assert result.update is not None, result.error
+    assert result.update.calls_saved_per_task == 0
+    assert len(seen) == 2
+
+
+def test_repeated_dev_executions_cannot_multiply_savings_for_one_unit():
+    result, _, _ = savings_attempt(duplicate_dev=True)
+    assert result.update is None
+    assert "duplicate dev execution" in result.error
+
+
+@pytest.mark.parametrize("observed,reported", [(True, True), (False, True), (True, False)])
+def test_rejected_replay_retains_reported_resources_and_counts_sends_once(observed, reported):
+    def replay(q, cases):
+        if observed:
+            FakeLLM().complete("", "")
+        return api().CandidateReplay(verdicts=("concern", "concern"),
+            cost=CostVector(llm_calls=int(reported), cpu_s=7, probe_runs=3, sandbox_runs=2))
+
+    result, ledger, _ = savings_attempt(replay=replay)
+    assert result.update is None and result.attempt.outcome == "failed"
+    assert result.attempt.cost.probe_runs == 3
+    assert result.attempt.cost.sandbox_runs == 2
+    assert result.attempt.cost.cpu_s >= 7
+    assert result.attempt.cost.llm_calls == 1 + int(observed)
+    assert ledger.total("acquisition").llm_calls == 1 + int(observed)
+    assert ledger.total("acquisition").probe_runs == 3
+
+
+@pytest.mark.parametrize("with_traces", [False, True])
+def test_duplicate_case_refs_cannot_bypass_shared_concept_cap(with_traces):
+    c, receipts = case()
+    bound = api().bind_oracle_labels([c], oracle_store=receipts, registered_policy_sha256=D)
+    rec, reader = trace(c)
+    rows = api().extract_teacher_traces([rec], teacher_node="n0", cases=bound, trace_store=reader)
+    caller = FakeLLM(default=concept_reply())
+    synth = Synthesizer(caller=caller)
+    api().propose_concept_from_teacher(bound, rows if with_traces else [], synthesizer=synth)
+    for count in (2, 3):
+        result = api().propose_concept_from_teacher(bound * count, rows if with_traces else [], synthesizer=synth)
+        assert isinstance(result, dict) and result["ok"] is False
+        assert "G6_E_SYNTH_UNBOUND_LABEL" in result["error"]
+    assert len(caller.calls) == 1

@@ -6,7 +6,6 @@ import ast
 import json
 import math
 import re
-import time
 from collections import Counter
 from dataclasses import dataclass
 from threading import Lock
@@ -179,6 +178,8 @@ def propose_concept_from_teacher(cases, traces, *, synthesizer):
 
     try:
         cases = tuple(OracleBoundCase.model_validate_json(c.model_dump_json()) for c in cases)
+        if len({c.failure.case_ref for c in cases}) != len(cases):
+            raise ValueError("duplicate case reference")
     except (ValueError, AttributeError):
         return refused("G6_E_SYNTH_UNBOUND_LABEL", "Receipt-bound cases required, including fallback.")
     training = tuple(c for c in cases if c.failure.split == "training")
@@ -386,6 +387,10 @@ def distill(graph, teacher_node, *, primitives, cases, traces, oracle_store, tra
             traces = tuple(traces)
             if any(t.split in {"training", "dev"} and t.graph_id != graph.graph_id for t in traces):
                 raise ValueError("teacher execution belongs to a different graph")
+            bound_dev_refs = {c.failure.case_ref for c in bound if c.failure.split == "dev"}
+            dev_executions = [t.unit_ref for t in traces if t.split == "dev" and t.unit_ref in bound_dev_refs]
+            if len(set(dev_executions)) != len(dev_executions):
+                raise ValueError("duplicate dev execution for one bound unit")
             rows = extract_teacher_traces(traces, teacher_node=teacher_node, cases=bound, trace_store=trace_store)
             verdicts = {}
             for row in rows:
@@ -401,7 +406,7 @@ def distill(graph, teacher_node, *, primitives, cases, traces, oracle_store, tra
                 meter.outcome, error = "no_candidate", "no training cases in the requested mode"
             else:
                 train_refs = {c.failure.case_ref for c in train}
-                dev = [c for c in bound if c.failure.split == "dev" and c.failure.case_ref in verdicts]
+                dev = [c for c in bound if c.failure.split == "dev"]
                 dev_refs = {c.failure.case_ref for c in dev}
                 extracted = [r for r in rows if (r.split == "training" and r.case_ref in train_refs)
                              or (r.split == "dev" and r.case_ref in dev_refs)]
@@ -417,22 +422,23 @@ def distill(graph, teacher_node, *, primitives, cases, traces, oracle_store, tra
                         scope = [FeaturePredicate.model_validate(s) for s in (scope or q.contract.applies_when)]
                         if not dev:
                             raise ValueError("receipt-bound dev cases required for savings measurements")
-                        replay_started, replay_cpu = time.perf_counter(), time.process_time()
-                        with attempt_meter("candidate_replay") as replay_meter:
-                            out = replay(q, dev) if replay is not None else _replay(q, dev, library=library)
-                            if isinstance(out, CandidateReplay):
-                                if out.cost.llm_calls:
-                                    raise ValueError("candidate runner reported model calls")
-                                replay_meter.cost, outputs = out.cost, list(out.verdicts)
-                            else:
-                                if q.contract.probes:
-                                    raise ValueError("probe replay must report measured resources")
-                                outputs = list(out)
-                            replay_meter.cost = CostVector(**(replay_meter.cost.model_dump() | {
-                                "wall_s": max(replay_meter.cost.wall_s, time.perf_counter() - replay_started),
-                                "cpu_s": max(replay_meter.cost.cpu_s, time.process_time() - replay_cpu)}))
+                        replay_meter = None
+                        try:
+                            with attempt_meter("candidate_replay") as replay_meter:
+                                out = replay(q, dev) if replay is not None else _replay(q, dev, library=library)
+                                if isinstance(out, CandidateReplay):
+                                    replay_meter.cost = out.cost
+                                    if out.cost.llm_calls:
+                                        raise ValueError("candidate runner reported model calls")
+                                    outputs = list(out.verdicts)
+                                else:
+                                    if q.contract.probes:
+                                        raise ValueError("probe replay must report measured resources")
+                                    outputs = list(out)
+                        finally:
+                            if replay_meter is not None and replay_meter.record is not None:
+                                meter.cost = meter.cost + replay_meter.record.cost
                         cost = replay_meter.record.cost
-                        meter.cost = meter.cost + cost
                         if cost.llm_calls:
                             raise ValueError("candidate replay made model sends")
                         if len(outputs) != len(dev) or any(v not in {"concern", "no_concern", "abstain"} for v in outputs):
@@ -445,15 +451,14 @@ def distill(graph, teacher_node, *, primitives, cases, traces, oracle_store, tra
                         new_graph, ps = rewrite(graph, teacher_node, primitives=ps, candidate=q, scope=scope, mode=mode)
                         teacher = next(n.primitive_id for n in graph.nodes if n.node_id == teacher_node)
                         dev_refs = {c.failure.case_ref for c in dev}
-                        teacher_costs = [r.cost for t in traces if t.split == "dev" and t.unit_ref in dev_refs
+                        skipped_refs = {dev[i].failure.case_ref for i in decided} if mode == "replace" else {
+                            c.failure.case_ref for c, out in zip(dev, outputs) if out == "concern"}
+                        teacher_costs = [r.cost for t in traces if t.split == "dev" and t.unit_ref in skipped_refs
                                          for r in t.runs if r.node_id == teacher_node]
                         total = Resources()
                         for c in teacher_costs:
                             total = total + Resources.measured(c)
-                        average = total.scaled(1 / len(teacher_costs))
-                        # Vote_any skips n only when q returns concern; silence still calls n.
-                        skip_share = kappa if mode == "replace" else outputs.count("concern") / len(dev)
-                        saved = average.scaled(skip_share)
+                        saved = total.scaled(1 / len(dev))
                         qcost = Resources.measured(cost).scaled(1 / len(dev))
                         update = DistillationUpdate(q=q, phi_s=scope, mode=mode, teacher=teacher,
                             teacher_node=teacher_node, acquisition=CostVector(), base_graph=graph.graph_id,
