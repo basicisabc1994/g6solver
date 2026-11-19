@@ -16,6 +16,8 @@ import os
 import sys
 from collections.abc import Callable
 
+from g6.core.child_imports import python_command
+
 QUESTION = """G6 found no operating-system boundary on this computer to keep the code it runs for you (a patch, a
 generated script, your repository's tests) away from your files:
   {why}
@@ -28,8 +30,8 @@ PROMPT = "Allow G6 to run such code without a boundary on this computer? [y/N] "
 #: How a client starts G6's server, after this installation's Python: with -P. The client starts it in the project's
 #: folder, and a plain ``-c`` puts that folder first on the import path, so a project's own ``pydantic`` or
 #: ``starlette`` would replace G6's and run in G6's process (worked examples, W1). -P keeps the folder off; -I would
-#: also drop PYTHONPATH and the user's site-packages, which the person sets, not the project.
-SERVER_ARGS = ("-P", "-c", "from g6.mcp import main; main()")
+#: also drop the user's site-packages. The bootstrap names this installation explicitly; -E ignores startup settings.
+SERVER_ARGS = tuple(python_command("from g6.mcp import main; main()", mode="-c", isolated=False)[1:])
 #: How each client removes its existing g6 entry, so setup can register this installation in its place.
 REMOVE = {"claude": "claude mcp remove --scope user g6", "codex": "codex mcp remove g6"}
 #: Setup's closing lines when patch review is allowed: the first review call.

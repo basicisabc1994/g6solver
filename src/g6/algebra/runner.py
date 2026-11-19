@@ -38,6 +38,7 @@ from typing import Any
 
 from g6.algebra.envelope import OUTPUT_UNRECOGNISED, RUN_FAILED, Refusal
 from g6.core import component_process, confine
+from g6.core.child_imports import python_command
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.process_tree import ProcessTreeError
 
@@ -110,7 +111,7 @@ def call_worker(request: dict[str, Any], *, seconds: float, memory_mb: int, cap:
     Refused when it could not run or ended without finishing for any other reason."""
     if not sys.executable:
         raise Refusal(RUN_FAILED, "this Python has no interpreter path to start G6's worker from")
-    argv = [sys.executable, "-I", "-m", "g6.algebra.worker"]
+    argv = python_command("g6.algebra.worker")
     with tempfile.TemporaryDirectory(prefix="g6_algebra_", ignore_cleanup_errors=True) as tmp:
         root = Path(tmp)
         for sub in ("work", "tmp", "home"):
