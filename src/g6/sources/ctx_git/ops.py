@@ -171,41 +171,50 @@ def _listed(lists: dict[str, list[Any]]) -> tuple[dict[str, list[Any]], dict[str
 
 
 def status_of(run: Run) -> dict[str, Any]:
-    """The working copy's state, from ``git status --porcelain=v1 -z --branch``."""
-    parts = run("status", "--porcelain=v1", "-z", "--branch", "--untracked-files=all").text.split("\0")
-    branch_line = parts[0][3:] if parts and parts[0].startswith("## ") else ""
-    staged: list[str] = []
-    modified: list[str] = []
-    untracked: list[str] = []
-    conflicted: list[str] = []
-    i = 1 if branch_line else 0
+    """The working copy's state from git's porcelain v2 NUL records."""
+    parts = run("status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all").text.split("\0")
+    found = {"branch": "", "upstream": "", "ahead": 0, "behind": 0,
+             "staged": [], "modified": [], "untracked": [], "conflicted": []}
+    i = 0
     while i < len(parts):
         entry = parts[i]
         i += 1
-        if len(entry) < 4:
+        if not entry:
             continue
-        x, y, path = entry[0], entry[1], entry[3:]
-        if x in "RC":
-            i += 1  # the next entry is the path it was renamed or copied from
-        if x + y in _CONFLICTS:
-            conflicted.append(path)
-        elif x == "?":
-            untracked.append(path)
-        elif x != "!":
-            if x != " ":
-                staged.append(path)
-            if y != " ":
-                modified.append(path)
-    branch, _, rest = branch_line.partition("...")
-    upstream = rest.split(" [", 1)[0] if rest else ""
-    ahead = re.search(r"ahead (\d+)", rest)
-    behind = re.search(r"behind (\d+)", rest)
-    if branch.startswith("No commits yet on "):
-        branch = branch.removeprefix("No commits yet on ")
-    return {"branch": branch.strip(), "upstream": upstream, "ahead": int(ahead.group(1)) if ahead else 0,
-            "behind": int(behind.group(1)) if behind else 0, "staged": staged, "modified": modified,
-            "untracked": untracked, "conflicted": conflicted,
-            "clean": not (staged or modified or untracked or conflicted)}
+        if entry.startswith("# branch.head "):
+            found["branch"] = entry[len("# branch.head "):]
+        elif entry.startswith("# branch.upstream "):
+            found["upstream"] = entry[len("# branch.upstream "):]
+        elif entry.startswith("# branch.ab "):
+            ahead, behind = entry[len("# branch.ab "):].split()
+            found["ahead"], found["behind"] = int(ahead.removeprefix("+")), int(behind.removeprefix("-"))
+        elif entry.startswith("# "):
+            continue
+        elif entry.startswith("? "):
+            found["untracked"].append(entry[2:])
+        elif entry.startswith("! "):
+            continue
+        elif entry[:2] in ("1 ", "2 ", "u "):
+            kind = entry[0]
+            fields = entry.split(" ", {"1": 8, "2": 9, "u": 10}[kind])
+            if len(fields) != {"1": 9, "2": 10, "u": 11}[kind]:
+                raise GitRefused("G6_E_GIT_FAILED", "git wrote an unreadable status record")
+            xy, path = fields[1], fields[-1]
+            if kind == "u":
+                found["conflicted"].append(path)
+            else:
+                if xy[0] != ".":
+                    found["staged"].append(path)
+                if xy[1] != ".":
+                    found["modified"].append(path)
+                if kind == "2":
+                    if i >= len(parts) or not parts[i]:
+                        raise GitRefused("G6_E_GIT_FAILED", "git omitted a rename's old path")
+                    i += 1
+        else:
+            raise GitRefused("G6_E_GIT_FAILED", "git wrote an unknown status record")
+    found["clean"] = not any(found[k] for k in ("staged", "modified", "untracked", "conflicted"))
+    return found
 
 
 def _clean_first(run: Run, op: str) -> None:
@@ -517,8 +526,10 @@ def merge(run: Run, repo: Path, c: Call) -> Outcome:
 
 def stash_save(run: Run, repo: Path, c: Call) -> Outcome:
     args = ["stash", "push"] + (["--include-untracked"] if c.include_untracked else [])
-    done = run(*args, *(["-m", c.message] if c.message else []))
-    if "no local changes to save" in done.said.lower():
+    before = run("rev-parse", "--verify", "-q", "refs/stash", ok=(0, 1)).out
+    run(*args, *(["-m", c.message] if c.message else []))
+    after = run("rev-parse", "--verify", "-q", "refs/stash", ok=(0, 1)).out
+    if before == after:
         raise GitRefused("G6_E_GIT_NOTHING_TO_STASH", "there are no local changes to stash")
     top = run("stash", "list", "-n", "1", "--format=%gd%x1f%H%x1f%s").text.strip().split("\x1f")
     return Outcome(answer("stash_save", CHANGED, f"Stashed as {top[0]} (read back); the working copy is clean of "
@@ -529,7 +540,7 @@ def stash_pop(run: Run, repo: Path, c: Call) -> Outcome:
     _clean_first(run, "stash_pop")
     done = run("stash", "pop", ok=(0, 1))
     if done.code == 1:
-        raise GitRefused(CONFLICT if "conflict" in done.said.lower() else "G6_E_GIT_FAILED",
+        raise GitRefused(CONFLICT if status_of(run)["conflicted"] else "G6_E_GIT_FAILED",
                          "stash pop did not apply cleanly; git keeps the stash")
     found = status_of(run)
     return Outcome(answer("stash_pop", CHANGED, "The newest stash was applied and dropped (read back from status).",

@@ -63,25 +63,6 @@ MAX_OUTPUT = 8 * 1024 * 1024
 MAX_ERROR = 64 * 1024
 _AUDIT = ("ctx_git", "audit.jsonl")
 _LOCK = threading.Lock()
-#: git's own words for each failure, first match wins.
-_CLASSES = (
-    ("G6_E_GIT_NOT_A_REPOSITORY", ("not a git repository",)),
-    ("G6_E_GIT_AUTH_FAILED", ("authentication failed", "could not read username", "could not read password",
-                              "permission denied (publickey", "terminal prompts disabled", "host key verification")),
-    ("G6_E_GIT_UNREACHABLE", ("could not resolve host", "unable to access", "connection timed out", "failed to connect",
-                              "network is unreachable", "connection refused", "could not read from remote")),
-    ("G6_E_GIT_REJECTED", ("non-fast-forward", "[rejected]", "fetch first", "pre-receive hook declined",
-                           "protected branch", "not possible to fast-forward", "[remote rejected]")),
-    ("G6_E_GIT_CONFLICT", ("conflict",)),
-    ("G6_E_GIT_NOTHING_TO_COMMIT", ("nothing to commit", "no changes added to commit", "nothing added to commit")),
-    ("G6_E_GIT_NOTHING_TO_STASH", ("no local changes to save", "no stash entries")),
-    ("G6_E_GIT_IDENTITY", ("please tell me who you are", "author identity unknown", "empty ident")),
-    ("G6_E_GIT_BAD_REVISION", ("unknown revision", "bad revision", "invalid object name", "not a valid object name",
-                               "did not match any", "invalid reference", "not a commit", "no such ref",
-                               "couldn't find remote ref", "no such remote")),
-    ("G6_E_GIT_EXISTS", ("already exists",)),
-    ("G6_E_GIT_TRANSPORT_REFUSED", ("transport", "not allowed")),
-)
 
 
 @dataclass(frozen=True)
@@ -104,15 +85,12 @@ class Done:
         return " ".join(text.split())[:500]
 
 
-def classify(message: str) -> str:
-    """The ``G6_E_GIT_*`` code for git's message."""
-    lower = message.lower()
-    for code, words in _CLASSES:
-        if code == "G6_E_GIT_TRANSPORT_REFUSED":
-            if all(w in lower for w in words):
-                return code
-        elif any(w in lower for w in words):
-            return code
+def classify(status: object) -> str:
+    """A failed command without machine evidence has only the generic failure code.
+
+    Diagnostic prose, in any language, cannot establish a more specific cause.
+    Operations establish conflicts/revisions/no-change with their own machine reads.
+    """
     return FAILED
 
 
@@ -150,6 +128,7 @@ def missing_git() -> GitRefused:
 
 
 def _runner(where: Path, env: dict[str, str], timeout: float) -> Callable[..., Done]:
+    env = {**env, "LC_ALL": "C", "LANG": "C"}
     def run(*args: str, ok: tuple[int, ...] = (0,), input_bytes: bytes = b"", cut_ok: bool = False) -> Done:
         argv = [git_program(), "-C", str(where), *safe_git_args(*args)]
         try:
@@ -170,7 +149,7 @@ def _runner(where: Path, env: dict[str, str], timeout: float) -> Callable[..., D
                                         "call keeps: narrow the request (paths, rev, max_count)")
         found = Done(done.returncode, done.stdout[:MAX_OUTPUT], done.stderr[:MAX_ERROR], cut)
         if found.code not in ok:
-            raise GitRefused(classify(found.said), f"git {args[0]} failed with exit {found.code}; "
+            raise GitRefused(classify(found.code), f"git {args[0]} failed with exit {found.code}; "
                              "check the repository and the requested operation")
         return found
     return run
