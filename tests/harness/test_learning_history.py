@@ -130,13 +130,14 @@ def test_registered_invoke_asks_dialog_for_forget_and_keeps_tool_schema(monkeypa
 
 
 @pytest.mark.usefixtures('declared_mcp_grants')
-def test_learning_history_list_and_declined_forget_over_mcp(monkeypatch):
+def test_learning_history_list_and_declined_forget_over_mcp(monkeypatch, tmp_path):
     from fastmcp import Client
     from fastmcp.client.elicitation import ElicitResult
     from g6.core import door
     from g6.mcp import build_server
     from g6.workforce import repo_tests
 
+    monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
     monkeypatch.setenv('G6_MCP_SENSITIVE', 'learning_history.forget')
     monkeypatch.setattr(door, 'person_model', lambda: None)
     monkeypatch.setattr(repo_tests, 'checked_repo', lambda root: Path('fixture'))
