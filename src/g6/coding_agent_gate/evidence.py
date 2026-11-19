@@ -3,9 +3,9 @@
 
 An item counts only when it has the structure its kind needs; anything else is rejected with the reason, so a
 placeholder (``none``, ``TODO``, ``not run``, "tests pass" with no exit code, an empty log) is never evidence.
-``observed_by`` says who produced the item: ``"g6"`` only when a G6 component ran the test or read the file itself,
-``"caller"`` for everything an agent reports. The gate cannot tell a fabricated item from a real one; provenance is
-how it says which items it took on trust.
+``observed_by`` is a compatibility hint, never observation authority. Only a matching stored test receipt bound
+to the host's artifact establishes ``observed_by_g6``. Every other item stays asserted, including file refs and
+old in-process flags. The gate checks report consistency; it cannot authenticate caller assertions.
 """
 from __future__ import annotations
 
@@ -50,6 +50,32 @@ class Evidence:
     exit_code: int | None = None  # a test run's exit code
     reviewer: str = ""            # who reviewed, for a review
     observed_by: Literal["g6", "caller"] = "caller"
+    receipt: str = ""            # host-bound receipt, never authority from observed_by alone
+    artifact_digest: str = ""    # supplied by the trusted host, not a door input
+
+    @property
+    def evidence_status(self) -> str:
+        """Only the existing store check establishes an observation; a provenance flag cannot."""
+        if self.kind == "test" and self.receipt and self.artifact_digest:
+            from g6.workforce.receipt_store import check, counts_as_pass
+
+            status, body = check(self.receipt, artifact_digest=self.artifact_digest)
+            if (status == "matched" and body is not None and self.ref == self.receipt
+                    and self.exit_code == (0 if counts_as_pass(body) else 1)):
+                return "observed_by_g6"
+        return "asserted"
+
+    def report_text(self) -> str:
+        """Attribute a declared count instead of speaking it as G6's own observation."""
+        if self.kind != "test":
+            return ""
+        found = re.search(r"\b(\d+)\s+passed\b", self.output, re.IGNORECASE)
+        count = found.group(1) if found else "an unspecified number"
+        if self.evidence_status == "observed_by_g6":
+            return f"G6 observed the test run: {self.ref} (exit {self.exit_code})."
+        if self.exit_code != 0:
+            return f"the agent reports a test run with exit {self.exit_code}; G6 did not run it"
+        return f"the agent reports {count} passed; G6 did not run it"
 
     def problem(self, *, author: str = "") -> str:
         """Why this item does not count, or ``""`` when it does."""
@@ -76,7 +102,12 @@ class Evidence:
         return ""
 
     def to_dict(self) -> dict[str, object]:
-        out: dict[str, object] = {"kind": self.kind, "ref": self.ref, "observed_by": self.observed_by}
+        status = self.evidence_status
+        out: dict[str, object] = {"kind": self.kind, "ref": self.ref,
+                                  "observed_by": "g6" if status == "observed_by_g6" else "caller",
+                                  "evidence_status": status}
+        if self.kind == "test":
+            out["report"] = self.report_text()
         if self.exit_code is not None:
             out["exit_code"] = self.exit_code
         if self.reviewer:
@@ -141,7 +172,8 @@ class VerifierResult:
 
     def to_dict(self) -> dict[str, object]:
         return {"status": self.status, "effective_status": self.effective_status, "exit_code": self.exit_code,
-                "source": self.source, "observed_by": self.observed_by, "unrecognised": self.unrecognised}
+                "source": self.source, "observed_by": "caller", "evidence_status": "asserted",
+                "unrecognised": self.unrecognised}
 
 
 __all__ = ["KINDS", "Evidence", "Kind", "VerifierResult", "is_placeholder"]

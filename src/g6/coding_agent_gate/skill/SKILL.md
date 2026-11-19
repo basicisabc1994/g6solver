@@ -31,7 +31,7 @@ coded findings, and calls no model.
 ## Ops
 
 - `preflight`: check a task and a proposed action before acting; verdict `block`, `needs_review`, `needs_evidence` or `proceed_with_caution`.
-- `verify_answer`: check a drafted answer before reporting done; verdict `block`, `needs_review`, `revise` or `pass`.
+- `verify_answer`: check a drafted answer before reporting done; verdict `block`, `needs_review`, `revise`, `report_consistent` or `pass`.
 
 ## Reading the result
 
@@ -47,7 +47,9 @@ no `task` the op is refused with `G6_E_CODING_AGENT_GATE_TASK_REQUIRED`.
 - `proceed_with_caution`: act, with a targeted check of the risk the findings name.
 - `revise`: fix the draft. A claim needs `{"kind": "file", "ref": "<path>"}` for the file you read; a readiness word
   needs a passing run, and on your own evidence alone the answer must also say it is not independently checked.
-- `pass`: report it with its uncertainty. `block` and `needs_review` read `blocked-escalated`; every other verdict
+- `report_consistent`: the caller's report is consistent; its test evidence is asserted. Say "the agent reports N passed; G6 did not run it".
+- `pass`: every test item is `observed_by_g6` through a stored receipt for the host-bound artifact; report its scope.
+  `block` and `needs_review` read `blocked-escalated`; every other verdict
   reads `qualified-draft`; nothing here is `verified`.
 
 Evidence counts only with structure: `file` a path, `test` the command and its `exit_code`, `log` non-empty `output`,
@@ -101,7 +103,7 @@ Composed:
 ## Failure modes it catches
 
 - `hallucinated_success` (an agent reporting work as done that the evidence does not back up): `verify_answer`
-  passes only with at least one counted item, or a `verifier` result with an exit code, and no finding. A readiness
+  returns `report_consistent` with counted asserted evidence and no finding. Only stored host-bound test receipts can yield `pass`. A readiness
   claim without a passing run, claims without any counted file, a failing exit code or a `verifier` status of `fail` each forces
   `revise`; a shortcut in the answer or the diff forces `block`.
 
@@ -154,7 +156,7 @@ done = verify_answer(
     task_contract="paginate(10, 3) returns 4 pages; existing tests stay green",
     evidence=[Evidence("file", "src/page.py"), Evidence("test", "pytest -q tests/test_page.py", exit_code=0)],
 )
-assert (done.verdict, done.completion_state, done.evidence_basis) == ("pass", "qualified-draft", "caller-declared")
+assert (done.verdict, done.completion_state, done.evidence_basis) == ("report_consistent", "qualified-draft", "caller-declared")
 
 placeholder = verify_answer("Fix the off-by-one in paginate()", "Fixed. All tests pass.",
                             task_contract="paginate(10, 3) returns 4 pages", evidence=[Evidence("test", "none")])

@@ -548,6 +548,11 @@ def _run(mission: DesignMission, producer: ProposalAgent, runner: CandidateRunne
                 task_contract="; ".join(mission.intent.requirements[j].text
                                        for j in range(len(mission.intent.requirements))),
                 risk_tier="medium")
+            if decision.verdict == "report_consistent":
+                # Candidate/mutant runs have no artifact-bound receipt. Keep the
+                # candidate as a draft without relabelling its report as observed.
+                return result("qualified-draft", "report_consistent_pending_observation",
+                              patch, tuple(observed), decision.verdict)
             if decision.verdict != "pass":
                 return result("blocked-escalated", "coding_gate_refused", obs=tuple(observed), gate=decision.verdict)
             log("candidate", f"success-{i}", {"patch_digest": patch.fingerprint, "gate": decision.verdict})

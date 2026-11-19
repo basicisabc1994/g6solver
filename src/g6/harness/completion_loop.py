@@ -1151,6 +1151,7 @@ def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
     review = _final_review(root, task, base)
     rounds, ran = state.get("rounds") or [], state.get("ran") or {}
     return patch_report.completion_report({
+        "evidence_status": "observed_by_g6",  # G6 ran these probes; gate receipts govern gate evidence separately
         "reason": reason, "repairs": sum(one["tree"] is not None for one in rounds), "max_repairs": MAX_REPAIRS,
         "failing": rounds[-1]["failing"] if rounds else [], "critic": state.get("critic"),
         "late_because": state.get("late") or ("no hook ran them before the agent started" if _before_fix() else NOT_ASKED),
@@ -1322,6 +1323,7 @@ def _reviews_report(state: dict, reason: str, code: str, ending: str, review: st
     """The report of a loop that reviewed: what its reviews found, why it stopped, then ``review``, the patch review's."""
     reviews = state["reviews"]
     return patch_report.completion_report({
+        "evidence_status": "observed_by_g6",  # G6 ran the reviewer and its tests, including unsuccessful attempts
         "reason": reason, "reviews": reviews, "repairs": sum(one["tree"] is not None for one in state["rounds"]),
         "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code), "ending": ending,
         "boundary": next((one["boundary"] for one in reversed(reviews) if one.get("boundary")), "")}, review)

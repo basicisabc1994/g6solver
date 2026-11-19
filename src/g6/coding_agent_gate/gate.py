@@ -2,9 +2,10 @@
 """The two floors, ``preflight`` (before acting) and ``verify_answer`` (before reporting done), and their envelope.
 
 Every rule emits a coded ``Finding``; ``SEVERITY`` maps each code to the verdict it forces, and the verdict is the
-strictest of them, decided in one place (audit 019 PY-006). With no finding the verdict is ``pass``, which needs at
-least one counted evidence item, so a call that checked nothing never passes (PY-002). Nothing here reads the
-environment (PY-008), writes a file (PY-010) or calls a model (CAG-008: the reviewer is the opt-in ``review``
+strictest of them, decided in one place (audit 019 PY-006). With no finding a caller report is ``report_consistent``;
+``pass`` requires every test to have a stored receipt for the host-bound artifact. A call that checked nothing
+never passes (PY-002). Explicit repository scope enables reference checks. Nothing here writes a file (PY-010)
+or calls a model (CAG-008: the reviewer is the opt-in ``review``
 module). A verdict maps down-only to ``qualified-draft`` or ``blocked-escalated``, never ``verified``.
 """
 from __future__ import annotations
@@ -23,7 +24,7 @@ from g6.core.reliability_envelope import envelope_fields, warning_card
 
 VERDICT_RANK: dict[str, dict[str, int]] = {
     "preflight": {"proceed_with_caution": 0, "needs_evidence": 1, "needs_review": 2, "block": 3},
-    "verify_answer": {"pass": 0, "revise": 1, "needs_review": 2, "block": 3},
+    "verify_answer": {"pass": 0, "report_consistent": 1, "revise": 2, "needs_review": 3, "block": 4},
 }
 
 #: Finding code -> the verdict it forces. The only place a rule's weight is set.
@@ -46,6 +47,7 @@ SEVERITY: dict[str, str] = {
     "claims_without_files": "revise",
     "overclaim_without_run": "revise",
     "overclaim_on_declared_run": "revise",
+    "EVIDENCE_REF_MISSING": "revise",
 }
 _MISSING: dict[str, str] = {
     "protected_policy_missing": "a protected-paths policy supplied by the person",
@@ -64,9 +66,10 @@ _MISSING: dict[str, str] = {
 _TIER_RANK = {"low": 0, "medium": 1, "high": 2}
 _TIER_WORDS = {"low": "low", "medium": "medium", "high": "high", "critical": "high",
                "r0": "low", "r1": "medium", "r2": "high", "r3": "high"}
-_DRAFT_VERDICTS = frozenset({"pass", "proceed_with_caution", "revise", "needs_evidence"})
+_DRAFT_VERDICTS = frozenset({"pass", "report_consistent", "proceed_with_caution", "revise", "needs_evidence"})
 _CODES = {
     "pass": "G6_E_CODING_AGENT_GATE_PASS",
+    "report_consistent": "G6_E_CODING_AGENT_GATE_REPORT_CONSISTENT",
     "proceed_with_caution": "G6_E_CODING_AGENT_GATE_PROCEED_WITH_CAUTION",
     "revise": "G6_E_CODING_AGENT_GATE_REVISE",
     "needs_evidence": "G6_E_CODING_AGENT_GATE_NEEDS_EVIDENCE",
@@ -134,6 +137,16 @@ class GateDecision:
     detected: dict[str, Any] = field(default_factory=dict)
     checks_run: tuple[str, ...] = ()
     reviewer: str = "off"
+    references_checked: bool = False
+    next_actions: tuple[dict[str, Any], ...] = ()
+
+    @property
+    def evidence_status(self) -> str:
+        items = [e.evidence_status for e in self.counted]
+        items += ["asserted"] * len(self.rejected)
+        if self.verifier is not None:
+            items.append("asserted")
+        return "observed_by_g6" if items and all(s == "observed_by_g6" for s in items) else "asserted"
 
     @property
     def completion_state(self) -> str:
@@ -150,9 +163,9 @@ class GateDecision:
 
     @property
     def evidence_basis(self) -> str:
-        sources = {e.observed_by for e in self.counted}
+        sources = {"g6" if e.evidence_status == "observed_by_g6" else "caller" for e in self.counted}
         if self.verifier is not None and self.verifier_counted:
-            sources.add(self.verifier.observed_by)
+            sources.add("caller")
         if not sources:
             return "none"
         return {frozenset({"g6"}): "g6-observed", frozenset({"caller"}): "caller-declared"}.get(frozenset(sources), "mixed")
@@ -168,6 +181,9 @@ class GateDecision:
             "requires_human_review": self.requires_human_review, "review_satisfied": self.review_satisfied,
             "findings": [{"code": f.code, "severity": f.severity, "message": f.message} for f in self.findings],
             "missing_evidence": self.missing_evidence, "evidence_basis": self.evidence_basis,
+            "evidence_status": self.evidence_status, "references_checked": self.references_checked,
+            "reference_check": "checked within supplied scope" if self.references_checked else "not checked: no repository root or path list supplied",
+            "next_actions": list(self.next_actions),
             "evidence_counted": [e.to_dict() for e in self.counted],
             "evidence_rejected": [{**e.to_dict(), "reason": why} for e, why in self.rejected],
             "verifier": None if self.verifier is None else {**self.verifier.to_dict(), "counted": self.verifier_counted},
@@ -179,7 +195,8 @@ class GateDecision:
         if not self.findings:
             scan = "a text tripwire plus a diff scan" if "shortcut_scan(diff)" in self.checks_run else "a text tripwire only"
             return (f"No rule of the coding-agent gate objected ({len(self.checks_run)} checks; evidence "
-                    f"{self.evidence_basis}; shortcut scan: {scan}). A gate pass is a qualified draft, not verification.")
+                    f"{self.evidence_basis}; shortcut scan: {scan}). Verdict: {self.verdict}. "
+                    "This is a qualified draft; test reports are attributed per evidence item.")
         rank = VERDICT_RANK[self.op]
         lead = max(self.findings, key=lambda f: rank.get(f.severity, len(rank)))
         return f"Coding-agent gate returned {self.verdict!r}: {lead.message} ({len(self.findings)} finding(s))."
@@ -192,8 +209,9 @@ class GateDecision:
                                                     "evidence; do not call it verified."))
         evidence = [{"source": f"coding_agent_gate.{self.op}", "summary": message, "verdict": self.verdict,
                      "checks_run": list(self.checks_run), "finding_codes": [f.code for f in self.findings],
-                     "evidence_basis": self.evidence_basis}]
-        evidence += [{"source": e.observed_by, "summary": f"{e.kind}: {e.ref}"[:200], **e.to_dict()} for e in self.counted]
+                     "evidence_basis": self.evidence_basis, "evidence_status": self.evidence_status}]
+        evidence += [{"source": e.to_dict()["observed_by"], "summary": f"{e.kind}: {e.ref}"[:200],
+                      **e.to_dict()} for e in self.counted]
         return envelope_fields(reliability_label=self.completion_state, warning_card=card, evidence=evidence,  # type: ignore[arg-type]
                                request_id=request_id or uuid.uuid4().hex[:12], run_id=run_id,
                                degradation_reason=message)
@@ -290,10 +308,12 @@ def verify_answer(task: str, answer: str, *, evidence: Iterable[Evidence] = (),
                   verifier: VerifierResult | str | None = None, claims: Iterable[str] = (), task_contract: str = "",
                   risk_tier: str = "", author: str = "", require_task_contract: bool = True,
                   touched_paths: Iterable[str] | None = None,
-                  protected_paths_policy: ProtectedPathsPolicy | None = None, scanned_diff: str = "") -> GateDecision:
+                  protected_paths_policy: ProtectedPathsPolicy | None = None, scanned_diff: str = "",
+                  repo_root: str | None = None) -> GateDecision:
     """Check a drafted answer before it is reported as done.
 
-    ``pass`` needs a counted evidence item and no finding. Readiness words ("verified", "all tests pass") need a
+    ``report_consistent`` means a consistent assertion; ``pass`` needs observed tests and no finding.
+    Readiness words ("verified", "all tests pass") need a
     passing run; on caller-declared evidence alone they also need the answer to say it is unverified. A negative
     signal (a failing exit code, a verifier ``fail``) is believed as given; a positive one needs structure.
 
@@ -313,9 +333,13 @@ def verify_answer(task: str, answer: str, *, evidence: Iterable[Evidence] = (),
     passing = [e for e in counted if e.kind == "test" and e.exit_code == 0]
     failing = [e for e in counted if e.kind == "test" and e.exit_code != 0]
     any_pass = bool(passing) or (v_counted and status == "pass")
-    observed_pass = any(e.observed_by == "g6" for e in passing) or (v_counted and status == "pass"
-                                                                     and v.observed_by == "g6")
+    observed_pass = bool(passing) and all(e.evidence_status == "observed_by_g6" for e in passing)
     f, path_status = _protected(touched_paths, protected_paths_policy, evidence, author)
+    from g6.coding_agent_gate.references import check_references, review_call
+
+    missing_refs = check_references(evidence, repo_root=repo_root, paths=touched_paths)
+    for ref in missing_refs:
+        f.append(_finding("EVIDENCE_REF_MISSING", f"EVIDENCE_REF_MISSING: reference does not resolve within the supplied scope: {ref}"))
     if not str(answer or "").strip():
         f.append(_finding("empty_answer", "No answer text was supplied, so there is nothing to check."))
     if text_hits:
@@ -350,12 +374,18 @@ def verify_answer(task: str, answer: str, *, evidence: Iterable[Evidence] = (),
                           "review by someone other than the author."))
     checks = ("answer_present", "task_contract", "evidence_structure", "test_exit_codes", "verifier_status",
               "claims_have_files", "readiness_claims", "risk_tier", "review_required", "shortcut_tripwire(text)")
-    return GateDecision("verify_answer", strictest("verify_answer", f), tier, terms, tuple(f), counted, rejected,
+    verdict = strictest("verify_answer", f)
+    tests = [e for e in evidence if e.kind == "test"]
+    if verdict == "pass" and not (tests and all(e.evidence_status == "observed_by_g6" for e in tests)):
+        verdict = "report_consistent"
+    return GateDecision("verify_answer", verdict, tier, terms, tuple(f), counted, rejected,
                         verifier=None if verifier is None else v, verifier_counted=v_counted,
                         detected={"shortcuts_text": text_hits, "shortcuts_diff": diff_hits, "readiness_claims": claimed,
                                   "acknowledges_unverified": acknowledges_unverified(said), "protected_paths": path_status},
                         checks_run=checks + (("protected_paths",) if touched_paths is not None or protected_paths_policy is not None else ())
-                        + (("shortcut_scan(diff)",) if diff else ()))
+                        + (("shortcut_scan(diff)",) if diff else ()),
+                        references_checked=repo_root is not None or touched_paths is not None,
+                        next_actions=(review_call(task, task_contract, evidence, repo_root),))
 
 
 __all__ = ["SEVERITY", "VERDICT_RANK", "Finding", "GateDecision", "preflight", "stricter_of",

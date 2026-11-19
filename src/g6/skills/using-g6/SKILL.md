@@ -113,6 +113,12 @@ After a decline or cancel, ask the person; offer no other way to confirm. A job 
 
 ## Read and ask
 
+Read `decision` separately from `ok`: `ok` retains the envelope's meaning. `may_proceed: null` means no declared
+permission to proceed. The coding gate's `report_consistent` describes assertions. Only `observed_by_g6` tests may
+be reported as G6's result; an `asserted` test reads "the agent reports N passed; G6 did not run it". Preserve the
+weakest overall `evidence_status` and each item's own status. `verified_within_scope` applies only to an existing
+verification route and its named scope. Follow `next_actions` to the exact `g6_review_patch` call for observations.
+
 Preserve `verified`, `qualified-draft` and `blocked-escalated` exactly as returned; `verified` covers only the named
 artifact and check scope. Report the warning card and recovery; never turn a refusal into a success.
 Ask the person when permissions, task meaning or evidence are missing. Local settings assume a trusted host;

@@ -8,20 +8,23 @@ Capability label: ``implemented``.
                       task_contract="paginate(10, 3) returns 4 pages; existing tests stay green",
                       evidence=[Evidence("file", "src/page.py"),
                                 Evidence("test", "pytest -q tests/test_page.py", exit_code=0)])
-    d.verdict, d.completion_state      # ("pass", "qualified-draft")
+    d.verdict, d.completion_state      # ("report_consistent", "qualified-draft")
 
 ``preflight`` checks a task and the agent's proposed action (``block`` / ``needs_review`` / ``needs_evidence`` /
 ``proceed_with_caution``); ``verify_answer`` checks a drafted answer (``block`` / ``needs_review`` / ``revise`` /
-``pass``). Evidence counts only with the structure its kind needs: a file path, a test command with its exit code, a
+``report_consistent`` / ``pass``). A consistent caller report returns ``report_consistent``; ``pass`` requires every
+test item to cite a stored G6 receipt for the host-bound artifact. ``evidence_status`` is ``asserted`` or
+``observed_by_g6``, per item and overall (weakest wins). Evidence counts only with the structure its kind needs: a file path, a test command with its exit code, a
 non-empty log, a unified diff, or a review naming a reviewer other than the author. Placeholders such as ``none``,
 ``TODO``, ``not run`` or "tests pass" with no exit code never count, and a call with no counted evidence never
 passes. A declared risk tier can raise the computed tier, never lower it; high-risk work without a named review is
 ``needs_review``, a blocking state, as are a shortcut and (by default) a missing task contract. ``review.tighten``
 is an opt-in model reviewer that can only make a decision stricter; nothing else calls a model, reads the
-environment or writes a file.
+environment or writes a file, except the existing receipt store reader. An optional ``repo_root`` checks reference
+existence and containment; an explicit ``touched_paths`` list checks membership. Neither observes a test.
 
 What it does not establish (audit 004): it reads what the caller sends. It does not run a test or check that a
-reviewer exists, and the only file it opens is G6's own test-receipt store, read when an item cites a receipt and the
+reviewer exists. Without a supplied root/list, references are explicitly not checked. The test-receipt store is read when an item cites a receipt and the
 host built the block with ``receipt_artifact_digest``. Evidence is ``observed_by="caller"`` unless a G6 component
 produced it, and everything through the registry or MCP door is caller-declared: the door's instance has no binding,
 so a receipt there is ``not_honoured_at_door`` (review C1). A host that binds the block to the digest of the tree it
@@ -50,6 +53,14 @@ from g6.coding_agent_gate.gate import (
 
 __g6_component__ = True
 __g6_block__ = "CodingAgentGateBlock"
+__g6_decision__ = {
+    "verify_answer": {"field": ("verdict",), "values": {
+        "pass": True, "report_consistent": None, "revise": False, "needs_review": False, "block": False},
+        "evidence_field": ("evidence_status",)},
+    "preflight": {"field": ("verdict",), "values": {
+        "proceed_with_caution": True, "needs_evidence": False, "needs_review": False, "block": False},
+        "evidence_field": ("evidence_status",)},
+}
 __g6_requires__: tuple[str, ...] = ("workforce",)   # the test-receipt store, read when an item cites a receipt
 # Failure-mode codes (g6.core.failure_modes): what it guards against, and what its own use can cause.
 __g6_mitigates__: tuple[str, ...] = ("hallucinated_success", "unapproved_protected_change")
@@ -63,6 +74,7 @@ __all__ = ["SEVERITY", "CodingAgentGateBlock", "CodingAgentGateInput", "Evidence
 #: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
 __g6_refusals__ = {
     "G6_E_CODING_AGENT_GATE_PASS": "none",
+    "G6_E_CODING_AGENT_GATE_REPORT_CONSISTENT": "none",
     "G6_E_CODING_AGENT_GATE_PROCEED_WITH_CAUTION": "person",
     "G6_E_CODING_AGENT_GATE_REVISE": ("input", "Fix the findings with every check still active; attach the evidence "
                                           "and call the gate again. Never weaken a gate to obtain permission."),

@@ -186,7 +186,36 @@ def _at_base(assessment: dict) -> dict[str, str]:
     there is no failure of the check, so it never shows the check exercises the change."""
     from g6.harness.patch_review import at_base_observations   # the one rule; patch_review imports this module lazily
 
-    return at_base_observations((assessment.get("scope") or {}).get("checks_run") or [])
+    return at_base_observations([run for run in (assessment.get("scope") or {}).get("checks_run") or []
+                                 if _observed(assessment, run)])
+
+
+def _observed(assessment: dict, item: dict | None = None) -> bool:
+    """Only schema positions establish report attribution, never a nested data key.
+
+    A leaf can state its own provenance in a mixed report. Missing/unknown statuses
+    are assertions; a verified label alone is not a statement that G6 ran a test.
+    """
+    inherited = (assessment.get("scope") or {}).get("evidence_status", assessment.get("evidence_status"))
+    if item is not None:
+        return item.get("evidence_status", inherited) == "observed_by_g6"
+    completion = assessment.get("completion") or {}
+    leaves = [*((assessment.get("scope") or {}).get("checks_run") or []),
+              *(completion.get("demonstrated") or []), *(completion.get("activities") or []),
+              *(one.get("check") or {} for one in
+                (assessment.get("confirmed_expectations") or {}).get("expectations") or []),
+              *(assessment.get("reviews") or []), *(assessment.get("sets") or [])]
+    return inherited == "observed_by_g6" and all(
+        one.get("evidence_status", inherited) == "observed_by_g6" for one in leaves)
+
+
+def _assertion(item: dict) -> str:
+    verdict = item.get("verdict", item.get("result"))
+    if verdict in ("failed", "fail", "crashed", "timed_out", "run_inconsistent"):
+        return f"the agent reports {code(verdict)}; G6 did not run it"
+    if item.get("passed") is not None or item.get("verdict", item.get("result")) in ("pass", "passed"):
+        return f"the agent reports {item.get('passed', 'an unspecified number')} passed; G6 did not run it"
+    return f"the agent reports {code(item.get('verdict', item.get('result', 'a result')))}; G6 did not run it"
 
 
 def code(value: object, limit: int | None = 140, *, literal: bool = False, confirmed: bool = False) -> str:
@@ -226,6 +255,8 @@ def _headline(assessment: dict) -> str:
             "test_weakened", "runner_configuration_changed", "gate_shortcut") else "Test integrity is in doubt")
     else:
         plain = OUTCOMES.get(outcome, "The review gave no outcome")
+    if outcome == "supported_within_scope" and not _observed(assessment):
+        plain = "Agent-reported support; G6 did not run it"
     return f"**{plain}** ({outcome}). Qualified draft: merging needs your separate approval."
 
 
@@ -244,6 +275,10 @@ def _findings(assessment: dict) -> list[list[str]]:
         reproduction = found.get("reproduction") or {}
         head = (f"- **{FAILED.get(found.get('code'), 'A check failed')}** ({found.get('code')}) for {requirements}: "
                 f"{show(found.get('check', ''))}")
+        if reproduction.get("kind") != "static" and not _observed(assessment, found):
+            items.append([head, f"  - {_assertion(found)}; stated reproduction: "
+                                f"{_plain(reproduction.get('node', found.get('check', '')))}."])
+            continue
         if reproduction.get("kind") == "static":
             imports = reproduction.get("imports") or [{}]
             first = imports[0]
@@ -264,6 +299,10 @@ def _findings(assessment: dict) -> list[list[str]]:
         reproduction = found.get("reproduction") or {}
         head = (f"- **{UNCONFIRMED.get(found.get('result'), 'A proposed check found a difference, not confirmed')}** "
                 f"({found.get('code')}) for {code(found.get('requirement', ''))}: {code(found.get('check', ''))}")
+        if not _observed(assessment, found):
+            items.append([head, f"  - {_assertion(found)}; stated reproduction: "
+                                f"{_plain(reproduction.get('node', ''))}."])
+            continue
         if found.get("result") == "counterexample":
             base = "passes at the base commit, fails on the patch"
         elif str(reproduction.get("at_base", "not run")).startswith("not run"):
@@ -293,7 +332,9 @@ def _shown(assessment: dict) -> list[list[str]]:
     for item in (assessment.get("completion") or {}).get("demonstrated", []):
         checks = item.get("checks", [])
         line = f"- {code(item.get('requirement', ''), 40)} on " + ", ".join(code(c, 80) for c in checks)
-        if item.get("kind") != "preserve" and checks and all(base.get(c) in ("failed", "timed_out") for c in checks):
+        if not _observed(assessment, item):
+            line += ": " + _assertion({"result": "passed", **item})
+        elif item.get("kind") != "preserve" and checks and all(base.get(c) in ("failed", "timed_out") for c in checks):
             line += ": fails at the base commit, passes on the patch"
         items.append([line + _issuer(assessment, item.get("requirement"))])
     return items
@@ -355,7 +396,8 @@ def _proposed(assessment: dict) -> str:
     if not own:
         return ""
     shown = [f"{code(a['check'], 40)}" + (f" for {code(a['requirement'], 40)}" if a.get("requirement") else "")
-             + f": {PROPOSED.get(str(a.get('result')), code(a.get('result', ''), 30))}" for a in own[:3]]
+             + ": " + (PROPOSED.get(str(a.get('result')), code(a.get('result', ''), 30))
+                        if _observed(assessment, a) else _assertion(a)) for a in own[:3]]
     more = f", and {len(own) - 3} more ({code('assessment.completion.activities')})" if len(own) > 3 else ""
     return "the proposed checks and template instances, which never pass a requirement: " + ", ".join(shown) + more
 
@@ -373,8 +415,10 @@ def _steps(assessment: dict) -> list[str]:
     shown = []
     for run in runs[:3]:
         name = RUNS.get(run.get("check"), str(run.get("check", "")))
-        if run.get("check") == "stated checks at the base commit" and run.get("outcomes"):
-            shown.append(_base_words(_at_base({"scope": {"checks_run": [run]}})))
+        if not _observed(assessment, run):
+            shown.append(f"{name}: {_assertion(run)}")
+        elif run.get("check") == "stated checks at the base commit" and run.get("outcomes"):
+            shown.append(_base_words(_at_base({**assessment, "scope": {"checks_run": [run]}})))
         elif run.get("verdict") == "run_inconsistent":   # the owner's ruling (2026-10-29): said plainly, no accusation
             shown.append(f"{name}: passed by pytest's own count, but the process exited with an error afterwards "
                          f"({code('run_inconsistent')}), so they are not counted as passed")
@@ -397,6 +441,8 @@ def _steps(assessment: dict) -> list[str]:
                                if str(r.get("stage", "")).startswith(stage.get(outcome, "-"))))
     rule = RULES.get(outcome, "") + (f" ({', '.join(codes[:4])}" + (", ..." if len(codes) > 4 else "") + ")"
                                      if codes else "")
+    if outcome == "supported_within_scope" and not _observed(assessment):
+        rule = "the agent reports support within the stated scope; G6 did not run it"
     return [f"- **Proposed:** the patch {code(str(scope.get('artifact_digest', ''))[:12])} on base "
             f"{code(str(scope.get('base_commit', ''))[:12])}, {len(requirements)} requirement(s); checks from "
             f"{', '.join(who)}.",
@@ -448,11 +494,13 @@ def _confirmed(assessment: dict) -> list[list[str]]:
         issuer = ("checked" if statement.get("checked") else "refuted" if statement.get("refute") else
                   f"not counted yet ({_words(statement.get('not_counted', '') or statement.get('gap', ''))})")
         outcomes = question.get("outcomes") if isinstance(question.get("outcomes"), dict) else {}
+        result = (CONFIRMED_RESULT.get(check.get("result"), "its check gave no result")
+                  if _observed(assessment, check) else _assertion(check))
         items.append([f"- {show(bq.shown_call(question), 200)}: the person chose {show(option, 20)}, "
                       f"{show(bq.shown_outcome(outcomes.get(option)), 120)} (question SHA-256 "
                       f"{show(_question_sha256(question), 70)}), scope shown in full below, answered "
                       f"by {show(answer.get('answered_by', ''), 60)} (recorded as given, not authenticated); "
-                      f"{CONFIRMED_RESULT.get(check.get('result'), 'its check gave no result')}; "
+                      f"{result}; "
                       f"the evidence issuer: {show(issuer, 120)}; Scope (exact text): "
                       f"{show(scope, None, literal=True)}. "
                       + _execution_limit()])
@@ -487,6 +535,13 @@ def _loop_lines(loop: dict) -> list[str]:
     """What the completion loop did. Its probes are a model's, so they speak only to what they tried: nothing here says
     the patch is right, and what they never touched stays in the review's list of what is not established."""
     sets, failing = loop.get("sets") or [], loop.get("failing") or []
+    if not _observed(loop):
+        return ["## What the completion loop reported", "- The agent reports probe results; G6 did not run it.",
+                f"- Reported reason: {code(loop.get('reason'))}.",
+                *_cut([[f"- Reported set {code(one.get('label'))}: {code(one.get('ran', 0))} probes; "
+                        f"left out: {code(one.get('left_out', ''))}."] for one in sets],
+                      BUDGET["findings"], "loop.sets"),
+                *[f"- Reported failing probe: {code(case, 200)}." for case in failing[:BUDGET["findings"]]]]
     ran = sum(one["ran"] for one in sets)
     result = (f"{len(failing)} still fail, of {ran} probes that ran" if failing else
               f"no counterexample found in {ran} probes; that does not show the patch is right" if ran else
@@ -540,6 +595,14 @@ def _review_lines(loop: dict) -> list[str]:
     A finding is a reviewer's test that failed on the patch. It stays open at the cap, or when the agent rejects it, and an
     open finding is no ruling on the patch: nothing here says it is right or wrong."""
     reviews = loop.get("reviews") or []
+    if not _observed(loop):
+        return ["## What the reviews reported", "- The agent reports review results; G6 did not run it.",
+                f"- Reported reason: {code(loop.get('reason'))}.",
+                *_cut([[f"- Reported review {code(one.get('n'))}: {code(one.get('rule'))}; "
+                        f"{code(one.get('file'))}; result {code(one.get('verdict'))}.",
+                        *[f"  - {code(test)}: {_assertion({'result': result})}."
+                          for test, result in (one.get("results") or {}).items()]] for one in reviews],
+                      BUDGET["findings"], "loop.reviews")]
     fixed, still = findings(reviews)
     last, count = reviews[-1]["results"] if reviews else {}, len(fixed) + len(still)
     lines = ["## What the reviews found"]

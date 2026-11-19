@@ -45,6 +45,8 @@ def test_py006_the_severity_table_drives_the_verdict(monkeypatch):
     monkeypatch.setitem(SEVERITY, "test_failed", "block")
     assert verify_answer("Fix totals", "Totals fixed.", task_contract=TC, evidence=[FILE, failing]).verdict == "block"
     assert stricter_of("revise", "pass", vocabulary="verify_answer") == "revise"
+    assert stricter_of("pass", "report_consistent", vocabulary="verify_answer") == "report_consistent"
+    assert surface_state("report_consistent") == "qualified-draft"
     assert stricter_of("revise", "nonsense", vocabulary="verify_answer") == "revise"
 
 

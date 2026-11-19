@@ -33,6 +33,11 @@ execution. G6's `coding_agent_gate.verify_answer` is reused, and a hash-chained
 run's decisions, its approver and its baseline's receipt, every entry prefixed
 with the run's id; a second writer is refused as `ledger_conflict`.
 
+Candidate runs on copies have no artifact-bound receipt. Their coding-gate verdict is
+`report_consistent` at best, and the controller keeps the candidate as a qualified draft
+with reason `report_consistent_pending_observation`. This is no claim that the gate
+observed the tests; `pass` requires every test item to have G6's matching receipt.
+
 Important remaining gaps:
 - A concrete LLM/coding-agent adapter must supply proposals; no model is
   installed, implicitly called, or entitled to hidden test data by this module.

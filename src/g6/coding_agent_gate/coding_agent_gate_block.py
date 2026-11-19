@@ -42,7 +42,8 @@ _OPS: dict[str, str] = {
                  "block / needs_review / needs_evidence / proceed_with_caution",
     "verify_answer": "verify_answer(task, answer, task_contract, evidence=[{kind, ref, output, exit_code, reviewer, "
                      "receipt}], verifier={status, exit_code}, claims, risk_tier, author): block / needs_review / "
-                     "revise / pass; a pass is qualified-draft, never verified; over this door a receipt is "
+                     "revise / report_consistent / pass; pass requires every test to have a host-bound G6 receipt; "
+                     "report_consistent is asserted, qualified-draft; over this door a receipt is "
                      "not_honoured_at_door",
 }
 
@@ -82,6 +83,7 @@ class CodingAgentGateInput(BaseModel):
     risk_tier: str = Field("", max_length=40)
     author: str = Field("", max_length=200)
     touched_paths: list[str] | None = Field(None, max_length=1000)
+    repo_root: str | None = Field(None, max_length=4000)
     require_task_contract: bool = True
     request_id: str = Field("", max_length=100)
     run_id: str = Field("", max_length=100)
@@ -134,7 +136,7 @@ class CodingAgentGateBlock(AIBlock[CodingAgentGateInput, dict, dict]):
                                      task_contract=data.task_contract, risk_tier=data.risk_tier, author=data.author,
                                      require_task_contract=data.require_task_contract, touched_paths=data.touched_paths,
                                      protected_paths_policy=self.protected_paths_policy,
-                                     scanned_diff=self.scanned_diff)
+                                     scanned_diff=self.scanned_diff, repo_root=data.repo_root)
         out = decision.to_dict()
         runs = {r["receipt"]: r["run"] for r in receipts if "run" in r}
         out["evidence_counted"] = [{**item, "receipt_run": runs[item["ref"]]}
@@ -173,7 +175,7 @@ def _evidence(data: CodingAgentGateInput, bound: str) -> tuple[list[Evidence], l
                    f"{result.get('verdict')!r} ({result.get('passed')} passed, {result.get('failed')} failed, "
                    f"{result.get('not_passed')} not passed of {result.get('total')})")
         items.append(Evidence("test", e.receipt, summary, 0 if receipt_store.counts_as_pass(body) else 1,
-                              observed_by="g6"))
+                              observed_by="g6", receipt=e.receipt, artifact_digest=bound))
     return items, receipts
 
 

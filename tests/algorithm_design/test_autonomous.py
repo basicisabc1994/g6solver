@@ -109,12 +109,12 @@ def test_autonomous_repair_from_failing_baseline():
     runner = Runner(["failed", "failed", "passed"])
     report = _run_agent(mission, producer, runner)
     assert report.completion_state == "qualified-draft"
-    assert report.reason == "frozen_tests_passed_pending_independent_review"
+    assert report.reason == "report_consistent_pending_observation"
     assert report.attempts == 3  # baseline plus two tested proposals
     assert len(producer.briefs) == 2
     assert "tests/test_logic.py" in producer.briefs[1].last_failed_tests
     assert report.patch.source.endswith("return x + 2\n")
-    assert report.gate_verdict == "pass"
+    assert report.gate_verdict == "report_consistent"
 
 
 def test_agent_cannot_change_tests_or_scope():

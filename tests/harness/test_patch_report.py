@@ -285,7 +285,7 @@ def test_the_docs_that_describe_the_reply_name_the_report():
 
 
 #: An assessment as small as the report reads it: a supported patch on its stated checks.
-MINIMAL = {"outcome": "supported_within_scope", "reasons": [], "requirements": [{"id": "R1"}],
+MINIMAL = {"evidence_status": "observed_by_g6", "outcome": "supported_within_scope", "reasons": [], "requirements": [{"id": "R1"}],
            "scope": {"artifact_digest": "a" * 64, "base_commit": "b" * 40, "search": {}, "checks_run": []},
            "completion": {}}
 
@@ -392,7 +392,7 @@ def test_the_gates_note_counts_only_proposed_and_template_checks():
     assert patch_report._gate_note(assessment) == ""
 
 
-LOOP = {"reason": "no probe failed", "repairs": 1, "max_repairs": 3, "failing": [], "critic": None,
+LOOP = {"evidence_status": "observed_by_g6", "reason": "no probe failed", "repairs": 1, "max_repairs": 3, "failing": [], "critic": None,
         "sets": [{"label": "scout", "hidden": False, "ran": 40, "left_out": "", "refused": []},
                  {"label": "held0", "hidden": True, "ran": 2, "left_out": "", "refused": ["helper.py: not a test file"]},
                  {"label": "held1", "hidden": True, "ran": 0, "left_out": "it exercised nothing", "refused": []}]}
@@ -437,7 +437,7 @@ def review(n: int, verdict: str = "defect", results: dict | None = None, **more)
             "file": f"test_critic_{n}.py", "results": results or {}, **more}
 
 
-CLEAN = {"reason": "a review reproduced nothing", "repairs": 1, "max_repairs": 3, "left": "", "no_clean": False, "boundary": "",
+CLEAN = {"evidence_status": "observed_by_g6", "reason": "a review reproduced nothing", "repairs": 1, "max_repairs": 3, "left": "", "no_clean": False, "boundary": "",
          "reviews": [review(1, results={"test_critic_1.py": "failed"}),
                      review(2, "none", {"test_critic_1.py": "passed"})]}
 

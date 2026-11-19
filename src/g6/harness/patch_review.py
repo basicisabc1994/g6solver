@@ -1705,6 +1705,19 @@ def _one_line(text: object) -> str:
     return "".join(" " if ord(ch) < 32 or ord(ch) == 127 else ch for ch in str(text))
 
 
+def _report_evidence(runs: list[dict], gate: dict, *, g6_observed: bool = False) -> list[dict]:
+    """Attribute G6's own executions at the producer boundary, otherwise require matched gate receipts.
+
+    The internal review knows what it ran, including base runs and unsuccessful attempts that issue no receipt.
+    Caller-supplied records cannot establish observation with their own provenance flag. Gate verdicts continue
+    to require artifact-bound receipts independently of this report-only attribution.
+    """
+    matched = {one["receipt"] for one in gate.get("receipts") or []
+               if one.get("receipt_status") == "matched" and one.get("receipt")}
+    return [{**run, "evidence_status": "observed_by_g6" if g6_observed or run.get("receipt") in matched else "asserted"}
+            for run in runs]
+
+
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
            sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=(), prepared=None,
            adequacy=None, config=None, counts=None, roots=(), stopped=(), proposer=None, first_action="",
@@ -1747,6 +1760,7 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                    "repo_env": ran.get("repo_env"), "env_set_by_g6": ran.get("env_set_by_g6"),
                    "host_python_version": platform.python_version(), "platform": platform.platform()}
     # the envelope's evidence items are as they were before checks carried a provenance (in scope.checks_run)
+    runs = _report_evidence(runs, gate, g6_observed=True)
     evidence = [{"source": "g6.workforce.repo_tests", "summary": f"tier {run['tier']}: {run['command']}: "
                  f"{run['verdict']}"[:200], "authority": "host-observed", "artifact_digest": artifact,
                  "base_commit": change.base_commit,
@@ -1754,6 +1768,8 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                  **{key: value for key, value in run.items() if key != "provenance"}} for run in runs]
     proposals, assumptions = _listed(listed, assumed)
     assessment = {
+        "evidence_status": "observed_by_g6" if runs and all(
+            run["evidence_status"] == "observed_by_g6" for run in runs) else "asserted",
         "outcome": outcome, "summary": summary, "reasons": reasons,
         "requirements": evaluated,
         "requirements_without_adequate_check": [r["id"] for r in evaluated if r["status"] == NOT_ESTABLISHED],
@@ -1770,6 +1786,13 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                                                      artifact=artifact, base_commit=change.base_commit,
                                                      templates=prepared, adequacy=adequacy, stopped=stopped,
                                                      proposals=proposer)}
+    # G6 observed these checks too. Whether they can pass a requirement is the
+    # issuer's separate decision; report attribution does not grant gate evidence.
+    for activity in assessment["completion"].get("activities") or []:
+        if activity.get("activity") in ("proposed check", "template instance"):
+            activity["evidence_status"] = "observed_by_g6"
+    for finding in (assessment["completion"].get("defects_reproduced") or {}).get("proposed_checks") or []:
+        finding["evidence_status"] = "observed_by_g6"
     if issuer_inputs is not None:   # the one authority's statement of each requirement (G6 0.3, slice 2)
         from g6.harness import requirement_evidence
         # the review's own integrity rule: a run it does not believe is no evidence for the issuer either
@@ -1797,7 +1820,8 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                               "answer": {"option": one.option, "text": one.answer.text,
                                          "answered_by": one.answered_by, "answered_at": one.answer.answered_at,
                                          "identity": "recorded as given, not authenticated"},
-                              "check": found} for one, found in zip(standard.expectations, enforced, strict=True)],
+                              "check": {**found, "evidence_status": "observed_by_g6"}}
+                             for one, found in zip(standard.expectations, enforced, strict=True)],
             "evidence": requirement_evidence.confirmed_evidence(
                 standard, enforced, artifact=artifact, base_commit=change.base_commit, environment=confirmed_environment,
                 integrity=[r["code"] for r in reasons if r["stage"] == "integrity"])}

@@ -16,8 +16,9 @@ give), G6:
    a removed or tautological assertion);
 6. makes small deliberate mistakes on the changed lines, within a time budget, and reruns the tests on each
    (``mutation_check``): a mistake the tests still pass is a blind spot;
-7. holds the agent's report to all of that (``coding_agent_gate.verify_answer``, with the runs as G6-observed
-   evidence): "all tests pass" over failing tests, or a claim nothing backs, is flagged.
+7. holds the agent's report to all of that (``coding_agent_gate.verify_answer``): "all tests pass" over failing tests,
+   or a claim nothing backs, is flagged. These in-process run reports carry no artifact-bound receipts, so the gate
+   keeps them asserted and returns ``report_consistent`` at best.
 
 The best label is ``qualified-draft``: the tests are yours or the agent's, not independent of the change (DECISIONS
 #22), and a passing run says the tests passed, not that the task is done. The tests run in your folder inside an
@@ -209,13 +210,14 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
         evidence.append(Evidence("diff", f"git diff {base}", output=diff, observed_by="g6"))
     decision = verify_answer(task, answer, evidence=evidence, task_contract=task, author="the coding agent")
     findings = "; ".join(f.message for f in decision.findings[:_SHOWN])
-    rows.append(_row("The agent's report against what G6 saw", decision.verdict,
+    rows.append(_row("The agent's report against the supplied evidence", decision.verdict,
                      findings or "no rule of the coding-agent gate objected", decision.completion_state))
 
     state = weakest([r["label"] for r in rows])
     failed = [r["check"] for r in rows if r["label"] == "blocked-escalated"]
     summary = ("Needs a person: " + "; ".join(failed) + "." if failed else
-               "No check objected. The tests ran and passed on the change; this is a qualified draft, not proof.")
+               "No check objected. The coding report remains asserted without artifact-bound test receipts; "
+               "this is a qualified draft.")
     return BundleResult(state, summary, rows, notes,
                         code="G6_E_AGENT_CHANGE_FLAGGED" if failed else "G6_E_QUALIFIED_DRAFT")
 
