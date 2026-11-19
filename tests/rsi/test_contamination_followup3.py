@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Synthetic regressions for total decoding, container fragments and path folding."""
+import html
 import json
 import random
-from urllib.parse import quote
+from urllib.parse import quote, quote_plus
 
 import pytest
 
@@ -52,6 +53,94 @@ def test_repair1_identity_accepts_enclosing_serializer(wrap):
     text = "Compute 1+2"
     assert clean_screen(SuiteCase("held", text, "secret"),
                         (SuiteCase("train", wrap(text), "other"),)).identity_excluded == 1
+
+
+IDENTITY_SERIALIZERS = (
+    quote_plus,
+    lambda s: json.dumps(quote_plus(s)),
+    lambda s: repr(quote_plus(s)),
+    lambda s: quote(quote_plus(s)),
+    lambda s: quote_plus(json.dumps(s)),
+    lambda s: quote_plus(repr(s)),
+    lambda s: quote_plus(quote_plus(s)),
+    lambda s: html.escape(quote_plus(repr(s))),
+    lambda s: quote_plus(html.escape(s)),
+    lambda s: json.dumps(html.escape(quote_plus(s))),
+)
+
+
+@pytest.mark.parametrize("serialize", IDENTITY_SERIALIZERS)
+@pytest.mark.parametrize("side", ["training", "held_out"])
+@pytest.mark.parametrize("plain", ["Compute 1+2", "return a+b"])
+def test_repair2_quote_plus_identity(serialize, side, plain):
+    held, train = (plain, serialize(plain)) if side == "training" else (serialize(plain), plain)
+    assert clean_screen(SuiteCase("held", held, "secret"),
+                        (SuiteCase("train", train, "other"),)).identity_excluded == 1
+
+
+@pytest.mark.parametrize("serialize", IDENTITY_SERIALIZERS)
+@pytest.mark.parametrize("side", ["training", "held_out"])
+@pytest.mark.parametrize("plain,other", [("Compute 1+2", "Compute 12"),
+                                         ("return a+b", "return a-b"),
+                                         ("Compute 1+2", "Compute 1 2")])
+def test_repair2_quote_plus_punctuation_controls(serialize, side, plain, other):
+    held, train = (plain, serialize(other)) if side == "training" else (serialize(plain), other)
+    assert clean_screen(SuiteCase("held", held, "secret"),
+                        (SuiteCase("train", train, "other"),)).identity_excluded == 0
+
+
+@pytest.mark.parametrize("held,train", [("Compute+1%oops", "Compute 1%oops"),
+                                       ("Compute 1%2", "Compute+1%2")])
+def test_repair2_identity_requires_plausible_url_output(held, train):
+    assert clean_screen(SuiteCase("held", held, "secret"),
+                        (SuiteCase("train", train, "other"),)).identity_excluded == 0
+
+
+@pytest.mark.parametrize("base", [10, 16])
+@pytest.mark.parametrize("codepoint", [0x7f, 0x80, 0x85, 0x9f])
+@pytest.mark.parametrize("side", ["training", "held_out", "output"])
+def test_repair2_xml_numeric_passages(base, codepoint, side):
+    plain = chr(codepoint).join(f"word{i}" for i in range(13))
+    reference = f"&#{codepoint};" if base == 10 else f"&#x{codepoint:x};"
+    encoded = plain.replace(chr(codepoint), reference)
+    held = SuiteCase("held", "private", encoded if side == "held_out" else plain)
+    training = (() if side == "output" else
+                (SuiteCase("train", "other", encoded if side == "training" else plain),))
+    assert clean_screen(held, training, (encoded,) if side == "output" else ()).ngram_excluded == 1
+
+
+@pytest.mark.parametrize("base", [10, 16])
+@pytest.mark.parametrize("codepoint", [0, 0x7f, *range(0x80, 0xa0), 0xd800, 0x10ffff])
+def test_repair2_xml_numeric_keeps_codepoint(base, codepoint):
+    reference = f"&#{codepoint};" if base == 10 else f"&#x{codepoint:x};"
+    assert gate._entity_text(reference, xml_numeric=True) == chr(codepoint)
+
+
+@pytest.mark.parametrize("reference,expected", [
+    ("&#" + "0" * 4301 + "127;", "\x7f"),
+    ("&#x" + "0" * 4301 + "80;", "\x80"),
+    ("&#" + "9" * 4301 + ";", None),
+    ("&#x" + "f" * 4301 + ";", None),
+    ("&#1114112;", None), ("&#x110000;", None),
+])
+def test_repair2_xml_numeric_conversion_is_bounded(reference, expected):
+    assert gate._entity_text(reference, xml_numeric=True) == (reference if expected is None else expected)
+
+
+@pytest.mark.parametrize("held", ["a\u20acb", "a\x80b"])
+def test_repair2_identity_compares_both_numeric_readings(held):
+    assert clean_screen(SuiteCase("held", held, "secret"),
+                        (SuiteCase("train", "a&#128;b", "other"),)).identity_excluded == 1
+
+
+@pytest.mark.parametrize("short_side", ["left", "right"])
+def test_repair2_impossible_legacy_pair_spends_no_matching_budget(short_side):
+    short = gate._token_graph(["INFO unrelated event 1"])
+    long = gate._token_graph(["INFO " * 13])
+    left, right = (short, long) if short_side == "left" else (long, short)
+    state = gate._Comparison(match_steps=gate._MAX_MATCH_STEPS - 1)
+    assert not gate._shared_13(left, right, state)
+    assert state.match_steps == gate._MAX_MATCH_STEPS - 1 and not state.limited
 
 
 def test_repair1_graph_has_linear_storage():

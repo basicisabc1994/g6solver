@@ -6,12 +6,16 @@ evaluator capability. These screens and canaries are DETECTORS, covering copies
 under NFKC/casefold/escape fixed points with default-ignorables removed or spaced,
 plus a whitespace-free view for canaries. Whole-input identity preserves
 punctuation and normalized whitespace, removing only enclosing serializer pairs.
+Identity compares literal plus signs and one plausible quote_plus reading;
+percent-encoded plus signs remain punctuation in that URL reading.
 The serialiser scope
 is JSON (json.dumps with either ensure_ascii setting), Python literals (repr,
 ascii and str of containers), URL percent-encoding (urllib.parse.quote and
 quote_plus), and HTML/XML entities (html.escape, numeric and named character
 references), including compositions of these families. Base64, compression,
 ciphers and custom encodings are outside this scope as deliberate encoding.
+Numeric references retain both HTML replacement and XML code-point readings
+inside the fixed point, before the shared Unicode and token projections.
 Adjacent fragments carry both empty and space boundaries in a token graph;
 matching tracks at most 13 tokens, without enumerating whole-case alternatives
 (linear in fields, so ordinary cases with many meta fields are screened, not refused).
@@ -38,6 +42,8 @@ candidate positions, view construction and legacy graph work share a budget of
 4194304 + 512 * N steps per comparison state, where N is raw input characters
 across the sources being compared (counting each field once, including keys).
 Repeated candidates are compared once; disjoint token vocabularies skip matching.
+Legacy pairs with fewer than 13 atoms on either side skip matching before charging
+work, since they cannot reach the 13-token threshold.
 Reaching the budget retains available marker incidents, then
 refuses the incomplete screen. New view construction is linear in fields and
 characters with two whole-case joins; serialized structure is never read.
@@ -274,7 +280,7 @@ def _percent_text(text: str, *, preserve_plus=False) -> str:
     return _decode_sub(_PERCENT_RUN, decode, text if preserve_plus else text.replace("+", " "))
 
 
-def _entity_text(text):
+def _entity_text(text, *, xml_numeric=False, numeric_differences=None):
     def decode(token):
         if token.startswith("&#"):
             hexadecimal = token[2:3] in ("x", "X")
@@ -282,7 +288,14 @@ def _entity_text(text):
             maximum = "10ffff" if hexadecimal else "1114111"
             if len(digits) > len(maximum) or (len(digits) == len(maximum) and digits.lower() > maximum):
                 return token
+            if xml_numeric:
+                return chr(int(digits, 16 if hexadecimal else 10))
             token = "&#" + ("x" if hexadecimal else "") + digits + ";"
+            decoded = html.unescape(token)
+            if (numeric_differences is not None and not numeric_differences
+                    and decoded != chr(int(digits, 16 if hexadecimal else 10))):
+                numeric_differences.append(True)
+            return decoded
         return html.unescape(token)
     return _decode_sub(_ENTITY, decode, text)
 
@@ -306,18 +319,28 @@ def _view_bound(text, previous):
     return text
 
 
-def _canonical(text: str, replacement: str, *, compact=False, serialization=None, preserve_plus=False) -> str:
+def _canonical(text: str, replacement: str, *, compact=False, serialization=None, preserve_plus=False,
+               xml_numeric=False, url_identity=False, numeric_differences=None) -> str:
+    plus_read = False
     for _ in range(_MAX_DECODE_PASSES):
         if serialization is not None:
             try:
-                _charge(serialization, 6 * len(text))
+                _charge(serialization, (9 if url_identity else 6) * len(text))
             except _ScanLimit:
                 raise _ScanLimit(text) from None
         normalized = _view_bound(unicodedata.normalize("NFKC", text), text)
         decoded = _decode_region(lambda s: _literal_text(s)[0], normalized)
         decoded = _view_bound(decoded, normalized)
+        if url_identity:
+            # Expose enclosing entity-escaped quotes before judging URL output.
+            decoded = _view_bound(_entity_text(decoded, xml_numeric=xml_numeric), decoded)
+            if (not plus_read and "+" in decoded
+                    and re.fullmatch(r"(?:[A-Za-z0-9_.~+\-]|%[0-9a-fA-F]{2})*", _strip_enclosing(decoded))):
+                decoded = decoded.replace("+", " ")
+                plus_read = True
         decoded = _view_bound(_percent_text(decoded, preserve_plus=preserve_plus), decoded)
-        decoded = _view_bound(_entity_text(decoded), decoded)
+        decoded = _view_bound(_entity_text(decoded, xml_numeric=xml_numeric,
+                                          numeric_differences=numeric_differences), decoded)
         result = _view_bound(("" if compact else " ").join(_IGNORABLE.sub(replacement, decoded).split()), decoded)
         # Finish decoding and boundary changes before folding case-sensitive escapes.
         if result == text:
@@ -328,17 +351,21 @@ def _canonical(text: str, replacement: str, *, compact=False, serialization=None
     raise _ScanLimit(text)
 
 
-def canonical_views(text: str, *, serialization=None) -> tuple[str, str, str]:
+def canonical_views(text: str, *, serialization=None, xml_numeric=False,
+                    numeric_differences=None) -> tuple[str, str, str]:
     """Legacy fixed views, with content-free refusal when decoding cannot finish."""
     if len(text) > _MAX_RAW_CHARS:
         raise _ScanLimit(text[:_MAX_RAW_CHARS])
     available = []
     try:
-        removed = _canonical(text, "", serialization=serialization)
+        removed = _canonical(text, "", serialization=serialization, xml_numeric=xml_numeric,
+                             numeric_differences=numeric_differences)
         available.append(removed)
-        spaced = _canonical(text, " ", serialization=serialization)
+        spaced = _canonical(text, " ", serialization=serialization, xml_numeric=xml_numeric,
+                            numeric_differences=numeric_differences)
         available.append(spaced)
-        compact = _canonical(removed, "", compact=True, serialization=serialization)
+        compact = _canonical(removed, "", compact=True, serialization=serialization, xml_numeric=xml_numeric,
+                             numeric_differences=numeric_differences)
     except _ScanLimit as error:
         raise _ScanLimit(*available, *error.available) from None
     except (MemoryError, OverflowError, RecursionError):
@@ -353,7 +380,20 @@ def _letters_numbers(text, *, words=False):
 
 def comparison_views(text: str, *, serialization=None) -> tuple[str, ...]:
     """Apply the same structure-free projections to either comparison side."""
-    removed, spaced, compact = canonical_views(text, serialization=serialization)
+    numeric_differences = []
+    html_views = canonical_views(text, serialization=serialization, numeric_differences=numeric_differences)
+    try:
+        # Identical decoder results need no second fixed point or extra allowance.
+        xml_views = (canonical_views(text, serialization=serialization, xml_numeric=True)
+                     if numeric_differences else html_views)
+    except _ScanLimit as error:
+        raise _ScanLimit(*html_views, *error.available) from None
+    modes = (html_views,) if html_views == xml_views else (html_views, xml_views)
+    return tuple(view for mode in modes for view in _projections(mode, serialization))
+
+
+def _projections(views, serialization):
+    removed, spaced, compact = views
     if serialization is not None:
         try:
             _charge(serialization, len(removed) + len(spaced) + len(compact))
@@ -419,22 +459,29 @@ def _fragment_texts(fragments, *, serialization=None):
         yield from _views(separator.join(fragments), state)
 
 
-def _input_views(text, state):
+def _strip_enclosing(view):
     # Remove only enclosing serializer delimiters; interior punctuation is identity.
+    left, right = 0, len(view)
+    pairs = {"[": "]", "{": "}", "(": ")", '"': '"', "'": "'"}
+    while left < right and pairs.get(view[left]) == view[right - 1]:
+        opener = view[left]
+        left, right = left + 1, right - 1
+        if opener == "(" and left < right and view[right - 1] == ",":
+            right -= 1
+        while left < right and view[left].isspace():
+            left += 1
+        while left < right and view[right - 1].isspace():
+            right -= 1
+    return view[left:right]
+
+
+def _input_views(text, state):
     for replacement in ("", " "):
-        view = _canonical(text, replacement, serialization=state, preserve_plus=True)
-        left, right = 0, len(view)
-        pairs = {"[": "]", "{": "}", "(": ")", '"': '"', "'": "'"}
-        while left < right and pairs.get(view[left]) == view[right - 1]:
-            opener = view[left]
-            left, right = left + 1, right - 1
-            if opener == "(" and left < right and view[right - 1] == ",":
-                right -= 1
-            while left < right and view[left].isspace():
-                left += 1
-            while left < right and view[right - 1].isspace():
-                right -= 1
-        yield view[left:right]
+        for xml_numeric in (False, True):
+            for url_identity in (False, True):
+                view = _canonical(text, replacement, serialization=state, preserve_plus=True,
+                                  xml_numeric=xml_numeric, url_identity=url_identity)
+                yield _strip_enclosing(view)
 
 
 def scan_texts(training, model_outputs=(), *, strict=True, serialization=None) -> tuple[str, ...]:
@@ -580,22 +627,32 @@ def _passage_tokens(text, *, punctuation_atoms=False):
     return tuple(tokens)
 
 
-def _passage_sequences(case, state):
-    seen = set()
+def _field_projections(case, state):
+    """Project fields and two joins under HTML and XML numeric readings."""
     for keys in (True, False):
         fields = tuple(_strings(case, keys=keys))
-        for view in (0, 1, 3, 4):
-            fragments = tuple(_views(s, state)[view] for s in fields)
+        views = tuple(_views(s, state) for s in fields)
+        joined = tuple(_views(separator.join(fields), state) for separator in ("", " "))
+        indices = (0, 1, 3, 4)
+        if any(len(v) > 6 for v in (*views, *joined)):
+            indices += (6, 7, 9, 10)
+        for index in indices:
             _charge(state, sum(map(len, fields)) * 2 + len(fields))
-            joins = tuple(_views(separator.join(fields), state)[view] for separator in ("", " "))
-            for tokenize in (_passage_tokens, lambda s: _passage_tokens(s, punctuation_atoms=True)):
-                _charge(state, sum(map(len, fragments)) + sum(map(len, joins)))
-                sequences = (tuple(t for s in fragments for t in tokenize(s)),
-                             *(tokenize(joined) for joined in joins))
-                for tokens in sequences:
-                    if len(tokens) >= 13 and tokens not in seen:
-                        seen.add(tokens)
-                        yield tokens
+            yield (tuple(v[index if index < len(v) else index % 6] for v in views),
+                   tuple(v[index if index < len(v) else index % 6] for v in joined))
+
+
+def _passage_sequences(case, state):
+    seen = set()
+    for fragments, joins in _field_projections(case, state):
+        for tokenize in (_passage_tokens, lambda s: _passage_tokens(s, punctuation_atoms=True)):
+            _charge(state, sum(map(len, fragments)) + sum(map(len, joins)))
+            sequences = (tuple(t for s in fragments for t in tokenize(s)),
+                         *(tokenize(joined) for joined in joins))
+            for tokens in sequences:
+                if len(tokens) >= 13 and tokens not in seen:
+                    seen.add(tokens)
+                    yield tokens
 
 
 def _passage_index(tokens, state):
@@ -649,24 +706,19 @@ def _token_graph(fragments, serialization=None):
 def _graphs(case, serialization=None):
     state = serialization if serialization is not None else _Comparison()
     seen = set()
-    for keys in (True, False):
-        fields = tuple(_strings(case, keys=keys))
-        for view in (0, 1, 3, 4):
-            fragments = tuple(_views(s, state)[view] for s in fields)
-            _charge(state, sum(map(len, fields)) * 2 + len(fields))
-            candidates = [fragments]
-            for separator in ("", " "):
-                candidates.append((_views(separator.join(fields), state)[view],))
-            for fragments in candidates:
-                graph = _token_graph(fragments, state)
-                _charge(state, sum(map(len, graph.atoms)))
-                if graph not in seen:
-                    seen.add(graph)
-                    yield graph
+    for fragments, joins in _field_projections(case, state):
+        for candidate in (fragments, *((joined,) for joined in joins)):
+            graph = _token_graph(candidate, state)
+            _charge(state, sum(map(len, graph.atoms)))
+            if graph not in seen:
+                seen.add(graph)
+                yield graph
 
 
 def _shared_13(left, right, serialization=None):
     """Match optional boundaries by character offsets within the shared work budget."""
+    if len(left.atoms) < 13 or len(right.atoms) < 13:
+        return False
     state = serialization if serialization is not None else _Comparison()
     _charge(state, sum(map(len, left.atoms)) + sum(map(len, right.atoms)))
     if not left.joins and not right.joins:

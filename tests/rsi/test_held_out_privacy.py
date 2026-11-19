@@ -95,6 +95,52 @@ def test_repair1_ordinary_megabyte_log_stays_open(stores):
     assert store.status(item.slice_id) == "open"
 
 
+def test_repair2_500_short_training_cases_stay_open(stores):
+    store, db = stores()
+    item = cut(store)
+    training = tuple(SuiteCase("train" + str(i), "INFO unrelated event " + str(i),
+                               "INFO completed request " + str(i)) for i in range(500))
+    result = store.screen(item.slice_id, training, membership=probes(store, item))
+    assert not result.serialization_limited and not result.voided and result.excluded_count == 0
+    assert store.status(item.slice_id) == "open"
+    assert not any(json.loads(row[0])["kind"] == "screen_limit"
+                   for row in db.execute("SELECT record FROM events"))
+
+
+@pytest.mark.parametrize("base", [10, 16])
+@pytest.mark.parametrize("codepoint", [0x7f, 0x80, 0x85, 0x9f])
+@pytest.mark.parametrize("boundary", ["training", "held_out", "output", "evaluate"])
+@pytest.mark.parametrize("compose", [False, True])
+def test_repair2_xml_numeric_store_boundaries(stores, base, codepoint, boundary, compose):
+    store, db = stores()
+    data = store._data(None)
+    plain = chr(codepoint).join(f"word{i}" for i in range(13))
+    reference = f"&#{codepoint};" if base == 10 else f"&#x{codepoint:x};"
+    encoded = plain.replace(chr(codepoint), reference)
+    if compose:
+        encoded = json.dumps(quote(html.escape(encoded)))
+    index = data["partitions"][0][0]
+    task = TaskSpec.from_record(data["tasks"][index])
+    data["tasks"][index] = replace(task, prompt=encoded if boundary == "held_out" else plain,
+                                   provenance=None).to_record()
+    item = cut(store)
+    if boundary == "evaluate":
+        store.screen(item.slice_id, (), membership=probes(store, item))
+        result = store.evaluate_pass(item.slice_id, task.task_id, encoded, arm="G0", attempt="xml",
+                                     anchor_pass=True, detectors={"clean": lambda t, o: False})
+        assert not result.passed and result.reason == "contamination"
+        assert not any(json.loads(row[0])["kind"] == "detector_census"
+                       for row in db.execute("SELECT record FROM events"))
+    else:
+        training = (() if boundary == "output" else
+                    (SuiteCase("train", "other", encoded if boundary == "training" else plain),))
+        result = store.screen(item.slice_id, training, membership=probes(store, item),
+                              model_outputs=(encoded,) if boundary == "output" else ())
+        assert result.ngram_excluded == 1
+    excluded = json.loads(db.execute("SELECT excluded FROM slices WHERE id=?", (item.slice_id,)).fetchone()[0])
+    assert excluded and store.status(item.slice_id) == "open"
+
+
 @pytest.mark.parametrize("copy_other", [False, True])
 def test_repair1_evaluation_screens_its_output(stores, copy_other):
     store, db = stores()
