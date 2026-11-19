@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Literal
 
-from g6.distill import surface
+from g6.distill import recovery_approvals, surface
 
 DECIDE_FORM = {"type": "object", "properties": {
     "confirm": {"type": "string", "enum": ["change", "keep"]},
@@ -24,6 +24,10 @@ def _call(fn, *args) -> dict:
             return blocked_reply(f'[{code}] Backend refused the operation; no authority was granted.')
         return blocked_reply("[G6_E_DISTILL_INPUT] Invalid input, missing entry or unreadable distillation record. "
                              "No authority was granted.")
+
+
+# Only this adapter's accepted dialogs register a recovery approval; the gate consumes it in g6.distill.
+_consume_recovery_approval = recovery_approvals.consume
 
 
 def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None:
@@ -80,6 +84,43 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
                     'decision': asdict(result)}
         return asdict(result)
 
+    async def g6_library_recover(interval_id: str, close_id: str, seconds_to_charge: float, ctx: Any) -> dict:
+        """Ask the client to approve an exact cross-boot cost floor, voiding the interval without authority.
+        The name is recorded as supplied. Same-user shell access is outside this boundary."""
+        from g6.core.door import blocked_reply
+        from g6.core.ledger import canonical, digest
+        from g6.distill import acceptance_gate as gate
+        from g6.mcp.consent import elicit, question
+
+        if not interval_id or not all(c in "0123456789abcdef" for c in interval_id):
+            return blocked_reply("[G6_E_DISTILL_INPUT] Invalid interval id.")
+        try:
+            journal = gate._interval_journal(interval_id)
+            binding = gate._recovery_binding(journal, close_id or next(r["id"] for r in journal.entries()
+                if r["kind"] in {"replacement_attempt_start", "registration_open_failed"}),
+                seconds_to_charge=seconds_to_charge)
+            if binding["interval_id"] != interval_id:
+                raise ValueError("interval changed")
+            message = question("Approve this exact recovery charge and void the incomplete interval?", binding,
+                close="This grants no method authority. Select change and enter your name to approve, or keep to decline.")
+        except (ValueError, KeyError, StopIteration, OSError):
+            return blocked_reply("[G6_E_DISTILL_RECOVERY_INPUT] Recovery binding is unavailable.")
+        state, content, _ = await elicit(ctx, message, DECIDE_FORM)
+        if state != "accept" or not isinstance(content, dict) or content.get("confirm") != "change" \
+                or not isinstance(content.get("name"), str) or not content["name"].strip():
+            return blocked_reply("[G6_E_DISTILL_RECOVERY_DIALOG] No recovery was authorized in the client's dialog.")
+        authority = gate.get_approval_authority()
+        record = authority.issue(reviewer_id=content["name"].strip(), scope="distill:reconfirm:" + digest(binding),
+            run_id=interval_id, single_use=True, ttl_seconds=60., disclosure=message,
+            acknowledgement=canonical({"action": state, "content": content}))
+        recovery_approvals.register(record, authority)
+        try:
+            return _call(lambda: gate._recover_interval(journal, close_id or next(r["id"] for r in journal.entries()
+                if r["kind"] in {"replacement_attempt_start", "registration_open_failed"}),
+                owner_grant=record.approval_id, seconds_to_charge=seconds_to_charge))
+        finally:
+            recovery_approvals.forget(record.approval_id)
+
     def g6_self_model(section: str = "", detail: str = "compact") -> dict:
         """Read G6's self-model; missing or stale measured observations remain unknown."""
         return _call(backend.self_model, section, detail)
@@ -117,7 +158,7 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
         """Read the research digest without publishing it or changing authority."""
         return _call(backend.research_digest, folder)
 
-    for fn in (g6_failure_record, g6_distill_start, g6_distill_job, g6_library, g6_library_decide,
+    for fn in (g6_failure_record, g6_distill_start, g6_distill_job, g6_library, g6_library_decide, g6_library_recover,
                g6_self_model, g6_simulate, g6_extend, g6_research_start, g6_research_stop,
                g6_research_status, g6_research_digest):
         if "ctx" in fn.__annotations__:

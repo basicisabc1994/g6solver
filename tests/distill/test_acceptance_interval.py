@@ -6,6 +6,7 @@ import pytest
 
 from g6.distill import acceptance_gate as g
 from . import test_acceptance_repair as repair
+from .test_acceptance_confirmation import live_confirmation
 
 
 @pytest.fixture
@@ -168,7 +169,7 @@ def test_reader_requires_final_close_and_accepts_exact_zero(sample, monkeypatch)
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
     registration = frozen.registration_sha256
     opening = {"registration": registration, "interval_version": 1, "phase": "assessment",
-               "monotonic_start": 0., "wall_start": 0.}
+               "boot_id": g._boot_identity(), "monotonic_start": 0., "wall_start": 0.}
     attempt = g._append(g._journal(), "replacement_attempt_start", opening)
     entry = SimpleNamespace(entry_id="e"*64, candidate_id=candidate.candidate_id,
         noninferiority="f"*64, teacher="c"*64, replacement_scope=[])
@@ -184,7 +185,7 @@ def test_reader_requires_final_close_and_accepts_exact_zero(sample, monkeypatch)
         "validation_s": 20., "monotonic_end": 20., "wall_end": 20.,
         "candidate_ids": [candidate.candidate_id], "activation_receipts": [receipt]})
     assert not g._replacement_authorized(entry)
-    g._confirm_interval(g._journal(), close)
+    live_confirmation(monkeypatch, g._journal(), close)
     assert g._replacement_authorized(entry)
     next_attempt = g._append(g._journal(), "replacement_attempt_start", opening | {"monotonic_start": 20.})
     assert not g._replacement_authorized(entry)
@@ -208,15 +209,17 @@ def test_interval_rows_bracket_writer_and_lease_release(sample, monkeypatch):
     monkeypatch.setattr(g, "_writer", writer)
     assert g.decide_replacement(candidate, g.Library(), frozen.registration_sha256).verdict == "admit_probation"
     rows = g._journal().entries()
-    assert rows[-1]["kind"] == "authority_confirmed"
-    assert rows[-1]["body"]["validation_s"] == 0.
-    assert g._validation_total(frozen.registration_sha256, None) == 10.
-    assert {d["latency_s"] for d in rows[-1]["body"]["bookkeeping"]} >= {2., 3.}
+    assert rows[-1]["kind"] == "confirmation_observed"
+    confirmed = next(row for row in rows if row["kind"] == "authority_confirmed")
+    assert confirmed["body"]["validation_s"] == 5.
+    assert g._validation_total(frozen.registration_sha256, None) == 15.
+    assert {d["latency_s"] for d in confirmed["body"]["bookkeeping"]} >= {2., 3.}
 
 
 @pytest.mark.parametrize("bound", [True, False])
 def test_failed_close_requires_bound_cost_recovery(sample, monkeypatch, bound):
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
+    monkeypatch.setattr(g.time, "time", lambda: clock[0])
     append = g._append
     def interrupted(journal, kind, body):
         result = append(journal, kind, body)
@@ -233,11 +236,11 @@ def test_failed_close_requires_bound_cost_recovery(sample, monkeypatch, bound):
     close = append(g._journal(), "registration_closed", closed["body"] | {"recovery_of": failed["id"] if bound else "f"*64,
         "validation_s": 7., "monotonic_end": 7., "activation_receipts": []})
     if bound:
-        g._confirm_interval(g._journal(), close)
+        g._recover_interval(g._journal(), close)
         assert g._validation_total(frozen.registration_sha256, None) == 17.
     else:
         with pytest.raises(ValueError, match="cost recovery"):
-            g._validation_total(frozen.registration_sha256, None)
+            g._recover_interval(g._journal(), close)
 
 
 _REAL_WRITER = g._writer

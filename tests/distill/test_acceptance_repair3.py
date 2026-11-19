@@ -170,6 +170,7 @@ def test_post_commit_cost_refuses_before_activation(sample, monkeypatch, delay):
 
 def test_failed_seal_append_requires_recovery_even_after_row_was_written(sample, monkeypatch):
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
+    monkeypatch.setattr(g.time, "time", lambda: clock[0])
     append = g._append
     def interrupted(journal, kind, body):
         result = append(journal, kind, body)
@@ -191,7 +192,7 @@ def test_failed_seal_append_requires_recovery_even_after_row_was_written(sample,
     recovery = failed["body"] | {"recovery_of": failed["id"], "candidate_ids": [], "activation_receipts": []}
     monkeypatch.setattr(g, "_append", append)
     close = g._append(journal, "registration_closed", recovery)
-    g._confirm_interval(journal, close)
+    g._recover_interval(journal, close)
     assert g._validation_total(frozen.registration_sha256, None) == 20010.
 
 
@@ -264,7 +265,7 @@ def test_activation_flip_overrun_stays_pending_for_readers(sample, monkeypatch):
         g._validation_total(frozen.registration_sha256, None)
     rows = g._journal().entries()
     closes = [row["body"] for row in rows if row["kind"] == "registration_closed"]
-    assert [body["validation_s"] for body in closes] == [0., 0.]
+    assert [body["validation_s"] for body in closes] == [1., 20000.]
     assert any(d["latency_s"] == 20000. for row in rows for d in row["body"].get("bookkeeping", []))
     assert closes[0]["activation_receipts"] and not closes[1]["activation_receipts"]
     receipts = [row["body"] for row in rows if row["kind"] == "replacement_state"]
@@ -342,7 +343,7 @@ def test_closed_total_reserves_activation_tail_for_the_next_attempt(sample, monk
     monkeypatch.setattr(g, "_append", delayed)
     answer = g.decide_replacement(candidate, Library(), frozen.registration_sha256)
     assert answer.verdict == "admit_probation", answer.reasons
-    assert g._validation_total(frozen.registration_sha256, None) == 10.
+    assert g._validation_total(frozen.registration_sha256, None) == 12.
     assert any(d["latency_s"] == 2. for row in g._journal().entries()
                for d in row["body"].get("bookkeeping", []))
 

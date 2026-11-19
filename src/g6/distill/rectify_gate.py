@@ -14,6 +14,7 @@ from pathlib import PurePosixPath
 from g6.core.ledger import LedgerError
 from .intake import class_key, earlier
 from .ledger import Stores
+from .library import Library
 from .records import CapabilityExtension, FailureMode, FailureRecord, LibraryEntry, Rectification
 
 
@@ -50,6 +51,10 @@ class Rectifier:
             if ((require_current and entry != latest) or entry.family != "g6_self"
                     or entry.status != "admitted" or entry.authority != "A2"):
                 raise LedgerError("pinning library check must be a current admitted g6_self method")
+            if require_current and entry.replacement == "R":
+                if (not getattr(Library, "replacement_state_checked", False)
+                        or not any(current == entry for current in Library().list())):
+                    raise LedgerError("pinning replacement authority unavailable")
         else:
             path = PurePosixPath(ref.split("::", 1)[0])
             if ("\\" in ref or path.is_absolute() or ".." in path.parts or not path.parts

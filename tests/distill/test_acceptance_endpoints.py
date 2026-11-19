@@ -71,7 +71,7 @@ def test_failed_opening_row_cannot_lose_its_recorded_cost(sample, monkeypatch):
     _, frozen, _ = repair.meter_rig(sample, monkeypatch)
     journal = g._journal()
     opening = {"registration": frozen.registration_sha256, "interval_version": 1,
-        "phase": "assessment", "monotonic_start": 0., "wall_start": 0.,
+        "phase": "assessment", "boot_id": g._boot_identity(), "monotonic_start": 0., "wall_start": 0.,
         "validation_s": 20000., "monotonic_end": 20000.}
     attempt = g._append(journal, "registration_open_failed", opening)
     g._append(journal, "registration_closed", opening | {"attempt": attempt,
@@ -134,7 +134,7 @@ def test_recovery_write_overrun_leaves_interval_incomplete(sample, monkeypatch, 
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
     journal = g._journal()
     opening = {"registration": frozen.registration_sha256, "interval_version": 1,
-        "phase": "assessment", "monotonic_start": 0., "wall_start": 0.}
+        "phase": "assessment", "boot_id": g._boot_identity(), "monotonic_start": 0., "wall_start": 0.}
     attempt = g._append(journal, "replacement_attempt_start", opening)
     entry, receipt = active_receipt(journal, candidate, frozen.registration_sha256, attempt)
     failure = g._append(journal, "registration_close_failed", opening | {
@@ -165,7 +165,7 @@ def test_recovery_cannot_reduce_recorded_cost_or_end(sample, monkeypatch, elapse
     candidate, frozen, _ = repair.meter_rig(sample, monkeypatch)
     journal = g._journal()
     opening = {"registration": frozen.registration_sha256, "interval_version": 1,
-               "phase": "assessment", "monotonic_start": 0., "wall_start": 0.}
+               "phase": "assessment", "boot_id": g._boot_identity(), "monotonic_start": 0., "wall_start": 0.}
     attempt = g._append(journal, "replacement_attempt_start", opening)
     entry, receipt = active_receipt(journal, candidate, frozen.registration_sha256, attempt)
     failure = g._append(journal, "registration_close_failed", opening | {
@@ -185,7 +185,7 @@ def test_cross_chain_endpoint_never_closes_opening(sample, monkeypatch, tmp_path
     monkeypatch.setattr(g, "_interval_journal", lambda ident=None:
         g.ChainLedger(tmp_path / (ident + ".jsonl")) if ident else tmp_path)
     opening = {"registration": frozen.registration_sha256, "interval_version": 1,
-               "phase": "assessment", "monotonic_start": 0., "wall_start": 0.}
+               "phase": "assessment", "boot_id": g._boot_identity(), "monotonic_start": 0., "wall_start": 0.}
     a, b = g._interval_journal("a"), g._interval_journal("b")
     attempt = g._append(a, "replacement_attempt_start", opening)
     other = g._append(b, "replacement_attempt_start", opening | {"wall_start": 1.})
@@ -218,7 +218,7 @@ def test_chain_ownership_with_interleaved_rows(sample, monkeypatch, kind):
         return ident
 
     opening = {"registration": frozen.registration_sha256, "interval_version": 1,
-               "phase": "assessment", "monotonic_start": 0., "wall_start": 0.}
+               "phase": "assessment", "boot_id": g._boot_identity(), "monotonic_start": 0., "wall_start": 0.}
     first = write(a, "replacement_attempt_start", opening)
     second = write(b, "replacement_attempt_start", opening | {"wall_start": 1.})
     body = opening | {"attempt": first, "validation_s": 0., "monotonic_end": 0.,

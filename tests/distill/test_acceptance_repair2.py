@@ -321,7 +321,7 @@ def test_activation_follows_completed_outer_meter_and_final_cost(sample, monkeyp
             closed.append(result)
             assert body["activation_receipts"] == activated
             assert clock[0] == 1.75
-            assert body["validation_s"] == .5
+            assert body["validation_s"] == 1.75
             assert not g._replacement_authorized(entry)
         return result
     monkeypatch.setattr(g, "_append", activate)
@@ -333,7 +333,7 @@ def test_activation_follows_completed_outer_meter_and_final_cost(sample, monkeyp
     assert g._replacement_authorized(entry)
     assert g._active([entry]) == [entry]
     total = g._validation_total(frozen.registration_sha256, None)
-    assert total == 10.5
+    assert total == 11.75
     assert any(d["latency_s"] == .75 for row in g._journal().entries()
                for d in row["body"].get("bookkeeping", []))
     receipt = next(row["body"] for row in g._journal().entries() if row["id"] == activated[0])

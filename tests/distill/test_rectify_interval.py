@@ -37,3 +37,13 @@ def test_lowering_from_a2_clears_all_replacement_fields(monkeypatch, authority):
     assert stored == [changed]
     assert changed.replacement == "none"
     assert changed.replacement_scope is changed.teacher is changed.noninferiority is None
+
+
+def test_pinning_requires_current_replacement_authority(monkeypatch):
+    entry = replacement_entry()
+    store = SimpleNamespace(list=lambda: [entry], get=lambda ident: entry)
+    rectifier = Rectifier(SimpleNamespace(for_model=lambda cls: store))
+    rect = SimpleNamespace(pinning=SimpleNamespace(test_ref="library:" + entry.entry_id), removal="class removed")
+    monkeypatch.setattr(g, "_replacement_authorized", lambda entry: False)
+    with pytest.raises(ValueError, match="authority"):
+        rectifier._pinning(rect)

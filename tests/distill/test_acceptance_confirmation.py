@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from g6.core.approval_authority import ApprovalAuthority
 from g6.distill import acceptance_gate as g
 from . import test_acceptance_repair as repair
 from .test_acceptance_endpoints import active_receipt
@@ -22,10 +23,53 @@ def entry_from_state(candidate):
         replacement_scope=[], replacement="R", authority="A1", status="probation")
 
 
+def owner_grant(monkeypatch, journal, close, *, charge=None, **kwargs):
+    authority = ApprovalAuthority()
+    monkeypatch.setattr(g, "get_approval_authority", lambda: authority)
+    scope = g.reconfirmation_scope(journal, close, owner_validation_s=charge)
+    record = authority.issue(reviewer_id="Fixture owner", scope=scope, **kwargs)
+    return record.approval_id
+
+
+def owner_recovery(monkeypatch, journal, close, seconds):
+    """Exercise the real adapter with a synthetic client dialog."""
+    import asyncio
+    from g6.mcp import distill
+    class Server:
+        def tool(self):
+            def add(fn):
+                if fn.__name__ == "g6_library_recover":
+                    self.recover = fn
+                return fn
+            return add
+    class Session:
+        async def elicit_form(self, **kwargs):
+            return SimpleNamespace(action="accept", content={"confirm": "change", "name": "Fixture owner"})
+    authority = ApprovalAuthority()
+    monkeypatch.setattr(g, "get_approval_authority", lambda: authority)
+    with monkeypatch.context() as scoped:
+        scoped.setattr(g, "_interval_journal", lambda ident=None: journal)
+        server = Server()
+        distill.register(server, object, object(), backend=object())
+        binding = g._recovery_binding(journal, close, seconds_to_charge=seconds)
+        return asyncio.run(server.recover(binding["interval_id"], close, seconds,
+            SimpleNamespace(session=Session(), request_id="fixture-recovery")))
+
+
+def live_confirmation(monkeypatch, journal, close):
+    """Represent a close returned to its still-running gate caller."""
+    row = next(r for r in journal.entries() if r["id"] == close)
+    meter = {"deadline": 5., "depth": 0, "overhead_s": 0., "bad": False, "diagnostics": [],
+             "live_close": (g._journal_identity(journal, row["body"]["attempt"]), close)}
+    with monkeypatch.context() as scoped:
+        scoped.setattr(g._BOOKKEEPING, "meter", meter, raising=False)
+        return g._confirm_interval(journal, close)
+
+
 @pytest.mark.parametrize("stage", ["setup", "acquisition", "replacement_attempt", "registration_closed",
                                   "writer", "release", "post_read", "active_receipt", "deadline"])
 @pytest.mark.parametrize("delay", [2., 20000.])
-def test_bookkeeping_is_diagnostic_and_deadline_bounded(sample, monkeypatch, stage, delay):
+def test_bookkeeping_is_charged_and_deadline_bounded(sample, monkeypatch, stage, delay):
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
     journal = g._interval_journal
     append = g._append
@@ -81,7 +125,7 @@ def test_bookkeeping_is_diagnostic_and_deadline_bounded(sample, monkeypatch, sta
         assert released[0]
     if delay == 2.:
         assert answer.verdict == "admit_probation", answer.reasons
-        assert g._validation_total(frozen.registration_sha256, None) == 10.
+        assert g._validation_total(frozen.registration_sha256, None) == 12.
     else:
         assert answer.verdict == "block", answer.reasons
         with pytest.raises(ValueError, match="cost recovery"):
@@ -148,6 +192,7 @@ def test_setup_error_requires_recovery_before_retry(sample, monkeypatch):
 
 def test_unrecorded_setup_failure_withholds_existing_authority_and_retry(sample, monkeypatch):
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
+    monkeypatch.setattr(g.time, "time", lambda: clock[0])
     monkeypatch.setattr(g, "_persist", lambda c, answer, *a, **kw: replace(answer, entry_id="e" * 64))
     assert g.decide_replacement(candidate, g.Library(), frozen.registration_sha256).verdict == "admit_probation"
     entry = entry_from_state(candidate)
@@ -167,7 +212,7 @@ def test_unrecorded_setup_failure_withholds_existing_authority_and_retry(sample,
     close = g._append(journal, "registration_closed", opening | {"attempt": attempt,
         "recovery_of": attempt, "validation_s": 40000., "monotonic_end": 40000.,
         "candidate_ids": [], "activation_receipts": []})
-    g._confirm_interval(journal, close)
+    g._recover_interval(journal, close)
     assert g._validation_total(frozen.registration_sha256, None) == 40020.
 
 
@@ -179,28 +224,31 @@ def test_unavailable_registered_deadline_blocks(sample, monkeypatch):
     assert g.decide_replacement(candidate, g.Library(), frozen.registration_sha256).verdict == "block"
 
 
-def test_cold_reader_needs_owner_recovery_and_returned_reconfirmation(sample, monkeypatch):
+def test_cold_reader_keeps_completed_authority_but_recovery_needs_owner(sample, monkeypatch):
     candidate, frozen, _ = repair.meter_rig(sample, monkeypatch)
     monkeypatch.setattr(g, "_persist", lambda c, answer, *a, **kw: replace(answer, entry_id="e" * 64))
     assert g.decide_replacement(candidate, g.Library(), frozen.registration_sha256).verdict == "admit_probation"
     entry = entry_from_state(candidate)
     assert g._replacement_authorized(entry)
     monkeypatch.setattr(g, "_RETURNED_CONFIRMATIONS", {})
-    assert not g._replacement_authorized(entry)
+    assert g._replacement_authorized(entry)
     journal = g._journal()
     body = next(r["body"] for r in journal.entries() if r["kind"] == "registration_closed")
     failure = g._append(journal, "registration_close_failed", body)
     close = g._append(journal, "registration_closed", body | {"recovery_of": failure})
     assert not g._replacement_authorized(entry)
-    g._confirm_interval(journal, close)
-    assert g._replacement_authorized(entry)
+    with pytest.raises(ValueError, match="owner"):
+        g._confirm_interval(journal, close)
+    g._recover_interval(journal, close)
+    assert not g._replacement_authorized(entry)
 
 
-def test_recovery_confirmation_return_is_deadline_checked(sample, monkeypatch):
+def test_recovery_void_return_is_deadline_checked(sample, monkeypatch):
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
+    monkeypatch.setattr(g.time, "time", lambda: clock[0])
     journal = g._journal()
     opening = {"registration": frozen.registration_sha256, "interval_version": 1,
-        "phase": "assessment", "monotonic_start": 0., "wall_start": 0.}
+        "phase": "assessment", "boot_id": g._boot_identity(), "monotonic_start": 0., "wall_start": 0.}
     attempt = g._append(journal, "replacement_attempt_start", opening)
     entry, receipt = active_receipt(journal, candidate, frozen.registration_sha256, attempt)
     close = g._append(journal, "registration_closed", opening | {"attempt": attempt, "validation_s": 0.,
@@ -210,20 +258,23 @@ def test_recovery_confirmation_return_is_deadline_checked(sample, monkeypatch):
         if kind == "registration_close_failed":
             raise OSError("marker unavailable")
         result = append(journal, kind, body)
-        if kind == "authority_confirmed":
+        if kind == "registration_voided":
             clock[0] += 20000.
         return result
     monkeypatch.setattr(g, "_append", delayed)
     with pytest.raises(ValueError, match="cost recovery"):
-        g._confirm_interval(journal, close)
+        g._recover_interval(journal, close)
     assert not g._replacement_authorized(entry)
+    with pytest.raises(ValueError, match="cost recovery"):
+        g._validation_total(frozen.registration_sha256, None)
 
 
-def test_recovery_recomputes_continuous_sixty_thousand_seconds(sample, monkeypatch):
+def test_recovery_charges_elapsed_after_sixty_thousand_seconds(sample, monkeypatch):
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
+    monkeypatch.setattr(g.time, "time", lambda: clock[0])
     journal = g._journal()
     opening = {"registration": frozen.registration_sha256, "interval_version": 1,
-        "phase": "assessment", "monotonic_start": 0., "wall_start": 0.}
+        "phase": "assessment", "boot_id": g._boot_identity(), "monotonic_start": 0., "wall_start": 0.}
     attempt = g._append(journal, "replacement_attempt_start", opening)
     entry, receipt = active_receipt(journal, candidate, frozen.registration_sha256, attempt, upper=-50000.)
     failure = g._append(journal, "registration_close_failed", opening | {"attempt": attempt,
@@ -232,19 +283,19 @@ def test_recovery_recomputes_continuous_sixty_thousand_seconds(sample, monkeypat
     close = g._append(journal, "registration_closed", opening | {"attempt": attempt,
         "recovery_of": failure, "validation_s": 40000., "monotonic_end": 40000.,
         "candidate_ids": [candidate.candidate_id], "activation_receipts": [receipt]})
-    # A recovery close carries its own continuously sampled floor before confirmation.
     row = next(r for r in journal.entries() if r["id"] == close)
-    assert row["body"].get("recovery_elapsed_s", row["body"]["validation_s"]) == 60000.
-    g._confirm_interval(journal, close)
+    assert row["body"]["recovery_elapsed_s"] == 40000.
+    g._recover_interval(journal, close)
     assert g._validation_total(frozen.registration_sha256, None) == 60010.
     assert not g._replacement_authorized(entry)
 
 
-def test_close_and_two_slow_markers_cannot_lose_terminal_twenty_thousand_seconds(sample, monkeypatch):
+def test_close_and_two_slow_markers_charge_through_recovery(sample, monkeypatch):
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
+    monkeypatch.setattr(g.time, "time", lambda: clock[0])
     journal = g._journal()
     opening = {"registration": frozen.registration_sha256, "interval_version": 1,
-        "phase": "assessment", "monotonic_start": 0., "wall_start": 0.}
+        "phase": "assessment", "boot_id": g._boot_identity(), "monotonic_start": 0., "wall_start": 0.}
     attempt = g._append(journal, "replacement_attempt_start", opening)
     entry, receipt = active_receipt(journal, candidate, frozen.registration_sha256, attempt, upper=-50000.)
     body = opening | {"attempt": attempt, "validation_s": 0., "monotonic_end": 0.,
@@ -265,7 +316,7 @@ def test_close_and_two_slow_markers_cannot_lose_terminal_twenty_thousand_seconds
     monkeypatch.setattr(g, "_append", append)
     close = g._append(journal, "registration_closed", body | {"recovery_of": failed["id"],
         "validation_s": 40000., "monotonic_end": 40000.})
-    g._confirm_interval(journal, close)
+    g._recover_interval(journal, close)
     assert g._validation_total(frozen.registration_sha256, None) == 60010.
     assert not g._replacement_authorized(entry)
 
