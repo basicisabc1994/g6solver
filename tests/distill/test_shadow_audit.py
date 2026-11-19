@@ -208,3 +208,20 @@ def test_shadow_revalidates_execution_and_teacher_node(fault):
                   teacher=lambda **_: record)
     assert not audit.records
     assert ledger.attempts[0].outcome == "failed"
+
+
+def test_review3_mismatched_graph_keeps_cpu_probe_sandbox_costs():
+    from g6.distill.cost_ledger import CostLedger
+    from g6.distill.graph_records import CostVector, ExecutionRecord, NodeRun
+    chosen, original = selected_record()
+    cost = CostVector(cpu_s=7, probe_runs=3, sandbox_runs=2)
+    run = NodeRun(**(original.runs[0].model_dump() | {"cost": cost}))
+    result = ExecutionRecord(**(original.model_dump(exclude={"run_id"}) | {
+        "graph_id": digest("other graph"), "runs": [run], "cost": cost}))
+    ledger = CostLedger()
+    audit = api().ShadowAudit(seed=7, ledger=ledger, teacher_graph=original.graph_id, teacher_node="n0")
+    with pytest.raises(ValueError, match="graph"):
+        audit.run(chosen, program_verdict="concern", admitted_replacement=True,
+                  in_scope=True, teacher=lambda **_: result)
+    total = ledger.total("maintenance")
+    assert total.cpu_s >= 7 and total.probe_runs == 3 and total.sandbox_runs == 2

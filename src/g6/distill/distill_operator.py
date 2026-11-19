@@ -19,10 +19,10 @@ from g6.core.ledger import canonical, digest
 from g6.core.model_calls import counting
 
 from . import synthesis
-from .cost_ledger import ResourceDelta, Resources
+from .cost_ledger import CostLedger, ResourceDelta, Resources
 from .execution import Observation, run_candidate
 from .facts import extract_facts, source_mapping
-from .graph import _matches, attempt_meter
+from .graph import _matches
 from .graph_lowering import validated
 from .graph_records import AttemptRecord, CostVector, Edge, ExecutionRecord, Node, Primitive, ProgramGraph, StopRule
 from .ledger import Stores
@@ -57,6 +57,9 @@ def bind_oracle_labels(cases, *, oracle_store, registered_policy_sha256) -> tupl
         raise UnboundLabel("nonempty batch required")
     for case in cases:
         try:
+            if (isinstance(case, OracleBoundCase)
+                    and case.registered_policy_sha256 != registered_policy_sha256):
+                raise ValueError("case policy differs from injected registration")
             failure = FailureRecord.model_validate_json(case.failure.model_dump_json())
             if failure.split not in {"training", "dev"} or failure.observed_by != "independent":
                 raise ValueError("only independent training/dev cases are visible")
@@ -110,33 +113,11 @@ def _unique_literals(cases):
     return {s for s, count in literals.items() if count == 1}
 
 
-def _revalidate_cases(cases):
-    cases = tuple(cases)
-    headers, seen, policies = [], set(), set()
-    try:
-        if not cases:
-            raise ValueError("nonempty receipt-bound batch required")
-        for case in cases:
-            # Validate headers for the entire batch before inspecting sources.
-            header = OracleBoundCase(failure=FailureRecord.model_validate_json(case.failure.model_dump_json()),
-                before={}, after={}, oracle_result=case.oracle_result,
-                registered_policy_sha256=case.registered_policy_sha256, expected=case.expected,
-                language=case.language, framework=case.framework)
-            if (header.failure.split not in {"training", "dev"}
-                    or header.failure.observed_by != "independent"):
-                raise ValueError("independent training/dev cases required")
-            if header.failure.case_ref in seen:
-                raise ValueError("duplicate case reference")
-            seen.add(header.failure.case_ref)
-            policies.add(header.registered_policy_sha256)
-            headers.append(header)
-        if len(policies) != 1:
-            raise ValueError("one registered policy required per batch")
-        return tuple(OracleBoundCase(**(header.model_dump() | {
-            "before": source_mapping(case.before), "after": source_mapping(case.after)}))
-            for header, case in zip(headers, cases, strict=True))
-    except (ValueError, TypeError, AttributeError) as error:
-        raise UnboundLabel(str(error)) from error
+def _revalidate_cases(cases, *, oracle_store, registered_policy_sha256):
+    if oracle_store is None or registered_policy_sha256 is None:
+        raise UnboundLabel("injected evaluator reader and registered policy required")
+    return bind_oracle_labels(cases, oracle_store=oracle_store,
+                              registered_policy_sha256=registered_policy_sha256)
 
 
 class TeacherTrace(Model):
@@ -153,8 +134,10 @@ _FEATURE_MATCHERS = {name: re.compile(r"(?<!\w)" + re.escape(name).replace("_", 
                      for name in sorted(FACT_NAMES)}
 
 
-def extract_teacher_traces(records, *, teacher_node, cases, trace_store) -> tuple[TeacherTrace, ...]:
-    cases = _revalidate_cases(cases)
+def extract_teacher_traces(records, *, teacher_node, cases, trace_store, oracle_store=None,
+                           registered_policy_sha256=None) -> tuple[TeacherTrace, ...]:
+    cases = _revalidate_cases(cases, oracle_store=oracle_store,
+                              registered_policy_sha256=registered_policy_sha256)
     allowed = {c.failure.case_ref: c.failure.split for c in cases}
     unique = _unique_literals(cases)
     extracted = []
@@ -200,13 +183,24 @@ def _training_cases(cases):
                                        language=c.language, framework=c.framework) for c in cases)
 
 
-def propose_concept_from_teacher(cases, traces, *, synthesizer):
+def propose_concept_from_teacher(cases, traces, *, synthesizer, oracle_store=None,
+                                 registered_policy_sha256=None, ledger=None):
+    """Fetch evaluator receipts and retain a scoped proposal's send log."""
+    ledger = ledger if ledger is not None else CostLedger()
+    with ledger.measure("concept_proposal") as meter, _metered_synthesizer(synthesizer, meter):
+        return _propose_concept_from_teacher(cases, traces, synthesizer=synthesizer,
+            oracle_store=oracle_store, registered_policy_sha256=registered_policy_sha256)
+
+
+def _propose_concept_from_teacher(cases, traces, *, synthesizer, oracle_store,
+                                  registered_policy_sha256):
     """One teacher-informed send with the existing shared batch cap and pacing."""
     def refused(code, reason):
         return blocked_reply(f"[{code}] {reason}")
 
     try:
-        cases = _revalidate_cases(cases)
+        cases = _revalidate_cases(cases, oracle_store=oracle_store,
+                                  registered_policy_sha256=registered_policy_sha256)
     except (ValueError, AttributeError):
         return refused("G6_E_SYNTH_UNBOUND_LABEL", "Receipt-bound cases required, including fallback.")
     training = tuple(c for c in cases if c.failure.split == "training")
@@ -422,7 +416,7 @@ def distill(graph, teacher_node, *, primitives, cases, traces, oracle_store, tra
     runners must return CandidateReplay with their measured resource vector.
     """
     update, error, ps = None, None, dict(primitives)
-    with ledger.measure("distill:" + teacher_node) as meter, _metered_synthesizer(synthesizer, meter):
+    with ledger.measure("distill:" + teacher_node) as meter:
         try:
             bound = bind_oracle_labels(cases, oracle_store=oracle_store,
                                        registered_policy_sha256=registered_policy_sha256)
@@ -436,7 +430,8 @@ def distill(graph, teacher_node, *, primitives, cases, traces, oracle_store, tra
             dev_executions = [t.unit_ref for t in traces if t.split == "dev" and t.unit_ref in bound_dev_refs]
             if len(set(dev_executions)) != len(dev_executions):
                 raise ValueError("duplicate dev execution for one bound unit")
-            rows = extract_teacher_traces(traces, teacher_node=teacher_node, cases=bound, trace_store=trace_store)
+            rows = extract_teacher_traces(traces, teacher_node=teacher_node, cases=bound, trace_store=trace_store,
+                oracle_store=oracle_store, registered_policy_sha256=registered_policy_sha256)
             verdicts = {}
             for row in rows:
                 if row.case_ref in verdicts and verdicts[row.case_ref] != row.verdict:
@@ -455,11 +450,14 @@ def distill(graph, teacher_node, *, primitives, cases, traces, oracle_store, tra
                 dev_refs = {c.failure.case_ref for c in dev}
                 extracted = [r for r in rows if (r.split == "training" and r.case_ref in train_refs)
                              or (r.split == "dev" and r.case_ref in dev_refs)]
-                concept = propose_concept_from_teacher([*train, *dev], extracted, synthesizer=synthesizer)
+                with meter.scope("concept_proposal") as concept_meter, _metered_synthesizer(synthesizer, concept_meter):
+                    concept = _propose_concept_from_teacher([*train, *dev], extracted, synthesizer=synthesizer,
+                        oracle_store=oracle_store, registered_policy_sha256=registered_policy_sha256)
                 if not isinstance(concept, Concept):
                     meter.outcome, error = "concept_refused", concept.get("error", "concept refused")
                 else:
-                    result = synthesizer.synthesise(concept, _training_cases(train), library=library)
+                    with meter.scope("candidate_synthesis") as synthesis_meter, _metered_synthesizer(synthesizer, synthesis_meter):
+                        result = synthesizer.synthesise(concept, _training_cases(train), library=library)
                     if not result.candidates or not rows:
                         meter.outcome, error = "no_candidate", "no candidate or no classified teacher traces"
                     else:
@@ -467,34 +465,21 @@ def distill(graph, teacher_node, *, primitives, cases, traces, oracle_store, tra
                         scope = [FeaturePredicate.model_validate(s) for s in (scope or q.contract.applies_when)]
                         if not dev:
                             raise ValueError("receipt-bound dev cases required for savings measurements")
-                        replay_meter = None
-                        before_replay = meter.send_cost
-                        try:
-                            with attempt_meter("candidate_replay") as replay_meter:
-                                out = (replay(q, dev, caller=synthesizer.caller) if replay is not None
+                        with meter.scope("candidate_replay") as replay_meter:
+                            with replay_meter.execution():
+                                out = (replay(q, dev, caller=replay_meter.wrap(synthesizer.caller)) if replay is not None
                                        else _replay(q, dev, library=library))
                                 if isinstance(out, CandidateReplay):
-                                    replay_meter.cost = out.cost
-                                    if out.cost.llm_calls:
-                                        raise ValueError("candidate runner reported model calls")
-                                    outputs = list(out.verdicts)
-                                else:
-                                    if q.contract.probes:
-                                        raise ValueError("probe replay must report measured resources")
-                                    outputs = list(out)
-                        finally:
-                            if replay_meter is not None and replay_meter.record is not None:
-                                sent = meter.send_cost
-                                measured = replay_meter.record.cost.model_dump()
-                                for name in ("llm_calls", "llm_tokens_in", "llm_tokens_out"):
-                                    measured[name] = max(measured[name], getattr(sent, name) - getattr(before_replay, name))
-                                replay_meter.record = AttemptRecord(**(replay_meter.record.model_dump(
-                                    exclude={"attempt_id"}) | {"cost": CostVector(**measured),
-                                    "model_sends": measured["llm_calls"]}))
-                                meter.cost = meter.cost + replay_meter.record.cost
+                                    replay_meter.record_resources(out.cost)
+                            if isinstance(out, CandidateReplay):
+                                outputs = list(out.verdicts)
+                            else:
+                                if q.contract.probes:
+                                    raise ValueError("probe replay must report measured resources")
+                                outputs = list(out)
                         cost = replay_meter.record.cost
-                        if cost.llm_calls:
-                            raise ValueError("candidate replay made model sends")
+                        if cost.llm_calls or isinstance(out, CandidateReplay) and out.cost.llm_calls:
+                            raise ValueError("candidate replay made model sends or reported model calls")
                         if len(outputs) != len(dev) or any(v not in {"concern", "no_concern", "abstain"} for v in outputs):
                             raise ValueError("candidate replay must return one verdict per dev case")
                         decided = [i for i, (c, out) in enumerate(zip(dev, outputs)) if out != "abstain" and

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, JsonValue, model_validator
+from pydantic import Field, JsonValue, model_serializer, model_validator
 
 from .records import (Count, FeaturePredicate, Finite, Interval, Model, Positive, Prediction,
                       Proposer, Record, Sha256, Split)
@@ -173,11 +173,22 @@ class AttemptRecord(Record):
     what: str
     cost: CostVector
     model_sends: Count
+    send_ids: list[Sha256] = Field(default_factory=list)
+    execution_ids: list[Sha256] = Field(default_factory=list)
     outcome: Literal["proposed", "screened", "concept_refused", "no_candidate", "refused_unbound_label",
-                     "failed", "budget_exhausted"]
+                     "failed", "budget_exhausted", "unmetered_send"]
     update_id: Sha256 | None
     started_at: str
     ended_at: str
+
+    @model_serializer(mode="wrap")
+    def resource_references(self, serialize):
+        # Empty references retain the canonical body of older graph attempts.
+        body = serialize(self)
+        for name in ("send_ids", "execution_ids"):
+            if not body.get(name):
+                body.pop(name, None)
+        return body
 
     @model_validator(mode="after")
     def sends_match(self) -> Self:

@@ -64,9 +64,12 @@ class ShadowAudit:
         with self.ledger.measure("shadow:" + case_id, category="maintenance") as meter:
             if self.teacher_graph is None or self.teacher_node is None:
                 raise ValueError("bound teacher graph and node required")
-            result = teacher(caller=meter.wrap(caller))
-            if not isinstance(result, ExecutionRecord):
-                raise ValueError("shadow teacher must return an execution record")
+            with meter.execution():
+                result = teacher(caller=meter.wrap(caller))
+                if not isinstance(result, ExecutionRecord):
+                    raise ValueError("shadow teacher must return an execution record")
+                meter.record_execution(result)
+            meter._close()
             result = ExecutionRecord.model_validate_json(result.model_dump_json())
             if result.unit_ref != case_id:
                 raise ValueError("shadow execution unit differs from selected case")
@@ -75,7 +78,6 @@ class ShadowAudit:
             runs = [r for r in result.runs if r.node_id == self.teacher_node]
             if len(runs) != 1:
                 raise ValueError("shadow execution lacks the bound teacher node")
-            meter.cost = result.cost
             if result.terminal not in {"ok", "abstain"} or runs[0].terminal not in {"ok", "abstain"}:
                 meter.outcome = "failed"
                 return None

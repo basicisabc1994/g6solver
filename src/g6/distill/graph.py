@@ -19,6 +19,7 @@ from g6.core.ledger import canonical, digest
 from g6.core.llm import LLMError
 from g6.core.model_calls import counting
 
+from .cost_ledger import capture_attempt_sends, scoped_caller
 from .execution import ExecutionRefused, Observation, run_candidate
 from .graph_lowering import LoweringRefused, lower, validated
 from .graph_records import AttemptRecord, CostVector, ExecutionRecord, Model, NodeRun, Terminal
@@ -67,7 +68,7 @@ def attempt_meter(what, *, update_id=None):
     meter = _Attempt()
     started_at = datetime.now(timezone.utc).isoformat()
     wall_start, cpu_start = time.monotonic(), time.process_time()
-    with counting() as sends:
+    with capture_attempt_sends() as capture, counting() as sends:
         try:
             yield meter
         except BaseException:
@@ -75,10 +76,18 @@ def attempt_meter(what, *, update_id=None):
             raise
         finally:
             measured = meter.cost.model_dump()
-            measured["llm_calls"] = sends()
+            send_ids, proxy_cost = capture.snapshot()
+            if capture.ledger is not None:
+                for name in ("llm_calls", "llm_tokens_in", "llm_tokens_out"):
+                    measured[name] = getattr(proxy_cost, name)
+            else:
+                measured["llm_calls"] = sends()
             measured["wall_s"] = max(measured["wall_s"], time.monotonic() - wall_start)
             measured["cpu_s"] = max(measured["cpu_s"], time.process_time() - cpu_start)
-            meter.record = AttemptRecord(what=what, cost=CostVector(**measured), model_sends=sends(),
+            if sends() > measured["llm_calls"]:
+                meter.outcome = "unmetered_send"
+            meter.record = AttemptRecord(what=what, cost=CostVector(**measured), model_sends=measured["llm_calls"],
+                                         send_ids=send_ids,
                                          outcome=meter.outcome, update_id=update_id,
                                          started_at=started_at, ended_at=datetime.now(timezone.utc).isoformat())
 
@@ -188,6 +197,7 @@ def execute(graph, x, *, primitives, unit_ref, split, request_id, g6_commit, see
     All non-read effects and state writes are outside this executor's authority.
     """
     from .records import Split
+    caller = scoped_caller(caller)
     if split not in ("training", "dev", "monitor", "field"):
         raise ExecutionRefused("G6_E_GRAPH_SPLIT", f"split {split!r} is refused by the graph executor")
     TypeAdapter(Split).validate_python(split)

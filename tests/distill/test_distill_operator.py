@@ -124,7 +124,8 @@ def test_teacher_trace_features_scrub_cap_and_split_boundary():
     rec, reader = trace(c, reasoning="assertions calls mystery_fact tests/test_secret.py "
                         "test_unique_name unique-training-value " + "z" * 2500)
     monitor = ExecutionRecord(**(rec.model_dump(exclude={"run_id"}) | {"split": "monitor"}))
-    rows = api().extract_teacher_traces([monitor, rec], teacher_node="n0", cases=bound, trace_store=reader)
+    rows = api().extract_teacher_traces([monitor, rec], teacher_node="n0", cases=bound, trace_store=reader,
+        oracle_store=receipts, registered_policy_sha256=D)
     assert len(rows) == 1 and rows[0].verdict == "concern"
     assert rows[0].features == ["assertions", "calls"]
     assert len(rows[0].reasoning) == 2000
@@ -137,19 +138,23 @@ def test_teacher_prompt_one_send_shared_cap_and_empty_fallback():
     c, receipts = case()
     bound = api().bind_oracle_labels([c], oracle_store=receipts, registered_policy_sha256=D)
     rec, reader = trace(c)
-    rows = api().extract_teacher_traces([rec], teacher_node="n0", cases=bound, trace_store=reader)
+    rows = api().extract_teacher_traces([rec], teacher_node="n0", cases=bound, trace_store=reader,
+        oracle_store=receipts, registered_policy_sha256=D)
     caller = FakeLLM(default=concept_reply())
     synth = Synthesizer(caller=caller)
-    concept = api().propose_concept_from_teacher(bound, rows, synthesizer=synth)
+    concept = api().propose_concept_from_teacher(bound, rows, synthesizer=synth,
+        oracle_store=receipts, registered_policy_sha256=D)
     assert concept.from_failures == [c.failure.record_id]
     prompt = json.loads(caller.calls[0][1])
     assert prompt["teacher"][0]["verdict"] == "concern"
     assert prompt["teacher"][0]["expected"] == "concern"
-    refused = api().propose_concept_from_teacher(bound, [], synthesizer=synth)
+    refused = api().propose_concept_from_teacher(bound, [], synthesizer=synth,
+        oracle_store=receipts, registered_policy_sha256=D)
     assert refused["ok"] is False and "G6_E_SYNTH_CALL_LIMIT" in refused["error"]
     assert len(caller.calls) == 1
     fallback = FakeLLM(default=concept_reply())
-    api().propose_concept_from_teacher(bound, [], synthesizer=Synthesizer(caller=fallback))
+    api().propose_concept_from_teacher(bound, [], synthesizer=Synthesizer(caller=fallback),
+        oracle_store=receipts, registered_policy_sha256=D)
     assert "teacher" not in json.loads(fallback.calls[0][1])
 
 
@@ -221,7 +226,8 @@ def test_execution_store_trace_reader_interface():
         def get_trace(self, ident):
             return reader.get(ident)
     assert api().extract_teacher_traces([rec], teacher_node="n0", cases=bound,
-                                        trace_store=TraceStore())[0].verdict == "concern"
+                                        trace_store=TraceStore(),
+                                        oracle_store=receipts, registered_policy_sha256=D)[0].verdict == "concern"
 
 
 def test_unbound_fallback_cannot_send():
@@ -238,9 +244,11 @@ def test_unbound_dev_trace_cannot_enter_teacher_prompt():
     receipts.values.update(dr.values)
     bound = api().bind_oracle_labels([c, d], oracle_store=receipts, registered_policy_sha256=D)
     rec, reader = trace(d)
-    rows = api().extract_teacher_traces([rec], teacher_node="n0", cases=bound, trace_store=reader)
+    rows = api().extract_teacher_traces([rec], teacher_node="n0", cases=bound, trace_store=reader,
+        oracle_store=receipts, registered_policy_sha256=D)
     caller = FakeLLM(default=concept_reply())
-    result = api().propose_concept_from_teacher(bound[:1], rows, synthesizer=Synthesizer(caller=caller))
+    result = api().propose_concept_from_teacher(bound[:1], rows, synthesizer=Synthesizer(caller=caller),
+        oracle_store=receipts, registered_policy_sha256=D)
     assert result["ok"] is False and not caller.calls
 
 
@@ -252,9 +260,11 @@ def test_receipt_bound_dev_trace_can_inform_concept_but_not_synthesis_targets():
     train, reader = trace(c)
     dev, dev_reader = trace(d, verdict="concern", reasoning="calls dev guidance")
     reader.values.update(dev_reader.values)
-    rows = api().extract_teacher_traces([train, dev], teacher_node="n0", cases=bound, trace_store=reader)
+    rows = api().extract_teacher_traces([train, dev], teacher_node="n0", cases=bound, trace_store=reader,
+        oracle_store=receipts, registered_policy_sha256=D)
     caller = FakeLLM(default=concept_reply())
-    result = api().propose_concept_from_teacher(bound, rows, synthesizer=Synthesizer(caller=caller))
+    result = api().propose_concept_from_teacher(bound, rows, synthesizer=Synthesizer(caller=caller),
+        oracle_store=receipts, registered_policy_sha256=D)
     assert result.from_failures == [c.failure.record_id]
     prompt = json.loads(caller.calls[0][1])
     assert len(prompt["training"]) == 1 and len(prompt["teacher"]) == 2
@@ -266,14 +276,17 @@ def test_teacher_proposal_inner_retry_cap_and_missing_reservation():
     c, receipts = case()
     bound = api().bind_oracle_labels([c], oracle_store=receipts, registered_policy_sha256=D)
     rec, reader = trace(c)
-    rows = api().extract_teacher_traces([rec], teacher_node="n0", cases=bound, trace_store=reader)
+    rows = api().extract_teacher_traces([rec], teacher_node="n0", cases=bound, trace_store=reader,
+        oracle_store=receipts, registered_policy_sha256=D)
     inner = FakeLLM(default="")
-    result = api().propose_concept_from_teacher(bound, rows, synthesizer=Synthesizer(caller=EmptyRetry(inner)))
+    result = api().propose_concept_from_teacher(bound, rows, synthesizer=Synthesizer(caller=EmptyRetry(inner)),
+        oracle_store=receipts, registered_policy_sha256=D)
     assert result["ok"] is False and len(inner.calls) == 1
     class Online:
         def complete(self, *args, **kwargs):
             raise AssertionError("must refuse before caller")
-    result = api().propose_concept_from_teacher(bound, rows, synthesizer=Synthesizer(caller=Online()))
+    result = api().propose_concept_from_teacher(bound, rows, synthesizer=Synthesizer(caller=Online()),
+        oracle_store=receipts, registered_policy_sha256=D)
     assert "G6_E_SYNTH_PACING" in result["error"]
 
 
@@ -529,7 +542,8 @@ def test_direct_extraction_refuses_whole_unbound_batch_before_sources_or_traces(
     object.__setattr__(bound, "before", NoSources(bound.before))
     rec, reader = trace(c)
     with pytest.raises(api().UnboundLabel):
-        api().extract_teacher_traces([rec], teacher_node="n0", cases=[bound, bad], trace_store=reader)
+        api().extract_teacher_traces([rec], teacher_node="n0", cases=[bound, bad], trace_store=reader,
+            oracle_store=receipts, registered_policy_sha256=D)
     assert reader.reads == []
 
 
@@ -538,12 +552,84 @@ def test_duplicate_case_refs_cannot_bypass_shared_concept_cap(with_traces):
     c, receipts = case()
     bound = api().bind_oracle_labels([c], oracle_store=receipts, registered_policy_sha256=D)
     rec, reader = trace(c)
-    rows = api().extract_teacher_traces([rec], teacher_node="n0", cases=bound, trace_store=reader)
+    rows = api().extract_teacher_traces([rec], teacher_node="n0", cases=bound, trace_store=reader,
+        oracle_store=receipts, registered_policy_sha256=D)
     caller = FakeLLM(default=concept_reply())
     synth = Synthesizer(caller=caller)
-    api().propose_concept_from_teacher(bound, rows if with_traces else [], synthesizer=synth)
+    api().propose_concept_from_teacher(bound, rows if with_traces else [], synthesizer=synth,
+        oracle_store=receipts, registered_policy_sha256=D)
     for count in (2, 3):
-        result = api().propose_concept_from_teacher(bound * count, rows if with_traces else [], synthesizer=synth)
+        result = api().propose_concept_from_teacher(bound * count, rows if with_traces else [], synthesizer=synth,
+            oracle_store=receipts, registered_policy_sha256=D)
         assert isinstance(result, dict) and result["ok"] is False
         assert "G6_E_SYNTH_UNBOUND_LABEL" in result["error"]
     assert len(caller.calls) == 1
+
+
+def test_review3_late_replay_send_refused_and_savings_stay_half(monkeypatch):
+    from threading import Event, Thread
+    release, finished, errors, workers = Event(), Event(), [], []
+    original = api().rewrite
+    def replay(q, cases, *, caller):
+        def late():
+            assert release.wait(2)
+            try:
+                caller.complete("late replay", "input")
+            except ValueError as error:
+                errors.append(error)
+            finally:
+                finished.set()
+        worker = Thread(target=late)
+        workers.append(worker)
+        worker.start()
+        return ["concern", "abstain"]
+    def rewrite(*args, **kwargs):
+        release.set()
+        assert finished.wait(2)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(api(), "rewrite", rewrite)
+    try:
+        result, ledger, _ = savings_attempt(replay=replay)
+    finally:
+        release.set()
+        for worker in workers:
+            worker.join(2)
+    assert result.update is not None, result.error
+    assert errors and "closed" in str(errors[0])
+    assert result.update.calls_saved_per_task == result.update.delta_c.llm_calls == 0.5
+    assert ledger.total("acquisition").llm_calls == 1
+
+
+def test_review3_forged_receipt_refused_before_trace_or_proposal():
+    from g6.distill.records import OracleBoundCase, OracleReceipt
+    c, receipts = case("negative")
+    forged = OracleReceipt(case_id=c.failure.case_ref, label="positive", reason="forged", policy_sha256=D)
+    failure = FailureRecord(**(c.failure.model_dump(exclude={"record_id"}) | {"evidence": [dict(
+        kind="oracle_label", digest=digest(forged.model_dump(mode="json")), receipt="forged")]}))
+    bound = OracleBoundCase(failure=failure, before=c.before, after=c.after, expected="concern",
+        oracle_result=forged, registered_policy_sha256=D)
+    record, reader = trace(c)
+    caller = FakeLLM(default=concept_reply())
+    with pytest.raises(api().UnboundLabel):
+        api().extract_teacher_traces([record], teacher_node="n0", cases=[bound], trace_store=reader)
+    assert not reader.reads
+    result = api().propose_concept_from_teacher([bound], [], synthesizer=Synthesizer(caller=caller))
+    assert result["ok"] is False and not caller.calls
+    with pytest.raises(api().UnboundLabel):
+        api().extract_teacher_traces([record], teacher_node="n0", cases=[bound], trace_store=reader,
+            oracle_store=receipts, registered_policy_sha256=D)
+    assert not reader.reads
+    result = api().propose_concept_from_teacher([bound], [], synthesizer=Synthesizer(caller=caller),
+        oracle_store=receipts, registered_policy_sha256=D)
+    assert result["ok"] is False and not caller.calls
+
+
+def test_public_concept_helper_uses_injected_custody_and_send_ledger():
+    from g6.distill.cost_ledger import CostLedger
+    c, receipts = case()
+    caller, ledger = FakeLLM(default=concept_reply()), CostLedger()
+    concept = api().propose_concept_from_teacher([c], [], synthesizer=Synthesizer(caller=caller),
+        oracle_store=receipts, registered_policy_sha256=D, ledger=ledger)
+    assert concept.from_failures == [c.failure.record_id]
+    assert receipts.reads == [c.failure.evidence[0].digest]
+    assert len(caller.calls) == ledger.total("acquisition").llm_calls == 1
