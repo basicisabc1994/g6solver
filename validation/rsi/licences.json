@@ -42,5 +42,16 @@
     "notes": "Owner permits evaluation only, aggregate scores only, no redistribution. Data card says cc; LeetCode terms restrict scraping. Held-out dates must be after September 2024.",
     "date_checked": "2026-11-18",
     "redistribute": false
+  },
+  {
+    "source": "generated",
+    "licence_id": "generated-local",
+    "licence": "Repository terms retained",
+    "url": "local:generated",
+    "train_ok": true,
+    "eval_ok": true,
+    "notes": "Local bug-injection tasks only. Family metadata must retain repository attribution and permissive licence terms. Training repositories and held-out repositories stay separate.",
+    "date_checked": "2026-11-18",
+    "redistribute": false
   }
 ]
