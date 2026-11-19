@@ -1,0 +1,85 @@
+{
+  "cohort": "development",
+  "cohort_digest": "ae1bcad1e5042ca568a1d376333841dd6ee6ca6c75d33fc77a10fd22213a6d9c",
+  "label": "g6-pilot-m1-allocation-v1",
+  "roles": {
+    "acquisition": {
+      "repositories": [
+        "black",
+        "charset-normalizer",
+        "pluggy",
+        "pygments",
+        "pyjwt",
+        "python-dotenv"
+      ],
+      "bugs": [
+        "black-5144",
+        "black-5148",
+        "black-5521",
+        "charset-normalizer-715",
+        "charset-normalizer-772",
+        "pluggy-799",
+        "pluggy-809",
+        "pygments-3158",
+        "pygments-3204",
+        "pyjwt-1201",
+        "pyjwt-1216",
+        "python-dotenv-700",
+        "python-dotenv-711"
+      ]
+    },
+    "admission": {
+      "repositories": [
+        "attrs",
+        "click",
+        "pydantic-settings",
+        "starlette",
+        "urllib3"
+      ],
+      "bugs": [
+        "attrs-1509",
+        "click-3404",
+        "click-3434",
+        "click-3769",
+        "pydantic-settings-1089",
+        "starlette-3166",
+        "starlette-3189",
+        "starlette-3718",
+        "urllib3-5254",
+        "urllib3-5347"
+      ]
+    },
+    "monitor": {
+      "repositories": [
+        "platformdirs",
+        "pydantic",
+        "s3transfer"
+      ],
+      "bugs": [
+        "platformdirs-666",
+        "pydantic-13133",
+        "pydantic-13243",
+        "s3transfer-423"
+      ]
+    },
+    "reuse": {
+      "repositories": [
+        "anyio",
+        "botocore",
+        "fastapi",
+        "setuptools"
+      ],
+      "bugs": [
+        "anyio-1354",
+        "anyio-1424",
+        "botocore-3835",
+        "botocore-3852",
+        "fastapi-13920",
+        "fastapi-14616",
+        "setuptools-5352",
+        "setuptools-5362"
+      ]
+    }
+  },
+  "note": "Exploratory pilot (M1). Allocated before any distillation run read a bug. These bugs were used earlier by the worked-example study (coding agent runs), never by the distillation pipeline."
+}
