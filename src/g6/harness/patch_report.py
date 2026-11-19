@@ -471,12 +471,6 @@ def render(assessment: dict) -> str:
     lines += _cut(_findings(assessment), BUDGET["findings"], "assessment.completion.defects_reproduced") or ["- None."]
     lines += ["", "## Not established"]
     lines += _cut(_missing(assessment), BUDGET["missing"], "assessment.completion.not_established") or ["- None."]
-    if assessment.get('resolution'):
-        lines += ['', '## To settle this']
-        for item in assessment['resolution'][:5]:
-            lines.append(f"- {code(item['requirement'])}: {code(item['untested'])} "
-                         f"Next: {code(item['cheapest_check']['tool'])}; "
-                         f"{code(item['needs_person'] or 'the agent can run the check now')}.")
     lines += ["", "## Demonstrated on the stated checks"]
     lines += _cut(_shown(assessment), BUDGET["shown"], "assessment.completion.demonstrated") or ["- None."]
     if assessment.get("confirmed_expectations"):   # only when the review enforced any: otherwise the report is as it was

@@ -1726,7 +1726,7 @@ def _one_line(text: object) -> str:
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
            sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=(), prepared=None,
            adequacy=None, config=None, counts=None, roots=(), stopped=(), proposer=None, first_action="",
-           issuer_inputs=None, confirmed=None, history_sources=None, history_task='') -> dict:
+           issuer_inputs=None, confirmed=None, *, history_sources=None, history_task='') -> dict:
     """The reply. ``first_action``: the next action that stands first for an insufficient-evidence outcome in place of
     the general one (the launch review's I6: a module the patch imports that is not installed here).
     ``issuer_inputs``: each stated check's SHA-256 and whether the patch wrote it, every other run that observed a

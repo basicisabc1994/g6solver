@@ -244,8 +244,8 @@
       "if type(confirmed) is not ExpectationStandard",
       "raise _Refused('G6_E_INPUT_VALIDATION', 'confirmed is the standard of the expectations the person confirmed (an ExpectationStandard)')",
       "if expected_artifact_digest and artifact != expected_artifact_digest",
-      "if confirmed is not None and confirmed.expectations or any((one.template == 'differential.v1' for one in instances))",
-      "if proposed",
+      "if confirmed is not None and confirmed.expectations or any((one.template == 'differential.v1' for one in instances)) or any((origin.template == 'differential.v1' for origin in retained_origins.values()))",
+      "if proposed or retained",
       "except ValueError",
       "raise _Refused('G6_E_INPUT_VALIDATION', str(exc))",
       "if confirmed is not None and confirmed.expectations",
@@ -258,7 +258,7 @@
     ],
     "review_patch": [
       "blocked_reply('[G6_E_PATCH_STALE] working tree differs from the supplied artifact digest')",
-      "_assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, deadline=deadline, limit=limit, started=started, listed=listed, assumed=assumed, unmapped=unmapped, proposed=proposed, placed=placed, instances=instances, config=config, roots=roots, llm=llm, confirmed=confirmed if confirmed is not None and confirmed.expectations else None)",
+      "_assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, deadline=deadline, limit=limit, started=started, listed=listed, assumed=assumed, unmapped=unmapped, proposed=proposed, placed=placed, instances=instances, config=config, roots=roots, llm=llm, confirmed=confirmed if confirmed is not None and confirmed.expectations else None, retained=retained, retained_origins=retained_origins, retained_skipped=retained_skipped)",
       "refused",
       "blocked_reply(f'[{CODE}] {exc}')"
     ],
@@ -341,7 +341,7 @@
       "if prepared is not None and (prepared.formal or prepared.symbolic)",
       "if any((r['stage'] == 'integrity' for r in reasons))",
       "if prepared is not None",
-      "if proposed or compiled",
+      "if proposed or compiled or retained",
       "if prepared",
       "if prepared is not None",
       "if proposals",
@@ -350,6 +350,7 @@
       "if search is not None",
       "if search is not None",
       "if formal is not None",
+      "if retained_skipped",
       "if config is not None and config['test_adequacy']",
       "if integrity",
       "if config is not None and config['test_adequacy']",
@@ -389,7 +390,7 @@
       "if confirmed is not None"
     ],
     "_assess": [
-      "_reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons, artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects, first_action=MISSING_IMPORT_ASK.format(name=missing[0]) if missing else SELF_CHECKED_ASK.format(ids=self_checked) if self_checked else '', prepared=prepared, adequacy=adequacy, config=config, counts={'template_instances': len(instances), 'proposed_checks': len(proposed), 'model_calls': proposals.calls if proposals else 0}, roots=roots, stopped=stopped, proposer=proposals, issuer_inputs={'check_sha': check_sha, 'written': lambda check: written.get(check, True), 'again': again, 'observed': observed}, confirmed=(confirmed, enforced) if confirmed is not None else None)"
+      "_reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons, artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects, first_action=MISSING_IMPORT_ASK.format(name=missing[0]) if missing else SELF_CHECKED_ASK.format(ids=self_checked) if self_checked else '', prepared=prepared, adequacy=adequacy, config=config, counts={'template_instances': len(instances), 'proposed_checks': len(proposed), 'model_calls': proposals.calls if proposals else 0}, roots=roots, stopped=stopped, proposer=proposals, issuer_inputs={'check_sha': check_sha, 'written': lambda check: written.get(check, True), 'again': again, 'observed': observed}, confirmed=(confirmed, enforced) if confirmed is not None else None, history_sources=history_sources, history_task=task)"
     ],
     "_authored": [
       "_written(check, change, root)",
@@ -521,10 +522,19 @@
       "if first_action and outcome == INSUFFICIENT",
       "if unknowns",
       "if issuer_inputs is not None",
-      "if confirmed is not None"
+      "if confirmed is not None",
+      "if interventions",
+      "if search is not None and outcome != INTEGRITY",
+      "except LETS_THROUGH",
+      "raise *",
+      "except (OSError, ValueError)",
+      "if outcome != INTEGRITY and history_sources",
+      "except LETS_THROUGH",
+      "raise *",
+      "except (OSError, ValueError)"
     ],
     "_reply": [
-      "{**envelope_fields(reliability_label='qualified-draft', warning_card=card, evidence=evidence, request_id=uuid.uuid4().hex[:12], degradation_reason=summary[:300]), 'ok': True, 'assessment': assessment, 'merge': {'status': 'requires_separate_approval', 'reason': MERGE_REASON, 'reasons': merge_reasons}, 'gate': gate, 'grounding': _grounding(claim, sources), 'artifact_digest': artifact}"
+      "outcome_history.disclose(reply, change.repo)"
     ],
     "_listing/branches": [
       "if type(key) is not str or key not in LISTINGS",

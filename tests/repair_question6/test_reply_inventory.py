@@ -112,7 +112,7 @@ def test_every_review_return_keeps_historical_text(monkeypatch, text, branch):
     monkeypatch.setattr(patch_review.repo_tests, 'checked_repo', lambda root: Path('ordinary'))
     monkeypatch.setattr(patch_review, '_import_roots', lambda *a: ())
     monkeypatch.setattr(patch_review.repo_tests, 'snapshot', lambda *a: {})
-    monkeypatch.setattr(patch_review.repo_tests, 'change', lambda *a: SimpleNamespace())
+    monkeypatch.setattr(patch_review.repo_tests, 'change', lambda *a: SimpleNamespace(repo=Path('ordinary'), files=()))
     args = dict(repo='unused', task='ordinary task', requirements=[])
     if branch == 'stale':
         args['expected_artifact_digest'] = 'different'
@@ -287,5 +287,12 @@ def test_full_reply_and_report_each_outcome_keep_every_text_leaf(tmp_path, monke
         actual = original(*bound.args, **bound.kwargs)
         with monkeypatch.context() as old:
             old.setattr(patch_report, 'render', renderer_68ca0eb.render)
-            expected = frozen(review_entry_68ca0eb._reply, patch_review)(*bound.args, **bound.kwargs)
-        same(actual, expected)
+            historical = frozen(review_entry_68ca0eb._reply, patch_review)
+            expected = historical(**{key: value for key, value in bound.arguments.items()
+                                     if key in inspect.signature(historical).parameters})
+        # Learning metadata is additive. Every historical field and its text remain compared.
+        assert set(actual) - set(expected) == {'learned'}
+        assert set(actual['assessment']) - set(expected['assessment']) <= {'resolution'}
+        existing = {key: value for key, value in actual.items() if key != 'learned'}
+        existing['assessment'] = {key: value for key, value in actual['assessment'].items() if key != 'resolution'}
+        same(existing, expected)
