@@ -23,26 +23,45 @@ def test_history_reader_exists_without_caller_trial_input():
     assert callable(history().read)
 
 
-def test_cold_start_is_the_pinned_c5782df_reply(monkeypatch):
-    from g6.cognitive_bridge.block import CognitiveBridgeBlock
-    from g6.core.selector import select
+def cold_pin():
     pin = json.loads((Path(__file__).parent / 'data/cold_c5782df.json').read_text(encoding='utf-8'))
+    # 1aafbe4b adds two shared-reader observations, including their selection evidence.
+    # Keep every earlier field pinned, with explicit expectations for the no-model path.
+    pin['select']['mechanisms'] += [
+        {'stage': 'semantic', 'ran': True, 'kind': 'safety_checks', 'value': [], 'floor_value': [],
+         'model_value': None, 'by': 'floor', 'disagreement': False, 'reason': 'no model configured'},
+        {'stage': 'semantic_risk', 'ran': True, 'kind': 'risk', 'value': 'R1', 'floor_value': 'R1',
+         'model_value': None, 'by': 'floor', 'disagreement': False, 'reason': 'no model configured'},
+    ]
+    pin['select']['evidence'][0]['stages_run'] += ['semantic', 'semantic_risk']
+    return pin
+
+
+def test_cold_start_keeps_pinned_ranking_and_records_the_semantic_floor():
+    from g6.cognitive_bridge.block import CognitiveBridgeBlock
+    from g6.core import semantic
+    from g6.core.selector import select
+    pin = cold_pin()
     def wire(value):
         return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(',', ':')).encode('utf-8')
     assert wire(CognitiveBridgeBlock().infer(pin['rank_input']).value) == wire(pin['rank'])
-    assert wire(select('review my Python patch', phase='verify', request_id='fixed', run_id='fixed')) == wire(pin['select'])
+    with semantic.request(llm=None):
+        assert wire(select('review my Python patch', phase='verify', request_id='fixed', run_id='fixed')) == wire(
+            pin['select'])
     forged = {**pin['rank_input'], 'trials': [{'resolved': True}]}
     assert CognitiveBridgeBlock().infer(forged).value.get('code') == 'G6_E_COGNITIVE_BRIDGE_INPUT'
 
 
 def test_empty_history_keeps_cold_reply_but_history_controls_remain_discoverable():
+    from g6.core import semantic
     from g6.core.selector import select
     from g6.harness.outcome_history import History
 
-    pin = json.loads((Path(__file__).parent / 'data/cold_c5782df.json').read_text(encoding='utf-8'))
-    assert select('review my Python patch', phase='verify', request_id='fixed', run_id='fixed',
-                  _history=History()) == pin['select']
-    listed = select('inspect local learning history', phase='verify', _history=History())
+    pin = cold_pin()
+    with semantic.request(llm=None):
+        assert select('review my Python patch', phase='verify', request_id='fixed', run_id='fixed',
+                      _history=History()) == pin['select']
+        listed = select('inspect local learning history', phase='verify', _history=History())
     assert any(c['id'] == 'op:learning_history.list' for c in listed['candidates'])
 
 
