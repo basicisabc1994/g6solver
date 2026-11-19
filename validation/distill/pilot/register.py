@@ -8,7 +8,9 @@ with case_id exported from CaseRecord), operator_digests, policy, study and
 oracle_receipts. Each receipt entry names case_id, label, policy_sha256 and
 receipt_sha256. These are evaluator-exported metadata, never case bodies.
 Study supplies family, acceptance_controls and replacement_protocol_sha256.
-No source paths, CaseRecords, receipt bodies or cohort bug payloads are opened.
+The optional --custody-metadata export supplies admission and monitor references
+and receipt digests; matching receipts are read only from sealed custody.
+No source paths, CaseRecords or cohort bug payloads are opened.
 """
 from __future__ import annotations
 
@@ -26,7 +28,7 @@ from g6.distill.held_out.case_gate import CaseRef, SHA256
 from g6.distill.held_out.oracle import OraclePolicy
 from g6.distill.held_out.registration_gate import Registration, oracle_digest, read_registration, strict_json, study_metadata
 
-from . import allocation
+from . import allocation, custody
 
 ROOT = Path(__file__).resolve().parents[3]
 COMPARATORS = (
@@ -54,7 +56,60 @@ def _sha(value, name):
     return value
 
 
-def assemble(manifest: dict, cohort: dict) -> Registration:
+def _custody_inputs(manifest, metadata, exported):
+    """Resolve digest-bound receipts inside custody for the draft's oracle checks."""
+    try:
+        if (set(exported) != {"version", "allocation_sha256", "policy_sha256", "cases", "oracle_receipts",
+                              "label_counts", "refusals"}
+                or exported["version"] != 1 or exported["allocation_sha256"] != digest(manifest)
+                or exported["refusals"] or not isinstance(exported["cases"], list)):
+            raise ValueError
+        policy = OraclePolicy.model_validate(metadata["policy"])
+        policy_sha = digest(policy.model_dump(mode="json"))
+        if exported["policy_sha256"] != policy_sha:
+            raise ValueError
+        refs = [CaseRef.model_validate(c) for c in exported["cases"]]
+        wanted = {u: r for r in custody.ROLES for u in manifest["roles"][r]["bugs"]}
+        if (len(refs) != len(wanted) or {c.unit_id for c in refs} != set(wanted)
+                or len({c.case_id for c in refs}) != len(refs)
+                or set(exported["oracle_receipts"]) != {c.case_id for c in refs}):
+            raise ValueError
+        folder = custody._folder()
+        counts = {r: dict.fromkeys(custody.LABELS, 0) for r in custody.ROLES}
+        receipts = {}
+        for ref in refs:
+            role = wanted[ref.unit_id]
+            if ref.cohort != "development" or ref.split != custody.ROLES[role]:
+                raise ValueError
+            raw = exported["oracle_receipts"][ref.case_id]
+            if set(raw) != {"receipt_sha256"}:
+                raise ValueError
+            ident = _sha(raw["receipt_sha256"], "receipt digest")
+            path = custody.checked_path(folder / "receipts" / f"{ident}.json")
+            if path.stat().st_size > 65536:
+                raise ValueError
+            body = strict_json(path.read_bytes())
+            if digest(body) != ident:
+                raise ValueError
+            receipt = custody.oracle.OracleResult.model_validate(body)
+            if (receipt.case_id != ref.case_id or receipt.policy_sha256 != policy_sha
+                    or receipt.label not in {"positive", "negative"}):
+                raise ValueError
+            counts[role][receipt.label] += 1
+            receipts[ref.case_id] = {"case_id": ref.case_id, "label": receipt.label,
+                                     "policy_sha256": policy_sha, "receipt_sha256": ident}
+        if exported["label_counts"] != counts:
+            raise ValueError
+        raw_cases = metadata.get("cases", [])
+        raw_receipts = metadata.get("oracle_receipts", {})
+        if ({c["unit_id"] for c in raw_cases} & set(wanted) or set(raw_receipts) & set(receipts)):
+            raise ValueError
+        return dict(metadata, cases=[*raw_cases, *exported["cases"]], oracle_receipts=dict(raw_receipts, **receipts))
+    except Exception:
+        raise ValueError("custody_metadata_invalid") from None
+
+
+def assemble(manifest: dict, cohort: dict, *, custody_metadata: dict | None = None) -> Registration:
     """Consume only envelope IDs/digests and explicit evaluator metadata."""
     errors = allocation.check(manifest)
     if errors:
@@ -71,6 +126,8 @@ def assemble(manifest: dict, cohort: dict) -> Registration:
     metadata = cohort.get("pilot_registration", {})
     if not isinstance(metadata, dict):
         raise ValueError("pilot_registration metadata must be an object")
+    if custody_metadata is not None:
+        metadata = _custody_inputs(manifest, metadata, custody_metadata)
     wanted = {unit: role for role in ("acquisition", "admission", "monitor") for unit in roles[role]["bugs"]}
     raw_cases = metadata.get("cases", [])
     units = {c["unit_id"] for c in raw_cases}
@@ -141,16 +198,22 @@ def main(argv=None) -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--cohort", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--custody-metadata", type=Path)
     args = parser.parse_args(argv)
     try:
         # Check all paths before the first read, including the output name.
         manifest_path, cohort_path, output = map(checked_path, (args.manifest, args.cohort, args.output))
+        custody_path = checked_path(args.custody_metadata) if args.custody_metadata is not None else None
+        if custody_path is not None:
+            custody._folder(study=cohort_path.parent)
         if cohort_path.resolve().is_relative_to(ROOT.resolve()):
             raise ValueError("development cohort manifest must be outside the repository")
         path = checked_path(output / "registration.json")
         if path.exists() or path in {manifest_path, cohort_path, production.POLICY_PATH.absolute()}:
             raise ValueError("draft cannot replace an existing file or input")
-        registration = assemble(strict_json(manifest_path.read_bytes()), strict_json(cohort_path.read_bytes()))
+        exported = strict_json(custody_path.read_bytes()) if custody_path is not None else None
+        registration = assemble(strict_json(manifest_path.read_bytes()), strict_json(cohort_path.read_bytes()),
+                                custody_metadata=exported)
         output.mkdir(exist_ok=True)
         path = checked_path(path)
         with path.open("x", encoding="utf-8", newline="\n") as stream:
