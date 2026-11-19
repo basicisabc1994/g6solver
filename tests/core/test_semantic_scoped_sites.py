@@ -90,3 +90,46 @@ def test_blank_model_reformulation_is_an_invalid_reply():
     from g6._context_engine._planner import reformulation_of
     fake = FakeLLM(default='{"value":{"query":"   "}}')
     assert reformulation_of("sleepy cats", fake) is None
+
+
+def test_legacy_reformulation_drops_authority_fields_before_validation():
+    from g6._context_engine._planner import reformulation_of
+    fake = FakeLLM(default=json.dumps({"query": "felines nap", "limits": {"searches": 99},
+                                      "sources": ["*"], "filters": {"registration_id": "*"}, "raw": True}))
+    assert reformulation_of("sleepy cats", fake) == {"query": "felines nap", "routes": [], "top_k": 8}
+
+
+def test_legacy_reformulation_bounds_the_search_fields():
+    from g6._context_engine._planner import reformulation_of
+    fake = FakeLLM(default=json.dumps({"query": "x" * 900, "routes": ["relations", "exact", {"term": 1}],
+                                      "top_k": 10 ** 6}))
+    assert reformulation_of("sleepy cats", fake) == {"query": "x" * 400, "routes": ["exact"], "top_k": 20}
+
+
+def test_reformulation_preserves_consent_refusal():
+    import pytest
+    from g6.core import cloud_consent
+    from g6.core.llm import LLMError
+    from g6._context_engine._planner import reformulation_of
+
+    def refuse(system, user):
+        raise LLMError(cloud_consent.REQUIRED)
+
+    with pytest.raises(LLMError, match=cloud_consent.REQUIRED):
+        reformulation_of("sleepy cats", FakeLLM(refuse))
+
+
+def test_selector_uses_only_an_explicit_semantic_caller(monkeypatch):
+    from g6.core.selector import select
+    monkeypatch.setattr(semantic, "resolve_caller", lambda: None)
+    bare = select("Brainstorm ten names", phase="plan")
+    monkeypatch.setattr(semantic, "resolve_caller", lambda: FakeLLM(default='{"value":"R3"}'))
+    assert select("Brainstorm ten names", phase="plan") == bare
+
+
+def test_selector_does_not_report_the_host_model_disable_setting(monkeypatch):
+    from g6.core.selector import select
+    monkeypatch.delenv("G6_DISABLE_LLM", raising=False)
+    bare = select("Brainstorm ten names", phase="plan")
+    monkeypatch.setenv("G6_DISABLE_LLM", "1")
+    assert select("Brainstorm ten names", phase="plan") == bare

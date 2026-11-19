@@ -910,10 +910,12 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         add(key, value, "phase_prior")
     words = " ".join(task.lower().split())
     from g6.core.risk_signals import _floor_classify
-    risk_reading = semantic.decide("risk", task, _floor_classify(task)[0], ("R0", "R1", "R2", "R3"))
     intents = [name for name, (pattern, _) in INTENTS.items() if pattern.search(words)]
-    safety = semantic.decide("safety_checks", task,
-                             ["action_safety"] if "action_safety" in intents else [], ("action_safety",))
+    # Ambient model configuration is a host fact. Only an explicit request caller may interpret this task.
+    with semantic.use_request(llm=None):
+        risk_reading = semantic.decide("risk", task, _floor_classify(task)[0], ("R0", "R1", "R2", "R3"))
+        safety = semantic.decide("safety_checks", task,
+                                 ["action_safety"] if "action_safety" in intents else [], ("action_safety",))
     if "action_safety" in safety.value and "action_safety" not in intents:
         intents.append("action_safety")
     for name in intents:
@@ -1053,8 +1055,11 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
                         "reroute.")
     if _history is not None and _history.rows:
         card['message'] = 'g6_select: fixed rules and ' + _history.note + '; no check ran on this task'
-    mechanisms.append(safety.mechanism())
-    mechanisms.append({**risk_reading.mechanism(), "stage": "semantic_risk"})
+    for reading, stage in ((safety, "semantic"), (risk_reading, "semantic_risk")):
+        mechanism = {**reading.mechanism(), "stage": stage}
+        if reading.by == "floor":
+            mechanism["reason"] = "deterministic floor; no semantic reading used"
+        mechanisms.append(mechanism)
     evidence = [{"kind": "selection", "corpus_entries": len(entries), "corpus_release": data.get("release", ""),
                  "stages_run": [m["stage"] for m in mechanisms if m["ran"]]}]
     # a deep copy: candidates hold the cached corpus's own objects, which a caller filling in a template must not

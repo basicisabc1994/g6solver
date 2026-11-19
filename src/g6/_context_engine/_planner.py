@@ -34,6 +34,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from g6.core import cloud_consent
+from g6.core.llm import LLMError
 from g6._context_engine import _engine as engine
 from g6._context_engine._envelope import MAX_TOP_K, PassageItem, SearchRequest, SearchResponse
 from g6._context_engine._fuse import tokens_of
@@ -182,19 +183,20 @@ def _record(store: ProjectStore, public: dict[str, Any]) -> None:
 
 
 @scoped
-def _run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFAULT_LIMITS, top_k: int = 8,
+def run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFAULT_LIMITS, top_k: int = 8,
         reformulate: Any = None, clock: Callable[[], datetime] = engine._utc,
-        semantic_scope: Any = None,
         ) -> tuple[SearchResponse, DecisionEvent, tuple[cloud_consent.Source, ...]]:
     """Plan and run a search for ``query`` against the evidence ``needs`` declared now, inside ``limits`` fixed
     before the run. ``reformulate`` is a model caller, used only when ``limits.model_calls`` allows; see the module
     docstring."""
     from g6._context_engine import _dispatch, _graph
+    from g6.core import semantic
 
     started = time.monotonic()
     store = ProjectStore(acc.binding)
-    calls_before = semantic_scope.calls
-    features = features_of(query) if limits.model_calls else _floor_features_of(query)
+    with semantic.use_request() as semantic_scope:
+        calls_before = semantic_scope.calls
+        features = features_of(query) if limits.model_calls else _floor_features_of(query)
     if features.is_relation_question:
         _graph.ensure(store)   # derived on this machine from the indexed files; what a traversal returns is scoped
     generation = store.published()
@@ -219,6 +221,7 @@ def _run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFA
     stop = "unavailable"
     asked: dict[str, Any] = {"query": query, "top_k": top_k, "routes": passage_routes}
     paths: list[dict[str, Any]] = []
+    tried: list[str] = []   # queries already searched; each reformulation request states them, so it is never a repeat
     if "relations" in chosen and _PATH.search(query):
         if limits.searches < 1:
             stop = "budget"
@@ -232,6 +235,7 @@ def _run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFA
             stop = "budget"
             break
         response, refs = engine.search(acc, SearchRequest(**asked), clock=clock)
+        tried.append(asked["query"])
         searches += len(asked["routes"])
         fresh = [i for i in response.payload["items"] if i["passage_id"] not in items]
         for item, ref in zip(response.payload["items"], refs, strict=True):
@@ -251,8 +255,15 @@ def _run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFA
             break
         open_needs = [n.text for n in declared if not _covered(n.text, list(items.values()))]
         before_call = semantic_scope.calls
-        with cloud_consent.request_sources(tuple(sources.values())):
-            proposal = reformulation_of(json.dumps({"query": query, "unmet_needs": open_needs}), reformulate)
+        try:
+            with cloud_consent.request_sources(tuple(sources.values())):
+                proposal = reformulation_of(json.dumps({"query": query, "unmet_needs": open_needs, "tried": tried}),
+                                            reformulate)
+        except LLMError as exc:
+            if cloud_consent.REQUIRED not in str(exc):
+                raise
+            stop = "refused"
+            break
         model_calls += semantic_scope.calls - before_call
         if proposal is None:
             stop = "no_new_passage"
@@ -347,29 +358,22 @@ def reformulation_of(text: str, caller: Any) -> dict[str, Any] | None:
             return value
 
     class Reply(_Record):
-        value: Proposal | None = None
-        query: str | None = None
-        routes: list[Literal["exact", "meaning", "structure"]] = Field(default_factory=list, max_length=3)
-        top_k: int = Field(default=8, ge=1, le=MAX_TOP_K)
+        value: Proposal
 
-        @model_validator(mode="after")
-        def one_layout(self):
-            if self.value is not None:
-                if self.query is not None or self.routes or self.top_k != 8:
-                    raise ValueError("ambiguous reformulation layouts")
-            else:
-                object.__setattr__(self, "value", Proposal(query=self.query, routes=self.routes, top_k=self.top_k))
-            return self
+        @model_validator(mode="before")
+        @classmethod
+        def one_layout(cls, data):
+            if isinstance(data, dict) and "value" not in data:
+                fields = _typed(json.dumps(data))
+                if fields is None:
+                    raise ValueError("invalid reformulation fields")
+                if "routes" in fields:
+                    fields["routes"] = list(fields["routes"])
+                return {"value": fields}
+            return data
 
     with semantic.use_request(llm=caller):
         reading = semantic.read(semantic.Question("reformulation", text, Reply, lambda: None, "choose"))
+    if reading.by == "floor" and reading.reason == "consent not given":
+        raise LLMError(cloud_consent.REQUIRED)
     return reading.value.model_dump() if reading.by != "floor" else None
-
-
-def run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFAULT_LIMITS, top_k: int = 8,
-        reformulate: Any = None, clock: Callable[[], datetime] = engine._utc,
-        ) -> tuple[SearchResponse, DecisionEvent, tuple[cloud_consent.Source, ...]]:
-    from g6.core import semantic
-    with semantic.use_request() as scope:
-        return _run(acc, query, needs, limits=limits, top_k=top_k, reformulate=reformulate, clock=clock,
-                    semantic_scope=scope)
