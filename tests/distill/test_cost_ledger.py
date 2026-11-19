@@ -8,6 +8,13 @@ from g6.core.llm import FakeLLM
 from g6.distill.graph_records import CostVector
 
 
+def completed_resources(meter, cost, *, execution_id=None):
+    from uuid import uuid4
+    from g6.core.ledger import digest
+    return meter.record_resources(cost, execution_id=execution_id or digest(uuid4().hex),
+        event_id=digest(uuid4().hex))
+
+
 def api():
     assert importlib.util.find_spec("g6.distill.cost_ledger"), "P4 cost ledger is missing"
     return importlib.import_module("g6.distill.cost_ledger")
@@ -78,6 +85,8 @@ def test_maintenance_amortisation_and_registered_frontier_prices():
     a = api()
     ledger = a.CostLedger()
     from g6.core.ledger import digest
+    with ledger.measure("cpu", category="maintenance") as meter:
+        completed_resources(meter, CostVector(cpu_s=10), execution_id=digest("cpu execution"))
     ledger.book("maintenance", a.Resources(cpu_s=10), execution_id=digest("cpu execution"))
     for category, count in [("maintenance", 5), ("serving", 20)]:
         with ledger.measure(category, category=category) as meter:
@@ -224,7 +233,7 @@ def test_review3_joined_graph_worker_books_one_call():
         worker.start()
         worker.join(2)
         assert not worker.is_alive() and results
-        meter.cost = results[0].cost
+        meter.record_execution(results[0])
     assert len(raw.calls) == ledger.total("acquisition").llm_calls == 1
     assert meter.record.send_ids == [ledger.sends[0].send_id]
 
@@ -291,16 +300,18 @@ def test_random_interleavings_booked_sends_equal_actual_inner_calls(seed):
             raise RuntimeError("after send")
         return "ok"
     raw = FakeLLM(responder=reply)
-    jobs = [(rng.randrange(3), rng.choice(["ok", "fail"]), rng.choice([True, False])) for _ in range(20)]
+    jobs = [(rng.randrange(3), rng.choice(["ok", "fail"]), rng.choice([True, False]),
+             rng.randrange(1, 5), rng.randrange(1, 3)) for _ in range(20)]
     with ledger.measure("outer") as meter:
         caller = meter.wrap(raw)
         def job(spec):
-            depth, text, early = spec
+            depth, text, early, probes, sandboxes = spec
             def nested(n):
                 with attempt_meter("nested") as inner:
                     if n:
                         nested(n - 1)
                     else:
+                        completed_resources(meter, CostVector(probe_runs=probes, sandbox_runs=sandboxes, solver_calls=1))
                         try:
                             caller.complete("system", text)
                         except RuntimeError:
@@ -316,6 +327,12 @@ def test_random_interleavings_booked_sends_equal_actual_inner_calls(seed):
         ledger.book_attempt(record)
     assert len(raw.calls) == ledger.total("acquisition").llm_calls == len(jobs)
     assert len({s.send_id for s in ledger.sends}) == len(jobs)
+    total = ledger.total("acquisition")
+    assert total.probe_runs == sum(job[3] for job in jobs)
+    assert total.sandbox_runs == sum(job[4] for job in jobs)
+    assert total.solver_calls == 20
+    for name in ("cpu_s", "wall_s", "solver_calls", "probe_runs", "sandbox_runs"):
+        assert getattr(total, name) == pytest.approx(sum(getattr(e.cost, name) for e in ledger.resource_events))
 
 
 
@@ -333,7 +350,7 @@ def test_reported_model_usage_cannot_add_to_or_replace_proxy_usage():
     ledger = api().CostLedger()
     with ledger.measure("reported") as meter:
         meter.wrap(FakeLLM(default="reply")).complete("s", "u")
-        meter.cost = CostVector(llm_calls=99, llm_tokens_in=999, llm_tokens_out=999, probe_runs=3)
+        completed_resources(meter, CostVector(llm_calls=99, llm_tokens_in=999, llm_tokens_out=999, probe_runs=3))
     total = ledger.total("acquisition")
     assert (total.llm_calls, total.llm_tokens_in, total.llm_tokens_out) == (1, 2, 5)
     assert total.probe_runs == 3
@@ -376,20 +393,22 @@ def test_usage_encoding_does_not_dispatch_to_text_subclass():
 
 
 def test_execution_ids_are_booked_once_even_when_an_attempt_is_rebooked():
-    from .test_shadow_audit import selected_record
-    from g6.distill.graph_records import ExecutionRecord, NodeRun
-    _, record = selected_record()
+    from g6.distill.graph import KernelResult, execute
+    from .test_graph_records import D, graph_for, primitive
     cost = CostVector(cpu_s=7, wall_s=9, probe_runs=3, sandbox_runs=2)
-    run = NodeRun(**(record.runs[0].model_dump() | {"cost": cost}))
-    record = ExecutionRecord(**(record.model_dump(exclude={"run_id"}) | {"cost": cost, "runs": [run]}))
+    p = primitive(budget=CostVector(cpu_s=10, wall_s=10, probe_runs=3, sandbox_runs=2))
     ledger = api().CostLedger()
+    with ledger.measure("source", category="maintenance"):
+        record = execute(graph_for([p]), {}, primitives={p.primitive_id: p}, unit_ref=D, split="dev",
+            request_id="events", g6_commit="fixture", kernels={p.impl_ref: lambda *a, **kw:
+                KernelResult(output="concern", cost=cost)})
     for _ in range(2):
         with ledger.measure("execution", category="maintenance") as meter:
             meter.record_execution(record)
         ledger.book_attempt(meter.record, category="maintenance")
     assert ledger.total("maintenance").probe_runs == 3
     assert ledger.total("maintenance").sandbox_runs == 2
-    assert record.run_id in ledger.booking_reports[-1].already_booked_execution_ids
+    assert set(record.attempts[0].execution_ids) <= set(ledger.booking_reports[-1].already_booked_execution_ids)
 
 
 def test_attempt_without_resource_references_keeps_its_existing_identity():
@@ -410,3 +429,183 @@ def test_unidentified_booking_cannot_create_model_spend():
     with pytest.raises(ValueError, match="ids|unidentified"):
         ledger.book("acquisition", api().Resources(llm_calls=4, llm_tokens_in=99))
     assert ledger.total("acquisition").llm_calls == 0
+
+
+def test_review4_probe_report_cannot_erase_measured_time(monkeypatch):
+    a = api()
+    clock = [0.0]
+    monkeypatch.setattr(a.time, "perf_counter", lambda: clock[0])
+    monkeypatch.setattr(a.time, "process_time", lambda: clock[0])
+    ledger = a.CostLedger()
+    with ledger.measure("probe") as meter:
+        with meter.execution():
+            clock[0] += 0.12
+            completed_resources(meter, CostVector(probe_runs=2))
+    total = ledger.total("acquisition")
+    assert total.wall_s >= 0.12 and total.cpu_s >= 0.12
+    assert total.probe_runs == 2
+
+
+def test_review4_idless_non_model_attempt_is_refused():
+    from g6.distill.graph_records import AttemptRecord
+    ledger = api().CostLedger()
+    record = AttemptRecord(what="unidentified", cost=CostVector(cpu_s=7, probe_runs=3, sandbox_runs=2),
+        model_sends=0, outcome="failed", update_id=None, started_at="start", ended_at="end")
+    with pytest.raises(ValueError, match="resource|execution|unidentified"):
+        ledger.book_attempt(record)
+    assert not ledger.attempts and not ledger.entries
+
+
+def test_review4_child_and_parent_aggregate_book_three_probes():
+    from g6.distill.graph import KernelResult, execute
+    from .test_graph_records import D, graph_for, primitive
+    p = primitive(budget=CostVector(probe_runs=3, cpu_s=5, wall_s=5))
+    ledger = api().CostLedger()
+    with ledger.measure("parent") as parent:
+        with parent.scope("child") as child:
+            rec = execute(graph_for([p]), {}, primitives={p.primitive_id: p},
+                unit_ref=D, split="dev", request_id="resources", g6_commit="fixture",
+                kernels={p.impl_ref: lambda *a, **kw: KernelResult(output="concern", cost=CostVector(probe_runs=3))})
+            assert ledger.total("acquisition").probe_runs == 3
+            child.record_execution(rec)
+        parent.record_execution(rec)
+    assert ledger.total("acquisition").probe_runs == 3
+
+
+def test_review4_legacy_assignment_cannot_create_or_hide_spend():
+    ledger = api().CostLedger()
+    with ledger.measure("legacy") as meter:
+        with pytest.raises((AttributeError, ValueError), match="cost|resource|assignment"):
+            meter.cost = CostVector(probe_runs=3)
+    assert ledger.total("acquisition").probe_runs == 0
+    assert ledger.total("acquisition").wall_s > 0
+
+
+def test_review4_bare_resource_reports_cannot_originate_spending():
+    ledger = api().CostLedger()
+    with ledger.measure("aggregate") as meter:
+        with pytest.raises(ValueError, match="execution|event|ids"):
+            meter.record_resources(CostVector(probe_runs=3))
+    assert ledger.total("acquisition").probe_runs == 0
+
+
+@pytest.mark.parametrize("with_references", [False, True])
+def test_review4_kernel_aggregate_requires_child_event_references(with_references):
+    from g6.distill.graph import KernelResult, execute
+    from g6.distill.cost_ledger import resource_owner
+    from .test_graph_records import D, graph_for, primitive
+    p = primitive(budget=CostVector(probe_runs=6, cpu_s=5, wall_s=5))
+    ledger = api().CostLedger()
+    def kernel(*a, **kw):
+        cost = CostVector(probe_runs=3)
+        report = completed_resources(resource_owner(), cost)
+        refs = {"execution_ids": tuple(report.booked_execution_ids)} if with_references else {}
+        return KernelResult(output="concern", cost=cost, **refs)
+    def run():
+        return execute(graph_for([p]), {}, primitives={p.primitive_id: p}, unit_ref=D, split="dev",
+            request_id="kernel-aggregate", g6_commit="fixture", kernels={p.impl_ref: kernel})
+    with ledger.measure("aggregate"):
+        if with_references:
+            assert run().terminal == "ok"
+        else:
+            with pytest.raises(ValueError, match="aggregate|event ids"):
+                run()
+    assert ledger.total("acquisition").probe_runs == 3
+
+
+def test_review4_probe_runner_books_completion_before_isolation_refusal(monkeypatch):
+    from pathlib import Path
+    from g6.distill import probes
+    from g6.workforce.repo_tests import RepoRefused
+    from .test_probes import invoke
+    monkeypatch.setattr(probes, "_stage_run", lambda *a, **kw: {"isolation": {}})
+    ledger = api().CostLedger()
+    with ledger.measure("probe", category="maintenance"):
+        with pytest.raises(RepoRefused, match="isolation"):
+            invoke(Path(".build"))
+        assert ledger.total("maintenance").probe_runs == 1
+
+
+def test_review4_sandbox_completion_survives_bad_output(monkeypatch):
+    from g6.distill import execution
+    from g6.distill.records import VerifierCandidate
+    from .test_records import bodies
+    monkeypatch.setenv("G6_REQUIRE_ISOLATION", "1")
+    monkeypatch.setattr(execution.sandbox, "run_batch", lambda *a, **kw: [])
+    ledger = api().CostLedger()
+    with ledger.measure("sandbox", category="maintenance"):
+        with pytest.raises(execution.ExecutionRefused, match="count"):
+            execution.run_candidate(VerifierCandidate(**bodies()[3][1]),
+                [execution.Observation({}, {}, {})], lambda _: None)
+        assert ledger.total("maintenance").sandbox_runs == 1
+
+
+def test_review4_resource_event_retries_and_category_conflicts():
+    from g6.core.ledger import digest
+    ledger = api().CostLedger()
+    execution_id, event_id = digest("runner"), digest("completion")
+    with ledger.measure("owner", category="maintenance") as meter:
+        cost = CostVector(probe_runs=3, sandbox_runs=2)
+        first = meter.record_resources(cost, execution_id=execution_id, event_id=event_id)
+        again = meter.record_resources(cost, execution_id=execution_id, event_id=event_id)
+        assert first.booked_execution_ids == again.already_booked_execution_ids == [event_id]
+        with pytest.raises(ValueError, match="conflicting"):
+            meter.record_resources(CostVector(probe_runs=4), execution_id=execution_id, event_id=event_id)
+        with pytest.raises((AttributeError, ValueError)):
+            meter.category = "acquisition"
+    with pytest.raises(ValueError, match="category|ownership"):
+        ledger.book("acquisition", api().Resources(probe_runs=3, sandbox_runs=2), execution_id=execution_id)
+    with pytest.raises(ValueError, match="category|ownership"):
+        ledger.book_attempt(meter.record)
+    ledger.book_attempt(meter.record, category="maintenance")
+    assert ledger.total("maintenance").probe_runs == 3
+    assert ledger.total("maintenance").sandbox_runs == 2
+    assert ledger.total("acquisition").probe_runs == 0
+
+
+def test_review4_aggregate_cannot_create_resources_or_change_event_cost():
+    from g6.distill.graph_records import AttemptRecord
+    from .test_shadow_audit import selected_record
+    ledger = api().CostLedger()
+    _, rec = selected_record()
+    from g6.distill.graph_records import CostVector, ExecutionRecord, NodeRun
+    cost = CostVector(probe_runs=3)
+    row = NodeRun(**(rec.runs[0].model_dump() | {"cost": cost}))
+    rec = ExecutionRecord(**(rec.model_dump(exclude={"run_id"}) | {"runs": [row], "cost": cost}))
+    with ledger.measure("owner") as meter:
+        with pytest.raises(ValueError, match="resource event ids"):
+            meter.record_execution(rec)
+        completed_resources(meter, cost)
+    bad = AttemptRecord(**(meter.record.model_dump(exclude={"attempt_id"}) | {
+        "cost": meter.record.cost + CostVector(sandbox_runs=2)}))
+    with pytest.raises(ValueError, match="resource event ids"):
+        ledger.book_attempt(bad)
+    assert ledger.total("acquisition").probe_runs == 3
+    assert ledger.total("acquisition").sandbox_runs == 0
+
+
+@pytest.mark.parametrize("reference", ["aggregate", "event_retry"])
+def test_review4_historical_references_cannot_cover_a_new_measured_interval(monkeypatch, reference):
+    from g6.distill.graph import KernelResult, execute
+    from .test_graph_records import D, graph_for, primitive
+    a = api()
+    ledger = a.CostLedger()
+    p = primitive(budget=CostVector(cpu_s=10, wall_s=10))
+    with ledger.measure("original"):
+        rec = execute(graph_for([p]), {}, primitives={p.primitive_id: p}, unit_ref=D, split="dev",
+            request_id="historical", g6_commit="fixture", kernels={p.impl_ref: lambda *a, **kw:
+                KernelResult(output="concern", cost=CostVector(cpu_s=7, wall_s=9))})
+    before = ledger.total("acquisition")
+    clock = [0.0]
+    monkeypatch.setattr(a.time, "perf_counter", lambda: clock[0])
+    monkeypatch.setattr(a.time, "process_time", lambda: clock[0])
+    with ledger.measure("later") as meter:
+        if reference == "aggregate":
+            meter.record_execution(rec)
+        else:
+            event = next(e for e in ledger.resource_events if e.event_id in rec.attempts[0].execution_ids)
+            meter.record_resources(event.cost, execution_id=event.execution_id, event_id=event.event_id)
+        clock[0] += 0.12
+    total = ledger.total("acquisition")
+    assert total.cpu_s >= before.cpu_s + 0.12
+    assert total.wall_s >= before.wall_s + 0.12

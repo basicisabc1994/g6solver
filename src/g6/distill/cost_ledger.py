@@ -164,6 +164,13 @@ class SendRecord(Model):
     ended_at: str
 
 
+class ResourceEvent(Model):
+    execution_id: Sha256
+    event_id: Sha256
+    category: Category
+    cost: CostVector
+
+
 class BookingReport(Model):
     attempt_id: Sha256 | None = None
     booked_send_ids: list[Sha256] = Field(default_factory=list)
@@ -176,6 +183,8 @@ class BookingReport(Model):
 class _Capture:
     ledger: object = None
     send_ids: set = field(default_factory=set)
+    execution_ids: set = field(default_factory=set)
+    consumed_ids: set = field(default_factory=set)
     lock: object = field(default_factory=RLock)
 
     def add(self, ledger, send_id):
@@ -187,12 +196,47 @@ class _Capture:
 
     def snapshot(self):
         with self.lock:
-            ids = sorted(self.send_ids)
-            return ids, self.ledger.cost_for(ids, ()) if self.ledger is not None else CostVector()
+            ids, executions = sorted(self.send_ids), sorted(self.execution_ids)
+            return ids, executions, self.ledger.cost_for(ids, executions) if self.ledger is not None else CostVector()
+
+    def add_resource(self, ledger, event_id, *, consumed):
+        with self.lock:
+            if self.ledger is not None and self.ledger is not ledger:
+                raise ValueError("attempt spans different ledgers")
+            self.ledger = ledger
+            self.execution_ids.add(event_id)
+            if consumed:
+                self.consumed_ids.add(event_id)
+
+    def consumed_cost(self):
+        with self.lock:
+            return self.ledger.cost_for((), self.consumed_ids) if self.ledger is not None else CostVector()
 
 
 _captures = ContextVar("distill_send_captures", default=())
 _current_measurement = ContextVar("distill_measurement", default=None)
+
+
+def resource_owner():
+    return _current_measurement.get()
+
+
+@contextmanager
+def consume_resources(cost, *, execution_id=None):
+    """Report a trusted probe or sandbox runner's completion before validation."""
+    owner = resource_owner()
+    if owner is None:
+        yield
+        return
+    with owner.execution():
+        wall, cpu = time.perf_counter(), time.process_time()
+        try:
+            yield
+        finally:
+            measured = CostVector.model_validate_json(cost.model_dump_json()).model_dump()
+            measured["wall_s"] = max(measured["wall_s"], time.perf_counter() - wall)
+            measured["cpu_s"] = max(measured["cpu_s"], time.process_time() - cpu)
+            owner._register_resource(execution_id or _id(), _id(), CostVector(**measured))
 
 
 def scoped_caller(caller):
@@ -297,19 +341,29 @@ class _MeteredCaller:
 class _Measurement:
     ledger: object
     what: str
-    category: str = "acquisition"
+    _category: str = "acquisition"
     parent: object = None
-    cost: CostVector = field(default_factory=CostVector)
     outcome: str = "screened"
     record: AttemptRecord | None = None
     _condition: Condition = field(default_factory=lambda: Condition(RLock()))
     _proxies: dict = field(default_factory=dict)
     _send_ids: set = field(default_factory=set)
     _execution_ids: set = field(default_factory=set)
+    _consumed_ids: set = field(default_factory=set)
     _active: int = 0
     _closed: bool = False
-    _excluded_wall: float = 0
-    _excluded_cpu: float = 0
+
+    @property
+    def category(self):
+        return self._category
+
+    @property
+    def cost(self):
+        return self.ledger.cost_for(self._send_ids, self._execution_ids)
+
+    @cost.setter
+    def cost(self, value):
+        raise ValueError("cost assignment refused; report resources at consumption")
 
     def wrap(self, caller):
         if caller is None:
@@ -338,6 +392,7 @@ class _Measurement:
         with self.ledger._state:
             self.ledger._sends.append(row)
             self.ledger._send_rows[row.send_id] = row
+            self.ledger._send_categories[row.send_id] = self.category
             if not late:
                 for owner in self._lineage():
                     owner._send_ids.add(row.send_id)
@@ -351,36 +406,69 @@ class _Measurement:
             return self.ledger.cost_for(self._send_ids, ())
 
     def record_execution(self, execution):
-        # Retain measured resources before inspecting execution identity or output.
+        """Reference completed events; an aggregate cannot originate spending."""
         cost = _execution_cost(CostVector.model_validate_json(execution.cost.model_dump_json()))
-        ident = execution.run_id
-        return self._register_execution(ident, cost)
+        ids = {ident for attempt in execution.attempts for ident in attempt.execution_ids}
+        with self.ledger._state:
+            report = self.reference_resources(cost, ids)
+            self.ledger._reference_execution(execution.run_id, ids)
+            return report
 
-    def record_resources(self, cost):
-        return self._register_execution(_id(), _execution_cost(
-            CostVector.model_validate_json(cost.model_dump_json())))
+    def reference_resources(self, cost, execution_ids):
+        ids = set(execution_ids)
+        with self.ledger._state:
+            if _execution_cost(cost) != self.ledger.cost_for((), ids):
+                raise ValueError("execution resources differ from resource event ids")
+            self.ledger._check_category((), ids, self.category)
+            for owner in self._lineage():
+                owner._execution_ids.update(ids)
+            return self.ledger._book_ids((), ids, self.category)
+
+    def record_resources(self, cost, *, execution_id=None, event_id=None):
+        """A consuming runner reports one completion, with stable ids for retries."""
+        if execution_id is None or event_id is None:
+            raise ValueError("resource completion requires execution and event ids")
+        with self._condition:
+            if self._closed:
+                raise ValueError("resource measurement is closed")
+            return self._register_resource(execution_id, event_id, cost)
 
     @contextmanager
     def execution(self):
-        """Exclude a runner's interval from wrapper time when it reports work."""
-        wall, cpu = time.perf_counter(), time.process_time()
-        before = len(self._execution_ids)
+        """Keep the owning scope open until a consuming runner completes."""
+        with self._condition:
+            if self._closed:
+                raise ValueError("resource measurement is closed")
+            self._active += 1
         try:
             yield
         finally:
-            if len(self._execution_ids) > before:
-                self._excluded_wall += time.perf_counter() - wall
-                self._excluded_cpu += time.process_time() - cpu
+            with self._condition:
+                self._active -= 1
+                self._condition.notify_all()
 
-    def _register_execution(self, ident, cost):
+    def _register_resource(self, execution_id, event_id, cost):
+        row = ResourceEvent(execution_id=execution_id, event_id=event_id,
+            category=self.category, cost=_execution_cost(CostVector.model_validate_json(cost.model_dump_json())))
         with self.ledger._state:
-            previous = self.ledger._executions.get(ident)
-            if previous is not None and previous != cost:
-                raise ValueError("execution id has conflicting resources")
-            self.ledger._executions[ident] = cost
+            previous = self.ledger._resource_events.get(event_id)
+            if previous is not None and previous != row:
+                raise ValueError("resource event id has conflicting resources or ownership")
+            if event_id in self.ledger._execution_refs:
+                raise ValueError("resource event id conflicts with an execution id")
+            if execution_id in self.ledger._executions or execution_id == event_id:
+                raise ValueError("execution id conflicts with a resource event id")
+            self.ledger._resource_events[event_id] = row
+            self.ledger._executions[event_id] = row.cost
+            self.ledger._execution_refs.setdefault(execution_id, set()).add(event_id)
             for owner in self._lineage():
-                owner._execution_ids.add(ident)
-            return self.ledger._book_ids((), (ident,), self.category)
+                owner._execution_ids.add(event_id)
+                if previous is None:
+                    owner._consumed_ids.add(event_id)
+            report = self.ledger._book_ids((), (event_id,), self.category)
+        for capture in _captures.get():
+            capture.add_resource(self.ledger, event_id, consumed=previous is None)
+        return report
 
     def _close(self):
         with self._condition:
@@ -394,14 +482,11 @@ class _Measurement:
             if self._closed:
                 raise ValueError("caller measurement is closed")
             self._active += 1
-        wall, cpu = time.perf_counter(), time.process_time()
         try:
             with self.ledger._scope(what, self.category, parent=self) as child:
                 yield child
         finally:
             with self._condition:
-                self._excluded_wall += time.perf_counter() - wall
-                self._excluded_cpu += time.process_time() - cpu
                 self._active -= 1
                 self._condition.notify_all()
 
@@ -417,7 +502,10 @@ class CostLedger:
         self._state = RLock()
         self._sends: list[SendRecord] = []
         self._send_rows = {}
+        self._send_categories = {}
         self._executions = {}
+        self._resource_events = {}
+        self._execution_refs = {}
         self._booked_sends, self._booked_executions = set(), set()
 
     @property
@@ -425,8 +513,13 @@ class CostLedger:
         with self._state:
             return tuple(self._sends)
 
+    @property
+    def resource_events(self):
+        with self._state:
+            return tuple(self._resource_events.values())
+
     def book(self, category: Category, cost: Resources, *, execution_id=None):
-        """Book a non-model execution report by id; bare totals have no custody."""
+        """Reference consumption events; caller totals cannot create spending."""
         if category not in CATEGORIES:
             raise ValueError("unknown cost category")
         if execution_id is None:
@@ -442,18 +535,43 @@ class CostLedger:
             values[name] = int(values[name])
         measured = CostVector(**values)
         with self._state:
-            previous = self._executions.get(execution_id)
-            if previous is not None and previous != measured:
-                raise ValueError("execution id has conflicting resources")
-            self._executions[execution_id] = measured
+            if measured != self.cost_for((), (execution_id,)):
+                raise ValueError("execution resources differ from resource event ids")
             return self._book_ids((), (execution_id,), category)
+
+    def _event_ids(self, execution_ids):
+        ids = set()
+        for ident in execution_ids:
+            if ident in self._executions:
+                ids.add(ident)
+            elif ident in self._execution_refs:
+                ids.update(self._execution_refs[ident])
+            else:
+                raise ValueError("unknown execution or resource event id")
+        return ids
+
+    def _reference_execution(self, ident, ids):
+        TypeAdapter(Sha256).validate_python(ident)
+        events = self._event_ids(ids)
+        if ident in self._executions or (ident in self._execution_refs and self._execution_refs[ident] != events):
+            raise ValueError("execution id has conflicting resource event ids")
+        self._execution_refs[ident] = events
+
+    def _check_category(self, send_ids, execution_ids, category):
+        if category not in CATEGORIES:
+            raise ValueError("unknown cost category")
+        if any(self._send_categories[ident] != category for ident in send_ids) or any(
+                self._resource_events[ident].category != category for ident in self._event_ids(execution_ids)):
+            raise ValueError("booking category conflicts with resource ownership")
 
     def cost_for(self, send_ids, execution_ids):
         with self._state:
             total = CostVector()
             for ident in set(send_ids):
+                if ident not in self._send_rows:
+                    raise ValueError("unknown send id")
                 total = total + self._send_rows[ident].cost
-            for ident in set(execution_ids):
+            for ident in self._event_ids(execution_ids):
                 total = total + self._executions[ident]
             return total
 
@@ -461,9 +579,10 @@ class CostLedger:
         if category not in CATEGORIES:
             raise ValueError("unknown cost category")
         with self._state:
-            sends, executions = set(send_ids), set(execution_ids)
+            sends, executions = set(send_ids), self._event_ids(execution_ids)
             if sends - self._send_rows.keys() or executions - self._executions.keys():
                 raise ValueError("unknown send or execution id")
+            self._check_category(sends, executions, category)
             fresh_sends, fresh_executions = sends - self._booked_sends, executions - self._booked_executions
             cost = self.cost_for(fresh_sends, fresh_executions)
             report = BookingReport(attempt_id=attempt_id, booked_send_ids=sorted(fresh_sends),
@@ -485,6 +604,8 @@ class CostLedger:
         with self._state:
             if _model_cost(row.cost) != self.cost_for(row.send_ids, ()):
                 raise ValueError("unmetered_send: attempt model usage differs from proxy send ids")
+            if _execution_cost(row.cost) != self.cost_for((), row.execution_ids):
+                raise ValueError("attempt resources differ from execution or resource event ids")
             report = self._book_ids(row.send_ids, row.execution_ids, category, row.attempt_id)
             fresh = all(a.attempt_id != row.attempt_id for a in self.attempts)
             if fresh:
@@ -507,14 +628,11 @@ class CostLedger:
             raise
         finally:
             meter._close()
-            # Legacy cost assignment is one explicit execution report. New runners
-            # report within execution() so their time is separate from wrapper time.
-            if meter.cost != CostVector():
-                meter._register_execution(_id(), _execution_cost(meter.cost))
-            else:
-                meter._register_execution(_id(), CostVector(
-                    wall_s=max(0, time.perf_counter() - wall - meter._excluded_wall),
-                    cpu_s=max(0, time.process_time() - cpu - meter._excluded_cpu)))
+            # Completed child events cover their intervals; book the remaining floor.
+            covered = self.cost_for((), meter._consumed_ids)
+            meter._register_resource(_id(), _id(), CostVector(
+                wall_s=max(0, time.perf_counter() - wall - covered.wall_s),
+                cpu_s=max(0, time.process_time() - cpu - covered.cpu_s)))
             cost = self.cost_for(meter._send_ids, meter._execution_ids)
             unmetered = noted() > cost.llm_calls
             if unmetered:

@@ -13,7 +13,9 @@ from dataclasses import dataclass
 from g6.core.ledger import canonical
 from g6.distillation import sandbox
 
+from .cost_ledger import consume_resources
 from .detectors import run_template
+from .graph_records import CostVector
 from .records import MethodContract, VerifierCandidate
 
 
@@ -85,8 +87,9 @@ def run_candidate(candidate: VerifierCandidate, observations: list[Observation],
             raise ExecutionRefused("G6_E_SYNTH_SOURCE", problems[0])
         if os.environ.get("G6_REQUIRE_ISOLATION", "").strip().lower() not in {"1", "true", "yes", "on"}:
             raise ExecutionRefused("G6_E_ISOLATION_UNAVAILABLE", "predicate execution requires strict isolation")
-        runs = sandbox.run_batch(candidate.body, [obs.facts for obs in selected],
-                                 timeout_s=candidate.contract.cost_bound.wall_s, memory_mb=256)
+        with consume_resources(CostVector(sandbox_runs=1)):
+            runs = sandbox.run_batch(candidate.body, [obs.facts for obs in selected],
+                                     timeout_s=candidate.contract.cost_bound.wall_s, memory_mb=256)
         if len(runs) != len(selected):
             raise ExecutionRefused("G6_E_SYNTH_EXECUTION", "runner output count differs from input count")
         values = []

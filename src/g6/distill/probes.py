@@ -19,6 +19,8 @@ from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.workforce import mutation_check, repo_tests
 
+from .cost_ledger import _id, consume_resources
+from .graph_records import CostVector
 from .records import Model, Record, Sha256
 
 PROBE_NAMES_V2 = frozenset({"kill_set.v2", "discriminates_at_base.v2"})
@@ -202,6 +204,7 @@ def run_probe(instance, before, after, *, split, probe_input, workspace, cost_bo
         raise ValueError("sealed custody cannot be an execution workspace")
     observations, old_kills, new_kills = [], set(), set()
     settled = 0
+    execution_id = _id()
     bindings = instance.bindings
     fixed = inputs.files[inputs.target]
 
@@ -230,8 +233,9 @@ def run_probe(instance, before, after, *, split, probe_input, workspace, cost_bo
         remaining = int(deadline - time.monotonic())
         if len(observations) >= budget.probe_runs or remaining < 1:
             refused()
-        raw = _stage_run(inputs, implementation, suite, workspace=workspace, timeout_s=min(20, remaining),
-                         python=python, deadline=deadline)
+        with consume_resources(CostVector(probe_runs=1), execution_id=execution_id):
+            raw = _stage_run(inputs, implementation, suite, workspace=workspace, timeout_s=min(20, remaining),
+                             python=python, deadline=deadline)
         check_time()
         isolation = raw.get("isolation")
         if not isinstance(isolation, dict) or not isolation.get("backend") or isolation.get("network") is not False:

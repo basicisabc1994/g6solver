@@ -212,16 +212,73 @@ def test_shadow_revalidates_execution_and_teacher_node(fault):
 
 def test_review3_mismatched_graph_keeps_cpu_probe_sandbox_costs():
     from g6.distill.cost_ledger import CostLedger
-    from g6.distill.graph_records import CostVector, ExecutionRecord, NodeRun
+    from g6.distill.graph import KernelResult, execute
+    from g6.distill.graph_records import CostVector, ExecutionRecord
+    from .test_graph_records import graph_for, primitive
     chosen, original = selected_record()
     cost = CostVector(cpu_s=7, probe_runs=3, sandbox_runs=2)
-    run = NodeRun(**(original.runs[0].model_dump() | {"cost": cost}))
-    result = ExecutionRecord(**(original.model_dump(exclude={"run_id"}) | {
-        "graph_id": digest("other graph"), "runs": [run], "cost": cost}))
+    p = primitive(budget=CostVector(cpu_s=10, wall_s=5, probe_runs=3, sandbox_runs=2))
+    def teacher(**_):
+        result = execute(graph_for([p]), {}, primitives={p.primitive_id: p}, unit_ref=chosen, split="dev",
+            request_id="mismatch", g6_commit="fixture", kernels={p.impl_ref: lambda *a, **kw:
+                KernelResult(output="concern", cost=cost)})
+        return ExecutionRecord(**(result.model_dump(exclude={"run_id"}) | {"graph_id": digest("other graph")}))
     ledger = CostLedger()
     audit = api().ShadowAudit(seed=7, ledger=ledger, teacher_graph=original.graph_id, teacher_node="n0")
     with pytest.raises(ValueError, match="graph"):
         audit.run(chosen, program_verdict="concern", admitted_replacement=True,
-                  in_scope=True, teacher=lambda **_: result)
+                  in_scope=True, teacher=teacher)
     total = ledger.total("maintenance")
     assert total.cpu_s >= 7 and total.probe_runs == 3 and total.sandbox_runs == 2
+
+
+def resource_teacher_graph():
+    from g6.distill.graph_records import CostVector
+    from .test_distill_operator import teacher_graph
+    from .test_graph_records import graph_for, primitive
+    _, llm, config = teacher_graph()
+    probe = primitive(budget=CostVector(probe_runs=3, wall_s=5, cpu_s=5))
+    return graph_for([probe, llm], combinator="seq", k=None), probe, llm, config
+
+
+def test_review4_runner_exception_keeps_three_probes_and_one_maintenance_send():
+    from g6.distill.cost_ledger import CostLedger
+    from g6.distill.graph import KernelResult, execute
+    from g6.distill.graph_records import CostVector
+    chosen, _ = selected_record()
+    graph, probe, llm, config = resource_teacher_graph()
+    ledger = CostLedger()
+    audit = api().ShadowAudit(seed=7, ledger=ledger, teacher_graph=graph.graph_id, teacher_node="n1")
+    def teacher(*, caller):
+        execute(graph, {}, primitives={p.primitive_id: p for p in (probe, llm)},
+            unit_ref=chosen, split="dev", request_id="raise-after", g6_commit="fixture", caller=caller,
+            llm_configs={llm.primitive_id: config}, kernels={probe.impl_ref: lambda *a, **kw:
+                KernelResult(output="concern", cost=CostVector(probe_runs=3))})
+        raise RuntimeError("runner failed after graph")
+    with pytest.raises(RuntimeError, match="after graph"):
+        audit.run(chosen, program_verdict="concern", admitted_replacement=True,
+            in_scope=True, teacher=teacher, caller=FakeLLM(default="concern"))
+    total = ledger.total("maintenance")
+    assert total.probe_runs == 3 and total.llm_calls == 1
+    assert ledger.total("acquisition").llm_calls == 0
+
+
+def test_review4_early_acquisition_booking_refused_and_horizon_stays_100_calls():
+    from g6.distill.cost_ledger import CostLedger
+    from g6.distill.graph import execute
+    from .test_distill_operator import teacher_graph
+    chosen, _ = selected_record()
+    graph, p, config = teacher_graph()
+    ledger = CostLedger()
+    audit = api().ShadowAudit(seed=7, ledger=ledger, teacher_graph=graph.graph_id, teacher_node="n0")
+    def teacher(*, caller):
+        rec = execute(graph, {}, primitives={p.primitive_id: p}, unit_ref=chosen, split="dev",
+            request_id="early", g6_commit="fixture", caller=caller, llm_configs={p.primitive_id: config})
+        with pytest.raises(ValueError, match="category|ownership"):
+            ledger.book_attempt(rec.attempts[0])
+        return rec
+    audit.run(chosen, program_verdict="concern", admitted_replacement=True,
+        in_scope=True, teacher=teacher, caller=FakeLLM(default="concern"))
+    assert ledger.total("maintenance").llm_calls == 1
+    assert ledger.total("acquisition").llm_calls == 0
+    assert ledger.profile(deployment_tasks=10).total().llm_calls == 100

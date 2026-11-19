@@ -284,6 +284,7 @@ def _propose_concept_from_teacher(cases, traces, *, synthesizer, oracle_store,
 class CandidateReplay:
     verdicts: tuple[str, ...]
     cost: CostVector
+    execution_ids: tuple[str, ...] = ()
 
 
 class DistillationUpdate(Model):
@@ -413,7 +414,7 @@ def distill(graph, teacher_node, *, primitives, cases, traces, oracle_store, tra
     """Propose U and gate inputs from oracle targets; every outcome is costed.
 
     Scope measurements are adaptive dev data. They grant no authority. Probe
-    runners must return CandidateReplay with their measured resource vector.
+    runners must report consumption events and return CandidateReplay referencing them.
     """
     update, error, ps = None, None, dict(primitives)
     with ledger.measure("distill:" + teacher_node) as meter:
@@ -470,7 +471,7 @@ def distill(graph, teacher_node, *, primitives, cases, traces, oracle_store, tra
                                 out = (replay(q, dev, caller=replay_meter.wrap(synthesizer.caller)) if replay is not None
                                        else _replay(q, dev, library=library))
                                 if isinstance(out, CandidateReplay):
-                                    replay_meter.record_resources(out.cost)
+                                    replay_meter.reference_resources(out.cost, out.execution_ids)
                             if isinstance(out, CandidateReplay):
                                 outputs = list(out.verdicts)
                             else:

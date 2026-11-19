@@ -379,6 +379,14 @@ def test_synthesis_failure_after_sends_retains_the_whole_attempt(outcome):
     assert ledger.total("acquisition").llm_calls == 2
 
 
+def completed_replay(verdicts, cost):
+    from g6.distill.cost_ledger import resource_owner
+    from .test_cost_ledger import completed_resources
+    report = completed_resources(resource_owner(), cost)
+    return api().CandidateReplay(verdicts=verdicts, cost=cost,
+        execution_ids=tuple(report.booked_execution_ids))
+
+
 def test_probe_resources_enter_acquisition_and_per_task_delta():
     from g6.distill.cost_ledger import CostLedger
     from g6.distill.synthesis import SynthesisResult
@@ -401,8 +409,8 @@ def test_probe_resources_enter_acquisition_and_per_task_delta():
     result = api().distill(g, "n0", primitives={p.primitive_id: p}, cases=[c, d], traces=[rec, dev],
         oracle_store=receipts, trace_store=reader, registered_policy_sha256=D,
         synthesizer=S(caller=FakeLLM(default=concept_reply())), ledger=ledger, mode="replace",
-        replay=lambda q, cases, **_: api().CandidateReplay(verdicts=("concern",),
-            cost=CostVector(cpu_s=0.4, wall_s=0.6, probe_runs=2)))
+        replay=lambda q, cases, **_: completed_replay(("concern",),
+            CostVector(cpu_s=0.4, wall_s=0.6, probe_runs=2)))
     assert result.update is not None, result.error
     assert result.update.delta_c.cpu_s <= -0.4 and result.update.delta_c.probe_runs == -2
     assert result.attempt.cost.probe_runs == 2
@@ -497,8 +505,8 @@ def test_rejected_replay_retains_reported_resources_and_counts_sends_once(observ
     def replay(q, cases, *, caller):
         if observed:
             caller.complete("", "")
-        return api().CandidateReplay(verdicts=("concern", "concern"),
-            cost=CostVector(llm_calls=int(reported), cpu_s=7, probe_runs=3, sandbox_runs=2))
+        return completed_replay(("concern", "concern"),
+            CostVector(llm_calls=int(reported), cpu_s=7, probe_runs=3, sandbox_runs=2))
 
     result, ledger, _ = savings_attempt(replay=replay)
     assert result.update is None and result.attempt.outcome == "failed"
@@ -522,6 +530,15 @@ def test_joined_thread_replay_send_is_costed_and_candidate_refused():
     assert "model sends" in result.error
     assert result.attempt.cost.llm_calls == 2
     assert ledger.total("acquisition").llm_calls == 2
+
+
+def test_review4_replay_aggregate_without_event_ids_is_refused():
+    def replay(q, cases, **_):
+        return api().CandidateReplay(verdicts=("concern", "concern"), cost=CostVector(probe_runs=3))
+    result, ledger, _ = savings_attempt(replay=replay)
+    assert result.update is None and result.attempt.outcome == "failed"
+    assert "resource" in result.error
+    assert ledger.total("acquisition").probe_runs == 0
 
 
 @pytest.mark.parametrize("fault", ["missing", "target", "policy"])
