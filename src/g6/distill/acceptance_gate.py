@@ -17,7 +17,7 @@ import re
 import statistics
 import time
 import threading
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -61,12 +61,14 @@ def _writer():
             stream = path.open("x", encoding="utf-8", newline="\n")
         except FileExistsError:
             raise ValueError("acceptance evaluator writer busy or recovery required") from None
+        lease = {"id": uuid4().hex, "retain": False}
         try:
             with stream:
-                stream.write(str(os.getpid()) + "\n")
-            yield
+                stream.write(str(os.getpid()) + "\n" + lease["id"] + "\n")
+            yield lease
         finally:
-            path.unlink()
+            if not lease["retain"]:
+                path.unlink()
 
 
 @dataclass(frozen=True)
@@ -377,7 +379,9 @@ def _interval(k, n):
 
 
 def _active(entries):
-    return [e for e in entries if e.authority in {"A1", "A2"} and e.status in {"probation", "admitted", "demoted"}]
+    return [e for e in entries if e.authority in {"A1", "A2"}
+            and e.status in {"probation", "admitted", "demoted"}
+            and (e.replacement != "R" or _replacement_authorized(e))]
 
 
 def _candidate(entry):
@@ -449,8 +453,9 @@ def _probe_verdict(candidate, case):
     return outcome.verdict
 
 
-def _normal_form(source):
+def _normal_form(source, reserved=()):
     """A deliberately small normalisation with direct function calls only."""
+    reserved = set(reserved) | set(re.findall(r"\b\w+\b", source))
     tree = ast.parse(source)
     names, constants, kept = {}, {}, []
     for node in tree.body:
@@ -459,7 +464,11 @@ def _normal_form(source):
                 raise ValueError("normalisation excludes test hooks")
             if node.name in names or node.args.defaults or node.args.kw_defaults:
                 raise ValueError("normalisation excludes decorated or defaulted functions")
-            names[node.name] = ("test_" if node.name.startswith("test_") else "helper_") + str(len(names))
+            prefix = "test_" if node.name.startswith("test_") else "helper_"
+            index = len(names)
+            while prefix + str(index) in reserved or prefix + str(index) in names.values():
+                index += 1
+            names[node.name] = prefix + str(index)
             kept.append(node)
         elif (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
               and node.targets[0].id.isupper() and isinstance(node.value, ast.Constant)):
@@ -531,7 +540,8 @@ def _name_bindings(tree):
 
 def _normal_equivalent(before, after):
     try:
-        return _normal_form(before) == _normal_form(after)
+        reserved = set(re.findall(r"\b\w+\b", before + "\n" + after))
+        return _normal_form(before, reserved) == _normal_form(after, reserved)
     except (SyntaxError, ValueError, RecursionError):
         return False
 
@@ -560,7 +570,23 @@ def _negative_justification(case, policy):
     return "n2"
 
 
+@dataclass(frozen=True)
+class _GuardedCandidate:
+    candidate: VerifierCandidate
+    scope: list
+    rows: dict
+
+    @property
+    def contract(self):
+        return self.candidate.contract
+
+
 def _run(candidate, case, entries, stack=frozenset()):
+    if isinstance(candidate, _GuardedCandidate):
+        own = (_run(candidate.candidate, case, entries, stack)
+               if _case_in_scope(candidate.scope, case) else "abstain")
+        served = candidate.rows[case.case_id].teacher_verdict if own == "abstain" else own
+        return own, served
     _candidate_boundary(candidate)
     if candidate.candidate_id in stack:
         raise ValueError("cyclic method dependency")
@@ -657,6 +683,8 @@ def _case_in_scope(scope, case):
 
 
 def _measure_entry(entry, observations, entries):
+    if entry.replacement == "R" and not _replacement_authorized(entry):
+        return ["abstain"] * len(observations), [0.] * (3 * len(observations))
     verdicts, costs = _measure(_candidate(entry), observations, entries)
     if entry.replacement == "R":
         verdicts = [v if _case_in_scope(entry.replacement_scope, o.case) else "abstain"
@@ -878,8 +906,11 @@ def _spend(registration, candidate, meter=None):
 
 @contextmanager
 def _attempt_meter(registration, candidate, phase):
-    started = time.monotonic()
-    body = {"registration": registration, "candidate_id": candidate.candidate_id, "phase": phase}
+    started = getattr(candidate, "started", None)
+    if started is None:
+        started = time.monotonic()
+    body = {"registration": registration, "candidate_id": candidate.candidate_id,
+            "phase": phase, "outer": True, "candidate_ids": getattr(candidate, "candidate_ids", [candidate.candidate_id])}
     attempt = _append(_journal(), "replacement_attempt_start", body)
     try:
         yield started, attempt
@@ -888,6 +919,20 @@ def _attempt_meter(registration, candidate, phase):
         if not math.isfinite(elapsed) or elapsed < 0:
             raise ValueError("invalid replacement attempt duration")
         _append(_journal(), "replacement_attempt", body | {"attempt": attempt, "validation_s": elapsed})
+        # Completion is inside the outer meter. Its seal also reserves the entire
+        # registered post-commit tail, so later attempts charge that budget too.
+        elapsed = time.monotonic() - started
+        tail = getattr(candidate, "tail_allowance_s", 0.)
+        sealed = elapsed + 1. + tail
+        try:
+            _append(_journal(), "registration_meter_closed", body | {
+                "attempt": attempt, "validation_s": sealed, "tail_allowance_s": tail})
+        except BaseException:
+            _append(_journal(), "replacement_attempt_start", body | {"phase": "cost_recovery"})
+            raise
+        if time.monotonic() - started > sealed:
+            _append(_journal(), "replacement_attempt_start", body | {"phase": "cost_recovery"})
+            raise ValueError("meter seal exceeded; owner cost recovery required")
 
 
 def _validation_total(registration, active):
@@ -902,17 +947,25 @@ def _validation_total(registration, active):
         if ident not in starts or ident in finished or not math.isfinite(elapsed) or elapsed < 0:
             raise ValueError("replacement attempt cost history invalid")
         finished[ident] = elapsed
+    sealed = set()
     for row in rows:
-        if row["kind"] != "replacement_prepared":
+        if row["kind"] != "registration_meter_closed":
             continue
-        receipt = row["body"]["completion"]
-        ident, reserved = receipt["attempt"], receipt["activation_reserved_s"]
-        if ident not in starts or not math.isfinite(reserved) or reserved < 0:
-            raise ValueError("replacement activation cost history invalid")
-        if ident in finished:
-            finished[ident] = max(finished[ident], reserved)
+        body = row["body"]
+        ident, elapsed = body["attempt"], body["validation_s"]
+        if (ident not in finished or ident in sealed or not math.isfinite(elapsed)
+                or elapsed < finished[ident] or body["candidate_id"] != starts[ident]["candidate_id"]):
+            raise ValueError("registration meter closure invalid")
+        finished[ident] = elapsed
+        sealed.add(ident)
+    for ident, body in starts.items():
+        if body.get("outer") and ident not in sealed:
+            finished.pop(ident, None)
     if starts.keys() - finished.keys() - {active}:
         raise ValueError("unfinished replacement attempt requires owner cost recovery")
+    recovered_meters = {r["body"].get("meter") for r in rows if r["kind"] == "reservation_meter_recovery"}
+    if any(not starts[ident].get("outer") and ident not in recovered_meters for ident in finished):
+        raise ValueError("unsealed earlier evaluation requires owner cost recovery")
     reservations = {r["id"]: r["body"] for r in rows if r["kind"] == "reserve"}
     recovered = {}
     for row in rows:
@@ -932,10 +985,11 @@ def _validation_total(registration, active):
             continue
         meter = row["body"].get("meter") or recovered.get(row["id"])
         start = starts.get(meter)
-        if (start is None or meter in used or start["phase"] != "assessment"
-                or start["candidate_id"] != row["body"].get("candidate_id")):
+        key = (meter, row["body"].get("candidate_id"))
+        if (start is None or key in used or start["phase"] != "assessment"
+                or row["body"].get("candidate_id") not in start.get("candidate_ids", [start["candidate_id"]])):
             raise ValueError("unmetered earlier evaluation requires owner cost recovery")
-        used.add(meter)
+        used.add(key)
     return math.fsum(finished.values())
 
 
@@ -962,8 +1016,8 @@ def _snapshot(library, entry_id):
     if type(library) is not Library:
         raise ValueError("gate requires the persisted library view")
     entry = library.get(entry_id)
-    if entry is None:
-        raise ValueError("stale or missing library snapshot")
+    if entry is None or (entry.replacement == "R" and not _replacement_authorized(entry)):
+        raise ValueError("stale, pending or missing library snapshot")
     return entry
 
 
@@ -994,13 +1048,16 @@ def _persist(candidate, answer, evidence, own, frozen, data, library, *, prepare
     certificate = {"gate": VERSION, "candidate": candidate.candidate_id, "report": _save_report(data),
                    "authority": "A1", "scope": "checked on the registered held-out cases; not proof"}
     replacement = data.get("replacement")
+    pending = replacement is not None and replacement.get("state") == "pending" and prepare != "activation"
+    if replacement is not None:
+        certificate = certificate | {"authority": "A0" if pending else "A1", "state": "pending"}
     fields = {} if replacement is None else {
-        "replacement": "R", "replacement_scope": replacement["scope"], "teacher": replacement["teacher"],
+        "replacement": "none" if pending else "R", "replacement_scope": replacement["scope"], "teacher": replacement["teacher"],
         "noninferiority": _save_report(replacement)}
     entry = LibraryEntry(candidate_id=candidate.candidate_id, contract_sha256=candidate.contract.content_id,
         concept_id=candidate.concept_id, family=candidate.contract.family,
         version=max((e.version for e in previous), default=0) + 1, parents=candidate.lineage,
-        status="probation", authority="A1", evidence=evidence,
+        status="demoted" if pending else "probation", authority="A0" if pending else "A1", evidence=evidence,
         regression_suite=[RegressionCase(case_ref=o.case.case_id, verdict=v) for o, v in zip(frozen.acceptance, own)],
         field=FieldEvidence(fired=0, confirmed=0, refuted=0, unlabelled=0, precision=None),
         decided_by=DecidedBy(gate_version=VERSION, person=None), certificate_sha256=_save_report(certificate),
@@ -1057,54 +1114,66 @@ def _final_replacement_cost(data, study, validation_s):
     return data | {"replacement": replacement | {"cost": cost, "validation_s": validation_s}}
 
 
-def _activate_replacement(candidate, library, frozen, evidence, batch_bar):
-    registration = frozen.registration_sha256
-    staged = None
+def _replacement_authorized(entry):
+    """Pending receipts grant no authority, including to dependency readers."""
     try:
-        with _attempt_meter(registration, candidate, "activation") as attempt:
-            prior = _validation_total(registration, attempt[1])
-            answer, evidence, own, data = _assess_replacement(candidate, library.list(), frozen,
-                evidence.reuse_index, prior_validation_s=prior, validation_started=attempt[0])
-            if answer.p_value > batch_bar:
-                raise ValueError("batch bar not met after library changed")
-            allowance = frozen.replacement.activation_allowance_s
-            if allowance is None:
-                raise ValueError("registered activation allowance required")
-            # Archive cases and prepare reports before taking the final cost snapshot.
-            _persist(candidate, answer, evidence, own, frozen, data, library, prepare=True)
-            validation_s = prior + max(0., time.monotonic() - attempt[0]) + allowance
-            data = _final_replacement_cost(data, frozen.replacement, validation_s)
-            completion = {"attempt": attempt[1], "registration": registration,
-                          "validation_s": validation_s, "activation_allowance_s": allowance,
-                          "activation_reserved_s": validation_s - prior}
-            data["replacement"]["activation_completion"] = completion
-            evidence = AcceptanceEvidence.model_validate(evidence.model_dump(mode="json") |
-                {"acceptance_report_sha256": digest(data)})
-            answer = replace(answer, report_sha256=digest(data))
-            entry = _persist(candidate, answer, evidence, own, frozen, data, library, prepare=True)
-            staged, target, head = _stage_replacement(entry)
-            answer = replace(answer, entry_id=entry.entry_id)
-            _append(_journal(), "replacement_prepared", asdict(answer) |
-                    {"registration": registration, "completion": completion})
-        # Completion append and all preparation must fit the registered tail budget.
-        reconciled = _validation_total(registration, None)
-        if (reconciled > validation_s or prior + time.monotonic() - attempt[0] > validation_s):
-            _append(_journal(), "replacement_attempt_start", {"registration": registration,
-                "candidate_id": candidate.candidate_id, "phase": "cost_recovery"})
-            raise ValueError("activation allowance exceeded; owner cost recovery required")
-        # The single path swap commits R and its cost-completion receipt together.
+        rows = _journal().entries()
+        states = [r["body"] for r in rows if r["kind"] == "replacement_state"
+                  and (r["body"].get("entry_id") == entry.entry_id
+                       or (r["body"].get("pending_receipt") == entry.noninferiority
+                           and r["body"].get("candidate_id") == entry.candidate_id))]
+        if not states or states[-1].get("state") != "active":
+            return False
+        receipt = states[-1]
+        writer = receipt.get("writer")
+        lock = state_path("distill", "acceptance_gate.lock")
+        if writer is not None and lock.exists() and writer in lock.read_text(encoding="utf-8").splitlines():
+            return False
+        closed = [r["body"] for r in rows if r["kind"] == "registration_meter_closed"
+                  and r["body"].get("attempt") == receipt.get("attempt")]
+        report = receipt["report"]
+        replacement = report["replacement"]
+        return (len(closed) == 1 and closed[0]["registration"] == report["registration"]
+                and entry.candidate_id in closed[0]["candidate_ids"]
+                and entry.candidate_id == report["candidate_id"]
+                and entry.noninferiority == receipt["pending_receipt"]
+                and entry.teacher == replacement["teacher"]
+                and [p.model_dump(mode="json") for p in entry.replacement_scope] == replacement["scope"]
+                and replacement["state"] == "active"
+                and replacement["validation_s"] >= closed[0]["validation_s"]
+                and replacement["cost"]["admissible"]
+                and replacement["cost"]["upper_95"] < 0)
+    except (ValueError, KeyError, FileNotFoundError):
+        return False
+
+
+def _activate_replacement(candidate, library, frozen, evidence, batch_bar, attempt):
+    registration = frozen.registration_sha256
+    prior = _validation_total(registration, attempt[1])
+    answer, evidence, own, data = _assess_replacement(candidate, library.list(), frozen,
+        evidence.reuse_index, prior_validation_s=prior, validation_started=attempt[0])
+    if answer.p_value > batch_bar:
+        raise ValueError("batch bar not met after library changed")
+    if frozen.replacement.activation_allowance_s is None:
+        raise ValueError("registered activation allowance required")
+    data["replacement"]["state"] = "pending"
+    evidence = AcceptanceEvidence.model_validate(evidence.model_dump(mode="json") |
+        {"acceptance_report_sha256": digest(data)})
+    answer = replace(answer, report_sha256=digest(data))
+    for prepare in (True, "activation"):
+        if prepare == "activation":
+            _final_replacement_cost(data, frozen.replacement,
+                prior + max(0., time.monotonic() - attempt[0]))
+            if not getattr(Library, "replacement_state_checked", False):
+                raise ValueError("pending replacement reader issuance required")
+        entry = _persist(candidate, answer, evidence, own, frozen, data, library, prepare=prepare)
+        staged, target, head = _stage_replacement(entry)
         try:
-            _publish_replacement(staged, target, head, attempt[0] + validation_s - prior)
-        except ValueError:
-            if prior + time.monotonic() - attempt[0] > validation_s:
-                _append(_journal(), "replacement_attempt_start", {"registration": registration,
-                    "candidate_id": candidate.candidate_id, "phase": "cost_recovery"})
-            raise
-        staged = None
-        return answer
-    finally:
-        if staged is not None:
-            staged.unlink(missing_ok=True)
+            _publish_replacement(staged, target, head, math.inf)
+        finally:
+            if staged is not None:
+                staged.unlink(missing_ok=True)
+    return replace(answer, entry_id=entry.entry_id), data
 
 
 def decide(candidate: VerifierCandidate, library: Library, registration: str) -> AcceptanceDecision:
@@ -1131,7 +1200,86 @@ def decide_batch(candidates, library: Library, registration: str) -> tuple[Accep
     return _decide_batch(candidates, library, registration, replacement=False)
 
 
+@dataclass
+class _AssessmentIdentity:
+    candidate_ids: tuple[str, ...]
+    started: float
+    tail_allowance_s: float = 0.
+
+    @property
+    def candidate_id(self):
+        return digest(self.candidate_ids)
+
+
 def _decide_batch(candidates, library, registration, *, replacement):
+    started = time.monotonic()
+    candidates = tuple(candidates)
+    pending = {}
+    identity = _AssessmentIdentity(tuple(c.candidate_id if type(c) is VerifierCandidate else "invalid"
+                                         for c in candidates), started)
+    try:
+        with _writer() as lease:
+            with _attempt_meter(registration, identity, "assessment") as attempt:
+                results = _decide_batch_inner(candidates, library, registration,
+                    replacement=replacement, attempt=attempt, pending=pending)
+                identity.tail_allowance_s = max((item[1].replacement.activation_allowance_s
+                                                for item in pending.values()), default=0.)
+            if not pending:
+                return results
+            total = _validation_total(registration, None)
+            closed = next(r["body"]["validation_s"] for r in _journal().entries()
+                          if r["kind"] == "registration_meter_closed" and r["body"]["attempt"] == attempt[1])
+            prior = total - closed
+            for index, candidate in enumerate(candidates):
+                if candidate.candidate_id not in pending:
+                    continue
+                answer, frozen, data = pending[candidate.candidate_id]
+                activation_started = False
+                try:
+                    if prior + time.monotonic() - attempt[0] > total:
+                        raise ValueError("activation allowance exceeded; owner cost recovery required")
+                    data = _final_replacement_cost(data, frozen.replacement, total)
+                    data["replacement"]["state"] = "active"
+                    body = {"state": "active", "entry_id": answer.entry_id,
+                            "registration": registration, "attempt": attempt[1],
+                            "candidate_id": candidate.candidate_id,
+                            "writer": lease["id"] if lease else None,
+                            "pending_receipt": digest(pending[candidate.candidate_id][2]["replacement"]),
+                            "report": data}
+                    activation_started = True
+                    _append(_journal(), "replacement_state", body)
+                    if prior + time.monotonic() - attempt[0] > data["replacement"]["validation_s"]:
+                        raise ValueError("activation allowance exceeded; owner cost recovery required")
+                except BaseException as error:
+                    if lease:
+                        lease["retain"] = True
+                    if activation_started:
+                        _append(_journal(), "replacement_attempt_start", {
+                            "registration": registration, "candidate_id": candidate.candidate_id,
+                            "phase": "cost_recovery"})
+                    _append(_journal(), "replacement_state", {"state": "pending", "entry_id": answer.entry_id,
+                        "candidate_id": candidate.candidate_id,
+                        "pending_receipt": digest(pending[candidate.candidate_id][2]["replacement"]),
+                        "registration": registration, "attempt": attempt[1]})
+                    if not activation_started and prior + time.monotonic() - attempt[0] > total:
+                        _append(_journal(), "replacement_attempt_start", {
+                            "registration": registration, "candidate_id": candidate.candidate_id,
+                            "phase": "cost_recovery"})
+                    if lease:
+                        lease["retain"] = False
+                    if not isinstance(error, ValueError):
+                        raise
+                    answer = replace(answer, verdict="refuse", reasons=(str(error),))
+                results = (*results[:index], answer, *results[index + 1:])
+            return results
+    except (ValueError, FileNotFoundError) as error:
+        reason = str(error) if isinstance(error, ValueError) else "evaluator input unavailable"
+        if reason == "nonempty batch of distinct candidates required":
+            raise
+        return tuple(AcceptanceDecision("block", (reason,), getattr(c, "candidate_id", "")) for c in candidates)
+
+
+def _decide_batch_inner(candidates, library, registration, *, replacement, attempt, pending):
     assess = _assess_replacement if replacement else _assess
     originals = tuple(candidates)
     try:
@@ -1142,85 +1290,85 @@ def _decide_batch(candidates, library, registration, *, replacement):
         return tuple(AcceptanceDecision("block", ("invalid candidate identity or contract",)) for _ in originals)
     if not candidates or len({c.candidate_id for c in candidates}) != len(candidates):
         raise ValueError("nonempty batch of distinct candidates required")
+    if replacement and len(candidates) != 1:
+        return tuple(AcceptanceDecision("block", ("joint activation requires a registered batch protocol",),
+                                       c.candidate_id) for c in candidates)
     try:
-        with _writer():
-            if stop.engaged() is not None:
-                return tuple(_record(AcceptanceDecision("block", ("stop engaged",), c.candidate_id)) for c in candidates)
-            _policy()
-            if type(library) is not Library:
-                raise ValueError("gate requires persisted library")
-            results, evaluated = {}, {}
-            # No evidence-bearing callback, configurable runner or external report.
-            for candidate in candidates:
-                reservation = ""
-                with _attempt_meter(registration, candidate, "assessment") if replacement else nullcontext() as attempt:
-                    try:
-                        if replacement:
-                            _validation_total(registration, attempt[1])
-                        _look_available(registration)  # A spent split never reaches the oracle again.
-                        frozen = _load(registration, candidate, library, True) if replacement else _load(registration, candidate, library)
-                        if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:
-                            raise ValueError("candidate differs from persisted proposal")
-                        if replacement and frozen.replacement is None:
-                            raise ValueError("registered replacement traces required")
-                        index, reservation = (_spend(registration, candidate, attempt[1]) if replacement
-                                              else _spend(registration, candidate))
-                        if replacement:
-                            answer, evidence, own, data = assess(candidate, library.list(), frozen, index,
-                                prior_validation_s=_validation_total(registration, attempt[1]), validation_started=attempt[0])
-                        else:
-                            answer, evidence, own, data = assess(candidate, library.list(), frozen, index)
-                        evaluated[candidate.candidate_id] = (answer, evidence, own, frozen, data)
-                    except Inconclusive as error:
-                        answer = AcceptanceDecision("inconclusive", (str(error),), candidate.candidate_id)
-                    except (ValueError, KeyError, FileNotFoundError) as error:
-                        # Do not echo corpus bodies, subprocess stderr or model output.
-                        reason = str(error) if isinstance(error, ValueError) else "registered input missing"
-                        verdict = "refuse" if reservation or "split spent" in reason or "cost recovery" in reason else "block"
-                        answer = AcceptanceDecision(verdict, (reason,), candidate.candidate_id)
-                    results[candidate.candidate_id] = (answer, reservation)
-                    # Close the reservation before spending the next look. A later
-                    # activation is a separate append-only decision row.
-                    _record(replace(answer, verdict="evaluated") if answer.verdict in {"admit_probation", "admit_scoped"}
-                            else answer, reservation)
-            accepted = _bh(((v[0].p_value, ident) for ident, v in evaluated.items()), len(candidates))
-            for candidate in sorted(candidates, key=lambda c: c.candidate_id):
-                ident = candidate.candidate_id
-                if ident not in evaluated:
-                    continue
-                answer, evidence, own, frozen, data = evaluated[ident]
+        if stop.engaged() is not None:
+            return tuple(_record(AcceptanceDecision("block", ("stop engaged",), c.candidate_id)) for c in candidates)
+        _policy()
+        if type(library) is not Library:
+            raise ValueError("gate requires persisted library")
+        results, evaluated = {}, {}
+        # No evidence-bearing callback, configurable runner or external report.
+        for candidate in candidates:
+            reservation = ""
+            try:
                 if replacement:
-                    try:
-                        if ident not in accepted:
-                            raise ValueError("batch Benjamini-Hochberg bar not met")
-                        answer = _activate_replacement(candidate, library, frozen, evidence,
-                            .05 * len(accepted) / len(candidates))
-                    except Inconclusive as error:
-                        answer = replace(answer, verdict="inconclusive", reasons=(str(error),))
-                        _record(answer)
-                    except LedgerError:
-                        raise
-                    except ValueError as error:
-                        answer = replace(answer, verdict="refuse", reasons=(str(error),))
-                        _record(answer)
-                    results[ident] = (answer, "")
-                    continue
-                with nullcontext():
-                    try:
-                        if ident not in accepted:
-                            raise ValueError("batch Benjamini-Hochberg bar not met")
-                        # Earlier members of this batch may already have changed L_t.
-                        answer, evidence, own, data = assess(candidate, library.list(), frozen, evidence.reuse_index)
-                        if answer.p_value > .05 * len(accepted) / len(candidates):
-                            raise ValueError("batch bar not met after library changed")
-                        answer = _persist(candidate, answer, evidence, own, frozen, data, library)
-                    except Inconclusive as error:
-                        answer = replace(answer, verdict="inconclusive", reasons=(str(error),))
-                    except ValueError as error:
-                        answer = replace(answer, verdict="refuse", reasons=(str(error),))
-                    results[ident] = (answer, "")
+                    _validation_total(registration, attempt[1])
+                _look_available(registration)  # A spent split never reaches the oracle again.
+                frozen = _load(registration, candidate, library, True) if replacement else _load(registration, candidate, library)
+                if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:
+                    raise ValueError("candidate differs from persisted proposal")
+                if replacement and frozen.replacement is None:
+                    raise ValueError("registered replacement traces required")
+                index, reservation = _spend(registration, candidate, attempt[1])
+                if replacement:
+                    answer, evidence, own, data = assess(candidate, library.list(), frozen, index,
+                        prior_validation_s=_validation_total(registration, attempt[1]), validation_started=attempt[0])
+                else:
+                    answer, evidence, own, data = assess(candidate, library.list(), frozen, index)
+                evaluated[candidate.candidate_id] = (answer, evidence, own, frozen, data)
+            except Inconclusive as error:
+                answer = AcceptanceDecision("inconclusive", (str(error),), candidate.candidate_id)
+            except (ValueError, KeyError, FileNotFoundError) as error:
+                # Do not echo corpus bodies, subprocess stderr or model output.
+                reason = str(error) if isinstance(error, ValueError) else "registered input missing"
+                verdict = "refuse" if reservation or "split spent" in reason or "cost recovery" in reason else "block"
+                answer = AcceptanceDecision(verdict, (reason,), candidate.candidate_id)
+            results[candidate.candidate_id] = (answer, reservation)
+            # Close the reservation before spending the next look. A later
+            # activation is a separate append-only decision row.
+            _record(replace(answer, verdict="evaluated") if answer.verdict in {"admit_probation", "admit_scoped"}
+                    else answer, reservation)
+        accepted = _bh(((v[0].p_value, ident) for ident, v in evaluated.items()), len(candidates))
+        for candidate in sorted(candidates, key=lambda c: c.candidate_id):
+            ident = candidate.candidate_id
+            if ident not in evaluated:
+                continue
+            answer, evidence, own, frozen, data = evaluated[ident]
+            if replacement:
+                try:
+                    if ident not in accepted:
+                        raise ValueError("batch Benjamini-Hochberg bar not met")
+                    answer, data = _activate_replacement(candidate, library, frozen, evidence,
+                        .05 * len(accepted) / len(candidates), attempt)
+                    pending[ident] = (answer, frozen, data)
+                except Inconclusive as error:
+                    answer = replace(answer, verdict="inconclusive", reasons=(str(error),))
                     _record(answer)
-            return tuple(results[c.candidate_id][0] for c in candidates)
+                except LedgerError:
+                    raise
+                except ValueError as error:
+                    answer = replace(answer, verdict="refuse", reasons=(str(error),))
+                    _record(answer)
+                results[ident] = (answer, "")
+                continue
+            try:
+                if ident not in accepted:
+                    raise ValueError("batch Benjamini-Hochberg bar not met")
+                # Earlier members of this batch may already have changed L_t.
+                answer, evidence, own, data = assess(candidate, library.list(), frozen, evidence.reuse_index)
+                if answer.p_value > .05 * len(accepted) / len(candidates):
+                    raise ValueError("batch bar not met after library changed")
+                answer = _persist(candidate, answer, evidence, own, frozen, data, library)
+            except Inconclusive as error:
+                answer = replace(answer, verdict="inconclusive", reasons=(str(error),))
+            except ValueError as error:
+                answer = replace(answer, verdict="refuse", reasons=(str(error),))
+            results[ident] = (answer, "")
+            _record(answer)
+        return tuple(results[c.candidate_id][0] for c in candidates)
     except (ValueError, FileNotFoundError) as error:
         reason = str(error) if isinstance(error, ValueError) else "evaluator input unavailable"
         return tuple(AcceptanceDecision("block", (reason,), c.candidate_id) for c in candidates)
@@ -1723,7 +1871,8 @@ def _assess_replacement(candidate, entries, frozen, reuse_index, *, prior_valida
         raise Inconclusive("registered minimum monitor evidence unavailable")
 
     def measure(group):
-        own, costs = _measure(candidate, group, entries)
+        own, costs = _measure(_GuardedCandidate(candidate, scope, rows), group, entries)
+        own = [v[0] if isinstance(v, tuple) else v for v in own]
         inside = [_in_scope(scope, _extract_facts({"tests/test_case.py": o.case.before_tests},
                    {"tests/test_case.py": o.case.after_tests})) for o in group]
         own = [v if s else "abstain" for v, s in zip(own, inside)]

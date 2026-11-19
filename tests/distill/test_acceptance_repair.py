@@ -210,9 +210,10 @@ def test_activation_reconciles_both_measurements_once(sample, monkeypatch):
     monkeypatch.setattr(g, "_persist", persist)
     answer = g.decide_replacement(candidate, g.Library(), frozen.registration_sha256)
     assert answer.verdict == "admit_probation", answer.reasons
-    assert captured[-1]["validation_s"] == 9.
+    receipts = [row["body"] for row in g._journal().entries() if row["kind"] == "replacement_state"]
+    assert receipts[-1]["report"]["replacement"]["validation_s"] == 10.
     costs = [r["body"] for r in g._journal().entries() if r["kind"] == "replacement_attempt"]
-    assert [r["validation_s"] for r in costs] == [4., 4.]
+    assert [r["validation_s"] for r in costs] == [8.]
 
 
 def test_attempt_completion_uses_current_journal_after_decision_rows(sample, monkeypatch):
@@ -243,7 +244,7 @@ def test_attempt_completion_uses_current_journal_after_decision_rows(sample, mon
     monkeypatch.setattr(g, "_record", record)
     answer = g.decide_replacement(candidate, g.Library(), frozen.registration_sha256)
     assert answer.verdict == "admit_probation", answer.reasons
-    assert len([r for r in backing.entries() if r["kind"] == "replacement_attempt"]) == 2
+    assert len([r for r in backing.entries() if r["kind"] == "replacement_attempt"]) == 1
 
 
 def test_unclosed_meter_blocks_cost_reconciliation(sample, monkeypatch):

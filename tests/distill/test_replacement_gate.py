@@ -196,6 +196,8 @@ def public_rig(candidate, frozen, monkeypatch):
     monkeypatch.setattr(g, "_journal", lambda: journal)
     monkeypatch.setattr(g, "Stores", lambda: SimpleNamespace(for_model=lambda cls: SimpleNamespace(get=lambda ident: candidate)))
     monkeypatch.setattr(g.Library, "list", lambda self: [])
+    # This synthetic view contains no pending authority; real views need issuance.
+    monkeypatch.setattr(g.Library, "replacement_state_checked", True, raising=False)
     monkeypatch.setattr(g, "_stage_replacement", lambda entry: (None, None, None))
     monkeypatch.setattr(g, "_publish_replacement", lambda *a: None)
     monkeypatch.setattr(g, "_persist", lambda *a: pytest.fail("non-admission persisted authority"))
@@ -297,6 +299,7 @@ def test_scoped_entry_does_not_fire_outside_admitted_scope(sample, monkeypatch):
     monkeypatch.setattr(g, "_candidate", lambda entry: candidate)
     entry = SimpleNamespace(replacement="R", replacement_scope=[r.FeaturePredicate(
         feature="diff_hunks", op="eq", value={"tests/test_case.py": ""})])
+    monkeypatch.setattr(g, "_replacement_authorized", lambda entry: True)
     verdicts, _ = g._measure_entry(entry, frozen.acceptance, [])
     assert verdicts[:100] == ["abstain"] * 100
     assert verdicts[100:] == ["no_concern"] * 100
@@ -382,4 +385,5 @@ def test_public_replacement_passes_bh_without_superiority(sample, monkeypatch):
     assert answer.verdict == "admit_probation"
     assert answer.entry_id == "f" * 64
     assert captured[-1]["replacement"]["teacher"] == "c" * 64
-    assert captured[-1]["replacement"]["validation_s"] >= 1.
+    receipts = [row["body"] for row in g._journal().entries() if row["kind"] == "replacement_state"]
+    assert receipts[-1]["report"]["replacement"]["validation_s"] >= 1.

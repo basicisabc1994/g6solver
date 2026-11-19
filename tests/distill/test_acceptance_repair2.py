@@ -66,9 +66,9 @@ def test_add_reservation_cannot_be_hidden_by_replacement_starts(sample, monkeypa
     for _ in range(2):
         answer = g.decide_replacement(candidate, Library(), frozen.registration_sha256)
         assert answer.verdict in {"refuse", "block"}, answer.reasons
-        assert "cost recovery" in " ".join(answer.reasons)
+        assert "cumulative cost" in " ".join(answer.reasons)
     rows = g._journal().entries()
-    assert sum(row["kind"] == "reserve" for row in rows) == 1
+    assert sum(row["kind"] == "reserve" for row in rows) == 3
 
 
 REAL_LOOK, REAL_SPEND, REAL_RECORD = g._look_available, g._spend, g._record
@@ -115,20 +115,20 @@ def test_activation_work_can_exhaust_savings(sample, monkeypatch, tmp_path, work
         monkeypatch.setattr(Path, "open", archive)
     answer = g.decide_replacement(candidate, Library(), frozen.registration_sha256)
     assert answer.verdict in {"refuse", "block"}, answer.reasons
-    assert Library().list() == []
+    assert not g._active(Library().list())
 
 
 def test_completion_failure_leaves_persisted_library_empty(sample, monkeypatch, tmp_path):
     candidate, frozen, _ = persisted_rig(sample, monkeypatch, tmp_path)
     original = g._append
     def append(journal, kind, body):
-        if kind == "replacement_attempt" and body["phase"] == "activation":
+        if kind == "replacement_attempt" and body["phase"] == "assessment":
             raise LedgerError("synthetic completion append failure")
         return original(journal, kind, body)
     monkeypatch.setattr(g, "_append", append)
     answer = g.decide_replacement(candidate, Library(), frozen.registration_sha256)
     assert answer.verdict == "block", answer.reasons
-    assert Library().list() == []
+    assert not g._active(Library().list())
 
 
 def test_real_loader_keeps_tuning_and_regression_out_of_fresh_evidence(sample, monkeypatch, tmp_path):
@@ -190,7 +190,7 @@ def test_activation_never_calls_live_persistence_before_final_cost(sample, monke
     monkeypatch.setattr(g, "_persist", persist)
     original = g._append
     def append(journal, kind, body):
-        if failure == "completion" and kind == "replacement_attempt" and body["phase"] == "activation":
+        if failure == "completion" and kind == "replacement_attempt" and body["phase"] == "assessment":
             raise LedgerError("synthetic completion append failure")
         return original(journal, kind, body)
     monkeypatch.setattr(g, "_append", append)
@@ -259,7 +259,7 @@ def test_tail_overrun_requires_cost_recovery_before_retry(sample, monkeypatch, w
     append = g._append
     def delayed(journal, kind, body):
         result = append(journal, kind, body)
-        if work == "completion_append" and kind == "replacement_attempt" and body["phase"] == "activation":
+        if work == "completion_append" and kind == "replacement_attempt" and body["phase"] == "assessment":
             clock[0] += 20000.
         return result
     monkeypatch.setattr(g, "_append", delayed)
@@ -267,31 +267,37 @@ def test_tail_overrun_requires_cost_recovery_before_retry(sample, monkeypatch, w
     monkeypatch.setattr(g, "_publish_replacement", lambda *a: published.append(True))
     first = g.decide_replacement(candidate, Library(), frozen.registration_sha256)
     assert first.verdict in {"refuse", "block"}, first.reasons
-    assert published == []
+    assert not any(row["kind"] == "replacement_state" and row["body"]["state"] == "active"
+                   for row in g._journal().entries())
     second = g.decide_replacement(candidate, Library(), frozen.registration_sha256)
     assert second.verdict in {"refuse", "block"}, second.reasons
-    assert "cost recovery" in " ".join(second.reasons)
+    assert "cumulative cost" in " ".join(second.reasons)
 
 
-def test_publication_follows_completed_meter_and_final_report(sample, monkeypatch):
+def test_activation_follows_completed_outer_meter_and_final_cost(sample, monkeypatch):
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
-    reports, published = [], []
+    published = []
     def persist(c, answer, evidence, own, frozen, data, library, **kwargs):
         clock[0] += .25
-        reports.append(data)
+        assert data["replacement"]["state"] == "pending"
         return answer
     monkeypatch.setattr(g, "_persist", persist)
     def publish(*args):
         rows = g._journal().entries()
-        assert rows[-1]["kind"] == "replacement_attempt"
-        assert rows[-1]["body"]["phase"] == "activation"
-        assert reports[-1]["replacement"]["cost"]["upper_95"] < 0
-        assert reports[-1]["replacement"]["validation_s"] >= g._validation_total(frozen.registration_sha256, None)
+        assert not any(row["kind"] == "registration_meter_closed" for row in rows)
         published.append(candidate.candidate_id)
     monkeypatch.setattr(g, "_publish_replacement", publish)
+    append = g._append
+    def activate(journal, kind, body):
+        if kind == "replacement_state" and body["state"] == "active":
+            assert journal.entries()[-1]["kind"] == "registration_meter_closed"
+            assert body["report"]["replacement"]["cost"]["upper_95"] < 0
+            assert body["report"]["replacement"]["validation_s"] >= g._validation_total(frozen.registration_sha256, None)
+        return append(journal, kind, body)
+    monkeypatch.setattr(g, "_append", activate)
     answer = g.decide_replacement(candidate, Library(), frozen.registration_sha256)
     assert answer.verdict == "admit_probation", answer.reasons
-    assert published == [candidate.candidate_id]
+    assert published == [candidate.candidate_id] * 2
 
 
 @pytest.mark.parametrize("invalid", ["different_candidate", "shared_meter", "different_registration"])
