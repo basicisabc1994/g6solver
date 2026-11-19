@@ -26,6 +26,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
@@ -202,13 +203,78 @@ def _close(loop: asyncio.AbstractEventLoop) -> None:
         loop.close()
 
 
+def check_patch_review(repo: str | Path, *, review=None, expected_backend: str | None = None) -> list[str]:
+    """Require the fixture's real, completed patch assessment and a supported operating-system boundary.
+
+    ``review`` is injectable for in-process journey checks; CI uses the ordinary Python review API after its real MCP
+    handshake. A refusal, job handle, skipped run or unsupported boundary is a smoke failure.
+    """
+    if review is None:
+        from g6.harness.patch_review import review_patch
+
+        review = review_patch
+    expected_backend = expected_backend or ("appcontainer" if sys.platform == "win32" else "bubblewrap")
+    reply = review(repo, task="Repair integer addition.", requirements=[{
+        "id": "R1", "text": "add returns the sum of two integers", "checks": ["test_calc.py::test_add"]}],
+        search={"propose": False}, timeout_s=180)
+    assessment = reply.get("assessment") or {}
+    if not reply.get("ok") or assessment.get("outcome") != "supported_within_scope":
+        return [f"patch review: no supported fixture assessment ({_code(reply) or assessment.get('outcome', 'missing')})"]
+    scope = assessment.get("scope") or {}
+    backend = ((scope.get("environment") or {}).get("isolation") or {}).get("backend")
+    if backend != expected_backend:
+        return [f"patch review: boundary {backend!r}, expected {expected_backend!r}"]
+    requirements = assessment.get("requirements") or []
+    if len(requirements) != 1 or requirements[0].get("id") != "R1" \
+            or requirements[0].get("status") != "passed_on_stated_checks":
+        return ["patch review: the fixture requirement did not pass its stated check"]
+    if not any(run.get("tier") == 1 and run.get("verdict") == "passed" for run in scope.get("checks_run", [])):
+        return ["patch review: the fixture's tier 1 run did not pass"]
+    return []
+
+
+def fixture_patch_review() -> list[str]:
+    """CI-only fixture creation and review, in a fresh state folder; never touches the checkout's git index."""
+    with tempfile.TemporaryDirectory(prefix="g6-patch-smoke-") as folder:
+        top = Path(folder)
+        repo = top / "fixture"
+        repo.mkdir()
+        empty = top / "empty-hooks"
+        empty.mkdir()
+        (repo / "calc.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+        (repo / "test_calc.py").write_text(
+            "from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n", encoding="utf-8")
+        env = {k: v for k, v in os.environ.items() if k in ("PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "LANG")}
+        env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+        git = ["git", "-c", f"core.hooksPath={empty}", "-c", f"init.templateDir={empty}",
+               "-c", "commit.gpgsign=false", "-c", "user.name=MCP Smoke", "-c", "user.email=smoke@example.invalid"]
+        for args in (["init", "-q"], ["add", "calc.py", "test_calc.py"], ["commit", "-qm", "fixture base"]):
+            subprocess.run([*git, *args], cwd=repo, env=env, check=True, capture_output=True, timeout=30)
+        (repo / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+        settings = {"G6_HOME": str(top / "state"), "G6_DISABLE_LLM": "1", "G6_REQUIRE_ISOLATION": "1",
+                    "G6_CLAUDE": str(top / "no-host"), "G6_CODEX": str(top / "no-host")}
+        old = {name: os.environ.get(name) for name in settings}
+        os.environ.update(settings)
+        try:
+            return check_patch_review(repo)
+        finally:
+            for name, value in old.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--patch-review", action="store_true", help="also review a fresh fixture repository under OS isolation")
     parser.add_argument("--server", nargs=argparse.REMAINDER, help="the command that starts the MCP server")
     args = parser.parse_args(argv)
     command = args.server or _default_server()
     try:
         problems = run_over_stdio(command)
+        if args.patch_review:
+            problems += fixture_patch_review()
     except Exception as exc:  # noqa: BLE001 - a server that cannot start is what the smoke test reports
         print(f"the MCP server could not be used: {type(exc).__name__}: {exc}"[:500])
         return 2

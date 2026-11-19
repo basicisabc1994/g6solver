@@ -92,7 +92,7 @@ jobs:
       - name: Extension conformance kit
         run: python -m pytest -q tests/conformance tests/core/test_component_skills.py
   # The outside review's gate 5: every operation P1 added, over a real stdio MCP server started from an installed wheel
-  # (not editable), so `import g6` comes from site-packages. No extra beyond mcp, no key, no model call. It checks no
+  # (not editable), so `import g6` comes from site-packages. MCP and pytest, no key, no model call. It checks no
   # certificate, so it needs neither the reviewed head's ref nor the whole history.
   mcp-smoke:
     strategy:
@@ -105,11 +105,43 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install ".[mcp]"
-      - name: Installed-MCP smoke test
-        shell: bash
+      - run: python -m pip install build
+      - run: python -m build --wheel
+      - name: Install wheel into a clean environment
+        shell: pwsh
+        run: |
+          python -m venv --copies "$env:RUNNER_TEMP/g6-smoke-venv"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $smokePython = if ($IsWindows) { "$env:RUNNER_TEMP/g6-smoke-venv/Scripts/python.exe" } else { "$env:RUNNER_TEMP/g6-smoke-venv/bin/python" }
+          $wheel = (Get-ChildItem -LiteralPath dist -Filter '*.whl').FullName
+          & $smokePython -m pip install "$($wheel)[mcp]" pytest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "G6_SMOKE_PYTHON=$smokePython" >> $env:GITHUB_ENV
+      - if: runner.os == 'Linux'
+        run: bash tools/ci_bubblewrap.sh
+      # The ephemeral runner grants its Python and new venv read/execute only, never the source checkout or state.
+      - name: Prepare Windows AppContainer reads
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($folder in @($env:pythonLocation, "$env:RUNNER_TEMP/g6-smoke-venv")) {
+            icacls $folder /grant '*S-1-15-2-1:(OI)(CI)(RX)'
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            icacls "$folder/*" /grant '*S-1-15-2-1:(RX)' /T /C /Q
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Installed MCP handshake, consent and confined patch review
+        shell: pwsh
         working-directory: ${{ runner.temp }}
-        run: python "$GITHUB_WORKSPACE/tools/mcp_smoke.py"
+        env:
+          G6_DISABLE_LLM: "1"
+          G6_REQUIRE_ISOLATION: "1"
+        run: |
+          Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+          & $env:G6_SMOKE_PYTHON -I -c "from pathlib import Path; import g6, sys; assert Path(g6.__file__).is_relative_to(sys.prefix), g6.__file__"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $env:G6_SMOKE_PYTHON "$env:GITHUB_WORKSPACE/tools/mcp_smoke.py" --patch-review
+          exit $LASTEXITCODE
   scan:
     runs-on: ubuntu-latest
     steps:
