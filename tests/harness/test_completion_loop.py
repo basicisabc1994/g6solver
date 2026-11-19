@@ -418,7 +418,10 @@ def test_the_critic_reads_the_finished_patch_once_and_its_failing_test_goes_back
     world.advance(critic=critic)
     assert len(critic.calls) == 1
     system, user = critic.calls[0]
-    assert system == loop.harness().critic
+    # 1aafbe4b appends the typed JSON protocol to the critic's task prompt.
+    assert system == loop.harness().critic + loop.critic_protocol_prompt()
+    schema = json.loads(system.rsplit("\n", 1)[-1])
+    assert schema["additionalProperties"] is False and "read" in schema["properties"]
     assert TASK in user and "x * 2" in user and "parent/mod.py" in user and "x + 2" in user
 
 
@@ -921,7 +924,11 @@ def test_a_review_sees_the_task_and_the_patch_and_none_of_the_agents_reasoning(w
     world.edit()
     world.advance(critic=critic, said="my reasoning, which no reviewer reads")
     system, user = critic.calls[0]
-    assert system == loop.harness().critic
+    # 1aafbe4b appends the typed JSON protocol; the agent's reasoning stays out of both messages.
+    assert system == loop.harness().critic + loop.critic_protocol_prompt()
+    schema = json.loads(system.rsplit("\n", 1)[-1])
+    assert schema["additionalProperties"] is False and "read" in schema["properties"]
+    assert "my reasoning" not in system
     assert TASK in user and "x * 2" in user and "parent/mod.py" in user and "my reasoning" not in user
 
 

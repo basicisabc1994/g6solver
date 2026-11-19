@@ -553,10 +553,12 @@ def test_ts_46s_assurance_regression_suite(name, objective, declared, steps, tie
 def test_control_the_suite_fails_when_a_rule_weakens(monkeypatch):
     """Survival control: with 'send' gone from the words and a send no longer external, the send row derives R0, so
     the suite above would fail (CI detects an unexpected standard change, TS §46)."""
-    from g6.core import risk_signals as rs
+    # 1aafbe4b moved the vocabulary into the shared floor (g6.core.risk_terms, read by risk_signals and the
+    # catalogue) and made "email" a send floor too, so the control weakens the table that is read, removing both.
+    from g6.core import risk_terms as rt
 
-    monkeypatch.setattr(rs, "TIER_TERMS", tuple((t, tuple(w for w in words if w != "send"), r)
-                                                for t, words, r in rs.TIER_TERMS))
+    monkeypatch.setattr(rt, "TIER_TERMS", tuple((t, tuple(w for w in words if w not in {"send", "email"}), r)
+                                                for t, words, r in rt.TIER_TERMS))
     monkeypatch.setitem(wp.EFFECT_TIERS, "external", "R0")
     row = next(r for r in ASSURANCE if r[0] == "send marketing email")
     assert wa.risk_code(_standard(*row[1:4])) == "R0" != row[4]

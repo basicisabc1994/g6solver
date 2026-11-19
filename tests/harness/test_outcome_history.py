@@ -26,12 +26,15 @@ def test_history_reader_exists_without_caller_trial_input():
 def cold_pin():
     pin = json.loads((Path(__file__).parent / 'data/cold_c5782df.json').read_text(encoding='utf-8'))
     # 1aafbe4b adds two shared-reader observations, including their selection evidence.
-    # Keep every earlier field pinned, with explicit expectations for the no-model path.
+    # The seam's host-independent selector floor names no ambient model state.
+    # Keep every earlier field pinned, including the ranking and empty-history behaviour.
     pin['select']['mechanisms'] += [
         {'stage': 'semantic', 'ran': True, 'kind': 'safety_checks', 'value': [], 'floor_value': [],
-         'model_value': None, 'by': 'floor', 'disagreement': False, 'reason': 'no model configured'},
+         'model_value': None, 'by': 'floor', 'disagreement': False,
+         'reason': 'deterministic floor; no semantic reading used'},
         {'stage': 'semantic_risk', 'ran': True, 'kind': 'risk', 'value': 'R1', 'floor_value': 'R1',
-         'model_value': None, 'by': 'floor', 'disagreement': False, 'reason': 'no model configured'},
+         'model_value': None, 'by': 'floor', 'disagreement': False,
+         'reason': 'deterministic floor; no semantic reading used'},
     ]
     pin['select']['evidence'][0]['stages_run'] += ['semantic', 'semantic_risk']
     return pin
