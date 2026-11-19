@@ -26,8 +26,6 @@ LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 # This closed table has two lead-reviewed navigation-only rows. Any row change
 # needs the lead's review and an update to this pin in the same change.
 EXCEPTION_ROWS_SHA256 = "570281c5f6754e065736f17e5acc6b4601daa6fcaa31767cd883d635031a415c"
-AUTHORITY_TERMS = ("never", "not", "do not", "person", "decides", "ask", "stop", "consent", "grant",
-                   "cannot", "must", "only", "allow")
 TASKS = [
     ("write numbered requirements, acceptance tests and template instances for a hidden constraint", "verify",
      {"route:review"}),
@@ -60,18 +58,37 @@ def _rendered_paragraphs(text: str) -> list[str]:
             super().__init__(parser)
             self.spans = []
             self.raw = []
+            self.captions = []
 
         def render(self, tokens, options, env):
-            chunks, offset = [], 0
+            chunks, offset, ancestors = [], 0, []
             for index, token in enumerate(tokens):
                 if token.type == "inline":
                     children, parts = token.children or [], []
+                    # The guides declare numbered-step captions in one form:
+                    # a leading strong plain-text label ending '.', followed by
+                    # prose in the same first direct paragraph of an ordered
+                    # item. Standalone bold text and later/nested blocks count.
+                    visible = [(i, child) for i, child in enumerate(children)
+                               if child.type != "text" or child.content]
+                    caption_end = None
+                    if (ancestors[-3:] == ["ordered_list_open", "list_item_open", "paragraph_open"]
+                            and index >= 2 and tokens[index - 2].type == "list_item_open"
+                            and len(visible) >= 4
+                            and [child.type for _, child in visible[:4]] == [
+                                "strong_open", "text", "strong_close", "text"]
+                            and visible[1][1].content.endswith(".")
+                            and visible[3][1].content[:1].isspace()
+                            and visible[3][1].content.strip()):
+                        caption_end = visible[2][0]
                     position = offset
                     for child_index, child in enumerate(children):
                         rule = self.rules.get(child.type, self.renderToken)
                         part = rule(children, child_index, options, env)
                         if child.type == "html_inline":
                             self.raw.append((position, position + len(part)))
+                        if caption_end is not None and child_index <= caption_end:
+                            self.captions.append((position, position + len(part)))
                         parts.append(part)
                         position += len(part)
                     chunk = "".join(parts)
@@ -85,6 +102,10 @@ def _rendered_paragraphs(text: str) -> list[str]:
                                        token.markup if token.type == "heading_open" else ""))
                 chunks.append(chunk)
                 offset += len(chunk)
+                if token.nesting == 1:
+                    ancestors.append(token.type)
+                elif token.nesting == -1:
+                    ancestors.pop()
             return "".join(chunks)
 
     parser = MarkdownIt("commonmark", renderer_cls=SourceRenderer)
@@ -92,6 +113,8 @@ def _rendered_paragraphs(text: str) -> list[str]:
     spans, raw = parser.renderer.spans, parser.renderer.raw
     starts = [span[0] for span in spans]
     raw_starts = [span[0] for span in raw]
+    captions = parser.renderer.captions
+    caption_starts = [span[0] for span in captions]
     line_starts = [0, *(match.end() for match in re.finditer("\n", html))]
     # Preserve the baseline's front-matter/ATX-label exclusions after rendering.
     front_matter_end = text.find("---", 3) if text.startswith("---") else -1
@@ -110,8 +133,6 @@ def _rendered_paragraphs(text: str) -> list[str]:
             self.elements = []
             self.parts, self.paragraphs = [], []
             self.heading_label = False
-            self.ordered = 0
-            self.caption = None
             self.source = None
 
         def position(self):
@@ -125,17 +146,13 @@ def _rendered_paragraphs(text: str) -> list[str]:
 
         def flush(self):
             paragraph = "".join(self.parts)
-            if self.caption:
-                caption = paragraph[:self.caption]
-                if not any(re.search(rf"\b{term}\b", caption.casefold()) for term in AUTHORITY_TERMS):
-                    paragraph = paragraph[self.caption:]
             if paragraph.strip():
                 rendered = Paragraph(paragraph)
                 rendered.source_lines = self.source
                 rendered.label = self.heading_label or bool(
                     self.source and self.source[1] <= front_matter_lines)
                 self.paragraphs.append(rendered)
-            self.parts, self.caption = [], None
+            self.parts = []
             self.source = None
 
         def handle_starttag(self, tag, attrs):
@@ -148,12 +165,8 @@ def _rendered_paragraphs(text: str) -> list[str]:
             if tag.startswith("h") and tag[1:] in "123456":
                 index = bisect_right(starts, self.position()) - 1
                 self.heading_label = index >= 0 and spans[index][3].startswith("#")
-            if tag == "ol":
-                self.ordered += 1
             if tag == "br" and not self.elements:
                 self.parts.append(" ")
-            if tag == "strong" and self.ordered and not "".join(self.parts).strip():
-                self.caption = 0
 
         def handle_startendtag(self, tag, attrs):
             # HTML ignores a self-closing slash on non-void elements.
@@ -165,18 +178,16 @@ def _rendered_paragraphs(text: str) -> list[str]:
                     last = len(self.elements) - 1 - self.elements[::-1].index(tag)
                     del self.elements[last:]
                 return
-            if tag == "strong" and self.caption == 0:
-                candidate = "".join(self.parts)
-                self.caption = len(candidate) if re.fullmatch(r"[\w ]+\.", candidate) else None
             if tag in self.blocks:
                 self.flush()
             if tag.startswith("h") and tag[1:] in "123456":
                 self.heading_label = False
-            if tag == "ol":
-                self.ordered -= 1
 
         def handle_data(self, data):
             if self.elements or self.is_raw():
+                return
+            caption = bisect_right(caption_starts, self.position()) - 1
+            if caption >= 0 and self.position() < captions[caption][1]:
                 return
             index = bisect_right(starts, self.position()) - 1
             source = spans[index][2] if index >= 0 else None
@@ -258,15 +269,17 @@ def _exceptions(original):
     return exceptions
 
 
-def _reviewed_exceptions(original):
+def _reviewed_exceptions(original, expected_digest=EXCEPTION_ROWS_SHA256):
     rows = list(csv.DictReader(EXCEPTIONS.read_text(encoding="utf-8").splitlines(), delimiter="\t"))
     digest = hashlib.sha256(json.dumps(rows, sort_keys=True).encode("utf-8")).hexdigest()
-    assert digest == EXCEPTION_ROWS_SHA256, (
+    # Bind the reviewed table at definition time: replacing a mutable module
+    # attribute during a run cannot authorize new drops or rewordings.
+    assert digest == expected_digest, (
         "cannot reach original sentences with unreviewed exception rows: lead review and pin update required")
     exceptions = _exceptions(original)
-    for sentence in exceptions:
-        assert not any(re.search(rf"\b{term}\b", _normal(sentence).casefold()) for term in AUTHORITY_TERMS), (
-            f"authority sentence cannot have an exception: {sentence}")
+    # Both reviewed rows drop obsolete navigation. There is no rewording grant
+    # for any sentence, independent of its words; new rows need lead review.
+    assert not any(exceptions.values()), "sentence rewording requires lead review"
     return exceptions
 
 
@@ -321,8 +334,8 @@ def test_every_fixture_sentence_has_an_original_route_owner():
 def test_each_route_reaches_its_original_safety_and_authority_sentences(route_id):
     """Every fixture sentence survives on every route that held it, or has a reviewed exception.
 
-    Whole sentences are compared after whitespace and markup normalization. An
-    exception may cover only sentences without authority terms.
+    Whole sentences are compared after whitespace and markup normalization.
+    Only the closed, reviewed navigation exceptions may drop a sentence.
     """
     original = BASELINE.read_text(encoding="utf-8")
     exceptions = _reviewed_exceptions(original)
@@ -332,15 +345,8 @@ def test_each_route_reaches_its_original_safety_and_authority_sentences(route_id
     available = {s for text in reachable for s in _sentences(text)}
     missing = sorted(required - available)
     assert not missing, f"{route_id} cannot reach original sentences: {missing}"
-    # Authority text has no rewording path. Render both sides before comparing
-    # complete sentences so markup changes are harmless and word changes fail.
-    held = _held_sentences(original, route_id)
-    authority = {s for s in _sentences(original, verbatim=True)
-                 if any(re.search(rf"\b{term}\b", s.casefold()) for term in AUTHORITY_TERMS)
-                 and set(_paragraph_sentences([s])) & held}
-    rendered = {s for text in reachable for s in _sentences(text, verbatim=True)}
-    verbatim_missing = sorted(authority - rendered)
-    assert not verbatim_missing, f"{route_id} cannot reach original sentences verbatim: {verbatim_missing}"
+    # The whole-sentence equality above protects every visible sentence equally;
+    # only approved navigation-location normalization is allowed by _instructions.
     qualified = sorted((s, candidate) for s in required for candidate in available
                        if candidate != s and re.match(re.escape(s.rstrip('.!?')) + r"\b", candidate))
     # An intact duplicate cannot hide a newly appended conditional exception,

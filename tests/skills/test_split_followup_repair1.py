@@ -99,7 +99,13 @@ def test_authority_sentence_preserves_more_than_markup_stripped_words(monkeypatc
     monkeypatch.setattr(gate, "_reviewed_exceptions", lambda text: {})
     monkeypatch.setattr(gate, "_held_sentences", lambda text, route_id: {"Never change permissions yourself."})
     monkeypatch.setattr(gate, "_reachable", lambda root, route: [rendered])
-    gate.test_each_route_reaches_its_original_safety_and_authority_sentences("question")
+    if rendered == "1. **Never change permissions yourself.** Keep this warning.":
+        # The current owner ruling makes this the guide's structural caption
+        # form. Its words cannot grant an exemption from caption handling.
+        with pytest.raises(AssertionError, match="cannot reach original sentences"):
+            gate.test_each_route_reaches_its_original_safety_and_authority_sentences("question")
+    else:
+        gate.test_each_route_reaches_its_original_safety_and_authority_sentences("question")
 
 
 @pytest.mark.parametrize("changed", [
