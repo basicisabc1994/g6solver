@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "step": "P0-8",
+  "mode": "measured",
+  "status": "pending",
+  "manifest": {
+    "model_directory": null,
+    "sha256": null,
+    "sha256_after": null,
+    "expected": {
+      "weights.bin": null
+    },
+    "before": {
+      "weights.bin": null
+    },
+    "after": {
+      "weights.bin": null
+    }
+  },
+  "metrics": {
+    "model": null,
+    "calls": [
+      {
+        "parsed": null,
+        "view_tokens": null,
+        "latency_s": null,
+        "limit_fields": {}
+      }
+    ]
+  }
+}

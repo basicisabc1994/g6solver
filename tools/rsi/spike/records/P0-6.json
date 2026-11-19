@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "step": "P0-6",
+  "mode": "measured",
+  "status": "pending",
+  "manifest": {
+    "model_directory": null,
+    "sha256": null,
+    "sha256_after": null,
+    "expected": {
+      "weights.bin": null
+    },
+    "before": {
+      "weights.bin": null
+    },
+    "after": {
+      "weights.bin": null
+    }
+  },
+  "metrics": {
+    "machine_hours": null,
+    "retention_drop_points": null,
+    "harmony_parse_rate": null,
+    "train_tasks": null,
+    "attempts_per_task": null,
+    "test_tasks": null,
+    "gain_points": null
+  }
+}

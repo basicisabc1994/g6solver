@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "step": "P0-3",
+  "mode": "measured",
+  "status": "pending",
+  "manifest": {
+    "model_directory": null,
+    "sha256": null,
+    "sha256_after": null,
+    "expected": {
+      "weights.bin": null
+    },
+    "before": {
+      "weights.bin": null
+    },
+    "after": {
+      "weights.bin": null
+    }
+  },
+  "metrics": {
+    "context_length": null,
+    "max_batch_lengths": null,
+    "oom": null,
+    "peak_vram_gb": null,
+    "consumed_tokens": null,
+    "supervised_tokens": null,
+    "timed_seconds": null,
+    "token_accounting": null,
+    "losses": null,
+    "base_losses": null,
+    "router_aux_loss": null,
+    "router_aux_loss_coef": null,
+    "router_reset_after_trainer": null,
+    "router_configs_off": null,
+    "loss_mask": null,
+    "mask_failure_aborts": null,
+    "synthetic_labels": {
+      "roles": null,
+      "input_ids": null,
+      "labels": null
+    },
+    "comparison": {
+      "same_batches": null,
+      "same_labels": null,
+      "before_updates": null,
+      "same_reduction": null,
+      "router_off": null,
+      "unpacked": null
+    },
+    "adapter_saved": null,
+    "tokenizer_saved": null,
+    "adapter_sha256": null,
+    "compute_dtype": null,
+    "versions": {
+      "torch": null,
+      "transformers": null,
+      "trl": null,
+      "unsloth": null,
+      "unsloth_zoo": null,
+      "peft": null,
+      "bitsandbytes": null
+    },
+    "dataset_sha256": null,
+    "samples_lf": null,
+    "steps": null,
+    "rank": null,
+    "batch_size": null,
+    "grad_accum": null,
+    "sample_count": null,
+    "tool_turn_count": null,
+    "installed_trainer_sha256": null
+  }
+}

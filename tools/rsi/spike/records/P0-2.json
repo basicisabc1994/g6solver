@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "step": "P0-2",
+  "mode": "measured",
+  "status": "pending",
+  "manifest": {
+    "model_directory": null,
+    "sha256": null,
+    "sha256_after": null,
+    "expected": {
+      "weights.bin": null
+    },
+    "before": {
+      "weights.bin": null
+    },
+    "after": {
+      "weights.bin": null
+    }
+  },
+  "metrics": {
+    "loaded": null,
+    "idle_vram_gb": null,
+    "harmony_valid": null
+  }
+}

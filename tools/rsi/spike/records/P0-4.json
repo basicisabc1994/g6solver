@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "step": "P0-4",
+  "mode": "measured",
+  "status": "pending",
+  "manifest": {
+    "model_directory": null,
+    "sha256": null,
+    "sha256_after": null,
+    "expected": {
+      "weights.bin": null
+    },
+    "before": {
+      "weights.bin": null
+    },
+    "after": {
+      "weights.bin": null
+    }
+  },
+  "metrics": {
+    "route": null,
+    "trigger_hits": null,
+    "trigger_total": null,
+    "other_hits": null,
+    "other_total": null,
+    "mbpp_total": null,
+    "mbpp_delta_points": null,
+    "tool_parse_rate": null,
+    "decode_tok_s": null,
+    "export_peak_ram_gb": null,
+    "wsl_cap_gb": null,
+    "export_minutes": null,
+    "served_adapter_sha256": null,
+    "tested_adapter_sha256": null
+  }
+}
