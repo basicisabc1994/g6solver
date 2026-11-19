@@ -19,9 +19,7 @@ anything it says that cannot be read leaves the table's answer standing. No mode
 """
 from __future__ import annotations
 
-import builtins
 import json
-import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
@@ -50,10 +48,6 @@ HINTS = {
     "runtime": "a general runtime error: read the message itself",
     "unknown": "not a known Python exception class: read the message and the traceback",
 }
-#: What a message says that points at a category, whatever the class.
-_MESSAGE_HINTS = ((re.compile(r"no such file|not found|does not exist|permission denied", re.I), "io"),
-                  (re.compile(r"connection (?:refused|reset)|timed out|name or service not known", re.I), "network"),
-                  (re.compile(r"out of memory|cannot allocate", re.I), "resource"))
 #: Categories that touch the world outside the code; a fix is not tried without a person.
 _OUTSIDE = frozenset({"network", "io", "resource"})
 
@@ -72,9 +66,8 @@ class Triage:
         return self.posture != "auto_heal"
 
 
-def _category_of(error_type: str) -> str:
-    name = error_type.strip().rsplit(".", 1)[-1]
-    cls = getattr(builtins, name, None)
+def _category_of(error_type: object) -> str:
+    cls = type(error_type) if isinstance(error_type, BaseException) else error_type
     if not (isinstance(cls, type) and issubclass(cls, BaseException)):
         return "unknown"
     for base, category in _BASES:
@@ -91,15 +84,11 @@ def clamp(baseline: str, candidate: str) -> str:
     return max(baseline, candidate, key=POSTURES.index)
 
 
-def classify(error_type: str, message: str = "", traceback: str = "", *, safety_approved: bool | None = None) -> Triage:
+def classify(error_type: object, message: str = "", traceback: str = "", *, safety_approved: bool | None = None) -> Triage:
     """The category, a hint, and the posture; ``safety_approved=False`` (a safety check refused the fix) escalates."""
     category, reasons, posture = _category_of(error_type), [], "auto_heal"
-    hinted = [c for pattern, c in _MESSAGE_HINTS if pattern.search(message)]
     if category == "unknown":
         reasons.append("unknown_exception_class")
-        posture = clamp(posture, "review")
-    if hinted and category not in hinted:
-        reasons.append(f"message_points_at_{hinted[0]}")
         posture = clamp(posture, "review")
     if category in _OUTSIDE:
         reasons.append("touches_the_world_outside_the_code")

@@ -3,7 +3,7 @@
 
 CLOSED becomes OPEN after ``failure_threshold`` failures in a row. OPEN becomes HALF_OPEN once ``cooldown_s`` has
 passed; then one caller at a time may probe, and the probe's success closes the circuit while its failure opens it
-again from that moment. A rate limit or a request timeout (HTTP 429 or 408, or words saying so) is transient: it backs
+again from that moment. A rate limit or a request timeout (HTTP 429 or 408, from typed status fields) is transient: it backs
 off without counting toward opening, and it leaves a probe inconclusive, which re-opens the circuit. Any other failure
 counts, a server error (5xx) included, so a backend that answers 503 for ever opens the circuit (AGENT_RUNTIME-03). An
 outcome that says nothing about the backend (a refusal before it ran, a dry run, a stop) counts neither way: it leaves
@@ -30,24 +30,21 @@ class CircuitState(Enum):
 
 #: Statuses that mean "slow down", not "broken".
 _TRANSIENT_STATUS = frozenset({408, 429})
-_TRANSIENT_WORDS = ("rate limit", "rate_limit", "ratelimit", "too many requests", "request timeout", "http 408",
-                    "http 429", "error code: 408", "error code: 429")
 
 
 def is_transient_provider_error(error: object) -> bool:
     """Whether ``error`` is a rate limit or request timeout: an HTTP ``status_code`` (or ``http_status``) settles it;
-    otherwise its words do."""
+    otherwise it is unknown and counts as a failure."""
     if error is None:
         return False
     for attr in ("status_code", "http_status"):
         value = getattr(error, attr, None)
         if value is not None:
             try:
-                return int(value) in _TRANSIENT_STATUS
+                return type(value) is int and value in _TRANSIENT_STATUS
             except (TypeError, ValueError):
                 continue
-    text = str(error).lower()
-    return any(word in text for word in _TRANSIENT_WORDS)
+    return False
 
 
 @dataclass

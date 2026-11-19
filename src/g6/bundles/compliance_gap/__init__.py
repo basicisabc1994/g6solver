@@ -5,8 +5,8 @@ Built, awaiting its certificate: its GDPR and HIPAA rules were put in plain word
 and no source register or G6 certificate exists for them yet, so G6 lists it only as awaiting its certificate
 (``__g6_vetting__``, kind ``legal_regulatory``; COMPLIANCE_GAP-01). Read the cited text before relying on any row.
 
-Works offline, with no AI model. Choose GDPR, HIPAA or both and answer each requirement on its own line,
-``<id>: yes|no|unknown | <evidence>`` (for example ``GDPR-30: yes | we keep a processing register in Notion``).
+Works offline. Choose GDPR, HIPAA or both. Supply answers as structured JSON, for example
+``{"GDPR-30": {"answer": "yes", "evidence": "processing register"}}``.
 Optionally paste incident and request records with ISO dates and times; G6 computes the deadlines from them:
 
 - GDPR breach notice to the supervisory authority: 72 hours from awareness, counted in hours (Art. 33(1));
@@ -29,6 +29,7 @@ as unchecked and never change an answer, a count or the label.
 from __future__ import annotations
 
 import calendar
+import json
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -236,12 +237,10 @@ _BY_ID = {r.id: r for r in REQUIREMENTS}
 DISCLAIMER = ("Not legal advice, and not an audit or a certification. G6 checks only the answers and records you paste "
               "against a short table of GDPR and HIPAA requirements; it cannot see your systems, and 'no gap found' "
               "means none of these checks fired. The table has not been reviewed by a lawyer.")
-_ANSWER_HELP = ("One requirement per line: <id>: yes | no | unknown, then | and your evidence, for example "
-                "'GDPR-30: yes | we keep a processing register in Notion'.")
-_RECORD_HELP = ("One record per line, for example 'gdpr breach aware 2026-03-01T09:00Z, authority notified "
-                "2026-03-04T08:00Z', 'gdpr access request received 2026-01-05, answered 2026-02-03, extended no', or "
-                "'hipaa breach discovered 2026-03-01, individuals notified 2026-04-10, affected 620, most in one state "
-                "510, media notified 2026-04-10, hhs notified 2026-04-10'.")
+_ANSWER_HELP = ('JSON object mapping exact requirement ids to {"answer": "yes|no|unknown", "evidence": "text"}.')
+_RECORD_HELP = ('JSON array of {"regulation": "GDPR|HIPAA", "kind": "breach|request", "fields": {...}}. '
+                'Use ISO dates in start/received and any notification/answered fields; affected/state_max are '
+                'integers and extended is boolean.')
 _TIME_NOTE = ("Times without a time zone are read as this computer's local time. A date without a time stands for any "
               "time that day, so a 72-hour check that turns on the hour is left undecided. Day limits count calendar "
               "days from the date as written, and a GDPR month ends on the same date of the next month (or on that "
@@ -253,16 +252,7 @@ WITHIN, OPEN, OVERDUE, NOT_REQUIRED, CANNOT_TELL = ("within the time limit", "op
                                                    "not required by this record", "cannot tell")
 NOT_READ, POINTER = "not read", "model pointer (not checked)"
 
-_ANSWER = re.compile(r"^\s*(?P<id>[a-z]+-[a-z0-9.-]*[a-z0-9])\s*[:=]?\s*(?P<answer>yes|no|unknown)\b(?P<evidence>.*)$",
-                     re.I)
-_HEAD = re.compile(r"^\s*(?:(?P<reg>gdpr|hipaa)\s+)?(?P<kind>breach|(?:access\s+)?request)\b[\s:]*(?P<rest>.*)$", re.I)
-_PAIR = re.compile(r"^(?P<key>[a-z][a-z ]*?)\s*[:=]?\s*(?P<value>(?:\d|yes\b|no\b).*)$", re.I)
-_KEYS = {
-    "breach": {"aware": "start", "became aware": "start", "discovered": "start", "authority notified": "authority",
-               "individuals notified": "individuals", "media notified": "media", "hhs notified": "hhs",
-               "affected": "affected", "most in one state": "state_max"},
-    "request": {"received": "received", "answered": "answered", "extended": "extended"},
-}
+
 _ALLOWED = {("GDPR", "breach"): {"start", "authority", "individuals", "affected"},
             ("HIPAA", "breach"): {"start", "individuals", "media", "hhs", "affected", "state_max"},
             ("GDPR", "request"): {"received", "answered", "extended"},
@@ -437,41 +427,45 @@ def _request(reg: str, f: dict, as_of: When, where: str) -> list[dict]:
                           "days; G6 did not check that." if extended else "", "Act on the request now." + hint)]
 
 
-def _parse_record(line: str, chosen: set[str]) -> tuple[str, str, dict]:
-    head = _HEAD.match(line)
-    if not head:
-        raise ValueError("start the line with 'breach' or 'access request' (after 'gdpr' or 'hipaa' if you chose both)")
-    reg = (head["reg"] or "").upper()
-    if not reg:
-        if len(chosen) != 1:
-            raise ValueError("start the line with 'gdpr' or 'hipaa': you chose both")
-        reg = next(iter(chosen))
-    elif reg not in chosen:
-        raise ValueError(f"this is a {reg} record, but {reg} is not among the regulations you chose")
-    kind = "breach" if head["kind"].lower() == "breach" else "request"
-    fields: dict[str, Any] = {}
-    for part in filter(None, (p.strip() for p in head["rest"].split(","))):
-        pair = _PAIR.match(part)
-        key = _KEYS[kind].get(" ".join(pair["key"].lower().split())) if pair else None
-        if key is None or key not in _ALLOWED[(reg, kind)]:
-            raise ValueError(f"cannot read {part!r} in a {reg} {kind} record")
-        value = pair["value"].strip()
+def _parse_record(record: dict, chosen: set[str]) -> tuple[str, str, dict]:
+    """Read declared incident fields. Prose is never an incident schema."""
+    if not isinstance(record, dict) or set(record) != {"regulation", "kind", "fields"}:
+        raise ValueError("a record needs regulation, kind and fields")
+    reg, kind, raw = record["regulation"], record["kind"], record["fields"]
+    if not isinstance(reg, str) or reg not in chosen or not isinstance(kind, str) or (reg, kind) not in _ALLOWED:
+        raise ValueError("unknown regulation or record kind")
+    if not isinstance(raw, dict) or set(raw) - set(_ALLOWED[(reg, kind)]):
+        raise ValueError("unknown incident fields")
+    fields = {}
+    for key, value in raw.items():
         if key in ("affected", "state_max"):
-            if not value.isdigit():
-                raise ValueError(f"{part!r}: give a whole number")
-            fields[key] = int(value)
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{key} needs a nonnegative integer")
+            fields[key] = value
         elif key == "extended":
-            if value.lower() not in ("yes", "no"):
-                raise ValueError(f"{part!r}: say extended yes or extended no")
-            fields[key] = value.lower() == "yes"
-        elif (when := _when(value)) is None:
-            raise ValueError(f"{part!r}: give an ISO date or date and time, for example 2026-03-01T09:00Z")
+            if type(value) is not bool:
+                raise ValueError("extended needs a boolean")
+            fields[key] = value
+        elif not isinstance(value, str) or (when := _when(value)) is None:
+            raise ValueError(f"{key} needs an ISO date or time")
         else:
             fields[key] = when
-    start_key = "start" if kind == "breach" else "received"
-    if start_key not in fields:
-        raise ValueError("say when it started: 'aware' or 'discovered' for a breach, 'received' for a request")
+    if ("start" if kind == "breach" else "received") not in fields:
+        raise ValueError("the incident start or request receipt is required")
     return reg, kind, fields
+
+
+def _structured(value: Any, expected: type, label: str) -> Any:
+    if value in (None, ""):
+        return expected()
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (ValueError, RecursionError, MemoryError) as exc:
+            raise ValueError(f"{label} must be structured JSON") from exc
+    if not isinstance(value, expected):
+        raise ValueError(f"{label} must be a JSON {expected.__name__}")
+    return value
 
 
 def _pointers(text: str, reqs: list[Requirement], llm: Any) -> tuple[list[dict], list[str]]:
@@ -528,25 +522,20 @@ def _regulations(text: str) -> set[str]:
     return {"GDPR", "HIPAA"} if "both" in words else {w.upper() for w in words if w in ("gdpr", "hipaa")}
 
 
-def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
+def run(inputs: dict[str, Any], llm: Any = None) -> BundleResult:
     answers: dict[str, tuple[str, str]] = {}
     problems: list[dict] = []
-    for n, line in enumerate(inputs.get("answers", "").splitlines(), 1):
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        m = _ANSWER.match(line)
-        rid = m["id"].upper() if m else ""
-        if not m:
-            problems.append(_problem(f"answers, line {n}", f"Could not read {line.strip()!r}.", _ANSWER_HELP))
-        elif rid not in _BY_ID:
-            problems.append(_problem(f"answers, line {n}", f"{rid} is not in the requirement table.",
-                                     "Use an id from the table; run with no answers to see them all."))
-        elif rid in answers:
-            problems.append(_problem(f"answers, line {n}", f"{rid} is answered more than once.", "Give one answer."))
-        else:
-            answers[rid] = (m["answer"].lower(), m["evidence"].strip(" \t|,;:-–—"))
-    records = [(n, line.strip()) for n, line in enumerate(inputs.get("records", "").splitlines(), 1)
-               if line.strip() and not line.lstrip().startswith("#")]
+    try:
+        raw_answers = _structured(inputs.get("answers"), dict, "answers")
+        for rid, answer in raw_answers.items():
+            if rid not in _BY_ID or not isinstance(answer, dict) or set(answer) != {"answer", "evidence"}:
+                raise ValueError("answers need exact requirement ids and answer/evidence fields")
+            if answer["answer"] not in ("yes", "no", "unknown") or not isinstance(answer["evidence"], str):
+                raise ValueError("answer must be yes, no or unknown and evidence must be text")
+            answers[rid] = (answer["answer"], answer["evidence"])
+        records = list(enumerate(_structured(inputs.get("records"), list, "records"), 1))
+    except ValueError as exc:
+        return BundleResult(_BE, str(exc), code="G6_E_INPUT_VALIDATION")
     try:
         chosen = _regulations(inputs.get("regulations", ""))
         as_of = _when(inputs["as_of"]) if inputs.get("as_of", "").strip() else None
@@ -556,7 +545,7 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
         return BundleResult(_BE, str(exc), code="G6_E_INPUT_VALIDATION")
     if not chosen:   # not stated: the regulations the answers and records name
         chosen = {_BY_ID[rid].regulation for rid in answers}
-        chosen |= {h["reg"].upper() for _, line in records if (h := _HEAD.match(line)) and h["reg"]}
+        chosen |= {r["regulation"] for _, r in records if isinstance(r, dict) and r.get("regulation") in ("GDPR", "HIPAA")}
     if not chosen:
         return BundleResult(_BE, "Choose GDPR, HIPAA or both, then answer the requirements.",
                             code="G6_E_INPUT_VALIDATION")
@@ -619,21 +608,19 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
 
 
 BUNDLE = Bundle(
+    vetting_package="g6.bundles.compliance_gap",
     id="compliance-gap",
     title="Compliance gap check",
     summary="Triage your GDPR or HIPAA answers and incident deadlines against a short requirement table.",
     fields=(
         Field("regulations", "Regulation(s)", kind="text", placeholder="GDPR, HIPAA",
               help="GDPR, HIPAA or both. SOC 2 is not included in this version."),
-        Field("answers", "Your answers, one requirement per line",
-              placeholder="GDPR-30: yes | we keep a processing register in Notion\nGDPR-35: no\n"
-                          "HIPAA-308-RISK: unknown",
-              help=_ANSWER_HELP + " A requirement you leave out, or answer unknown, is reported as not assessed. "
-                   "Run once with no answers to see every requirement id."),
-        Field("records", "Incidents and requests (optional), one per line",
-              placeholder="gdpr breach aware 2026-03-01T09:00Z, authority notified 2026-03-04T08:00Z\n"
-                          "gdpr access request received 2026-01-05, answered 2026-02-03, extended no",
-              help=_RECORD_HELP + " Start each line with gdpr or hipaa if you chose both."),
+        Field("answers", "Your answers (JSON)",
+              placeholder='{"GDPR-30": {"answer": "yes", "evidence": "processing register"}}',
+              help=_ANSWER_HELP + " An omitted or unknown answer is not assessed."),
+        Field("records", "Incidents and requests (JSON, optional)",
+              placeholder='[{"regulation": "GDPR", "kind": "request", "fields": {"received": "2026-01-05"}}]',
+              help=_RECORD_HELP),
         Field("as_of", "Judge open records as of (optional)", kind="text", placeholder="2026-10-18",
               help="An ISO date or date and time; now, if left empty."),
     ),

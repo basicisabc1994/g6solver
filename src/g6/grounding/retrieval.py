@@ -45,6 +45,7 @@ class Passage:
     provenance: str = "caller_supplied"   # who captured the text; never assumed to be a vetted corpus
     # audit 014, GRD-017: the source's own publication date (ISO 8601), "" when unknown; never an index or capture time
     published_at: str = ""
+    source_kind: str = "unknown"  # url | doi | corpus | unknown; declared, never inferred from the label
 
 
 @runtime_checkable
@@ -65,8 +66,14 @@ def _chunks(text: str, size: int = 4) -> list[str]:
 class TextRetriever:
     """BM25 over passages held in memory. Sources are labels you choose (file names, URLs)."""
 
-    def __init__(self, passages: list[tuple[str, str]], *, k1: float = 1.5, b: float = 0.75) -> None:
+    def __init__(self, passages: list[tuple[str, str]], *, k1: float = 1.5, b: float = 0.75,
+                 source_kinds: dict[str, str] | None = None) -> None:
         self._docs = [(src, txt, Counter(content_terms(txt))) for src, txt in passages if txt.strip()]
+        self._source_kinds = dict(source_kinds or {})
+        if any(kind not in ("url", "doi", "corpus", "unknown") for kind in self._source_kinds.values()):
+            raise ValueError("source kinds must be url, doi, corpus or unknown")
+        if set(self._source_kinds) - {src for src, _ in passages}:
+            raise ValueError("source kinds must name a supplied source")
         self._k1, self._b = k1, b
         lengths = [sum(c.values()) for _, _, c in self._docs]
         self._avg = (sum(lengths) / len(lengths)) if lengths else 0.0
@@ -77,8 +84,8 @@ class TextRetriever:
         self._idf = {t: math.log(1 + (n - f + 0.5) / (f + 0.5)) for t, f in df.items()}
 
     @classmethod
-    def from_texts(cls, texts: dict[str, str]) -> TextRetriever:
-        return cls([(src, chunk) for src, text in texts.items() for chunk in _chunks(text)])
+    def from_texts(cls, texts: dict[str, str], *, source_kinds: dict[str, str] | None = None) -> TextRetriever:
+        return cls([(src, chunk) for src, text in texts.items() for chunk in _chunks(text)], source_kinds=source_kinds)
 
     @classmethod
     def from_folder(cls, root: str | Path, patterns: tuple[str, ...] = ("*.md", "*.txt")) -> TextRetriever:
@@ -102,6 +109,6 @@ class TextRetriever:
                     score += self._idf[t] * f * (self._k1 + 1) / (
                         f + self._k1 * (1 - self._b + self._b * length / (self._avg or 1)))
             if score > 0:
-                scored.append(Passage(txt, src, round(score, 4)))
+                scored.append(Passage(txt, src, round(score, 4), source_kind=self._source_kinds.get(src, "unknown")))
         scored.sort(key=lambda p: -p.score)
         return scored[:top_k]

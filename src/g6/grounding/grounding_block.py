@@ -31,8 +31,9 @@ _MAX_SOURCE_CHARS = 2_000_000
 _OPS: dict[str, str] = {
     "check_claim": "check_claim(claim, sources={name: text}): quoted/supported/partial/conflict/not_found",
     "check_claims": "check_claims(text, sources={name: text}): one check per sentence of text",
-    "coverage": "coverage(text, sources={name: text}, weights={name: number}): per claim, the independent source "
-                "lineages (web host, else one for text handed in together) that support or contradict it; covered "
+    "coverage": "coverage(text, sources={name: text}, source_kinds={name: url|doi|corpus|unknown}, "
+                "weights={name: number}): per claim, the declared source lineages (kinds are caller statements) "
+                "that support or contradict it; covered "
                 "only with two or more and none against; weights are recorded as the caller's claim",
 }
 
@@ -44,6 +45,7 @@ class GroundingInput(BaseModel):
     claim: str = ""
     text: str = ""
     sources: dict[str, str] = Field(default_factory=dict)
+    source_kinds: dict[str, Literal["url", "doi", "corpus", "unknown"]] = Field(default_factory=dict)
     top_k: int = Field(5, ge=1, le=50)
     # coverage only; the caller's claim, recorded: finite numbers, one per source at most
     weights: dict[str, Annotated[float, Field(allow_inf_nan=False)]] = Field(default_factory=dict, max_length=1_000)
@@ -56,6 +58,7 @@ class GroundingInput(BaseModel):
 class GroundingBlock(AIBlock[GroundingInput, dict, dict]):
     __g6_block_contract__ = BlockContract(
         name="grounding", purpose="Check claims against supplied sources; lexical support is not entailment.",
+        inputs_optional=("source_kinds", "top_k", "weights"),
         inputs_required_per_op={"check_claim": ("claim", "sources"), "check_claims": ("text", "sources"),
                                 "coverage": ("text", "sources")},
         outputs_per_op={"check_claim": ("check", "completion_state"),
@@ -76,7 +79,7 @@ class GroundingBlock(AIBlock[GroundingInput, dict, dict]):
             return Result.fail(f"[{E_SOURCES_REQUIRED}] {data.op}: sources is required ({{name: text}})")
         if sum(len(t) for t in data.sources.values()) > _MAX_SOURCE_CHARS:
             return Result.fail(f"[{E_SOURCES_TOO_LARGE}] {data.op}: sources exceed {_MAX_SOURCE_CHARS} characters")
-        retriever = TextRetriever.from_texts(data.sources)
+        retriever = TextRetriever.from_texts(data.sources, source_kinds=data.source_kinds)
         if data.op == "check_claim":
             if not data.claim.strip():
                 return Result.fail(f"[{E_CLAIM_REQUIRED}] check_claim: claim is required")
