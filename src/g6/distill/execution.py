@@ -75,6 +75,11 @@ def run_candidate(candidate: VerifierCandidate, observations: list[Observation],
     candidate = VerifierCandidate.model_validate_json(canonical(candidate.model_dump(mode="json")))
     if candidate.candidate_id in stack or len(stack) >= 16:
         raise ExecutionRefused("G6_E_SYNTH_DEPENDENCY", "cyclic or over-deep method dependency")
+    if candidate.contract.probes and (candidate.form != "template_instance"
+                                    or candidate.body.template not in PROBE_TEMPLATES):
+        if candidate.form == "template_instance" and candidate.body.bindings:
+            raise ExecutionRefused("G6_E_SYNTH_BINDINGS", "seed bindings must be empty data")
+        raise ExecutionRefused("G6_E_SYNTH_PROBES", "probe declaration requires its registered template")
     stack = (*stack, candidate.candidate_id)
     active = [i for i, obs in enumerate(observations) if in_scope(candidate.contract, obs)]
     results = ["abstain"] * len(observations)
@@ -87,10 +92,17 @@ def run_candidate(candidate: VerifierCandidate, observations: list[Observation],
                 instance = ProbeTemplateInstance.model_validate(candidate.body.model_dump(mode="json"))
             except ValueError as error:
                 raise ExecutionRefused("G6_E_SYNTH_BINDINGS", str(error)) from error
+            declared = candidate.contract.probes
+            if len(declared) != 1 or declared[0].name != instance.template:
+                raise ExecutionRefused("G6_E_SYNTH_PROBES", "probe template differs from registered probe")
+            probe = declared[0]
+            bound = candidate.contract.cost_bound.model_dump()
+            bound.update(wall_s=min(probe.wall_s, bound["wall_s"]),
+                         probe_runs=min(probe.runs, bound["probe_runs"]))
             values = []
             for obs in selected:
                 kwargs = dict(split="training", bindings=instance.bindings.model_dump(mode="json"),
-                              probe_input=obs.probe_input, cost_bound=candidate.contract.cost_bound.model_dump())
+                              probe_input=obs.probe_input, cost_bound=bound)
                 if obs.probe_input is None:
                     detection = run_template(instance.template, obs.before, obs.after, **kwargs)
                 else:

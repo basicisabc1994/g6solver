@@ -8,12 +8,13 @@ Check                       Production lines/value                Pilot value
 Policy                      256-268 protected defaults             PilotPolicy digest, separate version
 Admission repositories      2474-2500, 2683-2684: >=30              allocation count, 5
 Monitor repositories        2474-2500, 2610-2617: >=30 per bound    allocation count, 3
-Quality R2 FN/FP             2580-2605: upper-95 <=.02              strict unit accuracy delta >=0;
+Quality R2 FN/FP             2580-2605: upper-95 <=.02              no teacher-correct unit becomes wrong;
                                                                    added false acceptances =0
-Quality R1 graph loss        2598-2604: upper bound <=.03            same point rule, teacher-only baseline
-Admission FPR               2608-2617, 2710: upper-95 delta <=.02    quality point rule above
+Quality R1 graph loss        2598-2604: upper bound <=.03            same unit rule, teacher-only baseline
+Admission FPR               2608-2617, 2710: upper-95 delta <=.02    no negative unit adds a false alarm
 Monitor FPR                 2731-2735: upper-95 delta <=.02         zero observed monitor false positives
 Cost at H                   2530-2548, 2741-2745: upper-95 <=0      point estimate <=0 at H=1000
+Prior validation            2728: cumulative validation charged   study candidate journal, all attempts
 Coverage                    2703-2708: point >=.10                 raw unit accuracy; abstain is incorrect
 Planted/trivial controls     2711-2721: planted + sign test          both classes required; no sign-test bar
 Library/regression          2690-2700, 2722: current union/replay    leaf method, empty library baseline
@@ -39,16 +40,21 @@ or serving endpoint. Callers do not supply observations, oracle labels or runner
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import json
 import math
 import os
 from pathlib import Path
 import statistics
+import sys
 import time
 from typing import Literal
+from uuid import uuid4
 
 from g6.core.ledger import canonical, digest
+from g6.core.repair_log import _process_lock
 from g6.core.storage import contained, g6_home
 
 from . import acceptance_gate as production
@@ -102,6 +108,111 @@ class PilotRefused(ValueError):
 def _require(condition, code, reason):
     if not condition:
         raise PilotRefused(code, reason)
+
+
+def _cost_append(path, row):
+    try:
+        with path.open("a", encoding="utf-8", newline="\n") as stream:
+            stream.write(canonical(row) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+    except (OSError, ValueError) as error:
+        raise PilotRefused("PILOT_COST_RECORD", "study validation cost append failed") from error
+
+
+def _pilot_validation_total(path, candidate_id, active):
+    """Study equivalent of production._reconcile_validation, without production stores.
+
+    Sum every completed attempt, retaining checkpoints on interruption. An orphan
+    start is charged through recovery only with continuous wall/monotonic clocks.
+    The caller holds the candidate's OS lock throughout assessment and publication.
+    """
+    attempts, total = {}, 0.
+    if not path.exists():
+        return total
+    try:
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                row = json.loads(line)
+                _require(row["candidate_id"] == candidate_id, "PILOT_COST_HISTORY", "cost candidate differs")
+                ident, kind = row["attempt"], row["kind"]
+                if kind == "start":
+                    _require(ident not in attempts, "PILOT_COST_HISTORY", "duplicated validation attempt")
+                    _require(all(type(row[k]) in (int, float) and math.isfinite(row[k])
+                                 for k in ("monotonic_start", "wall_start")),
+                             "PILOT_COST_HISTORY", "invalid validation clock")
+                    attempts[ident] = {"opening": row, "floor": 0., "open": True}
+                else:
+                    _require(kind in {"checkpoint", "finish"} and ident in attempts and attempts[ident]["open"],
+                             "PILOT_COST_HISTORY", "validation history order invalid")
+                    attempt = attempts[ident]
+                    seconds = row["validation_s"]
+                    _require(type(seconds) in (int, float) and math.isfinite(seconds)
+                             and seconds >= attempt["floor"]
+                             and row["validation_total_s"] == total + seconds,
+                             "PILOT_COST_HISTORY", "validation cost decreased or invalid")
+                    attempt["floor"] = seconds
+                    if kind == "finish":
+                        attempt["open"] = False
+                        total += seconds
+        for ident, attempt in attempts.items():
+            if not attempt["open"] or ident == active:
+                continue
+            opening = attempt["opening"]
+            elapsed = time.monotonic() - opening["monotonic_start"]
+            wall = time.time() - opening["wall_start"]
+            _require(all(math.isfinite(v) and v >= 0 for v in (elapsed, wall))
+                     and abs(wall - elapsed) <= max(2., .01 * max(wall, elapsed))
+                     and (not sys.platform.startswith("linux") or bool(opening["boot_id"]))
+                     and production._boot_identity() == opening["boot_id"],
+                     "PILOT_COST_HISTORY", "interrupted cost needs clock recovery")
+            seconds = max(attempt["floor"], elapsed)
+            total += seconds
+            _cost_append(path, {"kind": "finish", "attempt": ident, "candidate_id": candidate_id,
+                               "validation_s": seconds, "validation_total_s": total})
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        if isinstance(error, PilotRefused):
+            raise
+        raise PilotRefused("PILOT_COST_HISTORY", "study validation cost history unreadable") from error
+    _require(math.isfinite(total), "PILOT_COST_HISTORY", "finite cumulative validation cost required")
+    return total
+
+
+def _validation_charge(meter, allowance=0., *, finish=False):
+    elapsed = time.monotonic() - meter["started"]
+    _require(math.isfinite(elapsed) and elapsed >= 0, "PILOT_COST_HISTORY", "validation clock moved backwards")
+    seconds = max(meter["floor"], elapsed + allowance)
+    total = meter["prior"] + seconds
+    _require(math.isfinite(total), "PILOT_COST_HISTORY", "finite cumulative validation cost required")
+    _cost_append(meter["path"], {"kind": "finish" if finish else "checkpoint", "attempt": meter["attempt"],
+        "candidate_id": meter["candidate_id"], "validation_s": seconds, "validation_total_s": total})
+    meter.update(floor=seconds, closed=finish)
+    return total
+
+
+@contextmanager
+def _validation_attempt(root, candidate_id, policy):
+    path = contained(root, root / "pilot-validation" / f"{candidate_id}.jsonl")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with _process_lock(contained(root, path.with_suffix(".lock"))):
+            started, wall = time.monotonic(), time.time()
+            ident = uuid4().hex
+            _cost_append(path, {"kind": "start", "attempt": ident, "candidate_id": candidate_id,
+                "monotonic_start": started, "wall_start": wall, "boot_id": production._boot_identity()})
+            prior = _pilot_validation_total(path, candidate_id, ident)
+            meter = {"path": path, "prior": prior, "started": started, "attempt": ident,
+                     "candidate_id": candidate_id, "floor": 0., "closed": False}
+            try:
+                yield meter
+            finally:
+                if not meter["closed"]:
+                    total = _validation_charge(meter, policy.publication_allowance_s, finish=True)
+                    if meter.get("admitting"):
+                        _require(total <= meter["assessed_total"], "PILOT_PUBLICATION_BUDGET",
+                                 "validation and publication exceeded charged allowance")
+    except OSError as error:
+        raise PilotRefused("PILOT_COST_RECORD", "study validation cost storage unavailable") from error
 
 
 def pilot_point_cost(fixed_difference, savings, *, value_bounds, policy):
@@ -248,7 +359,7 @@ def _measure(candidate, group, scope):
     return [v if production._case_in_scope(scope, o.case) else "abstain" for o, v in zip(group, own)], costs
 
 
-def _assess(candidate, frozen, allocation, policy, started, data):
+def _assess(candidate, frozen, allocation, policy, meter, data):
     study, rows, scope, admission, monitor, strata, monitor_strata = _inputs(candidate, frozen, allocation, policy)
     own, costs = _measure(candidate, frozen.acceptance, scope)
     monitored, _ = _measure(candidate, monitor, scope)
@@ -257,6 +368,14 @@ def _assess(candidate, frozen, allocation, policy, started, data):
     teacher = [rows[o.case.case_id].teacher_verdict for o in admission]
     before, after = production._unit_pairs(admission, teacher, selected)
     delta = sum(after) - sum(before)
+    all_teacher = [rows[o.case.case_id].teacher_verdict for o in frozen.acceptance]
+    all_before, all_after = production._unit_pairs(frozen.acceptance, all_teacher, own)
+    regressed = sum(b and not a for b, a in zip(all_before, all_after))
+    teacher_alarms = {o.case.unit_id for o, t in zip(frozen.acceptance, all_teacher)
+                      if o.label == "negative" and t == "concern"}
+    candidate_alarms = {o.case.unit_id for o, q in zip(frozen.acceptance, own)
+                        if o.label == "negative" and q == "concern"}
+    added_alarms = candidate_alarms - teacher_alarms
     added = {o.case.unit_id for o, t, q in zip(admission, teacher, selected)
              if o.label == "positive" and q == "no_concern" and t != "no_concern"}
     units = {o.case.unit_id: o for o in admission}
@@ -272,19 +391,27 @@ def _assess(candidate, frozen, allocation, policy, started, data):
     savings = [(rows[o.case.case_id].teacher_s * study.teacher_weight * (1 - study.shadow_rate)
                 if q != "abstain" else 0.) - c * study.cpu_weight - rows[o.case.case_id].maintenance_delta_s
                for o, q, c in zip(frozen.acceptance, own, serving)]
-    fixed = study.fixed_new_s - study.fixed_base_s + (time.monotonic() - started
-        + max(policy.publication_allowance_s, study.activation_allowance_s or 0.)) * study.cpu_weight
+    # Reserve publication and a terminal cost append before testing the point cost.
+    validation_s = _validation_charge(meter, policy.publication_allowance_s
+        + max(policy.publication_allowance_s, study.activation_allowance_s or 0.))
+    fixed = study.fixed_new_s - study.fixed_base_s + validation_s * study.cpu_weight
     samples = production._cluster_differences(frozen.acceptance, rows, savings)
     production_cost = _reported(lambda: production._replacement_cost(fixed, samples,
                                                                     value_bounds=study.task_saving_bounds))
-    data.update({"accuracy_delta": delta, "added_false_acceptances": len(added),
+    data.update({"validation_s": validation_s, "accuracy_delta": delta, "regressed_units": regressed,
+            "added_false_acceptances": len(added), "added_admission_false_positives": len(added_alarms),
+            "teacher_admission_false_positives": len(teacher_alarms),
+            "admission_false_positives": len(candidate_alarms),
             "production_quality": quality, "production_margin": margin, "production_cost": production_cost,
             "strata": strata, "monitor_strata": monitor_strata})
     cost = pilot_point_cost(fixed, samples, value_bounds=study.task_saving_bounds, policy=policy)
     data["cost"] = cost
+    meter["assessed_total"] = validation_s
     _require(len(added) <= policy.maximum_added_false_acceptances, "PILOT_FALSE_ACCEPTANCE",
              "replacement adds false acceptances")
+    _require(not added_alarms, "PILOT_ADMISSION_FP", "negative admission unit adds a false alarm")
     _require(delta >= policy.minimum_accuracy_delta, "PILOT_QUALITY", "unit accuracy decreased")
+    _require(not regressed, "PILOT_UNIT_REGRESSION", "teacher-correct admission unit became incorrect")
     fp = production._counts(monitor, monitored)["fp"]
     _require(fp <= policy.maximum_monitor_false_positives, "PILOT_MONITOR_FP", "monitor false positive")
     _require(cost["admissible"], "PILOT_COST", "point cost at H exceeds zero")
@@ -327,6 +454,8 @@ def decide_pilot(candidate: VerifierCandidate, *, study_root: Path, allocation: 
     ident = candidate.candidate_id if type(candidate) is VerifierCandidate else ""
     prod = production.AcceptanceDecision("block", ("pilot inputs not loaded",), ident)
     measurements = {}
+    created = None
+    admitted = False
     try:
         root = _study_root(study_root)
         _require(type(candidate) is VerifierCandidate, "PILOT_CANDIDATE", "typed candidate required")
@@ -334,29 +463,39 @@ def decide_pilot(candidate: VerifierCandidate, *, study_root: Path, allocation: 
         path = contained(root, root / "pilot-gate" / f"{ident}.json")
         _require(int(path.exists()) < policy.maximum_admissions_per_candidate,
                  "PILOT_REUSED", "candidate already has a study admission")
-        started = time.monotonic()
-        try:
-            frozen = production._load(registration, candidate, Library(), True)
-        except (ValueError, KeyError, FileNotFoundError) as error:
-            raise PilotRefused("PILOT_REGISTRATION", "production registration loader refused") from error
-        prod = _production_decision(candidate, frozen)
-        own, costs = _assess(candidate, frozen, allocation, policy, started, measurements)
-        answer = PilotDecision("admit", "PILOT_ADMIT", prod, ident, policy_sha256,
-                               allocation_sha256, measurements, str(path))
-        publishing = time.monotonic()
-        bundle = _bundle(candidate, frozen, answer, own, costs)
-        encoded = canonical(bundle) + "\n"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path = contained(root, path)
-        _require(time.monotonic() - publishing <= max(policy.publication_allowance_s,
-                 frozen.replacement.activation_allowance_s or 0.), "PILOT_PUBLICATION_BUDGET",
-                 "study publication preparation exceeded its charged allowance")
-        with path.open("x", encoding="utf-8", newline="\n") as stream:
-            stream.write(encoded)
+        with _validation_attempt(root, ident, policy) as meter:
+            _require(not path.exists(), "PILOT_REUSED", "candidate already has a study admission")
+            try:
+                frozen = production._load(registration, candidate, Library(), True)
+            except (ValueError, KeyError, FileNotFoundError) as error:
+                raise PilotRefused("PILOT_REGISTRATION", "production registration loader refused") from error
+            prod = _production_decision(candidate, frozen)
+            own, costs = _assess(candidate, frozen, allocation, policy, meter, measurements)
+            answer = PilotDecision("admit", "PILOT_ADMIT", prod, ident, policy_sha256,
+                                   allocation_sha256, measurements, str(path))
+            publishing = time.monotonic()
+            bundle = _bundle(candidate, frozen, answer, own, costs)
+            encoded = canonical(bundle) + "\n"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path = contained(root, path)
+            _require(time.monotonic() - publishing <= max(policy.publication_allowance_s,
+                     frozen.replacement.activation_allowance_s or 0.), "PILOT_PUBLICATION_BUDGET",
+                     "study publication preparation exceeded its charged allowance")
+            with path.open("x", encoding="utf-8", newline="\n") as stream:
+                created = path
+                stream.write(encoded)
+            meter["admitting"] = True
+        admitted = True
         return answer
     except PilotRefused as error:
         measurements = measurements | {"refusal": str(error)}
         code = error.code
-    except (ValueError, KeyError, FileNotFoundError):
+    except (ValueError, KeyError, OSError):
         code = "PILOT_INPUT"
+    finally:
+        if created is not None and not admitted:
+            try:
+                created.unlink()
+            except OSError:
+                code = "PILOT_PUBLICATION_CLEANUP"
     return PilotDecision("refuse", code, prod, ident, policy_sha256, allocation_sha256, measurements)

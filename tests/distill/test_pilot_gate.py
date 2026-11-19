@@ -150,7 +150,12 @@ def test_conditions_refuse_with_stable_codes(pilot, rig, monkeypatch, condition,
     result = decide(pilot, rig)
     assert result.pilot_verdict == "refuse"
     assert result.code == code
-    assert not rig["root"].exists()
+    # A refusal admits nothing: no admission bundle. Since the step 4 repair, the candidate's cumulative
+    # validation cost history is the only thing a refusal may leave under the study root.
+    written = sorted(p.relative_to(rig["root"]).as_posix() for p in rig["root"].rglob("*") if p.is_file()) \
+        if rig["root"].exists() else []
+    assert not (rig["root"] / "pilot-gate").exists()
+    assert all(p.startswith("pilot-validation/") and p.endswith((".jsonl", ".lock")) for p in written)
 
 
 def test_study_only_storage_and_production_consumers(pilot, rig):
