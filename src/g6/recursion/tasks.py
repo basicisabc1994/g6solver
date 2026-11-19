@@ -89,6 +89,8 @@ class TaskSpec:
                 eligible.append("held_out")
             elif self.source == "codecontests" and self.source_split in ("valid", "validation"):
                 eligible.append("dev")
+            elif self.source == "generated" and self.source_split == "test" and not self.train_ok:
+                eligible.append("held_out")
         return tuple(eligible)
 
     def require_split(self, split: str) -> None:

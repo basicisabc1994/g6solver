@@ -243,7 +243,8 @@ def test_registry_json_matches_runtime_rows(api):
     from pathlib import Path
 
     data = json.loads((Path(__file__).resolve().parents[2] / "validation/rsi/licences.json").read_text())
-    assert data == [asdict(api.licence_for(source)) for source in ("mbpp", "apps", "codecontests", "livecodebench")]
+    assert data == [asdict(api.licence_for(source)) for source in
+                    ("mbpp", "apps", "codecontests", "livecodebench", "generated")]
 
 
 def test_direct_suite_metadata(api, task):

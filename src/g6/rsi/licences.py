@@ -34,6 +34,9 @@ ROWS = (
                "https://github.com/LiveCodeBench/LiveCodeBench", False, True,
                "Owner permits evaluation only, aggregate scores only, no redistribution. Data card says cc; "
                "LeetCode terms restrict scraping. Held-out dates must be after September 2024."),
+    LicenceRow("generated", "generated-local", "Repository terms retained", "local:generated", True, True,
+               "Local bug-injection tasks only. Family metadata must retain repository attribution and permissive "
+               "licence terms. Training repositories and held-out repositories stay separate."),
 )
 
 
