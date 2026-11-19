@@ -29,6 +29,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from g6.core.refusals import code_of
+
 from g6.core import cloud_consent
 from g6.core.consent_callers import guard
 from g6._context_engine import _engine as engine
@@ -172,7 +174,7 @@ def extract(acc: Access, passage_ids: Sequence[str], *, caller: Any, limits: Lim
         with cloud_consent.request_sources(tuple(refs)):
             reply = guard(caller).complete(SYSTEM, shown, max_tokens=2_000)
     except Exception as exc:  # noqa: BLE001 - the consent refusal is told apart by its code; anything else is raised on
-        if cloud_consent.REQUIRED not in str(exc):
+        if code_of(exc) != cloud_consent.REQUIRED:
             raise
         raise Refused(NOT_SENT, "the extraction was not sent: a source among these passages is not shared with this "
                                 "model's provider, so nothing left this machine and no relation is kept") from None

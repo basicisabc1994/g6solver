@@ -24,6 +24,8 @@ from functools import wraps
 from pathlib import Path
 from typing import Any
 
+from g6.core.refusals import code_of
+
 from g6.core.cloud_consent import sha256
 from g6.core.ledger import digest
 from g6.harness import question_store as qs
@@ -35,7 +37,6 @@ PROCESS = uuid.uuid4().hex
 NO_OBSERVATION = "no_g6_observation"
 CALLS = "tool_calls"
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
-_CODE = re.compile(r"\[(G6_E_[A-Z0-9_]+)\]")
 _started: dict[str, float] = {}      # run id -> this process's monotonic clock when it began the run
 
 
@@ -118,12 +119,12 @@ def observe_review(repo: str | os.PathLike, task: str, job_id: str, reply: Any, 
     assessment = reply.get("assessment") if isinstance(reply.get("assessment"), dict) else None
     scope = (assessment or {}).get("scope") if isinstance((assessment or {}).get("scope"), dict) else {}
     search = scope.get("search") if isinstance(scope.get("search"), dict) else {}
-    refused = _CODE.match(str(reply.get("error") or ""))
+    refused = code_of(reply)
     ref = _saved_ref(job_id, saved) if assessment else None
     reasons = [r for r in (assessment or {}).get("reasons") or [] if isinstance(r, dict)]
     data = {"outcome": str((assessment or {}).get("outcome") or "")[:80] or None,
             "state": str(reply.get("completion_state") or "")[:40] or None,
-            "refusal_code": refused[1] if refused else None,
+            "refusal_code": refused,
             "review_seconds": _number(scope.get("seconds")), "model_calls": _number(search.get("model_calls")),
             "integrity_reasons": sum(r.get("stage") == "integrity" for r in reasons),
             "requirements_failed": sum(isinstance(r, dict) and r.get("status") == "failed"

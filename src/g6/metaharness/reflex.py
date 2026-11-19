@@ -21,13 +21,13 @@ refused at enrolment) cannot read itself here: those stand in the digest's stops
 """
 from __future__ import annotations
 
-import re
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from g6.invariants import ERROR_CODE_PATTERN
+from g6.core.refusals import code_of
+
 from g6.metaharness.lessons import ROOT_CAUSES, Lesson, repeats
 from g6.metaharness.lessons import stuck as recurring
 from g6.metaharness.schema import HOLDOUT_REUSED, INSUFFICIENT_EVIDENCE, NO_GAIN, OBJECTIVE_REGRESSED, SUITE_CANNOT_DISCRIMINATE
@@ -164,12 +164,8 @@ def stages(rows: Iterable[Mapping[str, Any]]) -> tuple[StageMeasurement, ...]:
 
 
 def _reason(row: Mapping[str, Any]) -> str:
-    """Why a cycle went no further, as a stable code. A step the harness blocked carries its code at the head of its reason:
-    the first word of it that is a G6 code by G6's own rule (``g6.invariants.ERROR_CODE_PATTERN``)."""
-    code = _text(row.get("code"))
-    if code and code != CYCLE:
-        return code
-    return next(filter(ERROR_CODE_PATTERN.match, re.findall(r"\w+", str(row.get("reason", "")))), None) or CYCLE
+    """Read the cycle refusal code field; never interpret its human reason."""
+    return code_of(row)
 
 
 def _refused_by(row: Mapping[str, Any]) -> str:

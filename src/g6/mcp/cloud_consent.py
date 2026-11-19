@@ -109,6 +109,8 @@ def input_refusal(tool: str, fields, *, arguments=None, session=None) -> dict:
     from g6.mcp.repair import observe
 
     reply = blocked_reply('[G6_E_INPUT_VALIDATION] Undeclared tool argument; use only the declared arguments.')
+    reply['code'] = 'G6_E_INPUT_VALIDATION'
+    reply['missing'] = sorted(fields)
     reply = observe(tool, arguments, reply, session)
     if reply.get('repair') is not None and reply['repair']['by'] == 'agent':
         reply['repair']['fill'] = sorted(fields)

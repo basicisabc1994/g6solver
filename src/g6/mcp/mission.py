@@ -24,8 +24,11 @@ import json
 import re
 import subprocess
 from collections.abc import Callable
+from copy import deepcopy
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+from g6.core.refusals import code_of
 
 from g6.core import cloud_consent as cloud, git_env
 from g6.core.door import (
@@ -42,7 +45,6 @@ from g6.core.ledger import digest
 from g6.harness import verification_search
 from g6.harness.patch_review import DEFECT, INTEGRITY
 from g6.intent_engine import IntentElicitor
-from g6.invariants import ERROR_CODE_PATTERN
 from g6.mcp import review_reply
 from g6.mcp.consent_controls import host_controls, public_instructions
 from g6.reliability_pipeline import premortem as checklist
@@ -90,11 +92,11 @@ SUBMIT_HERE = ("Change only the source files in scope in the working tree, do no
 #: offers each of them.
 _TOOLS = {"create": "g6_mission_create", "status": "g6_mission_status", "submit": "g6_mission_submit",
           "accept": "g6_mission_clarify"}
-_NAMED = re.compile(r"\bmission_(create|status|submit|accept)\b")
-_DIALOG = {"confirm": "call g6_mission_confirm, which asks the person in the client's dialog",
-           "allow": "call g6_mission_create, which asks the person in the client's dialog"}
-_TERMINAL = re.compile(r'(?:confirm it at your terminal: )?`?python -P -m g6\.workforce\.decide (confirm|allow) \S+ '
-                       r'--reason "\.\.\."`?')
+MCP_GUIDANCE = {
+    "confirm": "Call g6_mission_confirm; the person answers in the client's dialog.",
+    "allow": "Call g6_mission_create; the person answers in the client's dialog.",
+    "submit": SUBMIT_HERE,
+}
 MAX_CHECKS_STATED = 200
 MAX_TEST_FILES = 200
 
@@ -108,16 +110,20 @@ def refused() -> dict | None:
         "The person must allow it themselves. Tell the person and stop."))
 
 
+MCP_ACTION_FIELDS = ("next_action", "reuse")
+MCP_TOOL_IDS = {"mission_" + name: tool for name, tool in _TOOLS.items()}
+
+
 def _here(value: Any) -> Any:
-    """``value`` with each step named as this surface offers it (``_TOOLS``, ``_DIALOG``, ``SUBMIT_HERE``)."""
-    if isinstance(value, str):
-        named = _NAMED.sub(lambda found: _TOOLS[found[1]], value.replace(coding.OBJECTIVE_INSTRUCTIONS, SUBMIT_HERE))
-        return _TERMINAL.sub(lambda found: _DIALOG[found[1]], named)
-    if isinstance(value, dict):
-        return {key: _here(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_here(item) for item in value]
-    return value
+    """Adapt the mission protocol's declared root action fields; evidence stays data."""
+    if not isinstance(value, dict):
+        return value
+    result = deepcopy(value)
+    for field in MCP_ACTION_FIELDS:
+        action = result.get(field)
+        if isinstance(action, dict) and isinstance(action.get("tool"), str) and action["tool"] in MCP_TOOL_IDS:
+            action["tool"] = MCP_TOOL_IDS[action["tool"]]
+    return result
 
 
 def reply(found: dict, *, control_id: str | None = None) -> dict:
@@ -143,21 +149,25 @@ def reply(found: dict, *, control_id: str | None = None) -> dict:
         controls["mission_id"] = control_id
         if envelope["run_id"] == control_id:
             controls["run_id"] = control_id
+    value["mcp_guidance"] = dict(MCP_GUIDANCE)
     return host_controls(value, controls, sources=sources)
 
 
 def _refusal(said: str, code: str = REFUSED) -> dict:
-    return _here(blocked_reply(f"[{code}] {said}"))
+    result = _here(blocked_reply(said))
+    result["mcp_guidance"] = dict(MCP_GUIDANCE)
+    result["code"] = code
+    if code != "unknown":
+        result["warning_card"]["code"] = code
+    return result
 
 
 def _guarded(work: Callable[[], dict]) -> dict:
-    """``work()``, or what refused it as a blocked reply with its code: the exception's, the first word of its words that
-    is a G6 code by G6's own rule (``g6.invariants.ERROR_CODE_PATTERN``), or ``REFUSED``."""
+    """``work()``, or a blocked reply with the exception's declared code (unknown if absent)."""
     try:
         return work()
     except (ValueError, LookupError, OSError, subprocess.SubprocessError) as exc:
-        named = next(filter(ERROR_CODE_PATTERN.match, re.findall(r"\w+", str(exc))), None)
-        return _refusal(str(exc), getattr(exc, "code", "") or named or REFUSED)
+        return _refusal(str(exc), code_of(exc))
 
 
 def _bound(shown: list[str], who: str) -> api.Approver:

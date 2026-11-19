@@ -42,6 +42,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from g6.core.refusals import code_of
+
 from g6.core import cloud_consent as cloud
 from g6.core.consent_callers import SDKClientWrapper, guard, sdk_send
 
@@ -235,8 +237,8 @@ class _Limits:
             record.update(sent=True, error=str(exc), limit="max_wall_clock_s")
             raise
         except Exception as exc:
-            withheld = any(code in str(exc) for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE))
-            record.update(sent=not withheld, error=f"{type(exc).__name__}: {' '.join(str(exc).split())[:200]}")
+            withheld = code_of(exc) in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)
+            record.update(sent=False if withheld else None, error=f"{type(exc).__name__}: {' '.join(str(exc).split())[:200]}")
             raise
         finally:
             record["seconds"] = round(time.monotonic() - started, 3)

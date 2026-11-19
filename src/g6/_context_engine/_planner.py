@@ -32,6 +32,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from g6.core.refusals import code_of
+
 from g6.core import cloud_consent
 from g6.core.consent_callers import guard
 from g6._context_engine import _engine as engine
@@ -251,7 +253,7 @@ def run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFAU
                 reply = guard(reformulate).complete(REFORMULATE, json.dumps({"query": query, "unmet_needs": open_needs}),
                                                     max_tokens=400)
         except Exception as exc:  # noqa: BLE001 - the consent refusal is told apart by its code; anything else is raised on
-            if cloud_consent.REQUIRED not in str(exc):
+            if code_of(exc) != cloud_consent.REQUIRED:
                 raise
             stop = "refused"
             break

@@ -20,7 +20,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from g6.invariants import ERROR_CODE_PATTERN
+from g6.core.refusals import code_of
+
 
 #: The card a step carries: the stable code of a result that is a draft, whatever the loop found.
 CODE = "G6_E_REVIEW_UNTIL_CLEAN"
@@ -79,7 +80,8 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
     from g6.workspace._envelope import WorkspaceRefused
 
     if not task.strip() or not session.strip():
-        return blocked_reply("[G6_E_INPUT_VALIDATION] a task and a session are needed: name one session for one task")
+        return {**blocked_reply("a task and a session are needed: name one session for one task"),
+                "code": "G6_E_INPUT_VALIDATION", "missing": [key for key, value in (("task", task), ("session", session)) if not value.strip()]}
     folder = completion_hook.folder(f"mcp:{session}")
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     request_id = uuid.uuid4().hex[:12]
@@ -88,12 +90,12 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
             asked = _asked(repo, task, base, folder)
         done = loop.advance(asked["repo"], asked["task"], asked["base"], folder, said=reason, answered=bool(reason.strip()))
     except repo_tests.RepoRefused as exc:
-        return blocked_reply(f"[{exc.code}] {exc}", request_id=request_id)
+        return {**blocked_reply(str(exc), request_id=request_id), "code": exc.code}
     except WorkspaceRefused:
         done = loop.Step(loop.WAIT, loop.ALREADY_RUNNING, loop.BUSY)
     if done.action == loop.WAIT:      # the step that is running owns the state, so nothing of it is read here
         return {**blocked_reply(f"[{done.code}] {done.text}", request_id=request_id), "run_id": folder.name,
-                "action": done.action}
+                "action": done.action, "code": done.code}
     state = loop._load(folder)
     evidence = _evidence(state, asked["base"])
     text = done.text or loop.read_report(folder, state)
@@ -107,7 +109,7 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
         "action": done.action, "report": text, "ending": ending, **({"note": note} if note else {})}
     if code:
         refused = blocked_reply(f"[{code}] {why}"[:600], request_id=request_id)
-        result = {**refused, "run_id": folder.name, "evidence": evidence, **said}
+        result = {**refused, "run_id": folder.name, "evidence": evidence, **said, "code": code}
     else:
         card = SENDS_BACK if done.action == loop.CONTINUE else ENDED
         result = {"ok": True, **said, **envelope_fields(
@@ -131,7 +133,7 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     capture = current_capture()
     if capture is not None:
         capture.review_unsent = (result.get('ending') == 'untested' and
-            str(result.get('error', '')).startswith(f'[{REQUIRED}]'))
+            code_of(result) == REQUIRED)
     body, refs, _ = freeze_output(result)
     try:
         result = json.loads(body)
@@ -141,10 +143,9 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     metadata.update(has_report='report' in result, has_text='text' in result)
     if capture is not None and capture.review_unsent and capture.refused_provider:
         metadata['review_provider'] = capture.refused_provider
-    said = str(result.get('error', ''))
-    word = said[1:said.find(']')] if said.startswith('[') and ']' in said else ''
-    if ERROR_CODE_PATTERN.match(word):
-        metadata['error_code'] = word
+    code = code_of(result)
+    if code != 'unknown':
+        metadata['error_code'] = code
     return bind_output(result, (Source.text(repository_source(repo), "completion-report", body),
                                 Source.text(input_source(task), "task", task), *(refs or ()),
                                 *(capture.sources if capture is not None else ())),

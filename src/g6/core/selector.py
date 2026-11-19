@@ -29,7 +29,7 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
    "truncate", "destroy", "terminate", "remove", "upload", "email", "transfer", "ship", "release", "roll back",
    "rollback", "revoke", "rotate", "tear down", "teardown", "kill", "refund", "charge", "shut down", "shutdown",
    "rewrite history", "force". Every reply, whatever its words: a call that acts outside G6
-   (``_acts``: an op its component lists as sensitive, or whose name holds an ``OUTWARD_WORDS`` word) ranks below
+   (``_acts``: the operation's declared effect, unknown when absent) ranks below
    every call that does not, and is never ``next``; ``g6_cloud_grant`` is ``next`` only as the remedy for the
    consent code. Where the rankers disagree it is listed. A semantic rerank (the local ColBERT rung) is
    deferred: it would make the reply depend on what the host has installed and cached, so ``rerank="colbert"`` is
@@ -69,6 +69,9 @@ import math
 import re
 from collections import Counter
 from typing import Any
+
+from g6.core.refusals import code_of
+from g6.core.states import state_of
 
 from g6.core.discovery import _tokens
 
@@ -155,9 +158,6 @@ INTENTS: dict[str, tuple[re.Pattern[str], dict[str, dict[str, float]]]] = {
         re.compile(r"\b(tune|improve|keeps failing|make my agent better)\b"),
         {"*": {"tool:metaharness_diagnose": 4.0, "tool:metaharness_start": 3.5, "tool:g6_improve_status": 2.0}}),
 }
-#: Words in an op's name that say it acts outside G6 (publishes, sends, pays, deletes, deploys, writes, removes),
-#: so the op acts even when its component does not list it among its sensitive ops.
-OUTWARD_WORDS = frozenset({"push", "send", "publish", "pay", "delete", "deploy", "drop", "remove", "write"})
 #: Tools a remedy may name before they are registered (built on another branch): such a remedy is marked
 #: ``available: false`` until the corpus holds the tool, and is never offered as a call.
 PENDING_TOOLS = {"g6_agentic_run": "the override kernel's tool (plan revision 8, phase D), built on its own branch"}
@@ -167,20 +167,6 @@ UNKNOWN_UNTIL_OBSERVED = (
     "whether a model is configured for G6: only a *_NO_MODEL or G6_E_LLM_DISABLED refusal says it is not",
     "whether this machine can confine a run: only G6_E_ISOLATION_UNAVAILABLE says it cannot",
 )
-_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
-#: The fixed prefixes G6's own MCP stack writes before a tool's error text, and no others: FastMCP's
-#: (``fastmcp.tools.tool_manager``: ``Error calling tool 'name': ``) and the MCP SDK's
-#: (``mcp.server.fastmcp.tools.base``: ``Error executing tool name: ``). G6's consent transport writes no code
-#: (``g6.mcp.consent_transport``).
-TRANSPORT_PREFIXES = (r"Error calling tool '[a-z][a-z0-9_]*': ", r"Error executing tool [a-z][a-z0-9_]*: ")
-#: A text reply's code counts only at the very start of its first line (an optional ``[``), or right after one of
-#: ``TRANSPORT_PREFIXES``; any other words before it never count, and the code that leads wins. Right after it, the
-#: door's own refusal names the component and op (``[NAME_ERROR] op:``) or a sensitive ``component.op``. Nothing
-#: later in the text is read.
-_LEADING_CODE = re.compile(r"\s*(?:" + "|".join(TRANSPORT_PREFIXES) + r")?\[?(G6_E_[A-Z0-9_]+)\]?")
-_DOOR_TAG = re.compile(r"\s*\[([A-Z][A-Z0-9_]*)_ERROR\]\s+([a-z][a-z0-9_]*):")
-_LEAD_PAIR = re.compile(r"\s*([a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)(?![\w.])")
-_WORD_LINE = re.compile(r"(?:(?:ending|outcome|action)\s*:\s*)?([a-z][a-z_]*)")
 STATES = ("verified", "qualified-draft", "blocked-escalated")
 CONSENT = "G6_E_CLOUD_CONSENT_REQUIRED"
 #: The envelope fields that name an outcome: a review's assessment, a mission's outcome, a review loop's ending and
@@ -281,17 +267,15 @@ def _corpus() -> dict[str, Any]:
 
 
 def _acts(entry: dict[str, Any]) -> str:
-    """Why an op acts outside G6's own checks, or "" when it does not: its component lists it as sensitive (it runs a
-    program, reaches the network or changes the machine), or its name holds an ``OUTWARD_WORDS`` word. A G6 tool
-    never acts in this sense: one that names an allowance runs G6's own confined check, or asks the person in the
-    client's dialog before anything happens."""
+    """Declared effect only. Absent or malformed declarations remain unknown."""
     if entry["kind"] != "op":
-        return ""
-    if entry["needs"]["sensitive"]:
-        return ("sensitive: it runs a program, reaches the network or changes the machine; only the person allows "
-                "it, and the action gate decides first")
-    said = sorted(set(re.findall(r"[a-z]+", entry["id"].split(".", 1)[1])) & OUTWARD_WORDS)
-    return f"its name says it acts outside G6 ({', '.join(said)}); the action gate decides first" if said else ""
+        return "internal"
+    effects = entry.get("effects")
+    if not isinstance(effects, (list, tuple)) or not effects:
+        return "unknown"
+    if any(effect not in ("internal", "outward") for effect in effects):
+        return "unknown"
+    return "outward" if "outward" in effects else "internal"
 
 
 def _registered(data: dict[str, Any]) -> set[str]:
@@ -312,56 +296,30 @@ def _field(value: Any, path: tuple[str, ...]) -> Any:
 
 
 def _read(outcome: str) -> dict[str, str]:
-    """What ``last_outcome`` says, read only from G6's own reply. A reply passed back as JSON: its code is the
-    envelope's own (``warning_card.code``, else a top-level or ``error`` code, else the code its ``error`` text
-    leads with; ``cloud_consent_code`` when it is the consent code), its state is ``completion_state``, its outcome
-    word the first of ``OUTCOME_FIELDS`` that names one, and its call the ``result``'s ``component`` and ``op``; a
-    finished job's wrapped reply is read through. Plain text: only a code that leads its first line counts (the
-    door's ``[NAME_ERROR] op:`` or a ``component.op`` right after it is read with it), or, with no code, a first
-    line that is an outcome word (``defect_detected``, ``ending: open``). The content an op worked on and the rest
-    of any text are never searched for codes, ``component.op`` pairs or outcome words."""
+    """Read reply fields. Human message text never establishes code or identity."""
     seen = dict.fromkeys(("code", "state", "word", "component", "op", "pair"), "")
+    seen["code"] = "unknown"
     text = (outcome or "").strip()
     try:
         value = json.loads(text) if text.startswith("{") else None
-    except (ValueError, RecursionError):
+    except (ValueError, RecursionError, MemoryError):
         value = None
-    lead = ""
     if isinstance(value, dict):
         if "job_id" in value and isinstance(value.get("result"), dict):
-            value = value["result"]          # a finished job (metaharness_job) wraps the reply it ran
-        for holder in (value.get("warning_card"), value, value.get("error")):
-            code = holder.get("code") if isinstance(holder, dict) else None
-            if isinstance(code, str) and _CODE.fullmatch(code):
-                seen["code"] = code
-                break
-        error = value.get("error")
-        first = error.split("\n", 1)[0] if isinstance(error, str) else ""
-        found = _LEADING_CODE.match(first)
-        if found and seen["code"] in ("", found.group(1)):
-            seen["code"], lead = found.group(1), first[found.end():]
+            value = value["result"]
+        seen["code"] = code_of(value)
         if value.get("cloud_consent_code") == CONSENT:
             seen["code"] = CONSENT
-        state = value.get("completion_state")
-        seen["state"] = state if state in STATES else ""
+        state = state_of(value.get("completion_state"))
+        seen["state"] = "" if state == "unknown" else state
         result = value.get("result")
         if isinstance(result, dict) and isinstance(result.get("component"), str) and isinstance(result.get("op"), str):
             seen["component"], seen["op"] = result["component"], result["op"]
+            seen["pair"] = result["component"] + "." + result["op"]
         seen["word"] = next((w for w in (_field(value, p) for p in OUTCOME_FIELDS)
                              if isinstance(w, str) and w in OUTCOME_WORDS), "")
-    else:
-        first = text.split("\n", 1)[0]
-        found = _LEADING_CODE.match(first)
-        if found:
-            seen["code"], lead = found.group(1), first[found.end():]
-        else:
-            said = _WORD_LINE.fullmatch(first.strip().lower())
-            seen["word"] = said.group(1) if said and said.group(1) in OUTCOME_WORDS else ""
-    tag = _DOOR_TAG.match(lead)
-    if tag and not seen["component"]:
-        seen["component"], seen["op"] = tag.group(1).lower(), tag.group(2)
-    pair = _LEAD_PAIR.match(lead)
-    seen["pair"] = pair.group(1) if pair else ""
+    elif text in OUTCOME_WORDS:
+        seen["word"] = text
     return seen
 
 
@@ -408,7 +366,7 @@ def remedy_for(outcome: str, data: dict[str, Any] | None = None) -> dict[str, An
     named = seen["component"] if seen["component"] in components else ""
     refused = state not in ("verified", "qualified-draft")      # a bare code passed back counts as a refusal
     key, found = "", None
-    if code:
+    if code != "unknown":
         limits = set(components[named].get("limits", ())) if named else {
             c for comp in components.values() for c in comp.get("limits", ())}
         if code in limits:
@@ -716,6 +674,7 @@ def _schedule(hypotheses: list[dict[str, Any]], entries: dict[str, dict[str, Any
 
 #: What to put in a template whose op refuses it as given, where G6 can say it in one line; any other such template
 #: says which fields to fill, from the corpus's record of the refusal.
+FILL_HINT_FIELDS = {"op:action_gating.evaluate": ("action", "action_type", "target_resource")}
 FILL_HINTS = {
     "op:action_gating.evaluate": 'Fill action with the act you are about to take, as {"action_type": "run_code", '
                                  '"target_resource": "git push origin main"} (action_type is one the gate profiles: '
@@ -737,7 +696,7 @@ def _fill_say(candidate: dict[str, Any]) -> str:
                 f"names but you leave out (the act a gate decides on, the evidence) can change that answer."
                 if fields else "")
     hint = FILL_HINTS.get(candidate["id"], "")
-    others = [f for f in candidate["fill"] if not re.search(rf"\b{re.escape(f)}\b", hint)]
+    others = [f for f in candidate["fill"] if f not in FILL_HINT_FIELDS.get(candidate["id"], ())]
     if hint and others:
         hint += (f" Also fill {', '.join(others)} where they apply: a field its signature names but you leave out "
                  "can change the answer.")
@@ -916,7 +875,7 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         add(key, CONSIDERED_BONUS, "considering")
     # a call that acts outside G6 ranks below every call that does not, whatever its score
     acting = {key: _acts(entries[key]) for key in entries}
-    order = sorted(scores, key=lambda k: (bool(acting[k]), -scores[k], k))
+    order = sorted(scores, key=lambda k: (acting[k] != "internal", -scores[k], k))
     lexical_order = sorted(lexical, key=lambda k: (-lexical[k], k))
     stage: dict[str, Any] = {"stage": "candidates", "ran": True, "intents": intents,
                              "rankers": ["lexical"] + (["phase_prior"] if phase else [])
@@ -970,7 +929,7 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     rest = [k for k in order if k not in must][:slots - len(must)]
     rank = {k: i for i, k in enumerate(order)}
     chosen = ([first] if first else []) + sorted((k for k in must + rest if k != first),
-                                                 key=lambda k: (bool(acting[k]), rank.get(k, len(rank)), k))
+                                                 key=lambda k: (acting[k] != "internal", rank.get(k, len(rank)), k))
 
     # 6. validation
     candidates = []
@@ -1004,7 +963,7 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     # the op whose outcome last_outcome reports (the reply's own component and op) is never next again
     reported = f"op:{seen['component']}.{seen['op']}" if seen["component"] and seen["op"] else ""
     # g6_cloud_grant asks the person to share data: next only as the remedy for the consent code itself
-    open_ = [c["id"] for c in candidates if not c["acts"] and c["id"] != reported and c["kind"] != "library"
+    open_ = [c["id"] for c in candidates if c["acts"] == "internal" and c["id"] != reported and c["kind"] != "library"
              and (c["id"] != "tool:g6_cloud_grant" or c["id"] == first)]
     if remedy is not None and remedy["tell_person"]:
         say = remedy["action"] + (f" The step: {remedy['setup']}." if remedy["setup"] else "")
@@ -1021,12 +980,13 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         nxt = {"id": pick, "call": found["call"], "tell_person": False, "say": _fill_say(found),
                "validated": found["validated"], "fill": found["fill"],
                "why": "remedy " + remedy["key"] if pick == first else why if pick == scheduled else
-               "the first candidate that does not act outside G6"
+               "the first candidate with declared internal effects"
                + (", and is not the call last_outcome reports" if reported else "")}
     elif candidates:
-        nxt = {"id": None, "call": None, "tell_person": True, "why": "every candidate acts outside G6 or was just made",
-               "say": "Every call offered here acts outside G6's checks or is the one just made: ask the person "
-                      "before any of them.", "fill": []}
+        nxt = {"id": None, "call": None, "tell_person": True,
+               "why": "every candidate has outward or unknown effects, or was just made",
+               "say": "No eligible call has declared internal effects. Review the effect declarations and the "
+                      "last call before proceeding.", "fill": []}
     else:
         nxt = {"id": None, "call": None, "tell_person": False, "say": "Nothing matched: describe the task in other "
                "words, or call g6_find.", "why": "no candidate", "fill": []}

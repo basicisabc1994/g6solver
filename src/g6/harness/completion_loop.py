@@ -62,6 +62,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from g6.core.refusals import code_of
+
 from g6.cegis import InputDomain, SearchResult, cegis
 from g6.context.redact import MASK, mask_paths, secret_spans
 from g6.core import host_models, keys
@@ -1554,10 +1556,10 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                     max_iterations=MAX_REPAIRS + 1, timeout_s=LOOP_S - (time.time() - state["started"]))
     except LLMError as exc:
-        if not any(code in str(exc) for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)):
+        code = code_of(exc)
+        if code not in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE):
             raise
         state["stop"] = "The review was not sent. " + cloud.WITHHELD
-        code = cloud.STATE_UNAVAILABLE if cloud.STATE_UNAVAILABLE in str(exc) else cloud.REQUIRED
         return refused(state["stop"], code, "cloud_consent_missing", untested=True)
     except repo_tests.RepoRefused as exc:
         if exc.code != ISOLATION_UNAVAILABLE:

@@ -30,6 +30,11 @@ Apart from those runs, ``help`` and ``ops`` are each block's own description of 
     python -P -m g6.skills.corpus --check     # exit 1 when the file is stale
 """
 from __future__ import annotations
+from g6.core.effects import effects_of
+from g6.core.refusals import missing_of
+
+from returns.result import Success
+
 
 import ast
 import contextlib
@@ -380,7 +385,7 @@ def _routes(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _help_lines(registry: Any, name: str) -> list[str]:
     result = registry.invoke(name, "help")
-    value = result.unwrap() if result.__class__.__name__ == "Success" else {}
+    value = result.unwrap() if isinstance(result, Success) else {}
     said = value.get("help") if isinstance(value, dict) else None
     if isinstance(said, dict):
         return [f"{key}: {text}" for key, text in said.items()]
@@ -426,9 +431,7 @@ def _door_check(instance: Any, name: str, op: str, params: dict[str, Any],
         _, error = build_typed_input(instance, {**params, "op": op}, code=code, op=op)
         if error is None:
             return params, []
-        said = error.split(f"{op}: ", 1)[-1]
-        named = sorted(f for f in fields if f not in params and f not in ("op", "operation")
-                       and re.search(rf"\b{re.escape(f)}\b", said))
+        named = [f for f in missing_of(error) if f in fields and f not in params and f not in ("op", "operation")]
         if not named:
             break
         params = {**params, **{f: _placeholder(f, _annotation_kind(fields[f].annotation)) for f in named}}
@@ -458,12 +461,9 @@ RUN_AT_BUILD = frozenset({
 _G6_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
 
 
-def _fill(said: str, params: dict[str, Any], fields: dict[str, Any]) -> list[str]:
-    """The fields the agent must supply: those a refusal names (as a word, or a plural field by its singular), else
-    the template's own placeholders."""
-    named = sorted(f for f in fields if f not in ("op", "operation") and (
-        re.search(rf"\b{re.escape(f)}\b", said)
-        or (len(f) > 3 and f.endswith("s") and re.search(rf"\b{re.escape(f[:-1])}\b", said))))
+def _fill(refusal: Any, params: dict[str, Any], fields: dict[str, Any]) -> list[str]:
+    """Only declared missing fields or the template fields; never words in prose."""
+    named = sorted(f for f in missing_of(refusal) if f in fields and f not in ("op", "operation"))
     return named or sorted(params)
 
 
@@ -520,8 +520,7 @@ def _run_as_given(name: str, op: str, params: dict[str, Any],
     if ran.get("completion_state") != "blocked-escalated":
         return True, [], []
     card = ran.get("warning_card") or {}
-    said = " ".join(str(card.get(k, "")) for k in ("message", "why")) + " " + str(ran.get("error", ""))
-    fill = _fill(said, params, fields)
+    fill = _fill(ran, params, fields)
     code = card.get("code", "") if _G6_CODE.fullmatch(str(card.get("code", ""))) else "G6_E_BLOCKED"
     what = f"fill {', '.join(fill)} with your own values" if fill else "fill the fields the op needs"
     return False, [f"[{code}] {name}.{op}: the op refuses this template as given; {what} "
@@ -619,7 +618,7 @@ def _components_and_ops() -> tuple[dict[str, Any], list[dict[str, Any]]]:
                     " This op is sensitive. The person must allow it themselves; tell the person and stop."
                     if op in sensitive else ""),
                 "sensitive": op in sensitive, "cost": cost, "phases": phases,
-                "validated": validated, "issues": issues, "fill": fill,
+                "validated": validated, "issues": issues, "fill": fill, "effects": list(effects_of(module, op)),
             })
     return components, ops
 

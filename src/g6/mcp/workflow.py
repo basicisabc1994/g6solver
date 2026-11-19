@@ -21,6 +21,8 @@ import json
 import time
 from typing import Any
 
+from g6.core.refusals import code_of
+
 from g6.core import cloud_consent as cloud
 from g6.harness.workflow import adapters, lifecycle, policy, view
 from g6.harness.workflow.record import ProjectRecord, RecordOff, RecordUnreadable, now, project_id, workflow_source
@@ -153,8 +155,7 @@ class _Step:
     def __init__(self, result: dict) -> None:
         self.action = str(result.get("action") or "")
         self.ending = str(result.get("ending") or "")
-        found = adapters._CODE.match(str(result.get("error") or ""))
-        self.code = found[1] if found else ""
+        self.code = code_of(result)
 
 
 def install(server: Any) -> None:
