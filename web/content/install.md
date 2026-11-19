@@ -5,6 +5,54 @@
     [releases page](https://github.com/basicisabc1994/g6solver/releases), where they are called bundles. A developer
     can also run one from a copy of the code: `pip install .`, then for example `g6 bundle check-claims`.
 
+## Install for a coding agent or Python
+
+Use Python 3.12 or 3.13. Give G6 its own environment with `--copies`: on Linux, G6 cannot yet distinguish its own
+Python from a repository environment linked to the same interpreter, and refuses to review then. Activate it and
+install G6 and its MCP dependencies:
+
+```sh
+python -m venv --copies .venv
+source .venv/bin/activate  # PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"
+g6 doctor
+g6 setup --client claude --allow patch_review.review  # or --client codex; run this yourself
+```
+
+Doctor names what is missing, the capability it blocks, and the command to fix it. It never installs anything or
+contacts a model. Importable components alone do not establish that patch review or an MCP client connection works.
+
+Linux (bubblewrap) and Windows (AppContainer) review patches; macOS does not review patches (no supported OS boundary); everything else works.
+
+| Platform | Patch review boundary | Preparation |
+|---|---|---|
+| Linux | bubblewrap | `sudo apt-get install bubblewrap`, then `g6 doctor`. Doctor gives the exact remedy if user namespaces or AppArmor prevent startup. |
+| Windows | AppContainer | `g6 doctor` prints the exact `icacls` commands for the interpreter folders it cannot read. Run those yourself, then repeat doctor. An access-list check alone is not a successful confined run. |
+| macOS | No supported OS boundary | Use Linux or Windows for patch review. Model-free tools, the MCP server and model-backed operations remain available with their dependencies. |
+
+On Windows, doctor's access-grant template is `icacls "<python-folder>" /grant "*S-1-15-2-1:(OI)(CI)(RX)", then icacls "<python-folder>\*" /grant "*S-1-15-2-1:(RX)" /T /C /Q`.
+Replace `<python-folder>` with the exact interpreter or environment folder doctor names; run the two commands
+separately. This grants read/execute access to all AppContainers on that folder. G6 does not change access lists for you.
+
+| Missing piece | What it blocks | Command (Linux, Windows and macOS) |
+|---|---|---|
+| `fastmcp` / `mcp` | MCP server | `python -m pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"` |
+| `anthropic` | Anthropic API calls; Claude Code sign-in needs no SDK | `python -m pip install "g6[anthropic] @ git+https://github.com/basicisabc1994/g6solver"` |
+| `z3-solver` (module `z3`) | Z3 formal methods | `python -m pip install "g6[formal] @ git+https://github.com/basicisabc1994/g6solver"` |
+| `ortools` | OR-Tools constraint solving and optimisation | `python -m pip install "g6[optim] @ git+https://github.com/basicisabc1994/g6solver"` |
+| `hypothesis` / `numpy` | Abstraction property checks | `python -m pip install "g6[abstraction] @ git+https://github.com/basicisabc1994/g6solver"` |
+| A configured model | Model-backed operations | Sign in to Claude Code with `claude auth login` or Codex with `codex login`, then choose that provider in `g6 setup`. Doctor does not check sign-in status. |
+
+If the host program is absent, doctor names its install command. A sign-in is needed only for model-backed operations;
+model-free checks work without one. Register the MCP server in your coding client with `g6 setup`, choose what it may
+run, then reconnect the client and accept its source-sharing dialog for data you intend to share. Doctor does not
+exercise that handshake or consent. Patch review refuses when no supported boundary can start, even if general
+unconfined execution was allowed.
+
+From an uninstalled source checkout, install into your environment with `python -m pip install ".[all]"` for the
+`g6` and `g6-mcp` commands. G6's own workers also receive this checkout's resolved package root explicitly; their
+working directory never supplies it.
+
 ## 1. Choose a worked example
 
 Go to [Worked examples](bundles/index.md) and download the one for your problem. Pick the file for your computer:

@@ -33,11 +33,24 @@ from pathlib import Path
 from typing import Any
 
 EXTRAS = {
-    "mcp": (("fastmcp", "mcp"), "the g6-mcp server for coding agents", 'pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"'),
-    "anthropic": (("anthropic",), "Claude as the AI model", 'pip install "g6[anthropic] @ git+https://github.com/basicisabc1994/g6solver"'),
+    "mcp": (("fastmcp", "mcp"), "MCP server", 'python -m pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"'),
+    "anthropic": (("anthropic",), "Anthropic API model calls (Claude Code sign-in needs no SDK)",
+                  'python -m pip install "g6[anthropic] @ git+https://github.com/basicisabc1994/g6solver"'),
+    "formal": (("z3",), "Z3 formal methods (z3-solver)",
+               'python -m pip install "g6[formal] @ git+https://github.com/basicisabc1994/g6solver"'),
+    "optim": (("ortools",), "OR-Tools constraint solving and optimisation",
+              'python -m pip install "g6[optim] @ git+https://github.com/basicisabc1994/g6solver"'),
     "abstraction": (("hypothesis", "numpy"), "the abstraction component's property checks",
-                    'pip install "g6[abstraction] @ git+https://github.com/basicisabc1994/g6solver"'),
+                    'python -m pip install "g6[abstraction] @ git+https://github.com/basicisabc1994/g6solver"'),
 }
+PLATFORM_SUPPORT = ("Linux (bubblewrap) and Windows (AppContainer) review patches; macOS does not review patches "
+                    "(no supported OS boundary); everything else works.")
+
+
+def _platform() -> Check:
+    return Check("platform", "ok", PLATFORM_SUPPORT)
+
+
 @dataclass(frozen=True)
 class Check:
     name: str
@@ -83,12 +96,19 @@ def _sqlite() -> Check:
         return Check("sqlite", "fail", f"SQLite unusable: {exc}", "Reinstall Python from python.org.")
 
 
+def _available(module: str) -> bool:
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def _extras() -> list[Check]:
     out = []
     for extra, (modules, purpose, fix) in EXTRAS.items():
-        missing = [m for m in modules if importlib.util.find_spec(m) is None]
+        missing = [module for module in modules if not _available(module)]
         out.append(Check(f"extra: {extra}", "warn" if missing else "ok",
-                         f"needed for {purpose}" + (f"; missing {', '.join(missing)}" if missing else ""),
+                         f"{purpose}" + (f" unavailable; missing {', '.join(missing)}" if missing else "; installed"),
                          fix if missing else ""))
     return out
 
@@ -126,8 +146,10 @@ def _host_model(provider: str, keys: dict[str, str]) -> Check:
         return Check("AI model", "fail", f"{provider} selected, but {program.name} is not found (no "
                                          f"{program.command} on PATH, and {program.env} names none)", program.install)
     shell = f"; {host_models.CODEX_SHELL_NOTE}" if provider == "codex" else ""
-    return Check("AI model", "ok", f"{provider} selected: {program.name} at {where}, signed in as you; not contacted "
-                                   f"by doctor{shell}")
+    login = "claude auth login" if provider == "claude_code" else "codex login"
+    return Check("AI model", "ok", f"{provider} selected: {program.name} at {where}, intended to be signed in as you; "
+                                   f"not contacted by doctor; sign-in status is not checked{shell}",
+                 f"Sign in yourself if needed: {login}")
 
 
 def _model(env: dict[str, str], keys: dict[str, str]) -> Check:
@@ -137,6 +159,8 @@ def _model(env: dict[str, str], keys: dict[str, str]) -> Check:
     provider = (env.get("G6_LLM_PROVIDER") or "none").strip().lower()
     if provider == "none":
         return Check("AI model", "ok", "none configured — everything that needs no model works",
+                     "For model-backed operations, sign in to Claude Code: claude auth login; or Codex: codex login "
+                     "(not contacted by doctor; sign-in status is not checked). "
                      f"Optional: add G6_LLM_PROVIDER=claude_code (your Claude Code sign-in), codex, ollama (free, "
                      f"local), or anthropic/openai/openrouter with its key, to {path()}.")
     if provider in HOST_PROVIDERS:
@@ -147,9 +171,9 @@ def _model(env: dict[str, str], keys: dict[str, str]) -> Check:
     if provider in PROVIDER_KEYS:
         key = PROVIDER_KEYS[provider]
         has = bool(keys.get(key))
-        if provider == "anthropic" and importlib.util.find_spec("anthropic") is None:
+        if provider == "anthropic" and not _available("anthropic"):
             return Check("AI model", "fail", "anthropic selected but the SDK is missing",
-                         'pip install "g6[anthropic] @ git+https://github.com/basicisabc1994/g6solver"')
+                         EXTRAS["anthropic"][2])
         unused = (f"; {key} is set in the environment, which G6 does not use"
                   if not has and env.get(key) else "")
         return Check("AI model", "ok" if has else "fail",
@@ -179,7 +203,8 @@ def _isolation() -> Check:
                     "runs with your permissions" if allowed else
                     f"Here no boundary can confine untrusted code run with {python}, so G6 refuses to run it")
             return Check("isolation", "fail" if confine.BWRAP_LEAKED in why else "warn",
-                         f"{confine.UNCONFINED_WARNING} {here}: {why}",
+                         f"Isolation is required for patch review. {confine.UNCONFINED_WARNING} "
+                         f"{here}: {why}",
                          confine.fix_for(why) or "Run G6 inside a virtual machine or a container of its own, or, to run "
                                                  "such code without a boundary, choose it once with g6 setup.")
     said = "started" if all(confine.started(python) for python in pythons) else "access list ok; not started"
@@ -226,7 +251,7 @@ def run_checks(env: dict[str, str] | None = None) -> list[Check]:
 
     filed = keys.read()
     settings = {**filed, **(os.environ if env is None else env)}
-    return [_python(), _package(), _home(), _sqlite(), *_extras(), _keys(), _model(settings, filed), _isolation(),
+    return [_platform(), _python(), _package(), _home(), _sqlite(), *_extras(), _keys(), _model(settings, filed), _isolation(),
             *_components(), _names()]
 
 
@@ -238,7 +263,7 @@ def report(checks: list[Check]) -> dict[str, Any]:
 
 def render(checks: list[Check]) -> str:
     mark = {"ok": "[ok]  ", "warn": "[warn]", "fail": "[FAIL]"}
-    lines = [f"{mark[c.status]} {c.name}: {c.detail}" + (f"\n         fix: {c.fix}" if c.fix and c.status != "ok" else "")
+    lines = [f"{mark[c.status]} {c.name}: {c.detail}" + (f"\n         fix: {c.fix}" if c.fix else "")
              for c in checks]
     status = report(checks)["status"]
     lines.append({"ok": "G6 is ready.", "warn": "G6 works; see the warnings above for optional extras.",
