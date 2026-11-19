@@ -149,7 +149,7 @@ def _judging_digest():
              "src/g6/safety_engine/weakening.py", "src/g6/distillation/sandbox.py", "src/g6/core/source_check.py",
              "src/g6/core/sandbox.py", "src/g6/core/component_process.py", "src/g6/core/binomial.py",
              "src/g6/reasoning/compare.py", "src/g6/metaharness/gate.py", "src/g6/metaharness/schema.py",
-             "src/g6/metaharness/evaluate.py")
+             "src/g6/metaharness/evaluate.py", "src/g6/distill/probes.py")
     return digest({p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in paths})
 
 
