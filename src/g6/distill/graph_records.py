@@ -175,6 +175,8 @@ class AttemptRecord(Record):
     model_sends: Count
     send_ids: list[Sha256] = Field(default_factory=list)
     execution_ids: list[Sha256] = Field(default_factory=list)
+    referenced_execution_ids: list[Sha256] = Field(default_factory=list)
+    resource_gaps: list[str] = Field(default_factory=list)
     outcome: Literal["proposed", "screened", "concept_refused", "no_candidate", "refused_unbound_label",
                      "failed", "budget_exhausted", "unmetered_send"]
     update_id: Sha256 | None
@@ -185,7 +187,7 @@ class AttemptRecord(Record):
     def resource_references(self, serialize):
         # Empty references retain the canonical body of older graph attempts.
         body = serialize(self)
-        for name in ("send_ids", "execution_ids"):
+        for name in ("send_ids", "execution_ids", "referenced_execution_ids", "resource_gaps"):
             if not body.get(name):
                 body.pop(name, None)
         return body
@@ -212,21 +214,38 @@ class ExecutionRecord(Record):
     root_output: JsonValue
     terminal: Terminal
     cost: CostVector
+    referenced_cost: CostVector = Field(default_factory=CostVector)
+    referenced_execution_ids: list[Sha256] = Field(default_factory=list)
     completion_state: Literal["verified", "qualified-draft", "blocked-escalated"]
     started_at: str
     ended_at: str
+
+    @model_serializer(mode="wrap")
+    def resource_references(self, serialize):
+        body = serialize(self)
+        if not self.referenced_execution_ids:
+            body.pop("referenced_execution_ids", None)
+            if self.referenced_cost == CostVector():
+                body.pop("referenced_cost", None)
+        return body
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
         if not self.runs or len({r.node_id for r in self.runs}) != len(self.runs):
             raise ValueError("execution needs unique node runs")
-        total = CostVector()
+        if self.referenced_cost != CostVector() and not self.referenced_execution_ids:
+            raise ValueError("referenced execution cost requires resource event ids")
+        if any(getattr(self.referenced_cost, name) for name in ("llm_calls", "llm_tokens_in", "llm_tokens_out")):
+            raise ValueError("referenced execution cost must contain non-model resources")
+        if len(self.referenced_execution_ids) != len(set(self.referenced_execution_ids)):
+            raise ValueError("referenced execution ids must be unique")
+        total = self.referenced_cost
         for run in self.runs:
             total = total + run.cost
         if total != self.cost:
             raise ValueError("execution cost differs from node run totals")
         if self.attempts:
-            measured = CostVector()
+            measured = self.referenced_cost
             for attempt in self.attempts:
                 measured = measured + attempt.cost
             if measured != self.cost:

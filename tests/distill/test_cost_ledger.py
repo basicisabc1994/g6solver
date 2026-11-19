@@ -290,11 +290,24 @@ def test_review3_pre_send_rejection_books_zero_for_rejected_send():
 
 
 @pytest.mark.parametrize("seed", range(12))
-def test_random_interleavings_booked_sends_equal_actual_inner_calls(seed):
+def test_random_interleavings_booked_sends_equal_actual_inner_calls(seed, monkeypatch):
     import random
+    import json
+    import subprocess
+    import sys
+    import threading
     from concurrent.futures import ThreadPoolExecutor
     from g6.distill.graph import attempt_meter
+    from g6.distill.cost_ledger import consume_resources, report_child_resources
     rng, ledger, deferred = random.Random(seed), api().CostLedger(), []
+    clock, independent, lock = threading.local(), [], threading.Lock()
+    monkeypatch.setattr(api().time, "thread_time", lambda: getattr(clock, "cpu", 0.0))
+    monkeypatch.setattr(api().time, "perf_counter", lambda: getattr(clock, "wall", 0.0))
+    def tick(cpu, wall):
+        clock.cpu = getattr(clock, "cpu", 0.0) + cpu
+        clock.wall = getattr(clock, "wall", 0.0) + wall
+        with lock:
+            independent.append((cpu, wall))
     def reply(system, user):
         if user == "fail":
             raise RuntimeError("after send")
@@ -311,7 +324,23 @@ def test_random_interleavings_booked_sends_equal_actual_inner_calls(seed):
                     if n:
                         nested(n - 1)
                     else:
-                        completed_resources(meter, CostVector(probe_runs=probes, sandbox_runs=sandboxes, solver_calls=1))
+                        first, second = (CostVector(probe_runs=probes), CostVector(sandbox_runs=sandboxes))
+                        if probes % 2:
+                            first, second = second, first
+                        with consume_resources(first):
+                            tick(0.01, 0.02)
+                            with consume_resources(second):
+                                tick(0.03, 0.04)
+                                completed_resources(meter, CostVector(solver_calls=1))
+                                if early:
+                                    with consume_resources(CostVector(), child_process=True):
+                                        source = "import time; s=time.process_time(); exec('while time.process_time()-s<0.01: pass'); print(time.process_time()-s)"
+                                        child_cpu = json.loads(subprocess.check_output(
+                                            [sys.executable, "-I", "-c", source], text=True))
+                                        report_child_resources(cpu_s=child_cpu, wall_s=0.01)
+                                        with lock:
+                                            independent.append((child_cpu, 0.0))
+                                        tick(0.0, 0.01)
                         try:
                             caller.complete("system", text)
                         except RuntimeError:
@@ -331,9 +360,135 @@ def test_random_interleavings_booked_sends_equal_actual_inner_calls(seed):
     assert total.probe_runs == sum(job[3] for job in jobs)
     assert total.sandbox_runs == sum(job[4] for job in jobs)
     assert total.solver_calls == 20
+    assert total.cpu_s == pytest.approx(sum(cpu for cpu, _ in independent))
+    assert total.wall_s == pytest.approx(sum(wall for _, wall in independent))
     for name in ("cpu_s", "wall_s", "solver_calls", "probe_runs", "sandbox_runs"):
         assert getattr(total, name) == pytest.approx(sum(getattr(e.cost, name) for e in ledger.resource_events))
 
+
+
+def _colliding_completion_ids():
+    # The first three small-set probe slots are 0, 1, 6 for these hashes.
+    # Select against this process's hash seed, without relying on thread timing.
+    ids = []
+    for number in range(1_000_000):
+        ident = f"{number:064x}"
+        if hash(ident) & 0x7FFF == 0:
+            ids.append(ident)
+            if len(ids) == 3:
+                return ids
+    raise AssertionError("could not construct colliding completion ids")
+
+
+@pytest.mark.parametrize("resource_field", ["cpu_s", "wall_s"])
+def test_concurrent_completion_snapshot_books_in_canonical_id_order(resource_field, monkeypatch):
+    from threading import Event, Thread
+    from g6.distill.graph_records import AttemptRecord
+
+    module, ledger = api(), api().CostLedger()
+    monkeypatch.setattr(module.time, "thread_time", lambda: 0.0)
+    monkeypatch.setattr(module.time, "perf_counter", lambda: 0.0)
+    small_first, small_second, large = _colliding_completion_ids()
+    first_done, second_done, errors = Event(), Event(), []
+    costs = {small_first: 2 ** -53, small_second: 2 ** -53, large: 1.0}
+
+    with ledger.measure("interleaved completions") as meter:
+        # Use stable event ids as well as one execution alias for the completions.
+        def complete(ident):
+            meter.record_resources(CostVector(**{resource_field: costs[ident], "probe_runs": 1}),
+                                   execution_id="f" * 64, event_id=ident)
+
+        def worker():
+            try:
+                complete(large)
+                first_done.set()
+                assert second_done.wait(5), "second completion did not arrive"
+                complete(small_first)
+            except BaseException as error:
+                errors.append(error)
+                first_done.set()
+
+        thread = Thread(target=worker)
+        thread.start()
+        try:
+            assert first_done.wait(5), "first completion did not arrive"
+            complete(small_second)
+        finally:
+            second_done.set()
+            thread.join(5)
+        assert not thread.is_alive() and not errors
+        completion_ids = {large, small_second, small_first}
+        cost = ledger.cost_for((), completion_ids)
+        record = AttemptRecord(what="snapshot", cost=cost, model_sends=0,
+            execution_ids=sorted(completion_ids), outcome="screened", update_id=None,
+            started_at="snapshot", ended_at="snapshot")
+        ledger.book_attempt(record)
+        ledger.book_attempt(record)
+        assert getattr(record.cost, resource_field) == 1.0000000000000002
+        assert ledger.cost_for((), ["f" * 64, *reversed(sorted(completion_ids))]) == cost
+    total = ledger.total("acquisition")
+    assert getattr(total, resource_field) == 1.0000000000000002
+    assert total.probe_runs == 3
+    assert len([event for event in ledger.resource_events if event.cost.probe_runs]) == 3
+
+
+@pytest.mark.parametrize("resource_field", ["cpu_s", "wall_s"])
+def test_attempt_rejects_one_ulp_resource_difference(resource_field, monkeypatch):
+    import math
+    from g6.distill.graph_records import AttemptRecord
+
+    module, ledger = api(), api().CostLedger()
+    monkeypatch.setattr(module.time, "thread_time", lambda: 0.0)
+    monkeypatch.setattr(module.time, "perf_counter", lambda: 0.0)
+    with ledger.measure("exact resource check") as meter:
+        completed_resources(meter, CostVector(**{resource_field: 1.0}))
+    body = meter.record.model_dump(exclude={"attempt_id"})
+    body["cost"][resource_field] = math.nextafter(1.0, 2.0)
+    altered = AttemptRecord(**body)
+    with pytest.raises(ValueError, match="attempt resources differ"):
+        ledger.book_attempt(altered)
+    assert getattr(ledger.total("acquisition"), resource_field) == 1.0
+
+
+def test_worker_finishing_after_attempt_creates_separate_late_event(monkeypatch):
+    from threading import Event, Thread, local
+
+    module, ledger, clock = api(), api().CostLedger(), local()
+    monkeypatch.setattr(module.time, "thread_time", lambda: getattr(clock, "cpu", 0.0))
+    monkeypatch.setattr(module.time, "perf_counter", lambda: getattr(clock, "wall", 0.0))
+    ready, finish, errors = Event(), Event(), []
+
+    def worker():
+        try:
+            ready.set()
+            assert finish.wait(5), "worker was not released"
+            clock.cpu, clock.wall = 0.25, 0.5
+        except BaseException as error:
+            errors.append(error)
+
+    try:
+        with ledger.measure("late completion") as meter:
+            thread = Thread(target=worker)
+            thread.start()
+            assert ready.wait(5), "worker did not start"
+        snapshot = meter.record.model_dump_json()
+        prior_events = {event.event_id: event.model_dump_json() for event in ledger.resource_events}
+    finally:
+        finish.set()
+        thread.join(5)
+    assert not thread.is_alive() and not errors
+    assert meter.record.model_dump_json() == snapshot
+    events = {event.event_id: event for event in ledger.resource_events}
+    assert {ident: events[ident].model_dump_json() for ident in prior_events} == prior_events
+    late_ids = events.keys() - prior_events.keys()
+    assert len(late_ids) == 1
+    late = next(attempt for attempt in ledger.attempts if attempt.what == "worker:late completion")
+    assert set(late.execution_ids) == late_ids
+    assert late.cost.cpu_s == 0.25 and late.cost.wall_s == 0.5
+    for record in (meter.record, late):
+        ledger.book_attempt(record)
+    assert ledger.total("acquisition").cpu_s == 0.25
+    assert ledger.total("acquisition").wall_s == 0.5
 
 
 def test_hook_counts_are_only_a_cross_check_and_unmetered_send_fails_closed():
@@ -394,14 +549,18 @@ def test_usage_encoding_does_not_dispatch_to_text_subclass():
 
 def test_execution_ids_are_booked_once_even_when_an_attempt_is_rebooked():
     from g6.distill.graph import KernelResult, execute
+    from g6.distill.cost_ledger import consume_resources
     from .test_graph_records import D, graph_for, primitive
     cost = CostVector(cpu_s=7, wall_s=9, probe_runs=3, sandbox_runs=2)
     p = primitive(budget=CostVector(cpu_s=10, wall_s=10, probe_runs=3, sandbox_runs=2))
     ledger = api().CostLedger()
+    def kernel(*args, **kwargs):
+        with consume_resources(cost):
+            pass
+        return KernelResult(output="concern")
     with ledger.measure("source", category="maintenance"):
         record = execute(graph_for([p]), {}, primitives={p.primitive_id: p}, unit_ref=D, split="dev",
-            request_id="events", g6_commit="fixture", kernels={p.impl_ref: lambda *a, **kw:
-                KernelResult(output="concern", cost=cost)})
+            request_id="events", g6_commit="fixture", kernels={p.impl_ref: kernel})
     for _ in range(2):
         with ledger.measure("execution", category="maintenance") as meter:
             meter.record_execution(record)
@@ -435,7 +594,7 @@ def test_review4_probe_report_cannot_erase_measured_time(monkeypatch):
     a = api()
     clock = [0.0]
     monkeypatch.setattr(a.time, "perf_counter", lambda: clock[0])
-    monkeypatch.setattr(a.time, "process_time", lambda: clock[0])
+    monkeypatch.setattr(a.time, "thread_time", lambda: clock[0])
     ledger = a.CostLedger()
     with ledger.measure("probe") as meter:
         with meter.execution():
@@ -458,14 +617,19 @@ def test_review4_idless_non_model_attempt_is_refused():
 
 def test_review4_child_and_parent_aggregate_book_three_probes():
     from g6.distill.graph import KernelResult, execute
+    from g6.distill.cost_ledger import consume_resources
     from .test_graph_records import D, graph_for, primitive
     p = primitive(budget=CostVector(probe_runs=3, cpu_s=5, wall_s=5))
     ledger = api().CostLedger()
+    def kernel(*args, **kwargs):
+        with consume_resources(CostVector(probe_runs=3)):
+            pass
+        return KernelResult(output="concern")
     with ledger.measure("parent") as parent:
         with parent.scope("child") as child:
             rec = execute(graph_for([p]), {}, primitives={p.primitive_id: p},
                 unit_ref=D, split="dev", request_id="resources", g6_commit="fixture",
-                kernels={p.impl_ref: lambda *a, **kw: KernelResult(output="concern", cost=CostVector(probe_runs=3))})
+                kernels={p.impl_ref: kernel})
             assert ledger.total("acquisition").probe_runs == 3
             child.record_execution(rec)
         parent.record_execution(rec)
@@ -598,7 +762,7 @@ def test_review4_historical_references_cannot_cover_a_new_measured_interval(monk
     before = ledger.total("acquisition")
     clock = [0.0]
     monkeypatch.setattr(a.time, "perf_counter", lambda: clock[0])
-    monkeypatch.setattr(a.time, "process_time", lambda: clock[0])
+    monkeypatch.setattr(a.time, "thread_time", lambda: clock[0])
     with ledger.measure("later") as meter:
         if reference == "aggregate":
             meter.record_execution(rec)

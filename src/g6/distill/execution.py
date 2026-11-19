@@ -87,7 +87,7 @@ def run_candidate(candidate: VerifierCandidate, observations: list[Observation],
             raise ExecutionRefused("G6_E_SYNTH_SOURCE", problems[0])
         if os.environ.get("G6_REQUIRE_ISOLATION", "").strip().lower() not in {"1", "true", "yes", "on"}:
             raise ExecutionRefused("G6_E_ISOLATION_UNAVAILABLE", "predicate execution requires strict isolation")
-        with consume_resources(CostVector(sandbox_runs=1)):
+        with consume_resources(CostVector(sandbox_runs=1), child_process=True):
             runs = sandbox.run_batch(candidate.body, [obs.facts for obs in selected],
                                      timeout_s=candidate.contract.cost_bound.wall_s, memory_mb=256)
         if len(runs) != len(selected):

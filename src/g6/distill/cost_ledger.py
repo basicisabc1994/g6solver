@@ -8,11 +8,11 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from threading import Condition, Lock, RLock
+from threading import Condition, Lock, RLock, local
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from pydantic import Field, TypeAdapter
+from pydantic import Field, TypeAdapter, model_validator
 
 from g6.core.ledger import digest
 from g6.core.model_calls import counting, note_model_call
@@ -63,11 +63,24 @@ class Resources(ResourceDelta):
         return cls(**CostVector.model_validate_json(cost.model_dump_json()).model_dump())
 
 
+class HorizonResources(Resources):
+    resource_gaps: list[str] = Field(default_factory=list)
+
+    def __add__(self, other):
+        total = super().__add__(other)
+        return total.model_copy(update={"resource_gaps": sorted(set(
+            self.resource_gaps + getattr(other, "resource_gaps", [])))})
+
+    def scaled(self, factor):
+        return super().scaled(factor).model_copy(update={"resource_gaps": list(self.resource_gaps)})
+
+
 class CostProfile(Model):
     acquisition: Resources = Field(default_factory=Resources)
     validation: Resources = Field(default_factory=Resources)
     serving: Resources = Field(default_factory=Resources)
     maintenance_per_task: Resources = Field(default_factory=Resources)
+    resource_gaps: list[str] = Field(default_factory=list)
 
     @property
     def fixed(self):
@@ -80,7 +93,8 @@ class CostProfile(Model):
     def total(self, tasks=HORIZON):
         if type(tasks) is not int or tasks < 0:
             raise ValueError("task count must be a nonnegative integer")
-        return self.fixed + self.variable.scaled(tasks)
+        total = self.fixed + self.variable.scaled(tasks)
+        return HorizonResources(**total.model_dump(), resource_gaps=list(self.resource_gaps))
 
 
 class Crossing(Model):
@@ -114,6 +128,7 @@ class CostComparison(Model):
     upper95: ResourceDelta
     economic: bool
     sign_cases: dict[str, Crossing]
+    resource_gaps: list[str] = Field(default_factory=list)
 
 
 def compare_costs(new: CostProfile, incumbent: CostProfile, *, upper95: ResourceDelta):
@@ -126,8 +141,9 @@ def compare_costs(new: CostProfile, incumbent: CostProfile, *, upper95: Resource
     if any(getattr(upper95, k) < getattr(difference, k) for k in ResourceDelta.model_fields):
         raise ValueError("upper95 must cover the cumulative cost difference")
     fixed, saving = new.fixed.minus(incumbent.fixed), incumbent.variable.minus(new.variable)
-    return CostComparison(difference=difference, upper95=upper95,
-        economic=all(getattr(upper95, k) <= 0 for k in ResourceDelta.model_fields),
+    gaps = sorted(set(new.resource_gaps + incumbent.resource_gaps))
+    return CostComparison(difference=difference, upper95=upper95, resource_gaps=gaps,
+        economic=not gaps and all(getattr(upper95, k) <= 0 for k in ResourceDelta.model_fields),
         sign_cases={k: sign_case(getattr(fixed, k), getattr(saving, k)) for k in ResourceDelta.model_fields})
 
 
@@ -169,6 +185,21 @@ class ResourceEvent(Model):
     event_id: Sha256
     category: Category
     cost: CostVector
+    child_event_ids: list[Sha256] = Field(default_factory=list)
+    child_cpu_status: Literal["not_applicable", "measured", "unmeasured"] = "not_applicable"
+    child_cpu_s: Nonnegative | None = None
+    child_wall_s: Nonnegative | None = None
+
+    @model_validator(mode="after")
+    def child_reading(self):
+        if self.child_cpu_status == "not_applicable":
+            if self.child_cpu_s is not None or self.child_wall_s is not None:
+                raise ValueError("non-child event cannot carry child usage")
+        elif self.child_wall_s is None or (self.child_cpu_s is not None) != (self.child_cpu_status == "measured"):
+            raise ValueError("child usage must state measured CPU or an explicit gap")
+        if len(self.child_event_ids) != len(set(self.child_event_ids)) or self.event_id in self.child_event_ids:
+            raise ValueError("child event ids must be distinct from their parent")
+        return self
 
 
 class BookingReport(Model):
@@ -221,22 +252,159 @@ def resource_owner():
     return _current_measurement.get()
 
 
+_meters = local()
+
+
+@dataclass
+class _ExclusiveMeter:
+    cost: CostVector
+    child_process: bool = False
+    cpu_s: float = 0
+    wall_s: float = 0
+    child_cpu_s: float | None = None
+    child_wall_s: float | None = None
+    child_event_ids: list = field(default_factory=list)
+    event_id: str | None = None
+    descendant_cost: CostVector = field(default_factory=CostVector)
+    resource_gaps: list[str] = field(default_factory=list)
+
+    def resume(self):
+        self._wall, self._cpu = time.perf_counter(), time.thread_time()
+
+    def pause(self):
+        wall, cpu = time.perf_counter(), time.thread_time()
+        self.wall_s += max(0, wall - self._wall)
+        self.cpu_s += max(0, cpu - self._cpu)
+
+    def report_child(self, *, cpu_s, wall_s):
+        if not self.child_process:
+            raise ValueError("child resources require a child-process boundary")
+        # Validate the supervision reading before replacing any previous reading.
+        reading = Resources(cpu_s=cpu_s, wall_s=wall_s)
+        if self.child_cpu_s is not None:
+            raise ValueError("child resources already reported")
+        self.child_cpu_s, self.child_wall_s = reading.cpu_s, reading.wall_s
+
+
+def report_child_resources(*, cpu_s, wall_s):
+    """A trusted backend reports its supervised child's user plus kernel CPU."""
+    stack = getattr(_meters, "stack", ())
+    if not stack:
+        raise ValueError("child resources require an active consuming boundary")
+    stack[-1].report_child(cpu_s=cpu_s, wall_s=wall_s)
+
+
 @contextmanager
-def consume_resources(cost, *, execution_id=None):
+def _exclusive_resources(owner, cost, *, execution_id=None, child_process=False, worker=False):
+    stack = getattr(_meters, "stack", None)
+    if stack is None:
+        stack = _meters.stack = []
+    parent = stack[-1] if stack else None
+    if parent is not None:
+        parent.pause()
+    meter = _ExclusiveMeter(cost, child_process)
+    stack.append(meter)
+    meter.resume()
+    try:
+        yield meter
+    finally:
+        meter.pause()
+        stack.pop()
+        if parent is not None:
+            parent.resume()
+        measured = _execution_cost(CostVector.model_validate_json(meter.cost.model_dump_json())).model_dump()
+        measured["cpu_s"] = max(measured["cpu_s"], meter.cpu_s) + (meter.child_cpu_s or 0)
+        measured["wall_s"] = max(measured["wall_s"], meter.wall_s)
+        meter.cost = CostVector(**measured)
+        meter.event_id = _id()
+        if child_process and meter.child_cpu_s is None:
+            meter.resource_gaps.append(f"child CPU unmeasured: event {meter.event_id}")
+        if parent is not None:
+            parent.descendant_cost = parent.descendant_cost + meter.cost + meter.descendant_cost
+            parent.resource_gaps.extend(meter.resource_gaps)
+        if owner is not None:
+            owner._register_resource(execution_id or _id(), meter.event_id, meter.cost,
+                child_event_ids=meter.child_event_ids,
+                child_cpu_status=("measured" if meter.child_cpu_s is not None else "unmeasured")
+                    if child_process else "not_applicable",
+                child_cpu_s=meter.child_cpu_s,
+                child_wall_s=(meter.child_wall_s if meter.child_wall_s is not None else meter.wall_s)
+                    if child_process else None)
+            if parent is not None:
+                parent.child_event_ids.append(meter.event_id)
+            if worker and owner._closed:
+                # A worker may finish after its scope; its sends still meet the closed proxy.
+                owner.ledger.book_attempt(AttemptRecord(what=f"worker:{owner.what}", cost=meter.cost,
+                    model_sends=0, execution_ids=[meter.event_id], outcome="screened", update_id=None,
+                    started_at="worker", ended_at=datetime.now(timezone.utc).isoformat()), category=owner.category)
+
+
+@contextmanager
+def consume_resources(cost, *, execution_id=None, child_process=False):
     """Report a trusted probe or sandbox runner's completion before validation."""
     owner = resource_owner()
     if owner is None:
-        yield
+        with _exclusive_resources(None, cost, child_process=child_process) as meter:
+            yield meter
         return
     with owner.execution():
-        wall, cpu = time.perf_counter(), time.process_time()
-        try:
-            yield
-        finally:
-            measured = CostVector.model_validate_json(cost.model_dump_json()).model_dump()
-            measured["wall_s"] = max(measured["wall_s"], time.perf_counter() - wall)
-            measured["cpu_s"] = max(measured["cpu_s"], time.process_time() - cpu)
-            owner._register_resource(execution_id or _id(), _id(), CostVector(**measured))
+        with _exclusive_resources(owner, cost, execution_id=execution_id, child_process=child_process) as meter:
+            yield meter
+
+
+_worker_hooks = Lock()
+_workers_carried = False
+
+
+def _run_resource_worker(owner, fn, *args, **kwargs):
+    with _exclusive_resources(owner, CostVector(), worker=True):
+        return fn(*args, **kwargs)
+
+
+def _carry_resource_workers():
+    """Meter worker units whose contexts the model-send boundary carries."""
+    global _workers_carried
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    with _worker_hooks:
+        if _workers_carried:
+            return
+        started, submitted = threading.Thread.start, ThreadPoolExecutor.submit
+
+        def submit(pool, fn, /, *args, **kwargs):
+            owner = resource_owner()
+            if owner is None:
+                return submitted(pool, fn, *args, **kwargs)
+            return submitted(pool, _run_resource_worker, owner, fn, *args, **kwargs)
+
+        def start(thread):
+            owner = resource_owner()
+            if owner is None:
+                return started(thread)
+            run, own = thread.run, "run" in vars(thread)
+
+            def run_metered():
+                try:
+                    _run_resource_worker(owner, run)
+                finally:
+                    if own:
+                        thread.run = run
+                    else:
+                        vars(thread).pop("run", None)
+
+            thread.run = run_metered
+            try:
+                return started(thread)
+            except BaseException:
+                if own:
+                    thread.run = run
+                else:
+                    vars(thread).pop("run", None)
+                raise
+
+        threading.Thread.start, ThreadPoolExecutor.submit = start, submit
+        _workers_carried = True
 
 
 def scoped_caller(caller):
@@ -409,6 +577,7 @@ class _Measurement:
         """Reference completed events; an aggregate cannot originate spending."""
         cost = _execution_cost(CostVector.model_validate_json(execution.cost.model_dump_json()))
         ids = {ident for attempt in execution.attempts for ident in attempt.execution_ids}
+        ids.update(execution.referenced_execution_ids)
         with self.ledger._state:
             report = self.reference_resources(cost, ids)
             self.ledger._reference_execution(execution.run_id, ids)
@@ -424,14 +593,14 @@ class _Measurement:
                 owner._execution_ids.update(ids)
             return self.ledger._book_ids((), ids, self.category)
 
-    def record_resources(self, cost, *, execution_id=None, event_id=None):
+    def record_resources(self, cost, *, execution_id=None, event_id=None, **metadata):
         """A consuming runner reports one completion, with stable ids for retries."""
         if execution_id is None or event_id is None:
             raise ValueError("resource completion requires execution and event ids")
         with self._condition:
             if self._closed:
                 raise ValueError("resource measurement is closed")
-            return self._register_resource(execution_id, event_id, cost)
+            return self._register_resource(execution_id, event_id, cost, **metadata)
 
     @contextmanager
     def execution(self):
@@ -447,9 +616,10 @@ class _Measurement:
                 self._active -= 1
                 self._condition.notify_all()
 
-    def _register_resource(self, execution_id, event_id, cost):
+    def _register_resource(self, execution_id, event_id, cost, **metadata):
         row = ResourceEvent(execution_id=execution_id, event_id=event_id,
-            category=self.category, cost=_execution_cost(CostVector.model_validate_json(cost.model_dump_json())))
+            category=self.category, cost=_execution_cost(CostVector.model_validate_json(cost.model_dump_json())),
+            **metadata)
         with self.ledger._state:
             previous = self.ledger._resource_events.get(event_id)
             if previous is not None and previous != row:
@@ -458,13 +628,23 @@ class _Measurement:
                 raise ValueError("resource event id conflicts with an execution id")
             if execution_id in self.ledger._executions or execution_id == event_id:
                 raise ValueError("execution id conflicts with a resource event id")
+            if set(row.child_event_ids) - self.ledger._resource_events.keys():
+                raise ValueError("unknown child resource event id")
+            self.ledger._check_category((), row.child_event_ids, self.category)
             self.ledger._resource_events[event_id] = row
             self.ledger._executions[event_id] = row.cost
-            self.ledger._execution_refs.setdefault(execution_id, set()).add(event_id)
+            children, pending = set(), list(row.child_event_ids)
+            while pending:
+                ident = pending.pop()
+                if ident not in children:
+                    children.add(ident)
+                    pending.extend(self.ledger._resource_events[ident].child_event_ids)
+            self.ledger._execution_refs.setdefault(execution_id, set()).update({event_id, *children})
             for owner in self._lineage():
-                owner._execution_ids.add(event_id)
-                if previous is None:
-                    owner._consumed_ids.add(event_id)
+                if owner.record is None:
+                    owner._execution_ids.add(event_id)
+                    if previous is None:
+                        owner._consumed_ids.add(event_id)
             report = self.ledger._book_ids((), (event_id,), self.category)
         for capture in _captures.get():
             capture.add_resource(self.ledger, event_id, consumed=previous is None)
@@ -567,13 +747,19 @@ class CostLedger:
     def cost_for(self, send_ids, execution_ids):
         with self._state:
             total = CostVector()
-            for ident in set(send_ids):
+            for ident in sorted(set(send_ids)):
                 if ident not in self._send_rows:
                     raise ValueError("unknown send id")
                 total = total + self._send_rows[ident].cost
-            for ident in self._event_ids(execution_ids):
+            # Snapshots, aliases and replayed records must add floats in one order.
+            for ident in sorted(self._event_ids(execution_ids)):
                 total = total + self._executions[ident]
             return total
+
+    def gaps_for(self, execution_ids):
+        with self._state:
+            return sorted(f"child CPU unmeasured: event {ident}" for ident in self._event_ids(execution_ids)
+                          if self._resource_events[ident].child_cpu_status == "unmeasured")
 
     def _book_ids(self, send_ids, execution_ids, category, attempt_id=None):
         if category not in CATEGORIES:
@@ -606,6 +792,8 @@ class CostLedger:
                 raise ValueError("unmetered_send: attempt model usage differs from proxy send ids")
             if _execution_cost(row.cost) != self.cost_for((), row.execution_ids):
                 raise ValueError("attempt resources differ from execution or resource event ids")
+            if row.resource_gaps != self.gaps_for((*row.execution_ids, *row.referenced_execution_ids)):
+                raise ValueError("attempt resource gaps differ from resource event ids")
             report = self._book_ids(row.send_ids, row.execution_ids, category, row.attempt_id)
             fresh = all(a.attempt_id != row.attempt_id for a in self.attempts)
             if fresh:
@@ -618,29 +806,29 @@ class CostLedger:
     def _scope(self, what, category, parent=None):
         meter = _Measurement(self, what, category, parent)
         started = datetime.now(timezone.utc).isoformat()
-        wall, cpu = time.perf_counter(), time.process_time()
         try:
             # Observer propagation lets the cross-check cover joined workers too.
             with _measurement_context(meter), counting(before_call=lambda: None) as noted:
-                yield meter
+                _carry_resource_workers()
+                with _exclusive_resources(meter, CostVector()):
+                    try:
+                        yield meter
+                    finally:
+                        meter._close()
         except BaseException:
             meter.outcome = "failed"
             raise
         finally:
-            meter._close()
-            # Completed child events cover their intervals; book the remaining floor.
-            covered = self.cost_for((), meter._consumed_ids)
-            meter._register_resource(_id(), _id(), CostVector(
-                wall_s=max(0, time.perf_counter() - wall - covered.wall_s),
-                cpu_s=max(0, time.process_time() - cpu - covered.cpu_s)))
-            cost = self.cost_for(meter._send_ids, meter._execution_ids)
-            unmetered = noted() > cost.llm_calls
-            if unmetered:
-                meter.outcome = "unmetered_send"
-            meter.record = AttemptRecord(what=what, cost=cost, model_sends=cost.llm_calls,
-                send_ids=sorted(meter._send_ids), execution_ids=sorted(meter._execution_ids),
-                outcome=meter.outcome, update_id=None, started_at=started,
-                ended_at=datetime.now(timezone.utc).isoformat())
+            with self._state:
+                cost = self.cost_for(meter._send_ids, meter._execution_ids)
+                unmetered = noted() > cost.llm_calls
+                if unmetered:
+                    meter.outcome = "unmetered_send"
+                meter.record = AttemptRecord(what=what, cost=cost, model_sends=cost.llm_calls,
+                    send_ids=sorted(meter._send_ids), execution_ids=sorted(meter._execution_ids),
+                    resource_gaps=self.gaps_for(meter._execution_ids),
+                    outcome=meter.outcome, update_id=None, started_at=started,
+                    ended_at=datetime.now(timezone.utc).isoformat())
             if parent is None:
                 self._book_attempt(meter.record, category=category)
             if unmetered:
@@ -661,13 +849,12 @@ class CostLedger:
     def total(self, category: Category):
         if category not in CATEGORIES:
             raise ValueError("unknown cost category")
-        total = Resources()
         with self._state:
-            entries = tuple(self.entries)
-        for kind, cost in entries:
-            if kind == category:
-                total = total + cost
-        return total
+            # Booking batches can group floats differently from attempt snapshots.
+            sends = [ident for ident in self._booked_sends if self._send_categories[ident] == category]
+            events = [ident for ident in self._booked_executions
+                      if self._resource_events[ident].category == category]
+            return Resources.measured(self.cost_for(sends, events))
 
     @staticmethod
     def estimate_validation(repeats, *, probes, split_cost: Resources):
@@ -688,4 +875,5 @@ class CostLedger:
             raise ValueError("positive deployment task count required for amortisation")
         return CostProfile(acquisition=self.total("acquisition"), validation=self.total("validation"),
             serving=self.total("serving").scaled(1 / deployment_tasks),
-            maintenance_per_task=self.total("maintenance").scaled(1 / deployment_tasks))
+            maintenance_per_task=self.total("maintenance").scaled(1 / deployment_tasks),
+            resource_gaps=self.gaps_for(self._booked_executions))

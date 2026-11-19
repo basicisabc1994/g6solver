@@ -211,17 +211,20 @@ def test_shadow_revalidates_execution_and_teacher_node(fault):
 
 
 def test_review3_mismatched_graph_keeps_cpu_probe_sandbox_costs():
-    from g6.distill.cost_ledger import CostLedger
+    from g6.distill.cost_ledger import CostLedger, consume_resources
     from g6.distill.graph import KernelResult, execute
     from g6.distill.graph_records import CostVector, ExecutionRecord
     from .test_graph_records import graph_for, primitive
     chosen, original = selected_record()
     cost = CostVector(cpu_s=7, probe_runs=3, sandbox_runs=2)
     p = primitive(budget=CostVector(cpu_s=10, wall_s=5, probe_runs=3, sandbox_runs=2))
+    def kernel(*args, **kwargs):
+        with consume_resources(cost):
+            pass
+        return KernelResult(output="concern")
     def teacher(**_):
         result = execute(graph_for([p]), {}, primitives={p.primitive_id: p}, unit_ref=chosen, split="dev",
-            request_id="mismatch", g6_commit="fixture", kernels={p.impl_ref: lambda *a, **kw:
-                KernelResult(output="concern", cost=cost)})
+            request_id="mismatch", g6_commit="fixture", kernels={p.impl_ref: kernel})
         return ExecutionRecord(**(result.model_dump(exclude={"run_id"}) | {"graph_id": digest("other graph")}))
     ledger = CostLedger()
     audit = api().ShadowAudit(seed=7, ledger=ledger, teacher_graph=original.graph_id, teacher_node="n0")
@@ -242,18 +245,21 @@ def resource_teacher_graph():
 
 
 def test_review4_runner_exception_keeps_three_probes_and_one_maintenance_send():
-    from g6.distill.cost_ledger import CostLedger
+    from g6.distill.cost_ledger import CostLedger, consume_resources
     from g6.distill.graph import KernelResult, execute
     from g6.distill.graph_records import CostVector
     chosen, _ = selected_record()
     graph, probe, llm, config = resource_teacher_graph()
     ledger = CostLedger()
     audit = api().ShadowAudit(seed=7, ledger=ledger, teacher_graph=graph.graph_id, teacher_node="n1")
+    def kernel(*args, **kwargs):
+        with consume_resources(CostVector(probe_runs=3)):
+            pass
+        return KernelResult(output="concern")
     def teacher(*, caller):
         execute(graph, {}, primitives={p.primitive_id: p for p in (probe, llm)},
             unit_ref=chosen, split="dev", request_id="raise-after", g6_commit="fixture", caller=caller,
-            llm_configs={llm.primitive_id: config}, kernels={probe.impl_ref: lambda *a, **kw:
-                KernelResult(output="concern", cost=CostVector(probe_runs=3))})
+            llm_configs={llm.primitive_id: config}, kernels={probe.impl_ref: kernel})
         raise RuntimeError("runner failed after graph")
     with pytest.raises(RuntimeError, match="after graph"):
         audit.run(chosen, program_verdict="concern", admitted_replacement=True,

@@ -487,7 +487,8 @@ def test_exception_books_measured_time_and_actual_sends(monkeypatch, sent):
     a, r = api(), records()
     clock = [10.0]
     monkeypatch.setattr(a.time, "monotonic", lambda: clock[0])
-    monkeypatch.setattr(a.time, "process_time", lambda: clock[0])
+    monkeypatch.setattr(a.time, "perf_counter", lambda: clock[0])
+    monkeypatch.setattr(a.time, "thread_time", lambda: clock[0])
     config = a.LLMConfig(model_id="fixture", system="judge", max_tokens=20)
     p = primitive(kind="llm", impl_ref="model:fixture", impl_version=config.content_id,
                   determinism="stochastic", budget=r.CostVector(llm_calls=1, llm_tokens_in=1000,
@@ -510,7 +511,8 @@ def test_kernel_failure_keeps_send_count_and_time(monkeypatch):
     a, r = api(), records()
     clock = [10.0]
     monkeypatch.setattr(a.time, "monotonic", lambda: clock[0])
-    monkeypatch.setattr(a.time, "process_time", lambda: clock[0])
+    monkeypatch.setattr(a.time, "perf_counter", lambda: clock[0])
+    monkeypatch.setattr(a.time, "thread_time", lambda: clock[0])
     p = primitive(budget=r.CostVector(llm_calls=1, wall_s=5, cpu_s=5))
     caller = FakeLLM(default="concern")
     def kernel(*args, **kw):
@@ -529,7 +531,8 @@ def test_attempt_meter_retains_exception_record(monkeypatch):
     a, r = api(), records()
     clock = [10.0]
     monkeypatch.setattr(a.time, "monotonic", lambda: clock[0])
-    monkeypatch.setattr(a.time, "process_time", lambda: clock[0])
+    monkeypatch.setattr(a.time, "perf_counter", lambda: clock[0])
+    monkeypatch.setattr(a.time, "thread_time", lambda: clock[0])
     caller = FakeLLM(default="concern")
     with counting() as sends:
         with pytest.raises(ValueError, match="fixture failure"):

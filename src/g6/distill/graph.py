@@ -2,15 +2,15 @@
 """Bounded graph execution with injected callers and kernels, plus structural credit.
 
 Kernels are trusted caller bindings, never dynamically imported from graph data.
-They must honour timeout_s and report their own non-time resources. Aggregates
-must reference the completed resource events they cover.
+They must honour timeout_s. Runner counts come from completion events only;
+returned counts only cross-check referenced events. Own cost carries time and proxy model usage.
 Late synchronous returns are discarded; this module cannot interrupt arbitrary Python.
 """
 from __future__ import annotations
 
 import json
 import time
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
@@ -20,7 +20,7 @@ from g6.core.ledger import canonical, digest
 from g6.core.llm import LLMError
 from g6.core.model_calls import counting
 
-from .cost_ledger import _id, capture_attempt_sends, resource_owner, scoped_caller
+from .cost_ledger import MODEL_FIELDS, _id, capture_attempt_sends, consume_resources, resource_owner, scoped_caller
 from .execution import ExecutionRefused, Observation, run_candidate
 from .graph_lowering import LoweringRefused, lower, validated
 from .graph_records import AttemptRecord, CostVector, ExecutionRecord, Model, NodeRun, Terminal
@@ -42,6 +42,7 @@ class LLMConfig(Model):
 
 @dataclass(frozen=True)
 class KernelResult:
+    """Cost carries own time, proxy usage and optional counts matching execution_ids."""
     output: JsonValue = None
     terminal: Terminal = "ok"
     cost: CostVector = field(default_factory=CostVector)
@@ -49,9 +50,6 @@ class KernelResult:
     execution_ids: tuple[str, ...] = ()
 
     def __post_init__(self):
-        TypeAdapter(Terminal).validate_python(self.terminal)
-        TypeAdapter(JsonValue).validate_python(self.output)
-        TypeAdapter(JsonValue).validate_python(self.trace)
         if not isinstance(self.cost, CostVector):
             raise TypeError("kernel cost must be CostVector")
         CostVector.model_validate_json(self.cost.model_dump_json())
@@ -63,6 +61,7 @@ class _Attempt:
     reported_execution_ids: tuple[str, ...] = ()
     outcome: str = "screened"
     record: AttemptRecord | None = None
+    own_execution_ids: set[str] = field(default_factory=set)
 
 
 @contextmanager
@@ -70,57 +69,54 @@ def attempt_meter(what, *, update_id=None, execution_id=None):
     """Retain measured time and noted sends on success, refusal and exception."""
     meter = _Attempt()
     started_at = datetime.now(timezone.utc).isoformat()
-    wall_start, cpu_start = time.monotonic(), time.process_time()
     owner = resource_owner()
-    with (owner.execution() if owner is not None else nullcontext()), capture_attempt_sends() as capture, counting() as sends:
+    with capture_attempt_sends() as capture, counting() as sends:
         try:
-            yield meter
-        except BaseException:
-            meter.outcome = "failed"
-            raise
+            with consume_resources(CostVector(), execution_id=execution_id) as usage:
+                try:
+                    yield meter
+                except BaseException:
+                    meter.outcome = "failed"
+                    raise
+                finally:
+                    # Own consumption is registered even if result validation fails.
+                    own_fields = {*MODEL_FIELDS, "cpu_s", "wall_s"}
+                    usage.cost = CostVector(**meter.reported_cost.model_dump(include=own_fields))
+                    runner_fields = set(CostVector.model_fields) - own_fields
+                    if any(getattr(meter.reported_cost, name) for name in runner_fields):
+                        referenced = (owner.ledger.cost_for((), meter.reported_execution_ids)
+                                      if owner is not None and meter.reported_execution_ids else None)
+                        if referenced is None or any(getattr(meter.reported_cost, name) != getattr(referenced, name)
+                                                     for name in runner_fields):
+                            raise ValueError("kernel runner counts must match completion event ids")
         finally:
-            measured = meter.reported_cost.model_dump()
-            send_ids, event_ids, proxy_cost = capture.snapshot()
-            ambiguous = False
             if meter.reported_execution_ids:
                 if owner is None:
-                    raise ValueError("kernel aggregate requires an active resource scope")
-                owner.reference_resources(meter.reported_cost, meter.reported_execution_ids)
-                for ident in owner.ledger._event_ids(meter.reported_execution_ids):
+                    raise ValueError("kernel aggregate event ids require an active resource scope")
+                try:
+                    ids = owner.ledger._event_ids(meter.reported_execution_ids)
+                except ValueError as exc:
+                    raise ValueError("kernel references require known completion event ids") from exc
+                owner.reference_resources(owner.ledger.cost_for((), ids), ids)
+                for ident in ids:
                     capture.add_resource(owner.ledger, ident, consumed=False)
-                send_ids, event_ids, proxy_cost = capture.snapshot()
-                for name in CostVector.model_fields:
-                    if name not in {"llm_calls", "llm_tokens_in", "llm_tokens_out"}:
-                        measured[name] = 0
-            elif owner is not None and any(measured[k] and getattr(proxy_cost, k)
-                    for k in ("probe_runs", "sandbox_runs", "solver_calls")):
-                ambiguous = True
-                for name in ("probe_runs", "sandbox_runs", "solver_calls"):
-                    measured[name] = 0
+            send_ids, event_ids, proxy_cost = capture.snapshot()
+            with capture.lock:
+                meter.own_execution_ids = set(capture.consumed_ids)
+            measured = proxy_cost.model_dump() if owner is not None else (usage.cost + usage.descendant_cost).model_dump()
             if capture.ledger is not None:
-                for name in ("llm_calls", "llm_tokens_in", "llm_tokens_out"):
+                for name in MODEL_FIELDS:
                     measured[name] = getattr(proxy_cost, name)
             else:
                 measured["llm_calls"] = sends()
-            measured["wall_s"] = max(measured["wall_s"], time.monotonic() - wall_start)
-            measured["cpu_s"] = max(measured["cpu_s"], time.process_time() - cpu_start)
-            if owner is not None:
-                # Only uncovered time and this kernel's own resources originate here.
-                covered = capture.consumed_cost()
-                resource = CostVector(**{k: (max(0, measured[k] - getattr(covered, k))
-                    if k in {"wall_s", "cpu_s"} else measured[k])
-                    for k in CostVector.model_fields if k not in {"llm_calls", "llm_tokens_in", "llm_tokens_out"}})
-                owner._register_resource(execution_id or _id(), _id(), resource)
-                send_ids, event_ids, proxy_cost = capture.snapshot()
-                measured = proxy_cost.model_dump()
             if sends() > measured["llm_calls"]:
                 meter.outcome = "unmetered_send"
             meter.record = AttemptRecord(what=what, cost=CostVector(**measured), model_sends=measured["llm_calls"],
-                                         send_ids=send_ids, execution_ids=event_ids,
-                                         outcome=meter.outcome, update_id=update_id,
-                                         started_at=started_at, ended_at=datetime.now(timezone.utc).isoformat())
-            if ambiguous:
-                raise ValueError("kernel aggregate resources require child event ids")
+                send_ids=send_ids, execution_ids=event_ids,
+                resource_gaps=owner.ledger.gaps_for(event_ids) if owner is not None else sorted(usage.resource_gaps),
+                outcome=meter.outcome, update_id=update_id,
+                started_at=started_at, ended_at=datetime.now(timezone.utc).isoformat())
+
 
 
 class ReplayCache:
@@ -238,6 +234,7 @@ def execute(graph, x, *, primitives, unit_ref, split, request_id, g6_commit, see
     facts = x.facts if isinstance(x, Observation) else data if isinstance(data, dict) else {}
     runs, fingerprints, attempts = {}, {}, []
     spent = CostVector()
+    attributed_sends, attributed_events, owned_events = set(), set(), set()
     llm_configs, kernels = llm_configs or {}, kernels or {}
     cache = cache if cache is not None else ReplayCache()
     limit = budget if budget is not None else graph.budget
@@ -369,9 +366,33 @@ def execute(graph, x, *, primitives, unit_ref, split, request_id, g6_commit, see
             meter.reported_execution_ids = result.execution_ids
             if result.terminal in ERRORS:
                 meter.outcome = "failed"
-        cost = meter.record.cost
-        spent = spent + cost
-        if not cost.within(p.budget) or not cost.within(n.budget) or not spent.within(limit):
+        try:
+            TypeAdapter(Terminal).validate_python(result.terminal)
+            TypeAdapter(JsonValue).validate_python(result.output)
+            TypeAdapter(JsonValue).validate_python(result.trace)
+        except (ValueError, TypeError):
+            result = replace(result, output=None, trace=None, terminal="fail")
+            meter.outcome = "failed"
+        # Node spending covers new consumption; references contribute once to the execution.
+        owner = resource_owner()
+        full_cost = meter.record.cost
+        if owner is not None:
+            fresh_sends = set(meter.record.send_ids) - attributed_sends
+            fresh_events = meter.own_execution_ids - owned_events
+            cost = owner.ledger.cost_for(fresh_sends, fresh_events)
+            meter.record = AttemptRecord(**(meter.record.model_dump(exclude={"attempt_id"}) | {
+                "cost": cost, "model_sends": cost.llm_calls, "send_ids": sorted(fresh_sends),
+                "execution_ids": sorted(fresh_events),
+                "referenced_execution_ids": sorted(set(meter.record.execution_ids) - fresh_events)}))
+            attributed_sends.update(fresh_sends)
+            attributed_events.update(meter.record.execution_ids)
+            attributed_events.update(meter.record.referenced_execution_ids)
+            owned_events.update(fresh_events)
+            spent = owner.ledger.cost_for(attributed_sends, attributed_events)
+        else:
+            cost = full_cost
+            spent = spent + cost
+        if not full_cost.within(p.budget) or not full_cost.within(n.budget) or not spent.within(limit):
             result = replace(result, output=None, terminal="refused")
             meter.outcome = "budget_exhausted"
         elif cost.wall_s > p.stop.timeout_s:
@@ -390,11 +411,15 @@ def execute(graph, x, *, primitives, unit_ref, split, request_id, g6_commit, see
         root = visit(g.root)
     if spent.llm_calls != sends():
         raise ExecutionRefused("G6_E_GRAPH_METER", "booked model calls differ from measured sends")
+    owner = resource_owner()
+    referenced_ids = attributed_events - owned_events
+    referenced_cost = owner.ledger.cost_for((), referenced_ids) if owner is not None else CostVector()
     rec = ExecutionRecord(graph_id=g.graph_id, unit_ref=unit_ref, split=split,
                           request_id=request_id, g6_commit=g6_commit,
                           model_ids={key: config.model_id for key, config in llm_configs.items()}, seed=seed,
                           runs=list(runs.values()), attempts=attempts,
                           root_output=root.output, terminal=root.terminal, cost=spent,
+                          referenced_cost=referenced_cost, referenced_execution_ids=sorted(referenced_ids),
                           completion_state="blocked-escalated" if root.terminal in ERRORS else "qualified-draft",
                           started_at=started_at, ended_at=datetime.now(timezone.utc).isoformat())
     owner = resource_owner()

@@ -233,7 +233,7 @@ def run_probe(instance, before, after, *, split, probe_input, workspace, cost_bo
         remaining = int(deadline - time.monotonic())
         if len(observations) >= budget.probe_runs or remaining < 1:
             refused()
-        with consume_resources(CostVector(probe_runs=1), execution_id=execution_id):
+        with consume_resources(CostVector(probe_runs=1), execution_id=execution_id, child_process=True):
             raw = _stage_run(inputs, implementation, suite, workspace=workspace, timeout_s=min(20, remaining),
                              python=python, deadline=deadline)
         check_time()
