@@ -208,6 +208,7 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
 
 
 BUNDLE = Bundle(
+    vetting_package="g6.bundles.bookkeeping_check",
     id="bookkeeping-check",
     title="Bookkeeping and GST check (Australia)",
     summary="Match your ledger to the bank, check each line's GST against its code, and recompute BAS G1, 1A and 1B.",

@@ -22,6 +22,8 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+from returns.result import Success
+
 from g6.agents._runtime import codes
 from g6.agents._runtime.gate import ToolGate
 from g6.agents._runtime.model import ToolCall
@@ -95,7 +97,7 @@ class GatedCalls:
 
                 registry = get_registry()
                 answered = registry.invoke(component, op, arguments, block_sensitive=True)
-                if answered.__class__.__name__ != "Success":
+                if not isinstance(answered, Success):
                     said = str(answered.failure())
                     found = _CODE.search(said)
                     return {"verdict": "refused", "code": found.group(0) if found else codes.TOOL_FAILED,

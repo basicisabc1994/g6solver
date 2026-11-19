@@ -593,6 +593,7 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
 
 
 BUNDLE = Bundle(
+    vetting_package="g6.bundles.contract_review",
     id="contract-review",
     title="Contract and document review",
     summary="Find the usual clauses, undefined terms, broken cross-references and mismatched numbers in a contract, "

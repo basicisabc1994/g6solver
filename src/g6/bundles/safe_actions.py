@@ -115,6 +115,7 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
 
 
 BUNDLE = Bundle(
+    vetting_package="g6.bundles.safe_actions",
     id="safe-actions",
     title="Safe agent actions",
     summary="Check the actions an AI agent wants to take, before it takes them.",

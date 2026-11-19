@@ -13,6 +13,8 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+from returns.result import Success
+
 from g6.core import discovery
 from g6.core.registry import get_registry
 from g6.navigator.authority import Authority, measured, shipped_authority
@@ -48,7 +50,7 @@ def ops_of(component: str, *, contracts: Contracts | None = None) -> frozenset[s
 def purpose(component: str, op: str) -> str:
     """The component's own ``help`` line for ``op`` (at most PURPOSE_CHARS), or "" when it gives none."""
     result = get_registry().invoke(component, "help")
-    if result.__class__.__name__ != "Success" or not isinstance(result.unwrap(), dict):
+    if not isinstance(result, Success) or not isinstance(result.unwrap(), dict):
         return ""
     for line in result.unwrap().get("help") or []:
         text = str(line)

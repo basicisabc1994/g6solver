@@ -66,6 +66,7 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
 
 
 BUNDLE = Bundle(
+    vetting_package="g6.bundles.check_claims",
     id="check-claims",
     title="Check claims against your sources",
     summary="Find the statements in a draft that your documents don't back up.",

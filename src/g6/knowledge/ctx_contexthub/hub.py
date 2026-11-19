@@ -38,6 +38,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from returns.result import Success
+
 from g6.core.storage import state_path
 from g6.knowledge import _store
 from g6.knowledge._types import Document, Source, instant, now, sha256_hex
@@ -108,7 +110,7 @@ def fetch_through_fetcher(url: str) -> Read:
     from g6.core.registry import get_registry
 
     result = get_registry().invoke("knowledge_fetcher", "fetch", {"source": "http", "url": url})
-    if result.__class__.__name__ != "Success":
+    if not isinstance(result, Success):
         return Read(None, "refused", str(result.failure())[:500], "G6_E_KNOWLEDGE_FETCH_REFUSED")
     reply = result.unwrap()
     outcome, code = str(reply.get("outcome") or "failed"), str(reply.get("code") or "")

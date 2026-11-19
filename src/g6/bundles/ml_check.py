@@ -281,6 +281,7 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
 
 
 BUNDLE = Bundle(
+    vetting_package="g6.bundles.ml_check",
     id="ml-check",
     title="ML result check",
     summary="Check a model's reported score: leakage between train and test, and the score recomputed from the labels.",

@@ -79,6 +79,7 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
 
 
 BUNDLE = Bundle(
+    vetting_package="g6.bundles.premortem",
     id="premortem",
     title="Plan pre-mortem",
     summary="Imagine your plan failed: see the likely reasons, the early warning signs and a cheap test for each.",

@@ -82,6 +82,7 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
 
 
 BUNDLE = Bundle(
+    vetting_package="g6.bundles.code_review",
     id="code-review",
     title="Code review with receipts",
     summary="An AI security and bug review where every finding must point at a real line of your code.",

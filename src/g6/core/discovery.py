@@ -21,6 +21,8 @@ import re
 from collections import Counter
 from typing import Any
 
+from returns.result import Success
+
 from g6.core import vetting
 from g6.core.door import THREAT_STATEMENT
 from g6.core.failure_modes import FailureModeRegistry, declared
@@ -42,7 +44,7 @@ def _tokens(text: str) -> list[str]:
 def ops(name: str) -> list[str]:
     """The ops a component's block lists for itself (via its ``ops`` op), or ``[]``."""
     result = get_registry().invoke(name, "ops")
-    if result.__class__.__name__ != "Success":
+    if not isinstance(result, Success):
         return []
     value = result.unwrap()
     listed = value.get("ops") if isinstance(value, dict) else None

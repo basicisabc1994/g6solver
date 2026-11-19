@@ -75,6 +75,7 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
 
 
 BUNDLE = Bundle(
+    vetting_package="g6.bundles.grounded_answer",
     id="grounded-answer",
     title="Grounded answer from your sources",
     summary="Ask a question about your documents; see which sentences of the AI's answer they actually back.",

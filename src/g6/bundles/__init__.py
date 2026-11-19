@@ -81,6 +81,7 @@ class Bundle:
     #: It runs code the person gives it (a repository's tests, a script): its page asks, where no operating-system
     #: boundary can confine that code and nothing was chosen, whether it may run without one (``g6.bundles.server``).
     runs_untrusted_code: bool = False
+    vetting_package: str = ""  # explicitly declared; never taken from run.__module__
 
 
 def catalog() -> dict[str, Bundle]:
@@ -100,7 +101,7 @@ def awaiting_certificate(bundle: Bundle) -> bool:
     (``g6.core.vetting``): it is then listed only as built, awaiting its certificate."""
     from g6.core import vetting
 
-    return vetting.awaiting_review(bundle.run.__module__)
+    return not bundle.vetting_package or vetting.awaiting_review(bundle.vetting_package)
 
 
 __all__ = ["AWAITING_CERTIFICATE", "AWAITING_NOTE", "Bundle", "BundleResult", "Field", "awaiting_certificate", "catalog",

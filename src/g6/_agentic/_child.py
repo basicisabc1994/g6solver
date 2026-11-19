@@ -17,6 +17,8 @@ asks nothing more ends with ``{"done": {"ok": result}}``, ``{"done": {"failure":
 nothing substituted. Keys and sign-ins stay in the parent: no model is called here.
 """
 from __future__ import annotations
+from returns.result import Success
+
 
 import importlib
 import inspect
@@ -169,7 +171,7 @@ def serve(request: Mapping[str, Any]) -> dict[str, Any]:
         return {"ask": state["ask"]}
     if raised:
         return {"done": {"raised": raised}}
-    if outcome.__class__.__name__ == "Success":
+    if isinstance(outcome, Success):
         return {"done": {"ok": _json(outcome.unwrap())}}
     return {"done": {"failure": str(outcome.failure())[:2000]}}
 

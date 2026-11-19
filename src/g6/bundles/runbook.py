@@ -110,6 +110,7 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
 
 
 BUNDLE = Bundle(
+    vetting_package="g6.bundles.runbook",
     id="runbook",
     title="Runbook safety check",
     summary="Find the risky steps in an operations runbook before anyone runs it.",

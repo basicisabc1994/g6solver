@@ -221,6 +221,7 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
 
 
 BUNDLE = Bundle(
+    vetting_package="g6.bundles.agent_change",
     id="agent-change-check",
     title="Did my coding agent really fix it?",
     summary="G6 runs your repository's tests itself, checks the agent did not weaken or skip them, and holds the "

@@ -15,6 +15,8 @@ binds (``server_sources``), a dialog's fields are the fields of the schema the d
 and the texts an agent is shown are read from the built servers (``shown``).
 """
 from __future__ import annotations
+from returns.result import Success
+
 
 import ast
 import enum
@@ -306,7 +308,7 @@ def server_sources(root: Path) -> frozenset[str]:
     handed on by a distribution other than the ones the classes come from, and a class reached only when the code
     runs (a factory's return value)."""
     classes = _server_classes()
-    outside_tops = {cls.__module__.split(".")[0] for cls in classes} | {name.split(".")[0] for name in _SERVER_CLASSES}
+    outside_tops = {name.split(".")[0] for name in _SERVER_CLASSES}
     files: dict[tuple[str, ...], Path] = {}
     for path in sorted(root.rglob("*.py")):
         rel = path.relative_to(root).with_suffix("").parts
@@ -451,7 +453,7 @@ def component_ops() -> dict[str, tuple[str, ...]]:
                 raise RegistrationError(f"the component {name}'s typed input does not say which ops it accepts, so "
                                         "its ops rest on its own reply alone: declare op as a Literal, or list the "
                                         "component in OPS_READ_FROM_THE_REPLY with the reason")
-            if registry.invoke(name, _NO_SUCH_OP).__class__.__name__ == "Success":
+            if isinstance(registry.invoke(name, _NO_SUCH_OP), Success):
                 raise RegistrationError(f"the component {name} is in OPS_READ_FROM_THE_REPLY and does not refuse an "
                                         "op its reply does not list")
         elif name in OPS_READ_FROM_THE_REPLY and block is not None:
