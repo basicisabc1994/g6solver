@@ -58,7 +58,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -142,7 +142,6 @@ ASKED = ("G6's completion loop is waiting for your answer: the agent asked a que
 #: A question mark that ends a sentence, past any closing marks, and the ones that stand alone in other scripts.
 _ASKS = re.compile(r"[\uff1f\u061f]|\?[*_'\"\u201d\u2019)\]]*(?:\s|$)")
 #: Code a reply quotes: a question mark there asks nobody anything.
-_QUOTED = re.compile(r"```.*?```|`[^`\n]*`", re.S)
 #: Why a run ended, from what stopped it: the row's stable cause, for ``metaharness.domain.FailureRecord``.
 OPEN, FIXED, CONTESTED = "review_finding_open", "review_finding_fixed", "review_finding_contested"
 FOUND_NOTHING, UNREACHABLE, UNREADABLE, OVERSIZE = ("review_found_nothing", "reviewer_unreachable", "reviewer_unreadable",
@@ -247,6 +246,7 @@ class ProbeRun:
     texts: dict[str, str]
     tail: str = ""
     boundary: str = ""     # what confined it, as the run says
+    failure_types: dict[str, str] = field(default_factory=dict)
 
     @property
     def ran(self) -> int:
@@ -317,7 +317,9 @@ def asks(said: str) -> bool:
 
     What it still gets wrong: a request with no question mark ("I need your decision") reads as a refusal. Its words stay in
     the row for the maintainers' label to put right, and a person's yes to it is reviewed by the loop their prompt arms."""
-    return bool(_ASKS.search(_QUOTED.sub(" ", said)))
+    from g6.core.markdown import parse
+
+    return bool(_ASKS.search(parse(said).prose(inline_code=False)))
 
 
 def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
@@ -329,11 +331,15 @@ def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
         return {"verdict": "unread", "rule": "", "why": "", "test": "", "error": f"the reply does not quote {proof}"}
     verdict = re.search(r"^VERDICT:\s*(\w+)", body, re.M)
     rule = re.search(r"^RULE:\s*(.*?)(?=^VERDICT:)", body, re.M | re.S)
-    why = re.search(r"^WHY:\s*(.*?)(?=^```|\Z)", body, re.M | re.S)
-    test = re.search(r"^```python\n(.*?)^```", body, re.M | re.S)
+    from g6.core.markdown import parse
+
+    blocks = parse(body).code_blocks
+    prose = body[:blocks[0].start] if blocks else body
+    why = re.search(r"^WHY:\s*(.*)", prose, re.M | re.S)
+    test = next((b.content for b in blocks if b.info == "python"), "")
     said_defect = bool(verdict) and verdict[1].lower() == "defect"
     return {"verdict": verdict[1].lower() if verdict else "unreadable", "rule": rule[1].strip() if rule else "",
-            "why": why[1].strip() if why else "", "test": test[1].strip() if test and said_defect else "", "error": ""}
+            "why": why[1].strip() if why else "", "test": test.strip() if test and said_defect else "", "error": ""}
 
 
 def scout_gate(raw: str, *, exit_code: int, collected: int, broken: int = 0, randoms: int | None = None,
@@ -459,6 +465,7 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
     A case that failed on an operating-system error is unknown, as a refused access looks like one. A run that did not
     finish, or tested code from outside its copy, leaves the set unusable."""
     code: int | None = 0
+    failure_types = {}
     origins = []
     results, texts, tail, boundary = {}, {}, [], ""
     for ran in runs:
@@ -493,7 +500,8 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
             code = None
             results.update({_PLACE.sub("", node): "unknown" for node in report.collection_errors})
         texts.update({_PLACE.sub("", full(named)): text for named, text in (ran.get("failure_messages") or {}).items()})
-    return cloud.bind_output(ProbeRun(code, results, texts, "\n".join(tail), boundary),
+        failure_types.update({_PLACE.sub("", full(n)): kind for n, kind in ran.get("failure_types", {}).items()})
+    return cloud.bind_output(ProbeRun(code, results, texts, "\n".join(tail), boundary, failure_types),
                              cloud.boundary_sources(carried=origins))
 
 
@@ -528,7 +536,7 @@ def _gate(tree: Path, got: ProbeRun) -> list[str]:
     def cases(test: str) -> list[str]:
         return [v for k, v in got.results.items() if k.rsplit("::", 1)[-1].split("[")[0] == test]
 
-    crashed = sum(v == "error" or (v == "failed" and not re.match(r"assert|AssertionError|Failed", got.texts.get(k, "")))
+    crashed = sum(v == "error" or (v == "failed" and got.failure_types.get(k) not in ("AssertionError", "Failed"))
                   for k, v in got.results.items())
     return scout_gate(tree.read_text(encoding="utf-8", errors="replace") if tree.is_file() else "",
                       exit_code=2 if got.exit is None else got.exit, collected=len(cases("test_cross")), broken=crashed,
