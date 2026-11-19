@@ -7,6 +7,7 @@ from returns.result import Success
 
 from g6.core.door import blocked_reply, door_reply, is_allowed
 from g6.harness import outcome_history
+from g6.harness.outcome_history import LETS_THROUGH
 from g6.learning_history.block import HistoryInput
 from g6.mcp import consent
 from g6.workforce import repo_tests
@@ -43,6 +44,8 @@ async def forget_reply(ctx, params_json: str, *, allow: frozenset[str]) -> dict:
         return door_reply('learning_history', 'forget', Success({
             'repository_id': history.repository, 'forgotten': True,
             'scope': 'one repository outcome history; separate execution receipts remain'}), caller=params)
+    except LETS_THROUGH:
+        raise
     except OSError:
         return blocked_reply('[G6_E_INPUT_VALIDATION] could not finish removing history; use learning_history.list '
                              'to inspect what remains. Do not retry around a permission refusal.')

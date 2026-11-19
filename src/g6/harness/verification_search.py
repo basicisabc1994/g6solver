@@ -554,6 +554,8 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
 
                 try:
                     ran['receipt'] = receipt_store._record_observation(change.repo, node, source, ran)
+                except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+                    raise
                 except (OSError, ValueError):
                     pass   # no receipt means no admitted learning; the observation's existing authority is unchanged
             return ran

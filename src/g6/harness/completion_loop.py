@@ -75,7 +75,7 @@ from g6.harness import patch_report
 from g6.harness.completion_hook import CHILD
 from g6.harness import verification_proposer as proposer
 from g6.harness import verification_search as vs
-from g6.harness.patch_review import _loaded_elsewhere, review_patch
+from g6.harness.patch_review import LETS_THROUGH, _loaded_elsewhere, review_patch
 from g6.workforce import repo_tests
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
@@ -544,6 +544,8 @@ def record_reproductions(change: repo_tests.Change, probes: Path, *, deadline: f
             try:
                 outcome_history.record_check(change, one.model_copy(update={'intent': 'preserve'}), node, patch,
                     base, 'counterexample', origin='k_loop', engine='g6_review_until_clean')
+            except LETS_THROUGH:
+                raise
             except (OSError, ValueError):
                 activities[-1]['history_note'] = 'outcome history could not be written'
     return activities
@@ -1019,6 +1021,8 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
         try:
             outcome_history.record_check(change, one, node, patch_run, base_run, classification,
                                           origin=origin, engine='g6_review_until_clean', refuted_by_difference=differs)
+        except LETS_THROUGH:
+            raise
         except (OSError, ValueError):
             retained_search.activities.append({'activity': 'outcome history', 'result': 'error',
                 'reason': 'retained history could not be written', 'model_calls': 0, 'seconds': 0})

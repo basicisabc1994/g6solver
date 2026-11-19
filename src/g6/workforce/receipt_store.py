@@ -58,6 +58,9 @@ from time import monotonic, sleep
 from g6.core.ledger import LedgerError, ChainLedger, digest
 from g6.core.outside import find_program
 from g6.core.storage import state_path
+from g6.core.component_process import ContainmentFailure, ExecutionInterrupted
+
+LETS_THROUGH = (ExecutionInterrupted, ContainmentFailure)
 
 SCHEMA = "g6.test_receipt/1"
 OBSERVATION_SCHEMA = 'g6.observation_receipt/1'
@@ -84,6 +87,8 @@ def repository_id(root: Path) -> str:
         if not roots or any(len(one) not in (40, 64) or any(c not in '0123456789abcdef' for c in one) for one in roots):
             return ''
         return hashlib.sha256('\n'.join(roots).encode('ascii')).hexdigest()
+    except LETS_THROUGH:
+        raise
     except (OSError, ValueError, repo_tests.RepoRefused):
         return ''
 
@@ -194,6 +199,8 @@ def lookup_learning(receipt_id: str, *, artifact_digest: str, _observations: boo
         return body
     try:
         entries = ChainLedger(state_path('evidence', 'test_learning_bindings.jsonl')).entries()
+    except LETS_THROUGH:
+        raise
     except (OSError, ValueError):
         return None
     bindings = [e['body'] for e in entries if e['kind'] == 'test-learning-binding'

@@ -8,6 +8,7 @@ from g6.core.ai_block import AIBlock
 from g6.core.contract_decorator import block_contract
 from g6.core.result import Result
 from g6.harness import outcome_history
+from g6.harness.outcome_history import LETS_THROUGH
 from g6.workforce import repo_tests
 
 
@@ -53,5 +54,7 @@ class LearningHistoryBlock(AIBlock):
                               'store_path': str(outcome_history.store_path(history.repository))
                               if history.repository else '', 'recording': 'on by default',
                               'scope': 'G6 own local check results; same-user state'})
+        except LETS_THROUGH:
+            raise
         except (OSError, ValueError) as exc:
             return Result.fail(f'[G6_E_INPUT_VALIDATION] history unavailable ({type(exc).__name__})')
