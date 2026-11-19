@@ -149,7 +149,6 @@ from __future__ import annotations
 import configparser
 import hashlib
 import platform
-import re
 import time
 import uuid
 from collections.abc import Collection, Sequence
@@ -334,7 +333,7 @@ def _ignored_asks(scan: repo_tests.Ignored) -> list[str]:
 
 
 #: The launch review's I6: a module a run could not import, and the import statements of the lines the patch adds.
-_ADDED_IMPORT = re.compile(r"^\+[ \t]*(?:from[ \t]+([\w.]+)[ \t]+import\b|import[ \t]+([^\n#;]+))", re.MULTILINE)
+
 # PENDING copy (the launch review's I6): ask, don't accuse; never "make those tests run here" for this case.
 MISSING_IMPORT_REASON = ("the tests could not import {names}, which the patch imports on a line it adds and which is "
                          "not installed here")
@@ -512,18 +511,31 @@ def _test_data(change: repo_tests.Change) -> list[str]:
 
 def _patch_imports_missing(change: repo_tests.Change, runs: list[dict]) -> list[str]:
     """The modules ``runs`` could not import (names recorded from exception objects) that
-    an import statement on a line the patch adds to a Python file names, itself, a package above it or a module below
-    it (the launch review's I6)."""
+    a static import newly present in the parsed after files names, itself, a package above it or a module below
+    it. Moving or re-adding an existing import does not make it new."""
     missing = {name for ran in runs for report in [repo_tests.read_report(ran)] if report.valid
                for name in report.data.get("missing_modules", ())}
     if not missing:
         return []
-    added = set()
-    for names, text in _diff_files(repo_tests.diff_text(change)):
-        if any(name.endswith(".py") for name in names):
-            for found in _ADDED_IMPORT.finditer(text):
-                added.update([found[1]] if found[1] else [part.split()[0] for part in found[2].split(",")
-                                                          if part.split()])
+    import ast
+
+    before, after = repo_tests.related_texts(change, [p for p in change.files if p.endswith(".py")])
+
+    def imports(files):
+        found = set()
+        for text in files.values():
+            try:
+                tree = ast.parse(text)
+            except (SyntaxError, ValueError, RecursionError):
+                continue  # an unread source cannot establish that an import was added
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    found.update(alias.name for alias in node.names)
+                elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+                    found.add(node.module)
+        return found
+
+    added = imports(after) - imports(before)
     return sorted(name for name in missing if any(name == mine or mine.startswith(name + ".")
                                                   or name.startswith(mine + ".") for mine in added
                                                   if not mine.startswith(".")))
@@ -821,60 +833,16 @@ def _requirement(req: Requirement, verdicts: dict[str, dict], norm: dict[str, st
         c["id"] for c in checks)}
 
 
-_HUNK_HEADER = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+
 #: Continuous-integration and task-runner files the weakening detector's list leaves out (``weakening._kind``'s
 #: "runner" kind holds the others: tox.ini, noxfile.py, .gitlab-ci.yml, .github/workflows/, .circleci/, ...).
 _CI_FILES = frozenset({"makefile", ".pre-commit-config.yaml"})
 
 
-def _unquoted(raw: str) -> str:
-    """A path as a line of the diff gives it (``repo_tests.diff_text``, whose names ``repo_tests.shown_name`` writes), read
-    back by that rule's one reader (``repo_tests.unquoted_name``), without the line's end or the tab git ends a bare name
-    holding a space with (repair 1's open item B); "" where it is not a name the rule writes, so its part is scanned as a
-    part whose file cannot be read."""
-    try:
-        return repo_tests.unquoted_name(raw.rstrip("\n").removesuffix("\t"))
-    except ValueError:
-        return ""
-
-
-def _diff_name(raw: str) -> str:
-    """A path as a ``---`` / ``+++`` line gives it (``_unquoted``), without ``a/`` or ``b/``; "" for ``/dev/null``."""
-    name = _unquoted(raw)
-    return "" if name == "/dev/null" else name[2:] if name[:2] in ("a/", "b/") else name
-
-
 def _diff_files(diff: str) -> list[tuple[set[str], str]]:
-    """``diff`` (``repo_tests.diff_text``) cut into one part per file, each with the paths it names, old and new. A
-    part begins at ``diff --git``, or at a ``---`` line outside a hunk once the part has had one (the untracked files
-    ``diff_text`` appends have no ``diff --git`` line); a hunk's lines are counted from its header, so a removed line
-    that itself starts with ``-- `` is never taken for a header. Lines are cut at newlines alone, as git writes them
-    (``str.splitlines`` also cuts at U+0085, U+2028, a form feed and others, which put a hunk's count out; repair 1's open
-    item C)."""
-    parts: list[tuple[set[str], list[str]]] = []
-    old = new = 0
-    rows = diff.split("\n")
-    for line in [f"{row}\n" for row in rows[:-1]] + ([rows[-1]] if rows[-1] else []):
-        if old > 0 or new > 0:   # inside a hunk
-            mark = line[:1]
-            old -= mark in ("-", " ", "\n")
-            new -= mark in ("+", " ", "\n")
-            parts[-1][1].append(line)
-            continue
-        names, lines = parts[-1] if parts else (set(), [])
-        if not parts or line.startswith("diff --git ") or (line.startswith("--- ") and any(
-                seen.startswith(("--- ", "@@")) for seen in lines)):
-            parts.append((set(), []))
-            names, lines = parts[-1]
-        lines.append(line)
-        if line.startswith(("--- ", "+++ ")):
-            names.add(_diff_name(line[4:]))
-        elif line.startswith(("rename from ", "rename to ", "copy from ", "copy to ")):
-            names.add(_unquoted(line.split(" ", 2)[2]))
-        elif (found := _HUNK_HEADER.match(line)) is not None:
-            old = int(found[1]) if found[1] is not None else 1
-            new = int(found[2]) if found[2] is not None else 1
-    return [(names - {""}, "".join(lines)) for names, lines in parts]
+    from g6.core.diff import parse_diff
+
+    return [(part.names if part.valid else set(), part.text) for part in parse_diff(diff)]
 
 
 def _scanned(rel: str, related: Collection[str] = ()) -> bool:

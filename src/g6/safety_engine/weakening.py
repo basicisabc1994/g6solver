@@ -140,7 +140,8 @@ class TestWeakeningReport:
         return {**asdict(self), **envelope}
 
 
-def detect_test_weakening(before: Source, after: Source, *, tests: Collection[str] = ()) -> TestWeakeningReport:
+def detect_test_weakening(before: Source, after: Source, *, tests: Collection[str] = (),
+                          conservative: bool = False) -> TestWeakeningReport:
     """Compare the tests and their configuration before and after a change; see the module docstring for the rules.
 
     ``before`` and ``after`` are each a mapping of path to text (``bytes`` is read as UTF-8) or a directory. Paths
@@ -180,7 +181,7 @@ def detect_test_weakening(before: Source, after: Source, *, tests: Collection[st
         elif kind == "config":
             reasons += _config_reasons(path, a, b, unread)
         else:
-            reasons += _python_reasons(path, kind, a, b, imported, unread)
+            reasons += _python_reasons(path, kind, a, b, imported, unread, conservative=conservative)
     not_checked = list(unread)
     if data:
         listed = ", ".join(shown(rel) for rel in data[:5]) + (", ..." if len(data) > 5 else "")
@@ -315,7 +316,7 @@ def _config_reasons(path: str, a: str | None, b: str | None, unread: list[str]) 
 # --- Python files ----------------------------------------------------------------------------------------------------
 
 def _python_reasons(path: str, kind: str, a: str | None, b: str | None, imported: frozenset[str],
-                    unread: list[str]) -> list[str]:
+                    unread: list[str], *, conservative: bool = False) -> list[str]:
     head: list[str] = []
     if kind == "startup":
         name = posixpath.basename(path)
@@ -325,18 +326,36 @@ def _python_reasons(path: str, kind: str, a: str | None, b: str | None, imported
         return head + ([f"{shown(path)}: test file deleted"] if kind == "test" else [])
     try:
         new_tree = ast.parse(b)
-    except SyntaxError as exc:
-        return head + [f"{shown(path)}: does not parse after the change (line {exc.lineno}: {exc.msg}); its tests cannot be "
+    except (SyntaxError, ValueError, RecursionError) as exc:
+        return head + [f"{shown(path)}: does not parse after the change (line {getattr(exc, "lineno", "?")}: {getattr(exc, "msg", type(exc).__name__)}); its tests cannot be "
                        "collected or compared"]
     try:
         old_tree = ast.parse(a) if a is not None else ast.Module(body=[], type_ignores=[])
-    except SyntaxError:
+    except (SyntaxError, ValueError, RecursionError):
         unread.append(f"{shown(path)}: did not parse before the change, so it was not compared")
-        return head
+        return head + ([f"{shown(path)}: test weakening comparison incomplete: before source does not parse"]
+                       if conservative else [])
     if a is not None and ast.dump(old_tree) == ast.dump(new_tree):
         return []  # only comments or layout changed
     old, new = _facts(old_tree), _facts(new_tree)
     found = head
+    if conservative:
+        def tautology(node):
+            if isinstance(node, ast.Assert):
+                return isinstance(node.test, ast.Constant) and bool(node.test.value)
+            if not isinstance(node, ast.Call):
+                return False
+            name, args = _name(node.func), node.args
+            if name == "assertTrue" and args and isinstance(args[0], ast.Constant):
+                return bool(args[0].value)
+            return (name in ("assertEqual", "assertEquals") and len(args) >= 2
+                    and isinstance(args[0], ast.Constant) and isinstance(args[1], ast.Constant)
+                    and args[0].value == args[1].value)
+
+        def tautologies(tree):
+            return Counter(ast.dump(n) for n in ast.walk(tree) if tautology(n))
+        if tautologies(new_tree) - tautologies(old_tree):
+            found.append(f"{shown(path)}: tautological assertion added")
     if kind == "startup":
         found += [f"{shown(path)}: adds or changes {name}, which {_HOOK_EFFECT.get(name, _effect_of(name))}"
                   for name, src in new.hooks.items() if old.hooks.get(name) != src]
@@ -348,8 +367,9 @@ def _python_reasons(path: str, kind: str, a: str | None, b: str | None, imported
         if stem != "__init__" and stem in imported:
             found.append(f"{shown(path)}: new module named like {stem!r}, which the existing tests import: it can shadow "
                          "the module they test")
-        return found  # a new test cannot weaken an old one; its own skips and mocks are its own
-    return found + _test_reasons(path, old, new) + _marker_reasons(path, old, new)
+        if not conservative:
+            return found  # normal snapshot policy: a new test cannot weaken an old one
+    return found + _test_reasons(path, old, new) + _marker_reasons(path, old, new, include_new=conservative)
 
 
 def _effect_of(name: str) -> str:
@@ -539,10 +559,10 @@ def _test_reasons(path: str, old: _Facts, new: _Facts) -> list[str]:
     return out
 
 
-def _marker_reasons(path: str, old: _Facts, new: _Facts) -> list[str]:
+def _marker_reasons(path: str, old: _Facts, new: _Facts, *, include_new: bool = False) -> list[str]:
     now = Counter(new.markers)
     for test, markers in new.test_markers.items():
-        if test not in old.tests:
+        if not include_new and test not in old.tests:
             now -= markers  # a new test's own skip or mock weakens no test that existed
     return [f"{shown(path)}: adds {name} ({_MARKER_NOTE[name]})" for name in sorted(now) if now[name] > old.markers[name]]
 
