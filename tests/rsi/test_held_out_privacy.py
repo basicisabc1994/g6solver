@@ -244,6 +244,9 @@ SERIALISERS = {
 }
 
 
+MALFORMED_SIBLINGS = r"C:\Users\someone | \Uwrong | https://example.invalid/%E9/%FF/% | "
+
+
 def serialised_forms(text, depth):
     for names in product(SERIALISERS, repeat=depth):
         encoded = text
@@ -254,10 +257,12 @@ def serialised_forms(text, depth):
 
 @pytest.mark.parametrize("depth", [1, 2, 3])
 @pytest.mark.parametrize("source", ["training", "output", "held_out"])
-def test_serialiser_compositions_exclude_thirteen_word_passage(depth, source):
+@pytest.mark.parametrize("sibling", ["", MALFORMED_SIBLINGS], ids=["plain", "malformed_siblings"])
+def test_serialiser_compositions_exclude_thirteen_word_passage(depth, source, sibling):
     words = [f"caf\u00e9\U00010400word{i}" + ("&<>'\"" if i == 6 else "") for i in range(13)]
     passage = " \n\t\u2003".join(words)
     for names, encoded in serialised_forms(passage, depth):
+        encoded = sibling + encoded
         held = SuiteCase("held", "private prompt", encoded if source == "held_out" else passage)
         training = ((SuiteCase("train", "other", encoded if source == "training" else passage),)
                     if source != "output" else ())
@@ -269,12 +274,14 @@ def test_serialiser_compositions_exclude_thirteen_word_passage(depth, source):
 
 @pytest.mark.parametrize("depth", [1, 2, 3])
 @pytest.mark.parametrize("boundary", ["training_screen", "output_screen", "evaluate"])
-def test_serialiser_compositions_void_canary_durably(stores, depth, boundary):
+@pytest.mark.parametrize("sibling", ["", MALFORMED_SIBLINGS], ids=["plain", "malformed_siblings"])
+def test_serialiser_compositions_void_canary_durably(stores, depth, boundary, sibling):
     store, db = stores()
     item = cut(store)
     marker = store._data(None)["canaries"][0]
     spaced = marker[:8] + " \n\t\u2003" + marker[8:16] + "\r\f\v" + marker[16:]
     for names, encoded in serialised_forms(spaced, depth):
+        encoded = sibling + encoded
         db.execute("UPDATE slices SET status='open' WHERE id=?", (item.slice_id,))
         if boundary == "evaluate":
             result = store.evaluate_pass(item.slice_id, "unused", encoded, arm="G0", attempt="one",
@@ -288,6 +295,66 @@ def test_serialiser_compositions_void_canary_durably(stores, depth, boundary):
             raise ValueError("later transaction")
         assert store.status(item.slice_id) == "void", names
         assert db.execute("SELECT count(*) FROM events WHERE record LIKE '%contamination%'").fetchone()[0] > 0
+
+
+def review_sibling_form(text, sibling):
+    if sibling == "windows_json":
+        return json.dumps({"path": r"C:\Users\someone", "text": json.dumps(text)})
+    return json.dumps({"url": "https://example.invalid/" + sibling, "text": quote(text)})
+
+
+@pytest.mark.parametrize("sibling", ["windows_json", "%E9", "%FF"])
+@pytest.mark.parametrize("source", ["training", "output", "held_out"])
+def test_review_malformed_siblings_do_not_hide_passage(sibling, source):
+    passage = "\n".join(f"word{i}" for i in range(13))
+    encoded = review_sibling_form(passage, sibling)
+    held = SuiteCase("held", "private", encoded if source == "held_out" else passage)
+    training = ((SuiteCase("train", "other", encoded if source == "training" else passage),)
+                if source != "output" else ())
+    result = screen(training, (held,), canaries=("a" * 32,),
+                    membership={"held": MembershipProbe(1, 1, (1, 1), (1, 1))},
+                    model_outputs=(encoded,) if source == "output" else ())
+    assert result.ngram_excluded == result.excluded_count == 1
+
+
+@pytest.mark.parametrize("sibling", ["windows_json", "%E9", "%FF"])
+@pytest.mark.parametrize("boundary", ["training_screen", "output_screen", "evaluate"])
+def test_review_malformed_siblings_do_not_prevent_durable_void(stores, sibling, boundary):
+    store, db = stores()
+    item = cut(store)
+    marker = store._data(None)["canaries"][0]
+    encoded = review_sibling_form(marker[:16] + "\n" + marker[16:], sibling)
+    if boundary == "evaluate":
+        store.screen(item.slice_id, (), membership=probes(store, item))
+        task = store._tasks(store._data(None), 0, item.freeze_digest)[0]
+        result = store.evaluate_pass(item.slice_id, task.task_id, encoded, arm="G0", attempt="one",
+                                     anchor_pass=True, detectors={"clean": lambda t, o: False})
+        assert not result.passed and result.reason == "contamination"
+    else:
+        training = (SuiteCase("train", encoded, "other"),) if boundary == "training_screen" else ()
+        outputs = (encoded,) if boundary == "output_screen" else ()
+        assert store.screen(item.slice_id, training, membership={}, model_outputs=outputs).voided
+    with pytest.raises(ValueError), store._db():
+        raise ValueError("later transaction")
+    assert store.status(item.slice_id) == "void"
+    assert db.execute("SELECT count(*) FROM events WHERE record LIKE '%contamination%'").fetchone()[0] > 0
+
+
+@pytest.mark.parametrize("raw,plain", [
+    (r"C:\Users\someone | caf\xe9", "C:\\Users\\someone | café"),
+    (r"\Uwrong | \U00010400", "\\Uwrong | \U00010400"),
+    (r"\U00110000 | \ud801\udc00", "\\U00110000 | \U00010400"),
+    (r"\N{bad} | \N{LATIN SMALL LETTER E WITH ACUTE}", "\\N{bad} | é"),
+    ("%E9%61%FF%C3%A9%62% | %FF%63", "%E9a%FFéb% | %FFc"),
+    ("%e9%61%ff%C3%A9", "%e9a%ffé"),
+    ("%E2%82%61%C3%A9%F0%9F%92", "%E2%82aé%F0%9F%92"),
+])
+def test_valid_sequences_decode_beside_malformed_sequences(raw, plain):
+    from g6.recursion.contamination_gate import _literal_text, _percent_text
+
+    decoded = _percent_text(raw) if raw.startswith("%") else _literal_text(raw)[0]
+    assert decoded == plain
+    assert canonical_views(raw) == canonical_views(plain)
 
 
 @pytest.mark.parametrize("passage", [" ".join(["caf\u00e9"] * 13), " ".join(["\U00010400"] * 13)],

@@ -26,11 +26,9 @@ import html
 import math
 import re
 import unicodedata
-import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from statistics import mean, stdev
-from urllib.parse import unquote_plus
 
 from g6.metaharness.schema import NOT_HELD_OUT, Suite, SuiteCase
 
@@ -174,28 +172,55 @@ _IGNORABLE = re.compile(
 )
 
 
+_LITERAL_ESCAPE = re.compile(
+    r"\\[\\'\"abfnrtv/]|\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}|\\U[0-9a-fA-F]{8}"
+    r"|\\[0-7]{1,3}|\\N\{[^{}]*\}"
+)
+_PERCENT_RUN = re.compile(r"(?:%[0-9a-fA-F]{2})+")
+
+
 def _literal_text(text: str) -> tuple[str, bool]:
-    """Decode one literal layer without damaging raw Unicode or malformed escapes."""
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            warnings.simplefilter("ignore", SyntaxWarning)
-            decoded = text.encode("latin-1", "backslashreplace").decode("unicode_escape")
-        # JSON also permits escaped slashes and represents astral scalars as pairs.
-        decoded = decoded.replace(r"\/", "/")
-        return decoded.encode("utf-16", "surrogatepass").decode("utf-16", "surrogatepass"), True
-    except UnicodeError:
-        return text, False
+    """Decode each literal token independently, retaining invalid sequences."""
+    def decode(match):
+        token = match.group()
+        if token == r"\/":
+            return "/"
+        if token[1] in "01234567":
+            return chr(int(token[1:], 8))
+        try:
+            return token.encode("ascii").decode("unicode_escape")
+        except UnicodeError:
+            return token
+
+    decoded = _LITERAL_ESCAPE.sub(decode, text)
+    # JSON represents astral scalars as adjacent UTF-16 surrogates.
+    decoded = decoded.encode("utf-16", "surrogatepass").decode("utf-16", "surrogatepass")
+    return decoded, "\\" not in decoded
+
+
+def _percent_text(text: str) -> str:
+    """Decode UTF-8 segments in each byte run, retaining the original invalid bytes."""
+    def decode(match):
+        token = match.group()
+        decoded = bytes.fromhex(token.replace("%", " ")).decode("utf-8", "surrogateescape")
+        parts, offset = [], 0
+        for char in decoded:
+            if 0xDC80 <= ord(char) <= 0xDCFF:
+                parts.append(token[offset:offset + 3])
+                offset += 3
+            else:
+                parts.append(char)
+                offset += 3 * len(char.encode("utf-8"))
+        return "".join(parts)
+
+    return _PERCENT_RUN.sub(decode, text.replace("+", " "))
 
 
 def _canonical(text: str, replacement: str, *, compact=False) -> str:
     while True:
         normalized = unicodedata.normalize("NFKC", text)
         decoded, literal_valid = _literal_text(normalized)
-        try:
-            decoded = unquote_plus(decoded, errors="strict")
-        except UnicodeError:
-            pass
+        decoded = _percent_text(decoded)
         decoded = html.unescape(decoded)
         result = ("" if compact else " ").join(_IGNORABLE.sub(replacement, decoded).split())
         # Finish decoding and boundary changes before folding case-sensitive escapes.
