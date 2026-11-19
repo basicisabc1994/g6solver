@@ -166,6 +166,8 @@ def test_failed_distillation_leaves_a_costed_attempt():
     assert result.attempt.outcome == "concept_refused"
     assert result.attempt.cost.llm_calls == 1 and result.attempt.cost.wall_s > 0
     assert ledger.total("acquisition").llm_calls == 1
+    assert result.attempt.cost.llm_tokens_in > 0
+    assert result.attempt.cost.llm_tokens_out > 0
 
 
 @pytest.mark.parametrize("mode,teacher", [("replace", "concern"), ("add", "no_concern")])
@@ -193,7 +195,7 @@ def test_distillation_targets_oracle_and_rewrites_lazy_graph(mode, teacher):
         oracle_store=receipts, trace_store=reader, registered_policy_sha256=D,
         synthesizer=S(caller=FakeLLM(default=concept_reply())), ledger=ledger, mode=mode,
         scope=[dict(feature="diff_hunks", op="ne", value={})],
-        replay=lambda q, cases: ["concern" for _ in cases])
+        replay=lambda q, cases, **_: ["concern" for _ in cases])
     u = result.update
     assert u is not None, result.error
     assert seen == ["concern"]
@@ -386,7 +388,7 @@ def test_probe_resources_enter_acquisition_and_per_task_delta():
     result = api().distill(g, "n0", primitives={p.primitive_id: p}, cases=[c, d], traces=[rec, dev],
         oracle_store=receipts, trace_store=reader, registered_policy_sha256=D,
         synthesizer=S(caller=FakeLLM(default=concept_reply())), ledger=ledger, mode="replace",
-        replay=lambda q, cases: api().CandidateReplay(verdicts=("concern",),
+        replay=lambda q, cases, **_: api().CandidateReplay(verdicts=("concern",),
             cost=CostVector(cpu_s=0.4, wall_s=0.6, probe_runs=2)))
     assert result.update is not None, result.error
     assert result.update.delta_c.cpu_s <= -0.4 and result.update.delta_c.probe_runs == -2
@@ -434,9 +436,9 @@ def savings_attempt(*, reached=(True, True), tokens=(100, 900), outputs=("concer
     ledger = CostLedger()
     seen = []
 
-    def run(q, cases):
+    def run(q, cases, *, caller=None):
         seen.extend(c.failure.case_ref for c in cases)
-        return replay(q, cases) if replay is not None else list(outputs[:len(cases)])
+        return replay(q, cases, caller=caller or FakeLLM()) if replay is not None else list(outputs[:len(cases)])
 
     if duplicate_dev:
         records.append(records[1])
@@ -479,9 +481,9 @@ def test_repeated_dev_executions_cannot_multiply_savings_for_one_unit():
 
 @pytest.mark.parametrize("observed,reported", [(True, True), (False, True), (True, False)])
 def test_rejected_replay_retains_reported_resources_and_counts_sends_once(observed, reported):
-    def replay(q, cases):
+    def replay(q, cases, *, caller):
         if observed:
-            FakeLLM().complete("", "")
+            caller.complete("", "")
         return api().CandidateReplay(verdicts=("concern", "concern"),
             cost=CostVector(llm_calls=int(reported), cpu_s=7, probe_runs=3, sandbox_runs=2))
 
@@ -493,6 +495,42 @@ def test_rejected_replay_retains_reported_resources_and_counts_sends_once(observ
     assert result.attempt.cost.llm_calls == 1 + int(observed)
     assert ledger.total("acquisition").llm_calls == 1 + int(observed)
     assert ledger.total("acquisition").probe_runs == 3
+
+
+def test_joined_thread_replay_send_is_costed_and_candidate_refused():
+    from threading import Thread
+    def replay(q, cases, *, caller):
+        worker = Thread(target=lambda: caller.complete("replay", "input"))
+        worker.start()
+        worker.join()
+        return ["concern"] * len(cases)
+    result, ledger, _ = savings_attempt(replay=replay)
+    assert result.update is None
+    assert "model sends" in result.error
+    assert result.attempt.cost.llm_calls == 2
+    assert ledger.total("acquisition").llm_calls == 2
+
+
+@pytest.mark.parametrize("fault", ["missing", "target", "policy"])
+def test_direct_extraction_refuses_whole_unbound_batch_before_sources_or_traces(fault):
+    c, receipts = case()
+    bound = api().bind_oracle_labels([c], oracle_store=receipts, registered_policy_sha256=D)[0]
+    other, other_receipts = case(ident="bad-later-case")
+    bad = api().bind_oracle_labels([other], oracle_store=other_receipts, registered_policy_sha256=D)[0]
+    if fault == "missing":
+        object.__setattr__(bad.failure, "evidence", [])
+    elif fault == "target":
+        object.__setattr__(bad, "expected", "no_concern")
+    else:
+        object.__setattr__(bad, "registered_policy_sha256", digest("other"))
+    class NoSources(dict):
+        def items(self):
+            pytest.fail("source access before batch validation")
+    object.__setattr__(bound, "before", NoSources(bound.before))
+    rec, reader = trace(c)
+    with pytest.raises(api().UnboundLabel):
+        api().extract_teacher_traces([rec], teacher_node="n0", cases=[bound, bad], trace_store=reader)
+    assert reader.reads == []
 
 
 @pytest.mark.parametrize("with_traces", [False, True])

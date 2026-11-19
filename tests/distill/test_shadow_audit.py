@@ -29,11 +29,12 @@ def test_shadow_disagreements_and_calls_are_maintenance_only():
     a = api()
     from g6.distill.cost_ledger import CostLedger
     ledger = CostLedger()
-    audit = a.ShadowAudit(seed=7, ledger=ledger)
-    chosen = next(digest(str(i)) for i in range(1000) if a.shadow_selected(digest(str(i)), seed=7))
+    chosen, record = selected_record()
+    audit = a.ShadowAudit(seed=7, ledger=ledger, teacher_graph=record.graph_id, teacher_node="n0")
     caller = FakeLLM(default="no_concern")
-    def teacher():
-        return caller.complete("", "")
+    def teacher(*, caller):
+        caller.complete("", "")
+        return record
     assert audit.run(chosen, program_verdict="concern", admitted_replacement=False,
                      in_scope=True, teacher=teacher) is None
     assert audit.run(chosen, program_verdict="abstain", admitted_replacement=True,
@@ -41,7 +42,7 @@ def test_shadow_disagreements_and_calls_are_maintenance_only():
     assert audit.run(chosen, program_verdict="concern", admitted_replacement=True,
                      in_scope=False, teacher=teacher) is None
     row = audit.run(chosen, program_verdict="concern", admitted_replacement=True,
-                    in_scope=True, teacher=teacher)
+                    in_scope=True, teacher=teacher, caller=caller)
     assert row.disagrees and row.program_verdict == "concern" and row.teacher_verdict == "no_concern"
     assert audit.disagreements == [row]
     assert ledger.total("maintenance").llm_calls == 1
@@ -52,19 +53,20 @@ def test_failed_shadow_call_is_still_costed():
     a = api()
     from g6.distill.cost_ledger import CostLedger
     ledger = CostLedger()
-    audit = a.ShadowAudit(seed=3, ledger=ledger)
-    chosen = next(digest(str(i)) for i in range(1000) if a.shadow_selected(digest(str(i)), seed=3))
+    chosen, record = selected_record()
+    audit = a.ShadowAudit(seed=7, ledger=ledger, teacher_graph=record.graph_id, teacher_node="n0")
     def fail(system, user):
         raise RuntimeError("teacher failed")
     caller = FakeLLM(responder=fail)
     with pytest.raises(RuntimeError):
         audit.run(chosen, program_verdict="concern", admitted_replacement=True,
-                  in_scope=True, teacher=lambda: caller.complete("", ""))
+                  in_scope=True, teacher=lambda caller: caller.complete("", ""), caller=caller)
     assert ledger.attempts[0].outcome == "failed"
     assert ledger.total("maintenance").llm_calls == 1 and not audit.records
 
 
-@pytest.mark.parametrize("field,value", [("seed", 8), ("rate", 1.0), ("teacher_graph", digest("changed"))])
+@pytest.mark.parametrize("field,value", [("seed", 8), ("rate", 1.0), ("teacher_graph", digest("changed")),
+                                       ("teacher_node", "other")])
 def test_registered_shadow_settings_cannot_be_reassigned(field, value):
     from g6.distill.cost_ledger import CostLedger
     audit = api().ShadowAudit(seed=7, ledger=CostLedger())
@@ -78,11 +80,11 @@ def test_shadow_record_for_another_unit_is_refused_and_costed():
     c, _ = case(ident="another-unit")
     record, _ = trace(c)
     ledger = CostLedger()
-    audit = api().ShadowAudit(seed=7, ledger=ledger, teacher_graph=record.graph_id)
+    audit = api().ShadowAudit(seed=7, ledger=ledger, teacher_graph=record.graph_id, teacher_node="n0")
     chosen = next(digest(str(i)) for i in range(1000) if api().shadow_selected(digest(str(i)), seed=7))
     with pytest.raises(ValueError, match="unit|case"):
         audit.run(chosen, program_verdict="concern", admitted_replacement=True,
-            in_scope=True, teacher=lambda: record)
+            in_scope=True, teacher=lambda **_: record)
     assert not audit.records
     assert ledger.attempts[0].outcome == "failed"
 
@@ -101,21 +103,108 @@ def test_shadow_execution_requires_the_bound_teacher_graph(binding):
     ledger = CostLedger()
     options = {} if binding == "missing" else {
         "teacher_graph": record.graph_id if binding == "matching" else digest("other-graph")}
-    audit = api().ShadowAudit(seed=7, ledger=ledger, **options)
+    audit = api().ShadowAudit(seed=7, ledger=ledger, teacher_node="n0", **options)
     caller = FakeLLM(default="concern")
 
-    def teacher():
+    def teacher(*, caller):
         caller.complete("", "")
         return record
 
     if binding == "matching":
         row = audit.run(chosen, program_verdict="concern", admitted_replacement=True,
-            in_scope=True, teacher=teacher)
+            in_scope=True, teacher=teacher, caller=caller)
         assert row is not None and not row.disagrees
     else:
         with pytest.raises(ValueError, match="graph|bound"):
             audit.run(chosen, program_verdict="concern", admitted_replacement=True,
-                in_scope=True, teacher=teacher)
+                in_scope=True, teacher=teacher, caller=caller)
         assert not audit.records
     assert ledger.total("maintenance").wall_s > 0
+    assert ledger.total("maintenance").llm_calls == (0 if binding == "missing" else 1)
+
+
+def selected_record():
+    from g6.distill.graph_records import ExecutionRecord
+    from .test_distill_operator import case, trace
+    chosen = next(digest(str(i)) for i in range(1000) if api().shadow_selected(digest(str(i)), seed=7))
+    c, _ = case()
+    record, _ = trace(c, verdict="no_concern")
+    record = ExecutionRecord(**(record.model_dump(exclude={"run_id"}) | {"unit_ref": chosen}))
+    return chosen, record
+
+
+def test_threaded_shadow_send_is_costed_at_injected_boundary():
+    from threading import Thread
+    from g6.distill.cost_ledger import CostLedger
+    chosen, record = selected_record()
+    ledger = CostLedger()
+    audit = api().ShadowAudit(seed=7, ledger=ledger, teacher_graph=record.graph_id, teacher_node="n0")
+    def teacher(*, caller):
+        worker = Thread(target=lambda: caller.complete("teacher", "input"))
+        worker.start()
+        worker.join()
+        return record
+    row = audit.run(chosen, program_verdict="concern", admitted_replacement=True,
+                    in_scope=True, teacher=teacher, caller=FakeLLM())
+    assert row.disagrees
     assert ledger.total("maintenance").llm_calls == 1
+    assert ledger.total("maintenance").llm_tokens_in > 0
+
+
+def test_shadow_rejects_verdict_only_result_from_other_execution():
+    from g6.distill.cost_ledger import CostLedger
+    from .test_distill_operator import case, trace
+    chosen, bound = selected_record()
+    other, _ = case(ident="other")
+    record, _ = trace(other)
+    audit = api().ShadowAudit(seed=7, ledger=CostLedger(), teacher_graph=bound.graph_id, teacher_node="n0")
+    with pytest.raises(ValueError, match="execution|record"):
+        audit.run(chosen, program_verdict="concern", admitted_replacement=True,
+                  in_scope=True, teacher=lambda **_: record.root_output, caller=FakeLLM())
+    assert not audit.records
+
+
+def test_shadow_compares_registered_node_rather_than_vote_root():
+    from g6.distill.cost_ledger import CostLedger
+    from g6.distill.graph import execute
+    from .test_distill_operator import teacher_graph
+    from .test_graph_records import graph_for
+    chosen, _ = selected_record()
+    _, p, config = teacher_graph()
+    graph = graph_for([p, p], combinator="vote", k=1)
+    caller = FakeLLM(default="no_concern")
+    def teacher(*, caller):
+        result = execute(graph, {}, primitives={p.primitive_id: p}, unit_ref=chosen, split="dev",
+            request_id="shadow-vote", g6_commit="fixture", caller=caller,
+            llm_configs={p.primitive_id: config}, cache=None)
+        assert result.root_output == "concern"
+        assert result.runs[0].node_id == "n0" and result.runs[0].output == "no_concern"
+        return result
+    replies = iter(["no_concern", "concern"])
+    caller = FakeLLM(responder=lambda *_: next(replies))
+    audit = api().ShadowAudit(seed=7, ledger=CostLedger(), teacher_graph=graph.graph_id, teacher_node="n0")
+    row = audit.run(chosen, program_verdict="concern", admitted_replacement=True,
+                   in_scope=True, teacher=teacher, caller=caller)
+    assert row.disagrees and row.teacher_verdict == "no_concern"
+
+
+@pytest.mark.parametrize("fault", ["case", "graph", "node", "output_digest"])
+def test_shadow_revalidates_execution_and_teacher_node(fault):
+    from g6.distill.cost_ledger import CostLedger
+    from g6.distill.graph_records import ExecutionRecord
+    chosen, record = selected_record()
+    graph_id = record.graph_id
+    if fault in {"case", "graph"}:
+        record = ExecutionRecord(**(record.model_dump(exclude={"run_id"}) | {
+            "unit_ref" if fault == "case" else "graph_id": digest("different")}))
+    elif fault == "output_digest":
+        record = record.model_copy(deep=True)
+        object.__setattr__(record.runs[0], "output", "concern")
+    ledger = CostLedger()
+    audit = api().ShadowAudit(seed=7, ledger=ledger, teacher_graph=graph_id,
+                             teacher_node="missing" if fault == "node" else "n0")
+    with pytest.raises(ValueError):
+        audit.run(chosen, program_verdict="concern", admitted_replacement=True, in_scope=True,
+                  teacher=lambda **_: record)
+    assert not audit.records
+    assert ledger.attempts[0].outcome == "failed"

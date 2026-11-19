@@ -104,3 +104,97 @@ def test_nested_measurement_is_rejected_before_work_and_ledger_recovers():
         caller.complete("", "")
     assert ledger.total("acquisition").llm_calls == 2
     assert len(ledger.attempts) == 3
+
+
+def test_external_inner_booking_is_refused_during_measurement():
+    from g6.distill.graph import attempt_meter
+    ledger = api().CostLedger()
+    with ledger.measure("outer"):
+        with attempt_meter("inner") as inner:
+            FakeLLM().complete("input", "input")
+        with pytest.raises(ValueError, match="active|measurement"):
+            ledger.book_attempt(inner.record)
+    assert ledger.total("acquisition").llm_calls == 1
+    assert len(ledger.attempts) == 1
+
+
+def test_injected_caller_meter_is_thread_safe_and_keeps_exception_usage():
+    from concurrent.futures import ThreadPoolExecutor
+    ledger = api().CostLedger()
+    def fail(system, user):
+        raise RuntimeError("offline failure")
+    with ledger.measure("workers") as meter:
+        caller = meter.wrap(FakeLLM(default="reply"))
+        assert meter.wrap(caller) is caller
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            assert list(pool.map(lambda _: caller.complete("system", "input"), range(20))) == ["reply"] * 20
+        with pytest.raises(RuntimeError, match="offline failure"):
+            meter.wrap(FakeLLM(responder=fail)).complete("system", "input")
+    assert ledger.total("acquisition").llm_calls == 21
+    assert ledger.total("acquisition").llm_tokens_in > 0
+    assert ledger.total("acquisition").llm_tokens_out > 0
+    assert len(ledger.sends) == 21
+    assert ledger.sends[-1].outcome == "exception"
+    assert ledger.sends[-1].cost.wall_s > 0
+    with pytest.raises(ValueError, match="closed"):
+        caller.complete("late", "input")
+
+
+def test_meter_refuses_unaccounted_image_entry_before_send():
+    class Caller:
+        calls = 0
+        def complete_with_images(self, *args, **kwargs):
+            self.calls += 1
+            return "image reply"
+    ledger, raw = api().CostLedger(), Caller()
+    with ledger.measure("images") as meter:
+        with pytest.raises(ValueError, match="text"):
+            meter.wrap(raw).complete_with_images("system", "user", [])
+    assert raw.calls == 0
+    assert ledger.total("acquisition").llm_calls == 0
+
+
+def test_meter_counts_a_hookless_caller_on_an_existing_worker():
+    from concurrent.futures import ThreadPoolExecutor
+    class Caller:
+        def complete(self, system, user, *, max_tokens):
+            return "reply"
+    ledger = api().CostLedger()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(lambda: None).result()
+        with ledger.measure("hookless") as meter:
+            assert pool.submit(meter.wrap(Caller()).complete, "system", "user").result() == "reply"
+    assert ledger.total("acquisition").llm_calls == 1
+    assert ledger.total("acquisition").llm_tokens_in == len("systemuser")
+    assert ledger.total("acquisition").llm_tokens_out == len("reply")
+
+
+def test_caller_boundary_refuses_second_inner_send():
+    from g6.core.model_calls import note_model_call
+    class Retrying:
+        calls = 0
+        def complete(self, system, user, *, max_tokens):
+            for _ in range(2):
+                note_model_call()
+                self.calls += 1
+            return "reply"
+    ledger, raw = api().CostLedger(), Retrying()
+    with ledger.measure("retry") as meter:
+        with pytest.raises(ValueError, match="one send"):
+            meter.wrap(raw).complete("system", "user")
+    assert raw.calls == 1
+    assert ledger.total("acquisition").llm_calls == 1
+
+
+def test_refused_reply_is_retained_without_double_booking():
+    class Caller:
+        def complete(self, *args, **kwargs):
+            return {"ok": False, "error": "refused"}
+    ledger = api().CostLedger()
+    with ledger.measure("refusal") as meter:
+        assert meter.wrap(Caller()).complete("system", "user")["ok"] is False
+    assert ledger.sends[0].outcome == "refused"
+    assert ledger.total("acquisition").llm_calls == 1
+    with pytest.raises(ValueError, match="already booked"):
+        ledger.book_attempt(meter.record)
+    assert len(ledger.attempts) == len(ledger.entries) == 1

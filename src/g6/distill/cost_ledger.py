@@ -5,12 +5,15 @@ from __future__ import annotations
 import math
 import time
 from contextlib import contextmanager
-from threading import Lock
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from threading import Condition, Lock, RLock
 from typing import Annotated, Literal
 
 from pydantic import Field
 
-from .graph import attempt_meter
+from g6.core.model_calls import counting
+
 from .graph_records import AttemptRecord, CostVector
 from .records import Finite, Model, Sha256
 
@@ -134,6 +137,111 @@ class RegisteredPrice(Model):
         return sum(getattr(self.rates, k) * getattr(resources, k) for k in ResourceDelta.model_fields)
 
 
+class SendRecord(Model):
+    what: str
+    cost: CostVector
+    outcome: Literal["completed", "refused", "exception"]
+    started_at: str
+    ended_at: str
+
+
+class _MeteredCaller:
+    def __init__(self, inner, owner):
+        self._inner, self._owner = inner, owner
+
+    @property
+    def __class__(self):
+        # Preserve the injected caller's offline classification in synthesis.
+        return self._inner.__class__
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def complete_with_images(self, *args, **kwargs):
+        raise ValueError("distillation metering accepts text sends only")
+
+    def complete(self, system, user, *, max_tokens=2048):
+        if not isinstance(system, str) or not isinstance(user, str):
+            raise ValueError("text system and user messages required")
+        owner = self._owner
+        with owner._condition:
+            if owner._closed:
+                raise ValueError("caller measurement is closed")
+            owner._active += 1
+        wall, cpu = time.perf_counter(), time.process_time()
+        started = datetime.now(timezone.utc).isoformat()
+        reply, outcome = None, "exception"
+        boundary_calls, boundary_lock = 0, Lock()
+
+        def before_send():
+            nonlocal boundary_calls
+            with boundary_lock:
+                if boundary_calls:
+                    raise ValueError("injected caller must make at most one send per completion")
+                boundary_calls += 1
+
+        try:
+            with counting(before_call=before_send) as noted:
+                reply = self._inner.complete(system, user, max_tokens=max_tokens)
+            outcome = "refused" if isinstance(reply, dict) and reply.get("ok") is False else "completed"
+            return reply
+        finally:
+            # UTF-8 bytes are conservative token units, matching graph execution.
+            # A caller without a hook still crossed this injected send boundary.
+            calls = max(1, noted())
+            cost = CostVector(llm_calls=calls,
+                llm_tokens_in=(len(system.encode("utf-8")) + len(user.encode("utf-8"))) * calls,
+                llm_tokens_out=len(reply.encode("utf-8")) if isinstance(reply, str) else 0,
+                wall_s=time.perf_counter() - wall, cpu_s=time.process_time() - cpu)
+            row = SendRecord(what=owner.what, cost=cost, outcome=outcome, started_at=started,
+                ended_at=datetime.now(timezone.utc).isoformat())
+            with owner._condition:
+                owner._sent = owner._sent + cost
+                with owner.ledger._state:
+                    owner.ledger._sends.append(row)
+                owner._active -= 1
+                owner._condition.notify_all()
+
+
+@dataclass
+class _Measurement:
+    ledger: object
+    what: str
+    cost: CostVector = field(default_factory=CostVector)
+    outcome: str = "screened"
+    record: AttemptRecord | None = None
+    _condition: Condition = field(default_factory=Condition)
+    _sent: CostVector = field(default_factory=CostVector)
+    _proxies: dict = field(default_factory=dict)
+    _active: int = 0
+    _closed: bool = False
+
+    def wrap(self, caller):
+        if caller is None:
+            return None
+        with self._condition:
+            if self._closed:
+                raise ValueError("caller measurement is closed")
+            if type(caller) is _MeteredCaller:
+                if caller._owner is not self:
+                    raise ValueError("caller belongs to another measurement")
+                return caller
+            if id(caller) not in self._proxies:
+                self._proxies[id(caller)] = _MeteredCaller(caller, self)
+            return self._proxies[id(caller)]
+
+    @property
+    def send_cost(self):
+        with self._condition:
+            return self._sent
+
+    def _close(self):
+        with self._condition:
+            self._closed = True
+            while self._active:
+                self._condition.wait()
+
+
 class CostLedger:
     """One outer measurement per operation; inner sends join that measurement.
 
@@ -146,20 +254,46 @@ class CostLedger:
         self.entries: list[tuple[str, Resources]] = []
         self.sink = sink
         self._measurement = Lock()
+        self._state = RLock()
+        self._sends: list[SendRecord] = []
+
+    @property
+    def sends(self):
+        with self._state:
+            return tuple(self._sends)
 
     def book(self, category: Category, cost: Resources):
+        if not self._measurement.acquire(blocking=False):
+            raise ValueError("external booking during active measurement")
+        try:
+            self._book(category, cost)
+        finally:
+            self._measurement.release()
+
+    def _book(self, category, cost, record=None):
         if category not in CATEGORIES:
             raise ValueError("unknown cost category")
-        self.entries.append((category, Resources.model_validate_json(cost.model_dump_json())))
+        cost = Resources.model_validate_json(cost.model_dump_json())
+        with self._state:
+            if record is not None and any(a.attempt_id == record.attempt_id for a in self.attempts):
+                raise ValueError("attempt already booked")
+            self.entries.append((category, cost))
+            if record is not None:
+                self.attempts.append(record)
+        if record is not None and self.sink is not None:
+            self.sink(record, category)
 
     def book_attempt(self, record: AttemptRecord, *, category: Category = "acquisition"):
+        if not self._measurement.acquire(blocking=False):
+            raise ValueError("external attempt booking during active measurement")
+        try:
+            self._book_attempt(record, category=category)
+        finally:
+            self._measurement.release()
+
+    def _book_attempt(self, record, *, category):
         row = AttemptRecord.model_validate_json(record.model_dump_json())
-        if any(a.attempt_id == row.attempt_id for a in self.attempts):
-            raise ValueError("attempt already booked")
-        self.book(category, Resources.measured(row.cost))
-        self.attempts.append(row)
-        if self.sink is not None:
-            self.sink(row, category)
+        self._book(category, Resources.measured(row.cost), row)
 
     @contextmanager
     def measure(self, what: str, *, category: Category = "acquisition"):
@@ -167,21 +301,29 @@ class CostLedger:
             raise ValueError("unknown cost category")
         if not self._measurement.acquire(blocking=False):
             raise ValueError("nested or active measurement on this ledger")
-        with_record = None
+        meter = _Measurement(self, what)
+        started = datetime.now(timezone.utc).isoformat()
+        wall, cpu = time.perf_counter(), time.process_time()
         try:
-            with attempt_meter(what) as meter:
-                with_record = meter
-                wall, cpu = time.perf_counter(), time.process_time()
-                try:
-                    yield meter
-                finally:
-                    meter.cost = CostVector(**(meter.cost.model_dump() | {
-                        "wall_s": max(meter.cost.wall_s, time.perf_counter() - wall),
-                        "cpu_s": max(meter.cost.cpu_s, time.process_time() - cpu)}))
+            with counting() as noted:
+                yield meter
+        except BaseException:
+            meter.outcome = "failed"
+            raise
         finally:
             try:
-                if with_record is not None and with_record.record is not None:
-                    self.book_attempt(with_record.record, category=category)
+                meter._close()
+                sent = meter.send_cost
+                measured = meter.cost.model_dump() | {
+                    "llm_calls": max(sent.llm_calls, noted()),
+                    "llm_tokens_in": max(sent.llm_tokens_in, meter.cost.llm_tokens_in),
+                    "llm_tokens_out": max(sent.llm_tokens_out, meter.cost.llm_tokens_out),
+                    "wall_s": max(meter.cost.wall_s, time.perf_counter() - wall),
+                    "cpu_s": max(meter.cost.cpu_s, time.process_time() - cpu)}
+                meter.record = AttemptRecord(what=what, cost=CostVector(**measured),
+                    model_sends=measured["llm_calls"], outcome=meter.outcome, update_id=None,
+                    started_at=started, ended_at=datetime.now(timezone.utc).isoformat())
+                self._book_attempt(meter.record, category=category)
             finally:
                 self._measurement.release()
 
@@ -189,7 +331,9 @@ class CostLedger:
         if category not in CATEGORIES:
             raise ValueError("unknown cost category")
         total = Resources()
-        for kind, cost in self.entries:
+        with self._state:
+            entries = tuple(self.entries)
+        for kind, cost in entries:
             if kind == category:
                 total = total + cost
         return total

@@ -7,6 +7,7 @@ import json
 import math
 import re
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass
 from threading import Lock
 from typing import Literal
@@ -109,6 +110,35 @@ def _unique_literals(cases):
     return {s for s, count in literals.items() if count == 1}
 
 
+def _revalidate_cases(cases):
+    cases = tuple(cases)
+    headers, seen, policies = [], set(), set()
+    try:
+        if not cases:
+            raise ValueError("nonempty receipt-bound batch required")
+        for case in cases:
+            # Validate headers for the entire batch before inspecting sources.
+            header = OracleBoundCase(failure=FailureRecord.model_validate_json(case.failure.model_dump_json()),
+                before={}, after={}, oracle_result=case.oracle_result,
+                registered_policy_sha256=case.registered_policy_sha256, expected=case.expected,
+                language=case.language, framework=case.framework)
+            if (header.failure.split not in {"training", "dev"}
+                    or header.failure.observed_by != "independent"):
+                raise ValueError("independent training/dev cases required")
+            if header.failure.case_ref in seen:
+                raise ValueError("duplicate case reference")
+            seen.add(header.failure.case_ref)
+            policies.add(header.registered_policy_sha256)
+            headers.append(header)
+        if len(policies) != 1:
+            raise ValueError("one registered policy required per batch")
+        return tuple(OracleBoundCase(**(header.model_dump() | {
+            "before": source_mapping(case.before), "after": source_mapping(case.after)}))
+            for header, case in zip(headers, cases, strict=True))
+    except (ValueError, TypeError, AttributeError) as error:
+        raise UnboundLabel(str(error)) from error
+
+
 class TeacherTrace(Model):
     run_id: Sha256
     case_ref: Sha256
@@ -124,7 +154,7 @@ _FEATURE_MATCHERS = {name: re.compile(r"(?<!\w)" + re.escape(name).replace("_", 
 
 
 def extract_teacher_traces(records, *, teacher_node, cases, trace_store) -> tuple[TeacherTrace, ...]:
-    cases = tuple(cases)
+    cases = _revalidate_cases(cases)
     allowed = {c.failure.case_ref: c.failure.split for c in cases}
     unique = _unique_literals(cases)
     extracted = []
@@ -172,14 +202,11 @@ def _training_cases(cases):
 
 def propose_concept_from_teacher(cases, traces, *, synthesizer):
     """One teacher-informed send with the existing shared batch cap and pacing."""
-    cases, traces = tuple(cases), tuple(traces)
     def refused(code, reason):
         return blocked_reply(f"[{code}] {reason}")
 
     try:
-        cases = tuple(OracleBoundCase.model_validate_json(c.model_dump_json()) for c in cases)
-        if len({c.failure.case_ref for c in cases}) != len(cases):
-            raise ValueError("duplicate case reference")
+        cases = _revalidate_cases(cases)
     except (ValueError, AttributeError):
         return refused("G6_E_SYNTH_UNBOUND_LABEL", "Receipt-bound cases required, including fallback.")
     training = tuple(c for c in cases if c.failure.split == "training")
@@ -187,6 +214,7 @@ def propose_concept_from_teacher(cases, traces, *, synthesizer):
                            or c.failure.observed_by != "independent" for c in cases)
             or len({c.failure.family for c in cases}) != 1):
         return refused("G6_E_SYNTH_TRAINING_ONLY", "Concepts require independent training failures.")
+    traces = tuple(traces)
     if not traces:
         return synthesis.propose_concept(_training_cases(training), synthesizer=synthesizer)
     # Reparse bound targets and extracted rows so mutated containers cannot bypass checks.
@@ -369,6 +397,23 @@ def _replay(q, cases, *, library=None):
     return run_candidate(q, observations, resolve)
 
 
+@contextmanager
+def _metered_synthesizer(synthesizer, meter):
+    # Keep the session's send caps and cached budgets while changing its boundary.
+    with synthesizer._lock:
+        original = synthesizer.caller
+        synthesizer.caller = meter.wrap(original)
+        inners = {id(m): m.inner for m in synthesizer._meters.values()}
+        try:
+            for m in synthesizer._meters.values():
+                m.inner = meter.wrap(m.inner)
+            yield synthesizer
+        finally:
+            for m in synthesizer._meters.values():
+                m.inner = inners[id(m)] if id(m) in inners else original
+            synthesizer.caller = original
+
+
 def distill(graph, teacher_node, *, primitives, cases, traces, oracle_store, trace_store,
             registered_policy_sha256, synthesizer, ledger, mode, scope=(), replay=None, library=None):
     """Propose U and gate inputs from oracle targets; every outcome is costed.
@@ -377,7 +422,7 @@ def distill(graph, teacher_node, *, primitives, cases, traces, oracle_store, tra
     runners must return CandidateReplay with their measured resource vector.
     """
     update, error, ps = None, None, dict(primitives)
-    with ledger.measure("distill:" + teacher_node) as meter:
+    with ledger.measure("distill:" + teacher_node) as meter, _metered_synthesizer(synthesizer, meter):
         try:
             bound = bind_oracle_labels(cases, oracle_store=oracle_store,
                                        registered_policy_sha256=registered_policy_sha256)
@@ -423,9 +468,11 @@ def distill(graph, teacher_node, *, primitives, cases, traces, oracle_store, tra
                         if not dev:
                             raise ValueError("receipt-bound dev cases required for savings measurements")
                         replay_meter = None
+                        before_replay = meter.send_cost
                         try:
                             with attempt_meter("candidate_replay") as replay_meter:
-                                out = replay(q, dev) if replay is not None else _replay(q, dev, library=library)
+                                out = (replay(q, dev, caller=synthesizer.caller) if replay is not None
+                                       else _replay(q, dev, library=library))
                                 if isinstance(out, CandidateReplay):
                                     replay_meter.cost = out.cost
                                     if out.cost.llm_calls:
@@ -437,6 +484,13 @@ def distill(graph, teacher_node, *, primitives, cases, traces, oracle_store, tra
                                     outputs = list(out)
                         finally:
                             if replay_meter is not None and replay_meter.record is not None:
+                                sent = meter.send_cost
+                                measured = replay_meter.record.cost.model_dump()
+                                for name in ("llm_calls", "llm_tokens_in", "llm_tokens_out"):
+                                    measured[name] = max(measured[name], getattr(sent, name) - getattr(before_replay, name))
+                                replay_meter.record = AttemptRecord(**(replay_meter.record.model_dump(
+                                    exclude={"attempt_id"}) | {"cost": CostVector(**measured),
+                                    "model_sends": measured["llm_calls"]}))
                                 meter.cost = meter.cost + replay_meter.record.cost
                         cost = replay_meter.record.cost
                         if cost.llm_calls:
