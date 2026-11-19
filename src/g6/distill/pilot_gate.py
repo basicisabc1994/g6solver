@@ -43,6 +43,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import hashlib
 import json
 import math
 import os
@@ -59,12 +60,83 @@ from g6.core.storage import contained, g6_home
 
 from . import acceptance_gate as production
 from . import execution
+from .held_out.registration_gate import Registration, strict_json
 from .library import Library
 from .probes import ProbeInput
 from .records import (AcceptanceEvidence, Cost, DecidedBy, FieldEvidence, LibraryEntry,
                       RegressionCase, VerifierCandidate)
 
 PILOT_GATE_VERSION = "distill-pilot-gate-v1"
+
+# Policy values are separately bound by production._policy_digest; owner anchors are appendable.
+JUDGING_FILES = (
+    "src/g6/distill/__init__.py",
+    "src/g6/distill/pilot_gate.py",
+    "src/g6/distill/acceptance_gate.py",
+    "src/g6/distill/rectify_gate.py",
+    "src/g6/harness/library_review_gate.py",
+    "src/g6/mcp/distill.py",
+    "src/g6/distill/execution.py",
+    "src/g6/distill/probes.py",
+    "src/g6/distill/detectors.py",
+    "src/g6/distill/records.py",
+    "src/g6/distill/ledger.py",
+    "src/g6/distill/library.py",
+    "src/g6/distill/facts.py",
+    "src/g6/distill/cost_ledger.py",
+    "src/g6/distill/graph_records.py",
+    "src/g6/distill/resource_math.py",
+    "src/g6/distill/findings.py",
+    "src/g6/distill/intake.py",
+    "src/g6/distill/recovery_approvals.py",
+    "src/g6/distill/operators.py",
+    "src/g6/distill/held_out/__init__.py",
+    "src/g6/distill/held_out/oracle.py",
+    "src/g6/distill/held_out/case_gate.py",
+    "src/g6/distill/held_out/registration_gate.py",
+    "src/g6/distill/held_out/sealed_gate.py",
+    "src/g6/safety_engine/weakening.py",
+    "src/g6/distillation/sandbox.py",
+    "src/g6/core/source_check.py",
+    "src/g6/core/sandbox.py",
+    "src/g6/core/component_process.py",
+    "src/g6/core/binomial.py",
+    "src/g6/core/confine.py",
+    "src/g6/core/ledger.py",
+    "src/g6/core/storage.py",
+    "src/g6/core/repair_log.py",
+    "src/g6/workforce/mutation_check.py",
+    "src/g6/workforce/repo_tests.py",
+    "src/g6/reasoning/compare.py",
+    "src/g6/metaharness/gate.py",
+    "src/g6/metaharness/schema.py",
+    "src/g6/metaharness/evaluate.py",
+    "validation/distill/pilot/allocation.json",
+)
+
+
+def pilot_judging_digest(root: Path) -> str:
+    """Hash ordered UTF-8 paths and exact bytes, each terminated by a NUL."""
+    result = hashlib.sha256()
+    for rel in JUDGING_FILES:
+        result.update(rel.encode("utf-8") + b"\0")
+        result.update((Path(root) / rel).read_bytes())
+        result.update(b"\0")
+    return result.hexdigest()
+
+
+def _pilot_registration(registration: str):
+    """Read only the owner-anchored registration, before production opens evidence."""
+    _, settings = production._policy()
+    anchor = settings["registrations"].get(registration)
+    if not anchor:
+        raise ValueError("missing owner registration anchor")
+    path = production._plain(production.ROOT / anchor["path"], production.ROOT / "validation/distill")
+    data = strict_json(path.read_bytes())
+    if digest(data) != registration:
+        raise ValueError("registration digest differs from frozen digest")
+    # Production checks the oracle digest after the pilot's broader dependency check.
+    return Registration.model_validate(data)
 
 
 @dataclass(frozen=True)
@@ -460,6 +532,17 @@ def decide_pilot(candidate: VerifierCandidate, *, study_root: Path, allocation: 
         root = _study_root(study_root)
         _require(type(candidate) is VerifierCandidate, "PILOT_CANDIDATE", "typed candidate required")
         candidate = VerifierCandidate.model_validate(candidate.model_dump(mode="json"))
+        try:
+            registered = _pilot_registration(registration)
+        except (ValueError, KeyError, OSError) as error:
+            raise PilotRefused("PILOT_REGISTRATION", "owner registration loader refused") from error
+        _require(registered.study.get("pilot_judging_sha256") == pilot_judging_digest(production.ROOT),
+                 "PILOT_JUDGING_CHANGED", "registered pilot judging dependencies changed")
+        _require(registered.study.get("pilot_gate_version") == PILOT_GATE_VERSION
+                 and registered.study.get("pilot_policy_sha256") == policy_sha256,
+                 "PILOT_POLICY", "registered pilot policy changed")
+        _require(registered.study.get("allocation_sha256") == allocation_sha256,
+                 "PILOT_ALLOCATION", "registered allocation changed")
         path = contained(root, root / "pilot-gate" / f"{ident}.json")
         _require(int(path.exists()) < policy.maximum_admissions_per_candidate,
                  "PILOT_REUSED", "candidate already has a study admission")

@@ -4,6 +4,7 @@ from importlib.util import find_spec
 import json
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -57,6 +58,12 @@ def rig(monkeypatch, tmp_path):
     box = {"frozen": frozen, "candidate": candidate, "allocation": allocation,
            "root": tmp_path / "study", "loaded": loaded}
     monkeypatch.setattr(production, "_load", load)
+    from g6.distill import pilot_gate
+    monkeypatch.setattr(pilot_gate, "_pilot_registration", lambda _: SimpleNamespace(study={
+        "pilot_judging_sha256": pilot_gate.pilot_judging_digest(production.ROOT),
+        "pilot_gate_version": pilot_gate.PILOT_GATE_VERSION,
+        "pilot_policy_sha256": digest(asdict(pilot_gate.PilotPolicy())),
+        "allocation_sha256": digest(box["allocation"])}))
     monkeypatch.setenv("G6_HOME", str(tmp_path / "production"))
     return box
 
