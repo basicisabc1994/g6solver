@@ -373,6 +373,9 @@ CLASSIFIED = {
     # (the row's own reading); normal_reading only makes a reading that is not a result an error
     ("harness/confirmed_checks.py", "read"): "a proposed check's run",
     ("harness/completion_loop.py", "_read"): "a probe set's run",
+    ("harness/completion_loop.py", "record_reproductions"): "a proposed check's run",
+    ("harness/outcome_history.py", "_status"): "not a run report: receipt phase data uses the producer reader",
+    ("harness/outcome_history.py", "_observation_status"): "not a run report: a stored observation receipt's own result",
     ("harness/completion_loop.py", "_outcome"): "one case's phases: the reader's own rule, a fixture error unknown",
     ("mcp/review_loop.py", "_step"): "words: completion_loop.read_report, the loop's report.md against its digest, "
                                      "another function of that name; not a run report",

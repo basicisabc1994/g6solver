@@ -226,7 +226,7 @@ RUN_SITES = {
     ("patch_review.py", "_execute_at_base", "repo_tests.run_at_base(change, ids, roots=roots, timeout_s=timeout_s, "
                                             "require_isolation=True)"): "the runner of the run at the base commit",
     ("verification_search.py", "_run_check", "repo_tests.run_at_base(change, [node], roots=roots, "
-                                             "timeout_s=timeout_s, overlay=overlay, require_isolation=True)"): (
+                                             "timeout_s=timeout_s, overlay=overlay, require_isolation=True, receipt=True)"): (
         "a proposed check at the base commit, not on the patch"),
     ("verification_search.py", "_run_check", "repo_tests._run(copy, [node], roots=(), timeout_s=timeout_s, "
                                              "network=False, copied=True, deadline=deadline, require_isolation=True, "
@@ -236,7 +236,7 @@ RUN_SITES = {
     ("verification_search.py", "_run_check", "repo_tests._run(copy, [node], roots=roots, timeout_s=timeout_s, "
                                              "network=False, copied=True, python=repo_tests.interpreter(change.repo), "
                                              "scratch_dir=copy.parent, deadline=deadline, require_isolation=True, "
-                                             "links=report)"): (
+                                             "links=report, receipt=True, _receipt_repository=change.repo)"): (
         "a proposed check's own code overlaid in a copy: never a stated check's bytes, so no stated node"),
     ("verification_search.py", "_run_mutant", "repo_tests._run(copy, ids, roots=roots, timeout_s=timeout_s, "
                                               "network=False, mutant=(rel, source), copied=True, "

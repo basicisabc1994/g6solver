@@ -669,7 +669,8 @@ ROOTS = ('g6.workforce.repo_tests', 'g6.harness.patch_review', 'g6.harness.compl
          # importers added on the 0.3 line: a918fd4 (behaviour), f562c31 (confirmed_checks), e15d9ad (behaviour_runner,
          # executable_scenario), 018b67b (workflow.adapters)
          'g6.mcp.behaviour', 'g6.harness.confirmed_checks', 'g6.harness.behaviour_runner',
-         'g6.harness.executable_scenario', 'g6.harness.workflow.adapters')
+         'g6.harness.executable_scenario', 'g6.harness.workflow.adapters',
+         'g6.harness.outcome_history', 'g6.learning_history.block', 'g6.mcp.learning_history')
 
 
 def crossings(roots=ROOTS, allowed: dict[str, str] | None = None) -> list[str]:
@@ -853,6 +854,11 @@ def test_the_folder_held_is_named_in_the_form_the_system_gives_and_containment_c
 #: matches any more fails it too.
 _NEVER_SHOWN = "never shown to a person or a model"
 ALLOWED = {
+    "g6.harness.outcome_history: req + '::'":
+        "_receipt: a requested pytest scope prefix compared with the stored node id; " + _NEVER_SHOWN,
+    "g6.harness.outcome_history: SimpleNamespace(file=relative, source=source, test=test, intent='preserve', "
+    "requirement_id='stated check ' + repo_tests.shown_name(node))":
+        "record_stated: names and source stored as receipt-bound check data; its finding uses the display rule",
     "g6.core.git_name: ''.join((_ESCAPED.get(ch) or _octal(ch) for ch in path))": "the rule itself: the text it quotes",
     "g6.workforce.repo_tests: str.__str__(rel)": ("_on_disk: the name given to the system as given, where its bytes name "
                                                    "another file for git there: looked at, never opened; " + _NEVER_SHOWN),

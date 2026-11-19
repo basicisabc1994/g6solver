@@ -239,7 +239,7 @@ def test_every_path_made_from_a_listed_name_asks_whether_it_is_exact_or_is_ruled
         key = (owner(call), "_in" if call.func.id == "_in" else "_on_disk[0]")
         alone[key] = alone.get(key, 0) + 1
     assert alone == {key: count for key, (count, _) in NAME_ALONE.items()}
-    assert asked == {"_disk", "_tracked_new", "diff_read.found"} and total == 41     # 41 since d60da76's Established.of
+    assert asked == {"_disk", "_tracked_new", "diff_read.found"} and total == 42  # _run hashes check bytes via _disk
     functions = {owner(node) + "." + node.name if owner(node) else node.name: node for node in ast.walk(tree)
                  if isinstance(node, ast.FunctionDef)}
     for name in asked:      # the answer is read, not dropped

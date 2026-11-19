@@ -10,12 +10,21 @@ READERS = {
     "algorithm_design/autonomous.py": {"_observed"},
     "bundles/agent_change.py": {"run"},
     "harness/completion_loop.py": {"_read"},
+    # Receipt projection restores ledger phase order; body_result decides admission.
+    "harness/outcome_history.py": {"_status"},
+    # _listing/_failed_ids expose validated identities; _in_repository qualifies
+    # local node names with the report's root. _verdicts/_observed decide results;
+    # _on_base reads the base control; phases_of exposes decided phases.
+    # _confined reads the boundary; the remaining readers classify loading,
+    # missing selections/imports and collection diagnostics.
     "harness/patch_review.py": {"_confined", "_failed_ids", "_in_repository", "_listing", "_observed",
                                 "_on_base", "_verdicts", "phases_of", "_not_loaded", "_patch_imports_missing",
                                 "_not_found", "_collection_errors"},
+    # reading/read adapt pytest reports to search decisions; _messages exposes
+    # validated diagnostics; _refused_access/_uncollected classify failed runs.
     "harness/verification_search.py": {"reading", "_messages", "_refused_access", "_uncollected", "read"},
     "workforce/bench.py": {"_in_place"},
-    "workforce/receipt_store.py": {"_body"},
+    "workforce/receipt_store.py": {"_body"},  # validate the producer report before persisting its receipt
     "workforce/repo_tests.py": {"_judge", "_progress", "shadowed", "run_before", "loaded_from", "established"},
 }
 
@@ -24,6 +33,8 @@ READERS = {
 ADAPTERS = {
     "algorithm_design/autonomous.py": {"baseline", "run"},
     "bundles/agent_change.py": {"runner", "run"},
+    # Review adapters launch patch/base runs; search adapters launch checks and
+    # negative controls. Each forwards the producer's return to a decided reader.
     "harness/patch_review.py": {"_execute", "_execute_at_base"},
     "harness/verification_search.py": {"_run_check", "_run_mutant"},
     "metaharness/coding.py": {"oracle"},

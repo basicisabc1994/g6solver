@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from g6.core.ledger import ChainLedger, digest
+from g6.core.component_process import ContainmentFailure, ExecutionInterrupted
 from g6.core.storage import state_path
 from g6.workforce import receipt_store
 
@@ -23,6 +24,7 @@ CLASSIFICATIONS = frozenset({'counterexample', 'unconfirmed_failure', 'defect_de
                              'fails_on_base_too', 'check_error'})
 REPRODUCED = frozenset({'counterexample', 'defect_detected'})
 repository_id = receipt_store.repository_id
+LETS_THROUGH = (ExecutionInterrupted, ContainmentFailure)
 
 
 def store_path(repository: str) -> Path:
@@ -89,22 +91,36 @@ def _admitted(row: dict, repository: str) -> bool:
 
 
 def _status(body: dict, node: str) -> tuple[bool, bool]:
+    from g6.workforce import repo_tests
+
     result = body.get('result', {})
     if body.get('source_before') != body.get('source_after') or result.get('verdict') not in {'passed', 'failed'}:
         return False, False
     if body.get('schema') == receipt_store.OBSERVATION_SCHEMA:
-        complete = result.get('completed') is True and not result.get('degraded')
-        return complete and result['verdict'] == 'passed', complete and result['verdict'] == 'failed'
+        return _observation_status(result)
     phases = body.get('test_outcomes', result.get('test_outcomes'))
-    if isinstance(phases, dict) and result.get('completed') is True and not result.get('degraded'):
-        mine = [p for n, p in phases.items() if n == node or n.startswith(node + '::')]
-        whole = bool(mine) and all(p.get('setup') == 'passed' and p.get('teardown') == 'passed' for p in mine)
-        return (whole and all(p.get('call') == 'passed' for p in mine),
-                whole and any(p.get('call') == 'failed' for p in mine))
-    return (receipt_store.counts_as_pass(body),
-            result.get('verdict') == 'failed' and result.get('completed') is True
-            and not result.get('degraded') and any(n == node or n.startswith(node + '::')
-                                                  for n in result.get('failed_ids', [])))
+    if phases is not None:
+        # Ledger JSON sorts mapping keys. Restore the producer's phase order at
+        # this storage boundary, keeping every extra field for the strict reader.
+        if type(phases) is dict:
+            phases = {name: ({**{phase: record[phase] for phase in repo_tests.REPORT_PHASES if phase in record},
+                             **{key: value for key, value in record.items() if key not in repo_tests.REPORT_PHASES}}
+                            if type(record) is dict else record)
+                      for name, record in phases.items()}
+        tests = body.get('tests', {})
+        report = repo_tests.read_report({
+            'said': '', 'output': '', 'rootdir': '', 'setup_errors': {},
+            'collected_ids': tests.get('collected', []), 'omitted_ids': tests.get('omitted', []),
+            **result, 'test_outcomes': phases})
+        outcome = report.body_result(node)
+        return outcome == 'passed', outcome == 'failed'
+    return False, False
+
+
+def _observation_status(result: dict) -> tuple[bool, bool]:
+    """The separate observation receipt has one result and no pytest phase report."""
+    complete = result.get('completed') is True and result.get('degraded') is False
+    return complete and result['verdict'] == 'passed', complete and result['verdict'] == 'failed'
 
 
 @dataclass(frozen=True)
@@ -186,6 +202,8 @@ def read(root: Path) -> History:
         return History()
     try:
         entries = ChainLedger(store_path(repository)).entries()
+    except LETS_THROUGH:
+        raise
     except (OSError, ValueError):
         return History(repository, rejected=1, unavailable='outcome chain unreadable; no history admitted', root=root)
     rows, rejected = [], 0
@@ -256,6 +274,8 @@ def disclose(reply: dict, root: Path) -> dict:
     """Add the first-record disclosure to the existing warning card, without changing evidence authority."""
     try:
         notice = take_notice(root)
+    except LETS_THROUGH:
+        raise
     except (OSError, ValueError):
         notice = ''
         if read(root).rows:
@@ -327,6 +347,8 @@ def check_sources(root: Path, nodes) -> dict[str, str]:
             continue
         try:
             found[node] = path.read_bytes().decode('utf-8')
+        except LETS_THROUGH:
+            raise
         except (OSError, UnicodeError):
             continue
     return found
@@ -335,6 +357,7 @@ def check_sources(root: Path, nodes) -> dict[str, str]:
 def record_stated(change, sources: dict[str, str], runs, *, artifact: str) -> None:
     """One row per executed stated/derived check, using only receipt-owned verdicts."""
     from types import SimpleNamespace
+    from g6.workforce import repo_tests
 
     for run in runs:
         receipt = run.get('receipt', '')
@@ -349,7 +372,7 @@ def record_stated(change, sources: dict[str, str], runs, *, artifact: str) -> No
             classification = 'defect_detected' if failed else 'not_refuted' if passed else 'check_error'
             relative, _, test = node.partition('::')
             check = SimpleNamespace(file=relative, source=source, test=test, intent='preserve',
-                                    requirement_id='stated check ' + node)
+                                    requirement_id='stated check ' + repo_tests.shown_name(node))
             record_check(change, check, node, {'receipt': receipt, 'source_before': body['source_before']},
                          None, classification, origin=run.get('provenance', 'stated'))
 
@@ -357,6 +380,7 @@ def record_stated(change, sources: dict[str, str], runs, *, artifact: str) -> No
 def retained_checks(change, requirement: str):
     """Overlap, then recency. No execution at preflight; missing exercised files stay stale."""
     from g6.harness import verification_search as vs
+    from g6.workforce import repo_tests
 
     history = read(change.repo)
     rows = sorted(enumerate(history.retained),
@@ -370,7 +394,8 @@ def retained_checks(change, requirement: str):
                     'seconds': 0.0, 'finding': row['finding']}
         missing = [rel for rel in row.get('modules', []) if not (change.repo / rel).is_file()]
         if missing:
-            skipped.append({**activity, 'result': 'stale', 'reason': 'exercised file gone: ' + ', '.join(missing)})
+            skipped.append({**activity, 'result': 'stale', 'reason': 'exercised file gone: ' +
+                            ', '.join(repo_tests.shown_name(rel) for rel in missing)})
             continue
         if not check['source']:
             skipped.append({**activity, 'result': 'skipped',

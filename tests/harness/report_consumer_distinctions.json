@@ -184,6 +184,13 @@
         "repo_env",
         "total",
         "verdict"
+      ],
+      "_record_observation": [
+        "bootstrap_sha256",
+        "g6_observation",
+        "isolation",
+        "source_before",
+        "verdict"
       ]
     },
     "bundles/agent_change.py": {
@@ -284,7 +291,8 @@
         "algorithm_design/autonomous.py:_observed",
         "metaharness/coding.py:oracle",
         "metaharness/coding.py:run_mutant",
-        "workforce/repo_tests.py:run_before"
+        "workforce/repo_tests.py:run_before",
+        "workforce/receipt_store.py:_record_observation"
       ],
       "type": "<class 'str'>",
       "constraint": "known runner verdict"
@@ -559,7 +567,8 @@
         "harness/patch_review.py:_run_again",
         "harness/verification_search.py:reading",
         "harness/verification_search.py:_run_check",
-        "algorithm_design/autonomous.py:_observed"
+        "algorithm_design/autonomous.py:_observed",
+        "workforce/receipt_store.py:_record_observation"
       ],
       "type": "<class 'str'>",
       "constraint": "text only"
@@ -749,7 +758,8 @@
         "workforce/receipt_store.py:_body",
         "bundles/agent_change.py:run",
         "workforce/bench.py:_in_place",
-        "algorithm_design/autonomous.py:_observed"
+        "algorithm_design/autonomous.py:_observed",
+        "workforce/receipt_store.py:_record_observation"
       ],
       "type": "{'backend': (<class 'str'>, <class 'NoneType'>), 'why': <class 'str'>, 'network': <class 'bool'>, 'container': (<class 'str'>, <class 'NoneType'>), 'profile': (<class 'str'>, <class 'NoneType'>), 'warning': <class 'str'>, 'allowed_by': <class 'str'>, 'cleanup': <class 'str'>}",
       "constraint": "known typed fields, backend required"
@@ -798,7 +808,8 @@
     "g6_observation": {
       "meaning": "G6 observation runner result for a confirmed check or probe; reading takes result and detail from it, never from a test phase",
       "consumers": [
-        "harness/verification_search.py:reading"
+        "harness/verification_search.py:reading",
+        "workforce/receipt_store.py:_record_observation"
       ],
       "type": "{'result': <class 'str'>, 'detail': <class 'str'>, 'observed': <class 'dict'>, 'owned_probe': <class 'bool'>, 'observations': <class 'list'>}",
       "constraint": "a known result and its detail; observations are input/output pairs"
@@ -806,7 +817,8 @@
     "bootstrap_sha256": {
       "meaning": "the digest of the program the observation runner started; reading carries it to the review execution record",
       "consumers": [
-        "harness/verification_search.py:reading"
+        "harness/verification_search.py:reading",
+        "workforce/receipt_store.py:_record_observation"
       ],
       "type": "<class 'str'>",
       "constraint": "a SHA-256 hex digest"

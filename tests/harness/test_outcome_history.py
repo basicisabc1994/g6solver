@@ -59,10 +59,17 @@ def receipt(repo='a' * 64, *, passed=False, source='source'):
     body = {'source_before': digest(source), 'source_after': digest(source),
             'repository_id': repo, 'check_digests': {'test_edge.py': digest('bytes')},
             'tests': {'requested': [node], 'collected': [node]},
-            'result': {'verdict': 'passed' if passed else 'failed', 'total': 1, 'not_passed': 0,
-                       'completed': True, 'degraded': False, 'failed_ids': [] if passed else [node]},
+            **phase_receipt(node, passed=passed),
             'isolation': {'backend': 'synthetic-unit-fixture'}}
     return receipt_store._record(body), body
+
+
+def phase_receipt(node, *, passed=False):
+    return {'tests': {'requested': [node], 'collected': [node]},
+            'test_outcomes': {node: {'setup': 'passed', 'call': 'passed' if passed else 'failed',
+                                     'teardown': 'passed'}},
+            'result': {'verdict': 'passed' if passed else 'failed', 'total': 1, 'not_passed': 0,
+                       'completed': passed, 'degraded': False, 'failed_ids': [] if passed else [node]}}
 
 
 def row(repo='a' * 64, *, method='formal', passed=False):
@@ -121,8 +128,7 @@ def test_admission_recomputes_classification_from_the_receipt(monkeypatch):
     h = history()
     body = {'repository_id': 'a' * 64, 'source_before': 'd' * 64, 'source_after': 'd' * 64,
             'check_digests': {'test_edge.py': 'b' * 64},
-            'tests': {'requested': ['test_edge.py::test_edge']},
-            'result': {'verdict': 'passed', 'total': 1, 'not_passed': 0, 'completed': True, 'degraded': False}}
+            **phase_receipt('test_edge.py::test_edge', passed=True)}
     monkeypatch.setattr(receipt_store, 'lookup', lambda ident, **kw: body if ident == 'owned' and kw[
                         'artifact_digest'] == body['source_before'] else None)
     value = {'schema': h.SCHEMA, 'repository_id': 'a' * 64, 'receipt': 'owned',
@@ -159,9 +165,7 @@ def test_stated_execution_records_a_defect_and_keeps_the_check(monkeypatch):
     sha = hashlib.sha256(source.encode()).hexdigest()
     body = {'source_before': 'd' * 64, 'source_after': 'd' * 64,
             'repository_id': 'a' * 64, 'check_digests': {'test_edge.py': sha},
-            'tests': {'requested': ['test_edge.py::test_edge']},
-            'result': {'verdict': 'failed', 'completed': True, 'degraded': False,
-                       'failed_ids': ['test_edge.py::test_edge']}}
+            **phase_receipt('test_edge.py::test_edge')}
     monkeypatch.setattr(receipt_store, 'lookup', lambda *a, **kw: body)
     monkeypatch.setattr(h, 'repository_id', lambda root: 'a' * 64)
     monkeypatch.setattr(h, '_record', lambda root, row: recorded.append(row))
@@ -261,8 +265,7 @@ def test_stated_node_is_retained_when_source_exceeds_replay_limit(monkeypatch):
     from types import SimpleNamespace
     h = history()
     body = {'repository_id': 'a' * 64, 'source_before': 'd' * 64, 'source_after': 'd' * 64,
-            'check_digests': {'test_large.py': 'b' * 64}, 'tests': {'requested': ['test_large.py']},
-            'result': {'verdict': 'failed', 'completed': True, 'degraded': False, 'failed_ids': ['test_large.py']}}
+            'check_digests': {'test_large.py': 'b' * 64}, **phase_receipt('test_large.py')}
     recorded = []
     monkeypatch.setattr(h, 'repository_id', lambda root: 'a' * 64)
     monkeypatch.setattr(receipt_store, 'lookup', lambda *a, **kw: body)

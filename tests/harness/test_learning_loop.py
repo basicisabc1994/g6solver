@@ -51,7 +51,7 @@ def world(tmp_path, monkeypatch):
         body = {'source_before': ran['source_before'], 'source_after': ran['source_before'],
                 'repository_id': receipt_store.repository_id(change.repo),
                 'check_digests': {placed: sha}, 'tests': {'requested': [node], 'collected': [node]},
-                'isolation': ran['isolation'], 'result': {**ran, 'completed': True}}
+                'isolation': ran['isolation'], 'result': {**ran, 'completed': ran['verdict'] == 'passed'}}
         ran['receipt'] = receipt_store._record(body)
         return ran
 
