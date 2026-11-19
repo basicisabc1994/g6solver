@@ -107,6 +107,33 @@ def test_repair2_500_short_training_cases_stay_open(stores):
                    for row in db.execute("SELECT record FROM events"))
 
 
+@pytest.mark.parametrize("copy", [None, "identity", "passage"])
+def test_repair3_500_ordinary_training_cases_stay_open(stores, copy):
+    store, db = stores()
+    data = store._data(None)
+    index = data["partitions"][0][0]
+    task = TaskSpec.from_record(data["tasks"][index])
+    if copy == "passage":
+        task = replace(task, prompt=" ".join(f"privateword{i}" for i in range(13)), provenance=None)
+        data["tasks"][index] = task.to_record()
+    item = cut(store)
+    training = [SuiteCase(f"train{i}",
+                          f"INFO unrelated event alpha beta gamma delta epsilon zeta eta theta {i}",
+                          f"INFO completed request {i}") for i in range(500)]
+    if copy == "identity":
+        training[-1] = replace(training[-1], input=task.prompt)
+    elif copy == "passage":
+        training[-1] = replace(training[-1], expected=task.prompt)
+    result = store.screen(item.slice_id, tuple(training), membership=probes(store, item))
+    assert not result.serialization_limited and not result.voided
+    assert result.excluded_count == (0 if copy is None else 1)
+    assert result.identity_excluded == (1 if copy == "identity" else 0)
+    assert result.ngram_excluded == (1 if copy == "passage" else 0)
+    assert store.status(item.slice_id) == "open"
+    assert not any(json.loads(row[0])["kind"] == "screen_limit"
+                   for row in db.execute("SELECT record FROM events"))
+
+
 @pytest.mark.parametrize("base", [10, 16])
 @pytest.mark.parametrize("codepoint", [0x7f, 0x80, 0x85, 0x9f])
 @pytest.mark.parametrize("boundary", ["training", "held_out", "output", "evaluate"])

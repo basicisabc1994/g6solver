@@ -133,6 +133,45 @@ def test_repair2_identity_compares_both_numeric_readings(held):
                         (SuiteCase("train", "a&#128;b", "other"),)).identity_excluded == 1
 
 
+@pytest.mark.parametrize("phase", ["identity", "canonical"])
+def test_repair3_equivalent_identity_readings_share_allowance(monkeypatch, phase):
+    text = "ordinary input alpha beta gamma " * 100
+    monkeypatch.setattr(gate, "_MAX_MATCH_STEPS", 30 * len(text))
+    state = gate._Comparison()
+    if phase == "canonical":
+        assert gate.canonical_views(text, serialization=state) == (
+            text.strip(), text.strip(), "ordinaryinputalphabetagamma" * 100)
+        assert not state.limited
+        return
+    assert set(gate._input_views(text, state)) == {text.strip()}
+    spent = state.match_steps
+    assert set(gate._input_views(text, state)) == {text.strip()}
+    assert state.match_steps == spent and not state.limited
+
+
+@pytest.mark.parametrize("phase", ["graphs", "passages"])
+def test_repair3_equivalent_field_readings_share_allowance(monkeypatch, phase):
+    case = SuiteCase("train", " ".join(f"word{i}" for i in range(13)), "other")
+    state = gate._Comparison()
+    for keys in (True, False):
+        fields = tuple(gate._strings(case, keys=keys))
+        for text in (*fields, "".join(fields), " ".join(fields)):
+            state.views[text] = gate.comparison_views(text)
+    monkeypatch.setattr(gate, "_MAX_MATCH_STEPS", 4000)
+    readings = tuple(gate._graphs(case, state) if phase == "graphs" else
+                     gate._passage_sequences(case, state))
+    assert readings and not state.limited
+
+
+@pytest.mark.parametrize("special", ["alpha+beta", "alpha & beta"])
+def test_repair3_literal_punctuation_identity_shares_allowance(monkeypatch, special):
+    text = f"ordinary input {special} gamma " * 100
+    monkeypatch.setattr(gate, "_MAX_MATCH_STEPS", 20 * len(text))
+    state = gate._Comparison()
+    assert set(gate._input_views(text, state)) == {text.strip()}
+    assert not state.limited
+
+
 @pytest.mark.parametrize("short_side", ["left", "right"])
 def test_repair2_impossible_legacy_pair_spends_no_matching_budget(short_side):
     short = gate._token_graph(["INFO unrelated event 1"])
