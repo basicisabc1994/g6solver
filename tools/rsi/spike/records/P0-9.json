@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "step": "P0-9",
+  "mode": "measured",
+  "status": "pending",
+  "manifest": {
+    "model_directory": null,
+    "sha256": null,
+    "sha256_after": null,
+    "expected": {
+      "weights.bin": null
+    },
+    "before": {
+      "weights.bin": null
+    },
+    "after": {
+      "weights.bin": null
+    }
+  },
+  "metrics": {
+    "families": [
+      {
+        "id": null,
+        "issue_template": null,
+        "actor_text": null,
+        "episode_seconds": null,
+        "mutation_check": {
+          "ran": null,
+          "tried": null,
+          "rejected": null,
+          "survived": null,
+          "stopped": null
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "step": "P0-5",
+  "mode": "measured",
+  "status": "pending",
+  "manifest": {
+    "model_directory": null,
+    "sha256": null,
+    "sha256_after": null,
+    "expected": {
+      "weights.bin": null
+    },
+    "before": {
+      "weights.bin": null
+    },
+    "after": {
+      "weights.bin": null
+    }
+  },
+  "metrics": {
+    "checked_attempts": null,
+    "elapsed_hours": null,
+    "problem_count": null,
+    "reasoning": null,
+    "slots": null,
+    "servers": null,
+    "g0_pass_at_1": null,
+    "representation_tasks": null,
+    "tool_calls": null,
+    "parsed_tool_calls": null,
+    "engines": null,
+    "engine_calls": [
+      {
+        "engine": null,
+        "elapsed_s": null,
+        "deadline_s": null
+      }
+    ]
+  }
+}

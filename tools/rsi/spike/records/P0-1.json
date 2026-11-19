@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "step": "P0-1",
+  "mode": "measured",
+  "status": "pending",
+  "manifest": {
+    "model_directory": null,
+    "sha256": null,
+    "sha256_after": null,
+    "expected": {
+      "weights.bin": null
+    },
+    "before": {
+      "weights.bin": null
+    },
+    "after": {
+      "weights.bin": null
+    }
+  },
+  "metrics": {
+    "gpu": null,
+    "cuda_available": null,
+    "capability": null,
+    "matmul_size": null,
+    "matmul_dtype": null,
+    "matmul_matches": null,
+    "memory_gb": null,
+    "swap_gb": null,
+    "cuda_version": null,
+    "wsl_driver": null,
+    "torch_version": null
+  }
+}
