@@ -5,7 +5,7 @@ No seed has measured precision here; seeds carry A0. Later acceptance owns L_0's
 A1 decisions. Every static seed preserves the existing detector's full report;
 its verdict projects an existing reason category, never runs a second detector.
 Swallow/self-reference seeds inherit the broad changed-check heuristic and its
-false alarms: they do not establish why a check changed. Confined probes abstain.
+false alarms: they do not establish why a check changed. V2 probes require explicit inputs.
 """
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -37,6 +37,8 @@ SEED_TEMPLATES = MappingProxyType({
     "discriminates_at_base.v1": SeedTemplate("discriminates_at_base.v1", False),
     "kill_set.v1": SeedTemplate("kill_set.v1", False),
 })
+PROBE_TEMPLATES = MappingProxyType({name: SeedTemplate(name, True) for name in (
+    "kill_set.v2", "discriminates_at_base.v2")})
 
 
 @dataclass(frozen=True)
@@ -44,6 +46,7 @@ class Detection:
     verdict: str
     reason: str
     report: weakening.TestWeakeningReport | None
+    outcome: object | None = None
 
 
 def detect(before, after, *, split):
@@ -51,8 +54,17 @@ def detect(before, after, *, split):
     return weakening.detect_test_weakening(source_mapping(before), source_mapping(after))
 
 
-def run_template(template, before, after, *, split, bindings=None):
+def run_template(template, before, after, *, split, bindings=None, probe_input=None, workspace=None,
+                 cost_bound=None, python=None):
     check_split(split)
+    if template in PROBE_TEMPLATES:
+        from .probes import ProbeTemplateInstance, run_probe
+        instance = ProbeTemplateInstance(template=template, bindings={} if bindings is None else bindings)
+        if probe_input is None or workspace is None or cost_bound is None:
+            return Detection("abstain", "Probe inputs, workspace and cost bound are required.", None)
+        outcome = run_probe(instance, before, after, split=split, probe_input=probe_input,
+                            workspace=workspace, cost_bound=cost_bound, python=python)
+        return Detection(outcome.verdict, outcome.reason, None, outcome)
     seed = SEED_TEMPLATES[template]
     if bindings:
         raise ValueError("seed templates accept no unmeasured bindings")

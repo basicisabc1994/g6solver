@@ -100,8 +100,10 @@ def _extract_facts(before, after, *, changed_functions=(), probe_outcomes=None):
     """
     before, after = source_mapping(before), source_mapping(after)
     probes = dict(probe_outcomes or {})
-    if set(probes) - PROBE_NAMES:
+    from .probes import PROBE_NAMES_V2, outcome_facts
+    if set(probes) - (PROBE_NAMES | PROBE_NAMES_V2):
         raise ValueError("unknown probe catalogue entry")
+    probes = outcome_facts(probes, before, after)
     files, diffs, errors = {}, {}, {}
     for path in sorted(before.keys() | after.keys()):
         sides = {}
