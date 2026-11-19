@@ -22,6 +22,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from g6.core.principals import same_principal
+
 from g6.action_gating.classifiers import classify_reversibility
 from g6.action_gating.normalizer import normalize_action_capsule
 from g6.core.adaptation_gate import is_automated
@@ -162,8 +164,8 @@ class Builder:
     def set_held_out(self, cases: Sequence[SuiteCase], *, source: str, author: str) -> str:
         """``source``: ``person`` (someone other than the builder), ``third-party`` (a public dataset),
         ``historical`` (recorded outcomes), ``caller`` or ``model``. Returns the provenance recorded."""
+        independent = source in INDEPENDENT_SOURCES and not same_principal(author, self.builder)
         self.held_out = tuple(cases)
-        independent = source in INDEPENDENT_SOURCES and author.strip().lower() != self.builder.strip().lower()
         self.provenance["held_out"] = ("independent" if independent else "model-drafted" if source == "model"
                                        else "caller")
         self.log.append(f"held-out from {source} by {author}: {self.provenance['held_out']}")

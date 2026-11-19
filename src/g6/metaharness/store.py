@@ -19,6 +19,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from g6.core.principals import same_principal
+
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import LedgerError, ChainLedger
 from g6.metaharness.schema import Profile
@@ -71,7 +73,7 @@ def _store_rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str
             problems.append("activate: no decision digest")
         if not who.strip() or is_automated(who):
             problems.append("activate: a person must accept it (no empty or auto: name)")
-        if who.strip().lower() == str(body.get("proposer") or "").strip().lower():
+        if same_principal(who, body.get("proposer")):
             problems.append("activate: the acceptor is the proposer")
     if body["kind"] in ("rollback", "demote"):
         target = body.get("target_version")

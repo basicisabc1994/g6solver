@@ -113,7 +113,9 @@ def _caller_author(check: Check) -> str:
     caller's."""
     from g6.evidence.certificate import G6
 
-    return "caller" if check.author.strip().lower() == G6 else check.author
+    from g6.core.principals import same_principal
+
+    return "caller" if same_principal(check.author, G6) else check.author
 
 
 def _result(value: Any) -> str:

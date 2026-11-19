@@ -12,6 +12,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Literal
+from collections.abc import Mapping
+
+from g6.core.principals import same_principal
 
 Kind = Literal["file", "test", "log", "diff", "review"]
 KINDS: tuple[str, ...] = ("file", "test", "log", "diff", "review")
@@ -70,9 +73,11 @@ class Evidence:
             return "" if _HUNK.search(self.output or "") else "a diff item needs unified-diff text with an @@ hunk"
         if is_placeholder(self.reviewer) or is_placeholder(ref):
             return "a review item needs who reviewed (reviewer) and what was reviewed (ref)"
-        who, by = set(_norm(self.reviewer).split()), set(_norm(author).split())
-        if by and (who <= by or by <= who):   # "Claude" reviewing work by "Claude Opus" is a self-review
-            return "the reviewer is the author; a self-review does not count"
+        try:
+            if same_principal(self.reviewer, author):
+                return "the reviewer is the author; a self-review does not count"
+        except ValueError:
+            return "reviewer or author identity is absent or ambiguous; names are recorded, not authenticated"
         return ""
 
     def to_dict(self) -> dict[str, object]:
@@ -81,15 +86,10 @@ class Evidence:
             out["exit_code"] = self.exit_code
         if self.reviewer:
             out["reviewer"] = self.reviewer
+            out["identity_notice"] = "Names are recorded as given and are not authenticated."
         if self.output:
             out["output_chars"] = len(self.output)
         return out
-
-
-_PASS_WORDS = frozenset({"pass", "passed"})
-_FAIL_WORDS = frozenset({"fail", "failed", "failure", "error", "errored"})
-_NOT_RUN_WORDS = frozenset({"", "not run", "notrun", "skipped", "none", "n/a"})
-_EXIT = re.compile(r"^exit(?: code| status)?\s*[:=]?\s*(-?\d+)$")
 
 
 @dataclass(frozen=True)
@@ -118,25 +118,15 @@ class VerifierResult:
 
     @classmethod
     def parse(cls, value: VerifierResult | str | None) -> VerifierResult:
-        """Read a verifier result. Only exact words (``pass`` / ``fail``) and an exit code (``exit code 1``) are
-        read; any other string is ``not_run`` with the text kept in ``unrecognised``: unknown is unknown."""
+        """Read typed status/exit_code fields. Text is unrecognised and cannot establish a run."""
         if value is None:
             return cls()
         if isinstance(value, cls):
             return value
+        if isinstance(value, Mapping):
+            return cls(**value)
         if not isinstance(value, str):
             raise TypeError("verifier must be a VerifierResult, a string or None")
-        text = _norm(value)
-        if text in _PASS_WORDS:
-            return cls("pass")
-        if text in _FAIL_WORDS:
-            return cls("fail")
-        if text in _NOT_RUN_WORDS:
-            return cls()
-        found = _EXIT.match(text)
-        if found:
-            code = int(found.group(1))
-            return cls("pass" if code == 0 else "fail", exit_code=code)
         return cls(unrecognised=value.strip()[:200])
 
     def to_dict(self) -> dict[str, object]:

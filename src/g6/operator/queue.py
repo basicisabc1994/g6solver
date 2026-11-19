@@ -4,8 +4,8 @@
 A draft enters as ``proposed`` and leaves only by a decision a person records: ``approve`` (optionally with edited
 text) or ``reject`` (with a reason) and, once the person has sent the approved text themselves, ``mark_sent``.
 
-* Every decision names its ``reviewer``. The actor that drafted the item cannot decide it, and an ``auto:`` reviewer
-  is refused, so a draft is never self-approved and never approved automatically (audit 011, VEN-003, VEN-013). A
+* Every decision records its ``reviewer`` and ``reviewer_kind``. The actor that drafted the item cannot decide it,
+  and an undeclared person is refused, so a draft is never self-approved and never approved automatically (audit 011, VEN-003, VEN-013). A
   database trigger refuses any status change without such a decision row, and a draft can only enter as
   ``proposed``. The library cannot tell a person from a program that passes a person's name: keep these methods out
   of every agent's tool set and call them only from a surface a person drives.
@@ -35,6 +35,9 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validato
 if TYPE_CHECKING:
     from g6.core.llm import LLMCaller
 
+from g6.core.principals import same_principal
+from g6.core.adaptation_gate import is_automated
+
 from g6.operator.gates import amount_of
 from g6.operator.router import QUALIFIED, Guard
 from g6.operator.store import OwnerScope, append_only, utc, utc_clock
@@ -52,7 +55,7 @@ CREATE TABLE IF NOT EXISTS actions (action_id TEXT PRIMARY KEY, venture_id TEXT 
     state TEXT NOT NULL, review_json TEXT NOT NULL, status TEXT NOT NULL, decoy INTEGER NOT NULL,
     approved_text TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS decisions (seq INTEGER PRIMARY KEY AUTOINCREMENT, action_id TEXT NOT NULL,
-    venture_id TEXT NOT NULL, outcome TEXT NOT NULL, reviewer TEXT NOT NULL, decoy INTEGER NOT NULL,
+    venture_id TEXT NOT NULL, outcome TEXT NOT NULL, reviewer TEXT NOT NULL, reviewer_kind TEXT NOT NULL DEFAULT 'unknown', decoy INTEGER NOT NULL,
     text_before TEXT NOT NULL, text_after TEXT NOT NULL, note TEXT NOT NULL, at TEXT NOT NULL);
 CREATE TRIGGER IF NOT EXISTS actions_enter_proposed BEFORE INSERT ON actions WHEN NEW.status <> 'proposed'
 BEGIN SELECT RAISE(ABORT, 'a draft enters the queue as proposed'); END;
@@ -60,11 +63,16 @@ CREATE TRIGGER IF NOT EXISTS actions_not_rewritten BEFORE UPDATE OF action_id, v
     decoy ON actions BEGIN SELECT RAISE(ABORT, 'a queued draft is not rewritten'); END;
 CREATE TRIGGER IF NOT EXISTS actions_no_delete BEFORE DELETE ON actions
 BEGIN SELECT RAISE(ABORT, 'a queued draft is not deleted'); END;
-CREATE TRIGGER IF NOT EXISTS actions_decided_by_person BEFORE UPDATE OF status ON actions
+
+"""
+
+
+_PERSON_TRIGGER = """CREATE TRIGGER IF NOT EXISTS actions_decided_by_person BEFORE UPDATE OF status ON actions
 WHEN NOT EXISTS (SELECT 1 FROM decisions WHERE action_id = NEW.action_id AND outcome = NEW.status
-                 AND lower(reviewer) <> lower(OLD.drafted_by) AND reviewer NOT LIKE 'auto:%')
+                 AND g6_same_principal(reviewer, OLD.drafted_by) = 0 AND reviewer_kind = 'person')
 BEGIN SELECT RAISE(ABORT, 'a status change needs a decision recorded by someone other than the drafter'); END;
 """
+_SCHEMA += _PERSON_TRIGGER
 
 
 class QueueError(Exception):
@@ -78,20 +86,22 @@ def _clean(text: Any) -> str:
     return text + "\n"
 
 
-def _person(reviewer: Any, drafted_by: str) -> str:
+def _person(reviewer: Any, drafted_by: str, *, actor_kind: str = "unknown") -> str:
     who = str(reviewer or "").strip()
-    if not who:
-        raise QueueError("A decision needs the name of the person who made it.")
-    if who.casefold().startswith("auto:"):
-        raise QueueError("An automatic decision is never recorded; a person decides.")
-    if who.casefold() == drafted_by.strip().casefold():
-        raise QueueError("The actor that drafted this cannot decide it; a different person must.")
+    try:
+        if same_principal(who, drafted_by):
+            raise QueueError("The actor that drafted this cannot decide it; a different person must.")
+    except ValueError as exc:
+        raise QueueError(str(exc)) from exc
+    if is_automated(who, actor_kind=actor_kind):
+        raise QueueError("A declared person must decide; names are recorded, not authenticated.")
     return who
 
 
 def _public(row: Any) -> dict[str, Any]:
     out = dict(row)
     out.pop("decoy")
+    out["identity_notice"] = "Names are recorded as given and are not authenticated."
     try:
         out["meta"], out["review"] = json.loads(out.pop("meta_json")), json.loads(out.pop("review_json"))
     except (RecursionError, MemoryError):
@@ -105,7 +115,14 @@ class ActionQueue:
         if not 0.0 <= decoy_rate <= 1.0:
             raise ValueError("decoy_rate is a probability between 0 and 1")
         self.scope, self._conn = scope, scope.conn
+        self._conn.create_function("g6_same_principal", 2, same_principal, deterministic=True)
         scope.store.script(_SCHEMA + append_only("decisions"))
+        # Migrate old recorded names to unknown kind and replace the gate atomically.
+        with scope.immediate():
+            if "reviewer_kind" not in {row[1] for row in self._conn.execute("PRAGMA table_info(decisions)")}:
+                self._conn.execute("ALTER TABLE decisions ADD COLUMN reviewer_kind TEXT NOT NULL DEFAULT 'unknown'")
+            self._conn.execute("DROP TRIGGER IF EXISTS actions_decided_by_person")
+            self._conn.execute(_PERSON_TRIGGER)
         self._decoy_rate, self._rng = float(decoy_rate), rng or random.Random()
         self._clock = utc_clock(clock or (lambda: utc(datetime.now(UTC))))
 
@@ -191,11 +208,12 @@ class ActionQueue:
             raise QueueError(f"This item is {row['status']}; it cannot be {verb}.")
         return row
 
-    def _decide(self, row: Any, outcome: str, reviewer: str, before: str, after: str, note: str = "") -> None:
+    def _decide(self, row: Any, outcome: str, reviewer: str, before: str, after: str, note: str = "", *,
+                reviewer_kind: str = "unknown") -> None:
         self._conn.execute(
-            "INSERT INTO decisions (action_id, venture_id, outcome, reviewer, decoy, text_before, text_after, note,"
-            " at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (row["action_id"], row["venture_id"], outcome, reviewer, row["decoy"], before, after, note,
+            "INSERT INTO decisions (action_id, venture_id, outcome, reviewer, reviewer_kind, decoy, text_before, text_after, note,"
+            " at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (row["action_id"], row["venture_id"], outcome, reviewer, reviewer_kind, row["decoy"], before, after, note,
              self._stamp()))
         self._conn.execute("UPDATE actions SET status=?, approved_text=? WHERE action_id=?",
                            (outcome, after or row["approved_text"], row["action_id"]))
@@ -209,11 +227,12 @@ class ActionQueue:
         return out
 
     # -- decisions: a person's, never the drafter's -----------------------------------------
-    def approve(self, venture_id: str, action_id: str, *, reviewer: str, text: str | None = None) -> dict[str, Any]:
+    def approve(self, venture_id: str, action_id: str, *, reviewer: str, text: str | None = None,
+                reviewer_kind: str = "unknown") -> dict[str, Any]:
         vid = self.scope.resolve(venture_id)
         with self.scope.immediate():
             row = self._require(vid, action_id, ("proposed",), "approved")
-            who = _person(reviewer, row["drafted_by"])
+            who = _person(reviewer, row["drafted_by"], actor_kind=reviewer_kind)
             before = row["body"]
             if row["action_type"] == GUARD_CANDIDATE:
                 if text is not None:
@@ -222,23 +241,23 @@ class ActionQueue:
             else:
                 after = _clean(text) if text is not None else before
                 status = ("voided" if after == before else "caught") if row["decoy"] else "approved"
-            self._decide(row, status, who, before, after)
+            self._decide(row, status, who, before, after, reviewer_kind=reviewer_kind)
             if status == "voided":
                 self.scope._append_evidence(vid, "decoy_approved", row["action_id"], {"reviewer": who})
         return self._decided(vid, row["action_id"], bool(row["decoy"]))
 
-    def reject(self, venture_id: str, action_id: str, *, reviewer: str, reason: str) -> dict[str, Any]:
+    def reject(self, venture_id: str, action_id: str, *, reviewer: str, reason: str, reviewer_kind: str = "unknown") -> dict[str, Any]:
         if not str(reason or "").strip():
             raise QueueError("Say why it is rejected: the reason is what teaches the next draft.")
         vid = self.scope.resolve(venture_id)
         with self.scope.immediate():
             row = self._require(vid, action_id, ("proposed", "approved"), "rejected")
-            who = _person(reviewer, row["drafted_by"])
+            who = _person(reviewer, row["drafted_by"], actor_kind=reviewer_kind)
             self._decide(row, "caught" if row["decoy"] else "rejected", who, row["approved_text"] or row["body"], "",
-                         note=str(reason))
+                         note=str(reason), reviewer_kind=reviewer_kind)
         return self._decided(vid, row["action_id"], bool(row["decoy"]))
 
-    def mark_sent(self, venture_id: str, action_id: str, *, reviewer: str, channel: str) -> bool:
+    def mark_sent(self, venture_id: str, action_id: str, *, reviewer: str, channel: str, reviewer_kind: str = "unknown") -> bool:
         """Record that a person sent the approved text themselves. False when it was already recorded."""
         vid = self.scope.resolve(venture_id)
         with self.scope.immediate():
@@ -253,8 +272,8 @@ class ActionQueue:
                 raise QueueError(f"{row['action_type']!r} is internal to the operator; there is nothing to send.")
             if row["status"] != "approved":
                 raise QueueError(f"This draft is {row['status']}; it is marked sent only after a person approves it.")
-            who = _person(reviewer, row["drafted_by"])
-            self._decide(row, "sent", who, "", row["approved_text"], note=str(channel))
+            who = _person(reviewer, row["drafted_by"], actor_kind=reviewer_kind)
+            self._decide(row, "sent", who, "", row["approved_text"], note=str(channel), reviewer_kind=reviewer_kind)
             if row["action_type"] == "spend":
                 try:
                     amount, month = amount_of(json.loads(row["meta_json"]).get("amount")), self._clock().strftime("%Y-%m")

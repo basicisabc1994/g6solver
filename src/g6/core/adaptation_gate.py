@@ -9,7 +9,7 @@ activates anything: a person still decides.
 
 Fixed on graduation (audit 037):
 
-- GATE-001: an automated reviewer name (``auto:``...) is refused, as the operator queue refuses it.
+- GATE-001: reviewer kind must be explicitly declared person; a name cannot establish actor kind.
 - GATE-002: a local validation is bound to the proposal's content digest, not only its id, so a proposal edited after it
   was validated is blocked.
 - GATE-003: the protected list now covers gates, judges, verifiers, invariants, approvals, ledgers, vaults, the stop,
@@ -25,6 +25,8 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+
+from g6.core.principals import same_principal
 
 from g6.core.ledger import digest
 
@@ -63,8 +65,13 @@ def _hex64(name: str, value: Any) -> str:
     return value
 
 
-def is_automated(name: str) -> bool:
-    return name.strip().lower().startswith("auto:")
+def is_automated(name: str, *, actor_kind: str = "unknown") -> bool:
+    """Whether the declared actor cannot establish a person. Names confer no kind.
+
+    Missing declarations fail closed. A declared kind is still a caller statement,
+    not authentication; callers must record it beside the identity.
+    """
+    return actor_kind != "person"
 
 
 def protected_hits(paths: tuple[str, ...]) -> list[str]:
@@ -158,7 +165,7 @@ def validate_locally(proposal: AdaptationProposal, guard: Callable[[Any], bool],
     kinds = {c.kind for c in controls}
     if kinds != {"negative", "positive"}:
         reasons.append("needs at least one negative and one positive control")
-    if any(c.authored_by.strip().lower() == proposal.proposer.strip().lower() for c in controls):
+    if any(same_principal(c.authored_by, proposal.proposer) for c in controls):
         reasons.append("controls authored by the proposer are not independent")
     outcomes = []
     for control in controls:
@@ -198,6 +205,8 @@ class PromotionDecision:
     reasons: tuple[str, ...]
     evidence_hashes: tuple[str, ...]
     verdicts: dict[str, str]
+    reviewer_kind: str = "unknown"
+    identity_notice: str = "Names are recorded as given and are not authenticated."
 
     @property
     def digest(self) -> str:
@@ -206,7 +215,7 @@ class PromotionDecision:
 
 def decide_promotion(proposal: AdaptationProposal, validation: LocalValidation | None, *, policy_version: str,
                      reviewer: str, owner_confirmed: bool, regression: str, budget: str,
-                     security: str) -> PromotionDecision:
+                     security: str, reviewer_kind: str = "unknown") -> PromotionDecision:
     """The gate. Unknown blocks; a failure rejects; the most it grants is isolated shadow use."""
     _text("policy_version", policy_version)
     verdicts = {"regression": regression, "budget": budget, "security": security}
@@ -223,10 +232,10 @@ def decide_promotion(proposal: AdaptationProposal, validation: LocalValidation |
         blocked.append(f"touches what judges it: {', '.join(hits)}")
     if not reviewer.strip():
         blocked.append("no reviewer")
-    elif reviewer.strip().lower() == proposal.proposer.strip().lower():
+    elif same_principal(reviewer, proposal.proposer):
         blocked.append("the reviewer is the proposer")
-    elif is_automated(reviewer):
-        blocked.append("the reviewer is an automated name (auto:), not a person")
+    elif is_automated(reviewer, actor_kind=reviewer_kind):
+        blocked.append("reviewer kind is not declared person; names are recorded, not authenticated")
     if owner_confirmed is not True:
         blocked.append("owner has not confirmed")
     if validation is None:
@@ -243,4 +252,4 @@ def decide_promotion(proposal: AdaptationProposal, validation: LocalValidation |
     evidence = (proposal.digest,) + ((validation.digest,) if validation else ())
     return PromotionDecision(proposal.proposal_id, policy_version, reviewer, disposition,
                              tuple(blocked + rejected) or ("all mandatory inputs passed; shadow use only",),
-                             evidence, verdicts)
+                             evidence, verdicts, reviewer_kind)

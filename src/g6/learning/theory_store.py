@@ -26,6 +26,8 @@ import time
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
+from g6.core.principals import same_principal
+
 from g6.core.adaptation_gate import is_automated
 from g6.core.storage import open_db
 from g6.learning.paired import CONFIRMED, DISCONFIRMED, credit
@@ -202,6 +204,8 @@ class TheoryStore:
     def activate(self, decision: PromotionDecision, *, accepted_by: str) -> Theory:
         """Make a candidate ``active`` because ``accepted_by`` accepted ``decision``, a promotion recommendation.
 
+        Identities are recorded as given and are not authenticated.
+
         This is the only way a theory becomes active. It refuses an empty or automated (``auto:``) name, and the
         theory's own proposer (LEARNING-01), as the meta-harness does; a decision that does not recommend promotion; a theory that is not a candidate here, or
         whose text changed after its evidence was measured; and a decision that does not follow from the held-out
@@ -218,7 +222,7 @@ class TheoryStore:
             raise ValueError(f"G6_E_LEARNING_NOT_RECOMMENDED: the decision for {decision.theory_id!r} is "
                              f"{decision.recommendation!r}, not a recommendation to promote")
         theory = self._require(decision.theory_id)
-        if theory.proposer.strip() and who.lower() == theory.proposer.strip().lower():
+        if same_principal(who, theory.proposer):
             raise ValueError("G6_E_LEARNING_APPROVER_IS_PROPOSER: the person accepting a change cannot be its proposer")
         if theory.status != "candidate":
             raise ValueError(f"G6_E_LEARNING_NOT_CANDIDATE: {theory.theory_id!r} is {theory.status!r}")

@@ -10,7 +10,6 @@ Every call returns the library envelope (``completion_state``, ``warning_card``,
 from __future__ import annotations
 
 import hashlib
-import re
 import time
 import uuid
 import threading
@@ -23,6 +22,10 @@ from pathlib import Path
 from typing import Any
 
 import g6
+from g6.core.refusals import code_of
+
+from g6.core.principals import same_principal
+
 from g6.core import stop
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import LedgerError, digest
@@ -31,7 +34,6 @@ from g6.core.reliability_envelope import envelope_fields, warning_card
 from g6.core.storage import g6_home, state_path
 from g6.harness import Memory, run
 from g6.integrity import build_manifest, manifest_sha256
-from g6.invariants import ERROR_CODE_PATTERN
 from g6.learning import TheoryStore
 from g6.metaharness.evaluate import EvaluationReport, evaluate, standard_for
 from g6.metaharness.artifacts import ArtifactError, ArtifactStore
@@ -500,7 +502,7 @@ class MetaHarness:
                          next_action="Inspect the confirmed workflow, then propose a candidate and request a bounded evaluation.", workflow_digest=digest_now, judging_sha256=judging,
                          held_out_digest=self.workflow.suite.digest("held_out"), head_version=version,
                          head_profile=profile.digest(), accept_risky=self.workflow.accept_risky,
-                         identity="accepted_by is recorded as given", **extra)
+                         identity="accepted_by is recorded as given and is not authenticated", **extra)
 
     @_serialized
     def candidate(self, profile: Profile | Mapping[str, Any], *, proposer: str, strategy: str = "hand-written",
@@ -565,9 +567,9 @@ class MetaHarness:
         try:
             raw = list(strategy.propose(view, runner))
         except LLMError as exc:
-            why = str(exc)          # the code its words name: the first word that is a G6 code by G6's own rule
-            code = next(filter(ERROR_CODE_PATTERN.match, re.findall(r"\w+", why)), None)
-            return _blocked(code or "G6_E_META_MODEL_FAILED", why, why)
+            why = str(exc)          # human text; only the declared code is used for routing
+            code = code_of(exc)
+            return _blocked(code, why, why)
         except Exception as exc:  # noqa: BLE001 - a failing strategy proposes nothing; it never raises through
             why = f"{type(exc).__name__}: {exc}"
             plan = recovery.for_proposal(why, ())
@@ -783,7 +785,7 @@ class MetaHarness:
         who = accepted_by.strip()
         if not who or is_automated(who):
             return _blocked(APPROVAL_REQUIRED, "a person must accept the change (no empty or auto: name)")
-        if who.lower() == decision.proposer.strip().lower():
+        if same_principal(who, decision.proposer):
             return _blocked(APPROVER_IS_PROPOSER, "the person accepting a change cannot be its proposer")
         version, base = self._head()
         if base.digest() != decision.base_digest or self.workflow.digest() != decision.workflow_digest:
@@ -818,7 +820,7 @@ class MetaHarness:
         return _envelope("qualified-draft", "G6_E_META_ACTIVATED", f"version {number} is active",
                          next_action="Live runs now use it; the monitor compares it with the previous version.",
                          head_version=number, head_profile=proposal.candidate_digest, snapshot=snap,
-                         identity="accepted_by is recorded as given")
+                         identity="accepted_by is recorded as given and is not authenticated")
 
     def _snapshot(self, number: int) -> str:
         home = g6_home()
@@ -1309,7 +1311,7 @@ class MetaHarness:
         assumed = [
             "live tasks resemble the suite (stationarity, KS A1)",
             "the held-out answers are right, and the oracle reads them correctly",
-            "accepted_by names the person who accepted (recorded as given)",
+            "accepted_by records the stated identity; it is not authenticated",
             f"the held-out split is {self.workflow.suite.provenance.get('held_out', 'caller')}-authored",
         ]
         return _envelope("qualified-draft", "G6_E_META_REPORT", "what this meta-harness has shown",
