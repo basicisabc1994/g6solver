@@ -1,16 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Public boundary checks using synthetic tasks and transactional memory storage."""
+import html
 import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import replace
 from io import BytesIO
+from itertools import product
 from pathlib import Path
+from urllib.parse import quote, quote_plus
 
 import pytest
 
 from g6.metaharness.schema import SuiteCase
-from g6.recursion.contamination_gate import CanaryProbe, MembershipProbe, screen
+from g6.recursion.contamination_gate import CanaryProbe, MembershipProbe, canonical_views, screen
 from g6.recursion.evaluator_entry import evaluator_capability
 from g6.recursion.held_out_slicer import FROZEN_COMPONENTS, FreezeRecord, HeldOutSlicer, partition_pool
 from g6.recursion.tasks import TaskSpec
@@ -220,3 +223,125 @@ def test_json_canary_void_is_durable_across_later_transactions(stores, mode, bou
     with pytest.raises(ValueError), store._db():
         raise ValueError("later transaction")
     assert store.status(item.slice_id) == "void"
+
+
+SERIALISERS = {
+    "json_ascii": lambda s: json.dumps(s, ensure_ascii=True),
+    "json_unicode": lambda s: json.dumps(s, ensure_ascii=False),
+    "repr": repr,
+    "ascii": ascii,
+    "str_list": lambda s: str([s]),
+    "str_tuple": lambda s: str((s,)),
+    "str_dict": lambda s: str({"text": s}),
+    "quote": quote,
+    "quote_plus": quote_plus,
+    "html_escape": html.escape,
+    "html_no_quotes": lambda s: html.escape(s, quote=False),
+    "html_decimal": lambda s: "".join(f"&#{ord(c)};" for c in s),
+    "html_hex": lambda s: "".join(f"&#x{ord(c):x};" for c in s),
+    "html_named": lambda s: "".join(f"&{html.entities.codepoint2name[ord(c)]};"
+                                   if ord(c) in html.entities.codepoint2name else c for c in s),
+}
+
+
+def serialised_forms(text, depth):
+    for names in product(SERIALISERS, repeat=depth):
+        encoded = text
+        for name in names:
+            encoded = SERIALISERS[name](encoded)
+        yield names, encoded
+
+
+@pytest.mark.parametrize("depth", [1, 2, 3])
+@pytest.mark.parametrize("source", ["training", "output", "held_out"])
+def test_serialiser_compositions_exclude_thirteen_word_passage(depth, source):
+    words = [f"caf\u00e9\U00010400word{i}" + ("&<>'\"" if i == 6 else "") for i in range(13)]
+    passage = " \n\t\u2003".join(words)
+    for names, encoded in serialised_forms(passage, depth):
+        held = SuiteCase("held", "private prompt", encoded if source == "held_out" else passage)
+        training = ((SuiteCase("train", "other", encoded if source == "training" else passage),)
+                    if source != "output" else ())
+        result = screen(training, (held,), canaries=("a" * 32,),
+                        membership={"held": MembershipProbe(1, 1, (1, 1), (1, 1))},
+                        model_outputs=(encoded,) if source == "output" else ())
+        assert result.ngram_excluded == result.excluded_count == 1, names
+
+
+@pytest.mark.parametrize("depth", [1, 2, 3])
+@pytest.mark.parametrize("boundary", ["training_screen", "output_screen", "evaluate"])
+def test_serialiser_compositions_void_canary_durably(stores, depth, boundary):
+    store, db = stores()
+    item = cut(store)
+    marker = store._data(None)["canaries"][0]
+    spaced = marker[:8] + " \n\t\u2003" + marker[8:16] + "\r\f\v" + marker[16:]
+    for names, encoded in serialised_forms(spaced, depth):
+        db.execute("UPDATE slices SET status='open' WHERE id=?", (item.slice_id,))
+        if boundary == "evaluate":
+            result = store.evaluate_pass(item.slice_id, "unused", encoded, arm="G0", attempt="one",
+                                         anchor_pass=True, detectors=None)
+            assert not result.passed and result.reason == "contamination", names
+        else:
+            training = (SuiteCase("train", encoded, "other"),) if boundary == "training_screen" else ()
+            outputs = (encoded,) if boundary == "output_screen" else ()
+            assert store.screen(item.slice_id, training, membership={}, model_outputs=outputs).voided, names
+        with pytest.raises(ValueError), store._db():
+            raise ValueError("later transaction")
+        assert store.status(item.slice_id) == "void", names
+        assert db.execute("SELECT count(*) FROM events WHERE record LIKE '%contamination%'").fetchone()[0] > 0
+
+
+@pytest.mark.parametrize("passage", [" ".join(["caf\u00e9"] * 13), " ".join(["\U00010400"] * 13)],
+                         ids=["review_ascii_latin1", "review_ascii_eight_digit_U"])
+@pytest.mark.parametrize("source", ["training", "output", "held_out"])
+def test_review_ascii_passage_reproductions(passage, source):
+    encoded = ascii(passage)
+    held = SuiteCase("held", "private", encoded if source == "held_out" else passage)
+    training = ((SuiteCase("train", "other", encoded if source == "training" else passage),)
+                if source != "output" else ())
+    result = screen(training, (held,), canaries=("a" * 32,),
+                    membership={"held": MembershipProbe(1, 1, (1, 1), (1, 1))},
+                    model_outputs=(encoded,) if source == "output" else ())
+    assert result.ngram_excluded == result.excluded_count == 1
+
+
+@pytest.mark.parametrize("boundary", ["screen", "evaluate"])
+def test_review_repr_x85_canary_void_is_durable(stores, boundary):
+    store, _ = stores()
+    item = cut(store)
+    marker = store._data(None)["canaries"][0]
+    encoded = repr(marker[:16] + "\x85" + marker[16:])
+    if boundary == "screen":
+        assert store.screen(item.slice_id, (), membership={}, model_outputs=(encoded,)).voided
+    else:
+        result = store.evaluate_pass(item.slice_id, "unused", encoded, arm="G0", attempt="one",
+                                     anchor_pass=True, detectors=None)
+        assert not result.passed and result.reason == "contamination"
+    with pytest.raises(ValueError), store._db():
+        raise ValueError("later transaction")
+    assert store.status(item.slice_id) == "void"
+
+
+@pytest.mark.parametrize("raw,plain", [
+    (r"caf\xe9", "caf\u00e9"), (r"\U00010400", "\U00010400"),
+    (r"caf\351", "caf\u00e9"), (r"\ud801\udc00", "\U00010400"),
+    ("caf\u00e9\U00010400" + r"\tword", "caf\u00e9\U00010400 word"),
+    ("&Eacute;", "\u00c9"), ("caf%C3%A9+word", "caf\u00e9 word"),
+])
+def test_family_decoders_preserve_unicode_and_escape_case(raw, plain):
+    assert canonical_views(raw) == canonical_views(plain)
+
+
+@pytest.mark.parametrize("raw", ["\\", r"\x", r"\xgg", r"\u12", r"\U00110000", r"\N{bad}",
+                                 "%", "%zz", "&missing;", "\ud800", "\udfff"])
+def test_malformed_serialised_text_never_raises_and_reaches_fixed_views(raw):
+    views = canonical_views(raw)
+    assert views[0] == raw
+    assert canonical_views(views[0]) == views
+
+
+@pytest.mark.parametrize("malformed", [r"\x", r"\U00110000", r"\N{bad}"])
+def test_malformed_literal_does_not_disable_casefold_for_sibling_text(malformed):
+    assert canonical_views("TEXT " + malformed)[0] == "text " + malformed
+    result = screen((), (SuiteCase("held", "private", "answer"),), canaries=("a" * 32,),
+                    membership={}, model_outputs=(malformed + " | " + "A" * 32,))
+    assert result.voided and result.canary_hits == 1

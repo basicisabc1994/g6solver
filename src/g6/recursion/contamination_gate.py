@@ -4,8 +4,12 @@
 ACCESS CONTROL is the binding barrier: the learner and proposer never hold the
 evaluator capability. These screens and canaries are DETECTORS, covering copies
 under NFKC/casefold/escape fixed points with default-ignorables removed or spaced,
-plus a whitespace-free view for short identity and canaries. They make no claim
-about deliberate adversarial obfuscation by a party controlling the encoding.
+plus a whitespace-free view for short identity and canaries. The serialiser scope
+is JSON (json.dumps with either ensure_ascii setting), Python literals (repr,
+ascii and str of containers), URL percent-encoding (urllib.parse.quote and
+quote_plus), and HTML/XML entities (html.escape, numeric and named character
+references), including compositions of these families. Base64, compression,
+ciphers and custom encodings are outside this scope as deliberate encoding.
 Adjacent fragments carry both empty and space boundaries in a token graph;
 matching tracks at most 13 tokens, without enumerating whole-case alternatives
 (linear in fields, so ordinary cases with many meta fields are screened, not refused).
@@ -18,13 +22,15 @@ crossing a bound refuses the screen, never skips it.
 """
 from __future__ import annotations
 
+import html
 import math
 import re
 import unicodedata
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from statistics import mean, stdev
-from urllib.parse import unquote
+from urllib.parse import unquote_plus
 
 from g6.metaharness.schema import NOT_HELD_OUT, Suite, SuiteCase
 
@@ -166,26 +172,40 @@ _IGNORABLE = re.compile(
     "\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3"
     "\U0001d173-\U0001d17a\U000e0000-\U000e0fff]"
 )
-_ESCAPE = re.compile(
-    r"\\u(?P<high>d[89ab][0-9a-f]{2})\\u(?P<low>d[cdef][0-9a-f]{2})"
-    r"|\\u(?P<code>[0-9a-f]{4})|\\(?P<simple>[\"\\/bfnrt])", re.IGNORECASE)
-_JSON_CHARACTERS = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
 
 
-def _unescape(match):
-    if match["high"] is not None:
-        return chr(0x10000 + ((int(match["high"], 16) - 0xD800) << 10) + int(match["low"], 16) - 0xDC00)
-    if match["code"] is not None:
-        return chr(int(match["code"], 16))
-    return _JSON_CHARACTERS[match["simple"]]
+def _literal_text(text: str) -> tuple[str, bool]:
+    """Decode one literal layer without damaging raw Unicode or malformed escapes."""
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            warnings.simplefilter("ignore", SyntaxWarning)
+            decoded = text.encode("latin-1", "backslashreplace").decode("unicode_escape")
+        # JSON also permits escaped slashes and represents astral scalars as pairs.
+        decoded = decoded.replace(r"\/", "/")
+        return decoded.encode("utf-16", "surrogatepass").decode("utf-16", "surrogatepass"), True
+    except UnicodeError:
+        return text, False
 
 
 def _canonical(text: str, replacement: str, *, compact=False) -> str:
     while True:
-        normalized = _IGNORABLE.sub(replacement, unicodedata.normalize("NFKC", text).casefold())
-        # One left-to-right pass keeps escaped backslashes intact until the next layer.
-        decoded = unquote(_ESCAPE.sub(_unescape, normalized))
-        result = ("" if compact else " ").join(decoded.split())
+        normalized = unicodedata.normalize("NFKC", text)
+        decoded, literal_valid = _literal_text(normalized)
+        try:
+            decoded = unquote_plus(decoded, errors="strict")
+        except UnicodeError:
+            pass
+        decoded = html.unescape(decoded)
+        result = ("" if compact else " ").join(_IGNORABLE.sub(replacement, decoded).split())
+        # Finish decoding and boundary changes before folding case-sensitive escapes.
+        if result == text:
+            if literal_valid:
+                result = result.casefold()
+            else:
+                # Keep undecoded escape markers intact while folding surrounding text.
+                head, *tails = result.split("\\")
+                result = "\\".join((head.casefold(), *(s[:1] + s[1:].casefold() for s in tails)))
         if result == text:
             return result
         text = result
@@ -345,6 +365,8 @@ def screen(training: Sequence[SuiteCase], held_out: Sequence[SuiteCase], *, cana
             or any(not isinstance(p, MembershipProbe) for p in membership.values())):
         raise ContaminationError("G6_E_RSI_MEMBERSHIP_REQUIRED")
     graphs = [graph for case in training for graph in _graphs(case)]
+    for output in model_outputs:
+        graphs.extend(_graphs(SuiteCase("", output, "")))
     inputs = {view for c in training for view in canonical_views(c.input)}
     excluded, identities, overlaps, members = set(), 0, 0, 0
     for index, case in enumerate(held_out):
