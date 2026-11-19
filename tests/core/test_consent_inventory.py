@@ -501,15 +501,19 @@ def test_every_context_engine_tool_has_its_source_contract_and_argument_kinds():
 
 
 def knowledge_model_calls(root=ROOT, extra=()):
-    """Every place the Context Engine's shared modules ask a model: (file:function, the receiver is ``guard(...)``,
+    """Every direct send in the Context Engine or its shared reader: (file:function, receiver is ``guard(...)``,
     the call lies inside ``with cloud_consent.request_sources(...)``). Read from the folder, so a new module is seen."""
     rows = []
     for path in [*sorted((root / 'src/g6/knowledge').glob('_*.py')), *sorted((root / 'src/g6/_context_engine').glob('_*.py')),
-                 *extra]:
+                 root / 'src/g6/core/semantic.py', *extra]:
         tree = ast.parse(path.read_text(encoding='utf-8'))
+        source_aliases = {a.asname or a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+                          and n.module == 'g6.core' for a in n.names if a.name == 'cloud_consent'}
         for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
             inside = {id(call) for block in ast.walk(function) if isinstance(block, ast.With) and any(
-                isinstance(i.context_expr, ast.Call) and ast.unparse(i.context_expr.func) == 'cloud_consent.request_sources'
+                isinstance(i.context_expr, ast.Call) and isinstance(i.context_expr.func, ast.Attribute)
+                and i.context_expr.func.attr == 'request_sources'
+                and isinstance(i.context_expr.func.value, ast.Name) and i.context_expr.func.value.id in source_aliases
                 for i in block.items) for call in ast.walk(block)}
             for call in ast.walk(function):
                 if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr in (
@@ -522,10 +526,24 @@ def knowledge_model_calls(root=ROOT, extra=()):
 
 def test_every_model_call_of_the_context_engine_is_guarded_and_names_its_sources(tmp_path):
     rows = knowledge_model_calls()
-    assert {'_relations.py:extract', '_planner.py:run'} <= {name for name, _, _ in rows}
+    # 1aafbe4b routes planner interpretation through the shared semantic reader.
+    assert {'_relations.py:extract', 'semantic.py:_send'} <= {name for name, _, _ in rows}
     assert all(guarded and inside for _, guarded, inside in rows), rows
     text = (ROOT / 'src/g6/_context_engine/_relations.py').read_text(encoding='utf-8')
     assert 'from g6.core.consent_callers import guard' in text and 'from g6.core import cloud_consent' in text
+    planner = ast.parse((ROOT / 'src/g6/_context_engine/_planner.py').read_text(encoding='utf-8'))
+    reads = {(function.name, call.args[0].args[0].value)
+             for function in ast.walk(planner) if isinstance(function, ast.FunctionDef)
+             for call in ast.walk(function) if isinstance(call, ast.Call)
+             and ast.unparse(call.func) == 'semantic.read'}
+    assert reads == {('features_of', 'query_intent'), ('reformulation_of', 'reformulation')}
+    scoped_reformulations = [call for block in ast.walk(planner) if isinstance(block, ast.With)
+                            and any(isinstance(i.context_expr, ast.Call)
+                                    and ast.unparse(i.context_expr.func) == 'cloud_consent.request_sources'
+                                    for i in block.items)
+                            for call in ast.walk(block) if isinstance(call, ast.Call)
+                            and ast.unparse(call.func) == 'reformulation_of']
+    assert len(scoped_reformulations) == 1
     # a new module that asks a model directly, or outside the sources of what it sends, fails the inventory
     fresh = tmp_path / '_fresh.py'
     fresh.write_text('def ask(caller, text):\n    return caller.complete("", text)\n\n\n'
