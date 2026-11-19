@@ -197,6 +197,7 @@ def test_exception_persists_attempt_cost(sample, monkeypatch):
 
 
 def test_activation_reconciles_both_measurements_once(sample, monkeypatch):
+    # Interval contract: final closes replace the reserved tail and diagnostic costs.
     candidate, frozen, clock = meter_rig(sample, monkeypatch)
     measure = g._measure
     def timed_measure(*args):
@@ -211,9 +212,20 @@ def test_activation_reconciles_both_measurements_once(sample, monkeypatch):
     answer = g.decide_replacement(candidate, g.Library(), frozen.registration_sha256)
     assert answer.verdict == "admit_probation", answer.reasons
     receipts = [row["body"] for row in g._journal().entries() if row["kind"] == "replacement_state"]
-    assert receipts[-1]["report"]["replacement"]["validation_s"] == 10.
-    costs = [r["body"] for r in g._journal().entries() if r["kind"] == "replacement_attempt"]
-    assert [r["validation_s"] for r in costs] == [8.]
+    assert [data["validation_s"] for data in captured] == [8., 8.]
+    assert receipts[-1]["report"]["replacement"]["validation_s"] == 8.
+    rows = g._journal().entries()
+    closes = [row["body"] for row in rows if row["kind"] == "registration_closed"]
+    assert [body["validation_s"] for body in closes] == [8.]
+    diagnostics = [row["body"]["validation_s"] for row in rows
+                   if row["kind"] in {"replacement_attempt", "registration_meter_closed"}]
+    assert diagnostics == [8., 8.]
+    total = g._validation_total(frozen.registration_sha256, None)
+    assert total == sum(body["validation_s"] for body in closes) == clock[0] == 8.
+    reconciled = receipts[-1]["report"]["replacement"]["cost"]
+    study = frozen.replacement
+    assert reconciled["fixed_difference"] == pytest.approx(
+        study.fixed_new_s - study.fixed_base_s + total * study.cpu_weight)
 
 
 def test_attempt_completion_uses_current_journal_after_decision_rows(sample, monkeypatch):

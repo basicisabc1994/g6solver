@@ -275,12 +275,27 @@ def test_tail_overrun_requires_cost_recovery_before_retry(sample, monkeypatch, w
 
 
 def test_activation_follows_completed_outer_meter_and_final_cost(sample, monkeypatch):
+    # Interval contract: authority waits for the final close after activation and lease release.
+    from contextlib import contextmanager
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
     published = []
+    entry = None
+    @contextmanager
+    def writer():
+        try:
+            yield
+        finally:
+            assert not g._replacement_authorized(entry)
+            clock[0] += .5
+    monkeypatch.setattr(g, "_writer", writer)
     def persist(c, answer, evidence, own, frozen, data, library, **kwargs):
+        nonlocal entry
         clock[0] += .25
         assert data["replacement"]["state"] == "pending"
-        return answer
+        entry = SimpleNamespace(entry_id="f" * 64, candidate_id=c.candidate_id,
+            noninferiority=g.digest(data["replacement"]), teacher=data["replacement"]["teacher"],
+            replacement_scope=[], replacement="R", authority="A1", status="probation")
+        return replace(answer, entry_id=entry.entry_id)
     monkeypatch.setattr(g, "_persist", persist)
     def publish(*args):
         rows = g._journal().entries()
@@ -288,16 +303,41 @@ def test_activation_follows_completed_outer_meter_and_final_cost(sample, monkeyp
         published.append(candidate.candidate_id)
     monkeypatch.setattr(g, "_publish_replacement", publish)
     append = g._append
+    activated, closed, activation_authority = [], [], []
     def activate(journal, kind, body):
+        result = append(journal, kind, body)
         if kind == "replacement_state" and body["state"] == "active":
-            assert journal.entries()[-1]["kind"] == "registration_meter_closed"
+            activated.append(result)
+            clock[0] += .75
+            activation_authority.append(g._replacement_authorized(entry))
+            assert not any(row["kind"] == "registration_closed" for row in journal.entries())
+            assert not g._replacement_authorized(entry)
+            assert g._active([entry]) == []
             assert body["report"]["replacement"]["cost"]["upper_95"] < 0
-            assert body["report"]["replacement"]["validation_s"] >= g._validation_total(frozen.registration_sha256, None)
-        return append(journal, kind, body)
+        if kind == "registration_closed":
+            closed.append(result)
+            assert body["activation_receipts"] == activated
+            assert body["validation_s"] == clock[0] == 1.75
+            assert g._replacement_authorized(entry)
+        return result
     monkeypatch.setattr(g, "_append", activate)
     answer = g.decide_replacement(candidate, Library(), frozen.registration_sha256)
+    assert activation_authority == [False]
     assert answer.verdict == "admit_probation", answer.reasons
     assert published == [candidate.candidate_id] * 2
+    assert len(activated) == len(closed) == 1
+    assert g._replacement_authorized(entry)
+    assert g._active([entry]) == [entry]
+    total = g._validation_total(frozen.registration_sha256, None)
+    assert total == clock[0] == 1.75
+    receipt = next(row["body"] for row in g._journal().entries() if row["id"] == activated[0])
+    replacement = receipt["report"]["replacement"]
+    reconciled = g._final_replacement_cost(receipt["report"], frozen.replacement, total)["replacement"]
+    assert reconciled["validation_s"] == total
+    assert reconciled["cost"]["fixed_difference"] == pytest.approx(
+        frozen.replacement.fixed_new_s - frozen.replacement.fixed_base_s + total * frozen.replacement.cpu_weight)
+    assert reconciled["cost"]["upper_95"] == pytest.approx(replacement["cost"]["upper_95"]
+        + (total - replacement["validation_s"]) * frozen.replacement.cpu_weight)
 
 
 @pytest.mark.parametrize("invalid", ["different_candidate", "shared_meter", "different_registration"])

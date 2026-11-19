@@ -160,6 +160,7 @@ def test_post_commit_cost_refuses_before_activation(sample, monkeypatch, delay):
 
 
 def test_failed_seal_append_requires_recovery_even_after_row_was_written(sample, monkeypatch):
+    # Interval contract: seal failures remain charged; failed final closes need bound recovery.
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
     append = g._append
     def interrupted(journal, kind, body):
@@ -170,8 +171,40 @@ def test_failed_seal_append_requires_recovery_even_after_row_was_written(sample,
         return result
     monkeypatch.setattr(g, "_append", interrupted)
     assert g.decide_replacement(candidate, Library(), frozen.registration_sha256).verdict == "block"
+    rows = g._journal().entries()
+    assert any(row["kind"] == "registration_meter_closed" for row in rows)
+    assert rows[-1]["kind"] == "registration_closed"
+    assert rows[-1]["body"]["validation_s"] == clock[0] == 20000.
+    assert g._validation_total(frozen.registration_sha256, None) == 20000.
+
+    def failed_close(journal, kind, body):
+        result = append(journal, kind, body)
+        if kind == "registration_closed":
+            clock[0] += 7.
+            raise ValueError("final close failed after writing")
+        return result
+    monkeypatch.setattr(g, "_append", failed_close)
+    assert g.decide_replacement(candidate, Library(), frozen.registration_sha256).verdict == "block"
     with pytest.raises(ValueError, match="cost recovery"):
         g._validation_total(frozen.registration_sha256, None)
+    journal = g._journal()
+    rows = journal.entries()
+    failed = rows[-1]
+    closed = [row for row in rows if row["kind"] == "registration_closed"][-1]
+    assert failed["kind"] == "registration_close_failed"
+    assert failed["body"]["attempt"] == closed["body"]["attempt"]
+    recovery = closed["body"] | {"validation_s": 7., "monotonic_end": clock[0],
+                                  "activation_receipts": []}
+    unbound = g.ChainLedger()
+    for row in rows:
+        unbound.append(row["kind"], row["id"], row["body"])
+    with monkeypatch.context() as patch:
+        patch.setattr(g, "_journal", lambda: unbound)
+        append(unbound, "registration_closed", recovery | {"recovery_of": "f" * 64})
+        with pytest.raises(ValueError, match="cost recovery"):
+            g._validation_total(frozen.registration_sha256, None)
+    append(journal, "registration_closed", recovery | {"recovery_of": failed["id"]})
+    assert g._validation_total(frozen.registration_sha256, None) == clock[0] == 20007.
 
 
 def test_replacement_batch_refuses_until_joint_activation_is_supported(sample, monkeypatch):
@@ -199,6 +232,7 @@ def test_pending_receipt_blocks_direct_gate_readers(sample, monkeypatch):
 
 
 def test_activation_flip_overrun_stays_pending_for_readers(sample, monkeypatch):
+    # Interval contract: readers reconcile every closed interval against R4, including activation time.
     from contextlib import contextmanager
     from types import SimpleNamespace
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
@@ -211,33 +245,53 @@ def test_activation_flip_overrun_stays_pending_for_readers(sample, monkeypatch):
         finally:
             locked[0] = False
     monkeypatch.setattr(g, "_writer", writer)
-    class Lock:
-        def exists(self):
-            return locked[0]
-
-        def read_text(self, **kwargs):
-            return "123\nwriter-lease\n"
-    monkeypatch.setattr(g, "state_path", lambda *args: Lock())
-    entry = None
+    entries = []
     def persist(c, answer, evidence, own, frozen, data, library, **kwargs):
-        nonlocal entry
-        entry = SimpleNamespace(entry_id="f" * 64, candidate_id=candidate.candidate_id,
-                                noninferiority=g.digest(data["replacement"]))
+        if kwargs["prepare"] is True:
+            entries.append(SimpleNamespace(entry_id=f"{len(entries) + 1:064x}", candidate_id=c.candidate_id,
+                noninferiority=g.digest(data["replacement"]), teacher=data["replacement"]["teacher"],
+                replacement_scope=[], replacement="R", authority="A1", status="probation"))
+        entry = entries[-1]
         return replace(answer, entry_id=entry.entry_id)
     monkeypatch.setattr(g, "_persist", persist)
     append = g._append
     def delayed(journal, kind, body):
         result = append(journal, kind, body)
         if kind == "replacement_state" and body["state"] == "active":
-            clock[0] += 20000.
-            assert not g._replacement_authorized(entry)
+            assert locked[0]
+            clock[0] += 1. if len(entries) == 1 else 20000.
+            assert not any(g._replacement_authorized(entry) for entry in entries)
+            assert g._active(entries) == []
         return result
     monkeypatch.setattr(g, "_append", delayed)
+    first = g.decide_replacement(candidate, Library(), frozen.registration_sha256)
+    assert first.verdict == "admit_probation", first.reasons
+    assert g._replacement_authorized(entries[0])
+    assert g._active(entries) == entries
     answer = g.decide_replacement(candidate, Library(), frozen.registration_sha256)
     assert answer.verdict == "refuse", answer.reasons
-    assert not g._replacement_authorized(entry)
-    with pytest.raises(ValueError, match="cost recovery"):
-        g._validation_total(frozen.registration_sha256, None)
+    assert "cumulative cost" in " ".join(answer.reasons)
+    assert not locked[0]
+    total = g._validation_total(frozen.registration_sha256, None)
+    assert total == clock[0] == 20001.
+    rows = g._journal().entries()
+    closes = [row["body"] for row in rows if row["kind"] == "registration_closed"]
+    assert [body["validation_s"] for body in closes] == [1., 20000.]
+    assert closes[0]["activation_receipts"] and not closes[1]["activation_receipts"]
+    receipts = [row["body"] for row in rows if row["kind"] == "replacement_state"]
+    assert len(receipts) == len(entries) == 2
+    for receipt, entry in zip(receipts, entries):
+        replacement = receipt["report"]["replacement"]
+        upper = replacement["cost"]["upper_95"] + (
+            total - replacement["validation_s"]) * replacement["cpu_weight"]
+        assert upper > 0
+        assert not g._replacement_authorized(entry)
+        verdicts, costs = g._measure_entry(entry, frozen.acceptance[:1], entries)
+        assert verdicts == ["abstain"] and costs == [0., 0., 0.]
+        monkeypatch.setattr(Library, "get", lambda self, ident: entry)
+        with pytest.raises(ValueError, match="pending"):
+            g._snapshot(Library(), entry.entry_id)
+    assert g._active(entries) == []
 
 
 def test_missing_reader_issuance_cannot_activate(sample, monkeypatch):
@@ -307,6 +361,7 @@ def test_closed_total_reserves_activation_tail_for_the_next_attempt(sample, monk
 
 
 def test_slow_refusal_tail_cannot_be_forgotten_by_retry(sample, monkeypatch):
+    # Interval contract: a refusal tail is charged by its final close on the next attempt.
     candidate, frozen, clock = repair.meter_rig(sample, monkeypatch)
     append = g._append
     def delayed(journal, kind, body):
@@ -316,5 +371,25 @@ def test_slow_refusal_tail_cannot_be_forgotten_by_retry(sample, monkeypatch):
         return result
     monkeypatch.setattr(g, "_append", delayed)
     assert g.decide_replacement(candidate, Library(), frozen.registration_sha256).verdict == "refuse"
-    with pytest.raises(ValueError, match="cost recovery"):
-        g._validation_total(frozen.registration_sha256, None)
+    rows = g._journal().entries()
+    diagnostic = next(row["body"] for row in rows if row["kind"] == "replacement_attempt")
+    assert diagnostic["validation_s"] == 0.
+    assert rows[-1]["kind"] == "registration_closed"
+    tail = rows[-1]["body"]["validation_s"]
+    assert tail == clock[0] == 20000.
+    assert g._validation_total(frozen.registration_sha256, None) == tail
+    monkeypatch.setattr(g, "_append", append)
+    assess = g._assess_replacement
+    retry_costs = []
+    def retry_assessment(*args, **kwargs):
+        retry_costs.append(kwargs["prior_validation_s"])
+        return assess(*args, **kwargs)
+    monkeypatch.setattr(g, "_assess_replacement", retry_assessment)
+    retry = g.decide_replacement(candidate, Library(), frozen.registration_sha256)
+    assert retry.verdict == "refuse", retry.reasons
+    assert "cumulative cost" in " ".join(retry.reasons)
+    assert retry_costs == [tail]
+    closes = [row["body"] for row in g._journal().entries() if row["kind"] == "registration_closed"]
+    assert [body["validation_s"] for body in closes] == [tail, 0.]
+    assert g._validation_total(frozen.registration_sha256, None) == sum(
+        body["validation_s"] for body in closes) == tail

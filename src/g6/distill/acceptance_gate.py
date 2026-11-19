@@ -356,8 +356,6 @@ def _load(registration_id, candidate, library, replacement_mode=False) -> Evalua
             groups[name] = [replace(o, case=ProbeCase(o.case, inputs[o.case.case_id]))
                             if o.case.case_id in inputs else o for o in group]
         observations = tuple(groups["acceptance"])
-    if not replacement_mode:
-        replacement = _registered_replacement(frozen, registration_id, candidate, custody, required=False)
     return EvaluationSet(registration_id, digest([o.case.case_id for o in observations]), observations,
                          tuple(groups["monitor"]), tuple(groups["regression"]), controls, replacement, frozen.policy,
                          tuple(groups["tuning"]))
@@ -476,6 +474,10 @@ def _normal_form(source, reserved=()):
                 raise ValueError("reassigned constant")
             constants[node.targets[0].id] = node.value
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            sensitive = {"inspect", "globals", "locals", "vars", "getattr", "hasattr", "setattr", "modules"}
+            if (getattr(node, "module", "") or "").split(".")[0] == "inspect" or any(
+                    alias.name.split(".")[0] in sensitive for alias in node.names):
+                raise ValueError("namespace introspection import")
             kept.append(node)
         else:
             raise ValueError("unsupported normalisation form")
@@ -491,10 +493,10 @@ def _normal_form(source, reserved=()):
             raise ValueError("dynamic normalisation form")
         if isinstance(node, ast.FunctionDef) and node not in kept:
             raise ValueError("nested function")
-        if isinstance(node, ast.Attribute) and (node.attr.startswith("__") or node.attr in names):
+        if isinstance(node, ast.Attribute) and (node.attr.startswith("__") or node.attr in names or node.attr in {"modules", "inspect", "globals", "locals", "vars", "getattr", "hasattr", "setattr"}):
             raise ValueError("name-sensitive attribute")
         if isinstance(node, ast.Name):
-            if node.id in {"globals", "locals", "eval", "exec", "getattr", "setattr", "vars", "dir"}:
+            if node.id in {"globals", "locals", "eval", "exec", "getattr", "hasattr", "setattr", "vars", "dir", "inspect", "__builtins__"}:
                 raise ValueError("name-sensitive operation")
             if node.id in names and not (isinstance(parents.get(node), ast.Call) and parents[node].func is node):
                 raise ValueError("function name escapes direct call")
@@ -713,7 +715,7 @@ def _leaks(candidate, observations):
     return False
 
 
-def _regress(entries, observations, added=None, *, targets=None):
+def _regress(entries, observations, added=None, *, targets=None, scope=None):
     # Replay every frozen case, including negative and abstain verdicts. Unknown
     # or missing bodies refuse; a new method cannot silently replace a verdict.
     cases = {o.case.case_id: o for o in observations}
@@ -726,7 +728,9 @@ def _regress(entries, observations, added=None, *, targets=None):
             if own != expected.verdict:
                 raise ValueError("entry regression no longer reproduces")
             before = _library_verdicts(entries, (observation,))[0]
-            after = _union([before, _measure(added, (observation,), entries)[0][0]]) if added else before
+            after = before
+            if added and (scope is None or _case_in_scope(scope, observation.case)):
+                after = _union([before, _measure(added, (observation,), entries)[0][0]])
             if after != before:
                 raise ValueError("whole-library regression verdict changed")
 
@@ -904,39 +908,33 @@ def _spend(registration, candidate, meter=None):
     return index, reservation
 
 
-@contextmanager
-def _attempt_meter(registration, candidate, phase):
-    started = getattr(candidate, "started", None)
-    if started is None:
-        started = time.monotonic()
-    body = {"registration": registration, "candidate_id": candidate.candidate_id,
-            "phase": phase, "outer": True, "candidate_ids": getattr(candidate, "candidate_ids", [candidate.candidate_id])}
-    attempt = _append(_journal(), "replacement_attempt_start", body)
-    try:
-        yield started, attempt
-    finally:
-        elapsed = time.monotonic() - started
-        if not math.isfinite(elapsed) or elapsed < 0:
-            raise ValueError("invalid replacement attempt duration")
-        _append(_journal(), "replacement_attempt", body | {"attempt": attempt, "validation_s": elapsed})
-        # Completion is inside the outer meter. Its seal also reserves the entire
-        # registered post-commit tail, so later attempts charge that budget too.
-        elapsed = time.monotonic() - started
-        tail = getattr(candidate, "tail_allowance_s", 0.)
-        sealed = elapsed + 1. + tail
-        try:
-            _append(_journal(), "registration_meter_closed", body | {
-                "attempt": attempt, "validation_s": sealed, "tail_allowance_s": tail})
-        except BaseException:
-            _append(_journal(), "replacement_attempt_start", body | {"phase": "cost_recovery"})
-            raise
-        if time.monotonic() - started > sealed:
-            _append(_journal(), "replacement_attempt_start", body | {"phase": "cost_recovery"})
-            raise ValueError("meter seal exceeded; owner cost recovery required")
+def _interval_journal(ident=None):
+    """Each interval owns its append-only chain, independent of the writer lease."""
+    root = state_path("distill", "acceptance_gate.intervals")
+    root.mkdir(parents=True, exist_ok=True)
+    return ChainLedger(root / (ident + ".jsonl")) if ident else root
 
 
-def _validation_total(registration, active):
-    rows = [r for r in _journal().entries() if r["body"].get("registration") == registration]
+def _interval_rows():
+    journal = _interval_journal()
+    if isinstance(journal, Path):
+        return [row for path in sorted(journal.glob("*.jsonl")) for row in ChainLedger(path).entries()]
+    return journal.entries()
+
+
+def _interval_elapsed(body, *, recovery=False):
+    elapsed = time.monotonic() - body["monotonic_start"]
+    wall = time.time() - body["wall_start"]
+    if not math.isfinite(elapsed) or not math.isfinite(wall):
+        raise ValueError("registration clock requires owner cost recovery")
+    return max(elapsed, wall, 0.) if recovery else max(elapsed, 0.)
+
+
+def _legacy_validation_total(registration, active):
+    intervals = {r["id"] for r in _interval_rows() if r["body"].get("interval_version") == 1
+                 and r["kind"] == "replacement_attempt_start" and r["body"].get("registration") == registration}
+    rows = [r for r in _journal().entries() if r["body"].get("registration") == registration
+            and not r["body"].get("interval_version") and r["body"].get("meter") not in intervals]
     starts = {r["id"]: r["body"] for r in rows if r["kind"] == "replacement_attempt_start"}
     finished = {}
     for row in rows:
@@ -991,6 +989,51 @@ def _validation_total(registration, active):
             raise ValueError("unmetered earlier evaluation requires owner cost recovery")
         used.add(key)
     return math.fsum(finished.values())
+
+
+def _validation_total(registration, active):
+    total = _legacy_validation_total(registration, active)
+    rows = [r for r in _interval_rows() if r["body"].get("registration") == registration
+            and r["body"].get("interval_version") == 1]
+    starts = {r["id"]: r["body"] for r in rows if r["kind"] == "replacement_attempt_start"}
+    closed, failed = {}, {}
+    for row in rows:
+        body = row["body"]
+        if row["kind"] == "registration_close_failed":
+            ident = body["attempt"]
+            if ident not in starts:
+                raise ValueError("registration failure binding invalid; owner cost recovery required")
+            closed.pop(ident, None)
+            failed[ident] = row["id"]
+        if row["kind"] != "registration_closed":
+            continue
+        ident, elapsed = body["attempt"], body["validation_s"]
+        if (ident not in starts or ident in closed or not math.isfinite(elapsed) or elapsed < 0
+                or body.get("recovery_of") != failed.get(ident)
+                or body["monotonic_end"] < starts[ident]["monotonic_start"]
+                or elapsed < body["monotonic_end"] - starts[ident]["monotonic_start"]):
+            raise ValueError("registration interval closure invalid; owner cost recovery required")
+        closed[ident] = elapsed
+        failed.pop(ident, None)
+    unfinished = starts.keys() - closed.keys() - {active}
+    total += math.fsum(closed.values())
+    members = {r["body"]["attempt"]: r["body"]["candidate_ids"] for r in rows
+               if r["kind"] == "registration_closed"}
+    used = set()
+    for row in _journal().entries():
+        body = row["body"]
+        meter = body.get("meter")
+        if row["kind"] != "reserve" or body.get("registration") != registration or meter not in starts:
+            continue
+        key = (meter, body.get("candidate_id"))
+        if (key in used or starts[meter]["phase"] != "assessment"
+                or (meter != active and body.get("candidate_id") not in members.get(meter, []))):
+            raise ValueError("registration interval reservation binding invalid; owner cost recovery required")
+        used.add(key)
+    if unfinished:
+        total += math.fsum(_interval_elapsed(starts[ident], recovery=True) for ident in unfinished)
+        raise ValueError(f"unfinished registration interval requires owner cost recovery; elapsed total {total}")
+    return total
 
 
 def _record(answer, reservation=""):
@@ -1106,7 +1149,7 @@ def _final_replacement_cost(data, study, validation_s):
     kind = ("dominates" if fixed <= 0 <= saving else "break_even" if fixed > 0 and saving > 0
             else "crossover" if fixed < 0 and saving < 0 else "never")
     cost.update(kind=kind, crossing=fixed / saving if kind in {"break_even", "crossover"} else None,
-                admissible=cost["upper_95"] < 0)
+                admissible=cost["upper_95"] <= 0)
     # The fixed-cost null changed; retain a conservative descriptive p value.
     cost["interval"] = cost["interval"] | {"margin": -fixed / 1000, "p_value": 1.}
     if not math.isfinite(fixed) or not cost["admissible"]:
@@ -1115,35 +1158,35 @@ def _final_replacement_cost(data, study, validation_s):
 
 
 def _replacement_authorized(entry):
-    """Pending receipts grant no authority, including to dependency readers."""
+    """An activation receipt needs its final interval closure and reconciled R4."""
     try:
         rows = _journal().entries()
-        states = [r["body"] for r in rows if r["kind"] == "replacement_state"
+        states = [r for r in rows if r["kind"] == "replacement_state"
                   and (r["body"].get("entry_id") == entry.entry_id
                        or (r["body"].get("pending_receipt") == entry.noninferiority
                            and r["body"].get("candidate_id") == entry.candidate_id))]
-        if not states or states[-1].get("state") != "active":
+        if not states or states[-1]["body"].get("state") != "active":
             return False
-        receipt = states[-1]
-        writer = receipt.get("writer")
-        lock = state_path("distill", "acceptance_gate.lock")
-        if writer is not None and lock.exists() and writer in lock.read_text(encoding="utf-8").splitlines():
-            return False
-        closed = [r["body"] for r in rows if r["kind"] == "registration_meter_closed"
-                  and r["body"].get("attempt") == receipt.get("attempt")]
+        row = states[-1]
+        receipt = row["body"]
         report = receipt["report"]
         replacement = report["replacement"]
-        return (len(closed) == 1 and closed[0]["registration"] == report["registration"]
-                and entry.candidate_id in closed[0]["candidate_ids"]
+        closed = [r["body"] for r in _interval_rows() if r["kind"] == "registration_closed"
+                  and r["body"].get("interval_version") == 1
+                  and r["body"].get("attempt") == receipt.get("attempt")]
+        if (not closed or row["id"] not in closed[-1]["activation_receipts"]
+                or closed[-1]["registration"] != report["registration"]):
+            return False
+        total = _validation_total(report["registration"], None)
+        upper = replacement["cost"]["upper_95"] + (
+            total - replacement["validation_s"]) * replacement["cpu_weight"]
+        return (entry.candidate_id in closed[-1]["candidate_ids"]
                 and entry.candidate_id == report["candidate_id"]
                 and entry.noninferiority == receipt["pending_receipt"]
                 and entry.teacher == replacement["teacher"]
                 and [p.model_dump(mode="json") for p in entry.replacement_scope] == replacement["scope"]
-                and replacement["state"] == "active"
-                and replacement["validation_s"] >= closed[0]["validation_s"]
-                and replacement["cost"]["admissible"]
-                and replacement["cost"]["upper_95"] < 0)
-    except (ValueError, KeyError, FileNotFoundError):
+                and replacement["state"] == "active" and math.isfinite(upper) and upper <= 0)
+    except (ValueError, KeyError, OSError, TypeError):
         return False
 
 
@@ -1200,86 +1243,114 @@ def decide_batch(candidates, library: Library, registration: str) -> tuple[Accep
     return _decide_batch(candidates, library, registration, replacement=False)
 
 
-@dataclass
-class _AssessmentIdentity:
-    candidate_ids: tuple[str, ...]
-    started: float
-    tail_allowance_s: float = 0.
-
-    @property
-    def candidate_id(self):
-        return digest(self.candidate_ids)
-
-
 def _decide_batch(candidates, library, registration, *, replacement):
-    started = time.monotonic()
+    started, wall = time.monotonic(), time.time()
+    interval_id = uuid4().hex
+    opening = {"registration": registration, "monotonic_start": started, "wall_start": wall,
+               "interval_version": 1, "state": "opened", "phase": "assessment"}
+    attempt_id = _append(_interval_journal(interval_id), "replacement_attempt_start", opening)
     candidates = tuple(candidates)
-    pending = {}
-    identity = _AssessmentIdentity(tuple(c.candidate_id if type(c) is VerifierCandidate else "invalid"
-                                         for c in candidates), started)
+    candidate_ids = [c.candidate_id if type(c) is VerifierCandidate else "invalid" for c in candidates]
+    pending, published, receipts = {}, {}, []
+    results, meter_error = None, None
+    completion_attempted = False
     try:
-        with _writer() as lease:
-            with _attempt_meter(registration, identity, "assessment") as attempt:
-                results = _decide_batch_inner(candidates, library, registration,
-                    replacement=replacement, attempt=attempt, pending=pending)
-                identity.tail_allowance_s = max((item[1].replacement.activation_allowance_s
-                                                for item in pending.values()), default=0.)
-            if not pending:
-                return results
-            total = _validation_total(registration, None)
-            closed = next(r["body"]["validation_s"] for r in _journal().entries()
-                          if r["kind"] == "registration_meter_closed" and r["body"]["attempt"] == attempt[1])
-            prior = total - closed
-            for index, candidate in enumerate(candidates):
-                if candidate.candidate_id not in pending:
+        with _writer():
+            results = _decide_batch_inner(candidates, library, registration, replacement=replacement,
+                attempt=(started, attempt_id), pending=pending, published=published)
+            completion_attempted = True
+            _append(_interval_journal(interval_id), "replacement_attempt", opening | {
+                "attempt": attempt_id, "validation_s": _interval_elapsed(opening)})
+            _append(_interval_journal(interval_id), "registration_meter_closed", opening | {
+                "state": "assessed", "attempt": attempt_id, "validation_s": _interval_elapsed(opening)})
+            if replacement and pending:
+                _validation_total(registration, attempt_id)
+            for index, ident in enumerate(candidate_ids):
+                if ident not in pending:
                     continue
-                answer, frozen, data = pending[candidate.candidate_id]
-                activation_started = False
+                answer, frozen, data = pending[ident]
                 try:
-                    if prior + time.monotonic() - attempt[0] > total:
-                        raise ValueError("activation allowance exceeded; owner cost recovery required")
-                    data = _final_replacement_cost(data, frozen.replacement, total)
-                    data["replacement"]["state"] = "active"
-                    body = {"state": "active", "entry_id": answer.entry_id,
-                            "registration": registration, "attempt": attempt[1],
-                            "candidate_id": candidate.candidate_id,
-                            "writer": lease["id"] if lease else None,
-                            "pending_receipt": digest(pending[candidate.candidate_id][2]["replacement"]),
-                            "report": data}
-                    activation_started = True
-                    _append(_journal(), "replacement_state", body)
-                    if prior + time.monotonic() - attempt[0] > data["replacement"]["validation_s"]:
-                        raise ValueError("activation allowance exceeded; owner cost recovery required")
-                except BaseException as error:
-                    if lease:
-                        lease["retain"] = True
-                    if activation_started:
-                        _append(_journal(), "replacement_attempt_start", {
-                            "registration": registration, "candidate_id": candidate.candidate_id,
-                            "phase": "cost_recovery"})
-                    _append(_journal(), "replacement_state", {"state": "pending", "entry_id": answer.entry_id,
-                        "candidate_id": candidate.candidate_id,
-                        "pending_receipt": digest(pending[candidate.candidate_id][2]["replacement"]),
-                        "registration": registration, "attempt": attempt[1]})
-                    if not activation_started and prior + time.monotonic() - attempt[0] > total:
-                        _append(_journal(), "replacement_attempt_start", {
-                            "registration": registration, "candidate_id": candidate.candidate_id,
-                            "phase": "cost_recovery"})
-                    if lease:
-                        lease["retain"] = False
-                    if not isinstance(error, ValueError):
-                        raise
+                    total = _validation_total(registration, attempt_id) + _interval_elapsed(opening)
+                    active = _final_replacement_cost(data, frozen.replacement, total)
+                    active["replacement"]["state"] = "active"
+                    receipt = _append(_journal(), "replacement_state", {
+                        "state": "active", "entry_id": answer.entry_id, "registration": registration,
+                        "attempt": attempt_id, "candidate_id": ident,
+                        "pending_receipt": digest(data["replacement"]), "report": active})
+                    _validation_total(registration, attempt_id)
+                    receipts.append(receipt)
+                except ValueError as error:
                     answer = replace(answer, verdict="refuse", reasons=(str(error),))
                 results = (*results[:index], answer, *results[index + 1:])
-            return results
-    except (ValueError, FileNotFoundError) as error:
-        reason = str(error) if isinstance(error, ValueError) else "evaluator input unavailable"
-        if reason == "nonempty batch of distinct candidates required":
+    except Exception as error:
+        if str(error) == "nonempty batch of distinct candidates required":
             raise
-        return tuple(AcceptanceDecision("block", (reason,), getattr(c, "candidate_id", "")) for c in candidates)
+        if results is not None:
+            meter_error = type(error).__name__
+            receipts.clear()
+        elif not isinstance(error, (ValueError, OSError)):
+            raise
+        if replacement or results is None:
+            reason = str(error) if isinstance(error, ValueError) else "registration operation unavailable"
+            results = tuple(AcceptanceDecision("block", (reason,), ident) for ident in candidate_ids)
+    finally:
+        can_close = True
+        if not completion_attempted:
+            try:
+                _append(_interval_journal(interval_id), "replacement_attempt", opening | {
+                    "attempt": attempt_id, "validation_s": _interval_elapsed(opening)})
+            except Exception as error:
+                meter_error = type(error).__name__
+        if meter_error is not None:
+            try:
+                _append(_interval_journal(interval_id), "registration_meter_failure", opening | {
+                    "attempt": attempt_id, "error_type": meter_error})
+            except Exception:
+                can_close = False
+        try:
+            if replacement and pending and results is not None:
+                total = _validation_total(registration, attempt_id) + _interval_elapsed(opening)
+                for index, ident in enumerate(candidate_ids):
+                    if ident not in pending:
+                        continue
+                    answer, frozen, data = pending[ident]
+                    try:
+                        _final_replacement_cost(data, frozen.replacement, total)
+                    except ValueError as error:
+                        receipts.clear()
+                        answer = replace(answer, verdict="refuse", reasons=(str(error),))
+                        if results[index].verdict in {"admit_probation", "admit_scoped"}:
+                            results = (*results[:index], answer, *results[index + 1:])
+        except ValueError as error:
+            receipts.clear()
+            if replacement and results is not None:
+                results = tuple(replace(answer, verdict="block", reasons=(str(error),)) for answer in results)
+        if not replacement and results is not None:
+            results = tuple(published.get(ident, answer) for ident, answer in zip(candidate_ids, results))
+        try:
+            if not can_close:
+                raise ValueError("registration journal requires owner cost recovery")
+            ended, wall_end = time.monotonic(), time.time()
+            elapsed = ended - started
+            if not math.isfinite(elapsed) or elapsed < 0:
+                raise ValueError("registration clock requires owner cost recovery")
+            _append(_interval_journal(interval_id), "registration_closed", opening | {
+                "state": "closed", "attempt": attempt_id, "validation_s": elapsed,
+                "monotonic_end": ended, "wall_end": wall_end,
+                "candidate_ids": candidate_ids, "activation_receipts": receipts})
+        except Exception:
+            try:
+                _append(_interval_journal(interval_id), "registration_close_failed", opening | {
+                    "attempt": attempt_id, "validation_s": _interval_elapsed(opening)})
+            except Exception:
+                pass  # The unclosed interval remains the recovery obligation.
+            if replacement and results is not None:
+                results = tuple(replace(answer, verdict="block", reasons=("interval close requires owner cost recovery",))
+                                for answer in results)
+    return results
 
 
-def _decide_batch_inner(candidates, library, registration, *, replacement, attempt, pending):
+def _decide_batch_inner(candidates, library, registration, *, replacement, attempt, pending, published):
     assess = _assess_replacement if replacement else _assess
     originals = tuple(candidates)
     try:
@@ -1362,6 +1433,7 @@ def _decide_batch_inner(candidates, library, registration, *, replacement, attem
                 if answer.p_value > .05 * len(accepted) / len(candidates):
                     raise ValueError("batch bar not met after library changed")
                 answer = _persist(candidate, answer, evidence, own, frozen, data, library)
+                published[ident] = answer
             except Inconclusive as error:
                 answer = replace(answer, verdict="inconclusive", reasons=(str(error),))
             except ValueError as error:
@@ -1522,7 +1594,7 @@ def _change(entry, *, status, authority, reason, person=None, field=None):
         "decided_by": {"gate_version": VERSION, "person": person}}
     if field is not None:
         data["field"] = field.model_dump(mode="json")
-    if authority == "A0" and entry.replacement == "R":
+    if authority != "A2" and authority < entry.authority:
         data.update(replacement="none", replacement_scope=None, teacher=None, noninferiority=None)
     result = LibraryEntry(**data)
     Stores().for_model(LibraryEntry).put(result)
@@ -1734,7 +1806,7 @@ def _replacement_cost(fixed_difference, savings, *, value_bounds):
             "break_even" if fixed_difference > 0 and saving > 0 else
             "crossover" if fixed_difference < 0 and saving < 0 else "never")
     return {"horizon": 1000, "fixed_difference": fixed_difference, "per_task_saving": saving,
-            "point": point, "upper_95": upper, "admissible": upper < 0, "interval": interval,
+            "point": point, "upper_95": upper, "admissible": upper <= 0, "interval": interval,
             "kind": kind, "crossing": fixed_difference / saving if kind in {"break_even", "crossover"} else None}
 
 
@@ -1906,7 +1978,7 @@ def _assess_replacement(candidate, entries, frozen, reuse_index, *, prior_valida
         test = _sign(control, success)
         if test["wins"] <= test["losses"] or test["p_one_sided"] > policy.alpha:
             raise ValueError("trivial controls do not fail the acceptance bar")
-    _regress(entries, all_observations, candidate)
+    _regress(entries, all_observations, candidate, scope=scope)
     dev_monitor = (*tuning, *monitor)
     _, _, _, _, monitor_base, monitor_after = measure(dev_monitor)
     if not any(o.label == "negative" for o in monitor):

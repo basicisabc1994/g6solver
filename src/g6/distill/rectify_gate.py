@@ -122,6 +122,7 @@ class Rectifier:
         # Down only. Retain the prior certificate reference as provenance; this
         # does not issue a certificate or grant a fresh authority level.
         self._append_once(LibraryEntry(**(body | dict(version=current.version + 1, status="demoted", authority="A0",
+            replacement="none", replacement_scope=None, teacher=None, noninferiority=None,
             changed_at=at, reason=f"removing check recurred: {rect.rect_id}",
             decided_by=dict(gate_version="distill.findings.recurrence.v1", person=None)))))
 
