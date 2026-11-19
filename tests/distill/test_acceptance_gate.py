@@ -235,14 +235,15 @@ def test_judging_paths_and_proposer_import_graph_are_protected():
     root = Path(__file__).resolve().parents[2]
     judging = ["src/g6/distill/acceptance_gate.py", "validation/distill/held_out/policy.json"]
     assert protected_hits(judging) == judging
+    evaluator_modules = {"acceptance_gate", "pilot_gate"}
     for path in (root / "src/g6/distill").glob("*.py"):
-        if path.name == "acceptance_gate.py":
+        if path.stem in evaluator_modules:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
-                assert "acceptance_gate" not in (node.module or "")
-                assert all(a.name != "acceptance_gate" for a in node.names)
+                assert not any(name in (node.module or "").split(".") for name in evaluator_modules)
+                assert not evaluator_modules.intersection(a.name for a in node.names)
     tree = ast.parse((root / judging[0]).read_text(encoding="utf-8"))
     imports = [n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
     assert not any("self_model" in n or n.endswith("lessons") for n in imports)

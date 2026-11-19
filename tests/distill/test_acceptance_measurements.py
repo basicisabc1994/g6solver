@@ -257,8 +257,8 @@ def test_proposer_import_graph_never_reaches_evaluator_or_threshold_writer():
                 edges.add(target)
                 edges.update(f"{target}.{alias.name}" for alias in node.names)
         graph[module] = edges
-    judging = "g6.distill.acceptance_gate"
-    starts = set(graph) - {judging}
+    judging = {"g6.distill.acceptance_gate", "g6.distill.pilot_gate"}
+    starts = set(graph) - judging
     reached = set()
     while starts:
         current = starts.pop()
@@ -266,7 +266,7 @@ def test_proposer_import_graph_never_reaches_evaluator_or_threshold_writer():
             continue
         reached.add(current)
         starts.update(graph.get(current, set()))
-    assert judging not in reached
+    assert not judging.intersection(reached)
     assert not any("held_out" in name for name in reached)
     assert protected_hits(("src/g6/distill/acceptance_gate.py", "validation/distill/held_out/policy.json"))
 
