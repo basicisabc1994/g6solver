@@ -1,0 +1,46 @@
+[
+  {
+    "source": "mbpp",
+    "licence_id": "mbpp-cc-by-4",
+    "licence": "CC-BY-4.0",
+    "url": "https://github.com/google-research/google-research/tree/master/mbpp",
+    "train_ok": false,
+    "eval_ok": true,
+    "notes": "MBPP underlying data terms. Retention only in this study; EvalPlus additions are Apache-2.0.",
+    "date_checked": "2026-11-18",
+    "redistribute": false
+  },
+  {
+    "source": "apps",
+    "licence_id": "apps-mit",
+    "licence": "MIT",
+    "url": "https://huggingface.co/datasets/codeparrot/apps",
+    "train_ok": true,
+    "eval_ok": true,
+    "notes": "Only the train split may train. Public tests need later augmentation; older data may be contaminated.",
+    "date_checked": "2026-11-18",
+    "redistribute": false
+  },
+  {
+    "source": "codecontests",
+    "licence_id": "codecontests-apache-cc-by",
+    "licence": "Apache-2.0 AND CC-BY-4.0",
+    "url": "https://github.com/google-deepmind/code_contests",
+    "train_ok": true,
+    "eval_ok": true,
+    "notes": "Only train may train. Parts retain their own terms; attribution and upstream restrictions still apply.",
+    "date_checked": "2026-11-18",
+    "redistribute": false
+  },
+  {
+    "source": "livecodebench",
+    "licence_id": "livecodebench-eval-only",
+    "licence": "MIT-code; data-cc-unspecified",
+    "url": "https://github.com/LiveCodeBench/LiveCodeBench",
+    "train_ok": false,
+    "eval_ok": true,
+    "notes": "Owner permits evaluation only, aggregate scores only, no redistribution. Data card says cc; LeetCode terms restrict scraping. Held-out dates must be after September 2024.",
+    "date_checked": "2026-11-18",
+    "redistribute": false
+  }
+]
