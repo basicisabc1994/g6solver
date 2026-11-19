@@ -15,6 +15,57 @@ def clean_screen(held, training=(), outputs=()):
                        membership={held.case_id: gate.MembershipProbe(1, 1, (1, 1), (1, 1))})
 
 
+def padded_references(text, base):
+    return "".join(("&#x" + "0" * 4301 + format(ord(c), "x") + ";") if base == 16 else
+                   ("&#" + "0" * 4301 + str(ord(c)) + ";") for c in text)
+
+
+@pytest.mark.parametrize("base", [10, 16])
+@pytest.mark.parametrize("fenced", [False, True])
+@pytest.mark.parametrize("side", ["training", "output", "held_out"])
+@pytest.mark.parametrize("kind", ["marker", "passage"])
+def test_repair1_zero_padded_references(base, fenced, side, kind):
+    marker = "c84a9f17d3e620b58a47c10f962deb35"
+    plain = marker if kind == "marker" else " ".join(f"w{i}" for i in range(13))
+    encoded = padded_references(plain, base)
+    if fenced:
+        encoded = "```json\n" + json.dumps(encoded) + "\n```"
+    held = SuiteCase("held", "private", encoded if side == "held_out" else
+                     plain if kind == "passage" else "secret")
+    training = ((SuiteCase("train", "other", encoded if side == "training" else plain),)
+                if side == "training" or (side == "held_out" and kind == "passage") else ())
+    result = gate.screen(training, (held,), canaries=(marker,),
+                         membership={"held": gate.MembershipProbe(1, 1, (1, 1), (1, 1))},
+                         model_outputs=(encoded,) if side == "output" else ())
+    assert (result.canary_hits if kind == "marker" else result.ngram_excluded) == 1
+
+
+@pytest.mark.parametrize("held,train", [("Compute 1+2", "Compute 12"), ("return a+b", "return a-b"),
+                                           ("Compute 1+2", "Compute 1 2")])
+def test_repair1_identity_keeps_punctuation(held, train):
+    assert clean_screen(SuiteCase("held", held, "secret"),
+                        (SuiteCase("train", train, "other"),)).identity_excluded == 0
+
+
+@pytest.mark.parametrize("wrap", [json.dumps, repr, lambda s: json.dumps([s]), lambda s: repr((s,))])
+def test_repair1_identity_accepts_enclosing_serializer(wrap):
+    text = "Compute 1+2"
+    assert clean_screen(SuiteCase("held", text, "secret"),
+                        (SuiteCase("train", wrap(text), "other"),)).identity_excluded == 1
+
+
+def test_repair1_graph_has_linear_storage():
+    graph = gate._token_graph(["x"] * 800)
+    assert sum(len(token) for edges in graph for _, token in edges) <= 800 * 4
+
+
+def test_repair1_legacy_matching_consumes_shared_budget(monkeypatch):
+    monkeypatch.setattr(gate, "_MAX_MATCH_STEPS", 100000)
+    with pytest.raises(gate.ContaminationError, match="SCREEN_LIMIT"):
+        gate._shared_13(gate._token_graph(["INFO alpha\n" * 1000]),
+                        gate._token_graph(["INFO beta\n" * 1000]))
+
+
 def malformed_corpus():
     seeds = ["&#" + "9" * 4301 + ";", "&#x" + "f" * 4301 + ";",
              r"\U" + "9" * 4301, r"\Uffffffff", "\ud800", "\udfff",
@@ -30,7 +81,7 @@ def test_followup3_canonical_views_are_total_on_malformed_corpus(raw):
     assert gate.canonical_views(views[0]) == views
 
 
-def test_followup3_entity_failure_retains_region_and_decodes_sibling(monkeypatch):
+def test_valid_entity_failure_retains_partial_evidence_and_refuses(monkeypatch):
     original = gate.html.unescape
 
     def decode(region):
@@ -39,7 +90,9 @@ def test_followup3_entity_failure_retains_region_and_decodes_sibling(monkeypatch
         return original(region)
 
     monkeypatch.setattr(gate.html, "unescape", decode)
-    assert gate.canonical_views("&#999; &eacute;")[0] == "&#999; é"
+    with pytest.raises(gate.ContaminationError, match="SCREEN_LIMIT") as caught:
+        gate.canonical_views("&#999; &eacute;")
+    assert "&#999; é" in caught.value.available
 
 
 CONTAINERS = {
@@ -215,6 +268,7 @@ def test_small_gap_passage_tokens_are_maximal_runs():
 @pytest.mark.parametrize("kind", ["marker", "passage"])
 def test_small_gap_matching_bound_refuses_incomplete_scan(monkeypatch, kind):
     monkeypatch.setattr(gate, "_MAX_MATCH_STEPS", 10, raising=False)
+    monkeypatch.setattr(gate, "_WORK_PER_CHAR", 0)
     with pytest.raises(gate.ContaminationError, match="SCREEN_LIMIT"):
         if kind == "marker":
             gate.canary_matches(("a" * 32,), ("unrelated content",))

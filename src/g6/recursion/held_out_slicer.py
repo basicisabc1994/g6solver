@@ -33,7 +33,7 @@ from g6.metaharness.domain import SealedSplit, cut_pool
 from g6.metaharness.schema import SuiteCase
 from g6.recursion.contamination_gate import (
     CanaryProbe, MembershipProbe, ScreenReport, canary_matches, incident_scan, screen,
-    ContaminationError, _Comparison,
+    ContaminationError, _Comparison, output_passage_exclusions,
 )
 from g6.recursion.evaluator_entry import EvaluatorCapability
 from g6.recursion.tasks import TaskSpec
@@ -516,9 +516,12 @@ class HeldOutSlicer:
         raw_limited = limited
         # Raw evidence is durable before any decoder or later screen can refuse.
         serialization = _Comparison(partial=True)
-        texts, _, limited = incident_scan(*sources, serialization=serialization)
         with self._db() as db:
-            decoded_hit = self._canary_incidents(db, self._data(db), texts, current, serialization=serialization)
+            data, decoded_hit = self._data(db), False
+            def record(texts):
+                nonlocal decoded_hit
+                decoded_hit |= self._canary_incidents(db, data, texts, current, serialization=serialization)
+            _, _, limited = incident_scan(*sources, serialization=serialization, on_texts=record)
             limited |= serialization.limited
             if limited or raw_limited:
                 self._block(db, current)
@@ -557,6 +560,26 @@ class HeldOutSlicer:
                 self._block(db, slice_id)
             raise HeldOutError("G6_E_RSI_SCREEN_LIMIT") from None
 
+    def _screen_output(self, slice_id, output):
+        try:
+            with self._db() as db:
+                row = self._row(db, slice_id)
+                if row["status"] != "open" or not row["screened"]:
+                    return None
+                tasks = self._tasks(self._data(db), row["generation"], row["freeze"])
+                found = output_passage_exclusions(tuple(_case(task) for task in tasks), output)
+                excluded = sorted(set(json.loads(row["excluded"])) | found)
+                db.execute("UPDATE slices SET excluded=? WHERE id=?", (_json(excluded), slice_id))
+                self._event(db, "output_screen", slice_id=slice_id, excluded_indices=sorted(found),
+                            output_digest=self._capability.commitment("output", output))
+                return bool(found)
+        except ContaminationError as error:
+            if str(error) != "G6_E_RSI_SCREEN_LIMIT":
+                raise
+            with self._db() as db:
+                self._block(db, slice_id)
+            raise HeldOutError("G6_E_RSI_SCREEN_LIMIT") from None
+
     def evaluate_pass(self, slice_id: str, case_id: str, output: str, *, arm: str, attempt: str,
                       anchor_pass: bool, detectors: Mapping[str, Callable[[TaskSpec, str], bool]] | None) -> PassResult:
         """Run the registered cheap detectors uncapped; True means a hack was found."""
@@ -564,6 +587,7 @@ class HeldOutSlicer:
         if (type(output) is not str or type(case_id) is not str or type(anchor_pass) is not bool
                 or type(arm) is not str or not arm or type(attempt) is not str or not attempt):
             raise HeldOutError("G6_E_RSI_PASS_INVALID")
+        copied = self._screen_output(slice_id, output) if not hit else False
         with self._db() as db:
             row = self._row(db, slice_id)
             data = self._data(db)
@@ -585,8 +609,10 @@ class HeldOutSlicer:
                 raise HeldOutError("G6_E_RSI_PASS_REUSED")
             names = tuple(self._registration(db)["detectors"])
             reason, count = "passed", 0
-            if not row["screened"]:
+            if not row["screened"] or copied is None:
                 reason = "screen_missing"
+            elif copied:
+                reason = "contamination"
             elif found[0][0] in json.loads(row["excluded"]):
                 reason = "item_excluded"
             else:

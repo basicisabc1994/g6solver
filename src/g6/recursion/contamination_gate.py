@@ -4,7 +4,9 @@
 ACCESS CONTROL is the binding barrier: the learner and proposer never hold the
 evaluator capability. These screens and canaries are DETECTORS, covering copies
 under NFKC/casefold/escape fixed points with default-ignorables removed or spaced,
-plus a whitespace-free view for short identity and canaries. The serialiser scope
+plus a whitespace-free view for canaries. Whole-input identity preserves
+punctuation and normalized whitespace, removing only enclosing serializer pairs.
+The serialiser scope
 is JSON (json.dumps with either ensure_ascii setting), Python literals (repr,
 ascii and str of containers), URL percent-encoding (urllib.parse.quote and
 quote_plus), and HTML/XML entities (html.escape, numeric and named character
@@ -32,8 +34,11 @@ New matchers index held token positions or marker eight-character windows and
 scan candidates left to right. Work is O(H + C + sum(occurrences_in_index)) with
 fixed gap windows; live chains retain only three token columns or 33 character
 columns. H is indexed text size and C is candidate length. Index construction,
-candidate positions and matching index occurrences share a 4194304-step budget
-per comparison state. Reaching it retains available marker incidents, then
+candidate positions, view construction and legacy graph work share a budget of
+4194304 + 512 * N steps per comparison state, where N is raw input characters
+across the sources being compared (counting each field once, including keys).
+Repeated candidates are compared once; disjoint token vocabularies skip matching.
+Reaching the budget retains available marker incidents, then
 refuses the incomplete screen. New view construction is linear in fields and
 characters with two whole-case joins; serialized structure is never read.
 Decoding is capped at 64 passes, raw fields at 1 MiB and each expanded view at
@@ -50,7 +55,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from statistics import mean, stdev
 
-from g6.metaharness.schema import NOT_HELD_OUT, Suite, SuiteCase
+from g6.metaharness.schema import SuiteCase
 
 
 class ContaminationError(ValueError):
@@ -203,34 +208,58 @@ _SURROGATE_PAIR = re.compile("[\ud800-\udbff][\udc00-\udfff]")
 
 
 def _decode_region(decoder, text):
-    """A failed region keeps its text; other regions still get decoded."""
+    """Decoder failure on a supported region leaves the scan incomplete."""
     try:
         return decoder(text)
+    except _ScanLimit:
+        raise
     except Exception:
-        return text
+        raise _ScanLimit(text) from None
+
+
+def _decode_sub(pattern, decoder, text):
+    available, failed = [], False
+    def replace(match):
+        nonlocal failed
+        try:
+            return _decode_region(decoder, match.group())
+        except _ScanLimit as error:
+            failed = True
+            available.extend(error.available)
+            return match.group()
+    result = _decode_region(lambda s: pattern.sub(replace, s), text)
+    if failed:
+        raise _ScanLimit(result, *available)
+    return result
 
 
 def _literal_text(text: str) -> tuple[str, bool]:
     """Decode each literal token independently, retaining invalid sequences."""
-    def decode(match):
-        token = match.group()
+    def decode(token):
         if token == r"\/":
             return "/"
         if token[1] in "01234567":
             return chr(int(token[1:], 8))
+        if token[1] in "xuU":
+            value = int(token[2:], 16)
+            return chr(value) if value <= 0x10FFFF else token
+        if token[1] == "N":
+            try:
+                return unicodedata.lookup(token[3:-1])
+            except KeyError:
+                return token
         return token.encode("ascii").decode("unicode_escape")
 
-    decoded = _LITERAL_ESCAPE.sub(lambda m: _decode_region(lambda _: decode(m), m.group()), text)
+    decoded = _decode_sub(_LITERAL_ESCAPE, decode, text)
     # JSON represents astral scalars as adjacent UTF-16 surrogates.
-    decoded = _SURROGATE_PAIR.sub(lambda m: _decode_region(
-        lambda s: s.encode("utf-16", "surrogatepass").decode("utf-16", "surrogatepass"), m.group()), decoded)
+    decoded = _decode_sub(_SURROGATE_PAIR,
+                          lambda s: s.encode("utf-16", "surrogatepass").decode("utf-16", "surrogatepass"), decoded)
     return decoded, "\\" not in decoded
 
 
-def _percent_text(text: str) -> str:
+def _percent_text(text: str, *, preserve_plus=False) -> str:
     """Decode UTF-8 segments in each byte run, retaining the original invalid bytes."""
-    def decode(match):
-        token = match.group()
+    def decode(token):
         decoded = bytes.fromhex(token.replace("%", " ")).decode("utf-8", "surrogateescape")
         parts, offset = [], 0
         for char in decoded:
@@ -242,13 +271,27 @@ def _percent_text(text: str) -> str:
                 offset += 3 * len(char.encode("utf-8"))
         return "".join(parts)
 
-    return _PERCENT_RUN.sub(lambda m: _decode_region(lambda _: decode(m), m.group()), text.replace("+", " "))
+    return _decode_sub(_PERCENT_RUN, decode, text if preserve_plus else text.replace("+", " "))
+
+
+def _entity_text(text):
+    def decode(token):
+        if token.startswith("&#"):
+            hexadecimal = token[2:3] in ("x", "X")
+            digits = token[3 if hexadecimal else 2:].removesuffix(";").lstrip("0") or "0"
+            maximum = "10ffff" if hexadecimal else "1114111"
+            if len(digits) > len(maximum) or (len(digits) == len(maximum) and digits.lower() > maximum):
+                return token
+            token = "&#" + ("x" if hexadecimal else "") + digits + ";"
+        return html.unescape(token)
+    return _decode_sub(_ENTITY, decode, text)
 
 
 _MAX_RAW_CHARS = 1048576
 _MAX_DECODE_PASSES = 64
 _MAX_VIEW_CHARS = 4194304
 _MAX_MATCH_STEPS = 4194304
+_WORK_PER_CHAR = 512
 
 
 class _ScanLimit(ContaminationError):
@@ -263,13 +306,18 @@ def _view_bound(text, previous):
     return text
 
 
-def _canonical(text: str, replacement: str, *, compact=False) -> str:
+def _canonical(text: str, replacement: str, *, compact=False, serialization=None, preserve_plus=False) -> str:
     for _ in range(_MAX_DECODE_PASSES):
+        if serialization is not None:
+            try:
+                _charge(serialization, 6 * len(text))
+            except _ScanLimit:
+                raise _ScanLimit(text) from None
         normalized = _view_bound(unicodedata.normalize("NFKC", text), text)
-        decoded, _ = _literal_text(normalized)
+        decoded = _decode_region(lambda s: _literal_text(s)[0], normalized)
         decoded = _view_bound(decoded, normalized)
-        decoded = _view_bound(_percent_text(decoded), decoded)
-        decoded = _view_bound(_ENTITY.sub(lambda m: _decode_region(html.unescape, m.group()), decoded), decoded)
+        decoded = _view_bound(_percent_text(decoded, preserve_plus=preserve_plus), decoded)
+        decoded = _view_bound(_entity_text(decoded), decoded)
         result = _view_bound(("" if compact else " ").join(_IGNORABLE.sub(replacement, decoded).split()), decoded)
         # Finish decoding and boundary changes before folding case-sensitive escapes.
         if result == text:
@@ -280,19 +328,21 @@ def _canonical(text: str, replacement: str, *, compact=False) -> str:
     raise _ScanLimit(text)
 
 
-def canonical_views(text: str) -> tuple[str, str, str]:
+def canonical_views(text: str, *, serialization=None) -> tuple[str, str, str]:
     """Legacy fixed views, with content-free refusal when decoding cannot finish."""
     if len(text) > _MAX_RAW_CHARS:
         raise _ScanLimit(text[:_MAX_RAW_CHARS])
     available = []
     try:
-        removed = _canonical(text, "")
+        removed = _canonical(text, "", serialization=serialization)
         available.append(removed)
-        spaced = _canonical(text, " ")
+        spaced = _canonical(text, " ", serialization=serialization)
         available.append(spaced)
-        compact = _canonical(removed, "", compact=True)
+        compact = _canonical(removed, "", compact=True, serialization=serialization)
     except _ScanLimit as error:
         raise _ScanLimit(*available, *error.available) from None
+    except (MemoryError, OverflowError, RecursionError):
+        raise _ScanLimit(*available, text) from None
     return removed, spaced, compact
 
 
@@ -301,9 +351,14 @@ def _letters_numbers(text, *, words=False):
                    for char in text)
 
 
-def comparison_views(text: str) -> tuple[str, ...]:
+def comparison_views(text: str, *, serialization=None) -> tuple[str, ...]:
     """Apply the same structure-free projections to either comparison side."""
-    removed, spaced, compact = canonical_views(text)
+    removed, spaced, compact = canonical_views(text, serialization=serialization)
+    if serialization is not None:
+        try:
+            _charge(serialization, len(removed) + len(spaced) + len(compact))
+        except _ScanLimit:
+            raise _ScanLimit(removed, spaced, compact) from None
     word_removed = " ".join(_letters_numbers(removed, words=True).split())
     word_spaced = " ".join(_letters_numbers(spaced, words=True).split())
     return removed, spaced, compact, word_removed, word_spaced, _letters_numbers(compact)
@@ -320,20 +375,31 @@ class _Comparison:
     partial: bool = False
     views: dict = field(default_factory=dict, repr=False)
     match_steps: int = 0
+    input_characters: int = 0
+    marker_scans: dict = field(default_factory=dict, repr=False)
+
+    @property
+    def budget(self):
+        return _MAX_MATCH_STEPS + _WORK_PER_CHAR * self.input_characters
 
 
-def _match_step(state):
-    state.match_steps += 1
-    if state.match_steps >= _MAX_MATCH_STEPS:
+def _match_step(state, amount=1):
+    if state.match_steps + amount >= state.budget:
         state.limited = True
         return False
+    state.match_steps += amount
     return True
+
+
+def _charge(state, amount=1):
+    if not _match_step(state, amount):
+        raise _ScanLimit()
 
 
 def _views(text, state):
     if text not in state.views:
         try:
-            state.views[text] = comparison_views(text)
+            state.views[text] = comparison_views(text, serialization=state)
         except _ScanLimit as error:
             state.limited = True
             if not state.partial:
@@ -354,11 +420,21 @@ def _fragment_texts(fragments, *, serialization=None):
 
 
 def _input_views(text, state):
-    # Whole-input ALNUM identity also ignores serializer quotes around the input.
-    views = _views(text, state)
-    yield from views[:3]
-    if views[5]:
-        yield views[5]
+    # Remove only enclosing serializer delimiters; interior punctuation is identity.
+    for replacement in ("", " "):
+        view = _canonical(text, replacement, serialization=state, preserve_plus=True)
+        left, right = 0, len(view)
+        pairs = {"[": "]", "{": "}", "(": ")", '"': '"', "'": "'"}
+        while left < right and pairs.get(view[left]) == view[right - 1]:
+            opener = view[left]
+            left, right = left + 1, right - 1
+            if opener == "(" and left < right and view[right - 1] == ",":
+                right -= 1
+            while left < right and view[left].isspace():
+                left += 1
+            while left < right and view[right - 1].isspace():
+                right -= 1
+        yield view[left:right]
 
 
 def scan_texts(training, model_outputs=(), *, strict=True, serialization=None) -> tuple[str, ...]:
@@ -389,7 +465,7 @@ def scan_texts(training, model_outputs=(), *, strict=True, serialization=None) -
     return tuple(found)
 
 
-def incident_scan(*sources, decode=True, serialization=None):
+def incident_scan(*sources, decode=True, serialization=None, on_texts=None):
     """Read raw supported containers before validation; return partial evidence on limits.
 
     Each source is bounded to depth 32, 16384 nodes and 1 MiB of strings. Top-level
@@ -408,14 +484,19 @@ def incident_scan(*sources, decode=True, serialization=None):
             leaves = tuple(_walk(group, state))
             probes.extend(leaf for leaf, _ in leaves if isinstance(leaf, CanaryProbe))
             fragments = tuple((leaf, key) for leaf, key in leaves if isinstance(leaf, str))
+            serialization.input_characters += sum(len(s) for s, _ in fragments)
+            group_texts = []
             for fields in (tuple(s for s, _ in fragments), tuple(s for s, key in fragments if not key)):
                 try:
                     if decode:
-                        texts.extend(_fragment_texts(fields, serialization=serialization))
+                        group_texts.extend(_fragment_texts(fields, serialization=serialization))
                     else:
-                        texts.extend((*fields, "".join(fields), " ".join(fields)))
+                        group_texts.extend((*fields, "".join(fields), " ".join(fields)))
                 except ContaminationError:
                     limited = True
+            texts.extend(group_texts)
+            if on_texts is not None:
+                on_texts(group_texts)
         limited |= state.limited
     return tuple(texts), tuple(probes), limited or serialization.limited
 
@@ -426,18 +507,23 @@ def canary_matches(canaries: Sequence[str], texts: Sequence[str], *, decode=True
     if not decode:
         return tuple(i for i, marker in enumerate(canaries) if any(marker in text for text in texts))
     state = serialization if serialization is not None else _Comparison()
-    markers = tuple(_letters_numbers(canonical_views(marker)[2]) for marker in canaries)
-    positions, found = {}, set()
-    for marker_id, marker in enumerate(markers):
-        for end in range(8, len(marker) + 1):
-            if not _match_step(state):
+    markers = tuple(marker if re.fullmatch(r"[0-9a-f]{32}", marker) else
+                    _letters_numbers(canonical_views(marker, serialization=state)[2]) for marker in canaries)
+    if markers not in state.marker_scans:
+        positions = {}
+        for marker_id, marker in enumerate(markers):
+            for end in range(8, len(marker) + 1):
+                if not _match_step(state):
+                    break
+                positions.setdefault(marker[end - 8:end], []).append((marker_id, end))
+            if state.match_steps + 1 >= state.budget:
                 break
-            positions.setdefault(marker[end - 8:end], []).append((marker_id, end))
-        if state.match_steps >= _MAX_MATCH_STEPS:
-            break
-    seen = set()
-    if state.match_steps < _MAX_MATCH_STEPS:
+        state.marker_scans[markers] = positions, set(), set()
+    positions, found, seen = state.marker_scans[markers]
+    if state.match_steps + 1 < state.budget:
         for text in dict.fromkeys(texts):
+            if not _match_step(state, len(text)):
+                break
             compact = _letters_numbers(text.casefold())
             if compact in seen:
                 continue
@@ -469,9 +555,9 @@ def canary_matches(canaries: Sequence[str], texts: Sequence[str], *, decode=True
                     history.setdefault(key, deque()).append(end)
                     expiry.append((end, key))
                 previous = current
-                if state.match_steps >= _MAX_MATCH_STEPS or len(found) == len(markers):
+                if state.match_steps + 1 >= state.budget or len(found) == len(markers):
                     break
-            if state.match_steps >= _MAX_MATCH_STEPS or len(found) == len(markers):
+            if state.match_steps + 1 >= state.budget or len(found) == len(markers):
                 break
     if state.limited and not state.partial:
         raise _ScanLimit()
@@ -500,8 +586,10 @@ def _passage_sequences(case, state):
         fields = tuple(_strings(case, keys=keys))
         for view in (0, 1, 3, 4):
             fragments = tuple(_views(s, state)[view] for s in fields)
+            _charge(state, sum(map(len, fields)) * 2 + len(fields))
             joins = tuple(_views(separator.join(fields), state)[view] for separator in ("", " "))
             for tokenize in (_passage_tokens, lambda s: _passage_tokens(s, punctuation_atoms=True)):
+                _charge(state, sum(map(len, fragments)) + sum(map(len, joins)))
                 sequences = (tuple(t for s in fragments for t in tokenize(s)),
                              *(tokenize(joined) for joined in joins))
                 for tokens in sequences:
@@ -536,55 +624,128 @@ def _ordered_13(positions, candidate, state):
     return False
 
 
-def _token_graph(fragments):
+@dataclass(frozen=True)
+class _TokenGraph:
+    atoms: tuple[str, ...]
+    joins: frozenset[int]
+
+    def __iter__(self):
+        return iter(((index + 1, atom),) for index, atom in enumerate(self.atoms))
+
+
+def _token_graph(fragments, serialization=None):
+    """Store atoms and optional word boundaries without merged substrings."""
+    state = serialization if serialization is not None else _Comparison()
     atoms, joins = [], set()
     for fragment in fragments:
+        _charge(state, len(fragment) + 1)
         tokens = re.findall(r"\w+|[^\w\s]", fragment)
         if atoms and tokens and re.fullmatch(r"\w+", atoms[-1]) and re.fullmatch(r"\w+", tokens[0]):
             joins.add(len(atoms))
         atoms.extend(tokens)
-    graph = []
-    for start, atom in enumerate(atoms):
-        edges = [(start + 1, atom)]
-        end = start + 1
-        while end in joins:
-            atom += atoms[end]
-            end += 1
-            edges.append((end, atom))
-        graph.append(edges)
-    return graph
+    return _TokenGraph(tuple(atoms), frozenset(joins))
 
 
 def _graphs(case, serialization=None):
     state = serialization if serialization is not None else _Comparison()
+    seen = set()
     for keys in (True, False):
         fields = tuple(_strings(case, keys=keys))
         for view in (0, 1, 3, 4):
-            yield _token_graph([_views(s, state)[view] for s in fields])
+            fragments = tuple(_views(s, state)[view] for s in fields)
+            _charge(state, sum(map(len, fields)) * 2 + len(fields))
+            candidates = [fragments]
             for separator in ("", " "):
-                yield _token_graph([_views(separator.join(fields), state)[view]])
+                candidates.append((_views(separator.join(fields), state)[view],))
+            for fragments in candidates:
+                graph = _token_graph(fragments, state)
+                _charge(state, sum(map(len, graph.atoms)))
+                if graph not in seen:
+                    seen.add(graph)
+                    yield graph
 
 
-def _shared_13(left, right):
-    """Longest common token path on two DAGs; cap state at the detector's 13 tokens.
-
-    A merged word edge spans consecutive fragment atoms. There are at most
-    quadratically many such edges, even when every fragment is one character.
-    """
-    positions = {}
-    for j, edges in enumerate(right):
-        for end, token in edges:
-            positions.setdefault(token, []).append((j, end))
-    lengths = {}
-    for i, edges in enumerate(left):
-        for end, token in edges:
-            for j, other_end in positions.get(token, ()):
-                count = lengths.get((i, j), 0) + 1
+def _shared_13(left, right, serialization=None):
+    """Match optional boundaries by character offsets within the shared work budget."""
+    state = serialization if serialization is not None else _Comparison()
+    _charge(state, sum(map(len, left.atoms)) + sum(map(len, right.atoms)))
+    if not left.joins and not right.joins:
+        if set(left.atoms).isdisjoint(right.atoms):
+            return False
+        positions = _passage_index(right.atoms, state)
+        previous = {}
+        for token in left.atoms:
+            _charge(state)
+            current = {}
+            for j in positions.get(token, ()):
+                _charge(state)
+                count = previous.get(j - 1, 0) + 1
                 if count >= 13:
                     return True
-                pair = (end, other_end)
-                lengths[pair] = max(lengths.get(pair, 0), count)
+                current[j] = count
+            previous = current
+        return False
+    positions = {}
+    for j, token in enumerate(right.atoms):
+        _charge(state)
+        positions.setdefault(token[0], []).append(j)
+    lengths = {}
+    for i, token in enumerate(left.atoms):
+        _charge(state)
+        for j in positions.get(token[0], ()):
+            count = lengths.get((i, j), 0) + 1
+            a, b, x, y = i, j, 0, 0
+            while a < len(left.atoms) and b < len(right.atoms):
+                _charge(state)
+                if left.atoms[a][x] != right.atoms[b][y]:
+                    break
+                x, y = x + 1, y + 1
+                end_a, end_b = x == len(left.atoms[a]), y == len(right.atoms[b])
+                if end_a and end_b:
+                    if count >= 13:
+                        return True
+                    pair = (a + 1, b + 1)
+                    lengths[pair] = max(lengths.get(pair, 0), count)
+                if end_a:
+                    a, x = a + 1, 0
+                    if a not in left.joins:
+                        break
+                if end_b:
+                    b, y = b + 1, 0
+                    if b not in right.joins:
+                        break
     return False
+
+
+def _passage_exclusions(candidates, held_out, serialization):
+    graphs = {graph for case in candidates for graph in _graphs(case, serialization)}
+    candidate_sequences = None
+    excluded = set()
+    for index, case in enumerate(held_out):
+        overlap = any(_shared_13(held_graph, train_graph, serialization)
+                      for held_graph in _graphs(case, serialization) for train_graph in graphs)
+        if not overlap:
+            if candidate_sequences is None:
+                unique = dict.fromkeys(tokens for item in candidates
+                                       for tokens in _passage_sequences(item, serialization))
+                candidate_sequences = [(tokens, _passage_index(tokens, serialization)) for tokens in unique]
+            for tokens in _passage_sequences(case, serialization):
+                positions = _passage_index(tokens, serialization)
+                if any(_ordered_13(positions, candidate, serialization)
+                       or _ordered_13(candidate_index, tokens, serialization)
+                       for candidate, candidate_index in candidate_sequences
+                       if not positions.keys().isdisjoint(candidate_index)):
+                    overlap = True
+                    break
+        if overlap:
+            excluded.add(index)
+    return excluded
+
+
+def output_passage_exclusions(held_out, output):
+    """Screen the scored output without substituting new membership observations."""
+    state = _Comparison(input_characters=len(output) + sum(len(s) for case in held_out for s in _strings(case)))
+    return _passage_exclusions((SuiteCase("", output, ""),), held_out, state)
 
 
 def screen(training: Sequence[SuiteCase], held_out: Sequence[SuiteCase], *, canaries: Sequence[str],
@@ -597,7 +758,8 @@ def screen(training: Sequence[SuiteCase], held_out: Sequence[SuiteCase], *, cana
             or any(type(s) is not str for s in model_outputs)
             or any(not isinstance(p, CanaryProbe) for p in canary_probes)):
         raise ContaminationError("G6_E_RSI_SCREEN_INVALID")
-    serialization = _Comparison()
+    serialization = _Comparison(input_characters=sum(len(s) for c in (*training, *held_out)
+                                                     for s in _strings(c)) + sum(map(len, model_outputs)))
     training_texts = scan_texts(training, serialization=serialization)
     hits = len(canary_matches(tuple(dict.fromkeys(canaries)),
                              (*training_texts, *scan_texts((), model_outputs, serialization=serialization),
@@ -610,29 +772,14 @@ def screen(training: Sequence[SuiteCase], held_out: Sequence[SuiteCase], *, cana
     if (not isinstance(membership, Mapping) or set(membership) != {c.case_id for c in held_out}
             or any(not isinstance(p, MembershipProbe) for p in membership.values())):
         raise ContaminationError("G6_E_RSI_MEMBERSHIP_REQUIRED")
-    graphs = [graph for case in training for graph in _graphs(case, serialization)]
-    for output in model_outputs:
-        graphs.extend(_graphs(SuiteCase("", output, ""), serialization))
+    candidates = (*training, *(SuiteCase("", output, "") for output in model_outputs))
+    passage_excluded = _passage_exclusions(candidates, held_out, serialization)
     inputs = {view for c in training for view in _input_views(c.input, serialization)}
-    candidate_sequences = None
+    training_ids = {case.case_id for case in training}
     excluded, identities, overlaps, members = set(), 0, 0, 0
     for index, case in enumerate(held_out):
-        identity = (bool(set(_input_views(case.input, serialization)) & inputs)
-                    or any(code == NOT_HELD_OUT for code, _ in Suite(tuple(training), (case,)).problems()))
-        overlap = any(_shared_13(held_graph, train_graph)
-                      for held_graph in _graphs(case, serialization) for train_graph in graphs)
-        if not overlap:
-            if candidate_sequences is None:
-                candidates = (*training, *(SuiteCase("", output, "") for output in model_outputs))
-                candidate_sequences = [(tokens, _passage_index(tokens, serialization))
-                                       for item in candidates for tokens in _passage_sequences(item, serialization)]
-            for tokens in _passage_sequences(case, serialization):
-                positions = _passage_index(tokens, serialization)
-                if any(_ordered_13(positions, candidate, serialization)
-                       or _ordered_13(candidate_index, tokens, serialization)
-                       for candidate, candidate_index in candidate_sequences):
-                    overlap = True
-                    break
+        identity = bool(set(_input_views(case.input, serialization)) & inputs) or case.case_id in training_ids
+        overlap = index in passage_excluded
         member = membership[case.case_id].flagged
         identities += identity
         overlaps += overlap

@@ -202,10 +202,10 @@ def test_fixed_fragment_views_carry_mixed_boundaries(api):
     assert result.ngram_excluded == result.excluded_count == 1
 
 
-def test_fixed_whitespace_free_view_catches_short_identity(api):
+def test_identity_keeps_normalized_internal_whitespace(api):
     result = run(api, [SuiteCase("held", "shortword", "secret")],
                  [SuiteCase("train", "short\n word", "other")])
-    assert result.identity_excluded == result.excluded_count == 1
+    assert result.identity_excluded == result.excluded_count == 0
 
 
 @pytest.mark.parametrize("source", ["training", "output"])
@@ -225,9 +225,9 @@ def test_fixed_views_keep_independent_cases_and_outputs_separate(api):
     assert not result.voided and result.canary_hits == 0
 
 
-def test_fragment_graph_size_is_quadratic_for_character_fragments(api):
+def test_fragment_graph_storage_is_linear_for_character_fragments(api):
     graph = api._token_graph(["x"] * 80)
-    assert sum(len(edges) for edges in graph) == 80 * 81 // 2
+    assert sum(len(token) for edges in graph for _, token in edges) == 80
     words = " ".join("x" for _ in range(13))
     assert run(api, [SuiteCase("held", words + " held", "secret")],
                [SuiteCase("train", "other", tuple("x" for _ in range(80)))]).ngram_excluded == 1

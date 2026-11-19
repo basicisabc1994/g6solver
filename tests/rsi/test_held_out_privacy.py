@@ -86,6 +86,139 @@ def probes(store, item):
             for t in store._tasks(store._data(None), item.generation, item.freeze_digest)}
 
 
+def test_repair1_ordinary_megabyte_log_stays_open(stores):
+    store, _ = stores()
+    item = cut(store)
+    result = store.screen(item.slice_id, (), membership=probes(store, item),
+                          model_outputs=("INFO request completed successfully\n" * 28000,))
+    assert not result.serialization_limited and not result.voided
+    assert store.status(item.slice_id) == "open"
+
+
+@pytest.mark.parametrize("copy_other", [False, True])
+def test_repair1_evaluation_screens_its_output(stores, copy_other):
+    store, db = stores()
+    data = store._data(None)
+    index = data["partitions"][0][0]
+    record = TaskSpec.from_record(data["tasks"][index])
+    passage = " ".join(f"passage{i}" for i in range(13))
+    data["tasks"][index] = replace(record, prompt=passage, provenance=None).to_record()
+    item = cut(store)
+    store.screen(item.slice_id, (), membership=probes(store, item))
+    tasks = store._tasks(data, 0, item.freeze_digest)
+    copied_index = next(i for i, task in enumerate(tasks) if task.task_id == record.task_id)
+    target = next(t for t in tasks if t.task_id != record.task_id) if copy_other else tasks[copied_index]
+    result = store.evaluate_pass(item.slice_id, target.task_id, passage, arm="G0", attempt="one",
+                                 anchor_pass=True, detectors={"clean": lambda t, o: False})
+    excluded = json.loads(db.execute("SELECT excluded FROM slices WHERE id=?", (item.slice_id,)).fetchone()[0])
+    assert copied_index in excluded
+    assert not result.passed and result.reason in ("item_excluded", "contamination")
+
+
+def test_repair1_concurrent_task_screen_cannot_approve_skipped_output(stores, monkeypatch):
+    store, _ = stores()
+    data = store._data(None)
+    index = data["partitions"][0][0]
+    task = TaskSpec.from_record(data["tasks"][index])
+    passage = " ".join(f"passage{i}" for i in range(13))
+    data["tasks"][index] = replace(task, prompt=passage, provenance=None).to_record()
+    item = cut(store)
+    original = store._screen_output
+    def interleave(slice_id, output):
+        result = original(slice_id, output)
+        store.screen(slice_id, (), membership=probes(store, item))
+        return result
+    monkeypatch.setattr(store, "_screen_output", interleave)
+    result = store.evaluate_pass(item.slice_id, task.task_id, passage, arm="G0", attempt="race",
+                                 anchor_pass=True, detectors={"clean": lambda t, o: False})
+    assert not result.passed and result.reason == "screen_missing"
+
+
+@pytest.mark.parametrize("decoder", ["literal", "percent", "entity"])
+@pytest.mark.parametrize("incident", [False, True])
+def test_repair1_decoder_limit_is_durable(stores, monkeypatch, decoder, incident):
+    from g6.recursion import contamination_gate as gate
+    from g6.recursion.held_out_slicer import HeldOutError
+
+    store, db = stores()
+    item = cut(store)
+    marker = store._data(None)["canaries"][0]
+    def limited(*args, **kwargs):
+        raise MemoryError("decoder limit")
+    if decoder == "entity":
+        monkeypatch.setattr(gate.html, "unescape", limited)
+        text = "&eacute;"
+    else:
+        class RefusingPattern:
+            def sub(self, *args, **kwargs):
+                return limited()
+        monkeypatch.setattr(gate, "_LITERAL_ESCAPE" if decoder == "literal" else "_PERCENT_RUN", RefusingPattern())
+        text = r"\U00000061" if decoder == "literal" else "%61" * 10000
+    with pytest.raises(HeldOutError, match="SCREEN_LIMIT"):
+        store.screen(item.slice_id, (), membership=probes(store, item),
+                     model_outputs=((marker,) if incident else ()) + (text,))
+    assert store.status(item.slice_id) == ("void" if incident else "blocked")
+    assert db.execute("SELECT count(*) FROM attempts").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("base", [10, 16])
+@pytest.mark.parametrize("fenced", [False, True])
+@pytest.mark.parametrize("kind", ["marker", "passage"])
+@pytest.mark.parametrize("boundary", ["training", "output", "evaluate", "held_out"])
+def test_repair1_padded_reference_store_boundaries(stores, base, fenced, kind, boundary):
+    store, db = stores()
+    data = store._data(None)
+    marker = "c84a9f17d3e620b58a47c10f962deb35"
+    data["canaries"][0] = marker
+    plain = marker if kind == "marker" else " ".join(f"w{i}" for i in range(13))
+    encoded = "".join("&#" + ("x" if base == 16 else "") + "0" * 4301 +
+                      (format(ord(c), "x") if base == 16 else str(ord(c))) + ";" for c in plain)
+    if fenced:
+        encoded = "```json\n" + json.dumps(encoded) + "\n```"
+    index = data["partitions"][0][0]
+    task = TaskSpec.from_record(data["tasks"][index])
+    if kind == "passage" or boundary == "held_out":
+        data["tasks"][index] = replace(task, prompt=encoded if boundary == "held_out" else plain,
+                                       provenance=None).to_record()
+    item = cut(store)
+    if boundary == "evaluate":
+        store.screen(item.slice_id, (), membership=probes(store, item))
+        result = store.evaluate_pass(item.slice_id, task.task_id, encoded, arm="G0", attempt="one",
+                                     anchor_pass=True, detectors={"clean": lambda t, o: False})
+        assert not result.passed and result.reason == "contamination"
+    else:
+        training = ((SuiteCase("train", "other", encoded),) if boundary == "training" else
+                    (SuiteCase("train", "other", plain),) if boundary == "held_out" and kind == "passage" else ())
+        result = store.screen(item.slice_id, training, membership=probes(store, item),
+                              model_outputs=(encoded,) if boundary == "output" else ())
+        assert (result.canary_hits if kind == "marker" else result.ngram_excluded) == 1
+    with pytest.raises(ValueError), store._db():
+        raise ValueError("later rollback")
+    assert store.status(item.slice_id) == ("void" if kind == "marker" else "open")
+    if kind == "passage":
+        assert json.loads(db.execute("SELECT excluded FROM slices WHERE id=?", (item.slice_id,)).fetchone()[0])
+
+
+def test_repair1_output_match_limit_blocks_before_census(stores, monkeypatch):
+    from g6.recursion import contamination_gate as gate
+    from g6.recursion.held_out_slicer import HeldOutError
+
+    store, db = stores()
+    data = store._data(None)
+    index = data["partitions"][0][0]
+    task = TaskSpec.from_record(data["tasks"][index])
+    data["tasks"][index] = replace(task, prompt="INFO alpha\n" * 1000, provenance=None).to_record()
+    item = cut(store)
+    store.screen(item.slice_id, (), membership=probes(store, item))
+    monkeypatch.setattr(gate, "_MAX_MATCH_STEPS", 100000)
+    monkeypatch.setattr(gate, "_WORK_PER_CHAR", 128)
+    with pytest.raises(HeldOutError, match="SCREEN_LIMIT"):
+        store.evaluate_pass(item.slice_id, task.task_id, "INFO beta\n" * 1000, arm="G0", attempt="one",
+                            anchor_pass=True, detectors={"clean": lambda t, o: pytest.fail("census before screen")})
+    assert store.status(item.slice_id) == "blocked"
+    assert db.execute("SELECT count(*) FROM attempts").fetchone()[0] == 0
+
+
 @pytest.mark.parametrize("incident", [False, True])
 def test_small_gap_bound_records_incident_before_durable_block(stores, monkeypatch, incident):
     from g6.recursion import contamination_gate as gate
@@ -97,6 +230,7 @@ def test_small_gap_bound_records_incident_before_durable_block(stores, monkeypat
     output = json.dumps({"0": marker[:16], "1": marker[16:]}) if incident else "ordinary text"
     original_bound = getattr(gate, "_MAX_MATCH_STEPS", 4194304)
     monkeypatch.setattr(gate, "_MAX_MATCH_STEPS", 5000, raising=False)
+    monkeypatch.setattr(gate, "_WORK_PER_CHAR", 0)
     with pytest.raises(HeldOutError, match="SCREEN_LIMIT"):
         store.screen(item.slice_id, (), membership=probes(store, item),
                      model_outputs=(output, "z" * 10000))
