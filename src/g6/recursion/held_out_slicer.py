@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Protected evaluator storage for sealed splits, freeze receipts and detector censuses.
 
-The host must keep this store out of actor, trainer and proposer mounts. Role checks
-and Vault are software boundaries; they do not confine arbitrary same-user code.
+The host keeps this store and evaluator capabilities outside learner mounts and
+processes. Capabilities and Vault do not confine arbitrary same-user code.
 """
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
 import secrets
@@ -20,7 +21,10 @@ from types import MappingProxyType
 from g6.core.vault import Vault
 from g6.metaharness.domain import SealedSplit, cut_pool
 from g6.metaharness.schema import SuiteCase
-from g6.recursion.contamination_gate import CanaryProbe, MembershipProbe, ScreenReport, case_strings, screen
+from g6.recursion.contamination_gate import (
+    CanaryProbe, MembershipProbe, ScreenReport, canary_matches, scan_texts, screen,
+)
+from g6.recursion.evaluator_entry import EvaluatorCapability
 from g6.recursion.tasks import TaskSpec
 from g6.rsi.records import TaskError, content_digest
 
@@ -33,9 +37,11 @@ class HeldOutError(ValueError):
     """A stable refusal code with no task or output text."""
 
 
-def _evaluator(role: str):
+def _evaluator(role: str, capability: EvaluatorCapability | None):
     if role != "evaluator":
         raise HeldOutError("G6_E_RSI_EVALUATOR_ONLY")
+    if type(capability) is not EvaluatorCapability:
+        raise HeldOutError("G6_E_RSI_EVALUATOR_CAPABILITY_REQUIRED")
 
 
 def _hex(value, length=64):
@@ -44,6 +50,10 @@ def _hex(value, length=64):
 
 def _json(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _public_ref(data, domain, *values):
+    return hmac.digest(bytes.fromhex(data["salt"]), _json([domain, *values]).encode("utf-8"), "sha256").hex()
 
 
 @dataclass(frozen=True)
@@ -112,6 +122,8 @@ def partition_pool(pool: Sequence[TaskSpec], seed: int) -> tuple[tuple[TaskSpec,
     for task in tasks:
         bucket = int(content_digest([RULE, seed, strata[task.task_id], task.family]), 16) % 6
         parts[bucket].append(task)
+    if not all(parts):
+        raise HeldOutError("G6_E_RSI_PARTITION_INFEASIBLE")
     return tuple(tuple(part) for part in parts)
 
 
@@ -137,14 +149,20 @@ def detector_census(task: TaskSpec, output: str, names: Sequence[str],
 class HeldOutSlicer:
     """An evaluator handle. Only registration, slice summaries and records may be shared."""
 
-    def __init__(self, root: str | Path, *, role: str):
-        _evaluator(role)
+    def __init__(self, root: str | Path, *, role: str, capability: EvaluatorCapability | None = None):
+        _evaluator(role, capability)
         self._root = Path(root)
+        self._capability = capability
         self._check_root()
         if not (self._root / "state.sqlite3").is_file():
             raise HeldOutError("G6_E_RSI_REGISTRATION_REQUIRED")
         with self._db() as db:
-            self._registration(db)
+            self._authorize(role, capability, self._data(db))
+
+    def _authorize(self, role, capability, data):
+        _evaluator(role, capability)
+        if not hmac.compare_digest(capability.binding(self._root), data["authority_binding"]):
+            raise HeldOutError("G6_E_RSI_EVALUATOR_CAPABILITY_REQUIRED")
 
     @property
     def detector_names(self) -> tuple[str, ...]:
@@ -177,8 +195,9 @@ class HeldOutSlicer:
 
     @classmethod
     def register(cls, root: str | Path, pool: Sequence[TaskSpec], *, seed: int,
-                 detectors: Sequence[str], role: str) -> HeldOutSlicer:
-        _evaluator(role)
+                 detectors: Sequence[str], role: str,
+                 capability: EvaluatorCapability | None = None) -> HeldOutSlicer:
+        _evaluator(role, capability)
         if (type(seed) is not int or not detectors or len(set(detectors)) != len(detectors)
                 or any(type(d) is not str or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", d) for d in detectors)
                 or not pool or any(not isinstance(t, TaskSpec) for t in pool)):
@@ -194,6 +213,7 @@ class HeldOutSlicer:
         root = Path(root)
         handle = object.__new__(cls)
         handle._root = root
+        handle._capability = capability
         handle._check_root()
         root.mkdir(parents=True, exist_ok=True)
         if any((root / name).exists() for name in ("rule.json", "state.sqlite3", "pool.json")):
@@ -208,6 +228,7 @@ class HeldOutSlicer:
         parts = [[positions[t.task_id] for t in part] for part in partitions]
         partition_digest = content_digest(parts)
         data = {"tasks": [t.to_record() for t in tasks], "partitions": parts,
+                "authority_binding": capability.binding(root),
                 "salt": secrets.token_hex(32), "canaries": [secrets.token_hex(16) for _ in range(6)]}
         # Exclusive creation arbitrates concurrent registration before any state is published.
         with (root / "pool.json").open("x", encoding="utf-8") as stream:
@@ -231,7 +252,7 @@ class HeldOutSlicer:
                 sid = content_digest([registration["pool_digest"], seed, generation])
                 db.execute("INSERT INTO slices (id,generation,status) VALUES (?,?,'sealed')", (sid, generation))
             handle._event(db, "registered", count=len(tasks), partition_digest=partition_digest)
-        return cls(root, role=role)
+        return cls(root, role=role, capability=capability)
 
     @staticmethod
     def _registration(db):
@@ -250,7 +271,11 @@ class HeldOutSlicer:
         if (hashlib.sha256(raw).hexdigest() != registration["pool_sha256"]
                 or hashlib.sha256((self._root / "rule.json").read_bytes()).hexdigest() != registration["rule_sha256"]):
             raise HeldOutError("G6_E_RSI_POOL_CHANGED")
-        return json.loads(raw)
+        data = json.loads(raw)
+        if "authority_binding" not in data:
+            raise HeldOutError("G6_E_RSI_EVALUATOR_CAPABILITY_REQUIRED")
+        self._authorize("evaluator", self._capability, data)
+        return data
 
     def registration(self) -> dict:
         with self._db() as db:
@@ -328,52 +353,77 @@ class HeldOutSlicer:
             db.execute("UPDATE slices SET status='spent' WHERE id=?", (slice_id,))
             self._event(db, "spent", slice_id=slice_id)
 
-    def evaluator_items(self, slice_id: str, *, role: str) -> tuple[TaskSpec, ...]:
-        _evaluator(role)
+    def evaluator_items(self, slice_id: str, *, role: str,
+                        capability: EvaluatorCapability | None = None) -> tuple[TaskSpec, ...]:
+        _evaluator(role, capability)
         with self._db() as db:
             row = self._row(db, slice_id, opened=True)
             data = self._data(db)
+            self._authorize(role, capability, data)
             excluded = set(json.loads(row["excluded"]))
             marker = data["canaries"][row["generation"]]
             return tuple(replace(t, prompt=t.prompt + "\n# " + marker, provenance=None)
                          for i, t in enumerate(self._tasks(data, row["generation"], row["freeze"])) if i not in excluded)
 
-    def canaries(self, slice_id: str, *, role: str) -> tuple[str, ...]:
-        _evaluator(role)
+    def canaries(self, slice_id: str, *, role: str,
+                 capability: EvaluatorCapability | None = None) -> tuple[str, ...]:
+        _evaluator(role, capability)
         with self._db() as db:
             row = self._row(db, slice_id, opened=True)
-            return (self._data(db)["canaries"][row["generation"]],)
+            data = self._data(db)
+            self._authorize(role, capability, data)
+            return (data["canaries"][row["generation"]],)
 
-    def sealed(self, slice_id: str, *, role: str) -> SealedSplit:
-        _evaluator(role)
+    def sealed(self, slice_id: str, *, role: str,
+               capability: EvaluatorCapability | None = None) -> SealedSplit:
+        _evaluator(role, capability)
         with self._db() as db:
             row = self._row(db, slice_id, opened=True)
             data, registration = self._data(db), self._registration(db)
+            self._authorize(role, capability, data)
             vault = Vault.seal([self._root / "pool.json", self._root / "rule.json"], ledger=None,
                                vault_id=registration["vault_id"])
             if vault.digest != registration["vault_digest"]:
                 raise HeldOutError("G6_E_RSI_POOL_CHANGED")
-            refs = tuple(MappingProxyType(_case(t).ref() | {"case_id": content_digest(t.task_id)})
+            refs = tuple(MappingProxyType({
+                "case_id": _public_ref(data, "item-id", t.task_id),
+                "input_sha256": _public_ref(data, "item-input", t.prompt),
+                "expected_sha256": _public_ref(data, "item-expected", _case(t).expected),
+            })
                          for t in self._tasks(data, row["generation"], row["freeze"]))
             return SealedSplit(vault, refs)
 
     def _void(self, db, slice_id):
-        db.execute("UPDATE slices SET status='void' WHERE id=?", (slice_id,))
-        self._event(db, "contamination", slice_id=slice_id)
+        changed = db.execute("UPDATE slices SET status='void' WHERE id=? AND status!='void'", (slice_id,))
+        if changed.rowcount:
+            self._event(db, "contamination", slice_id=slice_id)
 
     def _canary_incidents(self, db, data, texts, current):
-        matched = [i for i, marker in enumerate(data["canaries"]) if any(marker in text for text in texts)]
+        matched = canary_matches(data["canaries"], texts)
         if matched:
-            ids = {current}
+            ids = {current} if current is not None else set()
             ids.update(row[0] for i in matched for row in db.execute("SELECT id FROM slices WHERE generation=?", (i,)))
             for sid in sorted(ids):
                 self._void(db, sid)
         return bool(matched)
 
+    def _commit_incidents(self, slice_id, training=(), model_outputs=()):
+        texts = scan_texts(training, model_outputs, strict=False)
+        with self._db() as db:
+            data = self._data(db)
+            row = (db.execute("SELECT status FROM slices WHERE id=?", (slice_id,)).fetchone()
+                   if _hex(slice_id) else None)
+            current = slice_id if row is not None else None
+            hit = self._canary_incidents(db, data, texts, current)
+            return hit, row[0] if row is not None else None
+
     def screen(self, slice_id: str, training: Sequence[SuiteCase], *, membership: Mapping[str, MembershipProbe],
                model_outputs: Sequence[str] = (), canary_probes: Sequence[CanaryProbe] = ()) -> ScreenReport:
+        hit, previous = self._commit_incidents(slice_id, training, model_outputs)
         with self._db() as db:
-            row = self._row(db, slice_id, opened=True)
+            row = self._row(db, slice_id, opened=not hit)
+            if hit and previous != "open":
+                raise HeldOutError("G6_E_RSI_SLICE_CLOSED")
             data = self._data(db)
             cases = tuple(_case(t) for t in self._tasks(data, row["generation"], row["freeze"]))
             result = screen(training, cases, membership=membership, model_outputs=model_outputs,
@@ -381,8 +431,6 @@ class HeldOutSlicer:
             excluded = sorted(set(json.loads(row["excluded"])) | set(result.excluded_indices))
             db.execute("UPDATE slices SET excluded=?, screened=1 WHERE id=?", (_json(excluded), slice_id))
             self._event(db, "screen", slice_id=slice_id, **result.to_record())
-            texts = tuple(s for c in training for s in case_strings(c)) + tuple(model_outputs)
-            hit = self._canary_incidents(db, data, texts, slice_id)
             if result.voided and not hit:
                 self._void(db, slice_id)
             return result
@@ -390,15 +438,16 @@ class HeldOutSlicer:
     def evaluate_pass(self, slice_id: str, case_id: str, output: str, *, arm: str, attempt: str,
                       anchor_pass: bool, detectors: Mapping[str, Callable[[TaskSpec, str], bool]] | None) -> PassResult:
         """Run the registered cheap detectors uncapped; True means a hack was found."""
+        hit, _ = self._commit_incidents(slice_id, model_outputs=(output,))
         if (type(output) is not str or type(case_id) is not str or type(anchor_pass) is not bool
                 or type(arm) is not str or not arm or type(attempt) is not str or not attempt):
             raise HeldOutError("G6_E_RSI_PASS_INVALID")
-        key = content_digest([case_id, arm, attempt])
         with self._db() as db:
             row = self._row(db, slice_id)
             data = self._data(db)
+            key = _public_ref(data, "attempt", case_id, arm, attempt)
             # A leaked marker is still an incident on a duplicate or closed attempt.
-            if self._canary_incidents(db, data, (output,), slice_id):
+            if hit:
                 result = PassResult(False, "contamination", 0)
                 self._event(db, "pass", slice_id=slice_id, attempt_digest=key, **asdict(result))
                 return result

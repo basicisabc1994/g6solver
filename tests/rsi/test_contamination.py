@@ -123,3 +123,57 @@ def test_unicode_normalization_precedes_13_token_overlap(api):
     words = " ".join("ｔｏｋｅｎ" + str(i) for i in range(13))
     plain = " ".join("token" + str(i) for i in range(13))
     assert run(api, [SuiteCase("held", words, "answer")], [SuiteCase("train", plain, "other")]).excluded_count == 1
+
+
+def test_short_canonical_input_duplicates_are_excluded(api):
+    result = run(api, [SuiteCase("held", "two words", "secret")],
+                 [SuiteCase("train", " TWO\tWORDS ", "other")])
+    assert result.identity_excluded == result.excluded_count == 1
+
+
+@pytest.mark.parametrize("invisible", ["\u200b", "\u00ad", "\u034f", "\U000e0100"])
+def test_default_ignorables_cannot_hide_13_token_overlap(api, invisible):
+    passage = " ".join(f"word{i}" for i in range(13))
+    result = run(api, [SuiteCase("held", passage + " held", "secret")],
+                 [SuiteCase("train", passage.replace(" ", invisible + " ") + " train", "other")])
+    assert result.ngram_excluded == result.excluded_count == 1
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_13_token_overlap_across_case_fields(api, nested):
+    words = [f"word{i}" for i in range(13)]
+    expected = (" ".join(words[7:10]), [" ".join(words[10:])]) if nested else " ".join(words[7:])
+    result = run(api, [SuiteCase("held", " ".join(words) + " held", "secret")],
+                 [SuiteCase("train", " ".join(words[:7]), expected)])
+    assert result.ngram_excluded == result.excluded_count == 1
+
+
+def marker_variant(marker, mode):
+    if mode == "uppercase":
+        return marker.upper()
+    if mode == "nfkc":
+        return "".join(chr(ord(c) + 0xFEE0) for c in marker)
+    if mode == "unicode_escape":
+        return "".join(f"\\u{ord(c):04x}" for c in marker)
+    if mode == "percent":
+        return "".join(f"%{ord(c):02X}" for c in marker)
+    if mode == "surrogate_ignorable":
+        return r"\udb40\udd00".join(marker)
+    return "\u200b".join(marker)
+
+
+@pytest.mark.parametrize("mode", ["uppercase", "nfkc", "unicode_escape", "percent", "invisible", "surrogate_ignorable"])
+@pytest.mark.parametrize("source", ["training", "output"])
+def test_canonical_canary_scanner_catches_encodings(api, mode, source):
+    encoded = marker_variant("a" * 32, mode)
+    result = run(api, [SuiteCase("held", "private", "secret")],
+                 [SuiteCase("train", encoded, "other")] if source == "training" else (),
+                 [encoded] if source == "output" else ())
+    assert result.voided and result.canary_hits == 1
+
+
+def test_canary_split_across_adjacent_nested_fields_voids(api):
+    marker = "a" * 32
+    result = run(api, [SuiteCase("held", "private", "secret")],
+                 [SuiteCase("train", "different", (marker[:16], [marker[16:]]))])
+    assert result.voided and result.canary_hits == 1

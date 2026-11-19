@@ -2,6 +2,7 @@
 """Evaluator lifecycle, census and public-record boundaries using synthetic tasks."""
 import importlib
 import json
+from io import BytesIO
 
 import pytest
 
@@ -24,6 +25,12 @@ def api():
     return API()
 
 
+def authority():
+    from g6.recursion.evaluator_entry import evaluator_capability
+
+    return evaluator_capability(BytesIO(b"0123456789abcdef" * 2))
+
+
 def pool():
     return tuple(TaskSpec(f"livecodebench:PRIVATE-ID-{i}", f"PRIVATE-FAMILY-{i // 3}", "livecodebench",
                           licence_for("livecodebench"), f"PRIVATE-PROMPT-{i}",
@@ -33,7 +40,7 @@ def pool():
 
 def make(api, tmp_path, **kwargs):
     return api.HeldOutSlicer.register(tmp_path / "evaluator", kwargs.pop("tasks", pool()), seed=17,
-                                     detectors=("weakening", "mutation", "shortcut"), role="evaluator", **kwargs)
+                                     detectors=("weakening", "mutation", "shortcut"), role="evaluator", capability=authority(), **kwargs)
 
 
 def freeze(api, generation=0):
@@ -50,7 +57,7 @@ def opened(api, tmp_path, generation=0):
 def clean_screen(store, slice_id):
     from g6.recursion.contamination_gate import MembershipProbe
 
-    tasks = store.evaluator_items(slice_id, role="evaluator")
+    tasks = store.evaluator_items(slice_id, role="evaluator", capability=authority())
     return store.screen(slice_id, (), membership={t.task_id: MembershipProbe(1, 1, (1, 1), (1, 1)) for t in tasks})
 
 
@@ -64,7 +71,7 @@ def test_nothing_opens_before_committed_matching_generation_freeze(api, tmp_path
     item = store.cut(0, receipt)
     assert item.generation == 0 and item.freeze_digest == receipt
     assert item.to_record()["cut_after_generation"] == 0
-    assert store.evaluator_items(item.slice_id, role="evaluator")
+    assert store.evaluator_items(item.slice_id, role="evaluator", capability=authority())
 
 
 def test_seed_rule_registered_before_cut_and_same_seed_pool_same_partitions(api, tmp_path):
@@ -77,8 +84,8 @@ def test_seed_rule_registered_before_cut_and_same_seed_pool_same_partitions(api,
     for generation in range(6):
         left = first.cut(generation, first.record_freeze(freeze(api, generation)))
         right = second.cut(generation, second.record_freeze(freeze(api, generation)))
-        litems = first.evaluator_items(left.slice_id, role="evaluator")
-        ritems = second.evaluator_items(right.slice_id, role="evaluator")
+        litems = first.evaluator_items(left.slice_id, role="evaluator", capability=authority())
+        ritems = second.evaluator_items(right.slice_id, role="evaluator", capability=authority())
         assert {t.task_id for t in litems} == {t.task_id for t in ritems}
         assert not all_ids.intersection(t.task_id for t in litems)
         assert not families.intersection(t.family for t in litems)
@@ -106,12 +113,12 @@ def test_seed_and_rule_are_durable_before_partition_code_runs(api, tmp_path, mon
 def test_reopen_and_spend_survive_restart(api, tmp_path):
     store, item = opened(api, tmp_path)
     store.spend(item.slice_id)
-    again = api.HeldOutSlicer(tmp_path / "evaluator", role="evaluator")
+    again = api.HeldOutSlicer(tmp_path / "evaluator", role="evaluator", capability=authority())
     assert again.spent(item.slice_id)
     with pytest.raises(api.HeldOutError, match="SLICE_REUSED"):
         again.cut(0, item.freeze_digest)
     with pytest.raises(api.HeldOutError, match="SLICE_CLOSED"):
-        again.evaluator_items(item.slice_id, role="evaluator")
+        again.evaluator_items(item.slice_id, role="evaluator", capability=authority())
 
 
 @pytest.mark.parametrize("role", ["actor", "proposer", "trainer", "unknown"])
@@ -126,7 +133,7 @@ def test_roles_cannot_open_evaluator_store_or_read_items_canaries_or_sealed_refs
 
 def test_only_digest_and_count_records_cross_boundary_and_vault_seam_is_used(api, tmp_path, caplog):
     store, item = opened(api, tmp_path)
-    sealed = store.sealed(item.slice_id, role="evaluator")
+    sealed = store.sealed(item.slice_id, role="evaluator", capability=authority())
     assert isinstance(sealed, SealedSplit)
     with pytest.raises(AccessDenied):
         guarded_read(sealed.vault, "learner", tmp_path / "evaluator" / "pool.json")
@@ -134,7 +141,7 @@ def test_only_digest_and_count_records_cross_boundary_and_vault_seam_is_used(api
     public = json.dumps([store.registration(), item.to_record(), report.to_record(), store.records()])
     public += repr(item) + repr(store) + repr(sealed) + caplog.text
     assert "PRIVATE-" not in public
-    for marker in store.canaries(item.slice_id, role="evaluator"):
+    for marker in store.canaries(item.slice_id, role="evaluator", capability=authority()):
         assert marker not in public
 
 
@@ -144,13 +151,13 @@ def test_canary_void_is_durable_and_recorded_without_the_marker(api, tmp_path, s
 
     store, item = opened(api, tmp_path)
     from g6.recursion.contamination_gate import MembershipProbe
-    marker = store.canaries(item.slice_id, role="evaluator")[0]
-    tasks = store.evaluator_items(item.slice_id, role="evaluator")
+    marker = store.canaries(item.slice_id, role="evaluator", capability=authority())[0]
+    tasks = store.evaluator_items(item.slice_id, role="evaluator", capability=authority())
     report = store.screen(item.slice_id, (SuiteCase("train", marker, "answer"),) if source == "training" else (),
                           model_outputs=(marker,) if source == "output" else (),
                           membership={t.task_id: MembershipProbe(1, 1, (1, 1), (1, 1)) for t in tasks})
     assert report.voided
-    again = api.HeldOutSlicer(tmp_path / "evaluator", role="evaluator")
+    again = api.HeldOutSlicer(tmp_path / "evaluator", role="evaluator", capability=authority())
     assert again.status(item.slice_id) == "void"
     assert any(r["kind"] == "contamination" for r in again.records())
     assert marker not in json.dumps(again.records())
@@ -159,7 +166,7 @@ def test_canary_void_is_durable_and_recorded_without_the_marker(api, tmp_path, s
 def test_pass_without_census_fails_and_complete_census_runs_every_detector(api, tmp_path):
     store, item = opened(api, tmp_path)
     clean_screen(store, item.slice_id)
-    task = store.evaluator_items(item.slice_id, role="evaluator")[0]
+    task = store.evaluator_items(item.slice_id, role="evaluator", capability=authority())[0]
     missing = store.evaluate_pass(item.slice_id, task.task_id, "output", arm="G0", attempt="one",
                                   anchor_pass=True, detectors=None)
     assert not missing.passed and missing.reason == "census_missing"
@@ -179,7 +186,7 @@ def test_pass_without_census_fails_and_complete_census_runs_every_detector(api, 
 def test_partial_hacking_crashed_or_unknown_detector_census_fails_closed(api, tmp_path, mode):
     store, item = opened(api, tmp_path)
     clean_screen(store, item.slice_id)
-    task = store.evaluator_items(item.slice_id, role="evaluator")[0]
+    task = store.evaluator_items(item.slice_id, role="evaluator", capability=authority())[0]
 
     def bad(task, output):
         if mode == "raises":
@@ -285,7 +292,7 @@ def test_pure_census_runs_every_registered_detector_and_requires_exact_coverage(
 def test_registered_census_cannot_be_emptied_by_a_handle_attribute(api, tmp_path):
     store, item = opened(api, tmp_path)
     clean_screen(store, item.slice_id)
-    task = store.evaluator_items(item.slice_id, role="evaluator")[0]
+    task = store.evaluator_items(item.slice_id, role="evaluator", capability=authority())[0]
     try:
         store.detector_names = ()
     except AttributeError:
@@ -297,7 +304,7 @@ def test_registered_census_cannot_be_emptied_by_a_handle_attribute(api, tmp_path
 
 def test_canary_is_recorded_without_membership_and_prevents_any_later_open(api, tmp_path):
     store, item = opened(api, tmp_path)
-    marker = store.canaries(item.slice_id, role="evaluator")[0]
+    marker = store.canaries(item.slice_id, role="evaluator", capability=authority())[0]
     result = store.screen(item.slice_id, (), model_outputs=(marker,), membership={})
     assert result.voided and store.status(item.slice_id) == "void"
     assert any(r["kind"] == "contamination" for r in store.records())
@@ -318,8 +325,8 @@ def test_model_output_canary_voids_its_target_even_before_target_is_opened(api, 
 def test_canary_output_is_recorded_even_for_repeated_or_spent_attempts(api, tmp_path, closed):
     store, item = opened(api, tmp_path)
     clean_screen(store, item.slice_id)
-    task = store.evaluator_items(item.slice_id, role="evaluator")[0]
-    marker = store.canaries(item.slice_id, role="evaluator")[0]
+    task = store.evaluator_items(item.slice_id, role="evaluator", capability=authority())[0]
+    marker = store.canaries(item.slice_id, role="evaluator", capability=authority())[0]
     detectors = {n: lambda t, o: False for n in store.detector_names}
     assert store.evaluate_pass(item.slice_id, task.task_id, "clean", arm="G0", attempt="one",
                                anchor_pass=True, detectors=detectors).passed
@@ -335,15 +342,154 @@ def test_excluded_item_is_counted_and_cannot_be_rescued_by_a_later_clean_screen(
     from g6.metaharness.schema import SuiteCase
 
     store, item = opened(api, tmp_path)
-    task = store.evaluator_items(item.slice_id, role="evaluator")[0]
+    task = store.evaluator_items(item.slice_id, role="evaluator", capability=authority())[0]
     from g6.recursion.contamination_gate import MembershipProbe
 
     probes = {t.task_id: MembershipProbe(1, 1, (1, 1), (1, 1))
-              for t in store.evaluator_items(item.slice_id, role="evaluator")}
+              for t in store.evaluator_items(item.slice_id, role="evaluator", capability=authority())}
     report = store.screen(item.slice_id, (SuiteCase(task.task_id, "other", "other"),), membership=probes)
     assert report.identity_excluded == report.excluded_count == 1
     store.screen(item.slice_id, (), membership=probes)
-    assert task.task_id not in {t.task_id for t in store.evaluator_items(item.slice_id, role="evaluator")}
+    assert task.task_id not in {t.task_id for t in store.evaluator_items(item.slice_id, role="evaluator", capability=authority())}
     result = store.evaluate_pass(item.slice_id, task.task_id, "output", arm="G0", attempt="one",
                                  anchor_pass=True, detectors={n: lambda t, o: False for n in store.detector_names})
     assert not result.passed and result.reason == "item_excluded"
+
+
+def encoded_marker(marker, mode):
+    if mode == "uppercase":
+        return marker.upper()
+    if mode == "nfkc":
+        return "".join(chr(ord(c) + 0xFEE0) for c in marker)
+    if mode == "unicode_escape":
+        return "".join(f"\\u{ord(c):04x}" for c in marker)
+    return "".join(f"%{ord(c):02X}" for c in marker)
+
+
+@pytest.mark.parametrize("mode", ["uppercase", "nfkc", "unicode_escape", "percent"])
+@pytest.mark.parametrize("boundary", ["screen", "evaluate"])
+def test_encoded_canary_durably_voids_through_both_apis(api, tmp_path, mode, boundary):
+    store, item = opened(api, tmp_path)
+    clean_screen(store, item.slice_id)
+    task = store.evaluator_items(item.slice_id, role="evaluator", capability=authority())[0]
+    marker = store.canaries(item.slice_id, role="evaluator", capability=authority())[0]
+    output = encoded_marker(marker, mode)
+    if boundary == "screen":
+        assert store.screen(item.slice_id, (), model_outputs=(output,), membership={}).voided
+    else:
+        result = store.evaluate_pass(item.slice_id, task.task_id, output, arm="G0", attempt="one",
+                                     anchor_pass=True, detectors={n: lambda t, o: False for n in store.detector_names})
+        assert not result.passed and result.reason == "contamination"
+    again = api.HeldOutSlicer(tmp_path / "evaluator", role="evaluator", capability=authority())
+    assert again.status(item.slice_id) == "void"
+    with pytest.raises(api.HeldOutError, match="SLICE_CLOSED"):
+        again.evaluate_pass(item.slice_id, task.task_id, "clean", arm="G0", attempt="later",
+                            anchor_pass=True, detectors={n: lambda t, o: False for n in again.detector_names})
+
+
+def test_nested_fragment_canary_durably_voids(api, tmp_path):
+    from g6.metaharness.schema import SuiteCase
+
+    store, item = opened(api, tmp_path)
+    marker = store.canaries(item.slice_id, role="evaluator", capability=authority())[0]
+    report = store.screen(item.slice_id, (SuiteCase("train", "other", (marker[:16], [marker[16:]])),),
+                          membership={})
+    assert report.voided and store.status(item.slice_id) == "void"
+
+
+@pytest.mark.parametrize("refusal", ["spent", "malformed_output", "malformed_training"])
+def test_screen_refusals_commit_known_canary_incidents(api, tmp_path, refusal):
+    from g6.metaharness.schema import SuiteCase
+    from g6.recursion.contamination_gate import ContaminationError
+
+    store, item = opened(api, tmp_path)
+    clean_screen(store, item.slice_id)
+    task = store.evaluator_items(item.slice_id, role="evaluator", capability=authority())[0]
+    marker = json.loads((tmp_path / "evaluator" / "pool.json").read_text(encoding="utf-8"))["canaries"][1]
+    outputs, training = (marker,), ()
+    if refusal == "spent":
+        store.spend(item.slice_id)
+    elif refusal == "malformed_output":
+        outputs = (marker, None)
+    else:
+        training = (SuiteCase("train", marker, {"bad": object()}),)
+        outputs = ()
+    with pytest.raises((api.HeldOutError, ContaminationError)):
+        store.screen(item.slice_id, training, model_outputs=outputs, membership={})
+    again = api.HeldOutSlicer(tmp_path / "evaluator", role="evaluator", capability=authority())
+    assert again.status(item.slice_id) == "void"
+    assert any(r["kind"] == "contamination" for r in again.records())
+    with pytest.raises(api.HeldOutError, match="SLICE_REUSED"):
+        again.cut(1, again.record_freeze(freeze(api, 1)))
+    with pytest.raises(api.HeldOutError, match="SLICE_CLOSED"):
+        again.evaluate_pass(item.slice_id, task.task_id, "clean", arm="G0", attempt="later",
+                            anchor_pass=True, detectors={n: lambda t, o: False for n in again.detector_names})
+
+
+def test_learner_cannot_claim_evaluator_role_at_constructor(api, tmp_path):
+    opened(api, tmp_path)
+    with pytest.raises(api.HeldOutError, match="^G6_E_RSI_EVALUATOR_CAPABILITY_REQUIRED$"):
+        api.HeldOutSlicer(tmp_path / "evaluator", role="evaluator")
+
+
+@pytest.mark.parametrize("getter", ["evaluator_items", "canaries", "sealed"])
+def test_learner_cannot_claim_evaluator_role_at_getters(api, tmp_path, getter):
+    store, item = opened(api, tmp_path)
+    with pytest.raises(api.HeldOutError, match="^G6_E_RSI_EVALUATOR_CAPABILITY_REQUIRED$"):
+        getattr(store, getter)(item.slice_id, role="evaluator")
+
+
+def test_public_attempt_and_item_refs_resist_candidate_id_enumeration(api, tmp_path):
+    from g6.rsi.records import content_digest
+
+    store, item = opened(api, tmp_path)
+    clean_screen(store, item.slice_id)
+    task = store.evaluator_items(item.slice_id, role="evaluator", capability=authority())[0]
+    sealed = store.sealed(item.slice_id, role="evaluator", capability=authority())
+    store.evaluate_pass(item.slice_id, task.task_id, "clean", arm="G0", attempt="one",
+                        anchor_pass=True, detectors={n: lambda t, o: False for n in store.detector_names})
+    public = json.dumps([store.records(), [dict(r) for r in sealed.refs]])
+    for candidate in pool():
+        assert content_digest([candidate.task_id, "G0", "one"]) not in public
+        assert content_digest(candidate.task_id) not in public
+
+
+def test_registration_refuses_source_wide_infeasible_families(api, tmp_path):
+    from dataclasses import replace
+
+    tasks = tuple(replace(t, family="livecodebench", provenance=None) for t in pool())
+    with pytest.raises(api.HeldOutError, match="^G6_E_RSI_PARTITION_INFEASIBLE$"):
+        make(api, tmp_path, tasks=tasks)
+    assert not (tmp_path / "evaluator" / "pool.json").exists()
+    assert not (tmp_path / "evaluator" / "state.sqlite3").exists()
+
+
+def test_pure_partition_refuses_source_wide_infeasible_families(api):
+    from dataclasses import replace
+
+    tasks = tuple(replace(t, family="livecodebench", provenance=None) for t in pool())
+    with pytest.raises(api.HeldOutError, match="^G6_E_RSI_PARTITION_INFEASIBLE$"):
+        api.partition_pool(tasks, 17)
+
+
+def test_role_claim_is_rejected_before_store_access(api):
+    with pytest.raises(api.HeldOutError, match="^G6_E_RSI_EVALUATOR_CAPABILITY_REQUIRED$"):
+        api.HeldOutSlicer(".build/absent-learner-store", role="evaluator")
+
+
+def test_host_capability_binds_secret_and_store_and_hides_secret(api):
+    from pathlib import Path
+    from g6.recursion.evaluator_entry import evaluator_capability
+
+    host = authority()
+    other = evaluator_capability(BytesIO(b"fedcba9876543210" * 2))
+    store = object.__new__(api.HeldOutSlicer)
+    store._root = Path(".build/synthetic-authority-scope")
+    data = {"authority_binding": host.binding(store._root)}
+    store._authorize("evaluator", host, data)
+    with pytest.raises(api.HeldOutError, match="EVALUATOR_CAPABILITY_REQUIRED"):
+        store._authorize("evaluator", other, data)
+    store._root = Path(".build/different-authority-scope")
+    with pytest.raises(api.HeldOutError, match="EVALUATOR_CAPABILITY_REQUIRED"):
+        store._authorize("evaluator", host, data)
+    assert "0123456789abcdef" not in repr(host)

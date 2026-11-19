@@ -8,6 +8,7 @@ import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from statistics import mean, stdev
+from urllib.parse import unquote
 
 from g6.metaharness.schema import NOT_HELD_OUT, Suite, SuiteCase
 
@@ -81,17 +82,18 @@ class ScreenReport:
         return record | {"excluded_count": self.excluded_count, "voided": self.voided}
 
 
-def _strings(value: object):
+def _strings(value: object, *, strict=True, keys=True):
     if isinstance(value, str):
         yield value
     elif isinstance(value, Mapping):
         for key, item in value.items():
-            yield from _strings(key)
-            yield from _strings(item)
+            if keys:
+                yield from _strings(key, strict=strict, keys=keys)
+            yield from _strings(item, strict=strict, keys=keys)
     elif isinstance(value, (tuple, list)):
         for item in value:
-            yield from _strings(item)
-    elif value is not None and type(value) not in (bool, int, float):
+            yield from _strings(item, strict=strict, keys=keys)
+    elif strict and value is not None and type(value) not in (bool, int, float):
         raise ContaminationError("G6_E_RSI_SCREEN_INVALID")
 
 
@@ -99,10 +101,69 @@ def case_strings(case: SuiteCase) -> tuple[str, ...]:
     return tuple(_strings((case.case_id, case.input, case.expected, case.meta)))
 
 
+# Unicode Default_Ignorable_Code_Point, including its reserved ranges.
+_IGNORABLE = re.compile(
+    "[\u00ad\u034f\u061c\u115f-\u1160\u17b4-\u17b5\u180b-\u180f"
+    "\u200b-\u200f\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f"
+    "\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3"
+    "\U0001d173-\U0001d17a\U000e0000-\U000e0fff]"
+)
+_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
+_SURROGATE_ESCAPE = re.compile(r"\\u(d[89ab][0-9a-f]{2})\\u(d[cdef][0-9a-f]{2})", re.IGNORECASE)
+
+
+def canonical_text(text: str) -> str:
+    """Use the same text equivalence for identities, overlap and canary incidents."""
+    while True:
+        normalized = _IGNORABLE.sub("", unicodedata.normalize("NFKC", text).casefold())
+        paired = _SURROGATE_ESCAPE.sub(
+            lambda m: chr(0x10000 + ((int(m[1], 16) - 0xD800) << 10) + int(m[2], 16) - 0xDC00), normalized)
+        decoded = unquote(_ESCAPE.sub(lambda m: chr(int(m[1], 16)), paired))
+        if decoded == normalized:
+            return " ".join(normalized.split())
+        text = decoded
+
+
+def scan_texts(training, model_outputs=(), *, strict=True) -> tuple[str, ...]:
+    """Scan fields and ordered joins per case; never join independent cases or outputs."""
+    if not isinstance(training, Sequence) or isinstance(training, (str, bytes)):
+        if strict:
+            raise ContaminationError("G6_E_RSI_SCREEN_INVALID")
+        training = ()
+    if not isinstance(model_outputs, Sequence) or isinstance(model_outputs, (str, bytes)):
+        if strict:
+            raise ContaminationError("G6_E_RSI_SCREEN_INVALID")
+        model_outputs = (model_outputs,)
+    found = []
+    for case in training:
+        if not isinstance(case, SuiteCase):
+            if strict:
+                raise ContaminationError("G6_E_RSI_SCREEN_INVALID")
+            continue
+        value = (case.case_id, case.input, case.expected, case.meta)
+        fields = tuple(_strings(value, strict=strict))
+        values = tuple(_strings(value, strict=strict, keys=False))
+        found.extend(canonical_text(s) for s in fields)
+        for fragments in (fields, values):
+            found.extend(canonical_text(separator.join(fragments)) for separator in ("", " "))
+    for output in model_outputs:
+        if isinstance(output, str):
+            found.append(canonical_text(output))
+        elif strict:
+            raise ContaminationError("G6_E_RSI_SCREEN_INVALID")
+    return tuple(found)
+
+
+def canary_matches(canaries: Sequence[str], texts: Sequence[str]) -> tuple[int, ...]:
+    """Return marker positions only; text comes from the shared canonical scanner."""
+    return tuple(i for i, marker in enumerate(canaries)
+                 if any(canonical_text(marker) in text for text in texts))
+
+
 def _grams(texts: Sequence[str]) -> set[tuple[str, ...]]:
     found = set()
     for text in texts:
-        tokens = re.findall(r"\w+|[^\w\s]", unicodedata.normalize("NFKC", text).casefold())
+        tokens = re.findall(r"\w+|[^\w\s]", canonical_text(text))
         found.update(tuple(tokens[i:i + 13]) for i in range(len(tokens) - 12))
     return found
 
@@ -117,8 +178,8 @@ def screen(training: Sequence[SuiteCase], held_out: Sequence[SuiteCase], *, cana
             or any(type(s) is not str for s in model_outputs)
             or any(not isinstance(p, CanaryProbe) for p in canary_probes)):
         raise ContaminationError("G6_E_RSI_SCREEN_INVALID")
-    training_texts = tuple(text for case in training for text in case_strings(case))
-    hits = sum(any(marker in text for text in (*training_texts, *model_outputs)) for marker in set(canaries))
+    training_texts = scan_texts(training)
+    hits = len(canary_matches(tuple(set(canaries)), (*training_texts, *scan_texts((), model_outputs))))
     probe_flags = sum(p.flagged for p in canary_probes)
     # A known leak takes precedence over absent statistical readings.
     if hits or probe_flags:
@@ -127,10 +188,12 @@ def screen(training: Sequence[SuiteCase], held_out: Sequence[SuiteCase], *, cana
             or any(not isinstance(p, MembershipProbe) for p in membership.values())):
         raise ContaminationError("G6_E_RSI_MEMBERSHIP_REQUIRED")
     grams = _grams(training_texts)
+    inputs = {canonical_text(c.input) for c in training}
     excluded, identities, overlaps, members = set(), 0, 0, 0
     for index, case in enumerate(held_out):
-        identity = any(code == NOT_HELD_OUT for code, _ in Suite(tuple(training), (case,)).problems())
-        overlap = bool(_grams(case_strings(case)) & grams)
+        identity = (canonical_text(case.input) in inputs
+                    or any(code == NOT_HELD_OUT for code, _ in Suite(tuple(training), (case,)).problems()))
+        overlap = bool(_grams(scan_texts((case,))) & grams)
         member = membership[case.case_id].flagged
         identities += identity
         overlaps += overlap
