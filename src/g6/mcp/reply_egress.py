@@ -49,7 +49,10 @@ def budget_packet(packet, *, schema=None):
             result = render(value, lean=True)
             result["isError"] = True
     except (ValueError, TypeError, KeyError, RecursionError, MemoryError):
-        refused = oversize_refusal()
+        # A rendering/shortening failure cannot turn a real issued refusal into
+        # input validation. Code selection uses the original declared reply.
+        refused = oversize_refusal(original, schema=schema, measure=lambda reply:
+                                  len(json.dumps(render(reply, lean=True)).encode("utf-8")))
         result = {"content": [{"type": "text", "text": json.dumps(refused)}],
                   "structuredContent": refused, "isError": bool(root.result.get("isError"))}
     # Check the bytes that will actually be handed off, after every mutation,
