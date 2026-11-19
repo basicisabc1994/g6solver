@@ -26,6 +26,7 @@ from .graph import _matches
 from .graph_lowering import validated
 from .graph_records import AttemptRecord, CostVector, Edge, ExecutionRecord, Node, Primitive, ProgramGraph, StopRule
 from .ledger import Stores
+from .probes import ProbeInput
 from .records import (FACT_NAMES, Concept, FailureRecord, FeaturePredicate, LibraryEntry, Model, OracleBoundCase,
                       OracleReceipt, Rate, Sha256, Verdict, VerifierCandidate)
 
@@ -43,6 +44,11 @@ class DistillationCase:
     expected: str | None = None
     language: str = "python"
     framework: str = "pytest"
+    probe_input: ProbeInput | None = None
+
+
+class _ProbeBoundCase(OracleBoundCase):
+    probe_input: ProbeInput | None = None
 
 
 def bind_oracle_labels(cases, *, oracle_store, registered_policy_sha256) -> tuple[OracleBoundCase, ...]:
@@ -85,8 +91,9 @@ def bind_oracle_labels(cases, *, oracle_store, registered_policy_sha256) -> tupl
             raise UnboundLabel(str(error)) from error
     # Finish the whole batch's receipt checks before touching any source mapping.
     try:
-        return tuple(OracleBoundCase(**(header.model_dump() | {
-            "before": source_mapping(case.before), "after": source_mapping(case.after)}))
+        return tuple(_ProbeBoundCase(**(header.model_dump() | {
+            "before": source_mapping(case.before), "after": source_mapping(case.after),
+            "probe_input": getattr(case, "probe_input", None)}))
             for header, case in zip(headers, cases, strict=True))
     except (ValueError, TypeError) as error:
         raise UnboundLabel(str(error)) from error
@@ -180,7 +187,7 @@ def extract_teacher_traces(records, *, teacher_node, cases, trace_store, oracle_
 
 def _training_cases(cases):
     return tuple(synthesis.SynthesisCase(failure=c.failure, before=c.before, after=c.after, expected=c.expected,
-                                       language=c.language, framework=c.framework) for c in cases)
+        language=c.language, framework=c.framework, probe_input=getattr(c, "probe_input", None)) for c in cases)
 
 
 def propose_concept_from_teacher(cases, traces, *, synthesizer, oracle_store=None,
@@ -370,9 +377,7 @@ def rewrite(graph, teacher_node, *, primitives, candidate, scope, mode):
 def _replay(q, cases, *, library=None):
     observations = [Observation(source_mapping(c.before), source_mapping(c.after),
         extract_facts(source_mapping(c.before), source_mapping(c.after), split=c.failure.split),
-        c.expected, c.language, c.framework) for c in cases]
-    if q.contract.probes:
-        raise ValueError("probe replay requires an injected resource-accounted runner")
+        c.expected, c.language, c.framework, getattr(c, "probe_input", None)) for c in cases]
     entries = {e.entry_id: e for e in library.list()} if library is not None else {}
 
     def resolve(ident):

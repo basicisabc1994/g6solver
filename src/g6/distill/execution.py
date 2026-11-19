@@ -10,12 +10,15 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from g6.core import confine
 from g6.core.ledger import canonical
 from g6.distillation import sandbox
+from g6.workforce.repo_tests import RepoRefused
 
 from .cost_ledger import consume_resources
-from .detectors import run_template
+from .detectors import PROBE_TEMPLATES, run_template
 from .graph_records import CostVector
+from .probes import ProbeInput, ProbeTemplateInstance
 from .records import MethodContract, VerifierCandidate
 
 
@@ -27,6 +30,7 @@ class Observation:
     expected: str = "concern"
     language: str = "python"
     framework: str = "pytest"
+    probe_input: ProbeInput | None = None
 
 
 class ExecutionRefused(ValueError):
@@ -65,8 +69,9 @@ def in_scope(contract: MethodContract, observation: Observation) -> bool:
     return True
 
 
-def run_candidate(candidate: VerifierCandidate, observations: list[Observation], resolve, *, stack=()) -> list[str]:
-    """Resolve parents read-only; reject stale parents and dependency cycles."""
+def run_candidate(candidate: VerifierCandidate, observations: list[Observation], resolve, *, stack=(),
+                  reasons: list[str] | None = None) -> list[str]:
+    """Resolve parents read-only; optionally append probe reasons in execution order."""
     candidate = VerifierCandidate.model_validate_json(canonical(candidate.model_dump(mode="json")))
     if candidate.candidate_id in stack or len(stack) >= 16:
         raise ExecutionRefused("G6_E_SYNTH_DEPENDENCY", "cyclic or over-deep method dependency")
@@ -77,10 +82,34 @@ def run_candidate(candidate: VerifierCandidate, observations: list[Observation],
         return results
     selected = [observations[i] for i in active]
     if candidate.form == "template_instance":
-        if candidate.body.bindings:
+        if candidate.body.template in PROBE_TEMPLATES:
+            try:
+                instance = ProbeTemplateInstance.model_validate(candidate.body.model_dump(mode="json"))
+            except ValueError as error:
+                raise ExecutionRefused("G6_E_SYNTH_BINDINGS", str(error)) from error
+            values = []
+            for obs in selected:
+                kwargs = dict(split="training", bindings=instance.bindings.model_dump(mode="json"),
+                              probe_input=obs.probe_input, cost_bound=candidate.contract.cost_bound.model_dump())
+                if obs.probe_input is None:
+                    detection = run_template(instance.template, obs.before, obs.after, **kwargs)
+                else:
+                    if os.environ.get("G6_REQUIRE_ISOLATION", "").strip().lower() not in {"1", "true", "yes", "on"}:
+                        raise ExecutionRefused("G6_E_ISOLATION_UNAVAILABLE", "probe execution requires strict isolation")
+                    try:
+                        with confine.run_folder(prefix="distill-candidate-") as workspace:
+                            detection = run_template(instance.template, obs.before, obs.after,
+                                                     workspace=workspace, **kwargs)
+                    except RepoRefused as error:
+                        raise ExecutionRefused(error.code, str(error)) from error
+                values.append(detection.verdict)
+                if reasons is not None:
+                    reasons.append(detection.reason)
+        elif candidate.body.bindings:
             raise ExecutionRefused("G6_E_SYNTH_BINDINGS", "seed bindings must be empty data")
-        values = [run_template(candidate.body.template, obs.before, obs.after, split="training").verdict
-                  for obs in selected]
+        else:
+            values = [run_template(candidate.body.template, obs.before, obs.after, split="training").verdict
+                      for obs in selected]
     elif candidate.form == "predicate":
         problems = sandbox.check_source(candidate.body, max_chars=8192)
         if problems:
@@ -105,7 +134,7 @@ def run_candidate(candidate: VerifierCandidate, observations: list[Observation],
                 raise ExecutionRefused("G6_E_SYNTH_EXECUTION", "predicate must return verdict and reason")
             values.append(out["verdict"])
     elif candidate.form == "reuse":
-        values = run_candidate(resolve(candidate.body), selected, resolve, stack=stack)
+        values = run_candidate(resolve(candidate.body), selected, resolve, stack=stack, reasons=reasons)
     else:
         body = candidate.body
         if body.op == "sequence":
@@ -114,11 +143,13 @@ def run_candidate(candidate: VerifierCandidate, observations: list[Observation],
                 pending = [i for i, value in enumerate(values) if value == "abstain"]
                 if not pending:
                     break
-                outcomes = run_candidate(resolve(ident), [selected[i] for i in pending], resolve, stack=stack)
+                outcomes = run_candidate(resolve(ident), [selected[i] for i in pending], resolve,
+                                         stack=stack, reasons=reasons)
                 for i, value in zip(pending, outcomes, strict=True):
                     values[i] = value
         else:
-            columns = [run_candidate(resolve(ident), selected, resolve, stack=stack) for ident in body.entries]
+            columns = [run_candidate(resolve(ident), selected, resolve, stack=stack, reasons=reasons)
+                       for ident in body.entries]
             values = []
             for row in zip(*columns, strict=True):
                 concerns, abstains = row.count("concern"), row.count("abstain")

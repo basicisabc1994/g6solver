@@ -22,11 +22,12 @@ from g6.core.llm import EmptyRetry, FakeLLM, LLMCaller, LLMError
 from g6.core.model_calls import counting
 from g6.reasoning.budget import Budget, BudgetExhausted, MeteredCaller
 
-from .detectors import SEED_TEMPLATES
+from .detectors import PROBE_TEMPLATES, SEED_TEMPLATES
 from .execution import ExecutionRefused, Observation, run_candidate
 from .facts import extract_facts, source_mapping
 from .ledger import Stores
 from .library import Library
+from .probes import DEFAULT_PROBE_INSTANCES, KillSetBindings, ProbeInput, ProbeTemplateInstance
 from .records import (Composition, Concept, FailureRecord, LibraryEntry, MethodContract, Model,
                       SynthesisedBy, TemplateInstance, VerifierCandidate)
 
@@ -39,6 +40,7 @@ class SynthesisCase:
     expected: str = "concern"
     language: str = "python"
     framework: str = "pytest"
+    probe_input: ProbeInput | None = None
 
 
 class Refusal(Model):
@@ -92,7 +94,7 @@ def _training_view(concept, cases):
                     unique.add(node.value)
         literals.update(unique)
         observations.append(Observation(before, after, extract_facts(before, after, split="training"),
-                                        case.expected, case.language, case.framework))
+                                        case.expected, case.language, case.framework, case.probe_input))
     return concept, observations, {value for value, count in literals.items() if count == 1}
 
 
@@ -181,6 +183,21 @@ class Synthesizer:
                     "composition" if form in {"reuse", "composition"} else "template"), exchange_sha256=exchange),
                 training_case_ids=ids, authority="proposed", model_calls=1 + (meter.calls if meter else 0))
 
+        def probe_candidate(data, *, exchange=None):
+            try:
+                instance = ProbeTemplateInstance.model_validate(data)
+            except (ValueError, TypeError) as error:
+                raise ExecutionRefused("G6_E_SYNTH_BINDINGS", str(error)) from error
+            bindings = instance.bindings
+            runs = (2 + 2 * bindings.limit * bindings.reruns if isinstance(bindings, KillSetBindings)
+                    else 3 + bindings.reruns)
+            contract = MethodContract(**(default_contract.model_dump() | {
+                "assumptions": ["Explicit probe inputs and strict isolation required; sampled training evidence only."],
+                "probes": [{"name": instance.template, "runs": runs, "wall_s": 180.0}],
+                "cost_bound": {"wall_s": 180.0, "probe_runs": runs, "model_calls": 0}}))
+            return candidate("template_instance", TemplateInstance.model_validate(instance.model_dump(mode="json")),
+                             contract=contract, exchange=exchange)
+
         last_observed = []
 
         def covers(method):
@@ -236,6 +253,12 @@ class Synthesizer:
         for name in self.policy.template_order:
             if SEED_TEMPLATES[name].supported:
                 method = candidate("template_instance", TemplateInstance(template=name, bindings={}))
+                if covers(method):
+                    return result(method)
+
+        for instance in DEFAULT_PROBE_INSTANCES:
+            if PROBE_TEMPLATES[instance.template].supported:
+                method = probe_candidate(instance.model_dump(mode="json"))
                 if covers(method):
                     return result(method)
 
@@ -316,7 +339,10 @@ class Synthesizer:
             if meter.calls >= self.policy.max_synthesis_calls:
                 break
             response = ask("Propose " + stage + ". Return JSON only: " + (
-                '{"template": "seed id", "bindings": {}}. Bindings are data, never source.' if stage == "template bindings"
+                '{"template": "registered template id", "bindings": {}}. Bindings are data, never source. '
+                'Seeds require empty bindings. Registered probe schema: '
+                + canonical(ProbeTemplateInstance.model_json_schema())
+                if stage == "template bindings"
                 else '{"source": "def solve(facts): ..."}. Return verdict and reason; no imports or case literals.'),
                 feedback if stage == "predicate repair" else None)
             if response is None:
@@ -326,10 +352,15 @@ class Synthesizer:
             data, exchange = response
             try:
                 if stage == "template bindings":
-                    if set(data) != {"template", "bindings"} or data["bindings"] != {}:
+                    if set(data) != {"template", "bindings"}:
+                        raise ExecutionRefused("G6_E_SYNTH_BINDINGS", "template and bindings required")
+                    if isinstance(data["template"], str) and data["template"] in PROBE_TEMPLATES:
+                        method = probe_candidate(data, exchange=exchange)
+                    elif data["bindings"] != {}:
                         raise ExecutionRefused("G6_E_SYNTH_BINDINGS", "trusted seeds accept only empty bindings")
-                    body = TemplateInstance.model_validate(data)
-                    method = candidate("template_instance", body, exchange=exchange)
+                    else:
+                        body = TemplateInstance.model_validate(data)
+                        method = candidate("template_instance", body, exchange=exchange)
                 else:
                     if set(data) != {"source"} or not isinstance(data["source"], str):
                         raise ValueError("predicate proposal must contain only source text")

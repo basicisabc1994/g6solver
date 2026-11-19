@@ -62,6 +62,12 @@ class ProbeTemplateInstance(Model):
         return value
 
 
+DEFAULT_PROBE_INSTANCES = (
+    ProbeTemplateInstance(template="kill_set.v2", bindings={}),
+    ProbeTemplateInstance(template="discriminates_at_base.v2", bindings={}),
+)
+
+
 class ProbeBudget(Model):
     wall_s: Annotated[float, Field(gt=0, le=180)]
     probe_runs: Annotated[int, Field(strict=True, ge=0, le=512)]
@@ -101,6 +107,11 @@ class ProbeInput(Model):
     changed_lines: tuple[Count, ...] = Field(min_length=1, max_length=4096)
     base_implementation: str | None = Field(default=None, max_length=131072)
     new_tests: dict[str, str] | None = None
+
+    @classmethod
+    def from_case(cls, case):
+        """Copy explicit CaseRecord program inputs without inferring a base."""
+        return cls(files=dict(case.files), target=case.target, changed_lines=case.changed_lines)
 
     @model_validator(mode="after")
     def paths(self):
