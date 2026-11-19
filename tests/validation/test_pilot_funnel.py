@@ -473,3 +473,156 @@ def test_runner_diagnostic_stops_fixed_stage_without_content(rig, reason):
 
     row = rig.run(suite_runner_override=suite)["bugs"][0]
     assert (row["stage"], row["reason"], row["label"], row["runs"]) == ("fixed_suites", reason, None, 1)
+
+
+@pytest.mark.parametrize("last_line,reason", [
+    ("ValueError: missing or large support source", "support_missing_or_large"),
+    ("ValueError: missing or large source", "fix_source_missing_or_large"),
+    ("ValueError: linked support path", "support_linked_path"),
+    ("ValueError: unsupported fix path", "unsupported_fix_path"),
+    ("ValueError: linked fix path", "extraction_failed"),
+    ("ValueError: support source too large", "support_source_too_large"),
+    ("UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+     "source_not_utf8"),
+    ("OSError: hidden_file.py at /private/source", "extraction_failed"),
+    ("ValueError: support source too large\nOSError: hidden_file.py", "extraction_failed"),
+    ("ValueError: missing or large source /private/hidden_file.py", "extraction_failed"),
+    ("", "extraction_failed"),
+])
+def test_extraction_last_line_codes_and_privacy(rig, capsys, last_line, reason):
+    rig.docker.failure = 'Traceback: /private/hidden_file.py\n' + last_line
+    report = rig.run()
+    assert report["bugs"][0]["reason"] == reason
+    serialized = json.dumps(report) + (rig.folder / "funnel.json").read_text(encoding="utf-8")
+    assert "/private" not in serialized and "hidden_file.py" not in serialized
+    assert "ValueError:" not in serialized and "UnicodeDecodeError:" not in serialized
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""
+
+
+@pytest.mark.parametrize("verdict", ["timed_out", "could_not_start", "no_tests_collected", "passed",
+                                    "run_inconsistent", "private/file.py", {"secret": "hidden"}, None])
+def test_raw_runner_verdict_on_suite_stop(rig, monkeypatch, capsys, verdict):
+    @contextmanager
+    def folder(**kwargs):
+        stage = rig.folder / uuid4().hex
+        stage.mkdir()
+        yield str(stage)
+
+    monkeypatch.setattr(rig.f.confine, "run_folder", folder)
+    monkeypatch.setattr(repo_tests, "_run", lambda *a, **kw: {
+        "verdict": verdict, "isolation": {"backend": "fake"}, "output": "PRIVATE_OUTPUT"})
+    monkeypatch.setattr(repo_tests, "established", lambda *a, **kw: SimpleNamespace(
+        of=lambda test: "unknown", withheld=""))
+    report = rig.run(suite_runner_override=rig.f.suite_observation)
+    row = report["bugs"][0]
+    reason = "no_tests_collected" if verdict == "no_tests_collected" else "fixed_suite_did_not_pass"
+    assert (row["stage"], row["reason"]) == ("fixed_suites", reason)
+    want = verdict if isinstance(verdict, str) and "/" not in verdict else "unknown"
+    assert row["verdict"] == want
+    assert row["returned_unknown"] == 1
+    assert row["runs_not_started"] == int(verdict == "could_not_start")
+    serialized = json.dumps(report) + (rig.folder / "funnel.json").read_text(encoding="utf-8")
+    assert "PRIVATE_OUTPUT" not in serialized and "private/file.py" not in serialized and "hidden" not in serialized
+    assert capsys.readouterr().out == ""
+
+
+def test_diagnostic_stop_keeps_verdict(rig):
+    def suite(*a, **kw):
+        return rig.f.SuiteObservation("unknown", "missing_module", verdict="failed")
+
+    row = rig.run(suite_runner_override=suite)["bugs"][0]
+    assert (row["reason"], row["verdict"], row["returned_unknown"]) == ("missing_module", "failed", 1)
+
+
+def test_suite_request_counters_across_rows(rig):
+    def suite(case, implementation, tests, **kw):
+        if case.unit_id == rig.bugs[1]:
+            return "unknown"
+        return rig.suite(case, implementation, tests, **kw)
+
+    report = rig.run(arms=("as_built",), selected=rig.bugs[:2], suite_runner_override=suite)
+    first, second = report["bugs"]
+    expected = {"suite_requests": 4, "requests_refused": 0, "runs_not_started": 0,
+                "returned_passed": 2, "returned_failed": 1, "returned_unknown": 1}
+    assert (first["suite_requests"], second["suite_requests"]) == (3, 1)
+    assert report["total_runs"] == 4
+    for key, value in expected.items():
+        assert sum(row[key] for row in report["bugs"]) == value
+        assert report["total_" + key] == report["arms"]["as_built"][key] == value
+        assert sum(arms["as_built"][key] for arms in report["repositories"].values()) == value
+    for row in report["bugs"]:
+        assert row["suite_requests"] == row["runs"] == (
+            row["requests_refused"] + row["returned_passed"] + row["returned_failed"] + row["returned_unknown"])
+
+
+def test_refused_request_counts_as_refused_and_not_started(rig):
+    def refused(*a, **kw):
+        raise repo_tests.RepoRefused("G6_E_ISOLATION_UNAVAILABLE", "PRIVATE_REFUSAL")
+
+    report = rig.run(suite_runner_override=refused)
+    row = report["bugs"][0]
+    assert row["runs"] == row["suite_requests"] == row["requests_refused"] == row["runs_not_started"] == 1
+    assert row["returned_passed"] == row["returned_failed"] == row["returned_unknown"] == 0
+    assert row["verdict"] is None
+    assert report["total_requests_refused"] == report["total_runs_not_started"] == report["total_runs"] == 1
+    assert "PRIVATE_REFUSAL" not in json.dumps(report)
+
+
+def test_returned_outcome_counted_before_wall_stop(rig, monkeypatch):
+    elapsed = [0.0]
+    monkeypatch.setattr(rig.f, "MAX_SECONDS", 5)
+
+    def suite(*a, **kw):
+        elapsed[0] = 6.0
+        return "passed"
+
+    report = rig.run(clock=lambda: elapsed[0], suite_runner_override=suite)
+    row = report["bugs"][0]
+    assert row["reason"] == "unrun_budget"
+    assert row["returned_passed"] == report["total_returned_passed"] == 1
+
+
+def test_suite_counters_follow_variant_rows(rig):
+    report = rig.run()
+    rows = report["bugs"]
+    assert len(rows) == 8 and report["total_runs"] == len(rig.calls)
+    for row in rows:
+        assert row["suite_requests"] == row["runs"] == row["returned_passed"] + row["returned_failed"]
+        assert row["requests_refused"] == row["runs_not_started"] == row["returned_unknown"] == 0
+    assert sum(row["suite_requests"] for row in rows) == report["total_suite_requests"]
+
+
+def test_start_failure_verdict_survives_boundary_refusal(rig, monkeypatch):
+    @contextmanager
+    def folder(**kwargs):
+        stage = rig.folder / uuid4().hex
+        stage.mkdir()
+        yield str(stage)
+
+    monkeypatch.setattr(rig.f.confine, "run_folder", folder)
+    monkeypatch.setattr(repo_tests, "_run", lambda *a, **kw: {
+        "verdict": "could_not_start", "isolation": {"backend": None}})
+    report = rig.run(suite_runner_override=rig.f.suite_observation)
+    row = report["bugs"][0]
+    assert (row["reason"], row["verdict"]) == ("G6_E_ISOLATION_UNAVAILABLE", "could_not_start")
+    assert row["suite_requests"] == row["runs_not_started"] == row["returned_unknown"] == 1
+    assert row["requests_refused"] == 0
+
+
+def test_failed_extraction_keeps_wall_budget_stop(rig, monkeypatch):
+    elapsed = [0.0]
+    monkeypatch.setattr(rig.f, "MAX_SECONDS", 5)
+
+    def extract(command):
+        result = rig.docker(command)
+        if "support" in command:
+            elapsed[0] = 6.0
+            return subprocess.CompletedProcess(command, 1, "", "ValueError: missing or large source")
+        return result
+
+    report = rig.f.run_funnel(rig.manifest, rig.cohort, rig.folder / "funnel.json",
+                             arms=("as_built",), bugs=rig.bugs[:1], runner=extract,
+                             suite_runner=rig.suite, clock=lambda: elapsed[0])
+    assert report["bugs"][0]["reason"] == "unrun_budget"
+    assert report["total_runs"] == report["total_suite_requests"] == 0

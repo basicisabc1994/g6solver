@@ -39,12 +39,27 @@ REPOSITORY = Path(__file__).resolve().parents[3]
 SHAPE_REASONS = frozenset(("no_python_fix", "multiple_python_targets", "empty_changed_lines", "missing_target_pair",
                            "single_test_module_required", "missing_test_pair", "multi_target_required"))
 EXTRACT_REASONS = frozenset(("image_metadata_invalid", "image_missing", "image_id_mismatch", "extraction_failed"))
+EXTRACT_MESSAGES = {
+    "ValueError: missing or large support source": "support_missing_or_large",
+    "ValueError: missing or large source": "fix_source_missing_or_large",
+    "ValueError: linked support path": "support_linked_path",
+    "ValueError: unsupported fix path": "unsupported_fix_path",
+    "ValueError: support source too large": "support_source_too_large",
+}
+SUITE_COUNTERS = ("suite_requests", "requests_refused", "runs_not_started",
+                  "returned_passed", "returned_failed", "returned_unknown")
 
 
 @dataclass(frozen=True)
 class SuiteObservation:
     outcome: str
     reason: str = ""
+    verdict: str | None = None
+    not_started: bool = False
+
+
+def _verdict(value):
+    return value if isinstance(value, str) and value in repo_tests.REPORT_VERDICTS else "unknown"
 
 
 class _Stop(Exception):
@@ -68,6 +83,15 @@ def _bind(function, **bindings):
 def suite_observation(case, implementation, suite, *, workspace, timeout_s, python=None):
     """The oracle's staging route, with only structured diagnostics retained."""
     reason = ""
+    observation = None
+
+    def request(*args, **kwargs):
+        nonlocal observation
+        raw = repo_tests._run(*args, **kwargs)
+        verdict = _verdict(raw.get("verdict"))
+        observation = SuiteObservation("unknown", verdict=verdict,
+                                       not_started=verdict in {"could_not_start", "not_run"})
+        return raw
 
     def established(raw, **kwargs):
         nonlocal reason
@@ -81,10 +105,14 @@ def suite_observation(case, implementation, suite, *, workspace, timeout_s, pyth
                 reason = "no_tests_collected"
         return result
 
-    adapter = SimpleNamespace(_run=repo_tests._run, established=established, RepoRefused=repo_tests.RepoRefused)
+    adapter = SimpleNamespace(_run=request, established=established, RepoRefused=repo_tests.RepoRefused)
     run = _bind(oracle._run, repo_tests=adapter)
-    outcome = run(case, implementation, suite, workspace=workspace, timeout_s=timeout_s, python=python)
-    return SuiteObservation(outcome, reason)
+    try:
+        outcome = run(case, implementation, suite, workspace=workspace, timeout_s=timeout_s, python=python)
+    except repo_tests.RepoRefused as exc:
+        exc._funnel_observation = observation
+        raise
+    return SuiteObservation(outcome, reason, observation.verdict, observation.not_started)
 
 
 class _Budget:
@@ -103,9 +131,27 @@ class _Budget:
         self.check()
         self.runs += 1
         self.row["runs"] += 1
+        self.row["suite_requests"] += 1
+        self.row["verdict"] = None
         self.row["stages"][self.row["stage"]]["runs"] += 1
-        result = runner(case, implementation, tests, workspace=workspace,
-                        timeout_s=min(timeout_s, int(self.remaining())), python=python)
+        try:
+            result = runner(case, implementation, tests, workspace=workspace,
+                            timeout_s=min(timeout_s, int(self.remaining())), python=python)
+        except repo_tests.RepoRefused as exc:
+            observation = getattr(exc, "_funnel_observation", None)
+            if observation is None:
+                self.row["requests_refused"] += 1
+                self.row["runs_not_started"] += 1
+            else:
+                self.row["verdict"] = observation.verdict
+                self.row["runs_not_started"] += int(observation.not_started)
+                self.row["returned_unknown"] += 1
+            raise
+        outcome = result.outcome if isinstance(result, SuiteObservation) else result
+        self.row["returned_" + (outcome if outcome in {"passed", "failed"} else "unknown")] += 1
+        if isinstance(result, SuiteObservation):
+            self.row["verdict"] = _verdict(result.verdict) if result.verdict is not None else None
+            self.row["runs_not_started"] += int(result.not_started)
         if self.remaining() < 1:
             raise _BudgetStop()
         if isinstance(result, SuiteObservation):
@@ -132,7 +178,8 @@ def _stage(budget, row, stage, operation):
 def _new_row(bug, arm, variant=None):
     return {"bug_id": bug, "repository": allocation.repository_of(bug), "arm": arm, "variant": variant,
             "stage": "unrun", "reason": "ok", "label": None, "headline_stratum": None,
-            "mutant_count": None, "seconds": 0.0, "runs": 0, "stages": {}}
+            "mutant_count": None, "seconds": 0.0, "runs": 0, "verdict": None, "stages": {},
+            **dict.fromkeys(SUITE_COUNTERS, 0)}
 
 
 def _extract(manifest, cohort, bug_id, runner, budget):
@@ -154,9 +201,15 @@ def _extract(manifest, cohort, bug_id, runner, budget):
             else:
                 cache[key] = runner(command)
         result = cache[key]
-        if result.returncode and any(line.strip() == "ValueError: support source too large"
-                                     for line in (result.stderr or "").splitlines()):
-            raise _Stop("support_source_too_large")
+        if result.returncode and _material.EXTRACT in command:
+            lines = (result.stderr or "").splitlines()
+            last = lines[-1].strip() if lines else ""
+            reason = EXTRACT_MESSAGES.get(last, "extraction_failed")
+            if last.startswith("UnicodeDecodeError: 'utf-8' codec can't decode"):
+                reason = "source_not_utf8"
+            if reason != "support_source_too_large":
+                budget.check()
+            raise _Stop(reason)
         budget.check()
         return result
 
@@ -289,7 +342,8 @@ def _summarize(rows):
             "labels": dict(Counter(r["label"] for r in rows if r["label"])),
             "seconds_per_label": {label: sum(r["seconds"] for r in rows if r["label"] == label)
                                   for label in ("positive", "negative")},
-            "runs": sum(r["runs"] for r in rows), "seconds": sum(r["seconds"] for r in rows)}
+            "runs": sum(r["runs"] for r in rows), "seconds": sum(r["seconds"] for r in rows),
+            **{key: sum(r[key] for r in rows) for key in SUITE_COUNTERS}}
 
 
 def _output_path(output):
@@ -412,6 +466,7 @@ def run_funnel(manifest, cohort, output, *, arms=ARMS, bugs=None, runner=preflig
               "repositories": {repo: {a: _summarize([r for r in rows if r["repository"] == repo and r["arm"] == a])
                                        for a in arms} for repo in sorted({r["repository"] for r in rows})},
               "total_runs": budget.runs, "total_seconds": seconds,
+              **{"total_" + key: sum(r[key] for r in rows) for key in SUITE_COUNTERS},
               "run_count_scope": "confined-route requests; refusals charged conservatively",
               "caps": {"runs": MAX_RUNS, "seconds": MAX_SECONDS},
               "code_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
