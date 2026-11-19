@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import get_args, get_origin
+from typing import get_origin
+
+from g6.core.serialized_guidance import SerializedGuidance, serialized_positions
 
 PERSON = "This op is sensitive. The person must allow it themselves. Tell the person and stop."
 WITHHELD = "Results were withheld from a source not shared with this provider. Tell the person."
@@ -93,7 +95,8 @@ def guidance_model_inventory():
     """Import actual classes lazily; importing a component may import this module.
 
     Only outcome reasons are guidance. Contribution.reason and passage data keep
-    their data roles. Class labels and a payload's runtime type grant no roles.
+    their data roles. Actual registered identities select roles at model ingress;
+    class labels and dictionary shapes never establish those identities.
     """
     from g6.core.reliability_envelope import ReliabilityEnvelope
     from g6.knowledge._index import Searched
@@ -118,6 +121,8 @@ def guidance_positions(value, *, schema):
     def declared(contract, seen=()):
         if contract is None or contract in seen:
             return frozenset()
+        if isinstance(contract, SerializedGuidance):
+            return contract.positions
         if isinstance(contract, Mapping):
             return frozenset((*path, *tail) for path, child in contract.items()
                              for tail in declared(child, seen))
@@ -125,28 +130,14 @@ def guidance_positions(value, *, schema):
             return frozenset(path for child in contract for path in declared(child, seen))
         if isinstance(contract, str):
             return GUIDANCE_CONTRACT_POSITIONS.get(contract, frozenset())
-        origin, args = get_origin(contract), get_args(contract)
-        if origin in (list, tuple):
-            return frozenset(("*", *path) for child in args if child is not Ellipsis
-                             for path in declared(child, seen))
-        if origin is not None:
-            return frozenset(path for child in args for path in declared(child, seen))
-        if not isinstance(contract, type):
+        if not isinstance(contract, type) and get_origin(contract) is None:
             return frozenset()
-        positions = frozenset()
-        for model, roles in guidance_model_inventory().items():
-            if issubclass(contract, model):
-                positions |= roles
-        fields = getattr(contract, "model_fields", {})
-        out = set(positions)
-        for name, field in fields.items():
-            aliases = {name, field.serialization_alias or name, field.alias or name}
-            for path in positions:
-                if path[0] == name:
-                    out.update((alias, *path[1:]) for alias in aliases)
-            out.update((alias, *path) for alias in aliases
-                       for path in declared(field.annotation, (*seen, contract)))
-        return frozenset(out)
+        # Non-Pydantic extension class declarations are entirely data. They do
+        # not gain a G6 identity by imitating a model's module or class name.
+        from pydantic import BaseModel
+        if isinstance(contract, type) and not issubclass(contract, BaseModel):
+            return frozenset()
+        return serialized_positions(contract)
 
     return declared(schema)
 
@@ -166,9 +157,11 @@ def guidance_role(key, parent=0, opaque=False, *, at_root=False, positions=()):
         return 2
     if key == "warning_card":
         return 2
+    if (key,) in positions or ("*",) in positions:
+        return 1
     if opaque or _structured(key):
         return 0
-    return int(bool(parent or (at_root and key in GUIDANCE_FIELDS) or (key,) in positions))
+    return int(bool(parent or (at_root and key in GUIDANCE_FIELDS)))
 
 
 def child_guidance_positions(positions, key):
@@ -216,10 +209,12 @@ def reply_for_agent(value, *, _prose: bool = True, _schema=ENVELOPE_CONTRACT):
     """
     results, active = {}, set()
     root_positions = guidance_positions(value, schema=_schema)
-    todo = [(value, False, 0, False, 0, root_positions)]
+    root_guidance = int(() in root_positions)
+    todo = [(value, False, root_guidance, False, 0, root_positions)]
     while todo:
         item, opaque, guidance, done, depth, pending = todo.pop()
         positions = pending
+        sequence_guidance = guidance or int(("*",) in pending)
         if depth > _MAX_GUIDANCE_DEPTH:
             return {"ok": False, "completion_state": "blocked-escalated",
                     "error": "[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person."}
@@ -245,7 +240,7 @@ def reply_for_agent(value, *, _prose: bool = True, _schema=ENVELOPE_CONTRACT):
                     out.update(action=_ISOLATION_ACTION, suggested_action=_ISOLATION_ACTION)
                 results[ident] = out
             else:
-                children = [results[(id(child), opaque, guidance, child_guidance_positions(pending, "*"))]
+                children = [results[(id(child), opaque, sequence_guidance, child_guidance_positions(pending, "*"))]
                             for child in item]
                 results[ident] = tuple(children) if isinstance(item, tuple) else children
             active.remove(ident)
@@ -261,9 +256,9 @@ def reply_for_agent(value, *, _prose: bool = True, _schema=ENVELOPE_CONTRACT):
                              False, depth + 1, child_guidance_positions(positions, key))
                             for key, child in item.items())
             else:
-                todo.extend((child, opaque, guidance, False, depth + 1,
+                todo.extend((child, opaque, sequence_guidance, False, depth + 1,
                              child_guidance_positions(pending, "*")) for child in item)
-    return results[(id(value), False, 0, root_positions)]
+    return results[(id(value), False, root_guidance, root_positions)]
 
 
 def skill_for_agent(text: str | None) -> str | None:

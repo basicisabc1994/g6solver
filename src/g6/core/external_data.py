@@ -22,18 +22,29 @@ class ExternalDataLimit(ValueError):
     """The host could not safely copy external text receipts."""
 
 
-def _model_values(item, depth=0):
-    """Serialize model values without assigning any semantic role to their type."""
+def _model_values(item, depth=0, *, explicit=(), positions=(), path=()):
+    """Serialize models and retain the wire roles declared by runtime identities."""
     from pydantic import BaseModel
 
     if depth > _MAX_GUIDANCE_DEPTH:
         raise ExternalDataLimit("[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person.")
     if isinstance(item, BaseModel):
+        from g6.core.serialized_guidance import SerializedGuidance, validate_model_serialization
+        model = type(item)
+        runtime_positions = validate_model_serialization(model, positions, explicit, path)
         item = item.model_dump(mode="json")
+        if runtime_positions:
+            # Preserve the roles resolved before dumping erased class identity.
+            # Route declarations still apply separately, including to plain dicts.
+            item = external_value(item, _component=True, _schema=SerializedGuidance(model, runtime_positions))
     if isinstance(item, Mapping):
-        return {key: _model_values(child, depth + 1) for key, child in item.items()}
+        return {key: _model_values(child, depth + 1, explicit=explicit,
+                                  positions=child_guidance_positions(positions, key), path=(*path, key))
+                for key, child in item.items()}
     if isinstance(item, (list, tuple)):
-        children = [_model_values(child, depth + 1) for child in item]
+        children = [_model_values(child, depth + 1, explicit=explicit,
+                                  positions=child_guidance_positions(positions, "*"), path=(*path, index))
+                    for index, child in enumerate(item)]
         return tuple(children) if isinstance(item, tuple) else children
     return item
 
@@ -42,10 +53,12 @@ def external_value(value, *, _component=False, _schema=None):
     """Copy external JSON-like data, marking text without inspecting its words."""
     results, active = {}, set()
     root_positions = guidance_positions(value, schema=_schema)
-    todo = [(value, False, 0, False, True, root_positions)]
+    root_guidance = int(() in root_positions)
+    todo = [(value, False, root_guidance, False, True, root_positions)]
     while todo:
         item, opaque, guidance, done, at_root, pending = todo.pop()
         positions = pending
+        sequence_guidance = guidance or int(("*",) in pending)
         ident = (id(item), opaque, guidance, at_root, pending)
         if isinstance(item, str):
             results[ident] = (_GuidanceText(str.__str__(item))
@@ -58,7 +71,7 @@ def external_value(value, *, _component=False, _schema=None):
                                            if _component else 0, False, child_guidance_positions(positions, key))]
                               for key, child in item.items()}
                              if isinstance(item, Mapping) else
-                             [results[(id(child), opaque, guidance, False,
+                             [results[(id(child), opaque, sequence_guidance, False,
                                        child_guidance_positions(pending, "*"))] for child in item])
             if isinstance(item, tuple):
                 results[ident] = tuple(results[ident])
@@ -74,24 +87,52 @@ def external_value(value, *, _component=False, _schema=None):
                              if _component else 0, False, False, child_guidance_positions(positions, key))
                             for key, child in item.items())
             else:
-                todo.extend((child, opaque, guidance, False, False,
+                todo.extend((child, opaque, sequence_guidance, False, False,
                              child_guidance_positions(pending, "*")) for child in item)
-    return results[(id(value), False, 0, True, root_positions)]
+    return results[(id(value), False, root_guidance, True, root_positions)]
 
 
-def component_value(value, *, in_result=False, schema=None):
+def component_value(value, *, in_result=False, schema=None, _producer=None):
     """Classify roles at their reply position before granting data receipts.
 
-    A component payload is data unless its producer supplied a result contract.
-    Reply roots declare their own envelope; no nested object is recognised by
-    its keys. Private guidance receipts survive subsequent component wrappers.
+    A component payload is data unless its producer or a registered runtime
+    identity declares guidance roles. Reply roots declare their own envelope;
+    no nested object is recognised by its keys. Private guidance receipts survive
+    subsequent component wrappers.
     """
     contract = schema if in_result or schema is not None else ENVELOPE_CONTRACT
+    return _reply_value(value, contract, producer=_producer)
+
+
+def _reply_value(value, contract, *, knowledge=False, producer=None):
+    """The sole guarded conversion from component values to reply data."""
     try:
-        value = _model_values(value)
-    except ExternalDataLimit as exc:
-        return {"ok": False, "completion_state": "blocked-escalated", "error": str(exc)}
-    return reply_for_agent(external_value(value, _component=True, _schema=contract), _schema=contract)
+        from g6.core.serialized_guidance import explicit_serialization_bindings, validate_explicit_positions
+        if producer is not None:
+            contract = producer_result_contract(producer)
+        # Resolve the declaration before running any user serialization code.
+        positions = guidance_positions(None, schema=contract)
+        value = _model_values(value, explicit=explicit_serialization_bindings(contract), positions=positions)
+        validate_explicit_positions(value, contract)
+        from g6._context_engine._envelope import SearchResponse
+        if knowledge and contract is SearchResponse and isinstance(value, Mapping):
+            data_fields = (*SearchResponse.model_fields, "passage", "items")
+            value = {key: external_value(child) if key in data_fields else child for key, child in value.items()}
+        else:
+            value = external_value(value, _component=True, _schema=contract)
+        value = reply_for_agent(value, _schema=contract)
+        # Account for the exact JSON/UTF-8 representation here, before a later
+        # envelope or transport can try to serialize an unsupported value.
+        json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+        return value
+    except Exception as exc:
+        # A data or shape failure becomes a bounded refusal. Control flow (a person's interrupt,
+        # job cancellation, interpreter exit) is never swallowed into a reply.
+        name = type(exc).__name__
+        name = name if len(name) <= 80 and name.isascii() and name.isidentifier() else "Exception"
+        return {"ok": False, "completion_state": "blocked-escalated",
+                "error": "[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. "
+                         f"Tell the person. ({name})"}
 
 
 def producer_result_contract(fn):
@@ -148,7 +189,7 @@ def component_call(fn, *args, **kwargs):
         return Result.fail(external_value(str(exc)))
     if isinstance(outcome, Result):
         return (Result.fail(external_value(outcome.error)) if outcome.is_fail() else
-                Result.ok(component_value(outcome.value, in_result=True, schema=producer_result_contract(fn))))
+                Result.ok(component_value(outcome.value, in_result=True, _producer=fn)))
     return outcome
 
 
@@ -163,19 +204,12 @@ def quoted_content(value):
 def knowledge_quotes(value, *, schema=None):
     """Copy declared knowledge data without discovering contracts inside it.
 
-    None declares an entirely data payload. SearchResponse's declared fields
-    include the open payload: everything below it is data except payload.reason.
-    The MCP knowledge helper also declares passage/items as fetch/context data.
+    None declares no route roles; registered runtime models retain their own
+    declaration. SearchResponse's declared fields include the open payload:
+    everything below it is data except payload.reason. The MCP knowledge helper
+    also declares passage/items as fetch/context data.
     """
-    from g6._context_engine._envelope import SearchResponse
-    out = _model_values(value)
-    if schema is SearchResponse and isinstance(out, Mapping):
-        # The helper's known result fields are data; its other host prose still
-        # receives the default guidance filter. No nested key selects a model.
-        data_fields = (*SearchResponse.model_fields, "passage", "items")
-        out = {key: external_value(child) if key in data_fields else child for key, child in out.items()}
-        return reply_for_agent(out, _schema=schema)
-    return component_value(out, in_result=True, schema=schema)
+    return _reply_value(value, schema, knowledge=True)
 
 
 def program_output(value):
@@ -287,7 +321,7 @@ class ComponentRegistryIngress:
                     if outcome.is_fail():
                         owner.failure = external_value(outcome.error)
                         return Result.fail(owner.failure)
-                    owner.value = component_value(outcome.value, in_result=True, schema=producer_result_contract(fn))
+                    owner.value = component_value(outcome.value, in_result=True, _producer=fn)
                     return Result.ok(owner.value)
                 return outcome
             return invoke
@@ -321,8 +355,7 @@ class ComponentRegistryIngress:
             self.failure = external_value(str(exc))
             return Failure(self.failure)
         if outcome.__class__.__name__ == "Success":
-            self.value = component_value(outcome.unwrap(), in_result=True,
-                                         schema=producer_result_contract(self.target.invoke))
+            self.value = component_value(outcome.unwrap(), in_result=True, _producer=self.target.invoke)
             return Success(self.value)
         self.failure = external_value(str(outcome.failure()))
         return Failure(self.failure)

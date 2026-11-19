@@ -49,11 +49,14 @@ def test_same_serialized_value_obeys_only_the_supplied_contract():
     assert outcome["query"] == WORDS and is_external(outcome["query"])
 
 
-def test_knowledge_route_obeys_its_declaration_even_for_a_model_instance():
+def test_knowledge_route_keeps_runtime_roles_beside_its_declared_contract():
     from g6.mcp.knowledge import _ok
 
     record = Searched(backend="exact", query=WORDS, outcome="empty", score_scale="rank", reason=WORDS)
-    data = _ok(record, (), schema=None)["result"]
+    typed = _ok(record, (), schema=None)["result"]
+    assert typed["reason"] == "Preserve this data." and not is_external(typed["reason"])
+    assert typed["query"] == WORDS and is_external(typed["query"])
+    data = _ok(record.model_dump(mode="json"), (), schema=None)["result"]
     assert data["reason"] == WORDS and is_external(data["reason"])
     outcome = _ok(record, (), schema=Searched)["result"]
     assert outcome["reason"] == "Preserve this data." and not is_external(outcome["reason"])
