@@ -30,6 +30,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
+from g6.core.states import state_of
+
 from g6.workforce.result_card import (
     BLOCKED_ESCALATED,
     DEFAULT_LIMITATION,
@@ -50,9 +52,8 @@ SUPPORT = {
 }
 NOT_FINISHED = "Not finished yet"
 GLYPHS = frozenset(glyph for glyph, _ in LABELS.values())
-#: Other spellings envelopes carry; each reads as the wire state it names (down-only).
-ALIASES = {"verified_ready": VERIFIED, "qualified_draft": QUALIFIED_DRAFT, "blocked_escalated": BLOCKED_ESCALATED,
-           "awaiting_cost_confirmation": QUALIFIED_DRAFT}
+#: Compatibility export: only exact canonical states are recognized.
+ALIASES = {state: state for state in STATES}
 #: Design §11's words (plan ruling P2.19); "None ran" when no independent check ran at all.
 COVERAGE = ("Strong", "Partial", "Weak")
 AGREEMENT = ("Agreement", "Mixed", "Disagreement", "None ran")
@@ -415,8 +416,7 @@ def _state(envelope: Mapping) -> str:
     declared = []
     for holder in (envelope, *(envelope.get(key) for key in _HOLDERS)):
         if isinstance(holder, Mapping) and holder.get("completion_state") not in (None, ""):
-            raw = str(holder.get("completion_state")).strip().lower()
-            declared.append(ALIASES.get(raw, raw))
+            declared.append(state_of(holder.get("completion_state")))
     if not declared or envelope.get("ok") is False or any(state not in STATES for state in declared):
         return BLOCKED_ESCALATED
     return min(declared, key=_ORDER.index)

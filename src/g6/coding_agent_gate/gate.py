@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from g6.coding_agent_gate.protected_paths import ProtectedPathsPolicy
 
+from g6.core.states import state_of
+
 from g6.coding_agent_gate.detectors import NEW_TEST_MARKER, acknowledges_unverified, overclaims, risk_hits, scan_diff, shortcut_hits
 from g6.coding_agent_gate.evidence import Evidence, VerifierResult, is_placeholder
 from g6.core.reliability_envelope import envelope_fields, warning_card
@@ -108,7 +110,7 @@ def strictest(op: str, findings: Iterable[Finding]) -> str:
 
 def surface_state(verdict: str) -> str:
     """Verdict -> completion state, down-only: ``qualified-draft`` or ``blocked-escalated``, never ``verified``."""
-    return "qualified-draft" if str(verdict or "").strip().lower() in _DRAFT_VERDICTS else "blocked-escalated"
+    return state_of("qualified-draft" if verdict in _DRAFT_VERDICTS else "blocked-escalated")
 
 
 def tier_of(declared: str, fields: str, said: str = "") -> tuple[str, tuple[str, ...]]:
