@@ -30,6 +30,8 @@ repair block read only the corpus and this module.
 from __future__ import annotations
 
 import ast
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -762,3 +764,46 @@ LAYERS: dict[str, tuple[str, ...]] = {
     "G6_E_COMPOSITION_UNMET_INPUT": ("input", "core"),
     "G6_E_EVIDENCE_BINDING_UNREADABLE": ("person", "research"),
 }
+
+
+# Typed metadata readers: messages are for people only.
+_TYPED_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
+
+
+def code_of(value: object) -> str:
+    """Read a code from a refusal/exception, never from its message."""
+    if isinstance(value, Mapping):
+        holders = (value, value.get("warning_card"), value.get("error"))
+        for holder in holders:
+            if not isinstance(holder, Mapping) or "code" not in holder:
+                continue
+            code = holder["code"]
+            return code if isinstance(code, str) and _TYPED_CODE.fullmatch(code) else "unknown"
+        return "unknown"
+    code = getattr(value, "code", None)
+    return code if isinstance(code, str) and _TYPED_CODE.fullmatch(code) else "unknown"
+
+
+def missing_of(value: object) -> tuple[str, ...]:
+    """Declared missing input fields, in order; malformed declarations give none."""
+    missing = value.get("missing") if isinstance(value, Mapping) else getattr(value, "missing", None)
+    if not isinstance(missing, (list, tuple)) or not all(isinstance(f, str) and f for f in missing):
+        return ()
+    return tuple(dict.fromkeys(missing))
+
+
+class RefusalDetail(str):
+    """A refusal's human message with typed metadata, preserved by legacy string fields.
+
+    New envelopes should copy code/missing explicitly. Rendering the message or
+    casting it to str intentionally discards metadata; readers never recover it.
+    """
+
+    def __new__(cls, message: str, *, code: str = "unknown", missing: tuple[str, ...] = ()):
+        if not isinstance(code, str) or (code != "unknown" and not _TYPED_CODE.fullmatch(code)):
+            raise ValueError("a refusal needs a declared G6 code or unknown")
+        if not isinstance(missing, tuple) or not all(isinstance(field, str) and field for field in missing):
+            raise ValueError("missing must be a tuple of field names")
+        value = super().__new__(cls, message)
+        value.code, value.missing = code, tuple(dict.fromkeys(missing))
+        return value
