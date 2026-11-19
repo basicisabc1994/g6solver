@@ -1,5 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Evaluator-only contamination screens; exported records contain counts only."""
+"""Evaluator-only detectors for accidental copies under a fixed set of text views.
+
+ACCESS CONTROL is the binding barrier: the learner and proposer never hold the
+evaluator capability. These screens and canaries are DETECTORS, covering copies
+under NFKC/casefold/escape fixed points with default-ignorables removed or spaced,
+plus a whitespace-free view for short identity and canaries. They make no claim
+about deliberate adversarial obfuscation by a party controlling the encoding.
+Adjacent fragments carry both empty and space boundaries in a token graph;
+matching tracks at most 13 tokens, without enumerating whole-case alternatives.
+"""
 from __future__ import annotations
 
 import math
@@ -82,17 +91,25 @@ class ScreenReport:
         return record | {"excluded_count": self.excluded_count, "voided": self.voided}
 
 
-def _strings(value: object, *, strict=True, keys=True):
+def _strings(value: object, *, strict=True, keys=True, _depth=0, _budget=None):
+    if _budget is None:
+        _budget = [16384, 1048576]
+    _budget[0] -= 1
+    if _depth > 32 or _budget[0] < 0:
+        raise ContaminationError("G6_E_RSI_SCREEN_LIMIT")
     if isinstance(value, str):
+        _budget[1] -= len(value)
+        if _budget[1] < 0:
+            raise ContaminationError("G6_E_RSI_SCREEN_LIMIT")
         yield value
     elif isinstance(value, Mapping):
         for key, item in value.items():
             if keys:
-                yield from _strings(key, strict=strict, keys=keys)
-            yield from _strings(item, strict=strict, keys=keys)
+                yield from _strings(key, strict=strict, keys=keys, _depth=_depth + 1, _budget=_budget)
+            yield from _strings(item, strict=strict, keys=keys, _depth=_depth + 1, _budget=_budget)
     elif isinstance(value, (tuple, list)):
         for item in value:
-            yield from _strings(item, strict=strict, keys=keys)
+            yield from _strings(item, strict=strict, keys=keys, _depth=_depth + 1, _budget=_budget)
     elif strict and value is not None and type(value) not in (bool, int, float):
         raise ContaminationError("G6_E_RSI_SCREEN_INVALID")
 
@@ -112,16 +129,37 @@ _ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
 _SURROGATE_ESCAPE = re.compile(r"\\u(d[89ab][0-9a-f]{2})\\u(d[cdef][0-9a-f]{2})", re.IGNORECASE)
 
 
-def canonical_text(text: str) -> str:
-    """Use the same text equivalence for identities, overlap and canary incidents."""
+def _canonical(text: str, replacement: str, *, compact=False) -> str:
     while True:
-        normalized = _IGNORABLE.sub("", unicodedata.normalize("NFKC", text).casefold())
+        normalized = _IGNORABLE.sub(replacement, unicodedata.normalize("NFKC", text).casefold())
         paired = _SURROGATE_ESCAPE.sub(
             lambda m: chr(0x10000 + ((int(m[1], 16) - 0xD800) << 10) + int(m[2], 16) - 0xDC00), normalized)
         decoded = unquote(_ESCAPE.sub(lambda m: chr(int(m[1], 16)), paired))
-        if decoded == normalized:
-            return " ".join(normalized.split())
-        text = decoded
+        result = ("" if compact else " ").join(decoded.split())
+        if result == text:
+            return result
+        text = result
+
+
+def canonical_views(text: str) -> tuple[str, str, str]:
+    """The fixed detector views; the compact view is for identity and canaries."""
+    removed, spaced = _canonical(text, ""), _canonical(text, " ")
+    compact = _canonical(removed, "", compact=True)
+    assert _canonical(removed, "") == removed and _canonical(spaced, " ") == spaced
+    assert _canonical(compact, "", compact=True) == compact and not any(c.isspace() for c in compact)
+    return removed, spaced, compact
+
+
+def canonical_text(text: str) -> str:
+    """The default-ignorable removal view, retained for callers of repair 1."""
+    return canonical_views(text)[0]
+
+
+def _fragment_texts(fragments):
+    for fragment in fragments:
+        yield from canonical_views(fragment)
+    for separator in ("", " "):
+        yield from canonical_views(separator.join(fragments))
 
 
 def scan_texts(training, model_outputs=(), *, strict=True) -> tuple[str, ...]:
@@ -143,29 +181,123 @@ def scan_texts(training, model_outputs=(), *, strict=True) -> tuple[str, ...]:
         value = (case.case_id, case.input, case.expected, case.meta)
         fields = tuple(_strings(value, strict=strict))
         values = tuple(_strings(value, strict=strict, keys=False))
-        found.extend(canonical_text(s) for s in fields)
+        found.extend(view for s in fields for view in canonical_views(s))
         for fragments in (fields, values):
-            found.extend(canonical_text(separator.join(fragments)) for separator in ("", " "))
+            found.extend(_fragment_texts(fragments))
     for output in model_outputs:
         if isinstance(output, str):
-            found.append(canonical_text(output))
+            found.extend(canonical_views(output))
         elif strict:
             raise ContaminationError("G6_E_RSI_SCREEN_INVALID")
     return tuple(found)
 
 
+def incident_scan(*sources):
+    """Read raw supported containers before validation; return partial evidence on limits.
+
+    Each source is bounded to depth 32, 16384 nodes and 1 MiB of strings. Top-level
+    cases and outputs remain separate. Unsupported leaves cannot hide siblings.
+    """
+    texts, probes = [], []
+    limited = False
+    for source in sources:
+        budget = [16384, 1048576]
+
+        def walk(value, depth=0, is_key=False):
+            nonlocal limited
+            budget[0] -= 1
+            if depth > 32 or budget[0] < 0:
+                limited = True
+                return
+            if type(value) is str:
+                remaining = max(0, budget[1])
+                budget[1] -= len(value)
+                limited |= budget[1] < 0
+                yield value[:remaining], is_key
+            elif type(value) is CanaryProbe:
+                # Recheck numeric validity even if a caller bypassed construction.
+                rates = (getattr(value, "completion_rate", None), getattr(value, "chance_rate", None))
+                if all(_number(v) and v <= 1 for v in rates):
+                    probes.append(CanaryProbe(*rates))
+            elif isinstance(value, SuiteCase):
+                yield from walk((value.case_id, value.input, value.expected, value.meta), depth + 1, is_key)
+            elif type(value) is dict:
+                for key, item in value.items():
+                    if budget[0] < 0:
+                        break
+                    yield from walk(key, depth + 1, True)
+                    yield from walk(item, depth + 1, is_key)
+            elif type(value) in (list, tuple):
+                for item in value:
+                    if budget[0] < 0:
+                        break
+                    yield from walk(item, depth + 1, is_key)
+
+        groups = source if type(source) in (list, tuple) else (source,)
+        for group in groups:
+            if budget[0] < 0:
+                break
+            fragments = tuple(walk(group))
+            texts.extend(_fragment_texts(tuple(s for s, _ in fragments)))
+            texts.extend(_fragment_texts(tuple(s for s, key in fragments if not key)))
+    return tuple(texts), tuple(probes), limited
+
+
 def canary_matches(canaries: Sequence[str], texts: Sequence[str]) -> tuple[int, ...]:
     """Return marker positions only; text comes from the shared canonical scanner."""
+    compact = tuple(canonical_views(text)[2] for text in texts)
     return tuple(i for i, marker in enumerate(canaries)
-                 if any(canonical_text(marker) in text for text in texts))
+                 if any(canonical_views(marker)[2] in text for text in compact))
 
 
-def _grams(texts: Sequence[str]) -> set[tuple[str, ...]]:
-    found = set()
-    for text in texts:
-        tokens = re.findall(r"\w+|[^\w\s]", canonical_text(text))
-        found.update(tuple(tokens[i:i + 13]) for i in range(len(tokens) - 12))
-    return found
+def _token_graph(fragments):
+    atoms, joins = [], set()
+    for fragment in fragments:
+        tokens = re.findall(r"\w+|[^\w\s]", fragment)
+        if atoms and tokens and re.fullmatch(r"\w+", atoms[-1]) and re.fullmatch(r"\w+", tokens[0]):
+            joins.add(len(atoms))
+        atoms.extend(tokens)
+    graph = []
+    for start, atom in enumerate(atoms):
+        edges = [(start + 1, atom)]
+        end = start + 1
+        while end in joins:
+            atom += atoms[end]
+            end += 1
+            edges.append((end, atom))
+        graph.append(edges)
+    return graph
+
+
+def _graphs(case):
+    for keys in (True, False):
+        fields = tuple(_strings((case.case_id, case.input, case.expected, case.meta), keys=keys))
+        for view in (0, 1):
+            yield _token_graph([canonical_views(s)[view] for s in fields])
+            for separator in ("", " "):
+                yield _token_graph([canonical_views(separator.join(fields))[view]])
+
+
+def _shared_13(left, right):
+    """Longest common token path on two DAGs; cap state at the detector's 13 tokens.
+
+    A merged word edge spans consecutive fragment atoms. There are at most
+    quadratically many such edges, even when every fragment is one character.
+    """
+    positions = {}
+    for j, edges in enumerate(right):
+        for end, token in edges:
+            positions.setdefault(token, []).append((j, end))
+    lengths = {}
+    for i, edges in enumerate(left):
+        for end, token in edges:
+            for j, other_end in positions.get(token, ()):
+                count = lengths.get((i, j), 0) + 1
+                if count >= 13:
+                    return True
+                pair = (end, other_end)
+                lengths[pair] = max(lengths.get(pair, 0), count)
+    return False
 
 
 def screen(training: Sequence[SuiteCase], held_out: Sequence[SuiteCase], *, canaries: Sequence[str],
@@ -187,13 +319,13 @@ def screen(training: Sequence[SuiteCase], held_out: Sequence[SuiteCase], *, cana
     if (not isinstance(membership, Mapping) or set(membership) != {c.case_id for c in held_out}
             or any(not isinstance(p, MembershipProbe) for p in membership.values())):
         raise ContaminationError("G6_E_RSI_MEMBERSHIP_REQUIRED")
-    grams = _grams(training_texts)
-    inputs = {canonical_text(c.input) for c in training}
+    graphs = [graph for case in training for graph in _graphs(case)]
+    inputs = {view for c in training for view in canonical_views(c.input)}
     excluded, identities, overlaps, members = set(), 0, 0, 0
     for index, case in enumerate(held_out):
-        identity = (canonical_text(case.input) in inputs
+        identity = (bool(set(canonical_views(case.input)) & inputs)
                     or any(code == NOT_HELD_OUT for code, _ in Suite(tuple(training), (case,)).problems()))
-        overlap = bool(_grams(scan_texts((case,))) & grams)
+        overlap = any(_shared_13(held_graph, train_graph) for held_graph in _graphs(case) for train_graph in graphs)
         member = membership[case.case_id].flagged
         identities += identity
         overlaps += overlap

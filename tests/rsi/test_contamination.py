@@ -132,7 +132,7 @@ def test_short_canonical_input_duplicates_are_excluded(api):
 
 
 @pytest.mark.parametrize("invisible", ["\u200b", "\u00ad", "\u034f", "\U000e0100"])
-def test_default_ignorables_cannot_hide_13_token_overlap(api, invisible):
+def test_fixed_removal_view_catches_listed_default_ignorables(api, invisible):
     passage = " ".join(f"word{i}" for i in range(13))
     result = run(api, [SuiteCase("held", passage + " held", "secret")],
                  [SuiteCase("train", passage.replace(" ", invisible + " ") + " train", "other")])
@@ -164,7 +164,7 @@ def marker_variant(marker, mode):
 
 @pytest.mark.parametrize("mode", ["uppercase", "nfkc", "unicode_escape", "percent", "invisible", "surrogate_ignorable"])
 @pytest.mark.parametrize("source", ["training", "output"])
-def test_canonical_canary_scanner_catches_encodings(api, mode, source):
+def test_fixed_canary_views_catch_listed_encodings(api, mode, source):
     encoded = marker_variant("a" * 32, mode)
     result = run(api, [SuiteCase("held", "private", "secret")],
                  [SuiteCase("train", encoded, "other")] if source == "training" else (),
@@ -177,3 +177,63 @@ def test_canary_split_across_adjacent_nested_fields_voids(api):
     result = run(api, [SuiteCase("held", "private", "secret")],
                  [SuiteCase("train", "different", (marker[:16], [marker[16:]]))])
     assert result.voided and result.canary_hits == 1
+
+
+def test_fixed_views_recompose_after_ignorable_removal_and_are_idempotent(api):
+    held, train = "caf\u00e9", "cafe\u034f\u0301"
+    result = run(api, [SuiteCase("held", held, "secret")], [SuiteCase("train", train, "other")])
+    assert result.identity_excluded == result.excluded_count == 1
+    assert api.canonical_text(api.canonical_text(train)) == api.canonical_text(train)
+    for view in api.canonical_views(train):
+        assert view in api.canonical_views(view)
+
+
+def test_fixed_space_view_catches_replaced_invisible_word_boundaries(api):
+    words = [f"word{i}" for i in range(13)]
+    result = run(api, [SuiteCase("held", " ".join(words) + " held", "secret")],
+                 [SuiteCase("train", "\u200b".join(words) + " train", "other")])
+    assert result.ngram_excluded == result.excluded_count == 1
+
+
+def test_fixed_fragment_views_carry_mixed_boundaries(api):
+    words = [f"word{i}" for i in range(13)]
+    result = run(api, [SuiteCase("held", " ".join(words) + " held", "secret")],
+                 [SuiteCase("train", "different", ("word0 wor", "d1 word2", " ".join(words[3:])))])
+    assert result.ngram_excluded == result.excluded_count == 1
+
+
+def test_fixed_whitespace_free_view_catches_short_identity(api):
+    result = run(api, [SuiteCase("held", "shortword", "secret")],
+                 [SuiteCase("train", "short\n word", "other")])
+    assert result.identity_excluded == result.excluded_count == 1
+
+
+@pytest.mark.parametrize("source", ["training", "output"])
+def test_fixed_whitespace_free_view_catches_internal_canary_whitespace(api, source):
+    marker = "a" * 16 + " \n " + "a" * 16
+    result = run(api, [SuiteCase("held", "private", "secret")],
+                 [SuiteCase("train", "different", {"nested": [marker]})] if source == "training" else (),
+                 [marker] if source == "output" else ())
+    assert result.voided and result.canary_hits == 1
+
+
+def test_fixed_views_keep_independent_cases_and_outputs_separate(api):
+    marker = "a" * 16 + "b" * 16
+    result = api.screen((SuiteCase("one", marker[:16], ""), SuiteCase("two", marker[16:], "")),
+                        (SuiteCase("held", "private", "secret"),), canaries=(marker,),
+                        model_outputs=(marker[:16], marker[16:]), membership={"held": probe(api)})
+    assert not result.voided and result.canary_hits == 0
+
+
+def test_fragment_graph_size_is_quadratic_for_character_fragments(api):
+    graph = api._token_graph(["x"] * 80)
+    assert sum(len(edges) for edges in graph) == 80 * 81 // 2
+    words = " ".join("x" for _ in range(13))
+    assert run(api, [SuiteCase("held", words + " held", "secret")],
+               [SuiteCase("train", "other", tuple("x" for _ in range(80)))]).ngram_excluded == 1
+
+
+def test_compact_fixed_view_repeats_escape_decode_after_whitespace_removal(api):
+    assert api.canonical_views("a% 20b")[2] == "ab"
+    marker = "a" * 16 + "% 20" + "a" * 16
+    assert run(api, [SuiteCase("held", "private", "secret")], outputs=[marker]).canary_hits == 1
