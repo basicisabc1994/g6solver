@@ -11,7 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from . import chooser
+from . import chooser, counts
 from .environment import from_json
 from ._mine_io import atomic_json, digest, entry_id, local_path, pool_entries, read_json, repository_id
 
@@ -61,6 +61,30 @@ def _manifest(binding, configuration, tier, repositories, bugs):
             "roles": {role: groups[role] for role, _ in ROLES[tier]}, "unused": groups["unused"]}
 
 
+def _recount(inventory: dict, entries_list: list[dict], prepared: bool) -> tuple[dict, int | None]:
+    """Repositories per configuration from each completed row's own summary (prepared rows for the K_3 recount)."""
+    repositories = {entry_id(e): repository_id(e["repository"]) for e in entries_list}
+    # All six configurations the inventory states, not only the selectable four.
+    counted = {key: set() for key in counts.CONFIGURATIONS}
+    prepared_k3 = set()
+    for identity, row in inventory["completed"].items():
+        if identity not in repositories:
+            raise ValueError("completed rows differ from pool")
+        for key in counts.CONFIGURATIONS:
+            value = row["summary"]["counts"][key]
+            if type(value) is not int or value not in (0, 1):
+                raise ValueError("single-entry summary count refused")
+            if value:
+                counted[key].add(repositories[identity])
+        if prepared:
+            value = row["prepared_summary"]["counts"]["K_3"]
+            if type(value) is not int or value not in (0, 1):
+                raise ValueError("single-entry summary count refused")
+            if value:
+                prepared_k3.add(repositories[identity])
+    return {key: len(value) for key, value in counted.items()}, (len(prepared_k3) if prepared else None)
+
+
 def build_manifest(inventory: dict, pool: dict, environment: dict | None = None) -> dict:
     """Recount qualifying completed summaries, never infer eligibility from records."""
     if environment is None:
@@ -77,8 +101,14 @@ def build_manifest(inventory: dict, pool: dict, environment: dict | None = None)
     if inventory.get("complete") is not True or not isinstance(inventory.get("selection"), dict):
         raise ValueError("complete inventory with selection required")
     selection = inventory["selection"]
-    prepared_count = inventory["prepared_counts"]["K_3"] if prepared else None
-    chosen = chooser.choose(inventory["counts"], interpreter_exists=exists,
+    # Every chooser input is recounted from the per-entry rows; a stated aggregate is only compared, never trusted.
+    recounted, prepared_recount = _recount(inventory, entries_list, prepared)
+    if inventory.get("counts") != recounted:
+        raise ValueError("stated counts differ from completed summaries")
+    if prepared and (inventory.get("prepared_counts") or {}).get("K_3") != prepared_recount:
+        raise ValueError("stated prepared count differs from completed summaries")
+    prepared_count = prepared_recount if prepared else None
+    chosen = chooser.choose(recounted, interpreter_exists=exists,
                             prepared_count=prepared_count).public()
     if _canonical(selection) != _canonical(chosen):
         raise ValueError("selection differs from chooser")
