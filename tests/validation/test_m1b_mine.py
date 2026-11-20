@@ -582,7 +582,7 @@ def test_a2_matches_sealed_rows_that_name_a_project_only_by_bug_id(tmp_path, cap
 
 
 @pytest.mark.parametrize("sealed,stage", [
-    (None, "final cohort read"),
+    (None, "final cohort read: not found"),
     ("not json {secret-name-1", "final cohort json"),
     (json.dumps({"units": [{"id": "secret-name-1"}]}), "final cohort format: cohort repository list missing"),
     (json.dumps({"bugs": [{"id": "secret_name_without_number"}]}), "final cohort format: cohort bug id refused"),
@@ -608,6 +608,26 @@ def test_a2_refusal_names_a_sealed_named_exclude_path(tmp_path, capsys):
         module("a2_check").main(["--pool", str(pool), "--final-cohort", str(sealed),
                                  "--exclude", str(tmp_path / "final-exclude.json")])
     assert capsys.readouterr().err == "A2 input or output refused at exclude path: sealed path refused\n"
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16", "utf-32"])
+def test_a2_reads_a_sealed_file_in_any_json_encoding(tmp_path, capsys, encoding):
+    # PowerShell 5.1's Out-File and > write UTF-16 with a byte order mark; JSON allows UTF-8, 16 and 32.
+    pool = write_json(tmp_path / "pool.json", {"entries": [], "repositories": [{"repository": "org/widget"}]})
+    sealed = tmp_path / "synthetic-sealed.json"
+    sealed.write_text(json.dumps({"bugs": [{"id": "widget-3"}]}), encoding=encoding)
+    assert module("a2_check").main(["--pool", str(pool), "--final-cohort", str(sealed),
+                                    "--exclude", str(tmp_path / "exclude.json")]) == 0
+    assert capsys.readouterr().out == "1\n"
+
+
+def test_a2_read_refusals_name_a_fixed_reason(tmp_path, capsys):
+    pool = write_json(tmp_path / "pool.json", {"entries": [], "repositories": []})
+    for target, reason in ((tmp_path / "missing-sealed.json", "not found"), (tmp_path, "is a directory")):
+        with pytest.raises(SystemExit):
+            module("a2_check").main(["--pool", str(pool), "--final-cohort", str(target),
+                                     "--exclude", str(tmp_path / "exclude.json")])
+        assert capsys.readouterr().err == f"A2 input or output refused at final cohort read: {reason}\n"
 
 
 def test_a2_refusal_names_the_pool_stage(tmp_path, capsys):

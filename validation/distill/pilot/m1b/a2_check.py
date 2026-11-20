@@ -20,6 +20,16 @@ _FORMAT_REASONS = {"cohort repository list missing", "expected repository list",
 _PATH_REASONS = {"linked path refused", "sealed path refused"}
 
 
+def _read_reason(error: OSError) -> str:
+    if isinstance(error, FileNotFoundError):
+        return "not found"
+    if isinstance(error, IsADirectoryError):
+        return "is a directory"
+    if isinstance(error, PermissionError):
+        return "permission denied"
+    return "unreadable"
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pool", type=Path, required=True)
@@ -45,9 +55,16 @@ def main(argv=None) -> int:
         repositories = pool_ids(read_json(pool))
         # Keep this read entirely inside the owner's command; never return sealed IDs.
         stage = "final cohort read"
-        text = sealed.read_text(encoding="utf-8")
+        try:
+            if sealed.is_dir():
+                raise IsADirectoryError
+            raw = sealed.read_bytes()
+        except OSError as error:
+            stage += ": " + _read_reason(error)
+            raise
         stage = "final cohort json"
-        data = json.loads(text)
+        # From bytes, json detects UTF-8, UTF-16 and UTF-32 (PowerShell 5.1 writes UTF-16 with a byte order mark).
+        data = json.loads(raw)
         stage = "final cohort format"
         try:
             cohort = cohort_ids(data)
