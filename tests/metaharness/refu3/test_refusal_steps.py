@@ -20,6 +20,19 @@ from g6.self_maintenance import envelope, usage
 from g6.self_maintenance.envelope import CYCLE_LOG, STOP_FILE, CycleLog, refused_requests
 
 
+@pytest.fixture(autouse=True)
+def isolated_refusal_state(monkeypatch):
+    """Keep fault-injection state within one test, including all its assertions."""
+    record = loop_module._Record()
+    with monkeypatch.context() as state:
+        state.setattr(envelope, "_STOP_PENDING", {})
+        state.setattr(loop_module, "_RECORD", record)
+        try:
+            yield
+        finally:
+            record.folder_handles.close()
+
+
 class Unseen(Exception):
     """An error no code here names."""
 
