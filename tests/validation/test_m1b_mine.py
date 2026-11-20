@@ -128,6 +128,39 @@ def test_pool_drops_a_repository_named_only_by_cohort_bug_ids(tmp_path, cohort, 
     assert [d["codes"] for d in result["decisions"][:2]] == [[reason], [reason]]
 
 
+@pytest.mark.parametrize("owner", ["sponsors", "orgs", "apps", "marketplace", "topics"])
+def test_a_github_site_path_is_not_a_repository(owner):
+    # Found on the first real run: hatchling's funding link github.com/sponsors/ofek was read as a repository.
+    assert module("pool").repository_url({"info": {"project_urls": {
+        "Funding": f"https://github.com/{owner}/someone"}}}) is None
+    assert module("pool").repository_url({"info": {"project_urls": {
+        "Funding": f"https://github.com/{owner}/someone", "Source": "https://github.com/org/widget"}}}) == "org/widget"
+
+
+def test_one_unreadable_repository_is_a_drop_code_and_the_scan_goes_on(tmp_path):
+    gh = FakeGitHub()
+    real = gh.__call__
+
+    def flaky(args):
+        if args[:2] == ["api", "repos/org/gone"]:
+            raise module("pool").ReadFailed("GitHub read failed")
+        return real(args)
+    result = mine(tmp_path, flaky, ["gone", "a"])
+    assert [r["repository"] for r in result["repositories"]] == ["org/a"]
+    assert result["decisions"][0] == {"rank": 1, "repository": "org/gone", "codes": ["READ"]}
+    assert result["complete"]
+
+
+def test_consecutive_unreadable_repositories_stop_the_scan(tmp_path):
+    def broken(args):
+        raise module("pool").ReadFailed("GitHub read failed")
+    with pytest.raises(ValueError):
+        mine(tmp_path, broken, [f"p{i}" for i in range(8)])
+    saved = json.loads((tmp_path / "checkpoint.json").read_text(encoding="utf-8"))
+    assert saved["complete"] is False
+    assert len(saved["decisions"]) < 5
+
+
 def test_pool_tree_other_source_and_ambiguous_project(tmp_path):
     gh = FakeGitHub()
     gh.trees["org/a"] = {"truncated": False, "tree": [{"path": "native.rs"}]}

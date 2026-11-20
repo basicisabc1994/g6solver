@@ -31,6 +31,17 @@ class _Deadline(Exception):
     pass
 
 
+#: GitHub's own site paths: a link under one of them names no repository (e.g. a funding link to /sponsors/<user>).
+_SITE_PATHS = frozenset({"sponsors", "orgs", "apps", "marketplace", "topics", "features", "settings", "collections",
+                         "users", "enterprise", "about", "pricing", "login", "site"})
+#: A read failure for one repository is that repository's drop code; this many in a row stop the scan.
+READ_FAILURES_IN_A_ROW = 5
+
+
+class ReadFailed(ValueError):
+    """A GitHub read that did not succeed (not found, refused, network). Other refusals still stop the scan."""
+
+
 def repository_url(data: dict) -> str | None:
     info = data.get("info") or {}
     urls = list((info.get("project_urls") or {}).values()) + [info.get("home_page")]
@@ -45,6 +56,8 @@ def repository_url(data: dict) -> str | None:
         path = parsed.path.strip("/")
         if path.endswith(".git"):
             path = path[:-4]
+        if path.split("/")[0].lower() in _SITE_PATHS:
+            continue
         try:
             found.add(repository_id(path))
         except ValueError:
@@ -189,7 +202,7 @@ def mine(*, output: Path, checkpoint: Path, development: Path, selection_cohort:
         else:
             done = subprocess.run(["gh", *args], capture_output=True, timeout=min(600, left))
             if done.returncode:
-                raise ValueError("GitHub read failed")
+                raise ReadFailed("GitHub read failed")
             result = done.stdout.decode("utf-8")
         remaining()
         return result
@@ -227,12 +240,19 @@ def mine(*, output: Path, checkpoint: Path, development: Path, selection_cohort:
             if name in seen:
                 codes = ["DUPLICATE"]
             elif name:
-                canonical, branch, codes = _repository(name, read_gh, dev, selected)
-                if canonical in seen and not codes:
-                    codes, branch = ["DUPLICATE"], None
-                name = canonical
-            if branch:
-                entries, decisions = _pull_requests(name, branch, read_gh)
+                try:
+                    canonical, branch, codes = _repository(name, read_gh, dev, selected)
+                    if canonical in seen and not codes:
+                        codes, branch = ["DUPLICATE"], None
+                    name = canonical
+                    if branch:
+                        entries, decisions = _pull_requests(name, branch, read_gh)
+                except ReadFailed:
+                    # One unreadable repository is not kept (not shown public); a run of them is a broken reader.
+                    recent = [d["codes"] for d in state["decisions"][-(READ_FAILURES_IN_A_ROW - 1):]]
+                    if len(recent) == READ_FAILURES_IN_A_ROW - 1 and all(c == ["READ"] for c in recent):
+                        raise
+                    codes, branch, entries, decisions = ["READ"], None, [], []
             remaining()
             # Commit a complete repository scan as one checkpoint transaction.
             updated = copy.deepcopy(state)
