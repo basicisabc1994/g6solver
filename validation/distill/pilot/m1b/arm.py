@@ -25,16 +25,24 @@ def m1b_variants(case: funnel.CaseRecord) -> list[Construction]:
     constructions = []
     for name in funnel.VARIANTS:
         kind = "reversed_maintainer" if name == "reversed_maintainer" else "operator:" + name
+        if name != "reversed_maintainer":
+            # The registered fit filter (fit.py) treats SyntaxError and TypeError from the operator as an operator
+            # that does not apply; output that does not compile (e.g. a statement inserted before
+            # `from __future__`) is refused here, before any run. Only the operator call is guarded, so an error
+            # while building the case record still raises.
+            try:
+                funnel.operators.apply_operator(case.after_tests, name)
+            except (SyntaxError, TypeError):
+                constructions.append(Construction(name, kind, None, "operator_output_invalid"))
+                continue
+            except ValueError:
+                pass  # funnel._variant refuses it as operator_not_applicable
         try:
             built = funnel._variant(case, "multi_target", name)
         except funnel._Stop as exc:
             constructions.append(Construction(name, kind, None, exc.reason))
         except ValueError:
             constructions.append(Construction(name, kind, None, "case_record_invalid"))
-        except (SyntaxError, TypeError):
-            # The registered fit filter (fit.py) treats these as an operator that does not apply; output that does
-            # not compile (e.g. a statement inserted before `from __future__`) is refused here, before any run.
-            constructions.append(Construction(name, kind, None, "operator_output_invalid"))
         else:
             constructions.append(Construction(name, kind, built))
     for variant in indexed_erasures(case.before_tests, case.after_tests):

@@ -539,3 +539,51 @@ def test_runner_continues_past_operator_output_that_does_not_compile(monkeypatch
     assert any(row["bug_id"] == first and row["kind"] == "indexed_erasure" and row["stage"] == "headline"
                for row in rows)
     assert any(row["bug_id"] == second and row["stage"] == "headline" for row in rows)
+
+@pytest.mark.parametrize("budget", [False, True])
+def test_runner_keeps_a_settled_label_when_headline_diagnostics_stop(monkeypatch, budget):
+    from validation.distill.pilot import funnel
+    from g6.workforce import mutation_check
+    inv, pool, env = inputs()
+    m = module("allocation_m1b").build_manifest(inv, pool, env)
+    bug = module("access_m1b").selected(m, inventory=inv, pool=pool, environment=env)[0]
+    base = "def value(x):\n    return x\n"
+    fixed = "def value(x):\n    return x + 1\n"
+    old = "from subject import value\ndef test_value():\n    assert value(1) >= 1\n"
+    new = "from subject import value\ndef test_value():\n    assert value(1) == 2\n    assert value(2) == 3\n"
+    body = {"base": {"subject.py": base, "tests/test_value.py": old},
+            "fixed": {"subject.py": fixed, "tests/test_value.py": new},
+            "name_status": "M\tsubject.py\nM\ttests/test_value.py\n",
+            "patch": "".join(difflib.unified_diff(base.splitlines(True), fixed.splitlines(True),
+                                                  fromfile="a/subject.py", tofile="b/subject.py"))}
+
+    def suite(case, implementation, tests, **kwargs):
+        if implementation == fixed or (implementation == base and tests == old):
+            return "passed"
+        return "failed"
+
+    def headline_stops(*args, **kwargs):
+        raise funnel._BudgetStop() if budget else funnel._Stop("missing_module")
+
+    reports = []
+    monkeypatch.setattr(module("material"), "material_from_git", lambda *a, **kw: body)
+    monkeypatch.setattr(funnel, "_output_path", lambda output: Path(output))
+    monkeypatch.setattr(funnel, "_write", lambda output, report: reports.append(report))
+    monkeypatch.setattr(funnel.confine, "backend", lambda *a: ("fixture", ""))
+    monkeypatch.setattr(funnel, "_classify", headline_stops)
+    monkeypatch.setattr(mutation_check, "mutants", lambda *a, **kw: [
+        mutation_check.Mutant(2, "x", "9", "def value(x):\n    return 9\n")])
+    report = module("run_m1b").run(m, Path.cwd(), Path.cwd() / "synthetic-unused-output.json",
+                                    bugs=[bug], inventory=inv, pool=pool, environment=env,
+                                    suite_runner=suite, clock=lambda: 0.0)
+    headline = [row for row in report["bugs"] if "headline" in row["stages"]]
+    if budget:
+        assert headline and not any(row.get("headline_unavailable") for row in report["bugs"])
+        assert all(row["headline_stratum"] is None for row in report["bugs"])
+        return
+    assert headline
+    for row in headline:
+        assert row["label"] in ("positive", "negative")
+        assert row["reason"] != "missing_module"
+        assert row["headline_stratum"] == "headline_unavailable"
+        assert row["headline_unavailable"] == "missing_module"

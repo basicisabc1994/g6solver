@@ -120,7 +120,17 @@ def run(manifest, cache, output, *, inventory=None, pool=None, environment=None,
         if row["variant"] is not None:
             row["kind"] = constructions[row["variant"]].kind
         try:
-            return funnel._stage(budget, row, name, operation)
+            if name != "headline":
+                return funnel._stage(budget, row, name, operation)
+            # The label is settled before the headline step, which runs extra suites for some labels only. A stop
+            # there must not drop the label (attrition must not depend on it): keep it and record the reason apart.
+            try:
+                return funnel._stage(budget, row, name, operation)
+            except funnel._BudgetStop:
+                raise
+            except funnel._Stop as exc:
+                row["headline_unavailable"] = exc.reason
+                return "headline_unavailable"
         finally:
             if configuration == "K_2":
                 row["test_module"] = test_module
