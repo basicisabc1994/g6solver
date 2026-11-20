@@ -12,6 +12,9 @@ from pathlib import Path
 
 import pytest
 
+from validation.distill.pilot.m1b import chooser, counts
+from validation.distill.pilot.m1b._mine_io import digest
+
 
 def module(name):
     return importlib.import_module("validation.distill.pilot.m1b." + name)
@@ -19,22 +22,32 @@ def module(name):
 
 def inputs(size=16, configuration="K_0"):
     entries, completed = [], {}
+    environment = {"resolvable_modules": [], "loaded_packages": [], "pytest_dependencies": [],
+                   "interpreter_exists": False}
     for number in range(size):
         entry = {"repository": f"org/repo{number:02}", "pr": 1,
                  "merge_commit": "a" * 40, "parent": "b" * 40}
         entries.append(entry)
-        completed[f"{entry['repository']}#1"] = {"summary": {"counts": {configuration: 1}}}
+        completed[f"{entry['repository']}#1"] = {
+            "summary": {"counts": {key: int(key == configuration) for key in counts.CONFIGURATIONS}}}
     # A public record alone is never enough, and an ineligible PR in a counted repo stays out.
     for repo, pr in (("org/rejected", 1), ("org/repo00", 2)):
         entry = {"repository": repo, "pr": pr, "merge_commit": "c" * 40, "parent": "b" * 40}
         entries.append(entry)
-        completed[f"{repo}#{pr}"] = {"summary": {"counts": {configuration: 0}}}
-    tier = "full" if size >= 15 else "reduced" if size >= 10 else "stop"
-    inventory = {"complete": True, "binding": "d" * 64, "completed": completed,
+        completed[f"{repo}#{pr}"] = {"summary": {"counts": dict.fromkeys(counts.CONFIGURATIONS, 0)}}
+    inventory = {"complete": True, "completed": completed,
                  "records": [{"repository": "org/rejected", "failed_rules": []}],
-                 "counts": {configuration: size},
-                 "selection": {"configuration": configuration, "count": size, "tier": tier}}
-    return inventory, {"entries": entries}
+                 "counts": {key: size if key == configuration else 0 for key in counts.CONFIGURATIONS}}
+    pool = {"entries": entries}
+    refresh(inventory, pool, environment)
+    return inventory, pool, environment
+
+
+def refresh(inventory, pool, environment):
+    inventory["binding"] = digest({"entries": pool["entries"], "environment": environment, "version": 1})
+    inventory["selection"] = chooser.choose(inventory["counts"],
+        interpreter_exists=environment.get("interpreter_exists") is True,
+        prepared_count=inventory.get("prepared_counts", {}).get("K_3")).public()
 
 
 def write_json(path, value):
@@ -43,45 +56,45 @@ def write_json(path, value):
 
 
 def test_in_memory_draw_and_access():
-    inv, pool = inputs(16)
-    m = module("allocation_m1b").build_manifest(inv, pool)
+    inv, pool, env = inputs(16)
+    m = module("allocation_m1b").build_manifest(inv, pool, env)
     assert [len(m["roles"][r]["repositories"]) for r in ("acquisition", "admission", "monitor", "reuse")] == [5, 5, 3, 2]
     assert len(m["unused"]["repositories"]) == 1
-    assert module("allocation_m1b").check(m) == []
+    assert module("allocation_m1b").check(m, inv, pool, env) == []
     access = module("access_m1b")
-    assert len(access.selected(m)) == 5
+    assert len(access.selected(m, inventory=inv, pool=pool, environment=env)) == 5
     bug = m["roles"]["admission"]["bugs"][0]
     with pytest.raises(ValueError, match="role=admission"):
-        access.acquisition_bug(m, f"{bug['repository']}#{bug['pr']}")
+        access.acquisition_bug(m, f"{bug['repository']}#{bug['pr']}", inventory=inv, pool=pool, environment=env)
 
 
 @pytest.mark.parametrize("size", [10, 14, 15, 17])
 def test_in_memory_draw_order_and_edits(size):
-    inv, pool = inputs(size)
+    inv, pool, env = inputs(size)
     allocation = module("allocation_m1b")
-    m = allocation.build_manifest(inv, pool)
+    m = allocation.build_manifest(inv, pool, env)
     ordered = sorted((f"org/repo{i:02}" for i in range(size)), key=lambda repo: hashlib.sha256(
-        f"g6-pilot-m1b-allocation-v1|{'d' * 64}|{repo}".encode()).hexdigest())
+        f"g6-pilot-m1b-allocation-v1|{inv['binding']}|{repo}".encode()).hexdigest())
     sizes = (5, 5, 3, 2) if size >= 15 else (4, 4, 2)
     cursor = 0
     for role, count in zip(("acquisition", "admission", "monitor", "reuse"), sizes):
         assert m["roles"][role]["repositories"] == sorted(ordered[cursor:cursor + count])
         cursor += count
     assert m["unused"]["repositories"] == sorted(ordered[cursor:])
-    assert allocation.build_manifest(inv, pool) == m
+    assert allocation.build_manifest(inv, pool, env) == m
     for key, value in (("binding", "e" * 64), ("tier", "reduced" if size >= 15 else "full"),
                        ("configuration", "K_1"), ("label", "changed")):
         edited = deepcopy(m)
         edited[key] = value
-        assert allocation.check(edited)
+        assert allocation.check(edited, inv, pool, env)
     edited = deepcopy(m)
     edited["roles"]["admission"]["repositories"][0] = m["roles"]["monitor"]["repositories"][0]
-    assert allocation.check(edited)
+    assert allocation.check(edited, inv, pool, env)
 
 
 @pytest.mark.parametrize("change", ["stop", "incomplete", "selection", "count", "missing", "configuration", "prepared"])
 def test_in_memory_inventory_refusals(change):
-    inv, pool = inputs(9 if change == "stop" else 16)
+    inv, pool, env = inputs(9 if change == "stop" else 16)
     if change == "incomplete":
         inv["complete"] = False
     elif change == "selection":
@@ -93,40 +106,45 @@ def test_in_memory_inventory_refusals(change):
     elif change == "configuration":
         inv["selection"]["configuration"] = "K_123"
     elif change == "prepared":
-        inv, pool = inputs(16, "K_3")
+        inv, pool, env = inputs(16, "K_3")
     with pytest.raises(ValueError):
-        module("allocation_m1b").build_manifest(inv, pool)
+        module("allocation_m1b").build_manifest(inv, pool, env)
 
 
 def test_in_memory_access_refuses_every_other_role():
-    m = module("allocation_m1b").build_manifest(*inputs())
+    inv, pool, env = inputs()
+    m = module("allocation_m1b").build_manifest(inv, pool, env)
     access = module("access_m1b")
     for role, group in [*m["roles"].items(), ("unused", m["unused"])]:
         b = group["bugs"][0]
         identity = f"{b['repository']}#{b['pr']}"
         if role == "acquisition":
-            assert access.acquisition_bug(m, identity) == b
+            assert access.acquisition_bug(m, identity, inventory=inv, pool=pool, environment=env) == b
         else:
             with pytest.raises(ValueError, match="role=" + role):
-                access.selected(m, [identity])
+                access.selected(m, [identity], inventory=inv, pool=pool, environment=env)
     with pytest.raises(ValueError):
-        access.selected(m, ["org/unknown#1"])
+        access.selected(m, ["org/unknown#1"], inventory=inv, pool=pool, environment=env)
     m["binding"] = "e" * 64
     with pytest.raises(ValueError, match="invalid allocation"):
-        access.selected(m)
+        access.selected(m, inventory=inv, pool=pool, environment=env)
 
 
 @pytest.mark.parametrize("configuration", ["K_0", "K_1", "K_2", "K_3"])
 def test_in_memory_counts_bugs_by_selected_configuration(configuration):
-    inv, pool = inputs(16, configuration)
+    inv, pool, env = inputs(16, configuration)
     extra = {"repository": "org/repo00", "pr": 3, "merge_commit": "c" * 40, "parent": "b" * 40}
     pool["entries"].append(extra)
-    inv["completed"]["org/repo00#3"] = {"summary": {"counts": {configuration: 1}}}
+    inv["completed"]["org/repo00#3"] = {
+        "summary": {"counts": {key: int(key == configuration) for key in counts.CONFIGURATIONS}}}
     if configuration == "K_3":
         inv["prepared_counts"] = {"K_3": 16}
         for row in inv["completed"].values():
             row["prepared_summary"] = deepcopy(row["summary"])
-    m = module("allocation_m1b").build_manifest(inv, pool)
+        env.update(interpreter_exists=True, prepared_environment={key: [] for key in
+                   ("resolvable_modules", "loaded_packages", "pytest_dependencies")})
+    refresh(inv, pool, env)
+    m = module("allocation_m1b").build_manifest(inv, pool, env)
     assert len(m["repositories"]) == 16
     assert len(m["bugs"]) == 17
     assert {b["pr"] for b in m["bugs"] if b["repository"] == "org/repo00"} == {1, 3}
@@ -134,27 +152,32 @@ def test_in_memory_counts_bugs_by_selected_configuration(configuration):
 
 
 def test_in_memory_excluded_repository_stays_out():
-    inv, pool = inputs(16)
+    inv, pool, env = inputs(16)
     inv["a2_exclusions"] = ["org/repo00"]
     inv["completed"] = {key: value for key, value in inv["completed"].items() if not key.startswith("org/repo00#")}
-    inv["selection"]["count"] = inv["counts"]["K_0"] = 15
-    m = module("allocation_m1b").build_manifest(inv, pool)
+    inv["counts"]["K_0"] = 15
+    refresh(inv, pool, env)
+    m = module("allocation_m1b").build_manifest(inv, pool, env)
     assert len(m["repositories"]) == 15
     assert "org/repo00" not in m["repositories"]
 
 
 def test_material_in_memory_access_before_io():
-    m = module("allocation_m1b").build_manifest(*inputs())
+    inv, pool, env = inputs()
+    m = module("allocation_m1b").build_manifest(inv, pool, env)
     bug = m["roles"]["admission"]["bugs"][0]
     with pytest.raises(ValueError, match="role=admission"):
-        module("material").material_from_git(m, f"{bug['repository']}#{bug['pr']}", None)
+        module("material").material_from_git(m, f"{bug['repository']}#{bug['pr']}", None,
+                                             inventory=inv, pool=pool, environment=env)
 
 
 def test_runner_refuses_non_acquisition_before_io():
-    m = module("allocation_m1b").build_manifest(*inputs())
+    inv, pool, env = inputs()
+    m = module("allocation_m1b").build_manifest(inv, pool, env)
     b = m["roles"]["monitor"]["bugs"][0]
     with pytest.raises(ValueError, match="role=monitor"):
-        module("run_m1b").run(m, None, None, bugs=[f"{b['repository']}#{b['pr']}"])
+        module("run_m1b").run(m, None, None, bugs=[f"{b['repository']}#{b['pr']}"],
+                              inventory=inv, pool=pool, environment=env)
 
 
 @pytest.mark.parametrize("data,support,reason", [(b"x" * 131073, False, "fix_source_missing_or_large"),
@@ -205,8 +228,8 @@ def test_material_tree_contract(change, reason):
             if args[:2] == ("cat-file", "-s"):
                 return str(len(blobs[args[2]])).encode()
             assert args[-3:] == ("b" * 40, "a" * 40, "--")
-            if "--name-only" in args:
-                return b"added.py\0deleted.py\0subject.py\0"
+            if "--name-status" in args:
+                return b"A\tadded.py\nD\tdeleted.py\nM\tsubject.py\n"
             return b"--- a/subject.py\n+++ b/subject.py\n@@ -1 +1 @@\n-VALUE = 1\n+VALUE = 2\n"
 
     if reason:
@@ -222,29 +245,32 @@ def test_material_tree_contract(change, reason):
 
 
 def test_check_refuses_schema_type_edit():
-    m = module("allocation_m1b").build_manifest(*inputs())
+    inv, pool, env = inputs()
+    m = module("allocation_m1b").build_manifest(inv, pool, env)
     m["schema"] = True
-    assert module("allocation_m1b").check(m)
+    assert module("allocation_m1b").check(m, inv, pool, env)
 
 
 def test_material_sanitizes_read_errors(monkeypatch):
     from validation.distill.pilot._material import MaterialError
-    m = module("allocation_m1b").build_manifest(*inputs())
-    bug = module("access_m1b").selected(m)[0]
+    inv, pool, env = inputs()
+    m = module("allocation_m1b").build_manifest(inv, pool, env)
+    bug = module("access_m1b").selected(m, inventory=inv, pool=pool, environment=env)[0]
 
     def fail(*args, **kwargs):
         raise ValueError("SOURCE_SENTINEL")
 
     monkeypatch.setattr(module("material"), "_read", fail)
     with pytest.raises(MaterialError, match="^extraction_failed$"):
-        module("material").material_from_git(m, bug, None)
+        module("material").material_from_git(m, bug, None, inventory=inv, pool=pool, environment=env)
 
 
 def test_runner_reuses_funnel_stages_and_tags_kinds(monkeypatch):
     from validation.distill.pilot import funnel
     from g6.workforce import mutation_check
-    m = module("allocation_m1b").build_manifest(*inputs())
-    bug = module("access_m1b").selected(m)[0]
+    inv, pool, env = inputs()
+    m = module("allocation_m1b").build_manifest(inv, pool, env)
+    bug = module("access_m1b").selected(m, inventory=inv, pool=pool, environment=env)[0]
     base = "def value(x):\n    return x\n"
     fixed = "def value(x):\n    return x + 1\n"
     old = "from subject import value\ndef test_value():\n    assert value(1) >= 1\n"
@@ -256,7 +282,7 @@ def test_runner_reuses_funnel_stages_and_tags_kinds(monkeypatch):
                                                   fromfile="a/subject.py", tofile="b/subject.py"))}
     reads, suites, reports = [], [], []
 
-    def read(manifest, identity, cache):
+    def read(manifest, identity, cache, **kwargs):
         reads.append(identity)
         return body
 
@@ -275,7 +301,8 @@ def test_runner_reuses_funnel_stages_and_tags_kinds(monkeypatch):
     monkeypatch.setattr(mutation_check, "mutants", lambda *a, **kw: [
         mutation_check.Mutant(2, "x", "9", "def value(x):\n    return 9\n")])
     report = module("run_m1b").run(m, Path.cwd(), Path.cwd() / "synthetic-unused-output.json",
-                                    bugs=[bug], suite_runner=suite, clock=lambda: 0.0)
+                                    bugs=[bug], inventory=inv, pool=pool, environment=env,
+                                    suite_runner=suite, clock=lambda: 0.0)
     assert reads == [bug] and reports == [report]
     assert suites and report["total_runs"] == len(suites)
     assert set(report["arms"]) == {"m1b"}
@@ -289,20 +316,21 @@ def test_runner_reuses_funnel_stages_and_tags_kinds(monkeypatch):
 
 
 def manifest(tmp_path, size=16, configuration="K_0"):
-    inventory, pool = inputs(size, configuration)
+    inventory, pool, environment = inputs(size, configuration)
     inv_path = write_json(tmp_path / "synthetic-inventory.json", inventory)
     pool_path = write_json(tmp_path / "synthetic-pool.json", pool)
+    env_path = write_json(tmp_path / "synthetic-environment.json", environment)
     output = tmp_path / "synthetic-manifest.json"
-    assert module("allocation_m1b").main(["--write", str(inv_path), str(pool_path), str(output)]) == 0
-    return json.loads(output.read_text(encoding="utf-8"))
+    assert module("allocation_m1b").main(["--write", str(inv_path), str(pool_path), str(env_path), str(output)]) == 0
+    return json.loads(output.read_text(encoding="utf-8")), inventory, pool, environment
 
 
 @pytest.mark.parametrize("size,sizes", [(10, (4, 4, 2)), (14, (4, 4, 2)), (15, (5, 5, 3, 2)),
                                        (17, (5, 5, 3, 2))])
 def test_cli_draw_matches_independent_order(tmp_path, size, sizes):
-    m = manifest(tmp_path, size)
+    m, inv, pool, env = manifest(tmp_path, size)
     expected = sorted((f"org/repo{i:02}" for i in range(size)), key=lambda repo: hashlib.sha256(
-        f"g6-pilot-m1b-allocation-v1|{'d' * 64}|{repo}".encode()).hexdigest())
+        f"g6-pilot-m1b-allocation-v1|{inv['binding']}|{repo}".encode()).hexdigest())
     roles = ("acquisition", "admission", "monitor", "reuse")[:len(sizes)]
     assert list(m["roles"]) == list(roles)
     cursor = 0
@@ -315,16 +343,18 @@ def test_cli_draw_matches_independent_order(tmp_path, size, sizes):
         cursor += count
     assert m["unused"]["repositories"] == sorted(expected[cursor:])
     assert not set(m["roles"]["admission"]["repositories"]) & set(m["roles"]["monitor"]["repositories"])
-    assert module("allocation_m1b").check(m) == []
-    assert manifest(tmp_path, size) == m
-    assert module("allocation_m1b").main(["--check", str(tmp_path / "synthetic-manifest.json")]) == 0
+    assert module("allocation_m1b").check(m, inv, pool, env) == []
+    assert manifest(tmp_path, size)[0] == m
+    assert module("allocation_m1b").main(["--check", str(tmp_path / "synthetic-manifest.json"),
+        str(tmp_path / "synthetic-inventory.json"), str(tmp_path / "synthetic-pool.json"),
+        str(tmp_path / "synthetic-environment.json")]) == 0
 
 
 @pytest.mark.parametrize("change", ["stop", "incomplete", "selection", "count", "missing", "unknown"])
 def test_allocation_refuses_bad_inventory(tmp_path, change):
-    inv, pool = inputs()
+    inv, pool, env = inputs()
     if change == "stop":
-        inv, pool = inputs(9)
+        inv, pool, env = inputs(9)
     elif change == "incomplete":
         inv["complete"] = False
     elif change == "selection":
@@ -337,14 +367,15 @@ def test_allocation_refuses_bad_inventory(tmp_path, change):
         inv["selection"]["configuration"] = "K_123"
     with pytest.raises(SystemExit) as exc:
         module("allocation_m1b").main(["--write", str(write_json(tmp_path / "inv.json", inv)),
-                                       str(write_json(tmp_path / "pool.json", pool)), str(tmp_path / "out.json")])
+                                       str(write_json(tmp_path / "pool.json", pool)),
+                                       str(write_json(tmp_path / "env.json", env)), str(tmp_path / "out.json")])
     assert exc.value.code == 2
     assert not (tmp_path / "out.json").exists()
 
 
 @pytest.mark.parametrize("change", ["move", "binding", "tier", "commit", "unused", "label", "configuration"])
 def test_check_refuses_hand_edits(tmp_path, change):
-    m = manifest(tmp_path)
+    m, inv, pool, env = manifest(tmp_path)
     if change == "move":
         a, b = m["roles"]["acquisition"], m["roles"]["admission"]
         a["repositories"][0], b["repositories"][0] = b["repositories"][0], a["repositories"][0]
@@ -354,28 +385,30 @@ def test_check_refuses_hand_edits(tmp_path, change):
         m["unused"]["repositories"] = []
     else:
         m[change] = {"binding": "e" * 64, "tier": "reduced", "label": "other", "configuration": "K_1"}[change]
-    assert module("allocation_m1b").check(m)
-    assert module("allocation_m1b").main(["--check", str(write_json(tmp_path / "edited.json", m))]) == 1
+    assert module("allocation_m1b").check(m, inv, pool, env)
+    assert module("allocation_m1b").main(["--check", str(write_json(tmp_path / "edited.json", m)),
+        str(tmp_path / "synthetic-inventory.json"), str(tmp_path / "synthetic-pool.json"),
+        str(tmp_path / "synthetic-environment.json")]) == 1
 
 
 def test_access_only_returns_acquisition(tmp_path):
-    m = manifest(tmp_path)
+    m, inv, pool, env = manifest(tmp_path)
     access = module("access_m1b")
-    ids = access.selected(m)
+    ids = access.selected(m, inventory=inv, pool=pool, environment=env)
     assert ids == [f"{b['repository']}#{b['pr']}" for b in m["roles"]["acquisition"]["bugs"]]
-    assert access.acquisition_bug(m, ids[0]) == m["roles"]["acquisition"]["bugs"][0]
+    assert access.acquisition_bug(m, ids[0], inventory=inv, pool=pool, environment=env) == m["roles"]["acquisition"]["bugs"][0]
     for role in ("admission", "monitor", "reuse", "unused"):
         group = m["unused"] if role == "unused" else m["roles"][role]
         bug = group["bugs"][0]
         with pytest.raises(ValueError, match="role=" + role):
-            access.acquisition_bug(m, f"{bug['repository']}#{bug['pr']}")
+            access.acquisition_bug(m, f"{bug['repository']}#{bug['pr']}", inventory=inv, pool=pool, environment=env)
     for bug in ("org/missing#1", ids[0].split("#")[0] + "#999"):
         with pytest.raises(ValueError):
-            access.selected(m, [bug])
+            access.selected(m, [bug], inventory=inv, pool=pool, environment=env)
     damaged = deepcopy(m)
     damaged["binding"] = "bad"
     with pytest.raises(ValueError, match="invalid allocation"):
-        access.selected(damaged)
+        access.selected(damaged, inventory=inv, pool=pool, environment=env)
 
 
 def git(repo, *args):
@@ -411,20 +444,23 @@ def local_repo(tmp_path):
 
 def git_manifest(tmp_path, local_repo):
     repo, parent, merge = local_repo
-    inv, pool = inputs()
+    inv, pool, env = inputs()
     for row in pool["entries"]:
         row.update(parent=parent, merge_commit=merge)
+    refresh(inv, pool, env)
     inv_path = write_json(tmp_path / "inv.json", inv)
     pool_path = write_json(tmp_path / "pool.json", pool)
-    m = module("allocation_m1b").manifest_from_inventory(inv_path, pool_path)
-    bug = module("access_m1b").selected(m)[0]
-    return m, bug, repo
+    env_path = write_json(tmp_path / "env.json", env)
+    m = module("allocation_m1b").manifest_from_inventory(inv_path, pool_path, env_path)
+    bug = module("access_m1b").selected(m, inventory=inv, pool=pool, environment=env)[0]
+    return m, bug, repo, inv, pool, env
 
 
 def test_material_reads_parent_and_fixed_tree(tmp_path, local_repo):
-    m, bug, repo = git_manifest(tmp_path, local_repo)
+    m, bug, repo, inv, pool, env = git_manifest(tmp_path, local_repo)
     body = module("material").material_from_git(m, bug, tmp_path / "cache", source=repo,
-                                                 repository_root=tmp_path / "worktree")
+                                                 repository_root=tmp_path / "worktree",
+                                                 inventory=inv, pool=pool, environment=env)
     assert set(body) == {"base", "fixed", "patch", "name_status"}
     assert body["base"]["subject.py"] == "def value(x):\n    return x\n"
     assert body["fixed"]["subject.py"] == "def value(x):\n    return x + 1\n"
@@ -436,10 +472,11 @@ def test_material_reads_parent_and_fixed_tree(tmp_path, local_repo):
 
 
 def test_material_refuses_admission_before_io(tmp_path):
-    m = manifest(tmp_path)
+    m, inv, pool, env = manifest(tmp_path)
     b = m["roles"]["admission"]["bugs"][0]
     cache = tmp_path / "absent-cache"
     with pytest.raises(ValueError, match="role=admission"):
         module("material").material_from_git(m, f"{b['repository']}#{b['pr']}", cache,
-                                               source=tmp_path / "absent-source")
+                                               source=tmp_path / "absent-source",
+                                               inventory=inv, pool=pool, environment=env)
     assert not cache.exists()

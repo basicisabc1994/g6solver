@@ -1,15 +1,18 @@
 """Draw the registered M1b roles from a complete, body-free inventory.
 
-Usage: --write INVENTORY POOL MANIFEST, or --check MANIFEST.
-The recorded inputs and their checksum detect edits; they are not an external signature.
+Usage: --write INVENTORY POOL ENVIRONMENT MANIFEST,
+or --check MANIFEST INVENTORY POOL ENVIRONMENT.
+The inventory, pool and environment must come from outside the allocation.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 from pathlib import Path
 
 from . import chooser
+from .environment import from_json
 from ._mine_io import atomic_json, digest, entry_id, local_path, pool_entries, read_json, repository_id
 
 LABEL = "g6-pilot-m1b-allocation-v1"
@@ -58,15 +61,31 @@ def _manifest(binding, configuration, tier, repositories, bugs):
             "roles": {role: groups[role] for role, _ in ROLES[tier]}, "unused": groups["unused"]}
 
 
-def build_manifest(inventory: dict, pool: dict) -> dict:
+def build_manifest(inventory: dict, pool: dict, environment: dict | None = None) -> dict:
     """Recount qualifying completed summaries, never infer eligibility from records."""
+    if environment is None:
+        raise ValueError("external environment required")
+    entries_list = pool_entries(pool)
+    binding = digest({"entries": entries_list, "environment": environment, "version": 1})
+    if inventory.get("binding") != binding:
+        raise ValueError("inventory binding differs from pool or environment")
+    from_json(environment)
+    exists = environment.get("interpreter_exists") is True
+    prepared = exists and "prepared_environment" in environment
+    if prepared:
+        from_json(environment["prepared_environment"])
     if inventory.get("complete") is not True or not isinstance(inventory.get("selection"), dict):
         raise ValueError("complete inventory with selection required")
     selection = inventory["selection"]
+    prepared_count = inventory["prepared_counts"]["K_3"] if prepared else None
+    chosen = chooser.choose(inventory["counts"], interpreter_exists=exists,
+                            prepared_count=prepared_count).public()
+    if _canonical(selection) != _canonical(chosen):
+        raise ValueError("selection differs from chooser")
     configuration, tier = selection["configuration"], selection["tier"]
     if configuration not in CONFIGURATIONS or tier not in ROLES:
         raise ValueError("selection does not permit a draw")
-    entries = {entry_id(e): e for e in pool_entries(pool)}
+    entries = {entry_id(e): e for e in entries_list}
     completed = inventory["completed"]
     excluded = {repository_id(r) for r in inventory.get("a2_exclusions", [])}
     expected = {key for key, entry in entries.items() if repository_id(entry["repository"]) not in excluded}
@@ -75,11 +94,10 @@ def build_manifest(inventory: dict, pool: dict) -> dict:
     bugs = []
     for identity in sorted(completed):
         row = completed[identity]
-        count = row["summary"]["counts"][configuration]
+        summary = row["prepared_summary"] if configuration == "K_3" else row["summary"]
+        count = summary["counts"][configuration]
         if type(count) is not int or count not in (0, 1):
             raise ValueError("single-entry summary count refused")
-        if configuration == "K_3" and row.get("prepared_summary", {}).get("counts", {}).get("K_3") != count:
-            raise ValueError("prepared recount differs from summary")
         if count:
             entry = entries[identity]
             bugs.append({key: repository_id(entry[key]) if key == "repository" else entry[key] for key in ENTRY_KEYS})
@@ -90,22 +108,36 @@ def build_manifest(inventory: dict, pool: dict) -> dict:
             or not isinstance(aggregate, dict) or type(aggregate.get(configuration)) is not int
             or aggregate[configuration] != count):
         raise ValueError("selected count differs from completed summaries")
-    return _manifest(inventory["binding"], configuration, tier, repositories, bugs)
+    manifest = _manifest(binding, configuration, tier, repositories, bugs)
+    if configuration == "K_3":
+        manifest["prepared_interpreter"] = environment.get("prepared_interpreter")
+    return manifest
 
 
-def manifest_from_inventory(inventory: Path, pool: Path) -> dict:
-    return build_manifest(read_json(inventory), read_json(pool))
+def manifest_from_inventory(inventory: Path, pool: Path, environment: Path) -> dict:
+    return build_manifest(read_json(inventory), read_json(pool), read_json(environment))
 
 
-def check(manifest: dict) -> list[str]:
-    """Rebuild every role and bug assignment using only recorded inputs."""
+def _canonical(value) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def check(manifest: dict, inventory: dict | None = None, pool: dict | None = None,
+          environment: dict | None = None) -> list[str]:
+    """Rebuild the allocation from external inputs, including the pool's commits."""
+    if inventory is None or pool is None or environment is None:
+        return ["external inventory, pool and environment required"]
     try:
         if type(manifest["schema"]) is not int or manifest["schema"] != 1:
             return ["allocation schema refused"]
-        expected = _manifest(*(manifest[key] for key in ("binding", "configuration", "tier", "repositories", "bugs")))
-        if manifest != expected:
-            return ["allocation differs from recorded inputs or draw"]
-        # JSON object member ordering is immaterial, including after atomic_json sorts keys.
+        expected = build_manifest(inventory, pool, environment)
+        entries = {entry_id(entry): entry for entry in pool_entries(pool)}
+        for bug in manifest["bugs"]:
+            entry = entries[entry_id(bug)]
+            if any(bug[key] != entry[key] for key in ("parent", "merge_commit")):
+                return ["allocation commits differ from pool"]
+        if _canonical(manifest) != _canonical(expected):
+            return ["allocation differs from external inputs or draw"]
         return []
     except (KeyError, TypeError, ValueError, AttributeError):
         return ["malformed allocation inputs"]
@@ -114,19 +146,19 @@ def check(manifest: dict) -> list[str]:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--write", nargs=3, metavar=("INVENTORY", "POOL", "MANIFEST"))
-    group.add_argument("--check", metavar="MANIFEST")
+    group.add_argument("--write", nargs=4, metavar=("INVENTORY", "POOL", "ENVIRONMENT", "MANIFEST"))
+    group.add_argument("--check", nargs=4, metavar=("MANIFEST", "INVENTORY", "POOL", "ENVIRONMENT"))
     args = parser.parse_args(argv)
     try:
         if args.write:
-            inventory, pool, output = (local_path(Path(p)) for p in args.write)
-            if output in {inventory, pool}:
+            inventory, pool, environment, output = (local_path(Path(p)) for p in args.write)
+            if output in {inventory, pool, environment}:
                 raise ValueError("allocation paths overlap")
-            manifest = manifest_from_inventory(inventory, pool)
+            manifest = manifest_from_inventory(inventory, pool, environment)
             atomic_json(output, manifest)
             print("ok")
             return 0
-        errors = check(read_json(Path(args.check)))
+        errors = check(*(read_json(Path(path)) for path in args.check))
         print("\n".join(errors) or "ok")
         return int(bool(errors))
     except (OSError, ValueError, KeyError, TypeError, AttributeError):

@@ -51,18 +51,14 @@ def _from_objects(objects, parent, merge):
     if len(parents) not in {1, 2} or parents[0] != parent:
         raise MaterialError("extraction_failed")
     before, after = objects.tree(parent), objects.tree(merge)
-    names = objects.run("diff-tree", "-r", "--no-commit-id", "--name-only", "-z", "--no-renames",
-                        "--no-ext-diff", "--no-textconv", parent, merge, "--")
-    status, base, fixed = [], {}, {}
-    for raw in names.split(b"\0"):
-        if not raw:
-            continue
-        name = raw.decode("utf-8")
+    status = objects.run("diff-tree", "-r", "--no-commit-id", "--name-status", "--no-renames",
+                         "--no-ext-diff", "--no-textconv", parent, merge, "--").decode("utf-8")
+    names = changed_files({"name_status": status})
+    base, fixed = {}, {}
+    for name in names:
         gitread._safe_name(name)
         if name not in before and name not in after:
             raise MaterialError("extraction_failed")
-        kind = "M" if name in before and name in after else "A" if name in after else "D"
-        status.append(f"{kind}\t{name}\n")
         if not name.endswith(".py"):
             continue
         if name in before:
@@ -79,22 +75,22 @@ def _from_objects(objects, parent, merge):
             total += len(fixed[name].encode("utf-8"))
         if total > MAX_SUPPORT:
             raise MaterialError("support_source_too_large")
-    patch = objects.run("-c", "core.quotePath=false", "diff-tree", "-r", "-p", "--no-commit-id",
+    patch = objects.run("diff-tree", "-r", "-p", "--no-commit-id",
                         "--no-renames", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/",
                         parent, merge, "--").decode("utf-8")
-    body = {"name_status": "".join(status), "patch": patch, "base": base, "fixed": fixed}
+    body = {"name_status": status, "patch": patch, "base": base, "fixed": fixed}
     changed_files(body)
     return body
 
 
 def material_from_git(manifest: dict, bug_id: str, cache: Path, *, source: Path | None = None,
-                      repository_root: Path | None = None) -> dict:
+                      repository_root: Path | None = None, inventory=None, pool=None, environment=None) -> dict:
     """Return the image extractor's four keys, for acquisition only.
 
     source and repository_root have the git reader's offline fixture semantics;
     pool/manifest data cannot supply a local path or transport.
     """
-    entry = access_m1b.acquisition_bug(manifest, bug_id)
+    entry = access_m1b.acquisition_bug(manifest, bug_id, inventory=inventory, pool=pool, environment=environment)
     try:
         return _read(entry, cache, source=source, repository_root=repository_root)
     except MaterialError:
