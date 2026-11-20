@@ -20,6 +20,22 @@ from ._mine_io import (atomic_json, cohort_ids, digest, entry_id, external_path,
                        pool_entries, pool_ids, read_json, repository_id)
 
 
+# Fixed refusals from gitread: facts about an entry's commits or trees, not read failures that may pass.
+REFUSALS = frozenset({"links and submodules refused", "case-colliding tree refused", "git path refused",
+                      "changed path missing from trees", "pool parent differs from commit", "expected commit object"})
+READ_FAILURES_IN_A_ROW = 5
+
+
+def _drop(entry: dict, identity: str, reason: str, prepared: bool) -> dict:
+    record = {"repository": repository_id(entry["repository"]), "bug_id": identity, "failed_rules": ["READ"],
+              "flags": [reason.replace(" ", "_").replace("-", "_")]}
+    empty = counts.summarize([])
+    row = {"record": record, "summary": empty}
+    if prepared:
+        row["prepared_summary"] = empty
+    return row
+
+
 def _public_record(record: fit.FitRecord) -> dict:
     public = record.public()
     return {key: public[key] for key in ("repository", "bug_id", "failed_rules", "flags")}
@@ -98,9 +114,12 @@ def run(*, pool: Path, environment: Path, cache: Path, output: Path, exclude: Pa
             raise ValueError("inventory checkpoint inputs differ")
         completed = previous["completed"]
 
+    unread = []
+
     def save(complete):
         report = _report(completed, entries, excluded, complete=complete, exists=exists, prepared=prepared is not None)
         report["a2_exclusions"] = a2_exclusions
+        report["unread"] = sorted(unread)
         # Excluded candidates are removed from the checkpoint as well as the report.
         kept = {entry_id(e) for e in entries if repository_id(e["repository"]) not in excluded}
         state = {**report, "schema": 1, "binding": binding,
@@ -109,18 +128,35 @@ def run(*, pool: Path, environment: Path, cache: Path, output: Path, exclude: Pa
         return state
 
     save(False)
+    in_a_row = 0
     for entry in entries:
         identity = entry_id(entry)
         if repository_id(entry["repository"]) in excluded or identity in completed:
             continue
-        candidate = gitread.read_candidate(entry, cache, repository_root=repository_root)
+        try:
+            candidate = gitread.read_candidate(entry, cache, repository_root=repository_root)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            reason = str(error) if isinstance(error, ValueError) else ""
+            if reason in REFUSALS:
+                # A refusal is a fact about this entry's trees: it is recorded and never read again.
+                completed[identity] = _drop(entry, identity, reason, prepared is not None)
+                in_a_row = 0
+                save(False)
+                continue
+            # Anything else may be the network: leave the entry for the next run, and stop if it keeps happening.
+            unread.append(identity)
+            in_a_row += 1
+            if in_a_row >= READ_FAILURES_IN_A_ROW:
+                raise
+            continue
+        in_a_row = 0
         record = fit.assess(candidate, env)
         row = {"record": _public_record(record), "summary": counts.summarize([record])}
         if prepared is not None:
             row["prepared_summary"] = counts.summarize([record], prepared_environment=prepared)
         completed[identity] = row
         save(False)
-    return save(True)
+    return save(not unread)
 
 
 def main(argv=None, *, repository_root: Path | None = None) -> int:

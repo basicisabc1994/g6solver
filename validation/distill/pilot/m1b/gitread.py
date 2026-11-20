@@ -34,6 +34,10 @@ def _safe_name(name: str) -> None:
             raise ValueError("git path refused")
 
 
+# Ordinary files arrive in the fetch's one pack; only files over the limit are fetched one by one when read.
+PARTIAL_FILTER = "blob:limit=512k"
+
+
 class _Objects:
     def __init__(self, root: Path, origin: str, *, local: bool):
         self.root = root
@@ -57,7 +61,7 @@ class _Objects:
                    "-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
                    "-c", f"protocol.file.allow={'always' if self.local else 'never'}",
                    "-c", f"remote.origin.url={self.origin}", "-c", "remote.origin.promisor=true",
-                   "-c", "remote.origin.partialclonefilter=blob:none", "-c", "maintenance.auto=false",
+                   "-c", f"remote.origin.partialclonefilter={PARTIAL_FILTER}", "-c", "maintenance.auto=false",
                    "-c", "gc.auto=0"]
         if in_cache:
             command.extend(["--git-dir", str(self.objects)])
@@ -67,7 +71,8 @@ class _Objects:
         return done.stdout
 
     def fetch(self, sha: str):
-        self.run("fetch", "--no-tags", "--no-recurse-submodules", "--depth=2", "--filter=blob:none", "origin", sha)
+        self.run("fetch", "--no-tags", "--no-recurse-submodules", "--depth=2", f"--filter={PARTIAL_FILTER}",
+                 "origin", sha)
         if self.run("cat-file", "-t", sha).strip() != b"commit":
             raise ValueError("expected commit object")
 

@@ -306,7 +306,7 @@ def test_git_command_is_read_only_without_files(monkeypatch):
     monkeypatch.setattr(reader.subprocess, "run", run)
     objects.fetch("a" * 40)
     args, kwargs = calls[0]
-    assert "--no-recurse-submodules" in args and "--filter=blob:none" in args and "--depth=2" in args
+    assert "--no-recurse-submodules" in args and "--filter=blob:limit=512k" in args and "--depth=2" in args
     assert "core.hooksPath=empty-hooks" in args and "protocol.file.allow=never" in args
     assert "checkout" not in args and "clone" not in args
     assert kwargs["env"]["GIT_LFS_SKIP_SMUDGE"] == "1"
@@ -544,15 +544,69 @@ def test_inventory_partial_resume_and_binding(tmp_path, local_repo, monkeypatch)
     output = tmp_path / "inventory.json"
     kwargs = dict(pool=pool, environment=env, cache=tmp_path / "cache", output=output,
                   repository_root=tmp_path / "worktree")
-    with pytest.raises(ValueError, match="synthetic"):
-        inv.run(**kwargs)
+    # A read that fails for an unknown reason is left unread for the next run, never recorded as a drop.
+    partial = inv.run(**kwargs)
     state = json.loads(output.read_text())
+    assert not partial["complete"] and partial["unread"] == ["org/widget#2"]
     assert not state["complete"] and state["selection"] is None and len(state["records"]) == 1
     result = inv.run(**kwargs)
     assert result["complete"] and calls == [1, 2, 2]
     write_json(env, {"resolvable_modules": ["changed"], "loaded_packages": [], "pytest_dependencies": []})
     with pytest.raises(ValueError, match="differ"):
         inv.run(**kwargs)
+
+
+def test_inventory_records_a_refused_tree_as_a_drop_and_goes_on(tmp_path, local_repo, monkeypatch):
+    # Found on the first real run: kozea/tinycss2 holds a submodule; the refusal stopped all 648 entries.
+    repo, entry = local_repo
+    inv, reader = module("inventory"), module("gitread")
+    original = reader.read_candidate
+    def read(row, cache, **kwargs):
+        if row["pr"] == 2:
+            raise ValueError("links and submodules refused")
+        return original(row, cache, source=repo, repository_root=tmp_path / "worktree")
+    monkeypatch.setattr(reader, "read_candidate", read)
+    pool = write_json(tmp_path / "pool.json", {"entries": [{**entry, "pr": 2}, entry]})
+    env = write_json(tmp_path / "environment.json", {"resolvable_modules": [], "loaded_packages": [],
+                                                   "pytest_dependencies": []})
+    result = inv.run(pool=pool, environment=env, cache=tmp_path / "cache", output=tmp_path / "inventory.json",
+                     repository_root=tmp_path / "worktree")
+    assert result["complete"] and result["unread"] == [] and result["selection"] is not None
+    drop = [r for r in result["records"] if r["bug_id"] == "org/widget#2"]
+    assert drop == [{"repository": "org/widget", "bug_id": "org/widget#2", "failed_rules": ["READ"],
+                     "flags": ["links_and_submodules_refused"]}]
+    assert len(result["records"]) == 2
+
+
+def test_inventory_stops_after_five_unknown_read_failures_in_a_row(tmp_path, local_repo, monkeypatch):
+    repo, entry = local_repo
+    inv, reader = module("inventory"), module("gitread")
+    def read(row, cache, **kwargs):
+        raise ValueError("git object read refused")
+    monkeypatch.setattr(reader, "read_candidate", read)
+    pool = write_json(tmp_path / "pool.json", {"entries": [{**entry, "pr": n} for n in range(1, 8)]})
+    env = write_json(tmp_path / "environment.json", {"resolvable_modules": [], "loaded_packages": [],
+                                                   "pytest_dependencies": []})
+    output = tmp_path / "inventory.json"
+    with pytest.raises(ValueError):
+        inv.run(pool=pool, environment=env, cache=tmp_path / "cache", output=output,
+                repository_root=tmp_path / "worktree")
+    state = json.loads(output.read_text())
+    assert not state["complete"] and state["completed"] == {} and state["records"] == []
+
+
+def test_fetch_brings_ordinary_files_in_one_pack(tmp_path, monkeypatch):
+    # blob:none made every later file read a network round trip (about 1.7 min per entry on the first real run).
+    gitread = module("gitread")
+    objects = gitread._Objects(tmp_path / "cache", "https://github.com/org/widget", local=False)
+    seen = []
+    def run(*args, in_cache=True):
+        seen.append(args)
+        return b"commit\n"
+    monkeypatch.setattr(objects, "run", run)
+    objects.fetch("a" * 40)
+    assert "--filter=blob:limit=512k" in seen[0] and "--filter=blob:none" not in seen[0]
+    assert gitread.PARTIAL_FILTER == "blob:limit=512k"
 
 
 def test_a2_synthetic_count_only(tmp_path, capsys):
