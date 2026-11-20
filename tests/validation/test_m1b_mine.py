@@ -581,6 +581,43 @@ def test_a2_matches_sealed_rows_that_name_a_project_only_by_bug_id(tmp_path, cap
     assert json.loads(output.read_text()) == ["org/charset_normalizer", "org/widget"]
 
 
+@pytest.mark.parametrize("sealed,stage", [
+    (None, "final cohort read"),
+    ("not json {secret-name-1", "final cohort json"),
+    (json.dumps({"units": [{"id": "secret-name-1"}]}), "final cohort format: cohort repository list missing"),
+    (json.dumps({"bugs": [{"id": "secret_name_without_number"}]}), "final cohort format: cohort bug id refused"),
+    (json.dumps({"bugs": [{"unit": "secret-name-1"}]}), "final cohort format: repository id refused"),])
+def test_a2_refusal_names_its_stage_and_never_cohort_content(tmp_path, capsys, sealed, stage):
+    pool = write_json(tmp_path / "pool.json", {"entries": [], "repositories": [{"repository": "org/a"}]})
+    path = tmp_path / "synthetic-sealed.json"
+    if sealed is not None:
+        path.write_text(sealed, encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        module("a2_check").main(["--pool", str(pool), "--final-cohort", str(path),
+                                 "--exclude", str(tmp_path / "exclude.json")])
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == f"A2 input or output refused at {stage}\n"
+    assert "secret" not in captured.err and str(tmp_path) not in captured.err
+
+
+def test_a2_refusal_names_a_sealed_named_exclude_path(tmp_path, capsys):
+    pool = write_json(tmp_path / "pool.json", {"entries": [], "repositories": []})
+    sealed = write_json(tmp_path / "synthetic-sealed.json", {"bugs": [{"id": "a-1"}]})
+    with pytest.raises(SystemExit):
+        module("a2_check").main(["--pool", str(pool), "--final-cohort", str(sealed),
+                                 "--exclude", str(tmp_path / "final-exclude.json")])
+    assert capsys.readouterr().err == "A2 input or output refused at exclude path: sealed path refused\n"
+
+
+def test_a2_refusal_names_the_pool_stage(tmp_path, capsys):
+    sealed = write_json(tmp_path / "synthetic-sealed.json", {"bugs": [{"id": "a-1"}]})
+    with pytest.raises(SystemExit):
+        module("a2_check").main(["--pool", str(tmp_path / "missing.json"), "--final-cohort", str(sealed),
+                                 "--exclude", str(tmp_path / "exclude.json")])
+    assert capsys.readouterr().err == "A2 input or output refused at pool\n"
+
+
 def test_a2_error_contains_no_cohort_material(tmp_path, capsys):
     pool = write_json(tmp_path / "pool.json", {"entries": [], "repositories": []})
     sealed = write_json(tmp_path / "synthetic-sealed.json", ["secret-content-without-a-repository-id"])
@@ -589,7 +626,7 @@ def test_a2_error_contains_no_cohort_material(tmp_path, capsys):
                                  "--exclude", str(tmp_path / "exclude.json")])
     assert exc.value.code == 2
     captured = capsys.readouterr()
-    assert captured.out == "" and captured.err == "A2 input or output refused\n"
+    assert captured.out == "" and captured.err == "A2 input or output refused at final cohort format: repository id refused\n"
 
 
 def test_inventory_refuses_sealed_paths_without_opening(tmp_path):
