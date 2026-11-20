@@ -1528,6 +1528,20 @@
     "awaiting_review": []
   },
   {
+    "code": "opaque_learning",
+    "title": "retained check results nobody can inspect or erase",
+    "description": "Local check history is retained without a way for the person to inspect its counts and location or request its removal.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "learning_history"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
     "code": "output_contract_missing",
     "title": "output contract missing",
     "description": "output contract missing",

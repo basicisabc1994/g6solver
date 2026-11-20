@@ -44,6 +44,7 @@ NEEDS = {"abstraction": {"abstraction": ("hypothesis", "numpy")}, "adapt_audio":
          "metaharness": {"lora": ("torch", "transformers", "peft")}, "model_checking": {"formal": ("z3",)},
          "optimisation": {"optim": ("ortools",), "optim-nonlinear": ("scipy",)}}
 OUTSIDE["adapt_diagrams"] = {"Graphviz"}  # g6.media
+OUTSIDE["learning_history"] = {"git"}
 NEEDS["adapt_diagrams"] = {"image": ("PIL",)}
 NEEDS["adapt_visualisation"] = {"image": ("PIL",)}
 NEEDS["knowledge_converter"] = {"docs": ("pypdf",)}  # g6.knowledge

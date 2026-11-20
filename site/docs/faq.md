@@ -147,7 +147,7 @@ MCP, a reply with no state is a `qualified-draft`, and nothing is `verified` wit
 
 ### What is a component?
 A small package that does one job, such as `grounding` (check claims against sources) or `action_gating` (allow, ask
-a person, or block). Each works on its own and declares any other component it imports. There are 38 in the core
+a person, or block). Each works on its own and declares any other component it imports. There are 39 in the core
 harness, and 60 extensions are in the library, each in a family for one kind of work; the
 [catalogue](components.md) is generated from the code. The two tables below list every one.
 
@@ -181,6 +181,7 @@ harness, and 60 extensions are in the library, each in a family for one kind of 
 | `invariants` | Checks that every result's label matches the evidence attached to it | Python-only | — |
 | `lean` | Has Lean, a proof assistant, check a proof you wrote of a theorem you name, and confirms that it leaves no step unproved, assumes nothing beyond the standard rules and proves exactly the statement you give | MCP | `check_proof`, `lean_version`, `prove` |
 | `learning` | Learns hints from an agent's failures, and keeps one only when side-by-side runs show it helps | Python-only | — |
+| `learning_history` | Shows G6's locally retained checks and results for one repository, and erases that history only after agreement in the client's dialog | MCP | `forget` |
 | `metaharness` | Tunes how G6 runs a task you repeat: it proposes changes, tests each one on cases it has not seen, and keeps one only when you approve | Python-only | — |
 | `model_checking` | Checks a system you describe as states and the steps between them, such as a protocol or a workflow: it finds a run of steps that breaks a rule or gets stuck, or shows the rule always holds | MCP | `sany_parse`, `tlc_check` |
 | `navigator` | Checks a plan of G6 calls against each component's rules before anything runs | Python-only | — |
@@ -291,7 +292,7 @@ All are implemented and tested. Three have been through a study registered befor
 checking, the action gate and the meta-harness (see [Research](research.md)). None has been studied in real use.
 
 ### Which components can I call over MCP?
-Every extension in the library can be called over MCP, as can 21 of the 38 core components; the other 17 are
+Every extension in the library can be called over MCP, as can 22 of the 39 core components; the other 17 are
 Python-only for now. The tables above say which. `workforce` has tools of its own, `g6_mission_create` and the others,
 and no op for `g6_invoke`.
 

@@ -4,7 +4,7 @@
 
 Every way of failing G6 names, the components in the library that guard against it today, and the ones whose own use can cause it. A component built in a vetted area guards nothing until its certificate is current.
 
-240 failure modes: 150 guarded by at least one component, 90 with no guard yet.
+241 failure modes: 151 guarded by at least one component, 90 with no guard yet.
 
 | Failure mode | Code | Guarded by | Can be caused by | Built, awaiting its certificate |
 |---|---|---|---|---|
@@ -116,6 +116,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | an agent's behaviour never tried in a simulated world first | `no_simulation_test` | — | — | — |
 | off-brand or unreviewed content going out | `off_brand_content` | — | — | — |
 | container steps failing without clear errors | `opaque_container_failure` | — | — | — |
+| retained check results nobody can inspect or erase | `opaque_learning` | `learning_history` | — | — |
 | output contract missing | `output_contract_missing` | — | — | — |
 | a change that alters behaviour outside the part it was meant to touch | `outside_scope` | `complexity` | `meta_programming` | — |
 | overbroad retrieval | `overbroad_retrieval` | — | — | — |

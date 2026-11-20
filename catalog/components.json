@@ -1664,6 +1664,25 @@
     "vetting": null
   },
   {
+    "name": "learning_history",
+    "summary": "Inspect and erase G6's own local repository check history through g6_invoke.",
+    "maturity": "beta",
+    "maturity_reason": "new local history inspection and client-dialog erasure surface; covered by local tests, with no field-use assessment",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "list",
+      "forget"
+    ],
+    "requires": [
+      "harness",
+      "workforce"
+    ],
+    "sensitive_ops": [
+      "forget"
+    ],
+    "vetting": null
+  },
+  {
     "name": "llm_router",
     "summary": "g6.llm_router \u2014 pick a language model for a kind of task from a committed table, local first, with an ordered fallback chain and dated cost estimates.",
     "maturity": "beta",

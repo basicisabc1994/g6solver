@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from g6.core.ai_block import AIBlock
 from g6.core.contract_decorator import block_contract
+from g6.core.maturity import component_maturity
 from g6.core.result import Result
 from g6.harness import outcome_history
 from g6.harness.outcome_history import LETS_THROUGH
@@ -26,6 +27,8 @@ class HistoryInput(BaseModel):
 
 @block_contract(purpose="inspect G6's local repository check history", mitigates_failure_modes=('opaque_learning',),
                 verification_method='receipt-backed local counts; no correctness or promotion claim')
+@component_maturity('beta', reason='new local history inspection and client-dialog erasure surface; '
+                    'covered by local tests, with no field-use assessment')
 class LearningHistoryBlock(AIBlock):
     def __init__(self):
         super().__init__(name='learning_history')
