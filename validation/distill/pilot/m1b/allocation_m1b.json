@@ -1,0 +1,436 @@
+{
+  "binding": "8c2d4eadc7473778f5c8502fe7e9a7abf9d4f4c545ff61d0bed466e9048a4b19",
+  "bugs": [
+    {
+      "merge_commit": "6d05e0601850a294e78b9da951d3d2bbe55220e8",
+      "parent": "512e948bba369d46521a74f1d78250f0a651b545",
+      "pr": 141,
+      "repository": "borntyping/python-colorlog"
+    },
+    {
+      "merge_commit": "1040404bd539eefde8c1e7022c36b0f14ef34c16",
+      "parent": "0c6e54408dfc4e54562e76cfab3e044c816c169f",
+      "pr": 541,
+      "repository": "cunla/fakeredis-py"
+    },
+    {
+      "merge_commit": "310a1239b62f500284ce3bd91b7dabf70467f23e",
+      "parent": "27e268d4fc36a169b9a3296fe03d3b897fc0bf2f",
+      "pr": 348,
+      "repository": "keleshev/schema"
+    },
+    {
+      "merge_commit": "fcb0f9abd63822defd588ac0550dbfd960b391de",
+      "parent": "c7b559a1fa3aba57ca6dba0ab336841c5038a782",
+      "pr": 3024,
+      "repository": "marshmallow-code/marshmallow"
+    },
+    {
+      "merge_commit": "6e29fba282e68631034dd2722a413b4e35276584",
+      "parent": "404175512ced7ee915264485f757713df4f2c797",
+      "pr": 421,
+      "repository": "martinblech/xmltodict"
+    },
+    {
+      "merge_commit": "404175512ced7ee915264485f757713df4f2c797",
+      "parent": "966b903e4441f27816cd39ecf3305727b294a9c5",
+      "pr": 422,
+      "repository": "martinblech/xmltodict"
+    },
+    {
+      "merge_commit": "7ddd152601728be7635fb5063ac5eec70a044a1c",
+      "parent": "29288479fe1514df92c1276928b6f94ccdd2e947",
+      "pr": 260,
+      "repository": "pytest-dev/pytest-env"
+    },
+    {
+      "merge_commit": "1fed48103815fbd91f46c46f2f869e3aa41ffcf5",
+      "parent": "87aa83624f8b1412e13dc37c75285828831ad2f2",
+      "pr": 273,
+      "repository": "pytest-dev/pytest-env"
+    },
+    {
+      "merge_commit": "af9a6d35f2a585207b607ca54d3af93d1403a06a",
+      "parent": "d904cdf9d26180f45ccc294f2cfa8cd6542fe195",
+      "pr": 278,
+      "repository": "pytest-dev/pytest-env"
+    },
+    {
+      "merge_commit": "71ed67309520be160f3e100368705b58758d237a",
+      "parent": "0797e3d303cc5bbe0a3514b0625f7aeb3fa350b0",
+      "pr": 604,
+      "repository": "pytest-dev/pytest-mock"
+    },
+    {
+      "merge_commit": "ed5ed973f4f3e6bb14669266b5941150aa82a515",
+      "parent": "d14a7fd9e08a2d01d57ba3531253d534ed8cbf9b",
+      "pr": 617,
+      "repository": "pytest-dev/pytest-mock"
+    },
+    {
+      "merge_commit": "63f908d5ebc041654475597c3f2d6f1ee3da2c8f",
+      "parent": "dd198c35710f22b1cb86b7fc00311f9b7c63d665",
+      "pr": 1324,
+      "repository": "pytest-dev/pytest-xdist"
+    },
+    {
+      "merge_commit": "8ba31ecb38b299619ca4e136f2055f064b1d93f7",
+      "parent": "4ded1bc8897b29f7a1c905b21ce1cf40f9e733a6",
+      "pr": 230,
+      "repository": "r1chardj0n3s/parse"
+    },
+    {
+      "merge_commit": "175b52d5079dd632332bdc8a075f25867d5a6a17",
+      "parent": "d843b6b13604a14eba063e31e52dd99c05282d2e",
+      "pr": 256,
+      "repository": "r1chardj0n3s/parse"
+    },
+    {
+      "merge_commit": "17b94440c80df12bdb8ed939527ca6f14ad99fce",
+      "parent": "529dc2e01a0d882ec55d673304253b40eb4d38b2",
+      "pr": 257,
+      "repository": "r1chardj0n3s/parse"
+    },
+    {
+      "merge_commit": "d843b6b13604a14eba063e31e52dd99c05282d2e",
+      "parent": "a38727d1963151e4c4daff9dceb2faf925e849b6",
+      "pr": 258,
+      "repository": "r1chardj0n3s/parse"
+    },
+    {
+      "merge_commit": "0abf338be4a685a370f559ab256759f0cb985d64",
+      "parent": "4f76a3e2982a7b5c5491651283e718029a2cd6a1",
+      "pr": 261,
+      "repository": "r1chardj0n3s/parse"
+    },
+    {
+      "merge_commit": "9a6bf117f3c883f82bc20cc4023a44064cd23e1b",
+      "parent": "079b62ec1b7ced38b1ee880058e18e74e39cc2c1",
+      "pr": 173,
+      "repository": "scientific-python/lazy-loader"
+    },
+    {
+      "merge_commit": "6a1c2c31bc68a5142170e7040de190db02dcc7f3",
+      "parent": "b543bdce8771b6e7a7dae0c6745ddf7e80299797",
+      "pr": 185,
+      "repository": "sethmmorton/natsort"
+    },
+    {
+      "merge_commit": "b543bdce8771b6e7a7dae0c6745ddf7e80299797",
+      "parent": "839eca1d2fc3ffb12bb76540af810535ad0e175c",
+      "pr": 186,
+      "repository": "sethmmorton/natsort"
+    },
+    {
+      "merge_commit": "62351522ff99e0023003b610e15c69ea1eb79dda",
+      "parent": "74bbce1324edcdda0f0562e4083e676793983c2b",
+      "pr": 123,
+      "repository": "wolph/portalocker"
+    },
+    {
+      "merge_commit": "e3a52b306adabac00f67e5fbbd3a45489b5402ef",
+      "parent": "3eb2123565659437d35db426a809385e12e1d8d2",
+      "pr": 125,
+      "repository": "wolph/portalocker"
+    },
+    {
+      "merge_commit": "4d90688095f6c23a8efe13a0ac98049e857d4e89",
+      "parent": "334a829dec794018564eb611002e8ce9e46ffef3",
+      "pr": 51,
+      "repository": "wolph/python-utils"
+    },
+    {
+      "merge_commit": "e13d62ff24209455f6fe9036dd6fd456c3e711b4",
+      "parent": "e4408daad9d729816dc1ed521362ecc250223656",
+      "pr": 52,
+      "repository": "wolph/python-utils"
+    },
+    {
+      "merge_commit": "a52274d8f8b7467a151aad203889bfd5b98fb6a9",
+      "parent": "5b472cdc982a48f5cc0db8b7d2150a4eb7137b4f",
+      "pr": 56,
+      "repository": "wolph/python-utils"
+    },
+    {
+      "merge_commit": "33b595eae5694782c7cff6e4941230e8f6218734",
+      "parent": "2c7eb9248f369feb8253249113a355d69187064f",
+      "pr": 57,
+      "repository": "wolph/python-utils"
+    },
+    {
+      "merge_commit": "1a93d7485350002f0948f9b1114a98365a9aba1c",
+      "parent": "4faa11d6efb93351188efb5eb28991c427700734",
+      "pr": 60,
+      "repository": "wolph/python-utils"
+    },
+    {
+      "merge_commit": "dc831d0feaa24f4f0fb7be71d9eaf8cfcffb3be7",
+      "parent": "1b1e6d940e131e881c8d3558c1ed1e964785548e",
+      "pr": 64,
+      "repository": "wolph/python-utils"
+    },
+    {
+      "merge_commit": "45f4045a90033d4a84bae643d69df213736bab94",
+      "parent": "dc831d0feaa24f4f0fb7be71d9eaf8cfcffb3be7",
+      "pr": 65,
+      "repository": "wolph/python-utils"
+    },
+    {
+      "merge_commit": "5aba50a39a62b65fcf476a4779826fb41108a7d6",
+      "parent": "1e1b03e34ee00742214bfa75f6384a37871c3785",
+      "pr": 67,
+      "repository": "wolph/python-utils"
+    },
+    {
+      "merge_commit": "882e045e0386afb3f33915928c069a56d725cc34",
+      "parent": "5aba50a39a62b65fcf476a4779826fb41108a7d6",
+      "pr": 69,
+      "repository": "wolph/python-utils"
+    }
+  ],
+  "configuration": "K_0",
+  "inputs_sha256": "a7257eabec41ccc6f8ea8379ae848662efc80673cc596900deb0623f7fae7110",
+  "label": "g6-pilot-m1b-allocation-v1",
+  "repositories": [
+    "borntyping/python-colorlog",
+    "cunla/fakeredis-py",
+    "keleshev/schema",
+    "marshmallow-code/marshmallow",
+    "martinblech/xmltodict",
+    "pytest-dev/pytest-env",
+    "pytest-dev/pytest-mock",
+    "pytest-dev/pytest-xdist",
+    "r1chardj0n3s/parse",
+    "scientific-python/lazy-loader",
+    "sethmmorton/natsort",
+    "wolph/portalocker",
+    "wolph/python-utils"
+  ],
+  "roles": {
+    "acquisition": {
+      "bugs": [
+        {
+          "merge_commit": "fcb0f9abd63822defd588ac0550dbfd960b391de",
+          "parent": "c7b559a1fa3aba57ca6dba0ab336841c5038a782",
+          "pr": 3024,
+          "repository": "marshmallow-code/marshmallow"
+        },
+        {
+          "merge_commit": "71ed67309520be160f3e100368705b58758d237a",
+          "parent": "0797e3d303cc5bbe0a3514b0625f7aeb3fa350b0",
+          "pr": 604,
+          "repository": "pytest-dev/pytest-mock"
+        },
+        {
+          "merge_commit": "ed5ed973f4f3e6bb14669266b5941150aa82a515",
+          "parent": "d14a7fd9e08a2d01d57ba3531253d534ed8cbf9b",
+          "pr": 617,
+          "repository": "pytest-dev/pytest-mock"
+        },
+        {
+          "merge_commit": "63f908d5ebc041654475597c3f2d6f1ee3da2c8f",
+          "parent": "dd198c35710f22b1cb86b7fc00311f9b7c63d665",
+          "pr": 1324,
+          "repository": "pytest-dev/pytest-xdist"
+        },
+        {
+          "merge_commit": "8ba31ecb38b299619ca4e136f2055f064b1d93f7",
+          "parent": "4ded1bc8897b29f7a1c905b21ce1cf40f9e733a6",
+          "pr": 230,
+          "repository": "r1chardj0n3s/parse"
+        },
+        {
+          "merge_commit": "175b52d5079dd632332bdc8a075f25867d5a6a17",
+          "parent": "d843b6b13604a14eba063e31e52dd99c05282d2e",
+          "pr": 256,
+          "repository": "r1chardj0n3s/parse"
+        },
+        {
+          "merge_commit": "17b94440c80df12bdb8ed939527ca6f14ad99fce",
+          "parent": "529dc2e01a0d882ec55d673304253b40eb4d38b2",
+          "pr": 257,
+          "repository": "r1chardj0n3s/parse"
+        },
+        {
+          "merge_commit": "d843b6b13604a14eba063e31e52dd99c05282d2e",
+          "parent": "a38727d1963151e4c4daff9dceb2faf925e849b6",
+          "pr": 258,
+          "repository": "r1chardj0n3s/parse"
+        },
+        {
+          "merge_commit": "0abf338be4a685a370f559ab256759f0cb985d64",
+          "parent": "4f76a3e2982a7b5c5491651283e718029a2cd6a1",
+          "pr": 261,
+          "repository": "r1chardj0n3s/parse"
+        }
+      ],
+      "repositories": [
+        "marshmallow-code/marshmallow",
+        "pytest-dev/pytest-mock",
+        "pytest-dev/pytest-xdist",
+        "r1chardj0n3s/parse"
+      ]
+    },
+    "admission": {
+      "bugs": [
+        {
+          "merge_commit": "6e29fba282e68631034dd2722a413b4e35276584",
+          "parent": "404175512ced7ee915264485f757713df4f2c797",
+          "pr": 421,
+          "repository": "martinblech/xmltodict"
+        },
+        {
+          "merge_commit": "404175512ced7ee915264485f757713df4f2c797",
+          "parent": "966b903e4441f27816cd39ecf3305727b294a9c5",
+          "pr": 422,
+          "repository": "martinblech/xmltodict"
+        },
+        {
+          "merge_commit": "7ddd152601728be7635fb5063ac5eec70a044a1c",
+          "parent": "29288479fe1514df92c1276928b6f94ccdd2e947",
+          "pr": 260,
+          "repository": "pytest-dev/pytest-env"
+        },
+        {
+          "merge_commit": "1fed48103815fbd91f46c46f2f869e3aa41ffcf5",
+          "parent": "87aa83624f8b1412e13dc37c75285828831ad2f2",
+          "pr": 273,
+          "repository": "pytest-dev/pytest-env"
+        },
+        {
+          "merge_commit": "af9a6d35f2a585207b607ca54d3af93d1403a06a",
+          "parent": "d904cdf9d26180f45ccc294f2cfa8cd6542fe195",
+          "pr": 278,
+          "repository": "pytest-dev/pytest-env"
+        },
+        {
+          "merge_commit": "9a6bf117f3c883f82bc20cc4023a44064cd23e1b",
+          "parent": "079b62ec1b7ced38b1ee880058e18e74e39cc2c1",
+          "pr": 173,
+          "repository": "scientific-python/lazy-loader"
+        },
+        {
+          "merge_commit": "62351522ff99e0023003b610e15c69ea1eb79dda",
+          "parent": "74bbce1324edcdda0f0562e4083e676793983c2b",
+          "pr": 123,
+          "repository": "wolph/portalocker"
+        },
+        {
+          "merge_commit": "e3a52b306adabac00f67e5fbbd3a45489b5402ef",
+          "parent": "3eb2123565659437d35db426a809385e12e1d8d2",
+          "pr": 125,
+          "repository": "wolph/portalocker"
+        }
+      ],
+      "repositories": [
+        "martinblech/xmltodict",
+        "pytest-dev/pytest-env",
+        "scientific-python/lazy-loader",
+        "wolph/portalocker"
+      ]
+    },
+    "monitor": {
+      "bugs": [
+        {
+          "merge_commit": "6d05e0601850a294e78b9da951d3d2bbe55220e8",
+          "parent": "512e948bba369d46521a74f1d78250f0a651b545",
+          "pr": 141,
+          "repository": "borntyping/python-colorlog"
+        },
+        {
+          "merge_commit": "1040404bd539eefde8c1e7022c36b0f14ef34c16",
+          "parent": "0c6e54408dfc4e54562e76cfab3e044c816c169f",
+          "pr": 541,
+          "repository": "cunla/fakeredis-py"
+        }
+      ],
+      "repositories": [
+        "borntyping/python-colorlog",
+        "cunla/fakeredis-py"
+      ]
+    }
+  },
+  "schema": 1,
+  "tier": "reduced",
+  "unused": {
+    "bugs": [
+      {
+        "merge_commit": "310a1239b62f500284ce3bd91b7dabf70467f23e",
+        "parent": "27e268d4fc36a169b9a3296fe03d3b897fc0bf2f",
+        "pr": 348,
+        "repository": "keleshev/schema"
+      },
+      {
+        "merge_commit": "6a1c2c31bc68a5142170e7040de190db02dcc7f3",
+        "parent": "b543bdce8771b6e7a7dae0c6745ddf7e80299797",
+        "pr": 185,
+        "repository": "sethmmorton/natsort"
+      },
+      {
+        "merge_commit": "b543bdce8771b6e7a7dae0c6745ddf7e80299797",
+        "parent": "839eca1d2fc3ffb12bb76540af810535ad0e175c",
+        "pr": 186,
+        "repository": "sethmmorton/natsort"
+      },
+      {
+        "merge_commit": "4d90688095f6c23a8efe13a0ac98049e857d4e89",
+        "parent": "334a829dec794018564eb611002e8ce9e46ffef3",
+        "pr": 51,
+        "repository": "wolph/python-utils"
+      },
+      {
+        "merge_commit": "e13d62ff24209455f6fe9036dd6fd456c3e711b4",
+        "parent": "e4408daad9d729816dc1ed521362ecc250223656",
+        "pr": 52,
+        "repository": "wolph/python-utils"
+      },
+      {
+        "merge_commit": "a52274d8f8b7467a151aad203889bfd5b98fb6a9",
+        "parent": "5b472cdc982a48f5cc0db8b7d2150a4eb7137b4f",
+        "pr": 56,
+        "repository": "wolph/python-utils"
+      },
+      {
+        "merge_commit": "33b595eae5694782c7cff6e4941230e8f6218734",
+        "parent": "2c7eb9248f369feb8253249113a355d69187064f",
+        "pr": 57,
+        "repository": "wolph/python-utils"
+      },
+      {
+        "merge_commit": "1a93d7485350002f0948f9b1114a98365a9aba1c",
+        "parent": "4faa11d6efb93351188efb5eb28991c427700734",
+        "pr": 60,
+        "repository": "wolph/python-utils"
+      },
+      {
+        "merge_commit": "dc831d0feaa24f4f0fb7be71d9eaf8cfcffb3be7",
+        "parent": "1b1e6d940e131e881c8d3558c1ed1e964785548e",
+        "pr": 64,
+        "repository": "wolph/python-utils"
+      },
+      {
+        "merge_commit": "45f4045a90033d4a84bae643d69df213736bab94",
+        "parent": "dc831d0feaa24f4f0fb7be71d9eaf8cfcffb3be7",
+        "pr": 65,
+        "repository": "wolph/python-utils"
+      },
+      {
+        "merge_commit": "5aba50a39a62b65fcf476a4779826fb41108a7d6",
+        "parent": "1e1b03e34ee00742214bfa75f6384a37871c3785",
+        "pr": 67,
+        "repository": "wolph/python-utils"
+      },
+      {
+        "merge_commit": "882e045e0386afb3f33915928c069a56d725cc34",
+        "parent": "5aba50a39a62b65fcf476a4779826fb41108a7d6",
+        "pr": 69,
+        "repository": "wolph/python-utils"
+      }
+    ],
+    "repositories": [
+      "keleshev/schema",
+      "sethmmorton/natsort",
+      "wolph/python-utils"
+    ]
+  }
+}
