@@ -621,9 +621,25 @@ def test_a2_reads_a_sealed_file_in_any_json_encoding(tmp_path, capsys, encoding)
     assert capsys.readouterr().out == "1\n"
 
 
+def test_a2_takes_a_folder_of_sealed_files_as_their_union(tmp_path, capsys):
+    folder = tmp_path / "cohorts"
+    folder.mkdir()
+    write_json(folder / "final-a.json", {"bugs": [{"id": "widget-3"}]})
+    write_json(folder / "final-b.json", {"bugs": [{"id": "gadget-4"}]})
+    write_json(folder / "development-a.json", {"bugs": [{"id": "other-5"}]})
+    pool = write_json(tmp_path / "pool.json", {"entries": [], "repositories": [
+        {"repository": "org/widget"}, {"repository": "org/gadget"}, {"repository": "org/other"}]})
+    output = tmp_path / "exclude.json"
+    assert module("a2_check").main(["--pool", str(pool), "--final-cohort", str(folder),
+                                    "--exclude", str(output)]) == 0
+    assert capsys.readouterr().out == "2\n"
+    assert json.loads(output.read_text()) == ["org/gadget", "org/widget"]
+
+
 def test_a2_read_refusals_name_a_fixed_reason(tmp_path, capsys):
     pool = write_json(tmp_path / "pool.json", {"entries": [], "repositories": []})
-    for target, reason in ((tmp_path / "missing-sealed.json", "not found"), (tmp_path, "is a directory")):
+    for target, reason in ((tmp_path / "missing-sealed.json", "not found"),
+                           (tmp_path, "folder holds no final-*.json")):
         with pytest.raises(SystemExit):
             module("a2_check").main(["--pool", str(pool), "--final-cohort", str(target),
                                      "--exclude", str(tmp_path / "exclude.json")])

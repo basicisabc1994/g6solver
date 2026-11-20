@@ -55,25 +55,35 @@ def main(argv=None) -> int:
         repositories = pool_ids(read_json(pool))
         # Keep this read entirely inside the owner's command; never return sealed IDs.
         stage = "final cohort read"
-        try:
-            if sealed.is_dir():
-                raise IsADirectoryError
-            raw = sealed.read_bytes()
-        except OSError as error:
-            stage += ": " + _read_reason(error)
-            raise
-        stage = "final cohort json"
-        # From bytes, json detects UTF-8, UTF-16 and UTF-32 (PowerShell 5.1 writes UTF-16 with a byte order mark).
-        data = json.loads(raw)
-        stage = "final cohort format"
-        try:
-            cohort = cohort_ids(data)
-        except ValueError as error:
-            stage += ": " + (str(error) if str(error) in _FORMAT_REASONS else "unrecognised")
-            raise
-        except (KeyError, TypeError, AttributeError):
-            stage += ": row shape"
-            raise
+        # A folder stands for every final-*.json directly inside it; their ids are joined, which can only exclude more.
+        if sealed.is_dir():
+            files = sorted(path for path in sealed.glob("final-*.json") if path.is_file())
+            if not files:
+                stage += ": folder holds no final-*.json"
+                raise FileNotFoundError
+            files = [local_path(path, sealed=True) for path in files]
+        else:
+            files = [sealed]
+        cohort = set()
+        for path in files:
+            stage = "final cohort read"
+            try:
+                raw = path.read_bytes()
+            except OSError as error:
+                stage += ": " + _read_reason(error)
+                raise
+            stage = "final cohort json"
+            # From bytes, json detects UTF-8, UTF-16 and UTF-32 (PowerShell 5.1 writes UTF-16 with a byte order mark).
+            data = json.loads(raw)
+            stage = "final cohort format"
+            try:
+                cohort |= cohort_ids(data)
+            except ValueError as error:
+                stage += ": " + (str(error) if str(error) in _FORMAT_REASONS else "unrecognised")
+                raise
+            except (KeyError, TypeError, AttributeError):
+                stage += ": row shape"
+                raise
         overlap = sorted(repository for repository in repositories if in_cohort(repository, cohort))
         stage = "exclude write"
         atomic_json(output, overlap)
