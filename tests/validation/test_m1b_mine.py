@@ -118,6 +118,16 @@ def test_pool_drop_codes(tmp_path, reason):
     assert result["decisions"][0]["codes"] == [reason]
 
 
+@pytest.mark.parametrize("cohort,reason", [("development", "DEVELOPMENT"), ("selection", "SELECTION")])
+def test_pool_drops_a_repository_named_only_by_cohort_bug_ids(tmp_path, cohort, reason):
+    # The worked-example cohort files name a project only inside each bug id ("<project>-<number>").
+    gh = FakeGitHub()
+    bugs = {"bugs": [{"id": "python-dotenv-700"}, {"id": "widget-13"}]}
+    result = mine(tmp_path, gh, ["widget", "python-dotenv", "other"], **{cohort: bugs})
+    assert [r["repository"] for r in result["repositories"]] == ["org/other"]
+    assert [d["codes"] for d in result["decisions"][:2]] == [[reason], [reason]]
+
+
 def test_pool_tree_other_source_and_ambiguous_project(tmp_path):
     gh = FakeGitHub()
     gh.trees["org/a"] = {"truncated": False, "tree": [{"path": "native.rs"}]}

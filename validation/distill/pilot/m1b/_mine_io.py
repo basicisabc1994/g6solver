@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 _REPOSITORY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+\Z")
 _SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
+_BUG_ID = re.compile(r"([A-Za-z0-9][A-Za-z0-9_.-]*?)-[0-9]+\Z")
 
 
 def repository_id(value: str) -> str:
@@ -81,6 +82,14 @@ def cohort_ids(data) -> set[str]:
         raise ValueError("expected repository list")
     result = set()
     for row in data:
+        if isinstance(row, dict) and "repository" not in row and "repo" not in row and "id" in row:
+            # Worked-example cohort rows name the project only inside the bug id: "<project>-<number>".
+            # The project name is matched against a repository's own name, which can only exclude more.
+            match = _BUG_ID.fullmatch(row["id"]) if isinstance(row["id"], str) else None
+            if not match:
+                raise ValueError("cohort bug id refused")
+            result.add(match[1].lower())
+            continue
         if isinstance(row, dict):
             row = row.get("repository", row.get("repo"))
         result.add(repository_id(row))

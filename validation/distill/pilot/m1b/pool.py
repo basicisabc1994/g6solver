@@ -55,7 +55,7 @@ def repository_url(data: dict) -> str | None:
 def _repository(name, gh, development, selection_cohort):
     meta = json.loads(gh(["api", f"repos/{name}"]))
     canonical = repository_id(meta.get("full_name", name))
-    names = {name, canonical}
+    names = {name, canonical, canonical.split("/")[1]}
     if meta.get("private") is not False or meta.get("visibility", "public") != "public":
         return canonical, None, ["PUBLIC"]
     rules = selection.project_rules(canonical, meta, [])
