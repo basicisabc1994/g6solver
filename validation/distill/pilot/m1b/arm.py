@@ -31,6 +31,10 @@ def m1b_variants(case: funnel.CaseRecord) -> list[Construction]:
             constructions.append(Construction(name, kind, None, exc.reason))
         except ValueError:
             constructions.append(Construction(name, kind, None, "case_record_invalid"))
+        except (SyntaxError, TypeError):
+            # The registered fit filter (fit.py) treats these as an operator that does not apply; output that does
+            # not compile (e.g. a statement inserted before `from __future__`) is refused here, before any run.
+            constructions.append(Construction(name, kind, None, "operator_output_invalid"))
         else:
             constructions.append(Construction(name, kind, built))
     for variant in indexed_erasures(case.before_tests, case.after_tests):

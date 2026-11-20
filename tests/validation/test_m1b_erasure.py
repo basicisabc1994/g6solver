@@ -256,3 +256,63 @@ def test_validity_is_order_independent_and_does_not_mutate_rows():
     assert result == validity(reversed(data))
     assert result["code"] == "ok" and result["ignored_count"] == 0
     assert data == snapshot
+
+
+FUTURE = "from __future__ import annotations\n" + THREE
+DOC_FUTURE = '"""Module docstring."""\nfrom __future__ import annotations\n' + THREE
+OUTPUT_INVALID = ("extract_helper", "named_constant")
+
+
+@pytest.mark.parametrize("after", [FUTURE, DOC_FUTURE])
+def test_arm_records_operator_output_that_does_not_compile(after):
+    result = module("arm").m1b_variants(case(after=after))
+    assert [v.variant_id for v in result] == [
+        *funnel.VARIANTS, "indexed_erasure:test_value:1", "indexed_erasure:test_value:2",
+        "indexed_erasure:test_value:3"]
+    for construction in result:
+        if construction.variant_id in OUTPUT_INVALID:
+            assert construction.case is None and construction.reason == "operator_output_invalid"
+        else:
+            assert construction.case is not None and construction.reason == "ok"
+
+
+def _operator_applies(source, name):
+    from g6.distill import operators
+    try:
+        operators.apply_operator(source, name)
+    except (ValueError, SyntaxError, TypeError):
+        return False
+    return True
+
+
+@pytest.mark.parametrize("after", [THREE, FUTURE, DOC_FUTURE, "def test_value():\n    pass\n"])
+def test_arm_refusals_match_the_fit_filter(after):
+    result = {v.variant_id: v for v in module("arm").m1b_variants(case(after=after))}
+    for name in funnel.VARIANTS:
+        if name == "reversed_maintainer":
+            continue
+        assert (result[name].case is not None) == _operator_applies(after, name), name
+
+
+def test_arm_records_a_type_error_from_one_operator(monkeypatch):
+    original = funnel.operators.apply_operator
+
+    def apply(source, name):
+        if name == "rename_test":
+            raise TypeError("synthetic")
+        return original(source, name)
+
+    monkeypatch.setattr(funnel.operators, "apply_operator", apply)
+    result = {v.variant_id: v for v in module("arm").m1b_variants(case())}
+    assert result["rename_test"].case is None and result["rename_test"].reason == "operator_output_invalid"
+    assert all(v.case is not None for name, v in result.items() if name != "rename_test")
+
+
+@pytest.mark.parametrize("error", [RecursionError, MemoryError, OverflowError])
+def test_arm_lets_resource_errors_through(monkeypatch, error):
+    def apply(source, name):
+        raise error("synthetic")
+
+    monkeypatch.setattr(funnel.operators, "apply_operator", apply)
+    with pytest.raises(error):
+        module("arm").m1b_variants(case())

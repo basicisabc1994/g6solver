@@ -488,3 +488,54 @@ def test_material_refuses_admission_before_io(tmp_path):
                                                source=tmp_path / "absent-source",
                                                inventory=inv, pool=pool, environment=env)
     assert not cache.exists()
+
+
+def test_runner_continues_past_operator_output_that_does_not_compile(monkeypatch):
+    from validation.distill.pilot import funnel
+    from g6.workforce import mutation_check
+    inv, pool, env = inputs()
+    m = module("allocation_m1b").build_manifest(inv, pool, env)
+    first, second = module("access_m1b").selected(m, inventory=inv, pool=pool, environment=env)[:2]
+    base = "def value(x):\n    return x\n"
+    fixed = "def value(x):\n    return x + 1\n"
+    old = "from subject import value\ndef test_value():\n    assert value(1) >= 1\n"
+    new = "from subject import value\ndef test_value():\n    assert value(1) == 2\n    assert value(2) == 3\n"
+    patch = "".join(difflib.unified_diff(base.splitlines(True), fixed.splitlines(True),
+                                         fromfile="a/subject.py", tofile="b/subject.py"))
+
+    def body(after_old, after_new):
+        return {"base": {"subject.py": base, "tests/test_value.py": after_old},
+                "fixed": {"subject.py": fixed, "tests/test_value.py": after_new},
+                "name_status": "M\tsubject.py\nM\ttests/test_value.py\n", "patch": patch}
+
+    future = "from __future__ import annotations\n"
+    bodies = {first: body(future + old, future + new), second: body(old, new)}
+
+    def suite(case, implementation, tests, **kwargs):
+        if implementation == fixed:
+            return "passed"
+        if implementation == base and tests.endswith(old):
+            return "passed"
+        return "failed"
+
+    reports = []
+    monkeypatch.setattr(module("material"), "material_from_git", lambda manifest, identity, cache, **kw: bodies[identity])
+    monkeypatch.setattr(funnel, "_output_path", lambda output: Path(output))
+    monkeypatch.setattr(funnel, "_write", lambda output, report: reports.append(report))
+    monkeypatch.setattr(funnel.confine, "backend", lambda *a: ("fixture", ""))
+    monkeypatch.setattr(mutation_check, "mutants", lambda *a, **kw: [
+        mutation_check.Mutant(2, "x", "9", "def value(x):\n    return 9\n")])
+    report = module("run_m1b").run(m, Path.cwd(), Path.cwd() / "synthetic-unused-output.json",
+                                    bugs=[first, second], inventory=inv, pool=pool, environment=env,
+                                    suite_runner=suite, clock=lambda: 0.0)
+    assert reports == [report]
+    rows = report["bugs"]
+    assert {row["bug_id"] for row in rows} == {first, second}
+    refused = [row for row in rows if row["bug_id"] == first
+               and row["kind"] in ("operator:extract_helper", "operator:named_constant")]
+    assert len(refused) == 2
+    assert all(row["reason"] == "operator_output_invalid" and row["label"] is None and row["runs"] == 0
+               for row in refused)
+    assert any(row["bug_id"] == first and row["kind"] == "indexed_erasure" and row["stage"] == "headline"
+               for row in rows)
+    assert any(row["bug_id"] == second and row["stage"] == "headline" for row in rows)
