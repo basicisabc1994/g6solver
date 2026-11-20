@@ -128,6 +128,15 @@ def test_pool_drops_a_repository_named_only_by_cohort_bug_ids(tmp_path, cohort, 
     assert [d["codes"] for d in result["decisions"][:2]] == [[reason], [reason]]
 
 
+def test_pool_matches_cohort_project_names_by_their_normalised_form(tmp_path):
+    # A bug id spells the PyPI project ("charset-normalizer-772"); its repository may be "charset_normalizer".
+    gh = FakeGitHub()
+    result = mine(tmp_path, gh, ["charset_normalizer", "other"],
+                  development={"bugs": [{"id": "charset-normalizer-772"}]})
+    assert [r["repository"] for r in result["repositories"]] == ["org/other"]
+    assert result["decisions"][0]["codes"] == ["DEVELOPMENT"]
+
+
 @pytest.mark.parametrize("owner", ["sponsors", "orgs", "apps", "marketplace", "topics"])
 def test_a_github_site_path_is_not_a_repository(owner):
     # Found on the first real run: hatchling's funding link github.com/sponsors/ofek was read as a repository.
@@ -556,6 +565,20 @@ def test_a2_synthetic_count_only(tmp_path, capsys):
                                     "--exclude", str(output)]) == 0
     assert capsys.readouterr().out == "1\n"
     assert json.loads(output.read_text()) == ["org/a"]
+
+
+def test_a2_matches_sealed_rows_that_name_a_project_only_by_bug_id(tmp_path, capsys):
+    # The cohort files hold only "<project>-<number>" ids; a plain id intersection would count none.
+    pool = write_json(tmp_path / "pool.json", {"repositories": [
+        {"repository": "org/widget"}, {"repository": "org/Charset_Normalizer"}, {"repository": "org/other"}],
+        "entries": []})
+    sealed = write_json(tmp_path / "synthetic-sealed.json", {"bugs": [{"id": "widget-3"},
+                                                                   {"id": "charset-normalizer-9"}]})
+    output = tmp_path / "exclude.json"
+    assert module("a2_check").main(["--pool", str(pool), "--final-cohort", str(sealed),
+                                    "--exclude", str(output)]) == 0
+    assert capsys.readouterr().out == "2\n"
+    assert json.loads(output.read_text()) == ["org/charset_normalizer", "org/widget"]
 
 
 def test_a2_error_contains_no_cohort_material(tmp_path, capsys):

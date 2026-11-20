@@ -10,7 +10,7 @@ import argparse
 import json
 from pathlib import Path
 
-from ._mine_io import atomic_json, cohort_ids, local_path, pool_ids, read_json
+from ._mine_io import atomic_json, cohort_ids, in_cohort, local_path, pool_ids, read_json
 
 
 def main(argv=None) -> int:
@@ -24,7 +24,8 @@ def main(argv=None) -> int:
         if len({pool, sealed, output}) != 3:
             raise ValueError("overlapping paths")
         # Keep this read entirely inside the owner's command; never return sealed IDs.
-        overlap = sorted(pool_ids(read_json(pool)) & cohort_ids(json.loads(sealed.read_text(encoding="utf-8"))))
+        cohort = cohort_ids(json.loads(sealed.read_text(encoding="utf-8")))
+        overlap = sorted(repository for repository in pool_ids(read_json(pool)) if in_cohort(repository, cohort))
         atomic_json(output, overlap)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         parser.exit(2, "A2 input or output refused\n")

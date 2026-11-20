@@ -96,6 +96,24 @@ def cohort_ids(data) -> set[str]:
     return result
 
 
+_SEPARATORS = re.compile(r"[-_.]+")
+
+
+def project_key(name: str) -> str:
+    """A name in the form PyPI compares project names by (PEP 503)."""
+    return _SEPARATORS.sub("-", name.lower())
+
+
+def in_cohort(repository: str, cohort: set[str], *aliases: str) -> bool:
+    """True when a cohort names the repository: its id exactly, or a project name equal to its own name.
+
+    Cohort project names come from bug ids and are compared in normalised form, which can only exclude more.
+    """
+    names = {repository_id(repository), *(alias.lower() for alias in aliases)}
+    keys = {project_key(name.split("/")[-1]) for name in names}
+    return bool(names & cohort) or any("/" not in entry and project_key(entry) in keys for entry in cohort)
+
+
 def pool_entries(data: dict) -> list[dict]:
     entries = data["entries"]
     if not isinstance(entries, list):

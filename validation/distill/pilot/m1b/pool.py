@@ -19,7 +19,7 @@ from pathlib import Path
 
 from validation.worked_examples import selection
 
-from ._mine_io import (atomic_json, cohort_ids, digest, entry_id, external_path, local_path,
+from ._mine_io import (atomic_json, cohort_ids, digest, entry_id, external_path, in_cohort, local_path,
                        read_json, repository_id)
 
 LIMIT = 150
@@ -76,9 +76,9 @@ def _repository(name, gh, development, selection_cohort):
         return canonical, None, ["P2"]
     if not rules["P4"] or names & {r.lower() for r in selection.SWE_BENCH | selection.MULTIMODAL}:
         return canonical, None, ["P4"]
-    if names & development:
+    if in_cohort(canonical, development, name):
         return canonical, None, ["DEVELOPMENT"]
-    if names & selection_cohort:
+    if in_cohort(canonical, selection_cohort, name):
         return canonical, None, ["SELECTION"]
     languages = json.loads(gh(["api", f"repos/{canonical}/languages"]))
     if not languages.get("Python") or any(n != "Python" and v for n, v in languages.items()):
