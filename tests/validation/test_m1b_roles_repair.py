@@ -38,7 +38,7 @@ def inputs(configuration="K_0", *, prepared=None, interpreter=None):
                               prepared=prepared is not None)
     state.update(schema=1, completed=completed, unread=[],
                  binding=digest({"entries": entries, "environment": env, "version": 1}))
-    return state, {"entries": entries}, env
+    return state, {"entries": entries, "complete": True}, env
 
 
 def test_external_check_rejects_resealed_commits_and_missing_inputs():

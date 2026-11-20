@@ -38,7 +38,7 @@ def inputs(size=16, configuration="K_0"):
     inventory = {"complete": True, "completed": completed,
                  "records": [{"repository": "org/rejected", "failed_rules": []}],
                  "counts": {key: size if key == configuration else 0 for key in counts.CONFIGURATIONS}}
-    pool = {"entries": entries}
+    pool = {"entries": entries, "complete": True}
     refresh(inventory, pool, environment)
     return inventory, pool, environment
 
@@ -183,24 +183,19 @@ def test_runner_refuses_non_acquisition_before_io():
 @pytest.mark.parametrize("data,support,reason", [(b"x" * 131073, False, "fix_source_missing_or_large"),
                                                 (b"x" * 131073, True, "support_missing_or_large"),
                                                 (b"\xff", False, "source_not_utf8")])
-def test_material_source_limits(data, support, reason):
+def test_material_source_limits(tmp_path, data, support, reason):
     from validation.distill.pilot._material import MaterialError
 
-    class Objects:
-        def run(self, *args):
-            return str(len(data)).encode()
-
-        def blob(self, oid):
-            return data
-
+    path = tmp_path / "subject.py"
+    path.write_bytes(data)
     with pytest.raises(MaterialError, match="^" + reason + "$"):
-        module("material")._text(Objects(), "oid", support=support)
+        module("material")._text(path, support=support)
 
 
 @pytest.mark.parametrize("change,reason", [("valid", None), ("parent", "extraction_failed"),
                                           ("support_size", "support_missing_or_large"),
                                           ("support_total", "support_source_too_large")])
-def test_material_tree_contract(change, reason):
+def test_material_tree_contract(tmp_path, change, reason):
     from validation.distill.pilot import _material
     blobs = {"old": b"VALUE = 1\n", "new": b"VALUE = 2\n", "deleted": b"REMOVED = 1\n",
              "added": b"ADDED = 1\n", "context": b"CONTEXT = 1\n", "hidden": b"x" * 131073}
@@ -225,18 +220,31 @@ def test_material_tree_contract(change, reason):
         def run(self, *args):
             if args[:2] == ("cat-file", "commit"):
                 return ("parent " + ("c" if change == "parent" else "b") * 40 + "\n\nmessage").encode()
-            if args[:2] == ("cat-file", "-s"):
-                return str(len(blobs[args[2]])).encode()
             assert args[-3:] == ("b" * 40, "a" * 40, "--")
             if "--name-status" in args:
                 return b"A\tadded.py\nD\tdeleted.py\nM\tsubject.py\n"
             return b"--- a/subject.py\n+++ b/subject.py\n@@ -1 +1 @@\n-VALUE = 1\n+VALUE = 2\n"
 
-    if reason:
+    if change == "parent":
         with pytest.raises(_material.MaterialError, match="^" + reason + "$"):
             module("material")._from_objects(Objects(), "b" * 40, "a" * 40)
+        return
+    base_root, fixed_root = tmp_path / "base", tmp_path / "fixed"
+    for root, tree in ((base_root, before), (fixed_root, after)):
+        for name, oid in tree.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(blobs[oid])
+
+    def extract():
+        return module("material")._from_checkouts(Objects(), "b" * 40, "a" * 40,
+                                                 before, after, base_root, fixed_root)
+
+    if reason:
+        with pytest.raises(_material.MaterialError, match="^" + reason + "$"):
+            extract()
     else:
-        body = module("material")._from_objects(Objects(), "b" * 40, "a" * 40)
+        body = extract()
         assert set(body) == {"base", "fixed", "patch", "name_status"}
         assert body["base"] == {"subject.py": "VALUE = 1\n", "deleted.py": "REMOVED = 1\n"}
         assert body["fixed"] == {"subject.py": "VALUE = 2\n", "added.py": "ADDED = 1\n", "context.py": "CONTEXT = 1\n"}

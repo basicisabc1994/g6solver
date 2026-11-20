@@ -89,6 +89,8 @@ def build_manifest(inventory: dict, pool: dict, environment: dict | None = None)
     """Recount qualifying completed summaries, never infer eligibility from records."""
     if environment is None:
         raise ValueError("external environment required")
+    if pool.get("complete") is not True:
+        raise ValueError("complete pool required")
     entries_list = pool_entries(pool)
     binding = digest({"entries": entries_list, "environment": environment, "version": 1})
     if inventory.get("binding") != binding:
