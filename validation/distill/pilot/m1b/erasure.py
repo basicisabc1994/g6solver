@@ -58,5 +58,5 @@ def indexed_erasures(before_tests: str, after_tests: str) -> list[Variant]:
                 if len(variants) == 8:
                     return ErasureVariants(variants)
         return ErasureVariants(variants, reason="ok" if variants else "no_eligible_assert")
-    except (SyntaxError, ValueError, TypeError, RecursionError, MemoryError, OverflowError):
+    except (SyntaxError, ValueError, TypeError):
         return ErasureVariants(reason="unparseable_tests")

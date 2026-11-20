@@ -316,3 +316,45 @@ def test_arm_lets_resource_errors_through(monkeypatch, error):
     monkeypatch.setattr(funnel.operators, "apply_operator", apply)
     with pytest.raises(error):
         module("arm").m1b_variants(case())
+
+@pytest.mark.parametrize("error", [ValueError, TypeError, KeyError])
+def test_arm_raises_record_builder_errors_that_are_not_validation(monkeypatch, error):
+    original = funnel.CaseRecord.model_validate
+
+    def builder(*args, **kwargs):
+        if kwargs.get("strict") is None and args and isinstance(args[0], dict) and args[0].get("after_tests") != THREE:
+            raise error("internal record-builder regression")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(funnel.CaseRecord, "model_validate", builder)
+    with pytest.raises(error, match="internal record-builder regression"):
+        module("arm").m1b_variants(case())
+
+
+def test_arm_records_an_invalid_record_as_case_record_invalid(monkeypatch):
+    import pydantic
+    original = funnel.CaseRecord.model_validate
+
+    def builder(*args, **kwargs):
+        if args and isinstance(args[0], dict) and args[0].get("after_tests") != THREE:
+            raise pydantic.ValidationError.from_exception_data("CaseRecord", [])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(funnel.CaseRecord, "model_validate", builder)
+    result = module("arm").m1b_variants(case())
+    assert all(v.case is None and v.reason == "case_record_invalid"
+               for v in result if v.kind != "reversed_maintainer")
+
+
+def test_runner_aborts_on_an_internal_construction_error(monkeypatch):
+    run_m1b = module("run_m1b")
+
+    def broken(case):
+        raise KeyError("internal construction regression")
+
+    monkeypatch.setattr(run_m1b, "m1b_variants", broken)
+    built = case()
+    monkeypatch.setattr(funnel, "_shape", lambda *a, **kw: built)
+    with pytest.raises(RuntimeError) as caught:
+        run_m1b._construct(built)
+    assert isinstance(caught.value.__cause__, KeyError)

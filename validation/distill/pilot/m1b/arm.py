@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pydantic
+
 from .. import funnel
 from .erasure import indexed_erasures
 
@@ -41,7 +43,7 @@ def m1b_variants(case: funnel.CaseRecord) -> list[Construction]:
             built = funnel._variant(case, "multi_target", name)
         except funnel._Stop as exc:
             constructions.append(Construction(name, kind, None, exc.reason))
-        except ValueError:
+        except pydantic.ValidationError:
             constructions.append(Construction(name, kind, None, "case_record_invalid"))
         else:
             constructions.append(Construction(name, kind, built))
@@ -50,7 +52,7 @@ def m1b_variants(case: funnel.CaseRecord) -> list[Construction]:
             built = funnel.CaseRecord.model_validate({
                 **case.model_dump(), "before_tests": case.after_tests, "after_tests": variant.after_tests,
             })
-        except ValueError:
+        except pydantic.ValidationError:
             constructions.append(Construction(variant.variant_id, variant.kind, None, "case_record_invalid"))
         else:
             constructions.append(Construction(variant.variant_id, variant.kind, built))

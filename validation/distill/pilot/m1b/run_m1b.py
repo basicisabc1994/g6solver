@@ -23,6 +23,17 @@ from .arm import m1b_variants
 PREPARED_REQUIRED = "prepared_interpreter_required"
 
 
+def _construct(case):
+    """Build the M1b constructions; an error left after the arm's own refusals is ours, so end the run.
+
+    The funnel's bug-level handler would record ValueError, KeyError and TypeError as a material reason.
+    """
+    try:
+        return m1b_variants(case)
+    except (ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError("m1b construction error") from exc
+
+
 def _staged(body, bug_id, configuration, environment):
     """Use the static filter's source adapter and complete case constructor."""
     changes = {path: fit.ChangedFile(body["base"][path].encode() if path in body["base"] else None,
@@ -96,7 +107,7 @@ def run(manifest, cache, output, *, inventory=None, pool=None, environment=None,
                     raise funnel._Stop("case_record_invalid") from None
                 test_module, active_case = pending.pop(0)
             case = active_case
-        built = m1b_variants(case)
+        built = _construct(case)
         constructions.clear()
         constructions.update((entry.variant_id, entry) for entry in built)
         variants[:] = constructions
@@ -128,8 +139,8 @@ def run(manifest, cache, output, *, inventory=None, pool=None, environment=None,
                 return funnel._stage(budget, row, name, operation)
             except funnel._BudgetStop:
                 raise
-            except funnel._Stop as exc:
-                row["headline_unavailable"] = exc.reason
+            except (funnel._Stop, funnel.repo_tests.RepoRefused, OSError) as exc:
+                row["headline_unavailable"] = funnel._reason(exc)
                 return "headline_unavailable"
         finally:
             if configuration == "K_2":
