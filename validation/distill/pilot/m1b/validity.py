@@ -5,6 +5,9 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 
 HEADLINE_LABELS = frozenset(("positive", "negative"))
+# The production headline rule (g6.distill.acceptance_gate._headline) admits these strata; shared_mechanism is not
+# headline evidence, and headline_unavailable means the headline step could not run.
+HEADLINE_STRATA = frozenset(("witness_positive", "n1", "n2"))
 
 
 def construction_validity(rows: Iterable[Mapping[str, str | None]]) -> dict:
@@ -14,19 +17,21 @@ def construction_validity(rows: Iterable[Mapping[str, str | None]]) -> dict:
     headline labels in each of at least three repositories within one kind.
     CV3 counts distinct repositories with both labels in an informative kind;
     labels from different kinds cannot be combined to qualify a repository.
-    Missing identifiers and non-headline labels contribute only to ignored_count. A labelled row whose headline
-    step could not run (stratum `headline_unavailable`) is not headline evidence; it is counted apart.
+    Missing identifiers and non-headline labels contribute only to ignored_count. A labelled row counts only when
+    its headline_stratum is one the production headline rule admits (HEADLINE_STRATA); other labelled rows
+    (shared_mechanism, headline_unavailable, missing) are not headline evidence and are counted by stratum apart.
     """
     counts = defaultdict(Counter)
-    ignored = unavailable = 0
+    ignored, not_headline = 0, Counter()
     for row in rows:
-        if row.get("headline_stratum") == "headline_unavailable":
-            unavailable += 1
-            continue
         repository, kind, label = (row.get(key) for key in ("repository", "kind", "label"))
         if (not all(isinstance(value, str) and value.strip() for value in (repository, kind, label))
                 or label not in HEADLINE_LABELS):
             ignored += 1
+            continue
+        stratum = row.get("headline_stratum")
+        if stratum not in HEADLINE_STRATA:
+            not_headline[str(stratum)] += 1
             continue
         counts[kind][label, repository] += 1
 
@@ -47,7 +52,7 @@ def construction_validity(rows: Iterable[Mapping[str, str | None]]) -> dict:
     return {
         "code": "ok" if labelled else "no_headline_rows",
         "ignored_count": ignored,
-        "headline_unavailable_count": unavailable,
+        "not_headline_by_stratum": dict(sorted(not_headline.items())),
         "cv1": {"table": table, "labelled_count": labelled, "best_rule_correct": correct,
                 "best_rule_accuracy": correct / labelled if labelled else None},
         "cv2": {"repositories_by_kind": mixed, "informative_kinds": informative},

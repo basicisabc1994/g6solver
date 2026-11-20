@@ -31,32 +31,34 @@ def indexed_erasures(before_tests: str, after_tests: str) -> list[Variant]:
     """
     try:
         before, after = ast.parse(before_tests), ast.parse(after_tests)
-        groups = [
-            [node for node in tree.body
-             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")]
-            for tree in (before, after)
-        ]
-        if any(len({node.name for node in group}) != len(group) for group in groups):
-            return ErasureVariants(reason="ambiguous_test_function")
-        previous = {node.name: ast.dump(node) for node in groups[0]}
-        variants = []
-        for function in groups[1]:
-            if previous.get(function.name) == ast.dump(function):
-                continue
-            ordinal = 0
-            for index, statement in enumerate(function.body):
-                if not isinstance(statement, ast.Assert):
-                    continue
-                ordinal += 1
-                function.body[index] = ast.Pass()
-                try:
-                    source = ast.unparse(ast.fix_missing_locations(after)) + "\n"
-                    compile(source, "<indexed-erasure>", "exec")  # syntax only
-                finally:
-                    function.body[index] = statement
-                variants.append(Variant(f"indexed_erasure:{function.name}:{ordinal}", source))
-                if len(variants) == 8:
-                    return ErasureVariants(variants)
-        return ErasureVariants(variants, reason="ok" if variants else "no_eligible_assert")
-    except (SyntaxError, ValueError, TypeError):
+    except (SyntaxError, ValueError):
         return ErasureVariants(reason="unparseable_tests")
+    groups = [
+        [node for node in tree.body
+         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")]
+        for tree in (before, after)
+    ]
+    if any(len({node.name for node in group}) != len(group) for group in groups):
+        return ErasureVariants(reason="ambiguous_test_function")
+    previous = {node.name: ast.dump(node) for node in groups[0]}
+    variants = []
+    for function in groups[1]:
+        if previous.get(function.name) == ast.dump(function):
+            continue
+        ordinal = 0
+        for index, statement in enumerate(function.body):
+            if not isinstance(statement, ast.Assert):
+                continue
+            ordinal += 1
+            function.body[index] = ast.Pass()
+            try:
+                source = ast.unparse(ast.fix_missing_locations(after)) + "\n"
+                compile(source, "<indexed-erasure>", "exec")  # syntax only
+            except SyntaxError:
+                return ErasureVariants(reason="unparseable_tests")
+            finally:
+                function.body[index] = statement
+            variants.append(Variant(f"indexed_erasure:{function.name}:{ordinal}", source))
+            if len(variants) == 8:
+                return ErasureVariants(variants)
+    return ErasureVariants(variants, reason="ok" if variants else "no_eligible_assert")

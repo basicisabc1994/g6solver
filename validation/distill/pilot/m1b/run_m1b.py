@@ -142,6 +142,9 @@ def run(manifest, cache, output, *, inventory=None, pool=None, environment=None,
             except (funnel._Stop, funnel.repo_tests.RepoRefused, OSError) as exc:
                 row["headline_unavailable"] = funnel._reason(exc)
                 return "headline_unavailable"
+            except (ValueError, KeyError, TypeError) as exc:
+                # The funnel's bug-level handler would record these as a material reason and drop the label.
+                raise RuntimeError("m1b headline error") from exc
         finally:
             if configuration == "K_2":
                 row["test_module"] = test_module

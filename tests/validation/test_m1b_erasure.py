@@ -172,7 +172,8 @@ def test_arm_keeps_inapplicable_constructions_with_reason():
 
 
 def rows(kind, repositories, labels=("positive", "negative")):
-    return [{"repository": repository, "kind": kind, "label": label}
+    return [{"repository": repository, "kind": kind, "label": label,
+             "headline_stratum": "witness_positive" if label == "positive" else "n1"}
             for repository in repositories for label in labels]
 
 
