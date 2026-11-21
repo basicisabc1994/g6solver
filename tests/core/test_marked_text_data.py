@@ -68,6 +68,26 @@ def test_template_instances_refuse_a_subclass_of_g6s_own_marks(marker):
         vt.template_instances([foreign], {"R1"})
 
 
+class _MarkerEquality(type):
+    """A metaclass whose classes compare equal to G6's receipt types."""
+
+    def __eq__(cls, other):
+        return any(other is marker for marker in (_ExternalText, _GuidanceText, _MixedText))
+
+    __hash__ = type.__hash__
+
+
+class Impersonating(str, metaclass=_MarkerEquality):
+    """A str subclass from outside G6 whose class claims to equal a receipt type."""
+
+
+def test_template_instances_refuse_a_class_that_only_compares_equal_to_g6s_marks():
+    foreign = {**INSTANCE, "bindings": {**INSTANCE["bindings"], "calls": [{"args": [Impersonating("a")]}]}}
+    assert "a Impersonating is not" in vt.literal_problem(foreign["bindings"])
+    with pytest.raises(ValueError, match="bindings must be JSON data: a Impersonating is not"):
+        vt.template_instances([foreign], {"R1"})
+
+
 @pytest.mark.parametrize("build", [
     lambda plan: confine_record(plan),
     lambda plan: confine_not_started(plan.record(), OSError("the child did not start")),

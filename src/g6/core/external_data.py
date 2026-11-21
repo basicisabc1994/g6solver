@@ -220,9 +220,11 @@ def plain_text(value, *, _depth=0):
     role, never part of a stored record. Any other ``str`` subclass is left as it is, for the validator to refuse.
     Containers are copied (dict, list, tuple); nothing else changes. Below ``_MAX_GUIDANCE_DEPTH`` levels a value is
     returned as it is, for the validator's own depth limit to refuse. Only those exact three types are unwrapped: a
-    caller's subclass of one is a ``str`` subclass from outside G6 and is left as it is too.
+    caller's subclass of one is a ``str`` subclass from outside G6 and is left as it is too. Types are compared by
+    identity, never by equality, which a foreign metaclass defines.
     """
-    if type(value) in (_ExternalText, _GuidanceText, _MixedText):
+    kind = type(value)
+    if kind is _ExternalText or kind is _GuidanceText or kind is _MixedText:
         return str.__str__(value)
     if _depth > _MAX_GUIDANCE_DEPTH:
         return value
