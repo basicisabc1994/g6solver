@@ -490,17 +490,18 @@ def bind_execution(change: repo_tests.Change, sparse: dict[str, str], *, deadlin
     manifest is read, is still ``sparse``. Otherwise it raises ``OSError`` (``NOT_BOUND``) and nothing is bound (the
     reviews of wire-diagnose, 4, and wire-diagnose-fu, 1: bytes changed, or a file removed, while the manifest was
     read and restored before the snapshots are never taken as the reviewed artifact). A file the snapshot does not
-    list (one git sees as unchanged) is the manifest's alone, and one the copy leaves out by its own rule
-    (``_left_out``: a cache folder, say) is in neither the manifest nor the copy."""
+    list (one git sees as unchanged) is the manifest's alone. Authority is decided from the capture and from names
+    only, never by a second look at the file system (the review of wire-diagnose-fu, 2): a reviewed file in the
+    manifest is bound only by its digest, which nothing later excuses; one absent from it is excused only when its
+    name is one the copy always leaves out (``_named_out``: a cache folder, say)."""
     files = _copy_manifest(change, deadline=deadline)
 
     def agrees(rel: str, value: str) -> bool:
-        if value == "":
-            return rel not in files
-        return bool(re.fullmatch("[0-9a-f]{64}", value)) and files.get(rel) == value
+        if rel in files:
+            return bool(re.fullmatch("[0-9a-f]{64}", value)) and files[rel] == value
+        return value == "" or _named_out(rel)
 
-    differs = sorted(rel for rel, value in sparse.items() if not rel.startswith("\0") and not agrees(rel, value)
-                     and not _left_out(change.repo, rel))
+    differs = sorted(rel for rel, value in sparse.items() if not rel.startswith("\0") and not agrees(rel, value))
     if differs:
         raise OSError(NOT_BOUND.format(what="a reviewed file is missing, unreadable or differs: "
                                             + ", ".join(shown(rel) for rel in differs[:5])))
@@ -508,9 +509,15 @@ def bind_execution(change: repo_tests.Change, sparse: dict[str, str], *, deadlin
         raise OSError(NOT_BOUND.format(what="the tree changed while they were read"))
     return ExecutionSnapshot(sparse, files)
 
+def _named_out(rel: str) -> bool:
+    """Whether the copy leaves ``rel`` out by its name alone (``repo_tests._SKIPPED``: a cache folder, an environment,
+    a secret's file), read from the path's parts and never from the file system."""
+    return any(repo_tests._SKIPPED("", [part]) for part in PurePosixPath(repo_tests._in(rel)).parts)
+
+
 def _left_out(root: Path, rel: str) -> bool:
-    """Whether a copy of the tree leaves ``rel`` out by its own rule (``repo_tests._copy_ignored``, applied to each
-    folder on its path, where git looks: ``_on_disk``), so neither the manifest nor the copy holds it."""
+    """Whether the manifest's own read leaves ``rel`` out as the copy does (``repo_tests._copy_ignored``, applied to
+    each folder on its path, where git looks: ``_on_disk``): part of that one capture, never a later look."""
     parts = PurePosixPath(repo_tests._in(rel)).parts
     return any(part in repo_tests._copy_ignored(str(root.joinpath(*parts[:i])), [part]) for i, part in enumerate(parts))
 

@@ -653,3 +653,40 @@ def test_fu1_bind_execution_binds_a_manifest_holding_the_reviewed_file_set(monke
     monkeypatch.setattr(verification_search, "_copy_manifest", lambda *a, **kw: dict(manifest))
     monkeypatch.setattr(repo_tests, "snapshot", lambda *a: dict(sparse))
     assert verification_search.bind_execution(change, sparse, deadline=1e18).execution["files"] == manifest
+
+
+# --- review 2 of wire-diagnose-fu: no later look at the file system excuses a reviewed file ------------------------
+
+@pytest.mark.parametrize("manifest", [{"calc.py": "b" * 64}, {}], ids=["other-bytes", "absent"])
+def test_fu2_a_link_seen_after_the_capture_never_excuses_a_reviewed_file(monkeypatch, manifest):
+    """The copy's live rule (a link, a junction) reports calc.py left out whenever it is asked after the manifest's
+    read; the binding decides from the capture and names alone, so a reviewed file whose bytes differ, or that the
+    manifest lacks, is refused."""
+    from pathlib import Path
+
+    from g6.workforce import repo_tests
+
+    change = repo_tests.Change(Path("."), "HEAD", "a" * 40, "a" * 40, (), {}, {}, (), ())
+    sparse = {"\0HEAD": "h" * 64, "calc.py": "a" * 64}
+    monkeypatch.setattr(verification_search, "_copy_manifest", lambda *a, **kw: dict(manifest))
+    monkeypatch.setattr(repo_tests, "snapshot", lambda *a: dict(sparse))
+    monkeypatch.setattr(repo_tests, "_copy_ignored", lambda folder, names: set(names))   # every name a link, now
+    with pytest.raises(OSError, match="G6_E_EXECUTION_ARTIFACT_UNAVAILABLE"):
+        verification_search.bind_execution(change, sparse, deadline=1e18)
+
+
+def test_fu2_only_a_name_the_copy_always_leaves_out_excuses_an_absent_reviewed_file(monkeypatch):
+    from pathlib import Path
+
+    from g6.workforce import repo_tests
+
+    def touched(*a, **kw):
+        raise AssertionError("the binding looked at the file system again")
+
+    change = repo_tests.Change(Path("."), "HEAD", "a" * 40, "a" * 40, (), {}, {}, (), ())
+    sparse = {"\0HEAD": "h" * 64, ".venv/lib/x.py": "e" * 64, "pkg/__pycache__/m.py": "f" * 64}
+    monkeypatch.setattr(verification_search, "_copy_manifest", lambda *a, **kw: {})
+    monkeypatch.setattr(repo_tests, "snapshot", lambda *a: dict(sparse))
+    monkeypatch.setattr(repo_tests, "_copy_ignored", touched)
+    monkeypatch.setattr(Path, "is_symlink", touched)
+    assert verification_search.bind_execution(change, sparse, deadline=1e18).execution["files"] == {}
