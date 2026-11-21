@@ -108,7 +108,7 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Callable, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 
 from g6.core import component_process
 from g6.core.ledger import digest
@@ -295,6 +295,9 @@ class ProposedCheck(BaseModel):
     file: str = Field(min_length=1, max_length=300)
     source: str = Field(min_length=1)
     test: str = Field(default="", max_length=300)
+    #: The template instance a compiled check came from (``Origin.instance``), set only by G6's own code and never
+    #: read from a request, so learning keeps it with the check it retains.
+    _instance: dict | None = PrivateAttr(default=None)
 
 
 def _file_problem(file: str) -> str:

@@ -335,6 +335,10 @@ def record_check(change, check, placed: str, patch: dict, base: dict | None, cla
 
     if type(check.source) is ExecutableSource:
         row['check'].update(observation=check.source.observation, refuted_by_difference=refuted_by_difference)
+    instance = getattr(check, '_instance', None)
+    if isinstance(instance, dict):
+        # A compiled template's instance, so a retained finding replays as the template does (``resolution``).
+        row['check']['template_instance'] = instance
     if base is not None:
         other = receipt_store.lookup_learning(base.get('receipt', ''), artifact_digest=base.get('source_before', ''),
                                      _observations=True)
@@ -432,9 +436,13 @@ def retained_checks(change, requirement: str):
             from g6.harness.behaviour_runner import ExecutableSource
 
             checks[-1] = one.model_copy(update={'source': ExecutableSource(one.source, observed)})
+        instance = check.get('template_instance')
+        instance = instance if isinstance(instance, dict) else None
+        checks[-1]._instance = instance   # its own re-run's record keeps it too
         origins[ident] = vs.Origin(activity='retained check', label='retained', about={'origin': 'retained'},
                                   proposed_by='G6 retained a previously reproduced check',
                                   unconfirmed='a retained proposed check decides no requirement',
                                   template='differential.v1' if check.get('refuted_by_difference') else '',
-                                  refuted_by_difference=check.get('refuted_by_difference', False))
+                                  refuted_by_difference=check.get('refuted_by_difference', False),
+                                  instance=instance)
     return checks, origins, skipped

@@ -1627,6 +1627,7 @@ def compiled_check(root: Path, one: TemplateInstance, data: dict, notes: list[st
                   "template": one.template, "requirement_id": one.requirement_id, "intent": one.intent,
                   "bindings": one.bindings},
               **origin}
+    check._instance = fields["instance"]   # learning retains it with the check (``outcome_history.record_check``)
     return check, placed, vs.Origin(**fields)
 
 

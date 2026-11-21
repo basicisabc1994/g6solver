@@ -1,14 +1,17 @@
 """Reproductions for review 4. All execution state is held in memory."""
+import json
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from g6.core.ledger import ChainLedger
-from g6.harness import outcome_history as h
-from g6.harness import verification_search as vs
+from g6.core.ledger import ChainLedger, digest
+from g6.harness import outcome_history as h, resolution
+from g6.harness import verification_search as vs, verification_templates as vt
+from g6.harness.behaviour_runner import ExecutableSource
 from g6.workforce import receipt_store
+from tests.harness.test_proposed_checks import result
 
 REPOSITORY = "c" * 64
 
@@ -42,6 +45,102 @@ def assessment_for(defects):
         ],
         "completion": {"defects_reproduced": {"proposed_checks": defects}},
     }
+
+
+def test_retained_differential_resolution_keeps_template_semantics(monkeypatch):
+    memory_stores(monkeypatch)
+    data = {
+        "function": ["module", "calc", "edge"], "mode": "outputs",
+        "calls": [{"args": [1], "kwargs": {}}],
+    }
+    instance = vt.TemplateInstance(
+        id="keep-edge", requirement_id="R", intent="preserve",
+        template="differential.v1",
+        bindings={"function": "calc.edge", "mode": "outputs",
+                  "calls": [{"args": [1]}]},
+    )
+    one, placed, origin = vt.compiled_check(Path.cwd(), instance, data, [])
+    change = SimpleNamespace(repo=Path.cwd(), files=[], sources=(),
+                             base_commit="b" * 40)
+
+    def run(change, placed, source, node, *, at_base, **kwargs):
+        observation = {"input": {"args": [1], "kwargs": {}},
+                       "output": 1 if at_base else 2}
+        raw = {
+            "verdict": "passed", "said": "", "seconds": 0.0,
+            "source_before": digest({"base": at_base}),
+            "isolation": {"backend": "synthetic-review-fixture"},
+            "g6_observation": {
+                "result": "passed", "detail": "observed",
+                "observations": [observation],
+            },
+        }
+        # Custodied checks use the owned runner. The ordinary free-form replay
+        # emits the same observation, as the portable reproduction does.
+        if type(source) is ExecutableSource:
+            raw["receipt"] = receipt_store._record_observation(
+                change.repo, node, source, raw)
+            return raw
+        return {**result([node], output="G6-OBSERVATION " + json.dumps(observation)),
+                "completed": True}
+
+    monkeypatch.setattr(vs, "_run_check", run)
+    first = vs.search(
+        change, [one], {one.id: placed}, deadline=vs._clock() + 60,
+        artifact="a" * 64, origins={one.id: origin},
+    )
+    assert first.activities[0]["result"] == "counterexample"
+    for check, node, patch, base, classification, label, differs in first.outcomes:
+        h.record_check(change, check, node, patch, base, classification,
+                       origin=label, refuted_by_difference=differs)
+    history = h.read(change.repo)
+    assert len(history.rows) == len(history.retained) == 1, history
+
+    retained, origins, skipped = h.retained_checks(change, "R")
+    assert len(retained) == 1 and not skipped
+    repeated = vs.search(
+        change, retained, vs.placements(change.repo, retained),
+        deadline=vs._clock() + 60, artifact="a" * 64, origins=origins,
+    )
+    assert repeated.activities[0]["result"] == "counterexample"
+    args = resolution.build(
+        assessment_for(repeated.defects), repo=str(change.repo), task="Keep edge"
+    )[0]["cheapest_check"]["arguments"]
+
+    if "template_instances" in args:
+        replayed = vt.template_instances(args["template_instances"], {"R"})
+        check, target, replay_origin = vt.compiled_check(
+            change.repo, replayed[0], data, [])
+        replay_origins = {check.id: replay_origin}
+    else:
+        check = vs.proposed_checks(args["proposed_checks"], {"R"})[0]
+        target, replay_origins = vs.placement(check), {}
+    final = vs.search(
+        change, [check], {check.id: target}, deadline=vs._clock() + 60,
+        artifact="a" * 64, origins=replay_origins,
+    )
+    observed = final.activities[0]["result"]
+    assert observed == "counterexample", observed
+    # The instance survives retention as recorded, and a retained re-run's own record keeps it again.
+    assert args["template_instances"][0]["bindings"] == instance.bindings
+    for check, node, patch, base, classification, label, differs in repeated.outcomes:
+        assert check._instance == origin.instance
+
+
+@pytest.mark.parametrize("instance", [
+    {"template": "relation.v1", "requirement_id": "R", "intent": "preserve", "bindings": {"b": 1}},
+    None,   # a row retained before instances were kept, or a free-form check: it replays as its text
+], ids=["relation", "free-form"])
+def test_a_retained_row_restores_the_instance_it_kept(monkeypatch, instance):
+    source = "def test_kept():\n    assert True\n"
+    row = {"classification": "defect_detected", "finding": "R", "modules": [],
+           "check": {"file": "test_kept.py", "source": source, "test": "test_kept",
+                     "sha256": digest(source), **({"template_instance": instance} if instance else {})}}
+    monkeypatch.setattr(h, "read", lambda root: h.History(REPOSITORY, (row,)))
+    checks, origins, skipped = h.retained_checks(SimpleNamespace(repo=Path.cwd(), files=[]), "R")
+    assert len(checks) == 1 and not skipped
+    assert checks[0]._instance == instance and origins[checks[0].id].instance == instance
+    assert origins[checks[0].id].template == ""   # only the differential rule changes how a retained run is judged
 
 
 @pytest.mark.parametrize("params,allowed,answer,expected", [
