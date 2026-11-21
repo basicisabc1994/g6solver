@@ -23,14 +23,13 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from g6.core.states import state_of
-
 from g6.workforce.chain import StepResult
 from g6.workforce.chain import verdict as chain_verdict
 
 VERIFIED, QUALIFIED, BLOCKED = "verified", "qualified-draft", "blocked-escalated"
 STATES = (VERIFIED, QUALIFIED, BLOCKED)
 _RANK = {BLOCKED: 0, QUALIFIED: 1, VERIFIED: 2}
+_ALIASES = {"qualified_draft": QUALIFIED, "blocked_escalated": BLOCKED}
 #: How far the reader follows nested ``result`` values (envelope > pack output > the pack's own JSON
 #: result > ...). A reply that nests deeper is BLOCKED: what the reader cannot see it cannot trust.
 MAX_DEPTH = 5
@@ -121,8 +120,9 @@ def authority_rank(found: str) -> int:
 
 
 def normalize_state(value: str) -> str:
-    """Read an exact canonical state; anything else is refused."""
-    norm = state_of(value)
+    """The canonical (hyphen) state for either vocabulary; anything else is refused."""
+    norm = str(value).strip().lower()
+    norm = _ALIASES.get(norm, norm)
     if norm not in _RANK:
         raise ValueError(f"not a completion state: {value!r}; one of {STATES}")
     return norm
@@ -405,9 +405,18 @@ def _error_text(reply: dict) -> str:
 
 
 def _declared(value: Any) -> str | None:
-    """Read an exact canonical completion state; unknown spellings have no state."""
-    state = state_of(value)
-    return None if state == "unknown" else state
+    """A declared completion state in either vocabulary, read down-only (the product's own middleware.usage reading):
+    any blocked_* or a failure is a block; a verified or qualified state only by its exact spelling."""
+    if not isinstance(value, str):
+        return None
+    norm = value.strip().lower().replace("-", "_")
+    if norm.startswith("blocked") or norm in {"failed", "error"}:
+        return BLOCKED
+    if norm in {"verified", "verified_ready"}:
+        return VERIFIED
+    if norm in {"qualified", "qualified_draft", "awaiting_cost_confirmation"}:
+        return QUALIFIED
+    return None
 
 
 def _has_error(value: Any) -> bool:
@@ -478,6 +487,7 @@ def _unanswered(reply: dict) -> str:
 
 # -- the product's down-only reading of a reply's declared state (vendored from the archive's
 # ``middleware.usage.outcome_of``, without its usage-recording database writer) --------------------------------------
+_usage_QUALIFIED_STATES = frozenset({"qualified_draft", "qualified", "awaiting_cost_confirmation"})
 _usage_STATE_HOLDERS = (None, "reliability_envelope", "trust", "trust_panel")
 #: A job's own `state` for a result that is not in yet: nothing has ended, so no outcome.
 _usage_NOT_FINISHED = frozenset({"queued", "running", "pending", "needs_input"})
@@ -488,8 +498,16 @@ _usage_max_parsed_result_chars = 256 * 1024
 
 
 def _usage_state(value: str) -> str:
-    state = state_of(value)
-    return "none" if state == "unknown" else state
+    norm = value.strip().lower().replace("-", "_")
+    if norm in {"verified", "verified_ready"}:
+        return "verified"
+    if norm in _usage_QUALIFIED_STATES:
+        return "qualified-draft"
+    if norm == "blocked" or norm.startswith("blocked_"):
+        return "blocked-escalated"
+    if norm in {"failed", "error"}:
+        return "error"
+    return "none"
 
 
 def _usage_declared(level: dict) -> set[str]:
@@ -503,9 +521,8 @@ def _usage_declared(level: dict) -> set[str]:
     # tools never declare success there, and another tool's `state` may mean anything.
     job = level.get("state")
     if isinstance(job, str):
-        # Job state is a separate declared enum. Its exact failure values only lower a result.
-        lowered = ("pending" if job in _usage_NOT_FINISHED else "error" if job in {"failed", "error"}
-                   else _usage_state(job))
+        norm = job.strip().lower()
+        lowered = "pending" if norm in _usage_NOT_FINISHED else _usage_state(norm)
         if lowered in {"pending", "blocked-escalated", "error"}:
             found.add(lowered)
     return found - {"none"}

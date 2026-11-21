@@ -296,6 +296,101 @@ def test_the_selector_reads_a_text_reply_and_a_replys_error_by_their_lead():
     assert _read("defect_detected")["word"] == "defect_detected"
 
 
+# --- slice 4: input grammars (causes E1-E8) ----------------------------------------------------------------------------
+
+def test_compliance_answers_read_the_same_as_lines_and_as_structure():
+    from g6.bundles.compliance_gap import run
+
+    lines = run({"regulations": "GDPR", "answers": "GDPR-30: yes | a processing register\nGDPR-35: no",
+                 "records": "gdpr access request received 2026-01-05, answered 2026-02-03, extended no",
+                 "as_of": "2026-03-01"})
+    shaped = run({"regulations": "GDPR", "as_of": "2026-03-01",
+                  "answers": {"GDPR-30": {"answer": "yes", "evidence": "a processing register"},
+                              "GDPR-35": {"answer": "no", "evidence": ""}},
+                  "records": '[{"regulation": "GDPR", "kind": "request", "fields": {"received": "2026-01-05", '
+                             '"answered": "2026-02-03", "extended": false}}]'})
+    assert lines.code != "G6_E_INPUT_VALIDATION" and lines.rows
+    assert [(r.get("id"), r.get("result")) for r in lines.rows] == [(r.get("id"), r.get("result")) for r in shaped.rows]
+
+
+def test_a_message_that_points_outside_the_code_raises_the_posture_for_an_exception_too():
+    from g6.triage import classify
+
+    got = classify(ValueError("permission denied: /etc/shadow"), "permission denied: /etc/shadow")
+    assert got.posture == "review"
+    assert classify("builtins.ZeroDivisionError").category == "arithmetic"
+    assert classify(KeyError("k")).category == classify("KeyError").category == "key"
+
+
+def test_a_reviewer_whose_name_is_part_of_the_authors_is_a_self_review():
+    from g6.coding_agent_gate.evidence import Evidence
+
+    assert Evidence("review", ref="patch", reviewer="Claude").problem(author="Claude Opus")
+    assert Evidence("review", ref="patch", reviewer="Ada").problem(author="Claude Opus") == ""
+
+
+def test_a_verifiers_exact_words_and_its_typed_fields_are_both_read():
+    from g6.coding_agent_gate.evidence import VerifierResult
+
+    assert VerifierResult.parse("pass").effective_status == "pass"
+    assert VerifierResult.parse("exit code 1").effective_status == "fail"
+    assert VerifierResult.parse("looks fine").effective_status == "not_run"
+    assert VerifierResult.parse({"status": "pass", "exit_code": 0}).effective_status == "pass"
+
+
+def test_a_declared_source_kind_cannot_split_one_host():
+    from g6.grounding.lineage import _lineage
+    from g6.grounding.retrieval import Passage
+
+    assert _lineage(Passage("t", "https://www.example.org/a", source_kind="corpus")) == "host:example.org"
+    assert _lineage(Passage("t", "https://example.org/b")) == "host:example.org"
+    assert _lineage(Passage("t", "doi:10.1/x")) == "host:doi.org"
+
+
+def test_a_rate_limit_is_read_from_typed_fields_first():
+    from g6.agents._runtime.breaker import RATE_LIMITED, is_transient_provider_error
+    from g6.agents._runtime.model import AgentRefusal
+    from g6.core import llm
+
+    assert RATE_LIMITED == llm.RATE_LIMITED
+    assert is_transient_provider_error(AgentRefusal(llm.RATE_LIMITED, "slow down", backend_failure=True))
+    assert is_transient_provider_error(AgentRefusal("G6_E_AGENT_X", "x", detail={"status_code": 429}))
+    assert not is_transient_provider_error(AgentRefusal("G6_E_AGENT_X", "rate limit", detail={"status_code": 500}))
+
+
+def test_the_catalogue_shows_a_bare_command_and_hides_a_path_even_when_declared():
+    from g6.mcp.catalogue import HOST_VALUE, _needs
+
+    assert _needs("outside", [{"name": "t", "command": "git"}])[0]["command"] == "git"
+    assert _needs("outside", [{"name": "t", "command": "git", "catalogue_command": "C:/tools/git.exe"}])[0][
+        "command"] == HOST_VALUE
+
+
+@pytest.mark.parametrize("state", ["blocked", "blocked_escalated", "failed", "error"])
+def test_a_blocked_or_failed_state_is_read_as_blocked(state):
+    from g6.workforce.contracts import BLOCKED, Outcome, _blocks, _usage_state
+
+    assert Outcome.from_envelope({"completion_state": state}).state == BLOCKED
+    assert _blocks({"completion_state": state})
+    assert _usage_state(state) in ("blocked-escalated", "error")
+
+
+def test_mission_steps_are_named_for_this_surface_where_g6_wrote_them():
+    from g6.mcp.mission import _here
+
+    got = _here({"more": 'mission_status with detail="full" adds: units',
+                 "clarification": {"next_action": {"tool": "mission_accept"}},
+                 "awaiting_human": [{"kind": "acceptance",
+                                     "question": 'confirm it at your terminal: python -P -m g6.workforce.decide confirm '
+                                                 'm1 --reason "..."'}],
+                 "notes": "mission_create is caller data"})
+    assert got["more"].startswith("g6_mission_status with")
+    assert got["clarification"]["next_action"]["tool"] == "g6_mission_clarify"
+    assert "g6_mission_confirm" in got["awaiting_human"][0]["question"]
+    assert "g6.workforce.decide" not in got["awaiting_human"][0]["question"]
+    assert got["notes"] == "mission_create is caller data"
+
+
 def test_missing_fields_are_declared_first_then_read_from_the_schema_names_the_refusal_says():
     from g6.mcp.repair import _named
 

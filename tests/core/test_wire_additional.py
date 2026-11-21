@@ -62,7 +62,7 @@ def test_exact_failed_job_state_still_lowers_usage():
     from g6.workforce.contracts import _usage_declared
 
     assert _usage_declared({"state": "failed"}) == {"error"}
-    assert _usage_declared({"state": "FAILED"}) == set()
+    assert _usage_declared({"state": "FAILED"}) == {"error"}   # a downward reading: the base's, any case
 
 
 def test_held_out_by_the_builder_under_another_spelling_is_not_independent():

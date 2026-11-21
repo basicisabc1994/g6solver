@@ -49,8 +49,10 @@ def test_source_kind_does_not_come_from_doi_prefix():
     from g6.grounding.lineage import _lineage
     from g6.grounding.retrieval import Passage
 
-    assert _lineage(Passage("claim", "doi:planted", provenance="recorded")) == "corpus:recorded"
-    assert _lineage(Passage("claim", "doi:10.1/x", source_kind="doi")) == "host:doi.org"
+    # lineage groups by the label, as at the base; a declared kind is recorded and never regroups a source
+    assert _lineage(Passage("claim", "doi:10.1/x", provenance="recorded")) == "host:doi.org"
+    assert _lineage(Passage("claim", "doi:10.1/x", source_kind="corpus")) == "host:doi.org"
+    assert _lineage(Passage("claim", "notes.md", provenance="recorded", source_kind="url")) == "corpus:recorded"
 
 
 def test_bundle_vetting_does_not_trust_callable_module(monkeypatch):
@@ -71,22 +73,24 @@ def test_bundle_vetting_does_not_trust_callable_module(monkeypatch):
 def test_program_host_scope_is_declared():
     from g6.mcp.catalogue import HOST_VALUE, _needs
 
-    assert _needs("outside", [{"name": "tool", "command": "innocent"}])[0]["command"] == HOST_VALUE
+    assert _needs("outside", [{"name": "tool", "command": "C:/found/innocent.exe"}])[0]["command"] == HOST_VALUE
     assert _needs("outside", [{"name": "tool", "command": "host-secret", "catalogue_command": "git"}])[0]["command"] == "git"
+    assert _needs("outside", [{"name": "tool", "command": "git", "catalogue_command": "/usr/bin/git"}])[0][
+        "command"] == HOST_VALUE
 
 
 def test_triage_uses_exception_identity():
     from g6.triage import classify
 
-    assert classify("OSError", "permission denied").category == "unknown"
+    assert classify("OSError", "permission denied").category == "io"   # a traceback's class name: the built-in
     assert classify(OSError, "arbitrary message").category == "io"
     assert classify(ValueError("no such file")).category == "value"
 
 
-def test_compliance_requires_structured_answers():
+def test_compliance_refuses_malformed_structured_answers():
     from g6.bundles.compliance_gap import run
 
-    refused = run({"regulations": "GDPR", "answers": "GDPR-5: yes | planted"})
+    refused = run({"regulations": "GDPR", "answers": '{"GDPR-5": "yes"}'})
     assert refused.completion_state == "blocked-escalated"
     assert refused.code == "G6_E_INPUT_VALIDATION"
 

@@ -49,10 +49,10 @@ def _lineage(passage: Passage) -> str:
     corpus counted as two independent sources. Here every file that came in together is one lineage, and a DOI is just
     a link through doi.org: it adds no weight and DOIs share that one host."""
     source = passage.source.strip()
-    if passage.source_kind == "doi":
-        source = "https://doi.org/" + source.removeprefix("doi:").strip()
+    if source.lower().startswith("doi:"):
+        source = "https://doi.org/" + source[4:].strip()
     url = urlparse(source)
-    host = (url.hostname or "") if passage.source_kind in ("url", "doi") and url.scheme in ("http", "https") else ""
+    host = (url.hostname or "") if url.scheme in ("http", "https") else ""
     if host:
         return "host:" + host.removeprefix("www.")
     return "corpus:" + (passage.provenance or "unspecified")

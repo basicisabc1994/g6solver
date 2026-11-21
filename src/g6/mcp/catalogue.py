@@ -88,11 +88,10 @@ NEED_FIELDS = {"outside": ("name", "purpose", "install", "licence", "url", "env"
 
 
 def _program(command: object) -> str:
-    """An undeclared command is host data, regardless of spelling.
-
-    _needs exposes only the separate, explicitly declared catalogue_command.
-    """
-    return HOST_VALUE
+    """A declared program's command as a fresh client sees it: a bare name as the catalogue declares it (``git``);
+    a path, which the code found on this computer, as ``HOST_VALUE``."""
+    text = str(command or "")
+    return HOST_VALUE if any(mark in text for mark in ("/", "\\", ":")) else text
 
 
 def _needs(field: str, rows: object) -> list[dict]:
@@ -101,7 +100,8 @@ def _needs(field: str, rows: object) -> list[dict]:
         if isinstance(row, dict):
             out.append({k: row[k] for k in NEED_FIELDS[field] if k in row})
             if field == "outside":
-                out[-1]["command"] = row.get("catalogue_command") if isinstance(row.get("catalogue_command"), str) else _program(row.get("command"))
+                declared = row.get("catalogue_command")      # shown only when it passes the same rule
+                out[-1]["command"] = _program(declared if isinstance(declared, str) else row.get("command"))
     return out
 
 

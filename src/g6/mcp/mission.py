@@ -98,6 +98,12 @@ MCP_GUIDANCE = {
     "allow": "Call g6_mission_create; the person answers in the client's dialog.",
     "submit": SUBMIT_HERE,
 }
+_NAMED = re.compile(r"\bmission_(create|status|submit|accept)\b")
+_DIALOG = {"confirm": "call g6_mission_confirm, which asks the person in the client's dialog",
+           "allow": "call g6_mission_create, which asks the person in the client's dialog"}
+#: The library's fixed terminal instruction for a person's step (``g6.workforce.runtime``), as it writes it.
+_TERMINAL = re.compile(r'(?:confirm it at your terminal: )?`?python -P -m g6\.workforce\.decide (confirm|allow) \S+ '
+                       r'--reason "\.\.\."`?')
 MAX_CHECKS_STATED = 200
 MAX_TEST_FILES = 200
 
@@ -115,15 +121,40 @@ MCP_ACTION_FIELDS = ("next_action", "reuse")
 MCP_TOOL_IDS = {"mission_" + name: tool for name, tool in _TOOLS.items()}
 
 
+def _said_here(text: str) -> str:
+    """G6's own words, at a position G6 wrote them, with each step named as this surface offers it (``_TOOLS``,
+    ``_DIALOG``, ``SUBMIT_HERE``)."""
+    named = _NAMED.sub(lambda found: _TOOLS[found[1]], text.replace(coding.OBJECTIVE_INSTRUCTIONS, SUBMIT_HERE))
+    return _TERMINAL.sub(lambda found: _DIALOG[found[1]], named)
+
+
+def _tool_here(action: Any) -> None:
+    if isinstance(action, dict) and isinstance(action.get("tool"), str) and action["tool"] in MCP_TOOL_IDS:
+        action["tool"] = MCP_TOOL_IDS[action["tool"]]
+
+
 def _here(value: Any) -> Any:
-    """Adapt the mission protocol's declared root action fields; evidence stays data."""
+    """``value`` with each step named as this surface offers it, at the positions the mission library writes them
+    (root ``next_action`` / ``reuse``, ``clarification.next_action``, root ``more``, the acceptance question of
+    ``awaiting_human``), and the library's fixed terminal instruction replaced by the dialog in the result's rendered
+    ``markdown`` (which quotes the unmet requirement G6 wrote); everything else, caller data and evidence included,
+    stays as it is."""
     if not isinstance(value, dict):
         return value
     result = deepcopy(value)
     for field in MCP_ACTION_FIELDS:
-        action = result.get(field)
-        if isinstance(action, dict) and isinstance(action.get("tool"), str) and action["tool"] in MCP_TOOL_IDS:
-            action["tool"] = MCP_TOOL_IDS[action["tool"]]
+        _tool_here(result.get(field))
+    clarification = result.get("clarification")
+    if isinstance(clarification, dict):
+        _tool_here(clarification.get("next_action"))
+    if isinstance(result.get("more"), str):
+        result["more"] = _said_here(result["more"])
+    for waiting in result.get("awaiting_human") if isinstance(result.get("awaiting_human"), list) else ():
+        if isinstance(waiting, dict) and waiting.get("kind") == "acceptance" and isinstance(waiting.get("question"), str):
+            waiting["question"] = _said_here(waiting["question"])
+    shown = result.get("result")
+    if isinstance(shown, dict) and isinstance(shown.get("markdown"), str):
+        shown["markdown"] = _TERMINAL.sub(lambda found: _DIALOG[found[1]], shown["markdown"])
     return result
 
 

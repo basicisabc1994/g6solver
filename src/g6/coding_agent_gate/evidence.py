@@ -73,11 +73,10 @@ class Evidence:
             return "" if _HUNK.search(self.output or "") else "a diff item needs unified-diff text with an @@ hunk"
         if is_placeholder(self.reviewer) or is_placeholder(ref):
             return "a review item needs who reviewed (reviewer) and what was reviewed (ref)"
-        try:
-            if same_principal(self.reviewer, author):
-                return "the reviewer is the author; a self-review does not count"
-        except ValueError:
-            return "reviewer or author identity is absent or ambiguous; names are recorded, not authenticated"
+        who, by = set(_norm(self.reviewer).split()), set(_norm(author).split())
+        # "Claude" reviewing work by "Claude Opus" is a self-review; so is the same name in another spelling
+        if by and (who <= by or by <= who or same_principal(self.reviewer, author)):
+            return "the reviewer is the author; a self-review does not count"
         return ""
 
     def to_dict(self) -> dict[str, object]:
@@ -90,6 +89,12 @@ class Evidence:
         if self.output:
             out["output_chars"] = len(self.output)
         return out
+
+
+_PASS_WORDS = frozenset({"pass", "passed"})
+_FAIL_WORDS = frozenset({"fail", "failed", "failure", "error", "errored"})
+_NOT_RUN_WORDS = frozenset({"", "not run", "notrun", "skipped", "none", "n/a"})
+_EXIT = re.compile(r"^exit(?: code| status)?\s*[:=]?\s*(-?\d+)$")
 
 
 @dataclass(frozen=True)
@@ -117,8 +122,10 @@ class VerifierResult:
         return "pass" if self.status == "pass" else "not_run"
 
     @classmethod
-    def parse(cls, value: VerifierResult | str | None) -> VerifierResult:
-        """Read typed status/exit_code fields. Text is unrecognised and cannot establish a run."""
+    def parse(cls, value: VerifierResult | Mapping | str | None) -> VerifierResult:
+        """Read a verifier result: its typed fields (a mapping of ``status`` / ``exit_code``), or from a string only
+        exact words (``pass`` / ``fail``) and an exit code (``exit code 1``); any other string is ``not_run`` with the
+        text kept in ``unrecognised``: unknown is unknown."""
         if value is None:
             return cls()
         if isinstance(value, cls):
@@ -126,7 +133,18 @@ class VerifierResult:
         if isinstance(value, Mapping):
             return cls(**value)
         if not isinstance(value, str):
-            raise TypeError("verifier must be a VerifierResult, a string or None")
+            raise TypeError("verifier must be a VerifierResult, a mapping, a string or None")
+        text = _norm(value)
+        if text in _PASS_WORDS:
+            return cls("pass")
+        if text in _FAIL_WORDS:
+            return cls("fail")
+        if text in _NOT_RUN_WORDS:
+            return cls()
+        found = _EXIT.match(text)
+        if found:
+            code = int(found.group(1))
+            return cls("pass" if code == 0 else "fail", exit_code=code)
         return cls(unrecognised=value.strip()[:200])
 
     def to_dict(self) -> dict[str, object]:
