@@ -5,6 +5,7 @@ Only trusted Python integrations register builders and check scripts. Request da
 cannot replace a checker. The sandbox is a resource bound, not an OS boundary.
 """
 from __future__ import annotations
+from g6.core.guidance_builders import script_run
 
 import io
 import json
@@ -19,7 +20,6 @@ from typing import Any, Literal
 
 from g6.code import _roots
 from g6.code._types import CodeRefused, answer, refuse
-from g6.core import sandbox
 
 MAX_FILES = 200
 MAX_FILE_BYTES = 1_000_000
@@ -215,7 +215,7 @@ except BaseException as exc:
 report.write_text(json.dumps({**result, "token": _g6_token, "completed": True}), encoding="utf-8")
 """
         try:
-            ran = sandbox.run_script(script, {"artefact.zip": packed.getvalue()}, timeout_s=check.timeout_s,
+            ran = script_run(script, {"artefact.zip": packed.getvalue()}, timeout_s=check.timeout_s,
                                      mem_mb=check.mem_mb, max_output_bytes=128_000)
             evidence = {"sandbox_status": ran.status, "limits": ran.limits,
                         "stdout": ran.stdout[-4000:], "stderr": ran.stderr[-4000:]}

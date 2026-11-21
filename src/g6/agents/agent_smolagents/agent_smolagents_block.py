@@ -25,6 +25,7 @@ from g6.agents.agent_smolagents.sandbox import ALLOWED_IMPORTS, MEM_MB, REFUSED_
 from g6.agents.agent_smolagents.spec import AgentSpec
 from g6.core import confine
 from g6.core.ai_block import AIBlock
+from g6.core.agent_guidance import text_for_agent
 from g6.core.consent_callers import provider_from_env
 from g6.core.maturity import component_maturity
 from g6.core.reliability_envelope import WarningCard
@@ -85,9 +86,9 @@ def _isolation() -> dict[str, Any]:
     interpreter, with no test start): the backend, or none and why. Nothing is started or created."""
     python = interpreter()
     if python is None:
-        return {"backend": None, "why": "no Python interpreter was found (set G6_PYTHON)"}
+        return {"backend": None, "why": "No Python interpreter was found. Tell the person."}
     name, why = confine.backend(python, probe=False)
-    return {"backend": name, "why": why}
+    return {"backend": name, "why": text_for_agent(why)}
 
 
 def _check(data: AgentSmolagentsInput) -> dict[str, Any]:

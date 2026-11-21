@@ -20,23 +20,15 @@ Every reply carries the library envelope. A mission's own ``verified`` is held a
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from g6.core import cloud_consent as cloud, git_env
-from g6.core.door import (
-    allowed_sensitive,
-    blocked_reply,
-    card,
-    corrected_result,
-    door_envelope,
-    is_allowed,
-    said_state,
-)
+from g6.core import git_env
+from g6.core.door import allowed_sensitive, corrected_result, is_allowed, said_state
+from g6.core.guidance_builders import blocked_reply, card, door_envelope
 from g6.core.git_name import shown
 from g6.core.ledger import digest
 from g6.harness import verification_search
@@ -111,8 +103,12 @@ def refused() -> dict | None:
 def _here(value: Any) -> Any:
     """``value`` with each step named as this surface offers it (``_TOOLS``, ``_DIALOG``, ``SUBMIT_HERE``)."""
     if isinstance(value, str):
+        from g6.core.agent_guidance import is_external
+        if is_external(value):
+            return value
         named = _NAMED.sub(lambda found: _TOOLS[found[1]], value.replace(coding.OBJECTIVE_INSTRUCTIONS, SUBMIT_HERE))
-        return _TERMINAL.sub(lambda found: _DIALOG[found[1]], named)
+        named = _TERMINAL.sub(lambda found: _DIALOG[found[1]], named)
+        return named
     if isinstance(value, dict):
         return {key: _here(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
@@ -122,11 +118,8 @@ def _here(value: Any) -> Any:
 
 def reply(found: dict, *, control_id: str | None = None) -> dict:
     """``found`` in the library envelope: the state a closed mission reached, a ``qualified-draft`` while it is open."""
-    body, sources, _ = cloud.freeze_output(found)
-    try:
-        found = json.loads(body)
-    except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+    from g6.core.external_data import detached
+    found, sources, _ = detached(found)
     said = said_state(found) if found.get("completion_state") else "qualified-draft"
     if said == "blocked-escalated":
         shown = card(None, "G6_E_BLOCKED", f"{WHO} reported blocked-escalated: {found.get('result')}"[:500])

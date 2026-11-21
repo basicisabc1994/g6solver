@@ -23,7 +23,9 @@ from collections.abc import Callable
 from typing import Any
 
 from g6.algebra.schema import AlgebraResult
-from g6.core.errors import ISOLATION_ACTION, ISOLATION_UNAVAILABLE
+from g6.core.errors import ISOLATION_UNAVAILABLE
+from g6.core.guidance_builders import ISOLATION_ACTION
+
 from g6.core.reliability_envelope import WarningCard
 
 _P = "G6_E_ALGEBRA_"

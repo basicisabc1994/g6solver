@@ -164,7 +164,8 @@ def _predictions(inputs: dict[str, str], train_text: str, test_header: list[str]
             "check": "predictions", "result": "problem", "detail": "no predictions and no script were given",
             "what to do": "Paste the model's predictions, or a script that makes them. " + _SCRIPT_HELP,
             "label": "blocked-escalated"})
-    from g6.core.sandbox import isolation_refused, run_script
+    from g6.core.sandbox import isolation_refused
+    from g6.core.guidance_builders import script_run as run_script
 
     features = io.StringIO()
     writer = csv.DictWriter(features, [c for c in test_header if c != target], extrasaction="ignore")

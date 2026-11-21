@@ -59,13 +59,10 @@ def _noted(reply: Any, note: str) -> Any:
     if not note or not isinstance(reply, dict):
         return reply
     try:
-        body, refs, metadata = cloud.freeze_output(reply)
+        from g6.core.external_data import detached
+        noted, refs, metadata = detached(reply)
     except (TypeError, ValueError):
         return reply
-    try:
-        noted = json.loads(body)
-    except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
     noted["workflow"] = {**(noted.get("workflow") or {}), "note": note}
     return cloud.bind_output(noted, refs, metadata=metadata) if refs is not None else noted
 
@@ -83,11 +80,9 @@ def attach(reply: Any, built: Any, where: tuple[str, ...], project: str) -> Any:
     goes on a detached copy of the one serialisation the reply's receipt was matched against."""
     if not built or not isinstance(reply, dict):
         return reply
-    body, refs, metadata = cloud.freeze_output(reply)
-    try:
-        shown = holder = json.loads(body)
-    except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+    from g6.core.external_data import detached
+    shown, refs, metadata = detached(reply)
+    holder = shown
     for key in where[:-1]:
         if not isinstance(holder.get(key), dict):
             return reply
@@ -190,7 +185,7 @@ def install(server: Any) -> None:
 def _reply(project: str, item: str, result: dict, summary: str, next_step: str) -> dict:
     """The one way a workflow tool replies: G6's envelope, bound to the project's workflow source, with the fixed
     sentence a withheld reply carries in its place."""
-    from g6.core.reliability_envelope import envelope_fields, warning_card
+    from g6.core.guidance_builders import envelope_fields, warning_card
 
     reply = {"ok": True, "result": result, **envelope_fields(
         reliability_label="qualified-draft", warning_card=warning_card(CODE, summary, next_step), evidence=[])}
@@ -209,7 +204,7 @@ def _project(repo: str) -> str | None:
 
 
 def _refused(why: str) -> dict:
-    from g6.core.door import blocked_reply
+    from g6.core.guidance_builders import blocked_reply
     from g6.mcp.consent_controls import public_instructions
 
     return public_instructions(blocked_reply(f"[G6_E_INPUT_VALIDATION] {why}"))
@@ -319,7 +314,7 @@ async def decide(repo: str, task: str, intervention_id: str, ctx: Any) -> dict:
     if project is None or not isinstance(task, str) or not task.strip():
         return _refused("repo must be the full path of the repository's folder, and task the task's text")
     if view.level() != "suggestions":
-        from g6.core.door import blocked_reply
+        from g6.core.guidance_builders import blocked_reply
         from g6.mcp.consent_controls import public_instructions
 
         return public_instructions(blocked_reply(NOT_ADMITTED))
@@ -390,7 +385,7 @@ def _has_dialog(ctx: Any) -> bool:
 
 def _feedback_reply(project: str, result: dict, summary: str, next_step: str, *, text: str = "") -> dict:
     """A feedback reply: bound to the project's feedback source, a grant of its own."""
-    from g6.core.reliability_envelope import envelope_fields, warning_card
+    from g6.core.guidance_builders import envelope_fields, warning_card
     from g6.harness.workflow.feedback import feedback_source
 
     reply = {"ok": True, "result": result, **envelope_fields(

@@ -24,7 +24,9 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from g6.core.errors import ISOLATION_ACTION, ISOLATION_UNAVAILABLE
+from g6.core.errors import ISOLATION_UNAVAILABLE
+from g6.core.guidance_builders import ISOLATION_ACTION
+
 from g6.core.reliability_envelope import WarningCard
 from g6.model_checking.schema import ModelCheckResult
 

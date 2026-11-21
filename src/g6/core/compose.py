@@ -17,10 +17,12 @@ from typing import Any
 
 from g6.core.ai_block import AIBlock
 from g6.core.block_contract import contract_to_dict
-from g6.core.door import blocked_reply, corrected_result, door_envelope, said_state
+from g6.core.door import corrected_result, said_state
+from g6.core.guidance_builders import blocked_reply, door_envelope
 from g6.core.ledger import digest
 from g6.core.registry import OuterBudgetExceeded, build_typed_input, get_registry, outer_copy
 from g6.core.result import Result
+from g6.core.external_data import caller_echo, component_call, component_failure_reply, exception_text
 
 
 class CompositionError(ValueError):
@@ -116,7 +118,7 @@ class ComposedBlock(AIBlock):
             self.manifest.append({"component": block.name, "operation": stage.op,
                                   "implementation": f"{type(block).__module__}.{type(block).__qualname__}",
                                   "implementation_sha256": _implementation_digest(block),
-                                  "contract": deepcopy(contract_to_dict(contract)), "inputs": links, "params": params})
+                                  "contract": deepcopy(contract_to_dict(contract)), "inputs": links, "params": caller_echo(params)})
 
     def infer(self, data: dict) -> Result[dict]:
         values, checks, evidence = [], [], []
@@ -136,14 +138,18 @@ class ComposedBlock(AIBlock):
                 if self.strict and any(not check(context) for check in block.contract.preconditions):
                     raise _error("PRECONDITION_FAILED", index, block.name)
                 screen = getattr(block, "screen_raw", None)
-                outcome = screen(raw) if callable(screen) else None
+                outcome = component_call(screen, raw) if callable(screen) else None
                 if outcome is None:
                     typed, error = build_typed_input(block, raw, code="[G6_E_INPUT_VALIDATION]", op=stage.op)
                     if error:
                         raise CompositionError(error)
-                    outcome = block.infer(typed)
+                    outcome = component_call(block.infer, typed)
                 if not isinstance(outcome, Result) or outcome.is_fail():
-                    raise CompositionError(outcome.error if isinstance(outcome, Result) else "invalid block result")
+                    if isinstance(outcome, Result):
+                        refused = component_failure_reply(outcome.error)
+                        return Result.ok({**refused, **self._reply(values, checks, evidence, "blocked-escalated",
+                                                                  refused["warning_card"])})
+                    raise CompositionError("invalid block result")
                 value = outcome.value
                 if not isinstance(value, Mapping):
                     raise _error("OUTPUT_MISSING", index, "an object output is required")
@@ -169,7 +175,7 @@ class ComposedBlock(AIBlock):
                 if state == "blocked-escalated":
                     return Result.ok(self._reply(values, checks, evidence, state, envelope.get("warning_card")))
             except Exception as exc:  # a broken check or adapter cannot let later stages execute
-                refused = blocked_reply(str(exc))
+                refused = blocked_reply(exception_text(exc))
                 return Result.ok({**refused, **self._reply(values, checks, evidence, "blocked-escalated",
                                                           refused["warning_card"])})
         return Result.ok(self._reply(values, checks, evidence, state))

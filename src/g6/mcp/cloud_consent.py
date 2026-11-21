@@ -41,25 +41,33 @@ def _source_function(fn):
         root = capture is not None and capture.expected_tool is identity and not _INSIDE.get()
         token = _INSIDE.set(True)
         try:
-            arguments = inspect.signature(fn).bind(*args, **kwargs).arguments
-            arguments = {k: v for k, v in arguments.items() if k != 'ctx'}
+            bound = inspect.signature(fn).bind(*args, **kwargs)
+            arguments = {k: v for k, v in bound.arguments.items() if k != 'ctx'}
+            # Only supplied arguments cross this ingress. Defaults and any prose
+            # the handler constructs keep G6 ownership.
+            from g6.core.external_data import caller_echo
+            for name in tuple(bound.arguments):
+                if name != 'ctx':
+                    bound.arguments[name] = caller_echo(bound.arguments[name])
             declared = declaration.sources(arguments) if declaration is not None else ()
             with policy.request_sources(declared):
-                value = fn(*args, **kwargs) if inspect.iscoroutinefunction(fn) else await anyio.to_thread.run_sync(
-                    partial(fn, *args, **kwargs))
+                value = fn(*bound.args, **bound.kwargs) if inspect.iscoroutinefunction(fn) else await anyio.to_thread.run_sync(
+                    partial(fn, *bound.args, **bound.kwargs))
                 if inspect.isawaitable(value):
                     value = await value
             if root:
                 from g6.core.ledger import digest
                 try:
-                    body, refs, metadata = policy.freeze_output(value)
-                    value = json.loads(body)
+                    from g6.core.external_data import detached
+                    value, refs, metadata = detached(value)
                     # A refused reply gains its repair block (g6.mcp.repair: G6's own words, codes and templates)
                     # on the frozen snapshot, so the sources it carries are exactly the snapshot's.
                     repaired = _repaired(fn.__name__, arguments, value, capture)
-                    if repaired is not value:
-                        value = repaired
-                        body = json.dumps(value, separators=(',', ':'), allow_nan=False)
+                    from g6.core.agent_guidance import reply_for_agent
+                    value = reply_for_agent(repaired)
+                    # Keep all original source refs. Filtering gives no source a
+                    # grant, and the ticket must bind the filtered bytes.
+                    body = json.dumps(value, separators=(',', ':'), allow_nan=False)
                     content_hash = digest(value)
                 except (TypeError, ValueError, RecursionError, MemoryError):
                     # Unsupported serialization cannot establish source authority.
@@ -105,14 +113,15 @@ def input_refusal(tool: str, fields, *, arguments=None, session=None) -> dict:
 
     Only published field names and G6's program text are returned; no argument value is read back.
     """
-    from g6.core.door import blocked_reply
+    from g6.core.guidance_builders import blocked_reply
     from g6.mcp.repair import observe
 
     reply = blocked_reply('[G6_E_INPUT_VALIDATION] Undeclared tool argument; use only the declared arguments.')
     reply = observe(tool, arguments, reply, session)
     if reply.get('repair') is not None and reply['repair']['by'] == 'agent':
         reply['repair']['fill'] = sorted(fields)
-    return reply
+    from g6.core.agent_guidance import reply_for_agent
+    return reply_for_agent(reply)
 
 
 def input_error_result(tool: str, fields, *, arguments=None, session=None):
@@ -172,7 +181,8 @@ async def request_grant(ctx: Any, source: str, provider: str, *, description: st
 
 
 def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unknown', sources=(), session=None):
-    from g6.core.door import blocked_reply
+    from g6.core.guidance_builders import blocked_reply
+
     from g6.core.ledger import digest
     result = result if isinstance(result, dict) else {}
     control = dict(metadata or {})
@@ -208,11 +218,9 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
 def protect_reply(ctx: Any, result: dict, sources, *, supplied=(), job=None, record=True) -> dict:
     metadata = {}
     try:
-        body, known, metadata = policy.freeze_output(result)
-        try:
-            result = json.loads(body)
-        except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+        from g6.core.external_data import detached
+        result, known, metadata = detached(result)
+        body = json.dumps(result, separators=(',', ':'), allow_nan=False)
         sources = policy.boundary_sources(sources, carried=known or ())
         payload = policy.sha256(body)
         with policy.admission(client_provider(ctx), sources, payload, supplied=supplied, disclose=record):
@@ -323,8 +331,8 @@ def install(server) -> None:
 
 
 def register(server, context_type):
-    from g6.core.door import blocked_reply
-    from g6.core.reliability_envelope import envelope_fields, warning_card
+    from g6.core.guidance_builders import blocked_reply
+    from g6.core.guidance_builders import envelope_fields, warning_card
     from g6.mcp.consent_controls import public_instructions
 
     def reply(operation):

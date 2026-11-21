@@ -38,7 +38,8 @@ def register(server: Any, context_type: Any, jobs: Any) -> None:
         standing. Show both answers and the model name. A substitute never passes a requirement or becomes evidence.
         """
         from g6._agentic import decode, kernel
-        from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, is_allowed
+        from g6.core.door import SENSITIVE_ENV, allowed_sensitive, is_allowed
+        from g6.core.guidance_builders import blocked_reply
         from g6.mcp.consent_controls import public_instructions
 
         allow = allowed_sensitive()

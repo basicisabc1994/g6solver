@@ -15,7 +15,7 @@ import json
 import secrets
 from typing import Any
 
-from g6.core.sandbox import run_script
+from g6.core.guidance_builders import script_run as run_script
 
 TESTS_FILE = "_g6_tests.py"
 _RUNNER = '''

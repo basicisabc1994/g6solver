@@ -73,7 +73,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import uuid
 from typing import Any
 
@@ -109,29 +108,12 @@ def __getattr__(name: str) -> Any:
 
 
 def _denial_for_agent(reply: dict[str, Any]) -> None:
-    """Remove authority-bearing sentences from every textual copy in a refusal envelope."""
-    from g6.core.agent_guidance import _AUTHORITY
+    """Compatibility entry point; every reply uses the same agent filter."""
+    from g6.core.agent_guidance import reply_for_agent
 
-    setting = re.compile(r"\bG6_(?!E_)[A-Z][A-Z0-9_]*\b|~[/\\]\.g6[/\\]\.env|\ballow_sensitive\b", re.I)
-
-    def clean(value):
-        if isinstance(value, str):
-            kept = []
-            for sentence in re.split(r"(?<=[.!?])\s+", value):
-                if _AUTHORITY.search(sentence) or setting.search(sentence):
-                    # A refusal code remains useful even when its sentence must be withheld.
-                    kept.extend(re.findall(r"\[G6_E_[A-Z0-9_]+\]", sentence))
-                else:
-                    kept.append(sentence)
-            return " ".join(kept)
-        if isinstance(value, dict):
-            for key, child in value.items():
-                value[key] = clean(child)
-        elif isinstance(value, list):
-            value[:] = [clean(child) for child in value]
-        return value
-
-    clean(reply)
+    filtered = reply_for_agent(reply)
+    reply.clear()
+    reply.update(filtered)
 
 
 def describe_reply(component: str, *, allow_sensitive: frozenset[str] | None = None) -> dict[str, Any]:
@@ -145,7 +127,8 @@ def describe_reply(component: str, *, allow_sensitive: frozenset[str] | None = N
     if sensitive:
         allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
         info["sensitive_ops_allowed_here"] = [op for op in sensitive if _allowed(component, op, allow)]
-    return info
+    from g6.core.agent_guidance import reply_for_agent
+    return reply_for_agent(info)
 
 
 @capture_stdout
@@ -156,7 +139,9 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
     ``allow_sensitive`` (by default ``G6_MCP_SENSITIVE``) lists it or its component. A component whose block takes a
     model (``__g6_model__``) is given the one the person configured, built once for the call; with none configured,
     nothing is passed."""
-    from g6.core.door import allowed_sensitive, blocked_reply, invoke_checked, is_allowed as _allowed
+    from g6.core.door import allowed_sensitive, is_allowed as _allowed
+    from g6.core.guidance_builders import blocked_reply, invoke_checked
+    from g6.core.agent_guidance import reply_for_agent
 
     request_id = uuid.uuid4().hex[:12]
     try:
@@ -165,24 +150,22 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
         except (RecursionError, MemoryError):
             raise ValueError("a JSON record exceeds decoder limits") from None
     except json.JSONDecodeError as exc:
-        return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id)
+        return reply_for_agent(blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id))
     if not isinstance(params, dict):
-        return blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id)
+        return reply_for_agent(blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id))
     allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
-    from g6.core.consent_registry import GuardedRegistry
     from g6.core.registry import ComponentRegistry, get_registry
     target = registry if registry is not None else get_registry()
-    reply = invoke_checked(component, op, params, allow=allow, registry=GuardedRegistry(target), request_id=request_id,
+    reply = invoke_checked(component, op, params, allow=allow, registry=target, request_id=request_id,
                           how_to_allow="This op is sensitive. The person must allow it themselves. "
                                        "Tell the person and stop.")
-    if str(reply.get("error", "")).startswith(_DENIED):
-        _denial_for_agent(reply)
     if op == "help" and reply.get("ok"):
         from g6.core.agent_guidance import help_for_agent
 
         result = reply.get("result")
         if isinstance(result, dict):
-            result["help"] = help_for_agent(component, result.get("help"))
+            result["help"] = help_for_agent(component, result.get("help"), allow_sensitive=allow)
+    _denial_for_agent(reply)
     # The host's permission refusal runs no component code. Operations, including
     # a component's own "ops" implementation, retain the component source scope.
     if type(target) is ComponentRegistry and component in target.names():
@@ -290,7 +273,7 @@ def build_server(surface: Any = None) -> Any:
         """Run explicit stages with input mappings (caller.field or 0.field). Strict contracts and honest evidence.
         JSON contains stages [{component, op, inputs?, params?}] and inputs {field: value}. No Python code."""
         from g6.mcp.composition import compose_reply
-        from g6.core.door import blocked_reply
+        from g6.core.guidance_builders import blocked_reply
         try:
             try:
                 payload = json.loads(composition_json)
@@ -398,7 +381,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         qualified-draft. A refusal is blocked-escalated with no outcome. Test receipts are kept in a file owned by the
         same user as G6: they stop a caller from claiming that G6 ran a test, not a program running as that user. merge
         is always requires_separate_approval; nothing is merged. This is sensitive; the person must allow it themselves. Tell the person."""
-        from g6.core.door import blocked_reply
+        from g6.core.guidance_builders import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):
             return public_instructions(blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it"))
         from g6.harness.question_store import StoreUnreadable
@@ -443,7 +426,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         repository, task and base commit, and a call for another repository or task is refused. A later call's base is not
         read, so a commit you make does not move it. Needs a boundary (g6 doctor says what this computer needs) and G6_LOOP_CRITIC=codex in the person's key file, which approves their Codex sign-in. The line
         G6_LOOP_MODE=scouts, or no critic and G6_LLM_PROVIDER=claude_code, runs the scouts' loop here instead. This is sensitive; the person must allow it themselves. Tell the person."""
-        from g6.core.door import blocked_reply
+        from g6.core.guidance_builders import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):
             return public_instructions(blocked_reply(f"{_DENIED} g6_review_until_clean runs repository code and tests a model wrote; the host "
                                  "must allow it, with patch_review.review"))
@@ -461,7 +444,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         """Create a data-only Python application workflow: name, task with {input}, cases [{input, expected}],
         baseline_code {main.py: source defining solve(task)}, check (exact/contains/number), tolerance, seed.
         Does not confirm or execute it. Below 30 held-out cases is exploration only."""
-        from g6.core.door import blocked_reply
+        from g6.core.guidance_builders import blocked_reply
         try:
             try:
                 return mh.start(json.loads(specification_json))
@@ -497,7 +480,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     def metaharness_propose_code(workflow: str, files_json: str, hypothesis: str, ctx: Any) -> dict:
         """Propose generated application code as {filename.py: source}, with a falsifiable hypothesis.
         Stores content by digest; does not edit the evaluator or activate the candidate."""
-        from g6.core.door import blocked_reply
+        from g6.core.guidance_builders import blocked_reply
         try:
             files = json.loads(files_json)
             if not isinstance(files, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in files.items()):
@@ -513,7 +496,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         ``metaharness``) in G6_MCP_SENSITIVE (the security review of W1-W5, F2)."""
         if _allowed("metaharness", op, allowed_sensitive()):
             return None
-        from g6.core.door import blocked_reply
+        from g6.core.guidance_builders import blocked_reply
         return public_instructions(blocked_reply(f"{_DENIED} metaharness.{op} runs the workflow's code. "
                              "The person must allow it themselves. Tell the person and stop."))
 

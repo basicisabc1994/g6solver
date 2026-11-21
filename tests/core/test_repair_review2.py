@@ -19,7 +19,7 @@ class Session:
     pass
 
 
-def test_agent_surface_census():
+def test_agent_surface_census(monkeypatch):
     # Removing the safe route restriction or routing authority instructions must fail here.
     data = corpus.load()
     replies = [selector.select(task, "verify", considering=[
@@ -53,9 +53,42 @@ def test_agent_surface_census():
     from g6.mcp import mission, improve
 
     surfaces["mission and improvement denials"] = [mission.refused(), improve.refused()]
+    # A component can return the library door's own refusal, or isolation's
+    # bound text. Route both through the MCP reply path, not a code-specific helper.
+    import g6
+    from g6.core import confine, door
+    from g6.core.guidance_builders import door_reply_fields, confine_record
+
+    library_denial = g6.invoke("lean", "check_proof", {})
+    assert "G6_E_SENSITIVE_COMPONENT_DENIED" in json.dumps(library_denial)
+    isolation_denial = door.blocked_reply(confine.refusal(confine.Plan(None, "synthetic unavailable boundary")))
+    with monkeypatch.context() as patch:
+        patch.setattr(door, "invoke_checked", lambda *a, **k: isolation_denial)
+        surfaces["isolation refusal"] = invoke_reply("synthetic", "check", registry=object())
+        patch.setattr(door, "invoke_checked", lambda *a, **k: {
+            "ok": False, "result": door_reply_fields(library_denial)})
+        surfaces["library-route denial"] = invoke_reply("synthetic", "check", registry=object())
+        for label, facts in {
+            "sysctl": {"program": "/usr/bin/bwrap", "unprivileged_userns_clone": "0"},
+            "apparmor": {"program": "/usr/bin/bwrap", "apparmor_restrict": "1"},
+        }.items():
+            why = confine.bwrap_reason(facts)
+            assert "sudo" in why
+            patch.setattr(confine, "_plan", lambda confinement, python=None: confine.Plan(None, why, confinement))
+
+            def linux_refusal(*args, **kwargs):
+                plan = confine.plan(confine.Confinement(()))
+                refused = door.blocked_reply(confine.refused(plan))
+                refused["evidence"] = [{"isolation": confine_record(plan)}]
+                return refused
+
+            patch.setattr(door, "invoke_checked", linux_refusal)
+            surfaces[f"Linux {label} isolation refusal"] = invoke_reply("synthetic", "check", registry=object())
+            assert "G6_E_ISOLATION_UNAVAILABLE" in json.dumps(surfaces[f"Linux {label} isolation refusal"])
     forbidden = (r"allow\s*=|G6_MCP_SENSITIVE|G6_ALLOW_UNCONFINED|allow_execution|\ballow_sensitive\b|"
                  r"\b(?:confirm|approve|grant|promote)\s*\(|\bapprover\b|autonomous_low_risk|"
-                 r"\bg6\s+setup\b|--allow|allow parameter")
+                 r"\bg6\s+setup\b|--allow|allow parameter|\bicacls\b|/grant\b|\bchmod\b|\bsetfacl\b|"
+                 r"\b(?:sudo|doas|runas|sysctl|apparmor_parser|aa-complain|setenforce)\b|\bsu\s+-|/etc/")
     entries = {e["id"]: e for e in data["entries"] if e["kind"] == "op"}
     assert any(c["kind"] == "library" for r in replies for c in r["candidates"])
     for reply in replies:

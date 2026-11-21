@@ -154,7 +154,8 @@ def code_factory(workflow: Workflow, artifacts: Any, *, timeout_s: float = 30.0,
     from pathlib import Path
 
     from g6.core.confine import IsolationRefused
-    from g6.core.sandbox import isolation_refused, run_script
+    from g6.core.sandbox import isolation_refused
+    from g6.core.guidance_builders import script_run as run_script
 
     root = Path(workflow.code_root)
 
