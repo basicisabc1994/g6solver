@@ -298,6 +298,8 @@ def _given(raw: str, what: str) -> Path:
     raw = _text(raw) if isinstance(raw, str) else ""
     if not raw.strip() or any(ord(ch) < 32 for ch in raw):
         raise CodeRefused(PATH_INVALID, f"give {what}: an absolute path under a declared root")
+    if _elsewhere(raw):     # on its words, before a root is checked again or anything is resolved
+        raise CodeRefused(OUTSIDE_ROOT, f"{what} is a network or device path, not at or under a declared root")
     if raw.startswith("~") or not Path(raw).is_absolute():
         raise CodeRefused(PATH_INVALID, f"{what} is an absolute path (a relative one, or ~, is never resolved against "
                                         "the folder G6 runs in)")

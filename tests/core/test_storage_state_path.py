@@ -638,13 +638,19 @@ def test_an_error_while_deciding_is_refused_in_g6s_words(home: Path, where: str,
     def fails(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
         raise error
 
+    answer = None
     with monkeypatch.context() as patch:
         patch.setattr(*((os, "lstat") if where == "lstat" else (Path, "resolve")), fails)
         try:
-            state_path("churn", "x.json")
+            answer = state_path("churn", "x.json")
         except Exception as raw:  # noqa: BLE001
             caught = raw
         else:
             caught = AssertionError("nothing refused")
+    if os.name != "nt" and where == "lstat" and isinstance(error, OSError):
+        # on Linux and macOS resolving takes an lstat OSError as "not a link" (os.path.realpath, not strict): no error
+        # reaches the caller and the path under the home is the answer; the refusal is Windows' (3d89a26e)
+        assert isinstance(caught, AssertionError) and answer is not None and answer.parts[-2:] == ("churn", "x.json")
+        return
     assert type(caught) is PathRefused, f"state_path let out {type(caught).__name__}: {caught}"
     assert caught.outside is False and "zz-" not in caught.reason and "G6_HOME" in caught.reason, caught.reason

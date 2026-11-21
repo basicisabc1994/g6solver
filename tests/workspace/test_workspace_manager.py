@@ -50,7 +50,9 @@ def _task(home: Path, task_id: str = "t1", files: dict[str, str] | None = None) 
 def _escapes(ws: Workspace, outside: Path, links) -> list[str]:  # noqa: ANN001
     """Paths that would leave ``ws``: by '..', by an absolute path, through a link to a folder outside (when one can be
     made here), and into a device name."""
-    found = ["../escaped.txt", "sub/../../escaped.txt", str(outside / "escaped.txt"), "CON", "\\\\host\\share\\x"]
+    found = ["../escaped.txt", "sub/../../escaped.txt", str(outside / "escaped.txt"), "CON", "//host/share/x"]
+    if os.name == "nt":     # on Linux and macOS a backslash is a name's character: a plain name inside (a04825b3)
+        found.append("\\\\host\\share\\x")
     ws.root.mkdir(parents=True, exist_ok=True)
     if links.folder(ws.root / "door", outside):
         found += ["door/escaped.txt", "door/secret.txt"]

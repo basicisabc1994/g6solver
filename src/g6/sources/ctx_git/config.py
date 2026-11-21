@@ -39,7 +39,7 @@ from urllib.parse import urlsplit
 from g6.code import _roots
 from g6.code._types import CodeRefused
 from g6.core import http
-from g6.core.storage import confined_path, plain_file, state_path
+from g6.core.storage import _elsewhere, confined_path, plain_file, state_path
 from g6.sources.ctx_git import _config_includes, _refusals
 
 CONFIG_ENV = "G6_GIT_CONFIG"
@@ -271,6 +271,8 @@ def repository(raw: str, config: GitConfig, *, file_policy: set[str] | None = No
         raise GitRefused(NOT_A_REPOSITORY, 'config_repository_1')
     if raw.startswith("~") or not Path(raw).is_absolute():
         raise GitRefused(NOT_A_REPOSITORY, 'config_repository_2')
+    if _elsewhere(raw):     # on its words, before the roots are captured or anything is resolved
+        raise GitRefused(OUTSIDE_ROOT, "metadata_outside", metadata="repo")
     try:
         roots = _roots.Roots(config.roots, "the declared git folders")
         roots.refuse_if_empty("checked", raw)

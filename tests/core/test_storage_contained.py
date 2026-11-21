@@ -317,9 +317,17 @@ def test_an_absolute_path_is_allowed_only_inside(root: Path) -> None:
         contained(root, str(root.parent / "outside" / "secret.txt"))
 
 
-@pytest.mark.parametrize("raw", ["\\\\attacker.example\\share\\x.txt", "//attacker.example/share/x.txt",
-                                 "\\\\?\\C:\\Windows\\x.txt", "\\\\.\\PhysicalDrive0", "\\??\\C:\\Windows\\x.txt",
-                                 "/??/C:/Windows/x.txt"])
+#: Forms only Windows reads as network or device paths; on Linux and macOS a backslash is a name's character and /??/
+#: a plain folder (a04825b3), so there only //host/share is one (test_a_network_or_device_form_is_read_as_the_system...).
+_WINDOWS_ONLY = pytest.mark.skipif(os.name != "nt", reason="a network or device form only on Windows (a04825b3)")
+
+
+@pytest.mark.parametrize("raw", [pytest.param("\\\\attacker.example\\share\\x.txt", marks=_WINDOWS_ONLY),
+                                 "//attacker.example/share/x.txt",
+                                 pytest.param("\\\\?\\C:\\Windows\\x.txt", marks=_WINDOWS_ONLY),
+                                 pytest.param("\\\\.\\PhysicalDrive0", marks=_WINDOWS_ONLY),
+                                 pytest.param("\\??\\C:\\Windows\\x.txt", marks=_WINDOWS_ONLY),
+                                 pytest.param("/??/C:/Windows/x.txt", marks=_WINDOWS_ONLY)])
 def test_a_network_or_device_path_is_refused_before_anything_is_resolved(root: Path, raw: str,
                                                                         monkeypatch: pytest.MonkeyPatch) -> None:
     # resolving \\host\share on Windows opens it, which reaches the host over SMB (and offers it a login); \??\ is the
@@ -353,6 +361,20 @@ def test_a_network_or_device_form_is_read_as_the_system_reads_it(raw: str, syste
 @pytest.mark.parametrize("name", ["\\\\name", "\\??\\name"])
 def test_a_posix_name_holding_backslashes_is_a_plain_name(root: Path, name: str) -> None:
     assert contained(root, name) == root.resolve() / name
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX names")
+def test_a_posix_folder_named_with_question_marks_is_outside_by_its_words(root: Path,
+                                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    # on Linux and macOS /??/C:/Windows/x.txt is an absolute path under / like any other: outside, decided on the
+    # words before anything is resolved, and not called a network or device path
+    def never(self: Path, strict: bool = False) -> Path:
+        raise AssertionError("resolved an outside path")
+
+    monkeypatch.setattr(Path, "resolve", never)
+    with pytest.raises(PathRefused, match="outside") as refused:
+        contained(root, "/??/C:/Windows/x.txt")
+    assert refused.value.outside is True and "network or device" not in refused.value.reason
 
 
 @pytest.mark.parametrize("raw", ["", "  ", "a\x00b.txt", "a\nb.txt", "C:secret.txt", "notes.txt:hidden", "CON",
@@ -543,16 +565,23 @@ def test_an_error_while_deciding_is_refused_in_g6s_words(root: Path, where: str,
 
     with monkeypatch.context() as patch:
         patch.setattr(*((os, "lstat") if where == "lstat" else (Path, "resolve")), fails)
+        answer = None
         try:
             if call == "confined_path":
-                storage.confined_path(str(base / "sub" / "x.json"), (base,))
+                answer = storage.confined_path(str(base / "sub" / "x.json"), (base,))
             else:
-                contained(base, "sub/x.json", refuse_links=call == "refuse_links")
+                answer = contained(base, "sub/x.json", refuse_links=call == "refuse_links")
         except PathRefused as refused:
             caught: Exception = refused
         except Exception as raw:  # noqa: BLE001
             caught = raw
         else:
             caught = AssertionError("nothing refused")
+    if os.name != "nt" and where == "lstat" and isinstance(error, OSError) and call != "refuse_links":
+        # on Linux and macOS resolving asks lstat as it goes and takes an OSError as "not a link" (os.path.realpath,
+        # not strict): no error reaches the caller and the path inside is the answer; contained's refusal of a path
+        # the file system errs about is Windows' (its docstring, 3d89a26e)
+        assert answer == base / "sub" / "x.json" and isinstance(caught, AssertionError), (call, caught)
+        return
     assert type(caught) is PathRefused, f"{call} let out {type(caught).__name__}: {caught}"
     assert caught.outside is False and "zz-" not in caught.reason, caught.reason

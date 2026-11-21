@@ -84,17 +84,50 @@ def test_paths_reject_before_resolution(tmp_path, monkeypatch, surface, raw):
     def realpath(path, *args, **kwargs):
         calls.append(str(path))
         return str(path)
+    # the declared root is captured, opened and named by its handle, at its own check (e9fa6918), before any path is
+    # named: on Linux that names /proc/self/fd/N and elsewhere resolves the root, neither of them the path under test
+    roots = _roots.Roots((tmp_path,), "test")
     with monkeypatch.context() as patch:
         patch.setattr(Path, "resolve", resolve)
         patch.setattr(os.path, "realpath", realpath)
         with pytest.raises((CodeRefused, config.GitRefused)):
             if surface in ("existing", "destination"):
-                getattr(_roots, surface)(raw, _roots.Roots((tmp_path,), "test"))
+                getattr(_roots, surface)(raw, roots)
             else:
                 fn = config.repository if surface == "repository" else config.destination
                 fn(raw, config.GitConfig((tmp_path,), (), "test"))
     assert calls == []
     # Removing storage.confined_path's lexical checks permits resolution before refusal.
+
+
+@pytest.mark.parametrize("surface", ["existing", "destination", "repository"])
+def test_a_network_path_is_refused_before_the_roots_are_checked_again(tmp_path, monkeypatch, surface):
+    # Linux names an opened root by resolving /proc/self/fd/N (code/_roots._final_path), so a root check made before
+    # the network form is refused resolves first; stood in here on every system by a _final_path that resolves
+    import os
+    from pathlib import Path
+    from g6.code import _roots
+    from g6.code._types import CodeRefused
+    from g6.sources.ctx_git import config
+
+    roots = _roots.Roots((tmp_path,), "test")
+    calls = []
+    real = _roots._final_path
+
+    def linux_like(fd):
+        calls.append(os.path.realpath(f"descriptor-{fd}"))
+        return real(fd)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_roots, "_final_path", linux_like)
+        patch.setattr(Path, "resolve", lambda path, *a, **k: calls.append(str(path)) or path)
+        with pytest.raises((CodeRefused, config.GitRefused)) as refused:
+            if surface == "repository":
+                config.repository("//203.0.113.5/s/x", config.GitConfig((tmp_path,), (), "test"))
+            else:
+                getattr(_roots, surface)("//203.0.113.5/s/x", roots)
+    assert calls == []
+    assert "OUTSIDE_ROOT" in str(refused.value)
 
 
 def design(op, **params):

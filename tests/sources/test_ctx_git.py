@@ -212,7 +212,9 @@ def test_p1_git02_a_link_out_of_a_root_is_refused(home: Path, block: CtxGitBlock
         link.symlink_to(elsewhere, target_is_directory=True)
     except OSError as exc:
         pytest.skip(f"this platform does not let the test make a symbolic link: {exc}")
-    assert call(block, "status", repo=str(link))["code"] == cfg.OUTSIDE_ROOT
+    # refused as it is walked, without following the link: a linked component does not establish where its target
+    # is, so the refusal is PATH_INVALID, not OUTSIDE_ROOT (65eb0260, code/_roots.path_info)
+    assert call(block, "status", repo=str(link))["code"] == cfg.PATH_INVALID
 
 
 def test_p1_git02_a_git_folder_outside_the_root_is_refused(home: Path, block: CtxGitBlock) -> None:
