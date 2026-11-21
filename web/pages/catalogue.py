@@ -91,7 +91,7 @@ PLAIN: dict[str, tuple[str, str, str]] = {
                  "every gap named",
                  "work called verified when the evidence does not support it"),
     "formal": ("The logic checker",
-               "Settles small logic questions exactly with a solver, and labels each answer for what it is",
+               "Settles small logic questions exactly with a solver and reports the solver operation's own answer labels",
                "reasoning slips a model would state with confidence"),
     "goal_engine": ("Goal plans",
                     "Holds the subtasks you declare as a tree and checks them against what your executor reports",

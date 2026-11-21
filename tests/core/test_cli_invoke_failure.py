@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import asyncio
 import sys
-import subprocess
 import threading
 import warnings
 
@@ -192,26 +191,8 @@ def test_unwritable_stdout_has_only_g6_stderr(monkeypatch, capsys, registry_rese
     assert "private" not in out.err and "Traceback" not in out.err
 
 
-@pytest.mark.parametrize("json_mode", [False, True])
-def test_stdout_flush_failure_stays_masked_at_interpreter_shutdown(json_mode):
-    script = '''
-import sys
-from g6.cli import main
-class Output:
-    def write(self, text):
-        pass
-    def flush(self):
-        raise OSError("private flush detail")
-sys.stdout = Output()
-raise SystemExit(main(sys.argv[1:]))
-'''
-    result = subprocess.run([sys.executable, "-X", "utf8", "-c", script,
-                             "invoke", "algebra", "ops", "{}", *(["--json"] if json_mode else [])],
-                            capture_output=True, text=True, timeout=30)
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert "G6_E_INVOKE_FAILED" in result.stderr and "private" not in result.stderr
-    assert len(result.stderr.splitlines()) == 1
+# A flush failure at interpreter shutdown is the process's: tests/core/test_cli_entrypoint_process.py checks it through
+# the console entry point, which owns the process (an in-process main() owns only its call).
 
 
 @pytest.mark.parametrize("json_mode", [False, True])

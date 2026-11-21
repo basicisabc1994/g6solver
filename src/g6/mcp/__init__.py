@@ -77,13 +77,35 @@ import re
 import uuid
 from typing import Any
 
-# The server's own setting, the sensitive components or ops (``component.op``) the person allows: the same setting,
-# read the same way, as ``g6 invoke`` and ``g6.invoke`` (``g6.core.door``).
-from g6.core.door import SENSITIVE_ENV as SENSITIVE_ENV, allowed_sensitive
-from g6.mcp.consent_controls import public_instructions
-from g6.core.door import is_allowed as _allowed
+from g6.mcp._stdio import capture_stdout
 
 _DENIED = "[G6_E_SENSITIVE_COMPONENT_DENIED]"
+
+# Keep the public surface from before the door/consent imports became lazy.
+__all__ = [
+    "annotations", "asyncio", "json", "os", "uuid", "Any", "capture_stdout",
+    "SENSITIVE_ENV", "allowed_sensitive", "public_instructions",
+    "describe_reply", "invoke_reply", "QUIET", "build_server", "main",
+]
+_LAZY_NAMES = ("SENSITIVE_ENV", "allowed_sensitive", "_allowed", "public_instructions")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_NAMES))
+
+
+def __getattr__(name: str) -> Any:
+    # Preserve existing exports without importing Pydantic before the owned
+    # server entry can install its warning policy. Library imports set no policy.
+    if name in ("SENSITIVE_ENV", "allowed_sensitive", "_allowed"):
+        from g6.core import door
+
+        return getattr(door, "is_allowed" if name == "_allowed" else name)
+    if name == "public_instructions":
+        from g6.mcp.consent_controls import public_instructions
+
+        return public_instructions
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _denial_for_agent(reply: dict[str, Any]) -> None:
@@ -116,6 +138,7 @@ def describe_reply(component: str, *, allow_sensitive: frozenset[str] | None = N
     """The ``g6_describe`` reply: the component's description and, where it has sensitive ops, which of them this
     server allows."""
     from g6.core import discovery
+    from g6.core.door import allowed_sensitive, is_allowed as _allowed
 
     info = discovery.describe(component)
     sensitive = info.get("sensitive_ops") or []
@@ -125,6 +148,7 @@ def describe_reply(component: str, *, allow_sensitive: frozenset[str] | None = N
     return info
 
 
+@capture_stdout
 def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: Any = None,
                  allow_sensitive: frozenset[str] | None = None) -> dict[str, Any]:
     """The ``g6_invoke`` reply: the component's answer (or why there is none) inside the library envelope, through the
@@ -132,7 +156,7 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
     ``allow_sensitive`` (by default ``G6_MCP_SENSITIVE``) lists it or its component. A component whose block takes a
     model (``__g6_model__``) is given the one the person configured, built once for the call; with none configured,
     nothing is passed."""
-    from g6.core.door import blocked_reply, invoke_checked
+    from g6.core.door import allowed_sensitive, blocked_reply, invoke_checked, is_allowed as _allowed
 
     request_id = uuid.uuid4().hex[:12]
     try:
@@ -199,6 +223,7 @@ def build_server(surface: Any = None) -> Any:
         raise SystemExit("g6-mcp needs the MCP extra: pip install 'g6[mcp] @ git+https://github.com/basicisabc1994/g6solver'") from exc
 
     from g6.core import discovery
+    from g6.core.door import allowed_sensitive
     from g6.mcp.instructions import TEXT
 
     server = FastMCP("g6", instructions=TEXT)     # when to call G6, before any skill is read
@@ -286,6 +311,8 @@ def build_server(surface: Any = None) -> Any:
 def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     """The meta-harness tools (META_HARNESS_PLAN.md Phase 6): additive, the Python API's envelopes as JSON. Approval
     and rollback ask the person through the client (MCP elicitation); the agent never supplies the approver."""
+    from g6.core.door import allowed_sensitive, is_allowed as _allowed
+    from g6.mcp.consent_controls import public_instructions
     from g6.metaharness.surface import Surface
 
     mh = surface or Surface()
@@ -786,4 +813,6 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
 
 
 def main() -> None:
-    build_server().run()
+    from g6.mcp._stdio import run_stdio
+
+    run_stdio(build_server)
