@@ -191,6 +191,8 @@ _TREE = re.compile(r"/opt/we/(?:hidden\d*_)?tree\.json")
 _PROBES = re.compile(r"/opt/we/(?:probes|hidden\d*)")
 #: Where ``verification_search`` places a check in its copy: left out of a case's name, as it says nothing of the case.
 _PLACE = re.compile(r"^.*?g6_check_[0-9a-f]{12}/")
+#: The record kinds (``repo_tests._Counted.record``) of a failure that is an assertion: the real types only.
+_ASSERTION_KINDS = ("AssertionError", "Failed")
 #: A scout's session: what it is asked, where it starts, the one folder it may write to, and its time.
 Host = Callable[[str, Path, Path, float], str]
 _SOURCE_STATE: contextvars.ContextVar[cloud.Capture | None] = contextvars.ContextVar('g6_completion_sources', default=None)
@@ -542,10 +544,13 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
             results.update({_PLACE.sub("", node): "unknown" for node in report.collection_errors})
         texts.update({_PLACE.sub("", full(named)): text for named, text in (ran.get("failure_messages") or {}).items()})
         for named, found in (ran.get("failure_records") or {}).items():
-            # the record of the phase that failed first (a valid report holds records on failed phases only)
+            # A valid report holds one record per failed phase. The case is an assertion only when every failed
+            # phase's record is one: a crash in any phase (a teardown's beside a call's assertion) is the case's kind,
+            # never hidden by the phase that failed first.
             failed = [when for when in ("setup", "call", "teardown")
                       if report.phases.get(full(named), {}).get(when) == "failed"] + ["collect"]
-            kind = next((record["kind"] for when in failed for record in found if record["when"] == when), None)
+            found_kinds = [record["kind"] for when in failed for record in found if record["when"] == when]
+            kind = next((k for k in found_kinds if k not in _ASSERTION_KINDS), found_kinds[0] if found_kinds else None)
             if kind is not None:
                 kinds[_PLACE.sub("", full(named))] = kind
     return cloud.bind_output(ProbeRun(code, results, texts, "\n".join(tail), boundary, kinds),
@@ -586,7 +591,7 @@ def _gate(tree: Path, got: ProbeRun) -> list[str]:
     # A failed case is an assertion by its typed kind (``failure_records``); a report that carries none (a record made
     # before the bootstrap kept kinds) is read by its message's start, as before.
     crashed = sum(v == "error" or (v == "failed" and not (
-        got.kinds[k] in ("AssertionError", "Failed") if k in got.kinds
+        got.kinds[k] in _ASSERTION_KINDS if k in got.kinds
         else re.match(r"assert|AssertionError|Failed", got.texts.get(k, ""))))
                   for k, v in got.results.items())
     return scout_gate(tree.read_text(encoding="utf-8", errors="replace") if tree.is_file() else "",

@@ -615,6 +615,10 @@ def _records_on_failures(records: object, phases: Mapping[str, PhaseRecord], col
         return True   # absent
     if not REPORT_FIELDS["failure_records"].accepts(records):
         return False  # malformed: the report is unreadable, and no member of it is used as a key
+    # pytest hands one failed report per phase to the hook, so a phase has at most one record: a second one, of
+    # whatever kind, is not the producer's and could hide a crash behind an assertion (review 1 of the follow-up)
+    if any(len(found) != len({record["when"] for record in found}) for found in records.values()):
+        return False
     return all((record["when"] == "collect" and node in collection_failures)
                or (node in phases and phases[node].get(record["when"]) == "failed")
                for node, found in records.items() for record in found)
@@ -2126,12 +2130,17 @@ class _Counted:
         self.session = session
     @staticmethod
     def record(node, report, error):
+        # Every class question here is asked of the object's real type and its real MRO (``issubclass`` on
+        # ``type(...)``), never through ``isinstance``, which an exception's overridable ``__class__`` answers.
+        def real(value, classes):
+            classes = tuple(c for c in (classes if type(classes) is tuple else (classes,)) if isinstance(c, type))
+            return bool(classes) and issubclass(type(value), classes)
         # pytest wraps a test module's import or syntax error in its own CollectError and prints only that cause
         shown = error
-        if isinstance(error, getattr(node, "CollectError", ())):
-            shown = error.__cause__ if isinstance(error.__cause__, (ImportError, SyntaxError)) else None
-        module = shown.name if isinstance(shown, ImportError) and type(shown.name) is str else ""
-        if isinstance(shown, SyntaxError):
+        if real(error, getattr(node, "CollectError", ())):
+            shown = error.__cause__ if real(error.__cause__, (ImportError, SyntaxError)) else None
+        module = shown.name if real(shown, ImportError) and type(shown.name) is str else ""
+        if real(shown, SyntaxError):
             place = shown.filename if type(shown.filename) is str else ""
         else:
             frame = getattr(shown, "__traceback__", None)
@@ -2141,12 +2150,13 @@ class _Counted:
         # The two assertion kinds go by the real type, never the class's name: pytest's own fail exception is read
         # from the running pytest. Any other class that shares one of their names is named in full, so it never
         # reads as an assertion.
+        import builtins
         import pytest
         failed = getattr(getattr(pytest, "fail", None), "Exception", None)
         kind = type(error).__name__
-        if isinstance(error, AssertionError):
+        if real(error, builtins.AssertionError):
             kind = "AssertionError"
-        elif isinstance(failed, type) and isinstance(error, failed):
+        elif real(error, failed):
             kind = "Failed"
         elif kind in ("AssertionError", "Failed"):
             kind = f"{type(error).__module__}.{type(error).__qualname__}"
@@ -2157,9 +2167,10 @@ class _Counted:
             self.records.setdefault(report.nodeid, []).append(self.record(node, report, error))
         while error is not None and id(error) not in seen:
             seen.add(id(error))
-            if isinstance(error, ModuleNotFoundError) and type(error.name) is str:
+            # by the real type, as ``record`` reads it: an overridden ``__class__`` names no missing module
+            if issubclass(type(error), ModuleNotFoundError) and type(error.name) is str:
                 self.missing_modules.add(error.name)
-            if isinstance(error, OSError):
+            if issubclass(type(error), OSError):
                 self.os_errors.add(report.nodeid)
                 break
             error = error.__cause__ or error.__context__

@@ -224,16 +224,25 @@ def members(registrations: Mapping[str, Sequence[str]], ops: Mapping[str, Sequen
     return frozenset(found)
 
 
+def _read(text: str) -> str:
+    """What the naming readers read of a guidance text: its prose, its code blocks, and each inline HTML tag whole. An
+    agent reads the source, not a rendering, so a tag's attributes (``alt``, ``title``, any other) are read as they
+    stand; the prose drops the tags, so they are added here. HTML blocks are not read (``UNREAD`` in ``check``)."""
+    from g6.core.markdown import parse
+
+    doc = parse(text)
+    tags = [child.content for token in doc.tokens if token.type == "inline"
+            for child in token.children or () if child.type == "html_inline"]
+    return "\n".join([doc.prose(), *(b.content for b in doc.code_blocks), *tags])
+
+
 def named(texts: Mapping[str, str]) -> dict[str, frozenset[str]]:
     """What each guidance text names, by surface: a ``g6_*`` or ``metaharness_*`` tool name wherever it stands, such a
     name ending ``_*`` as a prefix (kept with its star), and a ``component.op`` pair written in backticks or as the
     first two arguments of ``g6_invoke(...)``."""
     out: dict[str, frozenset[str]] = {}
-    from g6.core.markdown import parse
-
     for surface, text in texts.items():
-        doc = parse(text)
-        text = doc.prose() + "\n" + "\n".join(b.content for b in doc.code_blocks)
+        text = _read(text)
         names = {name + "*" if star or name.endswith("_") else name for name, star in _TOOL.findall(text)}
         names |= {f"{component}.{op}" for component, op in _PAIR.findall(text) + _INVOKE.findall(text)}
         out[surface] = frozenset(names)
@@ -302,10 +311,7 @@ class Forms:
 def forms(text: str) -> Forms:
     """The one reading of "this text names a tool". The client's form is read first and is not read again as a
     bare name; a name the prefix marks is a prefixed name, in backticks or out of them."""
-    from g6.core.markdown import parse
-
-    doc = parse(text)
-    text = doc.prose() + "\n" + "\n".join(b.content for b in doc.code_blocks)
+    text = _read(text)
     client = frozenset(_CLIENT.findall(text))
     rest = _CLIENT.sub(" ", text)
     return Forms(frozenset(name + "*" if star or name.endswith("_") else name for name, star in _TOOL.findall(rest)),

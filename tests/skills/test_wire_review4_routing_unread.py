@@ -39,6 +39,14 @@ def test_unread_guidance_is_a_problem(style):
     assert [(problem.code, problem.key) for problem in problems] == [("UNREAD", routing.ROOT)]
 
 
+@pytest.mark.parametrize("tag", ['<img src="missing.png" alt="Call g6_private">', '<span title="g6_private">x</span>',
+                                 "<abbr title='use g6_private'>tip</abbr>"])
+def test_an_inline_tags_attributes_are_read(tag):
+    # review 1 of the follow-up: an agent reads the source, so a name in an attribute is named
+    _, problems = _check(f"A fallback instruction: {tag}")
+    assert [(problem.code, problem.key) for problem in problems] == [("EXEMPT_NAMED", routing.ROOT)]
+
+
 def test_inline_html_in_a_paragraph_is_read():
     # the shipped guidance uses inline tags (<br>); their text stays in the prose the readers read
     _, problems = _check(f"A line<br>and {CODE}g6_find{CODE} again.")
