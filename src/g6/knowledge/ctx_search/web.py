@@ -127,19 +127,21 @@ class Searcher(Protocol):
     def search(self, query: str, n: int) -> SearchResult: ...
 
 
-def _result(backend: str, query: str, reply_bytes: bytes, address: str, items: list[tuple[str, str, str, str]],
+def _result(backend: str, query: str, reply_bytes: bytes, address: str, items: list[tuple],
             **fields: Any) -> SearchResult:
-    """The results of one reply: each ``(title, url, snippet, page date)`` as a document sourced to the reply, the
-    page dates (the engine's word about each page) kept apart."""
+    """The results of one reply: each ``(title, url, snippet, page date)``, with what of its markup was not read when
+    one more member says so, as a document sourced to the reply, the page dates (the engine's word about each page)
+    kept apart."""
     source = Source(uri=address, sha256=sha256_hex(reply_bytes), retrieved_at=now(), provenance="fetched")
     documents, dates = [], []
-    for title, url, snippet, page_date in items:
+    for title, url, snippet, page_date, *rest in items:
         text = "\n\n".join(part for part in (title, snippet) if part)
-        if not text.strip() or not url:
-            continue
+        unread = tuple(rest[0]) if rest else ()
+        if not (text.strip() or unread) or not url:
+            continue  # a result whose words could not be read is kept, saying so; one with no words is not a result
         documents.append(Document(text=text, source=source, media_type="application/json",
                                   converted_by=f"g6.knowledge {backend} result", title=title[:2000],
-                                  locator=url[:4096]))
+                                  locator=url[:4096], unread=unread))
         dates.append(page_date[:40])
     outcome = fields.pop("outcome", None) or ("ok" if documents else "empty")
     return SearchResult(backend, query, outcome, documents, page_dates=dates, **fields)
@@ -354,11 +356,16 @@ class BraveSearcher:
                 exc = ValueError("a JSON record exceeds decoder limits")
             return SearchResult(self.name, query, "parse_failed", reason=f"Brave's reply is not its JSON: {exc}",
                                 evidence={"gate": decided})
-        from g6.knowledge._html import html_to_text
+        from g6.knowledge._html import read_html
 
-        items = [(_plain(html_to_text(r["title"])[1], 500), _web_address(r["url"]),
-                  _plain(html_to_text(r.get("description") or "")[1]), _plain(r.get("page_age"), 40))
-                 for r in raw[:n]]
+        # Markup the parser cannot read never raises: a title or snippet keeps the text before it, and its document
+        # says what was not read (``read_html``'s unread).
+        items = []
+        for r in raw[:n]:
+            _, title, title_unread = read_html(r["title"])
+            _, snippet, snippet_unread = read_html(r.get("description") or "")
+            items.append((_plain(title, 500), _web_address(r["url"]), _plain(snippet), _plain(r.get("page_age"), 40),
+                          title_unread + snippet_unread))
         return _result(self.name, query, reply.body, address, items,
                        evidence={"gate": decided, "spent": "one Brave Search request; its cost is on your Brave "
                                                            "account, not known to G6"})

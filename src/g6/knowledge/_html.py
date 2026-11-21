@@ -255,10 +255,18 @@ class _Reader(HTMLParser):
 
 def read_html(html: str) -> tuple[str, str, tuple[str, ...]]:
     """``(title, text, unread)`` of a page: the text a reader sees, and what was dropped that a reader might have seen
-    (hidden text, and text nested too deep), as the module docstring describes."""
+    (hidden text, and text nested too deep), as the module docstring describes. Markup the standard library's parser
+    refuses (a bogus marked section, ``<![x]>``) ends the reading there: the text before it is kept, and the rest is
+    returned as unread, never raised."""
     reader = _Reader()
-    reader.feed(html)
-    reader.close()
+    stopped = ()
+    try:
+        reader.feed(html)
+        reader.close()
+    except (AssertionError, ValueError) as exc:  # the stdlib parser's refusals of malformed markup
+        line, column = reader.getpos()
+        stopped = (f"markup the parser could not read, from line {line}, column {column + 1} on ({str(exc)[:200]}); "
+                   "the rest was not read",)
     reader.flush()
     paragraphs = []
     for pre, block in reader.blocks:
@@ -268,7 +276,7 @@ def read_html(html: str) -> tuple[str, str, tuple[str, ...]]:
             text = "\n".join(line.strip(" ") for line in block.split("\n") if line.strip(" "))
         if text.strip():
             paragraphs.append(text)
-    return _SPACES.sub(" ", "".join(reader.title)).strip(), "\n\n".join(paragraphs), reader.unread()
+    return _SPACES.sub(" ", "".join(reader.title)).strip(), "\n\n".join(paragraphs), reader.unread() + stopped
 
 
 def html_to_text(html: str) -> tuple[str, str]:

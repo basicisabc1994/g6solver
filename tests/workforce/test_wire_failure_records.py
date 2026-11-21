@@ -126,6 +126,17 @@ def test_each_failed_report_keeps_its_kind(tmp_path, monkeypatch):
     assert report.valid
 
 
+def test_a_crash_named_like_an_assertion_keeps_its_own_kind(tmp_path, monkeypatch):
+    """Review 4, finding 2: the kind goes by the real type, so a crash class that borrows an assertion's name stays
+    a crash in a real session."""
+    files = {"test_named.py": "class AssertionError(RuntimeError):\n    pass\n\n\nclass Failed(RuntimeError):\n"
+                              "    pass\n\n\ndef test_named_assertion():\n    raise AssertionError('crash')\n\n\n"
+                              "def test_named_failed():\n    raise Failed('crash')\n"}
+    _, counted, _ = _run(tmp_path, monkeypatch, files)
+    kinds = {node.rsplit("::", 1)[1]: [r["kind"] for r in got] for node, got in _records(counted).items()}
+    assert kinds == {"test_named_assertion": ["test_named.AssertionError"], "test_named_failed": ["test_named.Failed"]}
+
+
 def test_the_record_names_the_module_and_the_file(tmp_path, monkeypatch):
     files = {"calc_rec.py": "def add(:\n", "test_rec_syntax.py": "import calc_rec\n\n\ndef test_x():\n    pass\n",
              "test_rec_import.py": "import g6_absent_dependency_three\n\n\ndef test_x():\n    pass\n"}

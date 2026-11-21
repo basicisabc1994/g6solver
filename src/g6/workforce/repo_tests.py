@@ -605,15 +605,17 @@ class RunReport:
         return found
 
 
-def _records_on_failures(records: object, phases: Mapping[str, PhaseRecord]) -> bool:
+def _records_on_failures(records: object, phases: Mapping[str, PhaseRecord], collection_failures: set[str]) -> bool:
     """Whether every typed failure record (``failure_records``) stands on a failure: a test's on a phase its outcomes
-    record as failed, a collection error's (``collect``) on a node that ran no phase. A record on a phase that passed
-    (or a phase never recorded) makes the whole report unknown, never a reading of that test (review 1, finding 2)."""
+    record as failed, a collection error's (``collect``) on a collection failure the report lists (a failure message
+    for a node that ran no phase). A record on a phase that passed (or a phase never recorded), or a collection error's
+    with no such failure, makes the whole report unknown, never a reading of that test (review 1, finding 2; review 4,
+    finding 1: a collection error the report does not list as one would leave a "passed" standing)."""
     if records is None:
         return True   # absent
     if not REPORT_FIELDS["failure_records"].accepts(records):
         return False  # malformed: the report is unreadable, and no member of it is used as a key
-    return all((record["when"] == "collect" and node not in phases)
+    return all((record["when"] == "collect" and node in collection_failures)
                or (node in phases and phases[node].get(record["when"]) == "failed")
                for node, found in records.items() for record in found)
 
@@ -658,8 +660,7 @@ def read_report(raw: object) -> RunReport:
                   and all(phases[node].get("setup") == "failed" for node in setup if node in phases)
                   and setup <= set(phases)
                   and all(len(ids) == len(set(ids)) for ids in listings.values())
-                  and all(record.valid for record in phases.values())
-                  and _records_on_failures(value.get("failure_records"), phases))
+                  and all(record.valid for record in phases.values()))
     verdict = value.get("verdict") if type(value.get("verdict")) is str else ""
     consistent &= verdict in REPORT_VERDICTS
     # Loading telemetry is one fact, never two independently optional claims.
@@ -691,6 +692,7 @@ def read_report(raw: object) -> RunReport:
             consistent &= type(value[name]) is int and value[name] == count
     messages = set(value.get("failure_messages", {})) | set(value.get("messages", {})) if typed else set()
     collection_failures = messages - set(phases)
+    consistent &= _records_on_failures(value.get("failure_records"), phases, collection_failures)
     consistent &= not (collection_failures & collected) and not ((messages & set(phases)) - phase_failures)
     consistent &= not any(parent == "" or report_covers(parent, node)
                           for parent in collection_failures for node in collected)
@@ -2136,9 +2138,19 @@ class _Counted:
             while frame is not None and frame.tb_next is not None:
                 frame = frame.tb_next
             place = frame.tb_frame.f_code.co_filename if frame is not None else ""
-        return {"when": str(getattr(report, "when", "")),
-                "kind": "AssertionError" if isinstance(error, AssertionError) else type(error).__name__,
-                "module": module, "file": place}
+        # The two assertion kinds go by the real type, never the class's name: pytest's own fail exception is read
+        # from the running pytest. Any other class that shares one of their names is named in full, so it never
+        # reads as an assertion.
+        import pytest
+        failed = getattr(getattr(pytest, "fail", None), "Exception", None)
+        kind = type(error).__name__
+        if isinstance(error, AssertionError):
+            kind = "AssertionError"
+        elif isinstance(failed, type) and isinstance(error, failed):
+            kind = "Failed"
+        elif kind in ("AssertionError", "Failed"):
+            kind = f"{type(error).__module__}.{type(error).__qualname__}"
+        return {"when": str(getattr(report, "when", "")), "kind": kind, "module": module, "file": place}
     def pytest_exception_interact(self, node, call, report):
         error, seen = getattr(getattr(call, "excinfo", None), "value", None), set()
         if error is not None and getattr(report, "failed", False):

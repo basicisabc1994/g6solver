@@ -44,7 +44,7 @@ MIN_EXEMPTION = 20
 ABSENT_TOOL_RULE = ("A tool named here that your server does not list is absent: say so, use `g6_find`, and do not "
                     "call it again.")
 CODES = ("MISSING", "UNKNOWN", "UNROUTED", "ANCHOR", "LINK", "NOT_NAMED", "STALE", "EXEMPT_NAMED", "SINCE", "WORDS",
-         "SERVER", "ABSENT_RULE", "UNSELECTABLE")
+         "SERVER", "ABSENT_RULE", "UNSELECTABLE", "UNREAD")
 #: What ``selectable`` says of a member the selector's corpus offers with text (``g6.skills.corpus.selectable``).
 IN_CORPUS = "corpus"
 
@@ -355,7 +355,9 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
     code; ``WORDS`` a root skill over its cap; ``SERVER`` a server the recorder does not know, or a known one that
     was not recorded; ``ABSENT_RULE`` a root skill without the rule for a tool the person's server does not list;
     ``UNSELECTABLE`` an agent-facing member the selector's corpus neither offers with text nor exempts with a reason of
-    at least ``MIN_EXEMPTION`` characters (counted as routed, it would guide no agent to it).
+    at least ``MIN_EXEMPTION`` characters (counted as routed, it would guide no agent to it); ``UNREAD`` a guidance text
+    with content its readers (``named``, ``forms``) do not read, an HTML block or a part past the Markdown reader's
+    nesting limit (``truncated``): what it says there is unknown, never "names nothing".
     """
     problems: list[Problem] = []
 
@@ -442,6 +444,15 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
             if tool in names or tool in forms(detail_text[surface]).bare:
                 add("EXEMPT_NAMED", surface, f"it names {tool}, which the manifest exempts from agent use")
 
+    # Both readers skip HTML blocks and drop what lies past the nesting limit: such a text is not read, so it is a
+    # problem in its own right rather than a text that names nothing (review 4, finding 3).
+    from g6.core.markdown import parse
+
+    for surface, text in sorted(detail_text.items()):
+        doc = parse(text)
+        if doc.truncated or any(token.type == "html_block" for token in doc.tokens):
+            add("UNREAD", surface, "it holds an HTML block or content nested past the Markdown reader's limit, which "
+                                   "the routing readers do not read; write it as Markdown")
     # The client's form names a server and a tool wherever it stands: both exist, or it is stale.
     for surface, text in sorted(detail_text.items()):
         for server, tool in sorted(forms(text).client):
