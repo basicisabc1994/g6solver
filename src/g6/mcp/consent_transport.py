@@ -15,10 +15,11 @@ import weakref
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from types import MethodType
-from typing import Callable
+from typing import Any, Callable
 
 import anyio
 from mcp import types
+from pydantic import PrivateAttr
 from mcp.shared.message import SessionMessage
 
 from g6.core import cloud_consent as policy
@@ -80,20 +81,19 @@ class _Line(str):
         return joined
 
 
-#: The witness expecting each token still waiting, so the writer's serialising of a message can mark it taken.
-_OWNERS: dict[int, Witness] = {}
-
-
 class Tokened(types.JSONRPCMessage):
     """The message G6 sends (``_Stream.send``): serialised, its text carries its own token (``id`` of this object),
     so the writer that writes it is paired with this send alone, never with another whose text is the same. The SDK
     writer serialises a message as soon as it takes it from the stream, before writing it, so serialising also marks
-    the token taken: from then on only that write's outcome fires or discards its callback."""
+    the token taken with the witness expecting it: from then on only that write's outcome fires or discards its
+    callback. The message knows that witness only weakly (``_witness``), so it never keeps a connection alive."""
+
+    _witness: Any = PrivateAttr(default=None)
 
     def model_dump_json(self, **kwargs):
         text = _Line(super().model_dump_json(**kwargs))
         text.token = id(self)
-        owner = _OWNERS.get(text.token)
+        owner = self._witness() if self._witness is not None else None
         if owner is not None:
             owner.take(text.token)
         return text
@@ -105,12 +105,13 @@ def token(message: SessionMessage) -> int:
 
 
 class Witness:
-    """A writer G6 owns, seeing each message written. ``expect`` files a send's own callback under its own token;
-    ``written(token)`` (the writer, once that send's whole line was written and flushed, or the in-process client
-    once it took that send) fires it, once; ``discard(token)`` (a short, failed or cancelled write) removes it
-    without firing. Two sends never share a token, so identical lines never borrow each other's callback. ``take``
-    (the writer took the message) leaves the decision to that write: ``untaken_discard`` (a send cancelled or failed
-    on the sender's side) then keeps the callback, and discards only one the stream never took."""
+    """The writer of one connection, which G6 owns, seeing each message written. ``expect`` files a send's own callback
+    under its own token; ``written(token)`` (the writer, once that send's whole line was written and flushed, or the
+    in-process client once it took that send) fires it, once; ``discard(token)`` (a short, failed or cancelled write)
+    removes it without firing. Two sends never share a token, so identical lines never borrow each other's callback.
+    ``take`` (the writer took the message) leaves the decision to that write: ``untaken_discard`` (a send cancelled or
+    failed on the sender's side) then keeps the callback, and discards only one the stream never took. ``close``
+    (the connection ended) discards every callback and mark still held, firing none: nothing outlives the connection."""
 
     def __init__(self) -> None:
         self._expected: dict[int, tuple[object, Callable[[], None]]] = {}
@@ -119,7 +120,8 @@ class Witness:
     def expect(self, message: SessionMessage, callback: Callable[[], None]) -> int:
         key = token(message)
         self._expected[key] = (message.message, callback)     # the message held, so its identity is not reused
-        _OWNERS[key] = self
+        if isinstance(message.message, Tokened):
+            message.message._witness = weakref.ref(self)
         return key
 
     def take(self, key: int) -> None:
@@ -130,25 +132,26 @@ class Witness:
         if key not in self._taken:
             self.discard(key)
 
-    def _drop(self, key: int | None):
-        self._taken.discard(key)
-        if _OWNERS.get(key) is self:
-            del _OWNERS[key]
-        return self._expected.pop(key, None)
-
     def discard(self, key: int | None) -> None:
-        self._drop(key)
+        self._taken.discard(key)
+        self._expected.pop(key, None)
 
     def written(self, key: int | None) -> None:
-        held = self._drop(key)
+        self._taken.discard(key)
+        held = self._expected.pop(key, None)
         if held is not None:
             try:
                 held[1]()
             except Exception:  # noqa: BLE001 - recording never fails a write already made
                 pass
 
+    def close(self) -> None:
+        self._expected.clear()
+        self._taken.clear()
 
-#: The send streams whose writer G6 sees (``g6.mcp.stdio.stdio_server``, ``G6MemoryTransport``), each with its witness.
+
+#: The send streams whose writer G6 sees (``g6.mcp.stdio.stdio_server``, ``G6MemoryTransport``), each with its
+#: connection's witness; weakly, and each entry is removed when its connection ends (``unwitness``).
 _WITNESSES: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
@@ -156,6 +159,13 @@ def witness(stream) -> Witness:
     """The witness of ``stream``, a send stream whose every message G6's own writer sees written."""
     _WITNESSES[stream] = seen = Witness()
     return seen
+
+
+def unwitness(stream) -> None:
+    """The connection of ``stream`` ended: its witness discards every callback still held, firing none."""
+    seen = _WITNESSES.pop(stream, None)
+    if seen is not None:
+        seen.close()
 
 
 class _Taking:
@@ -219,6 +229,7 @@ def _memory_transport():
                         raised = exc
                     finally:
                         tg.cancel_scope.cancel()
+                unwitness(server_write)        # the connection ended: a reply it never read is never counted
                 if raised is not None:
                     raise raised
     return G6MemoryTransport

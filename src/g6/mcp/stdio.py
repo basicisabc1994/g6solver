@@ -15,7 +15,7 @@ from io import TextIOWrapper
 
 import anyio
 
-from g6.mcp.consent_transport import witness
+from g6.mcp.consent_transport import unwitness, witness
 
 
 class WrittenStdout:
@@ -65,7 +65,10 @@ async def stdio_server(stdin=None, stdout=None):
     out = WrittenStdout(stdout, None)
     async with sdk_stdio_server(stdin=stdin, stdout=out) as (read_stream, write_stream):
         out.seen = witness(write_stream)
-        yield read_stream, write_stream
+        try:
+            yield read_stream, write_stream
+        finally:
+            unwitness(write_stream)        # the connection ended: a reply never written is never counted
 
 
 async def serve(server) -> None:
