@@ -391,7 +391,10 @@ def _json_copy(value: Any) -> Any:
     text = _child.canonical(value)
     if len(text) > JSON_CHARS:
         raise ValueError("JSON character limit")
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def _plain_budget(value: Any) -> Budget:

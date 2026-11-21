@@ -324,7 +324,7 @@ def _read(outcome: str) -> dict[str, str]:
     text = (outcome or "").strip()
     try:
         value = json.loads(text) if text.startswith("{") else None
-    except (ValueError, RecursionError):
+    except (ValueError, RecursionError, MemoryError):
         value = None
     lead = ""
     if isinstance(value, dict):
@@ -593,7 +593,7 @@ def _items(considering: Any) -> list[Any]:
     if text.startswith(("[", "{")):
         try:
             parsed = json.loads(text)
-        except (RecursionError, ValueError, TypeError):
+        except (RecursionError, MemoryError, ValueError, TypeError):
             raise _Refusal("considering starts as JSON but does not decode") from None
         items = parsed if isinstance(parsed, list) else [parsed]
         if len(items) > MAX_CONSIDERING_ENTRIES:
@@ -625,7 +625,11 @@ def _check_op(entry: dict[str, Any], args: Any) -> tuple[bool, list[str]]:
     unknown = sorted(set(args) - set(entry.get("fields", ())))
     if unknown:
         issues.append(f"{component}.{op}'s typed input takes no field {', '.join(unknown)}")
-    missing = sorted(set(json.loads(entry["call"]["arguments"]["params_json"])) - set(args))
+    try:
+        template = json.loads(entry["call"]["arguments"]["params_json"])
+    except (ValueError, TypeError, RecursionError, MemoryError):
+        return False, [f"{component}.{op}'s template is not JSON G6 can read"]
+    missing = sorted(set(template) - set(args))
     if missing:
         issues.append(f"{component}.{op} needs the field {', '.join(missing)}")
     return not issues, issues
@@ -757,7 +761,7 @@ def _validate(entry: dict[str, Any], call: dict[str, Any]) -> tuple[bool, list[s
             return bool(entry["validated"]), list(entry["issues"])
         try:
             params = json.loads(call["arguments"].get("params_json", "{}"))
-        except (ValueError, RecursionError, TypeError):
+        except (ValueError, RecursionError, MemoryError, TypeError):
             return False, ["params_json is not JSON"]
         return _check_op(entry, params)
     from g6.skills import routing
@@ -791,7 +795,10 @@ def invoke_sketch(steps: list[str], data: dict[str, Any] | None = None) -> str:
         if entry is None or entry["sensitive"] or not entry["validated"] or entry["issues"]:
             return ""
         component, op = step.split(".", 1)
-        params = repr(json.loads(entry["call"]["arguments"]["params_json"]))
+        try:
+            params = repr(json.loads(entry["call"]["arguments"]["params_json"]))
+        except (ValueError, TypeError, RecursionError, MemoryError):
+            return ""
         lines.append(f'step{index} = g6.invoke("{component}", "{op}", {params})')
     return "\n".join(lines)
 

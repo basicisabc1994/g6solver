@@ -716,7 +716,10 @@ def dumps(data: dict[str, Any]) -> str:
 
 @lru_cache(maxsize=1)
 def _loaded(text: str) -> dict[str, Any]:
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def load() -> dict[str, Any]:

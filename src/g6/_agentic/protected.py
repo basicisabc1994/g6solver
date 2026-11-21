@@ -57,7 +57,7 @@ def certificate_bound() -> tuple[frozenset[str], tuple[str, ...]]:
             files.update(record["imported_code"])
             files.update(record["harness_sha256"])
             folders.append(record["component"].replace(".", "/") + "/")
-        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError, MemoryError) as exc:
             raise ValueError(f"the certificate {path.parent.parent.name} cannot be read: {exc}") from exc
     if not files:
         raise ValueError("no certificate was found, so the certificate-bound files are not known")

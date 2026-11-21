@@ -181,7 +181,10 @@ def append(body: Mapping[str, Any]) -> str:
         target = path()
         target.parent.mkdir(parents=True, exist_ok=True)
         _readable(target)
-        return ChainLedger(target).append(KIND, uuid.uuid4().hex, checked)
+        try:
+            return ChainLedger(target).append(KIND, uuid.uuid4().hex, checked)
+        except (RecursionError, MemoryError):    # _readable bounds each line first; the decoder's limits hold anyway
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 __all__ = ["KIND", "Entry", "append", "entry", "path"]

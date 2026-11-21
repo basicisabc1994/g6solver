@@ -338,12 +338,12 @@ def _repair(response: object) -> dict | None:
         if isinstance(text, str) and text.lstrip().startswith("{"):
             try:
                 found.append(json.loads(text))
-            except ValueError:
+            except (ValueError, RecursionError, MemoryError):
                 pass
     if isinstance(response, str) and response.lstrip().startswith("{"):
         try:
             found.append(json.loads(response))
-        except ValueError:
+        except (ValueError, RecursionError, MemoryError):
             pass
     return next((one["repair"] for one in found if isinstance(one, dict) and isinstance(one.get("repair"), dict)),
                 None)

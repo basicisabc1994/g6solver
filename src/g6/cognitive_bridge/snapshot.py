@@ -1028,12 +1028,11 @@ def json_reply(reply: Any, cap: int, preflight: Callable[[Any], None] | None = N
     _admit_reply(reply, cap)
     reply = text(reply, where="a model's reply")
     try:
-        try:
-            parsed = json.loads(reply, object_pairs_hook=_unique)
-        except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+        parsed = json.loads(reply, object_pairs_hook=_unique)
     except RecursionError:
         raise _too_deep("a model's reply") from None
+    except MemoryError:
+        raise ValueError("a JSON record exceeds decoder limits") from None
     if preflight is not None:
         preflight(parsed)
     return plain(parsed, where="a model's reply")

@@ -44,7 +44,10 @@ def dumps(components: dict[str, str]) -> str:
 @lru_cache(maxsize=1)
 def shipped() -> dict[str, str]:
     """The checked-in list of the components G6 ships (read once)."""
-    return dict(json.loads(PATH.read_text(encoding="utf-8"))["components"])
+    try:
+        return dict(json.loads(PATH.read_text(encoding="utf-8"))["components"])
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def built_in(name: str) -> bool:

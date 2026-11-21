@@ -85,7 +85,10 @@ def return_type(function: Callable[..., Any]) -> Any:
 
 
 def _json(value: Any) -> Any:
-    return json.loads(canonical(value))
+    try:
+        return json.loads(canonical(value))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def _component(component: str) -> tuple[Any, str]:
@@ -176,8 +179,8 @@ def serve(request: Mapping[str, Any]) -> dict[str, Any]:
 
 def main() -> int:
     """The confined child's entry: one request on stdin, one JSON line on stdout."""
-    request = json.loads(sys.stdin.read())
     try:
+        request = json.loads(sys.stdin.read())     # a request past the decoder's limits is this child's failure too
         _, package = _component(request["component"])
         if request.get("inside"):
             resolve(request["inside"], package)(request.get("isolation") or {})
