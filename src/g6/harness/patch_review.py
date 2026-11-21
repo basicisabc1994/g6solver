@@ -994,10 +994,14 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
             if not isinstance(before, verification_search.ExecutionSnapshot) and any(
                     one.explanations for one in proposed):
                 # an explanation is read only from a run shown to be on these bytes (the review of wire-diagnose, 3):
-                # bound here, before anything runs; bytes that cannot be bound leave every such reading not_decided
+                # bound here, before anything runs; bytes that cannot be bound (the binding's declared failures, its
+                # caps included) leave every such reading not_decided and the assessment whole, and a stop still stops
+                # (the review of wire-diagnose, 4)
                 try:
                     before = verification_search.bind_execution(change, before, deadline=deadline)
-                except OSError:
+                except LETS_THROUGH:
+                    raise
+                except (OSError, repo_tests.CopyNotRun, repo_tests.RepoRefused):
                     pass
         # Rule 11: only a normative requirement is assessed; the others are listed, and their checks never run.
         listed = [req for req in stated if req.provenance not in NORMATIVE]

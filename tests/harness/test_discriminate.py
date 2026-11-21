@@ -531,3 +531,40 @@ def test_review4_bind_execution_refuses_a_file_whose_digest_differs_from_the_sna
                                                                                     "other.py": "c" * 64})
         bound = verification_search.bind_execution(change, {"calc.py": "a" * 64}, deadline=1e18)
         assert bound.execution["files"] == {"calc.py": "a" * 64, "other.py": "c" * 64}
+
+
+def test_review4_a_binding_cap_leaves_the_readings_not_decided_and_the_assessment_whole(monkeypatch):
+    """Codex review 4 of wire-diagnose, finding 2, its reproducer: the manifest's file cap raises CopyNotRun (a
+    ValueError), which must leave the readings not_decided, never refuse the review."""
+    from g6.workforce import repo_tests
+
+    real_bind = verification_search.bind_execution
+    arguments, _, _, _, _, _ = _restored_race(monkeypatch)
+    monkeypatch.setattr(verification_search, "bind_execution", real_bind)
+    monkeypatch.setattr(repo_tests, "_git", lambda root, *args, **kw: b"AGENTS.md\0" if "-co" in args else b"")
+    monkeypatch.setattr(repo_tests, "_generated_files", lambda *a, **kw: ({}, {}))
+    monkeypatch.setattr(repo_tests, "COPY_MAX_FILES", 0)     # the real manifest's CopyNotRun, at one existing file
+    plain = copy.deepcopy(arguments)
+    del plain["proposed_checks"][0]["explanations"]
+    assert "assessment" in review_patch(**plain)
+    got = review_patch(**arguments)
+    assert "assessment" in got, got
+    reading = got["assessment"]["explanations"][0]
+    assert {e["reading"] for e in reading["explanations"]} == {"not_decided"}
+
+
+@pytest.mark.parametrize("stop", ["interrupted", "containment"])
+def test_review4_a_trusted_stop_while_binding_still_stops_the_review(monkeypatch, stop):
+    """ExecutionInterrupted and ContainmentFailure are OSErrors: the binding's fallback lets them through."""
+    from g6.core import component_process
+
+    arguments, _, _, _, _, _ = _restored_race(monkeypatch)
+    raised = (component_process.ExecutionInterrupted("stop", stopped=True) if stop == "interrupted" else
+              component_process.ContainmentFailure("cleanup unconfirmed"))
+
+    def bind(change, sparse, *, deadline):
+        raise raised
+
+    monkeypatch.setattr(verification_search, "bind_execution", bind)
+    with pytest.raises(type(raised)):
+        review_patch(**arguments)
