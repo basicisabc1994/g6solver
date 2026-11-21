@@ -70,7 +70,12 @@ def test_ops_and_help_answer_over_mcp_inside_the_envelope(op: str) -> None:
     reply = invoke_reply("prolog", op, json.dumps({"request_id": "req-1", "run_id": "run-1"}))
     assert check_envelope(reply) == [] and reply["ok"] is True and reply["completion_state"] == "qualified-draft"
     payload = reply["result"]
-    assert (payload["component"], payload["op"]) == ("prolog", op) and len(payload[op]) == len(SENSITIVE)
+    assert (payload["component"], payload["op"]) == ("prolog", op)
+    if op == "help":   # over MCP, help is the agent's text with each op's params template line (04b191cc)
+        templates = [line.split(":")[0] for line in payload[op].splitlines() if ": params_json template " in line]
+        assert sorted(templates) == sorted(f"prolog.{name}" for name in SENSITIVE)
+    else:
+        assert len(payload[op]) == len(SENSITIVE)
 
 
 def test_help_marks_every_swipl_op_sensitive_and_says_how_to_get_swi_prolog() -> None:

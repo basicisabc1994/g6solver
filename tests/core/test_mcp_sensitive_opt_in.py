@@ -53,8 +53,9 @@ def test_a_refusal_says_only_the_person_running_the_server_can_allow_it() -> Non
     found = invoke_reply("lean", "check_proof", "{}", allow_sensitive=frozenset())
     assert found["ok"] is False and found["completion_state"] == "blocked-escalated"
     assert found["warning_card"]["code"] == "G6_E_SENSITIVE_COMPONENT_DENIED"
-    assert SENSITIVE_ENV in found["error"] and "lean.check_proof" in found["error"]
-    assert "person" in found["error"]
+    # the person decides; the setting that would allow it is not named to the agent (d155c90e, 04b191cc)
+    assert SENSITIVE_ENV not in found["error"] and "lean.check_proof" in found["error"]
+    assert "The person must allow it themselves" in found["error"]
 
 
 def test_an_allowed_op_reaches_its_component() -> None:

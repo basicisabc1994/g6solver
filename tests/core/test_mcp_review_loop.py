@@ -139,7 +139,9 @@ def enveloped(reply: dict) -> None:
 def test_the_tool_is_on_the_surface_and_says_it_is_a_job_a_client_polls(rig):
     tools = asyncio.run(rig.server.get_tools())
     said = " ".join(tools["g6_review_until_clean"].description.split())
-    assert "metaharness_job" in said and "patch_review.review" in said and "G6_LOOP_CRITIC=codex" in said
+    # the permission it needs is the person's to give, unnamed to the agent (d155c90e): no patch_review.review here
+    assert "metaharness_job" in said and "the person must allow it themselves" in said and "G6_LOOP_CRITIC=codex" in said
+    assert "patch_review.review" not in said
     assert "seven training bugs" in said
     assert set(tools["g6_review_until_clean"].parameters["required"]) == {"repo", "task", "session"}
 

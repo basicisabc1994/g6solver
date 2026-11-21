@@ -81,7 +81,12 @@ def test_ops_and_help_answer_over_mcp_inside_the_envelope(op: str) -> None:
     reply = invoke_reply("algebra", op, json.dumps({"request_id": "req-1", "run_id": "run-1"}))
     assert check_envelope(reply) == [] and reply["ok"] is True and reply["completion_state"] == "qualified-draft"
     payload = reply["result"]
-    assert (payload["component"], payload["op"]) == ("algebra", op) and len(payload[op]) == len(CALLS) + 2
+    assert (payload["component"], payload["op"]) == ("algebra", op)
+    if op == "help":   # over MCP, help is the agent's text with each op's params template line (04b191cc)
+        templates = [line.split(":")[0] for line in payload[op].splitlines() if ": params_json template " in line]
+        assert sorted(templates) == sorted(f"algebra.{name}" for name in [*CALLS, *SAGE_CALLS])
+    else:
+        assert len(payload[op]) == len(CALLS) + 2
 
 
 def test_help_marks_the_sage_ops_sensitive_and_says_how_to_get_each_engine() -> None:

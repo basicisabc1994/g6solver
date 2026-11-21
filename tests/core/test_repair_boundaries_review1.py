@@ -40,8 +40,10 @@ def test_undeclared_arguments_send_no_source_and_never_execute_tool(tmp_path, mo
     reply = result.structured_content
     assert reply["completion_state"] == "blocked-escalated"
     assert reply["repair"]["code"] == "G6_E_INPUT_VALIDATION"
-    assert reply["repair"]["fix_by"] == "input" and reply["repair"]["call"]["tool"] == "g6_cloud_grant"
-    assert set(reply["repair"]["fill"]) == {"source", "provider"}
+    # since 3d45b793 any refusal of g6_cloud_grant is the person's, with no call to it: an undeclared argument there
+    # never yields a call that reopens the dialog
+    assert reply["repair"]["fix_by"] == "person" and reply["repair"]["call"] is None
+    assert reply["repair"]["fill"] == []
     assert "synthetic-secret" not in json.dumps(reply)
     assert captures == [()]
     assert not list(home.rglob("*")), "No grant, disclosure, source record or tool state is written"

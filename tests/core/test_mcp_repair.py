@@ -62,7 +62,9 @@ def test_a_fresh_clients_refused_review_is_the_persons(home: Path, tmp_path: Pat
 
 
 def test_a_withheld_reply_carries_the_persons_repair(home: Path) -> None:
-    refused, = _session([("g6_describe", {"component": "grounding"})])
+    # g6_describe is G6's own catalogue, answered to a fresh client (2c8204c4; the catalogue is exempt from grants,
+    # owner ruling 2026-11-16): an op's answer on a component's data is still withheld without a grant
+    refused, = _session([("g6_invoke", {"component": "grounding", "op": "help", "params_json": "{}"})])
     assert refused["cloud_consent_code"] == "G6_E_CLOUD_CONSENT_REQUIRED"
     assert refused["repair"]["by"] == "person" and refused["repair"]["call"]["tool"] == "g6_cloud_grant"
 
@@ -78,7 +80,9 @@ def test_a_sensitive_refusal_is_the_persons_with_the_setup_step(home: Path, decl
     refused, = _session([("g6_invoke", {"component": "lean", "op": "check_proof", "params_json": "{}"})])
     repair = refused["repair"]
     assert repair["code"] == "G6_E_SENSITIVE_COMPONENT_DENIED" and repair["by"] == "person", repair
-    assert repair["call"] is None and "g6 setup --allow lean.check_proof" in repair["step"]
+    # the step says the person decides and names no setup command (04b191cc: none reaches the agent)
+    assert repair["call"] is None and "The person decides whether to allow it themselves" in repair["step"]
+    assert "g6 setup" not in repair["step"] and "--allow" not in repair["step"]
 
 
 def test_retries_are_bounded_and_never_unchanged(home: Path) -> None:
