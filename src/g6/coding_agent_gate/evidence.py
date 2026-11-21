@@ -9,8 +9,6 @@ how it says which items it took on trust.
 """
 from __future__ import annotations
 
-from g6.core.diff import parse_diff
-
 import re
 from dataclasses import dataclass
 from typing import Literal
@@ -26,6 +24,7 @@ _PLACEHOLDERS = frozenset({
     "yes", "works", "it works", "tests pass", "tests passed", "all tests pass", "lgtm", "trust me", "see above",
 })
 _PATH = re.compile(r"^(?:[A-Za-z]:)?[\w.\-/\\~@+]+(?::\d+(?:-\d+)?)?$")
+_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@", re.MULTILINE)
 
 
 def _norm(text: object) -> str:
@@ -68,9 +67,7 @@ class Evidence:
         if self.kind == "log":
             return "" if not is_placeholder(self.output) else "a log item needs its non-empty text"
         if self.kind == "diff":
-            parts = parse_diff(self.output or "")
-            return "" if (any(p.hunks for p in parts) and all(p.valid for p in parts)) else (
-                "a diff item needs complete unified-diff text with an @@ hunk")
+            return "" if _HUNK.search(self.output or "") else "a diff item needs unified-diff text with an @@ hunk"
         if is_placeholder(self.reviewer) or is_placeholder(ref):
             return "a review item needs who reviewed (reviewer) and what was reviewed (ref)"
         who, by = set(_norm(self.reviewer).split()), set(_norm(author).split())

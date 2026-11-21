@@ -417,7 +417,7 @@ _PATHLIKE = re.compile(r"[A-Za-z]:[\\/]|\\\\|/(?:home|Users|tmp|var|private)/")
 def _door_check(instance: Any, name: str, op: str, params: dict[str, Any],
                 fields: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """The template as the door's own typed input check (``registry.build_typed_input``, what ``g6_invoke`` runs
-    before the op) takes it: a refused template gains placeholders for missing required schema fields and is
+    before the op) takes it: a refused template gains a typed placeholder for each field its refusal names and is
     checked again, up to ``FILL_ROUNDS`` times. Returns the template and, when the door still refuses it, why, in
     the door's words (a refusal that holds anything like a path is put in G6's fixed words instead)."""
     from g6.core.registry import build_typed_input
@@ -428,8 +428,9 @@ def _door_check(instance: Any, name: str, op: str, params: dict[str, Any],
         _, error = build_typed_input(instance, {**params, "op": op}, code=code, op=op)
         if error is None:
             return params, []
-        named = sorted(f for f, field in fields.items()
-                       if f not in params and f not in ("op", "operation") and field.is_required())
+        said = error.split(f"{op}: ", 1)[-1]
+        named = sorted(f for f in fields if f not in params and f not in ("op", "operation")
+                       and re.search(rf"\b{re.escape(f)}\b", said))
         if not named:
             break
         params = {**params, **{f: _placeholder(f, _annotation_kind(fields[f].annotation)) for f in named}}
@@ -460,9 +461,12 @@ _G6_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
 
 
 def _fill(said: str, params: dict[str, Any], fields: dict[str, Any]) -> list[str]:
-    """The template keys and required schema fields, independent of refusal wording."""
-    return sorted((set(params) | {name for name, field in fields.items() if field.is_required()})
-                  - {"op", "operation"})
+    """The fields the agent must supply: those a refusal names (as a word, or a plural field by its singular), else
+    the template's own placeholders."""
+    named = sorted(f for f in fields if f not in ("op", "operation") and (
+        re.search(rf"\b{re.escape(f)}\b", said)
+        or (len(f) > 3 and f.endswith("s") and re.search(rf"\b{re.escape(f[:-1])}\b", said))))
+    return named or sorted(params)
 
 
 def _unfilled(value: Any) -> bool:
@@ -472,12 +476,13 @@ def _unfilled(value: Any) -> bool:
 
 
 def _declared(op: str, line: str, required: set[str], fields: dict[str, Any]) -> set[str]:
-    """Every declared input can change a result; prose cannot exempt an optional field.
-
-    Where the shared model does not declare per-op applicability, conservatively
-    list all its fields rather than guessing relevance from a help signature.
-    """
-    return (set(required) | set(fields)) - {"op", "operation"}
+    """The fields the agent must supply for the op: those its contract requires, and every field of its typed input
+    its own help line names in its signature (``preflight(task, proposed_action, evidence, ...): ...``), required or
+    not, since an optional one can change the answer (the act a gate decides on, the evidence)."""
+    said = re.match(rf"\s*{re.escape(op)}\s*\(([^)]*)\)", line)
+    named = {m.group(1) for part in (said.group(1).split(",") if said else ())
+             if (m := re.match(r"\s*\**([a-z_][a-z0-9_]*)", part))}
+    return (set(required) | (named & set(fields))) - {"op", "operation"}
 
 
 def _complete_fill(fill: list[str], params: dict[str, Any], declared: set[str], fields: dict[str, Any]) -> list[str]:

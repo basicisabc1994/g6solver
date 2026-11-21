@@ -268,6 +268,7 @@ _PART = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
 _NOT_A_PLACE = frozenset({"__pycache__", "venv", "site-packages", "dist-packages", "node_modules"})
 _METADATA = (".egg-info", ".dist-info", ".pyc")
 _NODE = re.compile(r"[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*(?:\[[^\]\x00-\x1f\x7f]*\])?")
+_RAISED_LINE = re.compile(r"^E\s+(\S.*)$", re.MULTILINE)
 #: ``repo_tests._output``'s mark where it cut a run's output.
 #: G6's clock for the stage's deadline (a test replaces it).
 _clock = time.monotonic
@@ -567,10 +568,12 @@ def _messages(ran: dict, node: str) -> list[str]:
 
 def _failure(ran: dict, node: str) -> str:
     """How a check failed, from its structured failure annotation (empty when absent)."""
-    report, file = repo_tests.read_report(ran), node.partition("::")[0]
-    kinds = [kind for named, kind in report.data.get("failure_types", {}).items()
-             if _covers(node, report.full(named)) or report.full(named) == file]
-    return kinds[0][:300] if kinds else ""
+    for text in _messages(ran, node):
+        raised = _RAISED_LINE.findall(text)
+        line = raised[-1] if raised else next((part for part in text.splitlines() if part.strip()), "")
+        if line.strip():
+            return line.strip()[:300]
+    return ""
 
 
 def _refused_access(ran: dict, node: str) -> bool:

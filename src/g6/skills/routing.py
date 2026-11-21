@@ -57,6 +57,7 @@ _PAIR = re.compile(r"`([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)`")
 _INVOKE = re.compile(r'g6_invoke\(\s*"([a-z_][a-z0-9_]*)"\s*,\s*"([a-z_][a-z0-9_]*)"')
 _BARE = re.compile(r"`([a-z][a-z0-9_]*)(?:\([^`\n]*\))?`")
 _CLIENT = re.compile(r"(?<![\w.])mcp__([a-z0-9_-]+?)__([A-Za-z0-9_]+)")
+_HEADING = re.compile(r"(#{1,6}) \S")
 _ITEM = re.compile(r"\s*(?:[-*+]|\d+\.) ")
 
 
@@ -149,9 +150,7 @@ def loads(text: str) -> Manifest:
             raise ManifestError(f"route id {route_id!r} is not a lower-case name")
         raw = _fields(f"route {route_id}", raw, {"anchor", "detail"})
         anchor = _text(raw["anchor"], f"route {route_id}: anchor")
-        from g6.core.markdown import parse
-
-        heading = bool(parse(anchor).headings) and "\n" not in anchor
+        heading = bool(_HEADING.match(anchor)) and "\n" not in anchor
         lead = anchor.startswith("**") and anchor.endswith("**") and len(anchor) > 4 and "\n" not in anchor
         if not (heading or lead):
             raise ManifestError(f"route {route_id}: the anchor is a heading line or a bold lead, not {anchor!r}")
@@ -246,26 +245,45 @@ def root_words(text: str) -> int:
     return len(text.split("---", 2)[2].split()) if text.startswith("---") and text.count("---") >= 2 else len(text.split())
 
 
-def section(root: str, anchor: str) -> str | None:
-    """A unique real heading's section, or the real list item/paragraph with a bold lead."""
+def _lines(text: str) -> list[tuple[str, bool]]:
+    """Each line with whether it stands inside a fenced block (where ``#`` is not a heading). The fences are
+    CommonMark's own (``core.markdown``), so a ``~~~`` fence counts as a backtick one does."""
     from g6.core.markdown import parse
 
-    doc = parse(root)
-    head = parse(anchor).headings
-    if head:
-        return_value = doc.section(head[0].title, head[0].level, include_heading=True)
-        return return_value.rstrip("\n") if return_value is not None else None
-    candidates = []
-    stack = []
-    for token in doc.tokens:
-        if token.type == "list_item_open":
-            stack.append(token)
-        elif token.type == "list_item_close":
-            stack.pop()
-        elif token.type == "inline" and token.content.startswith(anchor):
-            start, end = doc.span(stack[-1] if stack else token)
-            candidates.append(root[start:end].rstrip("\n"))
-    return candidates[0] if len(candidates) == 1 else None
+    doc = parse(text)
+    spans = [doc.span(token) for token in doc.tokens if token.type == "fence"]
+    out, at = [], 0
+    for line, whole in zip(text.splitlines(), text.splitlines(keepends=True), strict=True):
+        out.append((line, any(start <= at < end for start, end in spans)))
+        at += len(whole)
+    return out
+
+
+def section(root: str, anchor: str) -> str | None:
+    """The part of the root skill a route's anchor heads: for a heading, down to the next heading of its level or
+    above; for a bold lead, its own list item or paragraph. ``None`` when the anchor is absent or stands twice."""
+    lines = _lines(root)
+    heading = _HEADING.match(anchor)
+    if heading:
+        at = [i for i, (line, fenced) in enumerate(lines) if not fenced and line.rstrip() == anchor]
+    else:
+        at = [i for i, (line, fenced) in enumerate(lines)
+              if not fenced and (line.lstrip().startswith(anchor) or _ITEM.sub("", line, count=1).startswith(anchor))]
+    if len(at) != 1:
+        return None
+    start, end = at[0], len(lines)
+    for i in range(start + 1, len(lines)):
+        line, fenced = lines[i]
+        if fenced:
+            continue
+        found = _HEADING.match(line)
+        if heading and found and len(found.group(1)) <= len(heading.group(1)):
+            end = i
+            break
+        if not heading and (found or not line.strip() or _ITEM.match(line)):
+            end = i
+            break
+    return "\n".join(line for line, _ in lines[start:end])
 
 
 @dataclass(frozen=True)

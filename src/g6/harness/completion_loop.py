@@ -58,7 +58,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -246,7 +246,6 @@ class ProbeRun:
     texts: dict[str, str]
     tail: str = ""
     boundary: str = ""     # what confined it, as the run says
-    failure_types: dict[str, str] = field(default_factory=dict)
 
     @property
     def ran(self) -> int:
@@ -465,7 +464,6 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
     A case that failed on an operating-system error is unknown, as a refused access looks like one. A run that did not
     finish, or tested code from outside its copy, leaves the set unusable."""
     code: int | None = 0
-    failure_types = {}
     origins = []
     results, texts, tail, boundary = {}, {}, [], ""
     for ran in runs:
@@ -500,8 +498,7 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
             code = None
             results.update({_PLACE.sub("", node): "unknown" for node in report.collection_errors})
         texts.update({_PLACE.sub("", full(named)): text for named, text in (ran.get("failure_messages") or {}).items()})
-        failure_types.update({_PLACE.sub("", full(n)): kind for n, kind in ran.get("failure_types", {}).items()})
-    return cloud.bind_output(ProbeRun(code, results, texts, "\n".join(tail), boundary, failure_types),
+    return cloud.bind_output(ProbeRun(code, results, texts, "\n".join(tail), boundary),
                              cloud.boundary_sources(carried=origins))
 
 
@@ -536,7 +533,7 @@ def _gate(tree: Path, got: ProbeRun) -> list[str]:
     def cases(test: str) -> list[str]:
         return [v for k, v in got.results.items() if k.rsplit("::", 1)[-1].split("[")[0] == test]
 
-    crashed = sum(v == "error" or (v == "failed" and got.failure_types.get(k) not in ("AssertionError", "Failed"))
+    crashed = sum(v == "error" or (v == "failed" and not re.match(r"assert|AssertionError|Failed", got.texts.get(k, "")))
                   for k, v in got.results.items())
     return scout_gate(tree.read_text(encoding="utf-8", errors="replace") if tree.is_file() else "",
                       exit_code=2 if got.exit is None else got.exit, collected=len(cases("test_cross")), broken=crashed,

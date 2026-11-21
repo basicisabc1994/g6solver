@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from g6.core.git_env import UnsafeGitConfig, git_program, safe_git, safe_git_args
+from g6.core.git_name import shown
 from g6.safety_engine import detect_test_weakening
 
 OUTWARD_TYPES = frozenset({"email", "post", "publish_copy", "price_test", "spend", "experiment"})
@@ -121,13 +122,93 @@ def run_set(workdir: Path, changed: list[str], candidates: list[str] | None = No
 
 # --- coding-agent sensors (spec section 7 rows 1, 3, 6): code over the diff, never an opinion ----
 
-#: Files that change pytest's collection/run policy.
+_SKIP_NAMES = frozenset({"skip", "skipif", "xfail", "importorskip"})
+_MOCK_NAMES = frozenset({"mock", "monkeypatch", "MagicMock", "patch"})
+_CATCH_ALL = frozenset({"AssertionError", "Exception", "BaseException"})
+#: Files that change what pytest collects or how it runs; new or changed ones are weakening.
 _PYTEST_CONFIG = ("conftest.py", "pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini")
 
 
 def _tests_in(root: Path) -> dict[str, str]:
     return {p.relative_to(root).as_posix(): p.read_text(encoding="utf-8", errors="replace")
             for p in Path(root).rglob("test_*.py") if "__pycache__" not in p.parts and "out" not in p.parts}
+
+
+def _name_of(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Call):
+        return _name_of(node.func)
+    return ""
+
+
+def _test_functions(tree: ast.Module) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+    out: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith("test"):
+            out[node.name] = node
+        elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            for sub in node.body:
+                if isinstance(sub, ast.FunctionDef | ast.AsyncFunctionDef) and sub.name.startswith("test"):
+                    out[f"{node.name}::{sub.name}"] = sub
+    return out
+
+
+def _asserts(fn: ast.AST) -> list[str]:
+    """The asserts a test really makes: one guarded by a catch-all handler is no assert."""
+    found: list[str] = []
+
+    def visit(node: ast.AST, guarded: bool) -> None:
+        # Each statement is examined ITSELF, not only through its children: a ``try`` directly inside another ``try``'s body
+        # (or in an ``else:`` or ``finally:``) keeps its own handlers, and an assert directly there is counted (Gate W D-W7;
+        # the earlier walk treated such a statement as a parent, so a nested catch-all was ignored and an assert in
+        # ``else:`` or ``finally:`` was never counted).
+        if isinstance(node, ast.Assert):
+            if not guarded:
+                found.append(ast.dump(node.test))
+        elif isinstance(node, ast.Try | getattr(ast, "TryStar", ast.Try)):
+            catch_all = any(h.type is None or _name_of(h.type) in _CATCH_ALL for h in node.handlers)
+            for stmt in node.body:  # only the body is guarded by this try's own handlers
+                visit(stmt, guarded or catch_all)
+            for part in (*node.handlers, *node.orelse, *node.finalbody):
+                visit(part, guarded)
+        else:
+            for child in ast.iter_child_nodes(node):
+                visit(child, guarded)
+
+    visit(fn, False)
+    return found
+
+
+def _markers(tree: ast.AST) -> dict[str, int]:
+    """Skip / xfail / mock shapes anywhere in the module (or one test), counted, so a new one is a diff."""
+    counts: dict[str, int] = {}
+    for node in ast.walk(tree):
+        name = ""
+        if isinstance(node, ast.Call | ast.Attribute | ast.Name):
+            name = _name_of(node)
+        elif isinstance(node, ast.ImportFrom | ast.Import):
+            names = [a.name for a in node.names] + ([node.module] if isinstance(node, ast.ImportFrom) and node.module else [])
+            name = next((n for n in names if n and n.split(".")[-1] in _MOCK_NAMES or n == "unittest.mock"), "")
+        elif isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets):
+            name = "pytestmark"
+        if name in _SKIP_NAMES or name in _MOCK_NAMES or name in ("pytestmark", "unittest.mock"):
+            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def _returns(fn: ast.AST) -> int:
+    """Returns in the test's own body. One inside a function or class the test defines (a fake's method) ends the
+    fake, not the test, so it skips none of the test's asserts (dogfood episode 4, 2026-10-05)."""
+    nested = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+
+    def count(node: ast.AST) -> int:
+        return sum(0 if isinstance(child, nested) else int(isinstance(child, ast.Return)) + count(child)
+                   for child in ast.iter_child_nodes(node))
+
+    return count(fn)
 
 
 def test_integrity(original: Path, workdir: Path) -> Verdict:
@@ -175,8 +256,43 @@ def weakened_tests(before: dict[str, str], after: dict[str, str]) -> list[str]:
     """``test_integrity``'s rules over test SOURCES (path -> text), before and after a change: what verify_task
     has when a caller gives its test file as it was and as it is (E10a; FE §10, TS §18, §43, 2026-10-05). A path git
     named is written by its one rule (``g6.core.git_name.shown``), a caller's as it is."""
-    report = detect_test_weakening(before, after, tests=set(before) | set(after))
-    return list(report.reasons)
+    findings: list[str] = []
+    for rel, src in before.items():
+        now = after.get(rel)
+        if now is None:
+            findings.append(f"{shown(rel)}: test file deleted")
+            continue
+        try:
+            old_tree, new_tree = ast.parse(src), ast.parse(now)
+        except SyntaxError as exc:
+            findings.append(f"{shown(rel)}: unparsable ({exc.msg})")
+            continue
+        old_fns, new_fns = _test_functions(old_tree), _test_functions(new_tree)
+        for name, fn in old_fns.items():
+            new_fn = new_fns.get(name)
+            if new_fn is None:
+                findings.append(f"{shown(rel)}: test removed {name}")
+                continue
+            have = list(_asserts(new_fn))
+            for a in _asserts(fn):
+                if a in have:
+                    have.remove(a)
+                else:
+                    findings.append(f"{shown(rel)}: {name}: an assert was removed or changed")
+                    break
+            if _returns(new_fn) > _returns(fn):
+                findings.append(f"{shown(rel)}: {name}: early return added")
+        old_m, new_m = _markers(old_tree), _markers(new_tree)
+        # A test that did not exist before cannot weaken one that did: its own skip or mock (a new test
+        # taking the monkeypatch fixture) is not counted. One in an old test, a fixture or at module level is.
+        for name, fn in new_fns.items():
+            if name not in old_fns:
+                for marker, n in _markers(fn).items():
+                    new_m[marker] -= n
+        for name, n in new_m.items():
+            if n > old_m.get(name, 0):
+                findings.append(f"{shown(rel)}: added {name}")
+    return findings
 
 
 def scope_check(original: Path, workdir: Path, protected: tuple[str, ...]) -> Verdict:

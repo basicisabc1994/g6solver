@@ -58,10 +58,6 @@ invoked here.
 """
 from __future__ import annotations
 
-from typing import Any
-
-from g6.core.diff import parse_diff
-
 import ast
 import configparser
 import fnmatch
@@ -170,7 +166,6 @@ SAID = {
     "collection_error": "the tests could not be collected (often an import that fails in this environment)",
     "no_tests_collected": "pytest collected no tests from the tests named",
     "pytest_not_found": "pytest is not installed for {python}",
-    "insufficient_evidence": "JUnit, console and recorder evidence is missing or inconsistent",
     "inconsistent_report": "pytest's exit code and its own tallies disagree, so neither is believed",
     # PENDING copy (the owner's ruling of 2026-10-29): a non-zero exit after a session pytest counts as all passed.
     "run_inconsistent": ("the tests passed by pytest's own count, but the process exited with an error afterwards, so "
@@ -405,12 +400,12 @@ for _name in ("changed", "os_errors", "import_path", "env_set_by_g6", "ignored_l
     REPORT_FIELDS[_name] = ReportField([str], [], "execution identity listing", "text members; os_errors annotate recorded failures")
 REPORT_FIELDS["changed"] = ReportField([str], [], "files that changed under the run",
                                        "text members; named only beside the verdict that says files changed")
-for _name in ("failure_messages", "messages", "failure_types", "repo_env", "loaded_outside", "submodules_not_hashed", "links_left_out",
+for _name in ("failure_messages", "messages", "repo_env", "loaded_outside", "submodules_not_hashed", "links_left_out",
               "links_materialised", "generated_copied", "generated_left_out", "ignored_inputs"):
     REPORT_FIELDS[_name] = ReportField({str: str}, {}, "execution annotation by identity", "text keys and values")
 REPORT_FIELDS["isolation"] = ReportField(_ISOLATION, {"backend": "recorded"}, "execution boundary",
                                         "known typed fields, backend required", required_members=("backend",))
-for _name in ("failure_messages", "messages", "failure_types"):
+for _name in ("failure_messages", "messages"):
     REPORT_FIELDS[_name] = ReportField({str: str}, {}, "failure annotations by identity",
                                       "failed phase, or an uncollected collection failure; never omitted")
 #: An observation's result, and the verdict its record gives it (``behaviour_runner.run``).
@@ -448,7 +443,7 @@ REPORT_PHASES = ("setup", "call", "teardown")
 REPORT_OUTCOMES = frozenset({"passed", "failed", "skipped"})
 REPORT_VERDICTS = frozenset({*RAN, CHANGED, RUN_INCONSISTENT, CRASHED, "timed_out", "collection_error",
                              "no_tests_collected", "pytest_not_found", "inconsistent_report", "incomplete",
-                             "could_not_start", "not_run", "insufficient_evidence"})
+                             "could_not_start", "not_run"})
 
 
 #: Every state in which a run establishes nothing: no pass, no failure of a test's body, no replay count and no killed
@@ -675,7 +670,7 @@ def read_report(raw: object) -> RunReport:
     for name, count in counters.items():
         if name in value:
             consistent &= type(value[name]) is int and value[name] == count
-    messages = set(value.get("failure_messages", {})) | (set(value.get("messages", {})) | set(value.get("failure_types", {}))) if typed else set()
+    messages = set(value.get("failure_messages", {})) | set(value.get("messages", {})) if typed else set()
     collection_failures = messages - set(phases)
     consistent &= not (collection_failures & collected) and not ((messages & set(phases)) - phase_failures)
     consistent &= not any(parent == "" or report_covers(parent, node)
@@ -1353,6 +1348,7 @@ def related_texts(change: Change, related: Iterable[str] | None = None) -> tuple
     return {moved.get(rel, rel): text for rel, text in before.items()}, after
 
 
+_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 
 
 def changed_lines(change: Change, rel: str) -> set[int]:
@@ -1368,11 +1364,8 @@ def changed_lines(change: Change, rel: str) -> set[int]:
         path = _disk(change.repo, rel)     # a source is one G6 could open by its name (``change``)
         return set(range(1, len(path.read_text(encoding="utf-8", errors="replace").splitlines()) + 1)) if path else set()
     found: set[int] = set()
-    for part in parse_diff(text):
-        if not part.valid:
-            raise RepoRefused("G6_E_GIT_COMMAND_FAILED", "git wrote an unreadable diff")
-        for hunk in part.hunks:
-            found.update(range(hunk.new_start, hunk.new_start + hunk.new_count))
+    for start, count in _HUNK.findall(text):
+        found.update(range(int(start), int(start) + (int(count) if count != "" else 1)))
     return found
 
 
@@ -2101,7 +2094,6 @@ class _Counted:
         self.test_outcomes, self.collected_ids, self.omitted_ids = {}, set(), set()
         self.rootdir = ""
         self.messages = {}
-        self.failure_types = {}
         self.os_errors = set()
         self.missing_modules, self.not_found_ids = set(), set()
         self.session = None
@@ -2110,9 +2102,6 @@ class _Counted:
         self.session = session
     def pytest_exception_interact(self, node, call, report):
         error, seen = getattr(getattr(call, "excinfo", None), "value", None), set()
-        if error is not None:
-            self.failure_types[report.nodeid] = ("AssertionError" if isinstance(error, AssertionError)
-                else "Failed" if isinstance(error, pytest.fail.Exception) else type(error).__name__)
         while error is not None and id(error) not in seen:
             seen.add(id(error))
             if isinstance(error, ModuleNotFoundError) and type(error.name) is str:
@@ -2122,15 +2111,7 @@ class _Counted:
                 break
             error = error.__cause__ or error.__context__
         self.write()
-    @pytest.hookimpl(tryfirst=True)
-    def pytest_runtest_makereport(self, item, call):
-        error = getattr(getattr(call, "excinfo", None), "value", None)
-        if error is not None:
-            item.user_properties.append(("g6.exception", type(error).__name__))
-            if isinstance(error, ImportError) and type(getattr(error, "name", None)) is str:
-                item.user_properties.append(("g6.missing_module", error.name))
     def pytest_itemcollected(self, item):
-        item.user_properties.append(("g6.nodeid", item.nodeid))
         self.collected_ids.add(item.nodeid)
     def pytest_deselected(self, items):
         self.deselected += len(items)
@@ -2179,7 +2160,7 @@ class _Counted:
                            "finished": len(self.finished), "failed_ids": self.failed,
                            "setup_errors": self.setup_errors, "test_outcomes": self.test_outcomes,
                            "collected_ids": sorted(self.collected_ids), "omitted_ids": sorted(self.omitted_ids),
-                           "rootdir": self.rootdir, "messages": self.messages, "failure_types": self.failure_types,
+                           "rootdir": self.rootdir, "messages": self.messages,
                            "os_errors": sorted(self.os_errors), "missing_modules": sorted(self.missing_modules),
                            "not_found_ids": sorted(self.not_found_ids),
                            "collection_stopped": self.collection_stopped}, handle)
@@ -2585,22 +2566,65 @@ def _opened(repo: Path, python: str, what: str, own: tuple[str, ...] = ()) -> st
     return python
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+#: The exception a report's text ends on: "E   ModuleNotFoundError: No module named 'x'" (or a message that starts so).
+_RAISED = re.compile(r"^(?:E\s+)?((?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*(?:Error|Exception)): (.*)$", re.MULTILINE)
+#: The module an import error names: missing, a name it lacks, or a binary part that would not load.
+_MODULE = re.compile(r"No module named '([\w.]+)'|cannot import name .*? from (?:partially initialized module )?"
+                     r"'([\w.]+)'|while importing ([\w.]+)")
+#: A source location in a traceback: native style (and a syntax error's), or pytest's ``path:line: ...``.
+_PLACE = re.compile(r'File "([^"\n]+\.py)", line \d+|^(\S[^\n]*?\.py):\d+: ', re.MULTILINE)
+#: Folders inside a repository that hold other people's code: an installed package is not the repository's own.
+_THEIRS = frozenset({"site-packages", "dist-packages"})
+_ENVIRONMENTS = frozenset({".venv", "venv", ".tox", ".nox"})
+
+
 def _module_here(name: str, roots: tuple[Path, ...]) -> bool:
+    """Whether module ``name``'s top package is the repository's own: a ``.py`` file or a package folder in one of the
+    folders the run puts on the import path (the top, ``src``, the roots named)."""
     top = name.partition(".")[0]
-    return any((root / f"{top}.py").is_file() or (root / top).is_dir() for root in roots)
+    for root in roots:
+        folder = root / top
+        if (root / f"{top}.py").is_file() or (folder / "__init__.py").is_file() or (
+                folder.is_dir() and any(folder.glob("*.py"))):
+            return True
+    return False
 
 
-def _blame(problem: ElementTree.Element, repo: Path, roots: tuple[Path, ...], *, collection: bool,
-           properties: dict[str, str] | None = None) -> str:
-    """Place only typed import failures; never infer a culprit from traceback prose."""
-    props = properties or {}
-    kind, module = props.get("g6.exception"), props.get("g6.missing_module", "")
-    if kind in ("ModuleNotFoundError", "ImportError") and module and all(p.isidentifier() for p in module.split(".")):
-        return "inside" if _module_here(module, roots) else "outside"
-    return "" if collection else "inside"
+def _file_here(name: str, repo: Path) -> bool:
+    """Whether a file a traceback names is the repository's own: inside it, and not in an installed package or a
+    virtual environment it holds."""
+    path = Path(name)
+    try:
+        rel = (path if path.is_absolute() else repo / path).resolve().relative_to(repo)
+    except (OSError, ValueError, RuntimeError):
+        return False
+    return not (_THEIRS & set(rel.parts) or rel.parts[:1] and rel.parts[0] in _ENVIRONMENTS)
 
 
-def _counts(report: Path, repo: Path, roots: tuple[Path, ...]) -> dict[str, Any] | None:
+def _blame(problem: ElementTree.Element, repo: Path, roots: tuple[Path, ...], *, collection: bool) -> str:
+    """Where one failure or error in the report comes from, read from its own text: "outside" (an import of a module
+    that is not the repository's: a dependency this environment lacks; or, for a collection error, a failing file that
+    is not the repository's), "inside" (anything else in a test that ran; for a collection error, an import of the
+    repository's own module, a syntax error in its file, or its file raising), or "" (a collection error whose module
+    or file cannot be read from the text). A module the change deleted or renamed, still imported, reads "outside"."""
+    text = _ANSI.sub("", f"{problem.get('message') or ''}\n{problem.text or ''}")
+    raised = _RAISED.findall(text)
+    kind = raised[-1][0].rpartition(".")[2] if raised else ""
+    if kind in ("ModuleNotFoundError", "ImportError"):
+        named = _MODULE.search(raised[-1][1])
+        module = next((group for group in named.groups() if group), "") if named else ""
+        if module:
+            return "inside" if _module_here(module, roots) else "outside"
+    if not collection:
+        return "inside"
+    places = list(_PLACE.finditer(text))
+    if not places:
+        return ""
+    return "inside" if _file_here(places[-1].group(1) or places[-1].group(2), repo) else "outside"
+
+
+def _counts(report: Path, repo: Path, roots: tuple[Path, ...]) -> dict[str, int] | None:
     """pytest's own tallies from its JUnit report, or None when it wrote none that can be read. One outcome per test
     (its ``<testcase>`` elements, by class and name: pytest writes a second one for a test that failed and then
     errored in its teardown): a failure, else an error, else a skip, else a pass (review I1; a test interrupted before
@@ -2608,10 +2632,8 @@ def _counts(report: Path, repo: Path, roots: tuple[Path, ...]) -> dict[str, Any]
     collection errors, and ``placed``, those whose module or file was read; ``outside``, the failed tests whose every
     failure and error comes from outside the repository (``_blame``)."""
     try:
-        from g6.core.junit import read_junit
-
-        root = read_junit(report)
-    except (OSError, ValueError):
+        root = ElementTree.parse(report).getroot()
+    except (OSError, ElementTree.ParseError):
         return None
     tests: dict[tuple[str, str], list[ElementTree.Element]] = {}
     for case in root.iter("testcase"):
@@ -2628,53 +2650,61 @@ def _counts(report: Path, repo: Path, roots: tuple[Path, ...]) -> dict[str, Any]
             total["skipped" if skipped else "passed"] += 1
             continue
         total["failures" if failures else "errors"] += 1
-        properties = {p.get("name"): p.get("value", "") for child in children if child.tag == "properties"
-                      for p in child if p.tag == "property"}
-        blames = {_blame(problem, repo, roots, collection=collection, properties=properties)
-                  for problem in failures + errors}
+        blames = {_blame(problem, repo, roots, collection=collection) for problem in failures + errors}
         total["collection"] += collection
         total["placed"] += collection and "" not in blames
         total["outside"] += blames == {"outside"}
-    from g6.core.junit import outcomes
-
-    try:
-        total["junit_outcomes"] = outcomes(root)
-    except ValueError:
-        total["junit_outcomes"] = None
     return total
 
 
-def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, moved: list[str]) -> str:
-    """Only consistent structured outcomes and console tallies can support a run.
+#: pytest's report of its own internal error (``Config.notify_exception``): each line of the traceback, at a line's start.
+_INTERNAL_ERROR = re.compile(r"^INTERNALERROR> ", re.MULTILINE)
 
-    Movement and timeout take priority. Exit 3 is ambiguous on Windows: no
-    console prefix resolves it. Missing, unreadable or contradictory JUnit is
-    insufficient evidence. Expected/finished telemetry and the phase recorder
-    retain their existing completeness and receipt restrictions.
-    """
-    pytest_exit = exit_code in (2, 4)
-    killed = exit_code is not None and (exit_code < 0 or 128 < exit_code <= 192 or exit_code >= 0xC0000000)
+
+def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, moved: list[str]) -> str:
+    """One verdict for one run. Files that changed under it decide first (nothing it reported can be trusted). Then
+    the archive coder's verdict rule, restated here (the library has no coder): the time bound, pytest's exit code, and
+    its own tallies, which must agree with the exit code. Refined after the review of
+    Tasks 4-5:
+
+    * failures and errors that all come from outside the repository (a dependency this environment lacks) are "could
+      not be collected", even when a test ran into one (I4);
+    * exit 2-4 (interrupted, internal error, usage error) is "failed" when the tallies hold a failure, or a collection
+      error G6 places in the repository's own code (a syntax error, a broken import of its own module); a collection
+      error G6 cannot place stays "could not be collected" (I2);
+    * a pass needs every test pytest meant to run (collected, less deselected: ``expected``) to have run to its end
+      (``finished``); fewer, or a count that cannot be read, is "incomplete" (I3). ``run`` always sets ``expected``;
+    * the owner's ruling (2026-10-29), asymmetric on purpose: an exit other than 0 and 2-5 after a session whose
+      tallies hold passes, no failure or error, every test it meant to run finished, and whose own per-test record
+      (``_Counted``: ``failed_ids``, ``setup_errors``) holds no failure either (the launch review's M1), is
+      ``run_inconsistent``
+      (not a pass, and no sign of tampering, since it cannot get a patch accepted: a GUI suite's X connection that
+      fails at exit). Exit 0 with a failure, an error or fewer tests finished stays untrusted, as a tampered runner
+      would show it;
+    * a fatal signal before the tallies were whole is ``crashed``, by the same reasoning: it cannot get a patch accepted. That stays
+      the run's verdict even with a failure on the record, since the run did not finish and a verdict of ``failed`` could be discounted
+      as a failure the base has too (the failure itself survives, per check, in ``patch_review._verdicts``). A test can choose exit
+      139, so ``crashed`` is no proof of a crash, and it
+      needs no more: all that test gains is insufficient evidence in place of an integrity alarm, and an exit outside the signals'
+      range gains it nothing;
+    * exit 3 is pytest's own (an internal error) only where pytest reported one, in its ``INTERNALERROR>`` lines, which
+      it always writes. Without them it is a process ended from outside pytest's session: Windows ends one that calls
+      abort(), or that a signal ends unhandled, with exit 3. That is read from the run's output, never the platform."""
+    # by a signal: the process's own negative code, a shell's 128 + n, a Windows exception's status, or Windows' exit 3
+    # with no internal error pytest reported
+    pytest_exit = exit_code in (2, 4) or (exit_code == 3 and _INTERNAL_ERROR.search(output) is not None)
+    killed = exit_code is not None and (exit_code < 0 or 128 < exit_code <= 192 or exit_code >= 0xC0000000
+                                        or (exit_code == 3 and not pytest_exit))
     if moved:
         return CHANGED
     if exit_code is None:
         return "timed_out"
-    if exit_code == 3:
-        return "insufficient_evidence"
-    from g6.core.junit import agrees
-
-    if counts is None or not agrees(counts, output):
-        return "insufficient_evidence"
+    if counts is None and "No module named 'pytest'" in output:
+        return "pytest_not_found"
     if exit_code == 5:
         return "no_tests_collected"
-    if "junit_outcomes" in counts:
-        phases = counts.get("test_outcomes")
-        if not isinstance(phases, dict):
-            return "insufficient_evidence"
-        expected = {node: read_phases(record).body() for node, record in phases.items() if "setup" in record}
-        actual = counts["junit_outcomes"]
-        actual = {n: "skipped" if v == "xfailed" else v for n, v in actual.items()} if actual is not None else None
-        if actual != expected:
-            return "insufficient_evidence"
+    if counts is None:
+        return CRASHED if killed else "collection_error" if pytest_exit else "inconsistent_report"
     bad, outside = counts["failures"] + counts["errors"], counts.get("outside", 0)
     if bad and outside == bad:
         return "collection_error"
@@ -2802,7 +2832,6 @@ def _progress(counts: dict[str, int], counted: Path) -> dict:
             "omitted_ids": found.get("omitted_ids", []),
             "failed_ids": found.get("failed_ids", []), "setup_errors": found.get("setup_errors", {}),
             "rootdir": found.get("rootdir", ""), "failure_messages": found.get("messages", {}),
-            "failure_types": found.get("failure_types", {}),
             "os_errors": found.get("os_errors", []),
             "missing_modules": found.get("missing_modules", []), "not_found_ids": found.get("not_found_ids", []),
             "collection_stopped": found.get("collection_stopped"),
@@ -3066,7 +3095,6 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                     (tally["expected"] is None or tally["expected"] != tally.get("finished"))), "receipt": "",
                 "source_before": ledger.digest(before), "rootdir": _root(repo, tally.get("rootdir") or ""),
                 "failure_messages": tally.get("failure_messages") or {},
-                "failure_types": tally.get("failure_types") or {},
                 "os_errors": list(tally.get("os_errors") or []),
                 "missing_modules": list(tally.get("missing_modules") or []),
                 "not_found_ids": list(tally.get("not_found_ids") or []),

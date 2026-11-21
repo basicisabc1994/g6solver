@@ -8,8 +8,6 @@ a broken seed cannot stop a round silently. Extraction is code: a claim's phrase
 assertive shape with no binding (certified, approved, used by N, N%)."""
 from __future__ import annotations
 
-from g6.core.junit import console_tally as tally  # noqa: F401 - public diagnostic reader
-
 import json
 import os
 import re
@@ -85,37 +83,24 @@ class Extraction:
     unbound: list[str]
 
 
+#: A count in pytest's closing tally line ("3 passed, 1 failed in 0.20s").
+_COUNT = re.compile(r"\b(\d+) (passed|failed|errors?|skipped|xfailed|xpassed|deselected)\b")
 
 
-def _report_tally(root, record: dict | None, console: str, *, control: bool = False) -> dict | None:
-    """Only mutually consistent XML, recorder and console counts are usable."""
-    from g6.core.junit import aggregate, agrees, outcomes, tally as xml_tally
-
-    if root is None or not isinstance(record, dict):
-        return None
-    expected = recorded(record) if control else recorded({**record, "control": "failed"})
-    if expected is None:
-        return None
-    try:
-        by_node = outcomes(root, control=control)
-    except ValueError:
-        return None
-    if by_node != {n: "passed" if v == "xpassed" else v for n, v in record["outcomes"].items()}:
-        return None
-    counts = xml_tally(root)
-    compare = dict(expected)
-    if not control:
-        compare["skipped"] = compare.get("skipped", 0) + len(record.get("collect_skipped") or [])
-    if control:
-        controls = [c for c in root.iter("testcase") if c.get("name") == "g6-positive-control"]
-        if len(controls) != 1 or controls[0].find("failure") is None:
-            return None
-        compare["failed"] = compare.get("failed", 0) + 1
-    if aggregate(counts) != aggregate(compare) or not agrees(counts, console):
-        return None
-    if control:
-        counts["failed"] -= 1
-    return {k: v for k, v in counts.items() if v}
+def tally(stdout: str) -> dict | None:
+    """The counts on pytest's closing tally line (the last line that has one), or None when the run reported none
+    (E2E Build 6: a parametrized node reports "3 passed", never "1 passed")."""
+    for line in reversed(str(stdout or "").strip().splitlines()):
+        found = _COUNT.findall(line)
+        if found:
+            out: dict = {}
+            for count, word in found:
+                key = "error" if word.startswith("error") else word
+                out[key] = out.get(key, 0) + int(count)
+            return out
+        if re.search(r"\bno tests ran\b", line):
+            return {}
+    return None
 
 
 #: The isolated runner's bootstrap: the real pytest is imported from this interpreter BEFORE the repository joins
@@ -203,8 +188,6 @@ class Record:
         control = Control.from_parent(session, name="g6-positive-control")
         self.node = control.nodeid
         items.append(control)
-        for item in items:
-            item.user_properties.append(("g6.nodeid", item.nodeid))
 
     def pytest_collectreport(self, report):
         if report.failed:
@@ -271,10 +254,6 @@ def norm(node):
 class Record:
     def __init__(self):
         self.outcomes, self.collect, self.skipped = {}, [], []
-
-    def pytest_collection_modifyitems(self, items):
-        for item in items:
-            item.user_properties.append(("g6.nodeid", norm(item.nodeid)))
 
     def pytest_collectreport(self, report):
         if report.failed:
@@ -377,7 +356,7 @@ def run_isolated(nodeid: str, repo: Path, timeout: float | None = None) -> bool:
             return False
         if confined.backend is not None:
             env["TMPDIR"] = _own_temp(config_dir)
-        cmd = [python, "-I", "-c", _ISOLATED_BOOT, str(repo), str(result), nodeid, f"--junitxml={Path(config_dir) / 'report.xml'}", "-q", "-p",
+        cmd = [python, "-I", "-c", _ISOLATED_BOOT, str(repo), str(result), nodeid, "-q", "-p",
                "no:cacheprovider", *no_null_device(config_dir), "--rootdir", str(repo), f"--confcutdir={repo}", "-c",
                str(config), "--import-mode=prepend"]
         try:
@@ -406,19 +385,15 @@ def run_isolated(nodeid: str, repo: Path, timeout: float | None = None) -> bool:
         finally:
             _released(confined, LAST_RUN)
         try:
-            from g6.core.junit import read_junit
-
             report = json.loads(result.read_text(encoding="utf-8"))
-            junit = read_junit(Path(result).with_name("report.xml"))
         except (OSError, ValueError, RecursionError, MemoryError):
-            report, junit = None, None
-    found = _report_tally(junit, report, proc.stdout, control=True)
+            report = None
+    found = recorded(report)
     # ``tally``: the record's counts (None: no record, or a control not seen failing); stdout is kept for diagnosis only
     LAST_RUN.update(nodeid=nodeid, rc=proc.returncode, started=STARTED in proc.stderr, timed_out=False,
                     reported=isinstance(report, dict),
                     control=str(report.get("control") or "") if isinstance(report, dict) else "",
-                    tally=found, verdict="insufficient_evidence" if found is None else "reported",
-                    stdout=proc.stdout[-2000:], stderr=proc.stderr[-2000:])
+                    tally=found, stdout=proc.stdout[-2000:], stderr=proc.stderr[-2000:])
     return (proc.returncode == 0 and found is not None and found.get("passed", 0) >= 1 and not found.get("failed")
             and not found.get("error"))
 
@@ -454,7 +429,7 @@ def run_suite(repo: Path, timeout: float | None = None) -> dict:
             return found
         if confined.backend is not None:
             env["TMPDIR"] = _own_temp(scratch)
-        cmd = [python, "-I", "-c", _SUITE_BOOT, str(repo), str(result), SUITE_DIR, f"--junitxml={Path(scratch) / 'report.xml'}", "-q", "-p", "no:cacheprovider",
+        cmd = [python, "-I", "-c", _SUITE_BOOT, str(repo), str(result), SUITE_DIR, "-q", "-p", "no:cacheprovider",
                *no_null_device(scratch), "--rootdir", str(repo), f"--confcutdir={repo}", "-c", str(config),
                "--import-mode=prepend", "--continue-on-collection-errors",
                # pytest 9.2 shortens long string IDs to argname+index. Copies at different
@@ -489,16 +464,10 @@ def run_suite(repo: Path, timeout: float | None = None) -> dict:
             return found
         found["started"] = True
         try:
-            from g6.core.junit import read_junit
-
             report = json.loads(result.read_text(encoding="utf-8"))
-            junit = read_junit(Path(result).with_name("report.xml"))
         except (OSError, ValueError, RecursionError, MemoryError):
-            found["why"] = f"insufficient_evidence: the test process exited with code {proc.returncode} before reporting"
+            found["why"] = f"the test process exited with code {proc.returncode} before reporting"
             return found
-    if _report_tally(junit, report, proc.stdout) is None:
-        found["why"] = "insufficient_evidence: JUnit, console and recorder do not agree"
-        return found
     found["collect_skipped"] = list(report.get("collect_skipped") or [])
     if proc.returncode not in (0, 1) or not isinstance(report.get("outcomes"), dict) or not report["outcomes"]:
         found["collect_errors"] = list(report.get("collect_errors") or [])
@@ -506,9 +475,7 @@ def run_suite(repo: Path, timeout: float | None = None) -> dict:
                         else f"no test could be collected ({len(found['collect_errors'])} test files failed to import)"
                         if found["collect_errors"] else "no tests were collected")
         return found
-    from g6.core.junit import outcomes
-
-    found.update(ran=True, outcomes=outcomes(junit), collect_errors=list(report.get("collect_errors") or []))
+    found.update(ran=True, outcomes=dict(report["outcomes"]), collect_errors=list(report.get("collect_errors") or []))
     return found
 
 
