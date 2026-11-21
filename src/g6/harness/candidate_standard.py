@@ -472,7 +472,7 @@ def with_confirmed(found, standard):
     shown = deepcopy(found)
     if standard is None:
         return shown
-    rejected = set()
+    rejected, outcomes = set(), []   # the mapped tests and the (function, case) pairs that assert a rejected outcome
     for one in standard.expectations:
         bindings = one.instance.bindings
         for item in shown['standard']:
@@ -489,6 +489,7 @@ def with_confirmed(found, standard):
             # so none of them is a check of this candidate or of any other.
             if not _same(proposed, answered):
                 rejected.update(item['checks'] if isinstance(item['checks'], list) else ())
+                outcomes.append((item['id'], item['function'], _full(proposed)))
                 item['checks'] = 'missing'
             item.update(status='stated', cases=deepcopy(bindings['cases']), text=one.scope, scope=one.scope,
                         confirmed_by=one.answered_by, expectation_id=one.expectation_id)
@@ -498,7 +499,24 @@ def with_confirmed(found, standard):
     for item in shown['standard']:
         if isinstance(item['checks'], list) and rejected & set(item['checks']):
             item['checks'] = [node for node in item['checks'] if node not in rejected] or 'missing'
+        # Another candidate's own example of the same typed call with the rejected outcome checks it too: that case
+        # goes, and the call the candidate offers carries only what is left (none when nothing is).
+        kept = [case for case in item['cases'] if not _rejects(outcomes, item, case)]
+        if len(kept) != len(item['cases']):
+            item['cases'] = kept
+            arguments = item.get('cheapest_check', {}).get('arguments', {})
+            if _instance(item):
+                arguments['template_instances'] = [_instance(item)]
+            else:
+                arguments.pop('template_instances', None)
+    shown['rejected'] = [dict(function=function, case=case) for _, function, case in outcomes]
     return shown
+
+
+def _rejects(outcomes, item, case):
+    """Whether ``case`` of ``item`` asserts an outcome the person rejected for that same typed call."""
+    return any(ident != item['id'] and function == item['function'] and _same(_full(case), rejected)
+               for ident, function, rejected in outcomes)
 
 
 def owns(found, one):
@@ -508,13 +526,16 @@ def owns(found, one):
     its standard states (``checks``)."""
     if getattr(one, 'template', '') != 'example.v1':
         return False
+    bindings = one.bindings if isinstance(one.bindings, dict) else {}
+    cases = bindings.get('cases') if isinstance(bindings.get('cases'), list) else []
+    if any(isinstance(case, dict) and gone['function'] == bindings.get('function') and _same(_full(case), gone['case'])
+           for case in cases for gone in found.get('rejected', ())):
+        return True   # a saved call carrying an outcome the person rejected only advertised its candidate
     item = next((i for i in found['standard'] if i['id'] == getattr(one, 'requirement_id', None)), None)
     if item is None or not item['function']:
         return False
     if item['status'] == 'stated':
         return True
-    bindings = one.bindings if isinstance(one.bindings, dict) else {}
-    cases = bindings.get('cases') if isinstance(bindings.get('cases'), list) else []
     return bindings.get('function') == item['function'] and any(
         isinstance(case, dict) and _same(case.get('args', []), own.get('args', []))
         and _same(case.get('kwargs', {}), own.get('kwargs', {})) for case in cases for own in item['cases'])

@@ -45,10 +45,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from g6.core import cloud_consent as cloud
 from g6.core.consent_callers import SDKClientWrapper, guard, sdk_send
 
-from g6.core.llm import (AnthropicCaller, EmptyRetry, FallbackCaller, LLMCaller, LLMError, NoModel, UnusableModel,
+from g6.core.llm import (AnthropicCaller, EmptyRetry, LLMCaller, LLMError, NoModel, UnusableModel,
                          complete_structured)
 from g6.core.git_name import shown
-from g6.core.semantic import trusted_stop
+from g6.core.semantic import FALLBACK_FAILED, chain_failed, original_stop, watched
+from g6.core.stop import STOPPED
 from g6.harness import verification_search as vs
 from g6.harness import verification_templates as vt
 from g6.reasoning.budget import Budget, BudgetExhausted, MeteredCaller
@@ -213,9 +214,11 @@ class _Limits:
     def __init__(self, metered: MeteredCaller, raw: LLMCaller, settings: dict, stage: list[str]) -> None:
         self.metered, self.raw, self.settings, self.stage = metered, raw, settings, stage
         self.calls: list[dict] = []
-        #: A trusted stop the caller raised. `complete_structured` turns every caller error into a refusal and keeps
-        #: none of them, so the stage raises this one itself once that call returns (`Proposer._ask`).
+        #: A trusted stop the caller raised. ``complete_structured`` turns every caller error into a refusal and keeps
+        #: none of them, so the stage raises this one itself once that call returns (``Proposer._ask``).
         self.stop: BaseException | None = None
+        #: Whether a fallback chain failed in every link (``semantic.FALLBACK_FAILED``).
+        self.chain_failed = False
 
     def complete(self, system: str, user: str, *, max_tokens: int = 0) -> str:
         record = {"stage": self.stage[0], "system": system, "user": user, "reply": None, "error": "",
@@ -239,8 +242,10 @@ class _Limits:
             record.update(sent=True, error=str(exc), limit="max_wall_clock_s")
             raise
         except Exception as exc:
-            if trusted_stop(exc):
-                self.stop = exc
+            if original_stop(exc) is not None:
+                self.stop = original_stop(exc)
+            elif chain_failed(exc):
+                self.chain_failed = True
             withheld = any(code in str(exc) for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE))
             record.update(sent=not withheld, error=f"{type(exc).__name__}: {' '.join(str(exc).split())[:200]}")
             raise
@@ -332,39 +337,6 @@ def _state_schema() -> dict:
     return schema
 
 
-class _Halted(Exception):
-    """A trusted stop one caller of a fallback chain raised, carried past the chain: ``FallbackCaller`` tries its next
-    caller after any ``LLMError``, and a provider's stop and the model door's stop are both LLMErrors."""
-
-
-class _Watched:
-    """One caller of a fallback chain, as the proposer's limits see it: a trusted stop it raises is kept on ``limits``
-    (``_Limits.stop``) and leaves the chain as ``_Halted``, so no later caller is asked; anything else is as it was."""
-
-    def __init__(self, caller: LLMCaller, limits: "_Limits") -> None:
-        self._caller, self._limits = caller, limits
-
-    def complete(self, system: str, user: str, **kwargs) -> str:
-        try:
-            return self._caller.complete(system, user, **kwargs)
-        except Exception as exc:
-            if trusted_stop(exc):
-                self._limits.stop = exc
-                raise _Halted(str(exc)) from exc
-            raise
-
-    def __getattr__(self, name: str):
-        return getattr(self._caller, name)
-
-
-def _watch(caller: LLMCaller, limits: "_Limits") -> None:
-    """Watch every caller of each fallback chain in ``caller`` (``_Watched``), at any depth."""
-    if isinstance(caller, FallbackCaller):
-        for one in caller._callers:
-            _watch(one, limits)
-        caller._callers = tuple(_Watched(one, limits) for one in caller._callers)
-
-
 def _backend(caller: LLMCaller) -> LLMCaller:
     """The provider behind G6's ``EmptyRetry`` (``provider_from_env`` wraps every one in it), which the proposer's
     limits meter and cap: the retry would ask again, for more tokens, past both, and its attempts would be neither
@@ -414,9 +386,10 @@ class Proposer:
         budget = Budget(max_model_calls=settings["max_model_calls"],
                         max_output_chars=settings["max_model_calls"] * settings["max_output_tokens"] * CHARS_PER_TOKEN,
                         max_wall_clock_s=left)
-        backend = guard(_backend(raw))
+        # A private copy of the caller (``semantic.watched``): a stop in any link of a fallback chain ends the proposer,
+        # and the caller the review was handed is never changed.
+        backend = guard(watched(_backend(raw)))
         self.limits = _Limits(MeteredCaller(backend, budget), backend, settings, self.stage)
-        _watch(backend, self.limits)
         self.context: RepositoryContext | None = None
         self.stopped = ""   # why every later stage is skipped (the cap, the time)
         if not self.ready:
@@ -450,6 +423,12 @@ class Proposer:
             got = complete_structured(self.limits, _SYSTEM, user, schema, retries=RETRIES)
         if self.limits.stop is not None:
             raise self.limits.stop   # an operator stop, a spent allowance or unconfirmed cleanup ends the proposer
+        if self.limits.chain_failed:   # the interim rule: no later stage runs on a chain that may have hidden a stop
+            self.stopped = FALLBACK_FAILED
+            activity.update(result="failed", code=STOPPED, reason=FALLBACK_FAILED, model_calls=sum(
+                1 for call in self.limits.calls[first:] if call.get("sent")), seconds=round(time.monotonic() - started, 3))
+            self._record(self.limits.calls[first:])
+            return None
         calls = self.limits.calls[first:]
         activity.update(model_calls=sum(1 for call in calls if call.get("sent")),
                         seconds=round(time.monotonic() - started, 3))

@@ -67,7 +67,7 @@ from pydantic import BaseModel, ConfigDict
 
 from g6.cegis import InputDomain, SearchResult, cegis
 from g6.context.redact import MASK, mask_paths, secret_spans
-from g6.core import host_models, keys
+from g6.core import host_models, keys, markdown
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.core.llm import LLMCaller, LLMError, _start_model_call
@@ -1682,8 +1682,11 @@ def critic_report(said: str, *, marker: str = "") -> dict[str, str]:
         value: _CriticValue
         reason: str = ""
 
-    body = _reply_part(said)
+    body = _reply_part(said.replace("\r\n", "\n").replace("\r", "\n"))
     text = _outside_code(body)   # every reader, deterministic or model, reads this, never code
+    if text is None:   # nested past what CommonMark reads: what it holds is unknown, so nothing reads it
+        return {"verdict": "unreadable", "rule": "", "why": "the reply nests deeper than G6 reads", "test": "",
+                "error": ""}
     floor = _floor_critic_report(text, marker=marker)
     stated, lines = _stated_verdicts(text), [line[1].lower() for line in _VERDICT_LINE.finditer(text)]
     if stated or lines:
@@ -1714,39 +1717,62 @@ def critic_report(said: str, *, marker: str = "") -> dict[str, str]:
     return value
 
 
-#: A fenced code block in any form: three or more backticks or tildes, any info string, closed only by a line of the
-#: same character at least as long with nothing but spaces after it (CommonMark), or open to the end of the reply.
-_FENCE = re.compile(r"^[ \t]*(?P<fence>(?P<mark>[`~])(?P=mark){2,})(?P<info>[^\n]*)\n(?P<body>.*?)"
-                    r"(?:^[ \t]*(?P=fence)(?P=mark)*[ \t]*$|\Z)", re.M | re.S)
 _VERDICT_LINE = re.compile(r"^[\W_]*verdict[\W_]*[:=][\W_]*(\w+)", re.I | re.M)
 
 
-def _info(fence: re.Match) -> str:
-    words = fence["info"].split()
+def _language(info: str) -> str:
+    words = info.split()
     return words[0].lower() if words else ""
 
 
 def _reply_part(said: str) -> str:
     """The reply after the last progress label (``[codex]``) that stands outside code: one inside a fixture is the
-    fixture's text, so it cuts nothing."""
-    spans = [fence.span() for fence in _FENCE.finditer(said)]
+    fixture's text, so it cuts nothing. Code is what CommonMark reads as code (``g6.core.markdown``)."""
+    spans = [(block.start, block.end) for block in markdown.parse(said).code_blocks]
     at = said.rfind("[codex]")
     while at != -1 and any(start <= at < end for start, end in spans):
         at = said.rfind("[codex]", 0, at)
     return said if at == -1 else said[at:].split("\n", 1)[-1]
 
 
-def _outside_code(body: str) -> str:
-    """The reply without its code: every fenced block (``_FENCE``) is dropped except a json one, which is the protocol's
-    own position and keeps its text. A reproduction or a fixture is code, so nothing in it is a verdict, a reason or
+def _outside_code(body: str) -> str | None:
+    """The reply without its code, or None when it nests deeper than CommonMark reads. Every code block, fenced in any
+    form or indented, at any depth of quotes and lists, is dropped, except a json one, which is the protocol's own
+    position and keeps its content. A reproduction or a fixture is code, so nothing in it is a verdict, a reason or
     the quoted token."""
-    return _FENCE.sub(lambda fence: fence["body"] if _info(fence) == "json" else "", body)
+    document = markdown.parse(body)
+    if document.truncated:
+        return None
+    pieces, at = [], 0
+    for block in document.code_blocks:
+        if block.start < at:
+            continue
+        pieces.append(body[at:block.start])
+        if _language(block.info) == "json":
+            pieces.append(block.content)
+        at = block.end
+    pieces.append(body[at:])
+    return "".join(pieces)
 
 
 def _reproduction(body: str) -> str:
-    """The reproducing test of a line-form reply: its first python fence, in any fence form."""
-    test = next((fence for fence in _FENCE.finditer(body) if _info(fence) == "python"), None)
-    return test["body"].strip() if test else ""
+    """The reproducing test of a line-form reply: its first python code block, in any fence form and at any depth."""
+    test = next((block for block in markdown.parse(body).code_blocks if _language(block.info) == "python"), None)
+    return test.content.strip() if test else ""
+
+
+#: A JSON string token, read as JSON reads it, so an escaped key (``"\u0076erdict"``) is the key it spells.
+_STRING = re.compile(r'"(?:[^"\\\n]|\\.)*"')
+
+
+def _names_verdict(fragment: str) -> bool:
+    for token in _STRING.finditer(fragment):
+        try:
+            if json.loads(token[0]) == "verdict":
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 class _RepeatedKey(ValueError):
@@ -1778,7 +1804,7 @@ def _stated_verdicts(body: str) -> list[dict]:
             at = body.find("{", at + 1)
             continue
         except (ValueError, RecursionError) as exc:
-            if '"verdict"' in body[at:getattr(exc, "pos", at)]:
+            if _names_verdict(body[at:getattr(exc, "pos", at)]):
                 found.append(_BROKEN)
             at = body.find("{", at + 1)
             continue
