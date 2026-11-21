@@ -58,14 +58,14 @@ def blocked_reply(*args, **kwargs):
 
 
 def invoke_checked(component, op, params, *, registry=None, **kwargs):
-    from g6.core.door import invoke_checked as build, said_state
+    from g6.core.door import invoke_checked as door_invoke, said_state
     from g6.core.registry import get_registry
     from g6.core.consent_registry import GuardedRegistry
     from g6.core.external_data import ComponentRegistryIngress, ExternalDataLimit, component_failure_reply
 
     ingress = ComponentRegistryIngress(registry if registry is not None else get_registry())
     try:
-        value = build(component, op, params, registry=GuardedRegistry(ingress), **kwargs)
+        value = door_invoke(component, op, params, registry=GuardedRegistry(ingress), **kwargs)
     except ExternalDataLimit as exc:
         return blocked_reply(str(exc), request_id=kwargs.get("request_id", ""))
     if ingress.failure is not None:

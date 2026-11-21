@@ -135,16 +135,19 @@ G6_CHILD, SANDBOX, PROGRAM = "g6", "sandbox", "program"
 CHILDREN = {
     ("mcp/improve.py", "_spawn", "subprocess.Popen"): G6_CHILD,                      # the runner, in the loop's folder
     ("mcp/improve.py", "_run_act", "subprocess.Popen"): G6_CHILD,                    # a person's act, in the loop's folder
-    ("metaharness/executor.py", "execute", "g6.core.sandbox.run_script"): SANDBOX,
-    ("metaharness/lora.py", "sandbox_trainer", "g6.core.sandbox.run_script"): SANDBOX,
-    ("metaharness/steps.py", "run_shown", "g6.core.sandbox.run_script"): SANDBOX,
+    # b076aa08: the three sandbox runs go through guidance_builders.script_run, which calls sandbox.run_script and marks
+    # the program's output as external text
+    ("metaharness/executor.py", "execute", "g6.core.guidance_builders.script_run"): SANDBOX,
+    ("metaharness/lora.py", "sandbox_trainer", "g6.core.guidance_builders.script_run"): SANDBOX,
+    ("metaharness/steps.py", "run_shown", "g6.core.guidance_builders.script_run"): SANDBOX,
     ("mcp/mission.py", "register", "subprocess.run"): PROGRAM,                       # git, in G6's copy
     ("mcp/mission.py", "register", "g6.core.git_env.safe_git"): PROGRAM,             # git's own checks
     ("mcp/__init__.py", "describe_reply", "g6.core.discovery.describe"): PROGRAM,    # outside programs' version probes
     # g6_invoke builds the person's configured model for a component that takes one, which may be their own claude or
     # codex (door.person_model, through llm.provider_from_env and host_models.CALLERS): found since the inventory
-    # follows a name bound to a table of callers
-    ("mcp/__init__.py", "invoke_reply", "g6.core.door.invoke_checked"): PROGRAM,
+    # follows a name bound to a table of callers; since 0b400900 through guidance_builders.invoke_checked, which calls
+    # door.invoke_checked with the component ingress that marks the component's result
+    ("mcp/__init__.py", "invoke_reply", "g6.core.guidance_builders.invoke_checked"): PROGRAM,
     # codex app-server: read_limits runs it through _ran, the one place its result is read (the refusals follow-up)
     ("self_maintenance/usage.py", "_ran", "g6.core.component_process.run_process"): PROGRAM,
     # the watched hosts the loop sends through, each built on the consent line's caller for its host (ConsentClaude and
