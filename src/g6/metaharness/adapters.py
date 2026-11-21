@@ -23,7 +23,7 @@ def _released(out: str) -> bool:
     try:
         return json.loads(out).get("state") != "blocked-escalated"
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 RELEASED = Check("the bundle released a result", _released, check_id="bundle-released",

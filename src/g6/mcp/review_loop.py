@@ -136,7 +136,7 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     try:
         result = json.loads(body)
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     metadata = {key: result[key] for key in ('action', 'ending', 'request_id', 'run_id') if key in result}
     metadata.update(has_report='report' in result, has_text='text' in result)
     if capture is not None and capture.review_unsent and capture.refused_provider:

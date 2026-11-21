@@ -59,7 +59,7 @@ def first_json_object(text: str) -> dict:
                         try:
                             value = json.loads(_escape_lone_backslashes(text[start:i + 1]))
                         except (RecursionError, MemoryError):
-                            raise ValueError("a JSON record exceeds decoder limits") from None
+                            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                     except json.JSONDecodeError:
                         break
                     if isinstance(value, dict):

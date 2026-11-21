@@ -794,7 +794,7 @@ def read_observation(raw: object) -> dict | None:
     try:
         return json.loads(json.dumps(found, allow_nan=False))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 class RepoRefused(ValueError):

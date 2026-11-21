@@ -68,7 +68,7 @@ def _json(value: Any) -> Any:
     try:
         return json.loads(json.dumps(value, allow_nan=False))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def same(a: Any, b: Any) -> bool:
@@ -183,7 +183,7 @@ def main() -> int:
     try:
         request = json.loads(sys.stdin.read())
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     _limit(int(request.get("mem_mb", 512)), int(request.get("cpu_s", 30)))
     op = request.get("op")
     reply = _evaluate(request) if op == "evaluate" else _search(request) if op == "search" else {

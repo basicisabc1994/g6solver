@@ -77,7 +77,7 @@ def _answered_call(ledger: Any, mission_id: str, run_id: str) -> dict | None:
     try:
         calls = [c for c in json.loads(run.get("calls_json") or "[]") if isinstance(c, dict)]
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     return next((c for c in calls if c.get("refused") is False), None)
 
 

@@ -233,7 +233,7 @@ def _load(path: Path, kind: type) -> Any:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not isinstance(value, kind):
         raise ValueError(f"G6_E_LEARNING_BUNDLE_INVALID: {path.name} is not a JSON {kind.__name__}")
     return value

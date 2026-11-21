@@ -174,13 +174,13 @@ def _rows(ledger: ChainLedger) -> list[tuple[str, PairReceipt]]:
     try:
         problems = ledger.verify()
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if problems:
         raise ValueError(f"the receipt ledger does not check out: {problems[0]}")
     try:
         return [(entry["id"], PairReceipt.from_body(entry["body"])) for entry in ledger.entries() if entry["kind"] == KIND]
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def receipts(ledger: ChainLedger, *, strategy_digest: str | None = None) -> tuple[PairReceipt, ...]:
@@ -272,11 +272,11 @@ class _Case:
         try:
             self.meta = json.loads(evidence.get(receipt.information_digest))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         try:
             oracle = json.loads(evidence.get(receipt.oracle_digest))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         self.instance = TaskInstance(input=self.task, expected_output=oracle["expected"],
                                      instance_id=receipt.case_id, metadata={**self.meta, **oracle["rule"]})
 
@@ -287,7 +287,7 @@ def _arm_again(receipt: PairReceipt, arm: Arm, case: _Case, store: StrategyStore
     try:
         kept = json.loads(evidence.get(arm.evidence))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     named = {"cohort_id": receipt.cohort_id, "replay_id": receipt.replay_id, "case_id": receipt.case_id,
              "strategy_digest": arm.strategy_digest, "prompt_digest": arm.prompt_digest, "seconds": arm.seconds,
              "cost_usd": arm.cost_usd, "error": ""}
@@ -368,7 +368,7 @@ def credited(ledger: ChainLedger, store: StrategyStore, *, evidence: Evidence | 
         return tuple(receipt for receipt, why in audit(ledger, store, evidence=evidence)
                      if not why and (strategy_digest is None or receipt.candidate.strategy_digest == strategy_digest))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 class PairedEvaluator:
@@ -472,7 +472,7 @@ class PairedEvaluator:
             read = [(r, why) for r, why in audit(self.ledger, self.store, evidence=self.evidence)
                     if (r.cohort_id, r.replay_id) == (self.cohort_id, replay_id)]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         earlier = [r for r, _ in read]
         sound = {r.pair_id for r, why in read if not why}       # a row that does not read again is never reused
         if any(self._settings(r) != mine for r in earlier):
@@ -495,7 +495,7 @@ class PairedEvaluator:
                 meta = json.loads(canonical(_plain({key: value for key, value in instance.metadata.items()
                                                     if key not in ORACLE_KEYS})))
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             oracle = {"expected": instance.expected_output,
                       "rule": {key: instance.metadata[key] for key in sorted(ORACLE_KEYS) if key in instance.metadata}}
             self.evidence.put(instance.input.encode("utf-8"))
@@ -534,7 +534,7 @@ class PairedEvaluator:
             try:
                 self.ledger.append(KIND, pair_id, receipt.to_body())
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             earlier.append(receipt)
             out.append(receipt)
         return tuple(out)

@@ -208,7 +208,7 @@ def finish(reply: Any, job_id: str) -> Any:
     try:
         reply = custody(json.loads(body)) if callable(custody) else json.loads(body)
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     # A job entered through a declared producer already carries that contract.
     # Absence of a value receipt is distinct from an explicitly unknown origin;
     # the latter stays in refs and cannot be replaced by the declaration.

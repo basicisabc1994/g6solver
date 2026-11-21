@@ -67,14 +67,14 @@ class Memory:
         try:
             return json.loads(row["reply_json"]) if row else None
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def runs(self, family: str) -> list[dict]:
         rows = self._db().execute("SELECT reply_json FROM runs WHERE family=? ORDER BY rowid", (family,)).fetchall()
         try:
             return [json.loads(r["reply_json"]) for r in rows]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def failure_counts(self, by: str = "check", min_count: int = 1) -> dict[str, int]:
         if by not in {"check", "family"} or type(min_count) is not int or min_count < 1:
@@ -97,7 +97,7 @@ class Memory:
         try:
             return json.loads(row["batch_json"]) if row else None
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def close(self) -> None:
         if self._conn is not None:

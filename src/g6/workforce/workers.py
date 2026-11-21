@@ -194,7 +194,7 @@ def load_templates(directory: str | Path | None = None) -> dict[str, Template]:
         try:
             template = _template(json.loads(path.read_text(encoding="utf-8")), path.name)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if path.name != f"{template.name}.json":
             raise ValueError(f"{path.name}: a template file is named <name>.json, here {template.name}.json")
         out[template.name] = template

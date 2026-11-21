@@ -343,7 +343,7 @@ class ProjectStore:
             return Generation(number=row["number"], state=row["state"], backends=json.loads(row["backends"]),
                               published_at=row["published_at"])
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def stage(self, backends: Mapping[str, bool]) -> Generation:
         """A new staging generation; one left staging by a crash is marked abandoned first."""
@@ -415,7 +415,7 @@ class ProjectStore:
             try:
                 backends = json.loads(row["backends"])
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             for name, entry in backends.items():
                 receipt = dict(receipts.get(name) or {})
                 complete = receipt.get("written") == listed and receipt.get("read_back") == listed
@@ -551,7 +551,7 @@ class ProjectStore:
                                   passage_ids=tuple(c["passage_id"] for c in cut),
                                   spans=tuple((c["span_start"], c["span_end"]) for c in cut)))
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return out
 
     # -- receipts, rereads, retained bytes and snapshots -------------------------------------------------------------
@@ -707,7 +707,7 @@ class ProjectStore:
             try:
                 backends = json.loads(row["backends"])
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             entry = backends.get(backend) or {"required": False, "state": "unavailable", "receipt": {},
                                               "registrations": {}}
             if entry.get("required"):
@@ -765,14 +765,14 @@ class ProjectStore:
                 try:
                     passages = json.loads(row["passage_ids"])
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 why = may_use(registration, at)
                 why = "revoked" if why == "unknown" else why
                 if not why:
                     try:
                         uris = set(json.loads(row["uris"]))
                     except (RecursionError, MemoryError):
-                        raise ValueError("a JSON record exceeds decoder limits") from None
+                        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                     later = conn.execute("SELECT uri FROM tombstones WHERE registration_id = ? AND n > ?",
                                          (row["registration_id"], row["watermark"])).fetchall()
                     if any(t["uri"] == "" or t["uri"] in uris for t in later):
@@ -851,7 +851,7 @@ class ProjectStore:
                     try:
                         body = json.loads(row["body"])
                     except (RecursionError, MemoryError):
-                        raise ValueError("a JSON record exceeds decoder limits") from None
+                        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                     if body.get("registration_id") == registration_id and body.get("unread"):
                         conn.execute("UPDATE jobs SET body = ? WHERE id = ?", (json.dumps({**body, "unread": []}), row["id"]))
             conn.execute("UPDATE dependents SET passage_ids = '[]', uris = '[]' WHERE registration_id = ?",

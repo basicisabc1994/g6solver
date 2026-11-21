@@ -25,7 +25,7 @@ def host_controls(value: dict, controls: dict, *, sources: Sequence[cloud.Source
     try:
         value = json.loads(body)
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if sources is not None:
         refs = cloud.boundary_sources(sources, carried=refs if refs is not None else (), inherit=False)
     if refs is None:

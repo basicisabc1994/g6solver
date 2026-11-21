@@ -172,7 +172,7 @@ def _gltf(path: Path) -> Any:
     try:
         return json.loads(data.decode("utf-8-sig"))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def self_contained(path: Path) -> None:

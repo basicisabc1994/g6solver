@@ -166,7 +166,7 @@ def parse(text: str, source: str) -> Connections:
         try:
             mapping = json.loads(text)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     except json.JSONDecodeError as exc:
         raise ConfigError(f"{source} is not JSON ({exc.msg} at line {exc.lineno}, column {exc.colno})") from None
     return from_mapping(mapping, source)

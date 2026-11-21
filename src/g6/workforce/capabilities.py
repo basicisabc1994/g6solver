@@ -257,7 +257,7 @@ class ParamContract:
             try:
                 body["operational"] = json.loads(json.dumps(data["operational"]))
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             body["operational_sha256"] = hashlib.sha256(json.dumps(
                 data["operational"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         contract = cls(**body, sha256=sha)

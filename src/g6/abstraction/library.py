@@ -245,7 +245,7 @@ class Library:
             try:
                 state = json.load(fh)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if state.get("version") != 1:
             raise ValueError(f"unsupported state version "
                              f"{state.get('version')!r}; expected 1")

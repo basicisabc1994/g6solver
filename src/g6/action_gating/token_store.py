@@ -147,7 +147,7 @@ class ActionGatingStore:
                 "audit_record": json.loads(row[9]) if row[9] else None,
             }
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def consume_gate_token(self, gate_token: str) -> bool:
         with self._conn:

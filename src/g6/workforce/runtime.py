@@ -597,7 +597,7 @@ class Runtime:
         try:
             body = json.loads(plan.to_json())
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         made = [c["key"] for c in kids if c.get("kind") == "do" and isinstance(c.get("key"), str)]
         for unit in body["units"]:
             if unit["key"] == unit_key:
@@ -757,7 +757,7 @@ class Runtime:
                 try:
                     rejected = json.loads(json.dumps(content, sort_keys=True, default=str))
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 refused_output = {"run_id": run.run_id, "unit": spec.key, "content": rejected,
                                   "sha256": _digest(rejected), "reason": str(exc),
                                   "provenance": _provenance(result.calls, inputs)}
@@ -1056,7 +1056,7 @@ class Runtime:
                 try:
                     reasons = json.loads(failed[-1]["reasons_json"] or "[]")
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 question = (f"Verifiers disagree on {spec.verifies}'s output: {', '.join(passed)} passed it and "
                             f"{spec.key} failed it ({'; '.join(reasons)[:600]}). Uphold the fail, or set it aside "
                             "with your reason (the result is then at most qualified-draft)?")
@@ -1112,7 +1112,7 @@ class Runtime:
         try:
             text = focused["text"] if focused else "; ".join(json.loads(verdict["reasons_json"] or "[]"))[:2000]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         self._missions.record_event(mission_id, "message", actor=f"worker:{row['instance_id']}",
                                     detail={"from": spec.key, "to": producer.key, "text": text,
                                             "refs": {"run_id": row["run_id"], "verdict_id": verdict["verdict_id"],
@@ -1195,7 +1195,7 @@ class Runtime:
         try:
             calls = [c for c in json.loads(last["calls_json"] or "[]") if isinstance(c, dict)]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         step = spec.call or spec.oracle or {}
         contract = self._caps.contract(*step["capability"]) if step.get("capability") else None
         ceiling = contract.cost_ceiling if contract is not None else None
@@ -1239,7 +1239,7 @@ class Runtime:
                 try:
                     spec_json = json.loads(self._ledger.instance(mission_id, row["instance_id"])["spec_json"])
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 limit = timedelta(seconds=int(spec_json["policy"]["max_runtime_seconds"]))
                 if self._now() - datetime.fromisoformat(row["started_at"]) <= limit:
                     continue  # still within its wall clock: it may be running
@@ -1316,7 +1316,7 @@ class Runtime:
         try:
             spec = json.loads(self._ledger.instance(mission_id, row["instance_id"])["spec_json"])
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if any((component, op) in RUNS_CODE for component, op in spec.get("allowed", [])):
             return True
         if spec.get("read_only"):
@@ -1400,7 +1400,7 @@ class Runtime:
         try:
             reasons = tuple(r for v in judged for r in json.loads(v["reasons_json"] or "[]"))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         judged_outcome = Outcome(worst, degraded=last.degraded, reasons=reasons, source=f"verdicts on {key}")
         # Gate W: a verified verdict counts only from a verifier-grade (A4) check, however the row was written.
         if any(v["state"] == VERIFIED and v.get("authority") != VERIFIER_GRADE for v in judged):

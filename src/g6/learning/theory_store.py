@@ -253,7 +253,7 @@ class TheoryStore:
         try:
             theory = self.get(theory_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if theory is None:
             raise KeyError(f"G6_E_LEARNING_UNKNOWN_THEORY: {theory_id!r} is not in scope {self.scope!r}")
         return theory
@@ -264,7 +264,7 @@ def _row_to_theory(row: sqlite3.Row) -> Theory:
         try:
             sources = list(json.loads(row["source_instances"] or "[]"))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     except (json.JSONDecodeError, TypeError):
         sources = []
     return Theory(theory_id=row["theory_id"], failure_code=row["failure_code"], instruction=row["instruction"],

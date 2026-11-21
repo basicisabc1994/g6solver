@@ -31,7 +31,7 @@ class BoundReply(dict):
                 try:
                     owned.execution_artifacts = json.loads(json.dumps(original.execution_artifacts))
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 detached[index] = owned
         return BoundReply(copy, self.task_identity)
 

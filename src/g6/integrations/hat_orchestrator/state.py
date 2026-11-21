@@ -81,7 +81,7 @@ class Store:
         try:
             return Snapshot.model_validate(json.loads(content))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     @property
     def backup_path(self):
@@ -122,7 +122,7 @@ class Store:
         try:
             return Policy.model_validate(json.loads(content))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     @contextmanager
     def transaction(self):

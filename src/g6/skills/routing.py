@@ -135,7 +135,7 @@ def loads(text: str) -> Manifest:
         try:
             data = json.loads(text, object_pairs_hook=_pairs)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     except json.JSONDecodeError as exc:
         raise ManifestError(f"not JSON: {exc}") from exc
     data = _fields("the manifest", data, {"format", "release", "routes", "entries"})
@@ -193,7 +193,7 @@ def load(path: Path | None = None) -> Manifest:
     try:
         return loads((path or manifest_path()).read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def dumps(manifest: Manifest) -> str:

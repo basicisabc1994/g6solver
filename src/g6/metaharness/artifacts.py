@@ -67,7 +67,7 @@ class ArtifactStore:
         try:
             return json.loads((self.root / "distillates" / sha / "admission.json").read_text(encoding="utf-8"))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     # adapters -----------------------------------------------------------------------------------------------------
     def put_adapter(self, folder: str | Path) -> str:

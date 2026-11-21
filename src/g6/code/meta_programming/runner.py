@@ -58,7 +58,7 @@ def run_tests(source: str, tests: str, module: str, *, timeout_s: float) -> dict
                 try:
                     report = json.loads(line[len(mark):])
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             except json.JSONDecodeError:
                 report = None
             break

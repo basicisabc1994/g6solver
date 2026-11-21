@@ -280,7 +280,7 @@ def _committed() -> tuple[dict[str, Any], tuple[ModelProfile, ...]]:
     try:
         raw = json.loads(text)
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     return {k: v for k, v in raw.items() if k != "models"}, tuple(ModelProfile.from_dict(r) for r in raw["models"])
 
 
@@ -290,7 +290,7 @@ def table() -> dict[str, Any]:
     try:
         return json.loads(json.dumps(_committed()[0]))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def default_registry() -> CognitiveTaskRegistry:

@@ -13,6 +13,7 @@ This assumes a trusted client and host. Python callers and a same-user shell are
 """
 from __future__ import annotations
 
+import json
 import importlib.util
 import os
 import sys
@@ -236,7 +237,7 @@ class Surface:
                 try:
                     mh.ledger.append(PROPOSED_BY, key, {"proposal_digest": proposal.digest(), "session": session})
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return as_json(got)
 
     @_surface_operation
@@ -272,7 +273,7 @@ class Surface:
                 try:
                     mh.ledger.append(PROPOSED_BY, key, {"proposal_digest": proposal.digest(), "session": session})
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return as_json(got)
 
     @_surface_operation
@@ -336,7 +337,7 @@ class Surface:
             try:
                 mh.ledger.append("client_consent", consent_id, consent)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         result = as_json(mh.activate(decision_digest, accepted_by=answer.strip(),
                                      candidate_digest=decision.candidate_digest))
         if result.get("warning_card", {}).get("code") == "G6_E_META_ACTIVATED":

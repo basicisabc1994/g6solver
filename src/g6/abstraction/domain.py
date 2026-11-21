@@ -154,7 +154,7 @@ class ConcreteDomain:
             try:
                 data = json.load(fh)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         rows = data["rows"] if isinstance(data, dict) and "rows" in data else data
         return cls.from_rows(rows, objective, **kw)
 

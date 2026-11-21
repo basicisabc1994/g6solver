@@ -44,7 +44,7 @@ class _FrozenResult:
         try:
             return json.loads(body)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 class Jobs:

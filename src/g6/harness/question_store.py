@@ -86,6 +86,17 @@ _clients: dict[str, tuple[str, object]] = {}
 _clients_lock = Lock()
 
 
+def asking_sources() -> tuple:
+    """The sources a question asked now records (``_provenance``): those held so far, including every input admitted
+    from a review and this call's arguments. The caller checks them before anything is recorded or spent."""
+    from g6.core import cloud_consent as cloud
+
+    capture = cloud.current_capture()
+    inputs = sorted(source for source in capture.supplied if _INPUT.fullmatch(source)) if capture is not None else []
+    return tuple(dict.fromkeys((*cloud.prompt_sources(), *(cloud.Source(
+        source, cloud.sha256('asking-call-input'), source.removeprefix('input:')) for source in inputs))))
+
+
 def _provenance() -> dict | None:
     """Keep the sources held at ask time, including every input admitted from a review and this call's arguments."""
     from g6.core import cloud_consent as cloud
@@ -94,8 +105,7 @@ def _provenance() -> dict | None:
     if capture is None or capture.client is None:
         return None
     inputs = sorted(source for source in capture.supplied if _INPUT.fullmatch(source))
-    sources = tuple(dict.fromkeys((*cloud.prompt_sources(), *(cloud.Source(
-        source, cloud.sha256('asking-call-input'), source.removeprefix('input:')) for source in inputs))))
+    sources = asking_sources()
     token = uuid4().hex
     with _clients_lock:
         if len(_clients) >= 64:

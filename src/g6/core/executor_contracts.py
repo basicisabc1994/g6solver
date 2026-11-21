@@ -54,7 +54,7 @@ def _json(text: str) -> str:
     try:
         value = json.loads(text, parse_constant=invalid)
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not isinstance(value, (dict, list)):
         raise ValueError("the payload must be a JSON object or array")  # noqa: TRY004 - Pydantic validation error
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
@@ -169,7 +169,7 @@ class InferenceRequest(Record):
             if not isinstance(json.loads(value), dict):
                 raise ValueError("settings must be a JSON object")  # noqa: TRY004 - Pydantic validation error
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return value
 
 

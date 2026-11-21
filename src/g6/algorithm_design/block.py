@@ -140,7 +140,7 @@ def _json(value: Any) -> Any:
     try:
         return json.loads(json.dumps(value, default=plain))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def _found(found: DesignSearch) -> dict[str, Any]:

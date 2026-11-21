@@ -245,7 +245,7 @@ def _parsed(rest: str) -> tuple[Any, str]:
     """The answer that follows ``ANSWERED`` in a text: (its JSON, "") or, cut short in the record, (None, its text)."""
     try:
         return json.JSONDecoder().raw_decode(rest)[0], ""
-    except ValueError:
+    except (ValueError, RecursionError, MemoryError):
         return None, rest
 
 

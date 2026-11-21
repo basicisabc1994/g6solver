@@ -222,7 +222,7 @@ class PersistentColbertIndex(Retrieves):
             try:
                 passage = Passage(**json.loads(row["record"]))
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             scored.append((passage, maxsim(tokens, _unpack(row["data"], row["tokens"], self.pin))))
         order = sorted(range(len(scored)), key=lambda i: (-scored[i][1], scored[i][0].id))[:top_k]
         hits = [Hit(passage=scored[i][0], score=scored[i][1], score_scale=self.score_scale, rank=n)

@@ -181,7 +181,7 @@ class ScorecardStore:
                 try:
                     entry = json.loads(line)
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             except json.JSONDecodeError:
                 continue
             if isinstance(entry, dict) and (component is None or entry.get("component") == component):

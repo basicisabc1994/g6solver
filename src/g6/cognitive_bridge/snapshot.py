@@ -575,7 +575,7 @@ def record_data(value: Any) -> Any:
     try:
         return json.loads(canonical_json(value))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def publish(value: T, *, where: str) -> T:
@@ -654,7 +654,7 @@ def plain(value: Any, *, where: str, _depth: int = 0, cap: int | None = None, er
     try:
         out = json.loads(canonical_json(value))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not _same(value, out, _depth):
         raise NotPlainData(where, "it does not survive the bridge's canonical encoder unchanged")
     return out
@@ -1028,11 +1028,8 @@ def json_reply(reply: Any, cap: int, preflight: Callable[[Any], None] | None = N
     _admit_reply(reply, cap)
     reply = text(reply, where="a model's reply")
     try:
-        try:
-            parsed = json.loads(reply, object_pairs_hook=_unique)
-        except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
-    except RecursionError:
+        parsed = json.loads(reply, object_pairs_hook=_unique)
+    except (RecursionError, MemoryError):   # the bridge's own refusal, never a translation it does not catch
         raise _too_deep("a model's reply") from None
     if preflight is not None:
         preflight(parsed)

@@ -26,6 +26,7 @@ names that gap as ``("mission", CALLER_DECLARED)``, even when every material cla
 """
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -141,7 +142,7 @@ class Bundle:
         try:
             return [entry["body"] for entry in self.ledger.entries() if entry["kind"] == "evidence"]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def standard_ref(name: str) -> StandardRef:

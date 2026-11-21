@@ -259,7 +259,7 @@ class SandboxSession:
             try:
                 return json.loads(done.outputs[FINAL].decode("utf-8")), printed, True
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return None, printed, False
 
 

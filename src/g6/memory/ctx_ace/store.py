@@ -185,7 +185,7 @@ class Store:
                     try:
                         return MemoryRecord.model_validate(json.loads(row["body"])), False
                     except (RecursionError, MemoryError):
-                        raise ValueError("a JSON record exceeds decoder limits") from None
+                        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 count, total = conn.execute("SELECT COUNT(*), COALESCE(SUM(LENGTH(body)), 0) FROM records").fetchone()
                 if count >= MAX_RECORDS:
                     raise StoreError(FULL, f"the store holds {count} records, its most; forget some first")
@@ -202,7 +202,7 @@ class Store:
         try:
             records, unreadable = self.load()
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         at = self.clock()
         by_id = {r.id: r for r in records}
         ranked = TextRetriever([(r.id, r.text) for r in records]).search(query, top_k=max(1, len(records)))
@@ -226,7 +226,7 @@ class Store:
         try:
             records, unreadable = self.load()
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         at = self.clock()
         wanted, tagged = set(record_ids), set(tags)
         current, stale, held = [], [], 0
@@ -256,7 +256,7 @@ class Store:
         try:
             records, _ = self.load()
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         at = self.clock()
         wanted, tagged = set(record_ids), set(tags)
         doomed: list[MemoryRecord | str] = []
@@ -300,7 +300,7 @@ class Store:
         try:
             records, _ = self.load()
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         record = next((r for r in records if r.id == record_id_), None)
         if record is None:
             raise StoreError(NOT_FOUND, f"no readable record {record_id_} is kept")
@@ -328,7 +328,7 @@ class Store:
         try:
             records, unreadable = self.load()
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         at = self.clock()
         try:
             size = self._db().execute("SELECT COALESCE(SUM(LENGTH(body)), 0) FROM records").fetchone()[0]

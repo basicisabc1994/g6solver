@@ -26,7 +26,7 @@ def _read(stem: str) -> dict[str, Any]:
     try:
         return json.loads((FOLDER / f"{stem}.json").read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def _named(name: str) -> str:

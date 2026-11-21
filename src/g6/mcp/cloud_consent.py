@@ -212,7 +212,7 @@ def protect_reply(ctx: Any, result: dict, sources, *, supplied=(), job=None, rec
         try:
             result = json.loads(body)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         sources = policy.boundary_sources(sources, carried=known or ())
         payload = policy.sha256(body)
         with policy.admission(client_provider(ctx), sources, payload, supplied=supplied, disclose=record):

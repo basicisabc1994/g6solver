@@ -126,7 +126,7 @@ def run(op: str, params: dict[str, Any], *, session: str | None, save: bool, out
         try:
             result = json.loads(result_file.read_text(encoding="utf-8")) if result_file.is_file() else None
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if ran.code != 0 or not isinstance(result, dict) or not result.get("ok"):
             said = (result or {}).get("error") if isinstance(result, dict) else None
             raise MediaError(BACKEND_FAILED, f"Blender failed (exit {ran.code}): {said or ran.text(400) or 'no result'}"

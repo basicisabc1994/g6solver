@@ -143,7 +143,7 @@ def skill_examples(text: str) -> list[tuple[str, dict]]:
             try:
                 params = json.loads(body)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         except json.JSONDecodeError as exc:
             raise ValueError(f"the g6-example for {op} is not JSON: {exc}") from exc
         if not isinstance(params, dict):

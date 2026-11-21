@@ -37,7 +37,7 @@ def _load(body: str) -> Reading:
     try:
         data = json.loads(body)
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     windows = []
     for row in data.pop("windows"):
         for key in ("reset_at", "observed_at", "attempted_at", "last_good_at"):
@@ -245,7 +245,7 @@ class Store:
                 try:
                     saved = datetime.fromisoformat(json.loads(path.read_text(encoding="utf-8"))["read_at"])
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 if saved >= now and not ahead(saved, present):
                     return  # a newer capture stands, unless it too is dated after this writer's present
             temp = path.with_suffix("." + uuid.uuid4().hex + ".tmp")

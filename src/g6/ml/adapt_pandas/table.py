@@ -362,7 +362,7 @@ def profile(table: Table, key: list[str] | None = None) -> dict[str, Any]:
         try:
             twice = [(json.loads(k), n) for k, n in counts.most_common() if n > 1]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         keyed = {"columns": key, "rows_with_missing_key": missing_key, "repeated_values": len(twice),
                  "rows_sharing_a_key": sum(n for _, n in twice),
                  "examples": [{"key": k, "rows": n} for k, n in twice[:5]]}

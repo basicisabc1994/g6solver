@@ -159,7 +159,7 @@ class VentureStore:
         try:
             d["runway_rule"] = json.loads(d.pop("runway_rule_json") or "{}")
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return d
 
     # -- evidence (append only) ---------------------------------------------------
@@ -215,7 +215,7 @@ class VentureStore:
             try:
                 d["detail"] = json.loads(d.pop("detail_json") or "{}")
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             out.append(d)
         return out
 

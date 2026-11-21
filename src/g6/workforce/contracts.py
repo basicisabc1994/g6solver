@@ -543,7 +543,7 @@ def _usage_levels(result: Any) -> list[dict] | None:
         try:
             result = json.loads(result)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not isinstance(result, dict):
         return None
     return [result] + ([result["result"]] if isinstance(result.get("result"), dict) else [])

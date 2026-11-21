@@ -1349,7 +1349,7 @@ def focused(missions, ledger, mission_id: str, unit: str, artifact_id: str, *, s
         try:
             reasons = json.loads(verdict["reasons_json"] or "[]")
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         try:
             answered = json.loads(next((r[len(_ANSWERED):] for r in reasons if r.startswith(_ANSWERED)), "{}"))
         except (ValueError, RecursionError, MemoryError):  # cut short in the record: the check's own words stand instead

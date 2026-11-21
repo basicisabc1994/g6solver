@@ -104,7 +104,7 @@ def _candidates(missions: MissionStore, mission: dict) -> list[dict]:
         return [{"episode_id": r[0], "task_id": r[1], "task_kind": r[2], "code": r[3], "source": r[4],
                  "detail": json.loads(r[5] or "{}"), "at": r[6]} for r in rows]
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def assemble(rows: dict[str, list]) -> dict:
@@ -142,7 +142,7 @@ def _calls(run: dict) -> list[dict]:
     try:
         return [c for c in json.loads(run.get("calls_json") or "[]") if isinstance(c, dict)]
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def _objective(rows: dict) -> dict:
@@ -180,7 +180,7 @@ def _capabilities(rows: dict) -> dict:
         allowed = sorted({".".join(pair) for w in rows["instances"]
                           for pair in json.loads(w["spec_json"] or "{}").get("allowed") or []})
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     called = [{"run_id": r["run_id"], "capability": f"{c.get('component')}.{c.get('op')}",
                "contract_sha256": c.get("contract_sha", ""), "refused": bool(c.get("refused"))}
               for r in rows["runs"] for c in _calls(r)]
@@ -233,7 +233,7 @@ def _verdict(rows: dict) -> dict:
                    "model_calls": v["model_calls"], "result": v["result"], "state": v["state"],
                    "reasons": json.loads(v["reasons_json"] or "[]")} for v in rows["verdicts"]]
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     closed = _closed(rows)
     if not (checks or closed):
         return _absent("the mission has not closed and no check has judged an output")

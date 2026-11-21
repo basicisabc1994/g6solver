@@ -389,7 +389,7 @@ def _granted(acc: Access, registration_id: str) -> bool:
         return True
     try:
         return cloud_consent.is_granted(consent_scope(registration_id), acc.destination)
-    except (ValueError, ScopeDenied):
+    except (ValueError, ScopeDenied, RecursionError, MemoryError):   # a sharing state G6 cannot read grants nothing
         return False
 
 

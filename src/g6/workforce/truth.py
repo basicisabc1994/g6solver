@@ -531,7 +531,7 @@ class Truth:
         try:
             data = json.loads((seed.dir / "truth.json").read_text(encoding="utf-8"))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return cls(seed.id, seed.dir / "repo", data["claims"])
 
     def check(self, claim_id: str, *, runner=None) -> bool:

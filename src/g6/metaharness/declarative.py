@@ -113,7 +113,7 @@ def discover(root: Path) -> dict:
         try:
             spec = WorkflowInput.model_validate(json.loads(file.read_text(encoding="utf-8")))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if spec.name != file.parent.name:
             raise ValueError("workflow name does not match its directory")
         # The baseline is frozen too: do not silently accept edits to its source.

@@ -139,7 +139,7 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
         try:
             params = json.loads(params_json or "{}")
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     except json.JSONDecodeError as exc:
         return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id)
     if not isinstance(params, dict):
@@ -270,7 +270,7 @@ def build_server(surface: Any = None) -> Any:
             try:
                 payload = json.loads(composition_json)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         except json.JSONDecodeError:
             return blocked_reply("[G6_E_INPUT_VALIDATION] composition_json must be JSON")
         return compose_reply(payload, allow_sensitive=allowed_sensitive())
@@ -439,7 +439,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             try:
                 return mh.start(json.loads(specification_json))
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         except json.JSONDecodeError:
             return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json must be JSON")
 
@@ -518,7 +518,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             try:
                 profile = json.loads(profile_json) if profile_json else None
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         except json.JSONDecodeError as exc:
             from g6.metaharness.api import _blocked
 

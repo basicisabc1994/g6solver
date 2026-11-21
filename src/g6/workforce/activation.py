@@ -390,7 +390,7 @@ def _history(missions: MissionStore) -> dict:
         try:
             refs = json.loads(detail or "{}")["refs"]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         approved = refs.get("learned_probe_promoted") or {}
         decision = refs.get("learning_decision") or {
             "evidence": [{"key": approved.get("key")}],

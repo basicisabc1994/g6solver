@@ -366,7 +366,7 @@ def sync(name: str, registry: str, *, ttl_hours: int = DEFAULT_TTL_HOURS, conten
         try:
             earlier = load(name)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     except HubError:
         earlier = {}
     docs: dict[str, Any] = dict(earlier.get("docs") or {}) if earlier.get("location") == location else {}
@@ -436,7 +436,7 @@ def search(name: str, query: str, *, tags: Sequence[str] = (), language: str = "
     try:
         kept = load(name)
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     wanted = {t.lower() for t in tags}
     entries = [e for e in _entries(kept) if wanted <= set(e.tags)
                and (not language or language.lower() in {t.language for t in e.targets})]
@@ -476,7 +476,7 @@ def get(name: str, entry: str, *, language: str = "", version: str = "") -> tupl
     try:
         kept = load(name)
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     found = next((e for e in _entries(kept) if e.id == entry), None)
     if found is None:
         raise HubError(NO_ENTRY, f"{name!r} lists no entry {entry!r}")
@@ -500,7 +500,7 @@ def add_note(name: str, entry: str, text: str) -> dict[str, Any]:
     try:
         kept = load(name)
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not any(e["id"] == entry for e in kept["entries"]):
         raise HubError(NO_ENTRY, f"{name!r} lists no entry {entry!r}")
     text = text.strip()
@@ -510,7 +510,7 @@ def add_note(name: str, entry: str, text: str) -> dict[str, Any]:
     try:
         notes = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if sum(1 for n in notes if n.get("entry") == entry) >= MAX_NOTES:
         raise HubError(TOO_LARGE, f"{entry} already has {MAX_NOTES} notes")
     note = {"kind": "note", "entry": entry, "text": text, "written_at": now(),
@@ -530,7 +530,7 @@ def registries() -> list[dict[str, Any]]:
             try:
                 kept = load(path.stem)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         except HubError as exc:
             out.append({"name": path.stem, "problem": exc.reason})
             continue

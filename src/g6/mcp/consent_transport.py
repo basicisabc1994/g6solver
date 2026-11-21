@@ -74,7 +74,7 @@ def prepare(session, request_id, result, sources, supplied=(), job=None, *, meta
     try:
         controls = json.loads(json.dumps({'job': job, 'metadata': metadata}))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     session._g6_tickets[key] = Ticket(tuple(sources), provider(session), frozenset(supplied),
                                     digest(body), controls['job'], controls['metadata'])
 

@@ -114,7 +114,7 @@ def host_facts(info: dict) -> dict:
     capture = policy.current_capture()
     if capture is None or not info.get("available"):
         return info
-    if policy.is_granted(HOST_SOURCE, _provider(capture)):
+    if _granted(HOST_SOURCE, capture):
         carry(str(info.get("name", "")), HOST_SOURCE)
         return info
     shown = {k: info[k] for k in CATALOGUE_FIELDS if k in info}
@@ -137,6 +137,14 @@ def _provider(capture: policy.Capture) -> str:
     return capture.client[0] if capture.client else "cloud:unknown"
 
 
+def _granted(source: str, capture: policy.Capture) -> bool:
+    """Whether ``source`` is shared with the client's provider; a sharing state G6 cannot read shares nothing."""
+    try:
+        return policy.is_granted(source, _provider(capture))
+    except (RecursionError, MemoryError):
+        return False
+
+
 #: ``g6_describe``'s one reply over MCP, without ``EXTENSION_SOURCE`` shared, for every name G6 did not ship: an
 #: installed extension and a name nothing provides read the same, so the reply tells no one which are installed.
 UNSHIPPED = {"available": False,
@@ -150,7 +158,7 @@ def unshipped_reply(name: str) -> dict | None:
     capture = policy.current_capture()
     if capture is None or built_in(name):
         return None
-    if not policy.is_granted(EXTENSION_SOURCE, _provider(capture)):
+    if not _granted(EXTENSION_SOURCE, capture):
         return dict(UNSHIPPED)
     if extension(name):
         carry(name)
@@ -164,7 +172,7 @@ def shown_components() -> list[str]:
     shown = []
     for name in registry.get_registry().names():
         if extension(name) and capture is not None:
-            if not policy.is_granted(EXTENSION_SOURCE, _provider(capture)):
+            if not _granted(EXTENSION_SOURCE, capture):
                 continue
             carry(name)
         shown.append(name)

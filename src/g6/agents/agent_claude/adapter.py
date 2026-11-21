@@ -127,7 +127,7 @@ def _result(text: str) -> dict[str, Any] | None:
             try:
                 found = json.loads(line)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         except json.JSONDecodeError:
             continue
         if isinstance(found, dict) and found.get("type") == "result":

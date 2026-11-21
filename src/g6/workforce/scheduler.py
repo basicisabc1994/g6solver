@@ -126,7 +126,7 @@ def load_tiers(path: str | Path | None = None) -> Tiers:
     try:
         raw = json.loads(Path(path or TIERS_FILE).read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not isinstance(raw, dict) or set(raw) != _FILE_FIELDS:
         raise ValueError(f"tiers.json: holds exactly {sorted(_FILE_FIELDS)}")
     problems: list[str] = []

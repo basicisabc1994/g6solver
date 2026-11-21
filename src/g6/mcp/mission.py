@@ -126,7 +126,7 @@ def reply(found: dict, *, control_id: str | None = None) -> dict:
     try:
         found = json.loads(body)
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     said = said_state(found) if found.get("completion_state") else "qualified-draft"
     if said == "blocked-escalated":
         shown = card(None, "G6_E_BLOCKED", f"{WHO} reported blocked-escalated: {found.get('result')}"[:500])

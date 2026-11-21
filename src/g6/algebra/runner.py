@@ -129,7 +129,7 @@ def call_worker(request: dict[str, Any], *, seconds: float, memory_mb: int, cap:
             try:
                 line = json.loads(row)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         except json.JSONDecodeError:
             if run.stopped and number == len(rows):
                 break                       # the last line, cut off when the run was stopped

@@ -66,7 +66,7 @@ def _subgoals(raw: Any) -> list[str]:
         raise ValueError("the reply holds no JSON object")
     try:
         found, _ = json.JSONDecoder().raw_decode(raw, start)
-    except ValueError as exc:
+    except (ValueError, RecursionError, MemoryError) as exc:
         raise ValueError("the reply's first JSON object does not parse") from exc
     items = found.get("subgoals") if isinstance(found, dict) else None
     if not isinstance(items, list) or not all(isinstance(s, dict) and isinstance(s.get("goal"), str) for s in items):

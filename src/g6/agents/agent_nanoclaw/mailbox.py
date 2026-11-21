@@ -130,7 +130,7 @@ class Mailbox:
             return {"name": row["name"], "members": json.loads(row["members"]),
                     "schema": json.loads(row["schema"]) if row["schema"] else None}
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def create_group(self, group: str, members: list[str], *, schema: dict[str, FieldType] | None = None
                      ) -> dict[str, Any]:
@@ -233,7 +233,7 @@ class Mailbox:
                                 "to": row["recipient"], "body": json.loads(row["body"]), "sent": row["sent"],
                                 "deliveries": times})
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         cursor = out[-1]["id"] if out else after
         return reply(op, "qualified-draft", CODES["DELIVERED"], f"{len(out)} message(s) for {member!r}"
                      f"{', and more after them' if more else ''}; ack up to the last id once each is handled",
@@ -302,7 +302,7 @@ class Mailbox:
                                 "body": json.loads(row["body"]), "sent": row["sent"], "delivered_to": times,
                                 "acked_by": sorted(m for m, upto in cursors.items() if upto >= row["id"] and m in times)})
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return reply(op, "qualified-draft", CODES["HISTORY"], f"{len(out)} message(s) in {group!r}", group=group,
                      members=found["members"], schema=found["schema"], messages=out)
 

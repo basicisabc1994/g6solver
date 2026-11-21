@@ -259,7 +259,7 @@ class Index:
             try:
                 meta = {row["key"]: json.loads(row["value"]) for row in conn.execute("SELECT key, value FROM meta")}
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             if not meta:
                 meta = {"revision": manifest["revision"], "sha256": manifest["sha256"], "types": list(types),
                         "jurisdictions": list(jurisdictions), "offset": 0, "lines": 0, "indexed": 0, "passages": 0,

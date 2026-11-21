@@ -635,7 +635,7 @@ class OwnerScope:
         try:
             out["caps"] = json.loads(out.pop("caps_json"))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return out
 
     def list_ventures(self) -> list[dict[str, Any]]:
@@ -668,7 +668,7 @@ class OwnerScope:
             return [{**{k: r[k] for k in ("seq", "kind", "ref", "at")}, "detail": json.loads(r["detail_json"])}
                     for r in rows]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def _append_evidence(self, vid: str, kind: str, ref: str, detail: dict[str, Any] | None) -> int:
         """Inside the caller's transaction: a state change and its history commit together or not at all."""

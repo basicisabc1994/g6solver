@@ -126,7 +126,7 @@ class SubprocessRunner:
             try:
                 reply = json.loads(done.stdout.decode("utf-8"))
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RunnerError(f"the candidate run's reply is not JSON: {exc}") from exc
         if not isinstance(reply, dict) or "refused" in reply:

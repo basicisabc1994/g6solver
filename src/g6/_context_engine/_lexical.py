@@ -141,7 +141,7 @@ class ScopedLexical(SqliteIndex):
                             left_out.append(row["id"])
                         continue   # a file observed changed is denied: it takes no place among the hits
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 words = _tokens(row["text"])
                 counts = Counter(words)
                 score = 0.0

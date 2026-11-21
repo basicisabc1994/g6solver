@@ -26,7 +26,7 @@ class NLIJudge:
         try:
             parsed = json.loads(reply)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if not isinstance(parsed, dict) or set(parsed) != {"verdict"}:
             raise ValueError("[G6_E_GROUNDING_JUDGE_FAILED] invalid NLI reply")
         verdict = parsed["verdict"]

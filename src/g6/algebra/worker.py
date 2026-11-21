@@ -50,7 +50,7 @@ def _safe(value: Any) -> Any:
     try:
         return json.loads(json.dumps(value, default=str))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def handle(request: dict[str, Any], emit: Emit) -> None:
@@ -106,7 +106,7 @@ def main() -> None:
         try:
             request = json.loads(sys.stdin.buffer.read().decode("utf-8") or "{}")
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         _emit({"stage": "error", "reason": f"the request is not JSON: {exc}"})
         return

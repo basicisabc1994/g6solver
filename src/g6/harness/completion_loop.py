@@ -219,7 +219,7 @@ def harness(path: Path = HARNESS) -> Harness:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     added = data.get("trained") or {}
     odd = sorted(set(added) - set(TRAINED))
     if odd:
@@ -470,7 +470,7 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
         try:
             report = repo_tests.read_report(json.loads(body)) if given.valid else given
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         ran = report.wire()
         boundary = (ran.get("isolation") or {}).get("backend") or boundary
         elsewhere, verdict = _loaded_elsewhere(change, ran), ran.get("verdict")
@@ -503,7 +503,7 @@ def _snapshot_probe(value):
     try:
         return cloud.bind_output(ProbeRun(**json.loads(body)), refs), refs
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def run_set(change: repo_tests.Change, probes: Path, *, at_base: bool, deadline: float, only: str = "") -> ProbeRun:

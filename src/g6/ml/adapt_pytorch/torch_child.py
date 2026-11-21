@@ -176,7 +176,7 @@ def child_main() -> None:
     try:
         job = json.loads(Path(JOB).read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     started = time.monotonic()
     versions: dict[str, str] = {}
     with warnings.catch_warnings(record=True) as caught:

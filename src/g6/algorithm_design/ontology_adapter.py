@@ -55,7 +55,7 @@ def read_ontology(path: str | Path) -> dict:
     try:
         result = json.loads(p.read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not isinstance(result, dict):
         raise ValueError("ontology must be a mapping")
     return result

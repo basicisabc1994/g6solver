@@ -286,7 +286,7 @@ class MissionStore:
                 semantic = {"objective": objective, "contract": json.loads(body),
                             "creation": {k: v for k, v in created.items() if k != "build"}}
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             created["request_sha256"] = hashlib.sha256(json.dumps(
                 semantic, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         mid, now = _uid(), _now()
@@ -313,11 +313,11 @@ class MissionStore:
             try:
                 self.get(row[0])  # ownership remains mandatory, including the collision path
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             try:
                 recorded = json.loads(row[1])
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             if recorded.get("actor") != "code" or recorded.get("request_sha256") != created["request_sha256"]:
                 raise ValueError("This creation request already has a different payload; conflicting reuse is refused.") from None
             return row[0]
@@ -341,7 +341,7 @@ class MissionStore:
             try:
                 created = json.loads(raw)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             if created.get("task_sha256") == task_sha256:
                 found.append(mid)  # Preserve the primary historical identity; never override a conflict.
             elif template == "code_change" and created.get("actor") == "code":
@@ -374,11 +374,11 @@ class MissionStore:
         try:
             out["contract"] = json.loads(out.pop("contract_json") or "{}")
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         try:
             out["outcome"] = json.loads(out.pop("outcome_json") or "{}")
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         raw = out.pop("acceptance_json", "") or ""
         try:
             out["acceptance"] = json.loads(raw) if raw else None
@@ -398,20 +398,20 @@ class MissionStore:
         try:
             return [self.get(r[0]) for r in rows]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def contract(self, mission_id: str) -> IntentContract:
         try:
             return IntentContract.model_validate(self.get(mission_id)["contract"])
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def set_contract(self, mission_id: str, contract: IntentContract | dict, *, actor: str) -> None:
         actor = check_actor(actor)
         try:
             mission = self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if mission["status"] != "eliciting":
             raise ValueError(f"the contract is fixed once the owner accepts it (status {mission['status']})")
         body = _contract(contract, mission["objective"]).model_dump_json()
@@ -431,7 +431,7 @@ class MissionStore:
         try:
             mission = self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         from g6.workforce import coding
 
         pending = coding.clarification_request(self, mission_id)
@@ -450,7 +450,7 @@ class MissionStore:
                      and mission["acceptance"] is not None and self.acceptance(mission_id).revision > 1
                      and not self.acceptance(mission_id).metadata.get("spec_complete"))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if mission["status"] != "eliciting" and not again:
             # COPY: when a mission may be accepted (E10b adds the second time, ruling E10.8).
             raise ValueError(f"a mission is accepted while 'eliciting', or again before any plan is stored when a plan "
@@ -487,7 +487,7 @@ class MissionStore:
         try:
             return self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def acceptance(self, mission_id: str) -> accept_rules.AcceptanceContract:
         """What counts as done for this mission (E2c): the contract it was accepted with, never asking less than its
@@ -496,7 +496,7 @@ class MissionStore:
         try:
             mission = self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         stored = mission["acceptance"]
         try:
             if stored is None:
@@ -535,7 +535,7 @@ class MissionStore:
         try:
             mission = self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if mission["status"] in FINISHED or mission["acceptance"] is None:
             # COPY: the refusal when a mission's standard cannot be raised.
             raise ValueError("this mission keeps the standard it has: it is finished, or was accepted before standards "
@@ -557,7 +557,7 @@ class MissionStore:
         try:
             return self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     @staticmethod
     def _standard(contract: accept_rules.AcceptanceContract, before: str, after: str, reason: str) -> dict:
@@ -575,7 +575,7 @@ class MissionStore:
             if effects is None or self.get(mission_id)["acceptance"] is None:
                 return None
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         contract = self.acceptance(mission_id)
         return contract if contract.policy_version else None
 
@@ -597,7 +597,7 @@ class MissionStore:
         try:
             mission = self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if (mission["risk_tier"] not in accept_rules.CONFIRM_TIERS or mission["acceptance"] is None
                 or self.records_only(mission_id)):
             return ()
@@ -629,7 +629,7 @@ class MissionStore:
         try:
             standard = self.acceptance(mission_id).metadata.get("coding")
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if standard:
             from g6.workforce import coding
 
@@ -656,7 +656,7 @@ class MissionStore:
         try:
             mission = self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if mission["status"] != "awaiting_plan":
             raise ValueError(f"a plan is added while the mission is 'awaiting_plan', not {mission['status']!r}")
         if mission["plan_revision"]:
@@ -679,7 +679,7 @@ class MissionStore:
                 try:
                     mission = self.get(mission_id)
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         # A mission accepted before contracts were kept (none stored) plans as before (fix pass I2); a record-only
         # template is not asked (ruling E10.12).
         if (mission["risk_tier"] in accept_rules.CONFIRM_TIERS and mission["acceptance"] is not None
@@ -708,7 +708,7 @@ class MissionStore:
                 try:
                     self.get(mission_id)  # NOT_FOUND for an unknown or foreign id
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 raise ValueError("the mission changed underneath this call; read it again")
             revision = self._revision(mission_id)
             self._append_event(mission["venture_id"], mission_id, "plan.revision", actor,
@@ -727,7 +727,7 @@ class MissionStore:
         try:
             mission = self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if mission["status"] not in ("active", "waiting"):
             raise ValueError(f"a running mission's plan is amended while it is active or waiting, not "
                              f"{mission['status']!r}")
@@ -759,7 +759,7 @@ class MissionStore:
         try:
             mission = self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         sql = ("SELECT p.revision, p.plan_json, p.plan_sha FROM mission_plans p"
                " JOIN missions m ON m.mission_id=p.mission_id WHERE p.mission_id=?" + _OWNED)
         args: list = [str(mission_id), self.owner]
@@ -797,7 +797,7 @@ class MissionStore:
         try:
             mission = self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if mission["status"] != "awaiting_plan":
             raise ValueError(f"a mission materializes its plan while 'awaiting_plan', not {mission['status']!r}")
         now = _now()
@@ -816,14 +816,14 @@ class MissionStore:
                 try:
                     current = self.get(mission_id)
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 if not self._revision(mission_id):
                     raise LookupError("this mission has no plan")
                 raise ValueError(f"another writer is materializing this mission until {current['lease_until']}")
             try:
                 revision = self.get(mission_id)["plan_revision"]
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             if not mission["plan_revision"]:  # the first take reserves; a later take (a retry) only leases
                 self._append_event(mission["venture_id"], mission_id, "plan.reserved", actor, {"revision": revision},
                                    f"reserved:{revision}")
@@ -836,7 +836,7 @@ class MissionStore:
         try:
             mission = self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         revision = mission["plan_revision"]
         with self._conn:
             cur = self._conn.execute(
@@ -854,7 +854,7 @@ class MissionStore:
         try:
             return self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def release(self, mission_id: str, *, holder: str) -> None:
         """Give the lease back (a writer that failed); the reservation stays."""
@@ -885,7 +885,7 @@ class MissionStore:
         try:
             mission = self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if mission["status"] not in RUNNING:
             raise ValueError(f"a runner leases a running mission, not a {mission['status']!r} one")
         current, until, fence = mission["lease_holder"], mission["lease_until"], mission["lease_fence"]
@@ -905,7 +905,7 @@ class MissionStore:
                 try:
                     again = self.get(mission_id)
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 raise LeaseHeld(again["lease_holder"], again["lease_until"])
             self._append_event(mission["venture_id"], mission_id, "lease.taken", actor,
                                {"holder": holder, "fence": fence + 1, "previous": current, "previous_until": until},
@@ -967,7 +967,7 @@ class MissionStore:
         try:
             mission = self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         current = mission["status"]
         if to not in _NEXT.get(current, frozenset()):
             raise ValueError(f"a mission cannot move from {current!r} to {to!r}")
@@ -983,7 +983,7 @@ class MissionStore:
         try:
             return self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def move(self, mission_id: str, to: str, *, expect: str, reason: str, actor: str,
              detail: dict | None = None) -> None:
@@ -995,7 +995,7 @@ class MissionStore:
         try:
             venture_id = self.get(mission_id)["venture_id"]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         self._update(mission_id, expect, "status=?", (to,))
         self._append_event(venture_id, mission_id, "mission.status", actor,
                            {"from": expect, "to": to, "reason": str(reason), **(detail or {})})
@@ -1008,7 +1008,7 @@ class MissionStore:
         try:
             current = self.get(mission_id)["status"]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if current != "closing":
             raise ValueError(f"a mission closes from 'closing', not {current!r}")
         return self._finish(mission_id, current, "done", outcome, actor, lease, detail)
@@ -1019,7 +1019,7 @@ class MissionStore:
         try:
             current = self.get(mission_id)["status"]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if current in FINISHED:
             raise ValueError(f"a {current} mission does not change")
         return self._finish(mission_id, current, "cancelled", Outcome(BLOCKED, reasons=(f"cancelled: {reason}",)),
@@ -1030,7 +1030,7 @@ class MissionStore:
         try:
             venture_id = self.get(mission_id)["venture_id"]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         body = json.dumps({"state": outcome.state, "degraded": outcome.degraded, "reasons": list(outcome.reasons),
                            "evidence": list(outcome.evidence), "source": outcome.source})
         with self._conn:  # the finish and its event commit together: a failed event leaves the mission open
@@ -1042,7 +1042,7 @@ class MissionStore:
         try:
             return self.get(mission_id)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def _update(self, mission_id: str, expected_status: str, assignments: str, values: tuple,
                 also: str = "") -> None:
@@ -1057,7 +1057,7 @@ class MissionStore:
             try:
                 self.get(mission_id)  # NOT_FOUND for an unknown or foreign id
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             raise ValueError("the mission changed underneath this call; read it again")
 
     @property
@@ -1080,7 +1080,7 @@ class MissionStore:
         try:
             venture_id = self.get(mission_id)["venture_id"]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return self._append_event(venture_id, mission_id, kind, actor, detail, idem_key)
 
     def _append_event(self, venture_id: str, mission_id: str, kind: str, actor: str, detail: dict,
@@ -1099,7 +1099,7 @@ class MissionStore:
         try:
             venture_id = self.get(mission_id)["venture_id"]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         key = f"{mission_id}:{idem_key}" if idem_key else ""
         return self._vstore.record_evidence(venture_id, kind, ref=str(mission_id),
                                             detail={**(detail or {}), "actor": actor}, idem_key=key)
@@ -1130,6 +1130,6 @@ class MissionStore:
             try:
                 d["detail"] = json.loads(d.pop("detail_json") or "{}")
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             out.append(d)
         return out

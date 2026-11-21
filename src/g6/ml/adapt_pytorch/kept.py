@@ -82,7 +82,7 @@ def load(model_id: str) -> tuple[bytes, dict[str, Any]]:
     try:
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     weights = weights_path.read_bytes()
     if hashlib.sha256(weights).hexdigest() != meta.get("weights_sha256"):
         raise MLError(UNTRUSTED_CODE, f"the weights of {model_id} are not the ones G6 wrote (their SHA-256 differs "

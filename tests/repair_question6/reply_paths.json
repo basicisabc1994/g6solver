@@ -846,7 +846,7 @@
       "if not isinstance(reply, dict) or not isinstance(reply.get('assessment'), dict)",
       "if callable(custody)",
       "except (RecursionError, MemoryError)",
-      "raise ValueError('a JSON record exceeds decoder limits')",
+      "raise json.JSONDecodeError('a JSON record exceeds decoder limits', '', 0)",
       "if refs is not None",
       "if saved",
       "if recorded is not None"

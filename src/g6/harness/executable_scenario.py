@@ -26,7 +26,7 @@ def _comparison(record: str, option: str) -> dict:
     try:
         scenario = json.loads(record)
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if option not in scenario['outcomes']:
         raise ValueError('G6_E_SCENARIO_UNAVAILABLE: an option not in the scenario')
     return {'function': scenario['entrypoint'], 'cases': [
@@ -55,7 +55,7 @@ class Scenario:
         try:
             value = json.loads(self.record)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if (set(value) != FIELDS or canonical(value).encode("ascii") != self.record
                 or value["version"] not in {"example-scenario.v1", "example-scenario.v2"}
                 or value["setup"] != SETUP):
@@ -101,7 +101,7 @@ class Scenario:
         try:
             value = json.loads(self.record)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         outcomes = {}
         for label, outcome in value['outcomes'].items():
             if outcome['expect'] == 'returns':
@@ -207,7 +207,7 @@ def test_example():
         try:
             value = json.loads(self.record)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if (value["entrypoint"][1:3] != question.function.rsplit(".", 1)
                 or canonical(value["input"]) != canonical({"args": question.args, "kwargs": question.kwargs})
                 or set(value["outcomes"]) != set(question.outcomes)):
@@ -234,7 +234,7 @@ def test_example():
             if json.loads(self.record)['version'] != 'example-scenario.v2':
                 raise ValueError(f'{UNAVAILABLE}: confirm the import roots and resolved repository path in a new dialog')
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def save(question, scenario: Scenario) -> None:
