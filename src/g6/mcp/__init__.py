@@ -165,16 +165,16 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
         result = reply.get("result")
         if isinstance(result, dict):
             result["help"] = help_for_agent(component, result.get("help"))
-    # The host's permission refusal runs no component code. Operations, including
-    # a component's own "ops" implementation, retain the component source scope.
-    if type(target) is ComponentRegistry and component in target.names():
-        module = target.get_module(component)
-        sensitive = getattr(module, '__g6_sensitive_ops__', ())
-        if op in sensitive and not _allowed(component, op, allow):
-            from g6.mcp.consent_controls import public_instructions
-            reply = public_instructions(reply)
     producer = target.get_module(component) if type(target) is ComponentRegistry and component in target.names() else None
     reply["decision"] = summarise(producer, op, reply.get("result"))
+    # The host's permission refusal runs no component code. Operations, including
+    # a component's own "ops" implementation, retain the component source scope.
+    # Declared last: a change after the declaration would read as unknown content.
+    if producer is not None:
+        sensitive = getattr(producer, '__g6_sensitive_ops__', ())
+        if op in sensitive and not _allowed(component, op, allow):
+            from g6.mcp.consent_controls import public_instructions
+            return public_instructions(reply)
     return reply
 
 

@@ -37,6 +37,16 @@ def test_sensitive_refusal_and_unknown_component_have_no_authorization():
         assert reply["decision"]["action_authorization"] == "not_requested"
 
 
+def test_a_sensitive_refusal_keeps_its_public_declaration():
+    # The summary is attached before the refusal is declared public instructions: a change after that declaration
+    # reads as unknown content, and the transport would withhold the denial as G6_E_CLOUD_CONSENT_REQUIRED.
+    from g6.core import cloud_consent as cloud
+    with cloud.collect_sources():
+        reply = invoke_reply("align_prompt_library", "put", "{}", allow_sensitive=frozenset())
+        assert reply["warning_card"]["code"] == "G6_E_SENSITIVE_COMPONENT_DENIED"
+        assert cloud.output_sources(reply) == ()
+
+
 def test_real_action_block_is_exposed_by_mcp_summary():
     reply = invoke_reply("action_gating", "evaluate", json.dumps({"action": {
         "action_type": "send_email", "target_resource": "customer@example.com"}}))
