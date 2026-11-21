@@ -22,7 +22,7 @@ from g6.core.guidance_builders import blocked_reply, door_envelope
 from g6.core.ledger import digest
 from g6.core.registry import OuterBudgetExceeded, build_typed_input, get_registry, outer_copy
 from g6.core.result import Result
-from g6.core.external_data import caller_echo, component_call, component_failure_reply
+from g6.core.external_data import caller_echo, component_call, component_failure_reply, exception_text
 
 
 class CompositionError(ValueError):
@@ -175,7 +175,7 @@ class ComposedBlock(AIBlock):
                 if state == "blocked-escalated":
                     return Result.ok(self._reply(values, checks, evidence, state, envelope.get("warning_card")))
             except Exception as exc:  # a broken check or adapter cannot let later stages execute
-                refused = blocked_reply(str(exc))
+                refused = blocked_reply(exception_text(exc))
                 return Result.ok({**refused, **self._reply(values, checks, evidence, "blocked-escalated",
                                                           refused["warning_card"])})
         return Result.ok(self._reply(values, checks, evidence, state))

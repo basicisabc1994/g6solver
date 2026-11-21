@@ -180,13 +180,32 @@ def producer_result_contract(fn):
     return None
 
 
+def exception_text(error):
+    """An exception's (or a failure value's) text for a reply; nothing it runs can escape.
+
+    Foreign code owns ``__str__`` and ``__repr__``: either may raise, or return a
+    ``str`` subclass with methods of its own. The text is always a plain ``str``,
+    or the type's name when no text can be read.
+    """
+    for render in (str, repr):
+        try:
+            return "".join((render(error),))
+        except Exception:
+            continue
+    try:
+        name = "".join((type(error).__name__,))
+    except Exception:
+        name = "object"
+    return f"{name} (its text could not be read)"
+
+
 def component_call(fn, *args, **kwargs):
     """Composition's direct block boundary, including its own exceptions."""
     from g6.core.result import Result
     try:
         outcome = fn(*args, **kwargs)
     except Exception as exc:
-        return Result.fail(external_value(str(exc)))
+        return Result.fail(external_value(exception_text(exc)))
     if isinstance(outcome, Result):
         return (Result.fail(external_value(outcome.error)) if outcome.is_fail() else
                 Result.ok(component_value(outcome.value, in_result=True, _producer=fn)))
@@ -315,7 +334,7 @@ class ComponentRegistryIngress:
                 try:
                     outcome = fn(*a, **k)
                 except Exception as exc:
-                    owner.failure = external_value(str(exc))
+                    owner.failure = external_value(exception_text(exc))
                     return Result.fail(owner.failure)
                 if isinstance(outcome, Result):
                     if outcome.is_fail():
@@ -352,18 +371,19 @@ class ComponentRegistryIngress:
         try:
             outcome = self.target.invoke(*args, **kwargs)
         except Exception as exc:
-            self.failure = external_value(str(exc))
+            self.failure = external_value(exception_text(exc))
             return Failure(self.failure)
         if outcome.__class__.__name__ == "Success":
             self.value = component_value(outcome.unwrap(), in_result=True, _producer=self.target.invoke)
             return Success(self.value)
-        self.failure = external_value(str(outcome.failure()))
+        self.failure = external_value(exception_text(outcome.failure()))
         return Failure(self.failure)
 
 
 def component_failure_reply(message, *, request_id=""):
     """Keep the raw diagnostic in data; envelope errors and cards are guidance."""
     from g6.core.door import blocked_reply
-    reply = blocked_reply(str(message), request_id=request_id)
-    reply["detail"] = external_value(str(message))
+    text = exception_text(message)
+    reply = blocked_reply(text, request_id=request_id)
+    reply["detail"] = external_value(text)
     return reply_for_agent(reply)
