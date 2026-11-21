@@ -43,6 +43,19 @@ class _SendBudget(LLMError):
     """Internal control flow, never a public protocol code."""
 
 
+def trusted_stop(error: BaseException) -> bool:
+    """An operator stop, a spent allowance, unconfirmed process cleanup, an unreadable stop file or a provider's stop:
+    it must reach the enclosing door unchanged, never become a floor reading. The model door's stop is matched by its
+    stable protocol code only."""
+    from g6.core import component_process
+    from g6.core.stop import STOPPED
+    from g6.self_maintenance.envelope import StopUnreadable
+    from g6.self_maintenance.usage import ProviderStop
+    return (isinstance(error, (component_process.ExecutionInterrupted, component_process.ContainmentFailure,
+                               StopUnreadable, ProviderStop))
+            or isinstance(error, LLMError) and str(error).startswith(STOPPED))
+
+
 @dataclass(frozen=True)
 class Kind:
     combine: Combine
@@ -308,7 +321,9 @@ def read(question: Question) -> Reading:
                 return finish(reason="call budget exhausted")
             try:
                 scope.llm = resolve_caller()
-            except Exception:
+            except Exception as exc:
+                if trusted_stop(exc):
+                    raise
                 return finish(reason="no model available")
         if scope.llm is None or isinstance(scope.llm, NoModel):
             return finish(reason="no model configured")
@@ -342,6 +357,8 @@ def read(question: Question) -> Reading:
                 scope.expired = True
                 return finish(reason="model timeout (15 s maximum)")
             if not ok:
+                if trusted_stop(raw):
+                    raise raw
                 timed_out = isinstance(raw, TimeoutError) or isinstance(raw, LLMError) and "TIMEOUT" in str(raw)
                 if timed_out:
                     scope.expired = True

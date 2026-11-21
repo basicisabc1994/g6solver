@@ -132,9 +132,8 @@ def _name(node, aliases):
     return ''
 
 
-def _tests(trees, function, cases=()):
-    """Map imports/calls, but concrete examples require an assertion of that case."""
-    found = []
+def _test_functions(trees):
+    """Each repository test function, its node id, and the module imports visible inside it (and all of them)."""
     for rel, tree in trees.items():
         if not repo_tests.is_test_related(rel):
             continue
@@ -149,7 +148,7 @@ def _tests(trees, function, cases=()):
         def walk(body, prefix=''):
             for test in body:
                 if isinstance(test, ast.ClassDef) and test.name.startswith('Test'):
-                    walk(test.body, f'{prefix}{test.name}::')
+                    yield from walk(test.body, f'{prefix}{test.name}::')
                 if not isinstance(test, (ast.FunctionDef, ast.AsyncFunctionDef)) or not test.name.startswith('test'):
                     continue
                 # Local bindings hide module imports. A conservative miss is safer than invented coverage.
@@ -158,40 +157,109 @@ def _tests(trees, function, cases=()):
                 local.update(n.name for n in ast.walk(test) if isinstance(n, (ast.FunctionDef, ast.ClassDef))
                              and n is not test)
                 visible = {key: value for key, value in aliases.items() if key not in local}
-                called = any(isinstance(n, ast.Call) and _name(n.func, aliases) == function for n in ast.walk(test))
-                imported = function in aliases.values()
-                if not cases and (called or imported):
-                    found.append(f'{shown(rel)}::{prefix}{test.name}')
-                    continue
-                matched = []
-                for case in cases:
-                    hit = False
-                    for assertion in ast.walk(test):
-                        if not isinstance(assertion, ast.Assert):
-                            continue
-                        compare = assertion.test
-                        if not (isinstance(compare, ast.Compare) and len(compare.ops) == 1
-                                and isinstance(compare.ops[0], ast.Eq) and isinstance(compare.left, ast.Call)):
-                            continue
-                        call = compare.left
-                        if _name(call.func, visible) != function or any(k.arg is None for k in call.keywords):
-                            continue
-                        try:
-                            hit |= _same(dict(args=[ast.literal_eval(a) for a in call.args],
-                                         kwargs={k.arg: ast.literal_eval(k.value) for k in call.keywords},
-                                         returns=ast.literal_eval(compare.comparators[0])),
-                                    dict(args=case.get('args', []), kwargs=case.get('kwargs', {}),
-                                         **{k: v for k, v in case.items() if k not in ('args', 'kwargs')}))
-                        except (ValueError, TypeError, RecursionError):
-                            pass
-                    matched.append(hit)
-                if matched and all(matched):
-                    found.append(f'{shown(rel)}::{prefix}{test.name}')
-        walk(tree.body)
+                yield f'{shown(rel)}::{prefix}{test.name}', test, aliases, visible
+        yield from walk(tree.body)
+
+
+def _case(call):
+    """A call written with literal arguments as an example case's input, or None."""
+    try:
+        if any(isinstance(a, ast.Starred) for a in call.args) or any(k.arg is None for k in call.keywords):
+            return None
+        case = dict(args=[ast.literal_eval(a) for a in call.args])
+        kwargs = {k.arg: ast.literal_eval(k.value) for k in call.keywords}
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        return None
+    if kwargs:
+        case['kwargs'] = kwargs
+    return None if vt.literal_problem(case) else case
+
+
+def _asserted(test, function, visible):
+    """The cases a test asserts as ``function(literal arguments) == literal``, read from its syntax tree."""
+    found = []
+    for assertion in ast.walk(test):
+        compare = assertion.test if isinstance(assertion, ast.Assert) else None
+        if not (isinstance(compare, ast.Compare) and len(compare.ops) == 1 and isinstance(compare.ops[0], ast.Eq)
+                and isinstance(compare.left, ast.Call) and _name(compare.left.func, visible) == function):
+            continue
+        case = _case(compare.left)
+        try:
+            value = ast.literal_eval(compare.comparators[0])
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+            continue
+        if case is not None and not vt.literal_problem(value):
+            found.append(dict(case, returns=value))
+    return found
+
+
+def _full(case):
+    return dict(args=case.get('args', []), kwargs=case.get('kwargs', {}),
+                **{k: v for k, v in case.items() if k not in ('args', 'kwargs')})
+
+
+def _tests(trees, function, cases=()):
+    """Map imports/calls, but concrete examples require an assertion of that case."""
+    found = []
+    for node, test, aliases, visible in _test_functions(trees):
+        if not cases:
+            called = any(isinstance(n, ast.Call) and _name(n.func, aliases) == function for n in ast.walk(test))
+            if called or function in aliases.values():
+                found.append(node)
+            continue
+        stated = [_full(one) for one in _asserted(test, function, visible)]
+        if all(any(_same(one, _full(case)) for one in stated) for case in cases):
+            found.append(node)
     return sorted(set(found))
 
 
+MAX_CALL = 500
+
+
+def _stated_calls(task, symbol):
+    """Each call of ``symbol`` the task writes as Python: its text, its syntax tree and where it ends."""
+    found = []
+    for match in re.finditer(rf'(?<![\w.]){re.escape(symbol)}(?=\()', task):
+        depth, end = 0, None
+        for index in range(match.end(), min(len(task), match.end() + MAX_CALL)):
+            depth += {'(': 1, ')': -1}.get(task[index], 0)
+            if depth == 0:
+                end = index + 1
+                break
+        if end is None:
+            continue
+        try:
+            call = ast.parse(task[match.start():end], mode='eval').body
+        except (SyntaxError, ValueError, MemoryError, RecursionError):
+            continue
+        if isinstance(call, ast.Call):
+            found.append((task[match.start():end], call, end))
+    return found
+
+
+_NO_VALUE = object()
+
+
+def _literal(text):
+    """The shortest Python literal ``text`` starts with (a sentence's closing full stop left out), or ``_NO_VALUE``."""
+    for end in range(1, min(len(text), MAX_CALL) + 1):
+        if end < len(text) and not (text[end].isspace() or text[end] in ',;)'):
+            continue
+        piece = text[:end]
+        for written in ((piece[:-1], piece) if piece.endswith('.') else (piece,)):
+            try:
+                value = ast.literal_eval(written)
+            except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+                continue
+            if not vt.literal_problem(value):
+                return value
+    return _NO_VALUE
+
+
 def _floor(task, symbols):
+    """Only what the task writes as Python: a named function's signature, and examples ``f(args) == value``.
+    No word of the task is read for meaning (owner direction, 2026-11-17): what a task says in prose is the shared
+    reader's to propose and the person's to confirm."""
     named = [name for name in symbols if re.search(rf'\b{re.escape(name.rsplit(".", 1)[-1])}\s*\(', task)]
     # A bare named symbol is sufficient only when unambiguous in the repository.
     if not named:
@@ -201,16 +269,24 @@ def _floor(task, symbols):
     for target in named[:4]:
         function = shown(target)
         symbol = function.rsplit('.', 1)[-1]
-        if re.search(r'\b(without changing|keep|preserv\w*|unchanged)\b', task, re.I):
-            items.append(dict(text=f'Keep {symbol} signature unchanged and preserve its existing tests',
-                              kind='preservation', function=function, cases=[]))
-        if re.search(r'\b(adds?|sum|addition)\b', task, re.I) and re.search(r'\bintegers?\b', task, re.I):
-            for label, args in [('positive', [2, 3]), ('negative', [-2, -3])]:
-                if label in task.lower():
-                    items.append(dict(text=f'{symbol} adds {label} integers', kind='example', function=function,
-                                      cases=[dict(args=args, returns=sum(args))]))
-            items.append(dict(text=f'{symbol}(1.5, 2) returns 3.5: candidate boundary case only',
-                              kind='boundary', function=function, cases=[dict(args=[1.5, 2], returns=3.5)]))
+        calls = _stated_calls(task, symbol)
+        # A call whose arguments are all plain names is the signature the task writes; two different ones state none.
+        signatures = {tuple(a.id for a in call.args) for _, call, _ in calls
+                      if not call.keywords and all(isinstance(a, ast.Name) for a in call.args)}
+        if len(signatures) == 1:
+            parameters, = signatures
+            items.append(dict(text=f'Keep the signature {symbol}({", ".join(parameters)}) the task writes, and '
+                                   'preserve its existing tests', kind='preservation', function=function, cases=[],
+                              parameters=list(parameters)))
+        for text, call, end in calls:
+            equals = re.match(r'\s*==\s*', task[end:end + MAX_CALL])
+            case = _case(call) if equals else None
+            value = _literal(task[end + equals.end():]) if case is not None else _NO_VALUE
+            if value is not _NO_VALUE:
+                example = dict(text=f'The task states {text} == {json.dumps(value)}', kind='example',
+                               function=function, cases=[dict(case, returns=value)])
+                if example not in items:
+                    items.append(example)
         if not any(i['function'] == function and i['kind'] == 'example' for i in items):
             items.append(dict(text=f'{symbol}: {task[:350]}', kind='example', function=function, cases=[]))
     if not items:
@@ -218,18 +294,88 @@ def _floor(task, symbols):
     return items
 
 
+def _twin(case):
+    """The stated example's call with its first whole-number argument written as the equal float, or None. Whether
+    the function must then give the stated result or refuse the input is the question only the person settles."""
+    args = case.get('args', [])
+    at = next((n for n, value in enumerate(args) if type(value) is int and abs(value) <= 2 ** 53), None)
+    if at is None or set(case) != {'args', 'returns'}:
+        return None
+    return [*args[:at], float(args[at]), *args[at + 1:]]
+
+
+def _boundaries(items, trees, symbols):
+    """One boundary candidate per named function, from its first explicit example with a whole-number argument: the
+    task's own examples first, then an assertion in the repository's tests. Each with the line that is its evidence."""
+    found = []
+    for function in dict.fromkeys(i['function'] for i in items if i['function']):
+        defined = shown(symbols[function][0]) if function in symbols else function
+        stated = [(case, 'task_text', f'{defined}: defines {function}; the task states '
+                   f'{function.rsplit(".", 1)[-1]}({_args(case)}) == {json.dumps(case["returns"])}')
+                  for i in items if i['function'] == function and i['kind'] == 'example' for case in i['cases']]
+        stated += [(case, 'repository_test', f'{node}: asserts {function.rsplit(".", 1)[-1]}({_args(case)}) == '
+                    f'{json.dumps(case["returns"])}')
+                   for node, test, _, visible in _test_functions(trees) for case in _asserted(test, function, visible)]
+        for case, origin, evidence in stated:
+            twin = _twin(case)
+            if twin is not None:
+                symbol = function.rsplit('.', 1)[-1]
+                found.append((dict(text=f'{symbol}({_args(dict(args=twin))}) gives {json.dumps(case["returns"])} '
+                                        f'as {symbol}({_args(case)}) does: candidate boundary case only',
+                                   kind='boundary', function=function,
+                                   cases=[dict(args=twin, returns=case['returns'])], origin=origin),
+                              case, evidence))
+                break
+    return found
+
+
+def _args(case):
+    return json.dumps(case.get('args', []))[1:-1]
+
+
+def _ident(raw):
+    """A model proposal's id binds its executable content alone, so the call its reply advertised is checked against
+    the id it names (``advertised``), never against a later model reply; every other id binds the whole item."""
+    bound = ({key: raw[key] for key in ('origin', 'function', 'cases')} if raw['origin'] == 'model_proposal'
+             else raw)
+    return 'candidate.' + hashlib.sha256(json.dumps(bound, sort_keys=True).encode()).hexdigest()[:12]
+
+
+def _advertised(instances, symbols):
+    """Model proposals an earlier reply advertised as ``cheapest_check`` calls: each supplied example.v1 instance whose
+    candidate id is the digest of its own function and cases (``_ident``), for a function the repository defines."""
+    found = []
+    for one in instances if isinstance(instances, (list, tuple)) else ():
+        try:
+            if not isinstance(one, dict) or one.get('template') != 'example.v1':
+                continue
+            bindings = one['bindings']
+            proposal = Proposal.model_validate(dict(
+                text=f'{bindings["function"]}: a model proposal an earlier reply advertised', kind='example',
+                function=bindings['function'], cases=bindings['cases'])).model_dump(exclude_unset=True)
+            item = dict(proposal, origin='model_proposal')
+            if proposal['function'] in symbols and one['requirement_id'] == _ident(item):
+                found.append(item)
+        except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
+            continue
+    return found
+
+
 def _instance(item):
-    if not item['function'] or not item['cases']:
+    # A boundary case is a question's offered outcome, not a behaviour: it runs only once the person states it.
+    if not item['function'] or not item['cases'] or item['kind'] == 'boundary' and item['status'] != 'stated':
         return None
     return dict(id=item['id'] + '.example', requirement_id=item['id'], template='example.v1', intent='change',
                 bindings=dict(function=item['function'], cases=item['cases']))
 
 
-def from_sources(texts, task, *, repo):
-    """Pure static input seam, also used by the bounded repository adapter."""
+def from_sources(texts, task, *, repo, advertised=None):
+    """Pure static input seam, also used by the bounded repository adapter. ``advertised``: the template instances a
+    review was given, whose model candidates an earlier reply advertised (``_advertised``)."""
     trees = _trees(texts)
     symbols = _symbols(trees)
-    floor = _floor(task, symbols)
+    floor = [dict(i, origin='task_text') for i in _floor(task, symbols)]
+    boundaries = _boundaries(floor, trees, symbols)
     with semantic.use_request() as scope:
         calls = scope.calls
         context = json.dumps({'task': task, 'functions': sorted(symbols)}, ensure_ascii=True)
@@ -237,19 +383,26 @@ def from_sources(texts, task, *, repo):
         model_calls = scope.calls - calls
     model = [p.model_dump(exclude_unset=True) if isinstance(p, Proposal) else p for p in reading.value]
     # choose governs the model reading; task-text items are an independent source and always retained.
-    items = [dict(i, origin='task_text') for i in floor]
+    items = [*floor, *(item for item, _, _ in boundaries), *_advertised(advertised, symbols)]
     for proposal in model:
         if proposal['function'] in symbols:
             items.append(dict(proposal, origin='model_proposal'))
-    standard, unknowns = [], []
-    for raw in items[:MAX_ITEMS]:
+    standard, unknowns, seen, basis = [], [], set(), {}
+    for raw in items:
+        ident = _ident(raw)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        if len(standard) >= MAX_ITEMS:
+            break
         function = raw['function']
-        ident = 'candidate.' + hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()[:12]
         item = dict(raw, id=ident, status='candidate')
+        basis.update({ident: (case, evidence) for boundary, case, evidence in boundaries if boundary is raw})
         checks = _tests(trees, function, item['cases']) if function else []
         item['checks'] = checks or 'missing'
         instance = _instance(item)
-        # These calls omit requirements deliberately; the review reconstructs the same candidate ids.
+        # These calls omit requirements deliberately; the review reconstructs the same candidate ids: the task's from
+        # the task and the repository, a model proposal's from the instance the call carries (``_advertised``).
         args = dict(repo=str(repo), task=task)
         if instance:
             args['template_instances'] = [instance]
@@ -259,6 +412,10 @@ def from_sources(texts, task, *, repo):
                                  reason='No static repository test maps to this observable candidate.'))
         standard.append(item)
     question = None
+
+    def outcomes(item):
+        return {'A': {'returns': item['cases'][0]['returns']}, 'B': {'raises': 'TypeError'}}
+
     def affected(item):
         """Count check identities for this input and either offered output, not unrelated imports."""
         changed = set()
@@ -266,26 +423,27 @@ def from_sources(texts, task, *, repo):
             if other['function'] != item['function']:
                 continue
             for case in other['cases']:
-                if (_same(case.get('args', []), [1.5, 2]) and not case.get('kwargs')
-                        and ({k: v for k, v in case.items() if k not in ('args', 'kwargs')}
-                             in ({'returns': 3.5}, {'raises': 'TypeError'}))):
-                    changed.add(_instance(other)['id'])
+                if (_same(case.get('args', []), item['cases'][0]['args']) and not case.get('kwargs')
+                        and any(_same({k: v for k, v in case.items() if k not in ('args', 'kwargs')}, one)
+                                for one in outcomes(item).values())):
+                    changed.add(other['id'] + '.example')   # its example.v1 check, now or once the person states it
                     if isinstance(other['checks'], list):
                         changed.update(other['checks'])
         return changed
 
-    # Rank the bounded concrete ambiguities by checks whose expected outcome can change.
-    ranked = sorted((i for i in standard if i['kind'] == 'boundary' and i['origin'] == 'task_text' and i['cases']),
-                    key=lambda i: (-len(affected(i)), i['id']))
+    # Rank the bounded concrete ambiguities, each from an explicit example, by checks whose expected outcome can change.
+    ranked = sorted((i for i in standard if i['id'] in basis), key=lambda i: (-len(affected(i)), i['id']))
     if ranked:
+        from g6.harness.behaviour_question import _citation
         item = ranked[0]
-        if re.search(r'\bintegers?\b', task, re.I) and re.search(r'\b(adds?|sum)\b', task, re.I):
-            candidate = dict(requirement_id=item['id'], function=item['function'], args=[1.5, 2], kwargs={},
-                outcomes={'A': {'returns': 3.5}, 'B': {'raises': 'TypeError'}}, cited=task,
-                evidence=[f'{shown(symbols[item["function"]][0])}: named function; integer-only versus numeric API'])
-            question = dict(text=f'For {item["function"]}(1.5, 2), should it return 3.5 or raise TypeError?',
-                            candidate=candidate, changes_checks=len(affected(item)),
-                            affected_checks=sorted(affected(item)))
+        stated, evidence = basis[item['id']]
+        symbol = item['function'].rsplit('.', 1)[-1]
+        candidate = dict(requirement_id=item['id'], function=item['function'], args=item['cases'][0]['args'],
+                         kwargs={}, outcomes=outcomes(item), cited=_citation(task, item['function']),
+                         evidence=[evidence])
+        question = dict(text=f'For {item["function"]}({_args(item["cases"][0])}), should it return '
+                             f'{json.dumps(stated["returns"])} as {symbol}({_args(stated)}) does, or raise TypeError?',
+                        candidate=candidate, changes_checks=len(affected(item)), affected_checks=sorted(affected(item)))
     mechanism = reading.mechanism()
     if reading.by == 'floor' and reading.reason in {'invalid model reply', 'model failed'}:
         mechanism['reason'] = 'model reading failed: ' + reading.reason
@@ -312,6 +470,9 @@ def with_confirmed(found, standard):
                 continue
             item.update(status='stated', cases=deepcopy(bindings['cases']), text=one.scope, scope=one.scope,
                         confirmed_by=one.answered_by, expectation_id=one.expectation_id)
+            # The call it offers runs what the person confirmed, never the alternative they did not choose.
+            if _instance(item) and 'cheapest_check' in item:
+                item['cheapest_check']['arguments']['template_instances'] = [_instance(item)]
     return shown
 
 
@@ -370,6 +531,12 @@ def checks(found, texts, *, before=None, budget=20):
         if item['kind'] == 'preservation' and item['function'] in symbols:
             rel, node = symbols[item['function']]
             ident = item['id'] + '.signature'
+            if 'parameters' in item and item['parameters'] != [a.arg for a in (*node.args.posonlyargs,
+                                                                                 *node.args.args)]:
+                skipped.append(dict(activity='candidate check', check=ident, origin=item['origin'],
+                    candidate_id=item['id'], result='skipped', reason='the base does not have the stated signature',
+                    model_calls=0, seconds=0.0))
+                continue
             path, exact = repo_tests._on_disk(rel)
             if not exact:
                 skipped.append(dict(activity='candidate check', check=ident, origin=item['origin'],

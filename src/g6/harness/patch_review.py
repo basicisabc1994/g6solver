@@ -993,7 +993,10 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict] | None
             original = candidate_standard.baseline(root, change, texts)
             # The existing request (including an injected fake/None) remains authoritative.
             with semantic.use_request(**({'llm': llm} if llm is not None else {})):
-                candidates = candidate_standard.from_sources({**original, **texts}, task, repo=root)
+                candidates = candidate_standard.from_sources({**original, **texts}, task, repo=root,
+                                                             advertised=template_instances)
+            # The person's confirmed answer first: the check scheduled for a candidate is the one they confirmed.
+            candidates = candidate_standard.with_confirmed(candidates, confirmed)
             stated, assumed, unmapped, proposed, instances, config = _inputs(
                 task, claim, tests, sources, timeout_s, [], None, proposed_checks, template_instances, search,
                 candidate_ids=[c['id'] for c in candidates['standard']])
@@ -1038,7 +1041,7 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict] | None
                        retained_skipped=retained_skipped, candidate_origins=candidate_origins,
                        candidate_skipped=candidate_skipped, candidate_calls=candidates['model_calls'] if thin else 0,
                        thin=thin)
-        return candidate_standard.annotate(reviewed, candidates, claim, confirmed) if candidates is not None else reviewed
+        return candidate_standard.annotate(reviewed, candidates, claim) if candidates is not None else reviewed
     except LETS_THROUGH:
         raise   # an operator stop, a spent allowance or unconfirmed process cleanup must reach the enclosing door
     except repo_tests.RepoRefused as exc:
@@ -1051,6 +1054,9 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict] | None
             refused["warning_card"].update(suggested_action=exc.help, next_step=exc.help)
         return refused
     except (OSError, ValueError, TypeError) as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise   # an unreadable stop file is an OSError too: a stop is never a refused input
         return blocked_reply(f"[{CODE}] {exc}")
 
 

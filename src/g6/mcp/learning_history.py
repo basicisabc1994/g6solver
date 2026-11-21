@@ -5,6 +5,7 @@ import json
 from pydantic import ValidationError
 from returns.result import Success
 
+from g6.core import component_process
 from g6.core.door import blocked_reply, door_reply, is_allowed
 from g6.harness import outcome_history
 from g6.learning_history.block import HistoryInput
@@ -43,6 +44,8 @@ async def forget_reply(ctx, params_json: str, *, allow: frozenset[str]) -> dict:
         return door_reply('learning_history', 'forget', Success({
             'repository_id': history.repository, 'forgotten': True,
             'scope': 'one repository outcome history; separate execution receipts remain'}), caller=params)
+    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+        raise   # both are OSErrors: an operator stop or unconfirmed cleanup must reach the enclosing door
     except OSError:
         return blocked_reply('[G6_E_INPUT_VALIDATION] could not finish removing history; use learning_history.list '
                              'to inspect what remains. Do not retry around a permission refusal.')

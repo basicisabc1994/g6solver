@@ -156,7 +156,10 @@ def _guarded(work: Callable[[], dict]) -> dict:
     try:
         return work()
     except (ValueError, LookupError, OSError, subprocess.SubprocessError) as exc:
-        named = next(filter(ERROR_CODE_PATTERN.match, re.findall(r"\w+", str(exc))), None)
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise   # an operator stop, a spent allowance or unconfirmed cleanup reaches the door, never a refusal
+        named =next(filter(ERROR_CODE_PATTERN.match, re.findall(r"\w+", str(exc))), None)
         return _refusal(str(exc), getattr(exc, "code", "") or named or REFUSED)
 
 

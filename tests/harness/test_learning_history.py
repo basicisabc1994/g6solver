@@ -260,3 +260,30 @@ def test_learning_binding_never_overrides_receipt_outcome_and_ambiguous_bindings
     other = {**binding, 'repository_id': 'b' * 64}
     entries.append({'kind': 'test-learning-binding', 'id': digest(other), 'body': other})
     assert receipt_store.lookup_learning('owned', artifact_digest='artifact') is None
+
+
+def _stops():
+    from g6.core.component_process import ContainmentFailure, ExecutionInterrupted
+    return [ExecutionInterrupted('operator stop', stopped=True), ExecutionInterrupted('allowance ended'),
+            ContainmentFailure('cleanup unconfirmed')]
+
+
+@pytest.mark.parametrize('stop', _stops(), ids=lambda e: type(e).__name__)
+def test_worker_stop_reaches_the_door_through_every_history_reader(monkeypatch, stop):
+    """Both are OSError subclasses: an OSError handler around a git call must let them through."""
+    from g6.learning_history.block import HistoryInput, LearningHistoryBlock
+    from g6.mcp.learning_history import forget_reply
+    from g6.workforce import repo_tests
+
+    def git(*args, **kwargs):
+        raise stop
+
+    monkeypatch.setattr(repo_tests, '_git', git)
+    monkeypatch.setattr(repo_tests, 'checked_repo', lambda root: Path('fixture'))
+    with pytest.raises(type(stop)):
+        receipt_store.repository_id(Path('fixture'))
+    with pytest.raises(type(stop)):
+        LearningHistoryBlock().infer(HistoryInput(op='list', repo='fixture'))
+    ctx = SimpleNamespace(session=None, request_id='fixture')
+    with pytest.raises(type(stop)):
+        asyncio.run(forget_reply(ctx, '{"repo":"fixture"}', allow=frozenset({'learning_history.forget'})))

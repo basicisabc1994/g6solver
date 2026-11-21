@@ -67,7 +67,7 @@ from pydantic import BaseModel, ConfigDict
 
 from g6.cegis import InputDomain, SearchResult, cegis
 from g6.context.redact import MASK, mask_paths, secret_spans
-from g6.core import host_models, keys
+from g6.core import component_process, host_models, keys
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.core.llm import LLMCaller, LLMError, _start_model_call
@@ -549,6 +549,8 @@ def record_reproductions(change: repo_tests.Change, probes: Path, *, deadline: f
             try:
                 outcome_history.record_check(change, one.model_copy(update={'intent': 'preserve'}), node, patch,
                     base, 'counterexample', origin='k_loop', engine='g6_review_until_clean')
+            except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+                raise   # both are OSErrors: an operator stop or unconfirmed cleanup must reach the enclosing door
             except (OSError, ValueError):
                 activities[-1]['history_note'] = 'outcome history could not be written'
     return activities
@@ -1024,6 +1026,8 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
         try:
             outcome_history.record_check(change, one, node, patch_run, base_run, classification,
                                           origin=origin, engine='g6_review_until_clean', refuted_by_difference=differs)
+        except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+            raise
         except (OSError, ValueError):
             retained_search.activities.append({'activity': 'outcome history', 'result': 'error',
                 'reason': 'retained history could not be written', 'model_calls': 0, 'seconds': 0})
@@ -1685,8 +1689,10 @@ def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
     floor = _floor_critic_report(said, proof=proof)
     if floor["verdict"] == "unread":
         return floor
-    if floor["verdict"] in READ_VERDICTS:
-        return floor  # explicit protocol identifiers cannot be reinterpreted by a model
+    if floor["verdict"] in READ_VERDICTS or re.search(r"^VERDICT:\s*\w", body, re.M):
+        # an explicit verdict line is a protocol identifier: final, never reinterpreted by a model, so a stated
+        # failure (unreadable, or any word that is not none or defect) stays a failed review
+        return floor
     reading = semantic.read(semantic.Question("critic", said, Reply, lambda: floor, "choose"))
     value = reading.value.model_dump() if isinstance(reading.value, BaseModel) else reading.value
     if value["verdict"] != "defect":

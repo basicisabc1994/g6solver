@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from g6.core import component_process
 from g6.core.ai_block import AIBlock
 from g6.core.contract_decorator import block_contract
 from g6.core.result import Result
@@ -53,5 +54,7 @@ class LearningHistoryBlock(AIBlock):
                               'store_path': str(outcome_history.store_path(history.repository))
                               if history.repository else '', 'recording': 'on by default',
                               'scope': 'G6 own local check results; same-user state'})
+        except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+            raise   # both are OSErrors: an operator stop or unconfirmed cleanup must reach the enclosing door
         except (OSError, ValueError) as exc:
             return Result.fail(f'[G6_E_INPUT_VALIDATION] history unavailable ({type(exc).__name__})')

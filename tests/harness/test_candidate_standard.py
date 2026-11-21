@@ -12,17 +12,23 @@ from g6.harness import verification_templates as vt
 from g6.mcp import mission
 from tests.harness.test_proposed_checks import _repo
 
-TASK = 'Fix add(a, b) so it adds positive and negative integers without changing the existing API'
+#: Every case below is written in the task as Python; no word of the task is read for meaning.
+TASK = 'Fix add(a, b) so that add(2, 3) == 5 and add(-2, -3) == -5 without changing the existing API'
 NODE = 'tests/test_calc.py::test_add'
 SOURCES = {'calc.py': 'def add(a, b):\n    return a + b\n',
     'tests/test_calc.py': 'from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n'}
+
+
+def stating(got, args):
+    """The candidate whose one case is the call with ``args``."""
+    return next(c for c in got['standard'] if c['kind'] == 'example' and [k['args'] for k in c['cases']] == [args])
 
 
 def test_memory_candidate_templates_have_no_normative_provenance():
     from g6.harness import candidate_standard as cs
     with semantic.request(llm=None):
         got = cs.from_sources(SOURCES, TASK, repo='fixture')
-    negative = next(c for c in got['standard'] if 'negative' in c['text'])
+    negative = stating(got, [-2, -3])
     vt.template_instances(negative['cheapest_check']['arguments']['template_instances'],
                           [c['id'] for c in got['standard']])
     _, instances, _, _ = cs.checks(got, SOURCES, before=SOURCES)
@@ -42,10 +48,9 @@ def test_memory_git_names_are_shown_or_refused_without_becoming_text(odd):
         got = cs.from_sources(texts, TASK, repo='fixture')
     assert got['standard'] and all(c['function'] == 'calc.add' for c in got['standard'])
     assert got['test_files'] == [test_file]
-    positive = next(c for c in got['standard'] if 'positive' in c['text'])
+    positive = stating(got, [2, 3])
     assert positive['checks'] == [test_file + '::test_add']
-    assert got['question']['candidate']['evidence'] == [
-        'calc.py: named function; integer-only versus numeric API']
+    assert got['question']['candidate']['evidence'] == ['calc.py: defines calc.add; the task states add(2, 3) == 5']
     checks, _, _, _ = cs.checks(got, texts, before=texts)
     signature, = [c for c in checks if c.id.endswith('.signature')]
     namespace = {}
@@ -114,7 +119,10 @@ def test_memory_question_confirms_exactly_its_own_boundary_case():
     shown = cs.with_confirmed(got, held)
     stated = [c for c in shown['standard'] if c['status'] == 'stated']
     assert len(stated) == 1 and stated[0]['id'] == item['id']
-    assert stated[0]['cases'] == [{'args': [1.5, 2], 'raises': 'TypeError'}]
+    assert stated[0]['cases'] == [{'args': [2.0, 3], 'raises': 'TypeError'}]
+    # the call it offers is the confirmed case too, never the alternative the person rejected
+    offered, = stated[0]['cheapest_check']['arguments']['template_instances']
+    assert offered['bindings']['cases'] == [{'args': [2.0, 3], 'raises': 'TypeError'}]
     assert all(c['status'] == 'candidate' for c in shown['standard'] if c['id'] != item['id'])
     assert all(c['status'] == 'candidate' for c in got['standard'])
 
@@ -125,7 +133,7 @@ def test_memory_rebound_alias_is_not_concrete_coverage():
              '    add = lambda a, b: -5\n    assert add(-2, -3) == -5\n'}
     with semantic.request(llm=None):
         got = cs.from_sources(texts, TASK, repo='fixture')
-    negative = next(c for c in got['standard'] if 'negative' in c['text'])
+    negative = stating(got, [-2, -3])
     assert negative['checks'] == 'missing'
 
 
@@ -135,8 +143,73 @@ def test_memory_float_literals_do_not_cover_integer_case():
              '    assert add(-2.0, -3.0) == -5.0\n'}
     with semantic.request(llm=None):
         got = cs.from_sources(texts, TASK, repo='fixture')
-    negative = next(c for c in got['standard'] if 'negative' in c['text'])
+    negative = stating(got, [-2, -3])
     assert negative['checks'] == 'missing'
+
+
+@pytest.mark.parametrize('task', [
+    'Add validation to multiply(a, b) for positive integers',
+    'Make multiply(a, b) add up the sum of two integers, positive or negative',
+    'Keep multiply unchanged; it adds nothing and sums nothing',
+])
+def test_memory_no_word_of_the_task_is_read_for_meaning(task):
+    """Owner direction 2026-11-17: without a stated example or a model proposal, no behaviour is invented."""
+    from g6.harness import candidate_standard as cs
+    texts = {'calc.py': 'def multiply(a, b):\n    return a * b\n'}
+    with semantic.request(llm=None):
+        got = cs.from_sources(texts, task, repo='fixture')
+    assert got['standard'] and all(c['cases'] == [] for c in got['standard'])
+    assert got['question'] is None
+    assert all(c['kind'] == 'preservation' for c in got['standard'] if 'signature' in c['text'])
+    assert [c['kind'] for c in got['standard']].count('preservation') == ('multiply(a, b)' in task)
+
+
+@pytest.mark.parametrize('task, case', [
+    ('multiply(2, 3) == 6 must hold', {'args': [2, 3], 'returns': 6}),
+    ('Ensure multiply(2, b=3) == 6.', {'args': [2], 'kwargs': {'b': 3}, 'returns': 6}),
+    ('Then multiply(-1.5, 2) == -3.0; done', {'args': [-1.5, 2], 'returns': -3.0}),
+    ("Want multiply('ab', 2) == 'abab' too", {'args': ['ab', 2], 'returns': 'abab'}),
+])
+def test_memory_a_stated_example_is_parsed_as_python(task, case):
+    from g6.harness import candidate_standard as cs
+    texts = {'calc.py': 'def multiply(a, b):\n    return a * b\n'}
+    with semantic.request(llm=None):
+        got = cs.from_sources(texts, task, repo='fixture')
+    examples = [c for c in got['standard'] if c['kind'] == 'example' and c['cases']]
+    assert [c['cases'] for c in examples] == [[case]]
+    assert examples[0]['origin'] == 'task_text'
+
+
+def test_memory_two_stated_signatures_propose_no_preservation():
+    from g6.harness import candidate_standard as cs
+    with semantic.request(llm=None):
+        got = cs.from_sources(SOURCES, 'Change add(a, b) into add(a, b, c)', repo='fixture')
+    assert not any(c['kind'] == 'preservation' for c in got['standard'])
+
+
+def test_memory_signature_check_needs_the_base_to_have_the_stated_parameters():
+    from g6.harness import candidate_standard as cs
+    with semantic.request(llm=None):
+        got = cs.from_sources(SOURCES, 'Fix add(x, y)', repo='fixture')
+    keep, = [c for c in got['standard'] if c['kind'] == 'preservation']
+    checks, _, _, skipped = cs.checks(got, SOURCES, before=SOURCES)
+    assert not any(c.id.endswith('.signature') for c in checks)
+    assert any(s['candidate_id'] == keep['id'] and 'stated signature' in s['reason'] for s in skipped)
+
+
+def test_memory_the_question_comes_from_a_repository_example_when_the_task_states_none():
+    """The e2e task names add(a, b) and states no example: the repository's own assert is the explicit example."""
+    from g6.harness import behaviour_question as bq, candidate_standard as cs
+    task = 'Change add(a, b) in calc.py so it adds two integers and returns their sum as an int.'
+    with semantic.request(llm=None):
+        got = cs.from_sources(SOURCES, task, repo='fixture')
+    candidate = got['question']['candidate']
+    assert candidate['args'] == [2.0, 3]
+    assert candidate['outcomes'] == {'A': {'returns': 5}, 'B': {'raises': 'TypeError'}}
+    assert candidate['evidence'] == [f'{NODE}: asserts add(2, 3) == 5']
+    item = next(c for c in got['standard'] if c['id'] == candidate['requirement_id'])
+    assert item['origin'] == 'repository_test' and item['status'] == 'candidate'
+    assert bq.caller_candidates(task, [candidate])
 
 
 def test_memory_default_resolver_is_tried_without_injected_caller(monkeypatch):
@@ -167,8 +240,9 @@ def test_memory_question_ranks_checks_whose_outputs_change():
     texts = {'calc.py': SOURCES['calc.py'] + '\ndef sumit(a, b):\n    return a + b\n',
              'tests/test_calc.py': 'from calc import add, sumit\n\n' +
              '\n'.join(f'def test_positive_{i}():\n    assert add(2, 3) == 5\n' for i in range(5)) +
-             '\ndef test_boundary():\n    assert sumit(1.5, 2) == 3.5\n'}
-    task = TASK.replace('add(a, b)', 'add(a, b) and sumit(a, b)')
+             '\ndef test_sumit():\n    assert sumit(2, 3) == 5\n'
+             '\ndef test_boundary():\n    assert sumit(2.0, 3) == 5\n'}
+    task = 'Fix add(a, b) and sumit(a, b)'
     with semantic.request(llm=None):
         got = cs.from_sources(texts, task, repo='fixture')
     assert got['question']['candidate']['function'] == 'calc.sumit'
@@ -204,9 +278,9 @@ def test_memory_floor_and_negative_check():
     assert all(c['status'] == 'candidate' for c in got['standard'])
     keep = next(c for c in got['standard'] if c['kind'] == 'preservation')
     assert keep['checks'] == [NODE] and 'signature' in keep['text']
-    positive = next(c for c in got['standard'] if 'positive' in c['text'])
+    positive = stating(got, [2, 3])
     assert positive['checks'] == [NODE]
-    negative = next(c for c in got['standard'] if 'negative' in c['text'])
+    negative = stating(got, [-2, -3])
     assert negative['checks'] == 'missing'
     vt.template_instances(negative['cheapest_check']['arguments']['template_instances'],
                           [c['id'] for c in got['standard']])
@@ -334,7 +408,7 @@ def test_task_floor_maps_preservation_but_does_not_invent_negative_coverage(addi
     got = standard(addition)
     assert got['standard'], got
     keep = next(c for c in got['standard'] if c['kind'] == 'preservation')
-    negative = next(c for c in got['standard'] if 'negative' in c['text'])
+    negative = stating(got, [-2, -3])
     assert keep['status'] == 'candidate' and keep['origin'] == 'task_text'
     assert 'signature' in keep['text'] and NODE in keep['checks']
     assert negative['checks'] == 'missing'
@@ -379,7 +453,7 @@ def test_alias_mapping_and_concrete_input_coverage(addition):
         'def test_add():\n    assert plus(2, 3) == 5\n\n'
         'def test_negative():\n    assert plus(-2, -3) == -5\n', encoding='utf-8')
     got = standard(addition)
-    negative = next(c for c in got['standard'] if 'negative' in c['text'])
+    negative = stating(got, [-2, -3])
     assert negative['checks'] == ['tests/test_calc.py::test_negative']
 
 
@@ -399,7 +473,7 @@ def test_confirmation_door_states_exactly_one_case(addition, monkeypatch):
 def test_negative_cheapest_call_is_accepted_by_the_review_door(addition, monkeypatch):
     from g6.harness import patch_review
     got = standard(addition)
-    negative = next(c for c in got['standard'] if 'negative' in c['text'])
+    negative = stating(got, [-2, -3])
     def assess(*args, **kwargs):
         assert all(one.provenance == 'model_hypothesis' for one in kwargs['instances'])
         return {'assessment': {'completion': {'activities': []}, 'report': 'fixture'}}
@@ -407,4 +481,103 @@ def test_negative_cheapest_call_is_accepted_by_the_review_door(addition, monkeyp
     with semantic.request(llm=None):
         reviewed = patch_review.review_patch(**negative['cheapest_check']['arguments'])
     assert reviewed['assessment']['standard']
+
+
+def _thin_review(monkeypatch):
+    """A thin review whose repository and execution boundary are stubbed; what reached the assessment is kept."""
+    from pathlib import Path
+    from types import SimpleNamespace
+    from g6.harness import candidate_standard as cs, outcome_history, patch_review, verification_search as vs
+    from g6.workforce import repo_tests
+    root = Path('fixture')
+    monkeypatch.setattr(repo_tests, 'checked_repo', lambda repo: root)
+    monkeypatch.setattr(repo_tests, 'snapshot', lambda repo: {})
+    monkeypatch.setattr(repo_tests, 'change', lambda repo, base: SimpleNamespace(repo=root))
+    monkeypatch.setattr(cs, 'sources', lambda repo: SOURCES)
+    monkeypatch.setattr(cs, 'baseline', lambda *a: SOURCES)
+    monkeypatch.setattr(patch_review, '_import_roots', lambda *a: ())
+    monkeypatch.setattr(outcome_history, 'retained_checks', lambda *a: ([], {}, []))
+    monkeypatch.setattr(vs, 'placements', lambda root, checks: {c.id: c.file for c in checks})
+    monkeypatch.setattr(vs, 'bind_execution', lambda change, before, **kwargs: before)
+    seen = {}
+
+    def assess(*args, **kwargs):
+        seen.update(kwargs)
+        return {'ok': True, 'assessment': {'requirements': [], 'completion': {'activities': []}, 'report': 'stub'}}
+
+    monkeypatch.setattr(patch_review, '_assess', assess)
+    return seen
+
+
+def test_model_candidates_advertised_call_needs_no_second_identical_model_reply(monkeypatch):
+    from g6.harness import candidate_standard as cs, patch_review
+    seen = _thin_review(monkeypatch)
+    proposal = {'text': 'Opposite inputs cancel', 'kind': 'example', 'function': 'calc.add',
+                'cases': [{'args': [-2, 2], 'returns': 0}]}
+    with semantic.request(llm=FakeLLM(default=json.dumps({'value': [proposal]}))):
+        found = cs.from_sources(SOURCES, TASK, repo='fixture')
+    model, = [c for c in found['standard'] if c['origin'] == 'model_proposal']
+    for later in ('{"value": []}', 'not json', json.dumps({'value': [{**proposal, 'text': 'Signs cancel out'}]})):
+        seen.clear()
+        with semantic.request(llm=FakeLLM(default=later)):
+            reply = patch_review.review_patch(**model['cheapest_check']['arguments'])
+        assert seen, reply.get('warning_card')
+        sent = [one for one in seen['instances'] if one.requirement_id == model['id']]
+        assert [one.bindings['cases'] for one in sent] == [[{'args': [-2, 2], 'returns': 0}]]
+        shown, = [c for c in reply['assessment']['standard'] if c['id'] == model['id']]
+        assert shown['origin'] == 'model_proposal' and shown['status'] == 'candidate'
+
+
+@pytest.mark.parametrize('change', [
+    {'cases': [{'args': [-2, 2], 'returns': 1}]},          # another expectation under the advertised id
+    {'function': 'calc.missing'},                          # a function the repository does not define
+    {'template': 'relation.v1'},
+])
+def test_an_altered_advertised_call_names_no_candidate(monkeypatch, change):
+    from g6.harness import candidate_standard as cs, patch_review
+    seen = _thin_review(monkeypatch)
+    proposal = {'text': 'Opposite inputs cancel', 'kind': 'example', 'function': 'calc.add',
+                'cases': [{'args': [-2, 2], 'returns': 0}]}
+    with semantic.request(llm=FakeLLM(default=json.dumps({'value': [proposal]}))):
+        found = cs.from_sources(SOURCES, TASK, repo='fixture')
+    model, = [c for c in found['standard'] if c['origin'] == 'model_proposal']
+    arguments = json.loads(json.dumps(model['cheapest_check']['arguments']))
+    one = arguments['template_instances'][0]
+    one.update({k: v for k, v in change.items() if k == 'template'})
+    one['bindings'].update({k: v for k, v in change.items() if k != 'template'})
+    with semantic.request(llm=FakeLLM(default='{"value": []}')):
+        reply = patch_review.review_patch(**arguments)
+    assert not seen and reply['completion_state'] == 'blocked-escalated'
+
+
+def test_confirmed_alternative_is_the_check_the_review_schedules(monkeypatch):
+    from g6.harness import behaviour_question as bq, candidate_standard as cs, patch_review
+    from g6.harness.confirmed_expectation import ConfirmedExpectation, ExpectationStandard
+    seen = _thin_review(monkeypatch)
+    with semantic.request(llm=None):
+        found = cs.from_sources(SOURCES, TASK, repo='fixture')
+    candidate = found['question']['candidate']
+    one, = bq.caller_candidates(TASK, [candidate])
+    question, rule = one.questions('b' * 64)
+    reading = bq.read('accept', {'choice': 'B', 'name': 'Fixture'}, question, rule, answered_at='2026-11-19T00:00:00Z')
+    held = ExpectationStandard().with_expectation(ConfirmedExpectation(question, reading.answer))
+    with semantic.request(llm=None):
+        reply = patch_review.review_patch('fixture', task=TASK, confirmed=held)
+    shown = next(c for c in reply['assessment']['standard'] if c['id'] == candidate['requirement_id'])
+    assert shown['status'] == 'stated' and shown['cases'] == [{'args': [2.0, 3], 'raises': 'TypeError'}]
+    sent = [case for instance in seen['instances'] if instance.requirement_id == candidate['requirement_id']
+            for case in instance.bindings['cases']]
+    assert sent == [{'args': [2.0, 3], 'raises': 'TypeError'}]
+
+
+@pytest.mark.parametrize('stop', ['ExecutionInterrupted', 'ContainmentFailure'])
+def test_premortem_lets_a_trusted_stop_from_the_reader_reach_the_door(addition, stop):
+    from g6.core import component_process
+    error = getattr(component_process, stop)('stopped while the reader asked')
+
+    def fail(system, user):
+        raise error
+
+    with pytest.raises(type(error)):
+        standard(addition, FakeLLM(fail))
 

@@ -125,6 +125,44 @@ def test_failed_send_uses_floor_without_exception_text(error, reason):
     assert reason in reading.reason
 
 
+def _trusted_stops():
+    from g6.core.component_process import ContainmentFailure, ExecutionInterrupted
+    from g6.self_maintenance.envelope import StopUnreadable
+    from g6.self_maintenance.usage import ProviderStop
+    return [ExecutionInterrupted("allowance ended"), ExecutionInterrupted("operator stop", stopped=True),
+            ContainmentFailure("cleanup unconfirmed"), StopUnreadable("stop file unreadable"),
+            ProviderStop("G6_E_PROVIDER_LIMIT: provider stopped", "send-1"),
+            LLMError("G6_E_STOPPED: G6's stop was engaged, so the host was stopped")]
+
+
+@pytest.mark.parametrize("error", _trusted_stops(), ids=lambda e: type(e).__name__)
+def test_trusted_stop_from_the_worker_propagates_and_is_never_a_floor_reading(error):
+    """An operator stop, a spent allowance or unconfirmed cleanup must reach the enclosing door unchanged."""
+    sem = api()
+
+    def fail(system, user):
+        raise error
+
+    with sem.request(llm=FakeLLM(fail)) as scope:
+        with pytest.raises(type(error)) as raised:
+            sem.read(question())
+    assert raised.value is error
+    assert scope.mechanisms == []
+
+
+@pytest.mark.parametrize("error", _trusted_stops(), ids=lambda e: type(e).__name__)
+def test_trusted_stop_while_resolving_the_default_caller_propagates(monkeypatch, error):
+    sem = api()
+
+    def resolve():
+        raise error
+
+    monkeypatch.setattr(sem, "resolve_caller", resolve)
+    with sem.request():
+        with pytest.raises(type(error)):
+            sem.read(question())
+
+
 def test_timeout_discards_late_reply_and_never_exposes_late_mechanism():
     sem = api()
 

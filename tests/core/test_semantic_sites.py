@@ -111,6 +111,18 @@ def test_critic_model_cannot_replace_an_explicit_legacy_verdict():
     assert not fake.calls
 
 
+@pytest.mark.parametrize("verdict", ["unreadable", "Unreadable", "cannot", "clean"])
+def test_critic_explicit_failure_verdict_is_final_and_a_failed_review(verdict):
+    """Only a reply with no verdict line is read for meaning; an explicit verdict never becomes clean."""
+    from g6.harness import completion_loop as loop
+    fake = FakeLLM(default='{"value":{"verdict":"none","rule":"","why":"","test":"","error":""}}')
+    with semantic.request(llm=fake):
+        got = loop.critic_report(f"READ: receipt-7\nVERDICT: {verdict}\nWHY: I could not read the code",
+                                 proof="receipt-7")
+    assert got["verdict"] == verdict.lower() and not fake.calls
+    assert loop._round_outcome({**got, "results": {}, "file": "test_review.py"}) == "review_failed"
+
+
 def test_query_intent_paraphrase_and_floor():
     from g6._context_engine._planner import features_of
     q = "Show the ripples when this component changes"
