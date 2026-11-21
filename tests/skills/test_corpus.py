@@ -10,12 +10,28 @@ from pathlib import Path
 import pytest
 
 from g6.mcp import registrations
+from g6.mcp import corpus_build
 from g6.skills import corpus, routing
 
 
+def test_the_reader_core_imports_holds_the_standard_library_alone() -> None:
+    """Lead ruling (rc-030 fix pass 2): core must not import g6.mcp or g6.metaharness, even indirectly. core reads the
+    corpus through ``g6.skills.corpus``, so that module imports the standard library alone; the writer, which reads
+    the MCP registrations and the meta-harness, is ``g6.mcp.corpus_build`` and no module of core imports it."""
+    import ast
+    import sys
+
+    tree = ast.parse(Path(corpus.__file__).read_text(encoding="utf-8"))
+    imported = {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+    imported |= {node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    assert {name for name in imported if name.split(".")[0] not in sys.stdlib_module_names} == set()
+    core = Path(corpus.__file__).parents[1] / "core"
+    assert not [path.name for path in core.rglob("*.py") if "corpus_build" in path.read_text(encoding="utf-8")]
+
+
 def test_the_checked_in_corpus_is_what_the_code_builds() -> None:
-    built = corpus.dumps(corpus.build())
-    assert built == corpus.PATH.read_text(encoding="utf-8"), "run: python -P -m g6.skills.corpus --write"
+    built = corpus_build.dumps(corpus_build.build())
+    assert built == corpus.PATH.read_text(encoding="utf-8"), "run: python -P -m g6.mcp.corpus_build --write"
 
 
 def test_it_holds_every_tool_of_g6_mcp_every_route_and_every_runnable_built_in_op() -> None:
@@ -44,7 +60,7 @@ def test_every_entry_has_text_and_says_what_it_establishes_and_what_it_does_not(
 
 
 def test_the_hand_written_tool_data_covers_exactly_the_registered_tools() -> None:
-    assert set(corpus.TOOL_DATA) == set(registrations.recorded()["g6"])
+    assert set(corpus_build.TOOL_DATA) == set(registrations.recorded()["g6"])
 
 
 def test_it_carries_no_local_path() -> None:
@@ -89,7 +105,7 @@ def test_an_op_template_is_validated_only_when_g6_invoke_runs_it_as_given(monkey
             assert not entry["validated"] and entry["issues"][0].startswith("[G6_E_INPUT_VALIDATION]"), entry
         if entry["validated"]:
             validated += 1
-            assert component in corpus.RUN_AT_BUILD and not entry["sensitive"] and error is None, entry["id"]
+            assert component in corpus_build.RUN_AT_BUILD and not entry["sensitive"] and error is None, entry["id"]
             ran = invoke_reply(component, op, entry["call"]["arguments"]["params_json"], allow_sensitive=frozenset())
             assert ran["completion_state"] != "blocked-escalated", (entry["id"], ran["warning_card"])
             assert entry["issues"] == [], entry["id"]
@@ -133,11 +149,11 @@ def test_fill_names_every_field_the_template_leaves_absent_empty_or_a_placeholde
 
 def test_only_ops_that_compute_over_their_input_alone_are_run_when_the_corpus_is_built() -> None:
     data = corpus.load()
-    for name in corpus.RUN_AT_BUILD:
+    for name in corpus_build.RUN_AT_BUILD:
         needs = data["components"][name]["needs"]
         assert needs["model"] == "none" and not needs["confined"] and not needs["outside"] and not needs["extras"], name
     for entry in corpus.entries():
-        if entry["kind"] == "op" and (entry["component"] not in corpus.RUN_AT_BUILD or entry["sensitive"]):
+        if entry["kind"] == "op" and (entry["component"] not in corpus_build.RUN_AT_BUILD or entry["sensitive"]):
             assert entry["validated"] is False and "not run when the corpus was built" in entry["issues"][-1], entry
 
 
@@ -161,7 +177,7 @@ def test_a_component_whose_reply_reads_the_clock_is_not_run_when_the_corpus_is_b
         return invoke_reply("duty_of_care", "directory", "{}", allow_sensitive=frozenset())["warning_card"]["message"]
 
     assert on(real.date(2026, 11, 1)) != on(real.date(2027, 9, 1))
-    assert "duty_of_care" not in corpus.RUN_AT_BUILD
+    assert "duty_of_care" not in corpus_build.RUN_AT_BUILD
     assert not any(e["validated"] for e in corpus.entries() if e.get("component") == "duty_of_care")
 
 
@@ -169,7 +185,7 @@ def test_the_build_runs_in_a_scratch_home_and_leaves_the_persons_home_alone(monk
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("G6_HOME", str(home))
-    assert corpus.dumps(corpus.build()) == corpus.PATH.read_text(encoding="utf-8")
+    assert corpus_build.dumps(corpus_build.build()) == corpus.PATH.read_text(encoding="utf-8")
     assert list(home.iterdir()) == []
 
 

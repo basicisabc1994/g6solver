@@ -367,7 +367,7 @@ LAYERS: dict[str, tuple[str, ...]] = {
         "The kernel cannot override this op or part: the original refusal stands. Tell the person what it says."),
     "G6_E_AGENT_CHANGE_FLAGGED": ("none", "bundles"),
     "G6_E_APPROVAL_REQUIRED": ("person", "_agentic", "wait"),
-    "G6_E_BLOCKED": ("none", "_agentic bundles core mcp skills",
+    "G6_E_BLOCKED": ("none", "_agentic bundles core mcp",
         "Read the warning card: it says why and what can be done. Tell the person."),
     "G6_E_BOOKKEEPING_PROBLEM": ("none", "bundles"),
     "G6_E_BUDGET_EXHAUSTED": ("person", "_agentic",
@@ -460,7 +460,7 @@ LAYERS: dict[str, tuple[str, ...]] = {
     "G6_E_HTTP_TOO_LARGE": ("person", "core"),
     "G6_E_HUMAN_APPROVAL_REQUIRED": ("person", "mcp",
         "Only the person can approve this. Ask the person; offer no other way to agree, and never answer for them."),
-    "G6_E_INPUT_VALIDATION": ("input", "_agentic agents bundles core harness mcp skills",
+    "G6_E_INPUT_VALIDATION": ("input", "_agentic agents bundles core harness mcp",
         "The input did not fit: the refusal names the field. For an op, read g6_describe; for a tool, its description. "
         "Fix the field and call again."),
     "G6_E_INVALID_PARAMS": ("input", "cli"),

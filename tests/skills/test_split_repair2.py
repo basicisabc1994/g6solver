@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from g6.mcp import corpus_build
 from g6.skills import corpus, routing
 
 GUIDE = Path(__file__).resolve().parents[2] / "src/g6/skills/using-g6"
@@ -28,7 +29,7 @@ def test_corpus_is_exactly_the_route_entry_and_its_direct_reference_links(route_
     targets = derived.LINK.findall(section)
     assert set(route.detail) == {"skills/using-g6/" + target for target in targets}
     expected = " ".join("\n".join([section, *[(GUIDE / t).read_text(encoding="utf-8") for t in targets]]).split())
-    entry = next(e for e in corpus._routes([]) if e["id"] == "route:" + route_id)
+    entry = next(e for e in corpus_build._routes([]) if e["id"] == "route:" + route_id)
     assert entry["text"] == expected
 
 
@@ -38,7 +39,7 @@ def test_corpus_refuses_declared_detail_that_the_root_does_not_link(monkeypatch)
     routes = {**manifest.routes, "compose": replace(route, detail=(*route.detail, "metaharness/skill/SKILL.md"))}
     monkeypatch.setattr(routing, "load", lambda: replace(manifest, routes=routes))
     with pytest.raises(ValueError, match="compose.*reference links"):
-        corpus._routes([])
+        corpus_build._routes([])
 
 
 @pytest.mark.parametrize("task,phase,required,excluded", [
@@ -57,7 +58,7 @@ def test_live_reference_text_closes_the_reproduced_selection_failures(task, phas
 
     data = corpus.load()
     tools = [e for e in data["entries"] if e["kind"] == "tool"]
-    live = {**data, "entries": [e for e in data["entries"] if e["kind"] != "route"] + corpus._routes(tools)}
+    live = {**data, "entries": [e for e in data["entries"] if e["kind"] != "route"] + corpus_build._routes(tools)}
     offered = {c["id"] for c in selector.select(task, phase, corpus=live)["candidates"]}
     assert required <= offered
     assert not excluded & offered

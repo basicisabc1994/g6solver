@@ -213,6 +213,35 @@ def test_every_registered_builtin_producer_has_an_explicit_contract():
     assert missing == [], missing
 
 
+@pytest.mark.parametrize("module,name,searched", [
+    ("g6.coding_agent_gate.coding_agent_gate_block", "CodingAgentGateBlock", None),
+    ("g6.knowledge.ctx_elastic.block", "CtxElasticBlock", "g6.knowledge._index.Searched"),
+])
+def test_a_producer_with_its_own_contract_is_found_by_its_class_and_never_by_its_name(module, name, searched):
+    """core is the kernel and imports no component (pyproject's first import contract): the producers that declare
+    their own contract are located by module and class name in what is already loaded, and the class must be the
+    real one, so a look-alike with the same names claims nothing."""
+    import importlib
+
+    from g6.core.agent_guidance import ENVELOPE_CONTRACT
+    from g6.core.external_data import producer_result_contract
+
+    cls = getattr(importlib.import_module(module), name)
+    contract = producer_result_contract(cls.__new__(cls).infer)
+    if searched is None:
+        assert contract == ENVELOPE_CONTRACT
+    else:
+        assert contract[0] == ENVELOPE_CONTRACT and f"{contract[1].__module__}.{contract[1].__name__}" == searched
+
+    def infer(self, value) -> Result[dict]:
+        return Result.ok({"block_reason": WORDS})
+
+    impostor = type(name, (), {"__module__": module, "infer": infer})()
+    assert not guidance_positions(None, schema=producer_result_contract(impostor.infer))
+    source = inspect.getsource(producer_result_contract)
+    assert module not in {n.module for n in ast.walk(ast.parse(source)) if isinstance(n, ast.ImportFrom)}
+
+
 def test_counterfeit_producer_metadata_cannot_claim_a_builtin_contract():
     from g6.core.external_data import producer_result_contract
     from g6.lean.lean_block import LeanBlock

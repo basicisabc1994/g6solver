@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from functools import wraps
 import json
+import sys
 from typing import get_args, get_type_hints
 
 from g6.core.agent_guidance import (
@@ -146,26 +147,22 @@ def producer_result_contract(fn):
     explicit = getattr(fn, "result_contract", getattr(owner, "result_contract", None))
     if explicit is not None:
         return explicit
-    from g6.goal_engine.block import GoalEngineBlock
-    from g6.coding_agent_gate.coding_agent_gate_block import CodingAgentGateBlock
-    from g6.action_gating.action_gating_block import ActionGatingBlock
-    from g6.algorithm_design.block import AlgorithmDesignBlock
-    from g6.complexity.block import ComplexityBlock
-    from g6.self_maintenance.block import SelfMaintenanceBlock
-    from g6.knowledge.ctx_elastic.block import CtxElasticBlock
-    from g6.knowledge.knowledge_fetcher.block import KnowledgeFetcherBlock
     from g6.knowledge._index import Searched
     from g6.knowledge.knowledge_fetcher.fetcher import FetchResult
-    contracts = {GoalEngineBlock: ENVELOPE_CONTRACT,
-                 CodingAgentGateBlock: ENVELOPE_CONTRACT,
-                 ActionGatingBlock: ENVELOPE_CONTRACT,
-                 AlgorithmDesignBlock: ENVELOPE_CONTRACT,
-                 ComplexityBlock: ENVELOPE_CONTRACT,
-                 SelfMaintenanceBlock: ENVELOPE_CONTRACT,
-                 CtxElasticBlock: (ENVELOPE_CONTRACT, Searched),
-                 KnowledgeFetcherBlock: (ENVELOPE_CONTRACT, FetchResult)}
-    if type(owner) in contracts:
-        return contracts[type(owner)]
+    # core imports no component (pyproject's first import contract): a producer is located by module and class name
+    # in what is already loaded (an instance's own module is), and the class must be that one.
+    contracts = {("g6.goal_engine.block", "GoalEngineBlock"): ENVELOPE_CONTRACT,
+                 ("g6.coding_agent_gate.coding_agent_gate_block", "CodingAgentGateBlock"): ENVELOPE_CONTRACT,
+                 ("g6.action_gating.action_gating_block", "ActionGatingBlock"): ENVELOPE_CONTRACT,
+                 ("g6.algorithm_design.block", "AlgorithmDesignBlock"): ENVELOPE_CONTRACT,
+                 ("g6.complexity.block", "ComplexityBlock"): ENVELOPE_CONTRACT,
+                 ("g6.self_maintenance.block", "SelfMaintenanceBlock"): ENVELOPE_CONTRACT,
+                 ("g6.knowledge.ctx_elastic.block", "CtxElasticBlock"): (ENVELOPE_CONTRACT, Searched),
+                 ("g6.knowledge.knowledge_fetcher.block", "KnowledgeFetcherBlock"): (ENVELOPE_CONTRACT, FetchResult)}
+    cls = type(owner)
+    key = (cls.__module__, cls.__name__)
+    if key in contracts and getattr(sys.modules.get(key[0]), key[1], None) is cls:
+        return contracts[key]
     from g6.core.producer_contracts import builtin_result_contract
     builtin = builtin_result_contract(owner)
     if builtin is not None:

@@ -85,4 +85,10 @@ def test_retained_producers_and_handoffs_are_inventoried():
                        'registrations.py:identifiers': {'read_text'},
                        # eb0e46e8: the checked-in list of the components G6 ships (mcp/built_in.json), read to tell a
                        # built-in from an extension, and by its --check; G6's installed program data too.
-                       'catalogue.py:shipped': {'read_text'}, 'catalogue.py:main': {'read_text'}}
+                       'catalogue.py:shipped': {'read_text'}, 'catalogue.py:main': {'read_text'},
+                       # rc-030 fix pass 2: the selector corpus's writer moved here from g6.skills.corpus (core imports
+                       # no g6.mcp): the using-g6 skill's own files (_routes), G6's own component source, parsed for
+                       # its imports (_confines), and the checked-in corpus.json its --check compares (main). Run by a
+                       # maintainer when G6 is built, never by a tool; G6's installed program text, as above.
+                       'corpus_build.py:_routes': {'read_text'}, 'corpus_build.py:_confines': {'read_text'},
+                       'corpus_build.py:main': {'read_text'}}

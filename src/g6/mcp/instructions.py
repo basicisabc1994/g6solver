@@ -7,9 +7,8 @@ the server registers; the routing check reads it as guidance and holds it to tha
 """
 from __future__ import annotations
 
-#: The first sentence, which also ends the prompt hook's hint.
-LEAD = ("Before you say a Python task is done, have G6 check it; when stuck, unsure which G6 tool fits, or after a "
-        "G6 refusal, call g6_select with the task, your phase and the refusal's code.")
+#: The first sentence, which also ends the prompt hook's hint; core keeps it, since core imports nothing of g6.mcp.
+from g6.core.selector import LEAD
 
 TEXT = LEAD + (
     " To check: call g6_review_patch with the repository, the task and the requirements, poll metaharness_job, and "

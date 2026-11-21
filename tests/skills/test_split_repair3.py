@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from g6.core import selector
+from g6.mcp import corpus_build
 from g6.skills import corpus, routing
 
 
@@ -38,7 +39,7 @@ def test_discovery_survives_every_nonempty_route_list(limit):
 def test_fallback_keeps_the_specific_review_route_when_it_took_the_last_slot():
     data = corpus.load()
     tools = [e for e in data["entries"] if e["kind"] == "tool"]
-    live = {**data, "entries": [e for e in data["entries"] if e["kind"] != "route"] + corpus._routes(tools)}
+    live = {**data, "entries": [e for e in data["entries"] if e["kind"] != "route"] + corpus_build._routes(tools)}
     reply = selector.select("review my Python patch against its requirements and acceptance tests", "verify",
                             corpus=live)
     ids = [c["id"] for c in reply["candidates"]]

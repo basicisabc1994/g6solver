@@ -1107,6 +1107,10 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
 
 #: How the prompt hook's hint begins (``hint``).
 HINT_PREFIX = "G6 calls that may fit at the start of a task: "
+#: The first sentence of G6's instructions (``g6.mcp.instructions.TEXT`` begins with it), which also ends the hint.
+#: It is kept here because core imports no component and not ``g6.mcp`` (pyproject's first import contract).
+LEAD = ("Before you say a Python task is done, have G6 check it; when stuck, unsure which G6 tool fits, or after a "
+        "G6 refusal, call g6_select with the task, your phase and the refusal's code.")
 
 
 def hint(prompt: str) -> str:
@@ -1116,8 +1120,6 @@ def hint(prompt: str) -> str:
     Fixed rules, no model; nothing of the prompt is repeated. ``""`` for an empty prompt. A route (a skill section to
     read) is not a call, and a sensitive op is refused until the person allows it, so both are passed over.
     ``select``'s reply is unchanged by it."""
-    from g6.mcp.instructions import LEAD
-
     if not isinstance(prompt, str) or not prompt.strip():
         return ""
     names = []
@@ -1132,5 +1134,5 @@ def hint(prompt: str) -> str:
     return f"{HINT_PREFIX}{', '.join(names)}. {LEAD}" if names else LEAD
 
 
-__all__ = ["BUDGET_UNITS", "COST_UNITS", "HINT_PREFIX", "MAX_CANDIDATES", "PENDING_TOOLS", "PRIORS", "REMEDIES",
+__all__ = ["BUDGET_UNITS", "COST_UNITS", "HINT_PREFIX", "LEAD", "MAX_CANDIDATES", "PENDING_TOOLS", "PRIORS", "REMEDIES",
            "STAGES", "hint", "recovery_remedies", "remedy_for", "select"]

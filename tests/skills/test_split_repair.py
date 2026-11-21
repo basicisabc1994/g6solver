@@ -17,6 +17,7 @@ import pytest
 from markdown_it import MarkdownIt
 from markdown_it.renderer import RendererHTML
 
+from g6.mcp import corpus_build
 from g6.skills import corpus, routing
 
 GUIDE = Path(__file__).resolve().parents[2] / "src/g6/skills/using-g6"
@@ -365,7 +366,7 @@ def test_each_route_reaches_its_original_safety_and_authority_sentences(route_id
 @pytest.mark.parametrize("route_id", sorted(routing.load().routes))
 def test_route_corpus_includes_its_root_entry_and_every_declared_detail(route_id):
     route = routing.load().routes[route_id]
-    entry = next(e for e in corpus._routes([]) if e["id"] == f"route:{route_id}")
+    entry = next(e for e in corpus_build._routes([]) if e["id"] == f"route:{route_id}")
     root = (GUIDE / "SKILL.md").read_text(encoding="utf-8")
     assert _normal(routing.section(root, route.anchor)) in entry["text"]
     for detail in route.detail:
@@ -440,7 +441,7 @@ def test_live_route_details_preserve_the_baseline_choices(task, phase, baseline_
 
     data = corpus.load()
     tools = [e for e in data["entries"] if e["kind"] == "tool"]
-    live = {**data, "entries": [e for e in data["entries"] if e["kind"] != "route"] + corpus._routes(tools)}
+    live = {**data, "entries": [e for e in data["entries"] if e["kind"] != "route"] + corpus_build._routes(tools)}
     offered = {c["id"] for c in selector.select(task, phase, corpus=live)["candidates"]}
     assert baseline_routes <= offered, sorted(offered)
 

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from g6.core import selector
+from g6.mcp import corpus_build
 from g6.skills import corpus
 
 
 def test_live_review_fallback_evicts_verify_answer_and_keeps_ranked_order():
     data = corpus.load()
     tools = [e for e in data["entries"] if e["kind"] == "tool"]
-    live = {**data, "entries": [e for e in data["entries"] if e["kind"] != "route"] + corpus._routes(tools)}
+    live = {**data, "entries": [e for e in data["entries"] if e["kind"] != "route"] + corpus_build._routes(tools)}
     reply = selector.select("review my Python patch against its requirements and acceptance tests", "verify",
                             corpus=live, limit=5)
     assert [c["id"] for c in reply["candidates"]] == [

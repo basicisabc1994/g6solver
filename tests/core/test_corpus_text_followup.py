@@ -8,6 +8,7 @@ import re
 
 from g6.core import agent_guidance
 from g6.core.registry import get_registry
+from g6.mcp import corpus_build
 from g6.skills import corpus
 
 
@@ -21,7 +22,7 @@ def test_every_clean_help_line_is_its_ops_text() -> None:
         if entry["kind"] != "op":
             continue
         name, op = key[3:].split(".", 1)
-        line = next((ln for ln in corpus._help_lines(registry, name) if re.match(rf"\s*{re.escape(op)}\b", ln)), "")
+        line = next((ln for ln in corpus_build._help_lines(registry, name) if re.match(rf"\s*{re.escape(op)}\b", ln)), "")
         if line and not agent_guidance._AUTHORITY.search(line) and not entry["text"].startswith(line):
             missing.append(key)
     assert not missing, (len(missing), missing[:10])
@@ -34,7 +35,7 @@ def test_no_op_text_teaches_the_agent_to_lift_a_block() -> None:
 
 def test_a_tool_keeps_its_first_description_sentence() -> None:
     text = _entries()["tool:g6_review_patch"]["text"]
-    assert text != corpus.TOOL_DATA["g6_review_patch"]["when"], text
+    assert text != corpus_build.TOOL_DATA["g6_review_patch"]["when"], text
 
 
 def test_a_sensitive_refusal_says_its_sentence_once(tmp_path, monkeypatch, declared_mcp_grants) -> None:
