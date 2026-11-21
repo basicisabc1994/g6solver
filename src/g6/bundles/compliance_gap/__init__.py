@@ -587,6 +587,8 @@ def run(inputs: dict[str, Any], llm: Any = None) -> BundleResult:
     try:
         given = _structured(inputs.get("answers"), dict, "{")
         given_records = _structured(inputs.get("records"), list, "[")
+        if any(not isinstance(record, (dict, str)) for record in given_records or ()):
+            raise ValueError("each record given as JSON must be an object (or a line of text)")
         for rid, answer in (given or {}).items():
             if rid not in _BY_ID or not isinstance(answer, dict) or set(answer) != {"answer", "evidence"}:
                 raise ValueError("answers need exact requirement ids and answer/evidence fields")

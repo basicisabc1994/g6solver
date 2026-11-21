@@ -69,6 +69,7 @@ __g6_refusals__ = {
     "G6_E_GROUNDING_NOT_FOUND": "none",
     "G6_E_GROUNDING_NO_CHECKABLE_SENTENCE": "none",
     "G6_E_GROUNDING_PARTIAL": "none",
+    "G6_E_GROUNDING_SOURCE_KINDS_UNKNOWN": "input",
     "G6_E_GROUNDING_SOURCES_REQUIRED": "input",
     "G6_E_GROUNDING_SOURCES_TOO_LARGE": "person",
     "G6_E_GROUNDING_TEXT_TOO_LARGE": "person",

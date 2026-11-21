@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -67,12 +68,15 @@ class TextRetriever:
     """BM25 over passages held in memory. Sources are labels you choose (file names, URLs)."""
 
     def __init__(self, passages: list[tuple[str, str]], *, k1: float = 1.5, b: float = 0.75,
-                 source_kinds: dict[str, str] | None = None) -> None:
+                 source_kinds: dict[str, str] | None = None, sources: Iterable[str] | None = None) -> None:
+        """``sources``: the names the caller supplied (default: the passages' own), which ``source_kinds`` may name,
+        a source whose text is empty included."""
         self._docs = [(src, txt, Counter(content_terms(txt))) for src, txt in passages if txt.strip()]
         self._source_kinds = dict(source_kinds or {})
         if any(kind not in ("url", "doi", "corpus", "unknown") for kind in self._source_kinds.values()):
             raise ValueError("source kinds must be url, doi, corpus or unknown")
-        if set(self._source_kinds) - {src for src, _ in passages}:
+        supplied = set(sources) if sources is not None else {src for src, _ in passages}
+        if set(self._source_kinds) - supplied:
             raise ValueError("source kinds must name a supplied source")
         self._k1, self._b = k1, b
         lengths = [sum(c.values()) for _, _, c in self._docs]
@@ -85,7 +89,8 @@ class TextRetriever:
 
     @classmethod
     def from_texts(cls, texts: dict[str, str], *, source_kinds: dict[str, str] | None = None) -> TextRetriever:
-        return cls([(src, chunk) for src, text in texts.items() for chunk in _chunks(text)], source_kinds=source_kinds)
+        return cls([(src, chunk) for src, text in texts.items() for chunk in _chunks(text)], source_kinds=source_kinds,
+                   sources=texts)
 
     @classmethod
     def from_folder(cls, root: str | Path, patterns: tuple[str, ...] = ("*.md", "*.txt")) -> TextRetriever:

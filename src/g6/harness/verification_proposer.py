@@ -241,7 +241,7 @@ class _Limits:
         except Exception as exc:
             # not sent only when consent refused it and no request was counted around it; where the count cannot
             # tell, it was sent
-            withheld = watch is not None and bool(watch.refused(exc)) and watch.counted() == 0
+            withheld = watch is not None and bool(watch.withheld(exc))
             record.update(sent=not withheld, error=f"{type(exc).__name__}: {' '.join(str(exc).split())[:200]}")
             raise
         finally:

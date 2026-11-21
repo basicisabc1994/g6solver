@@ -827,26 +827,33 @@ def missing_of(value: object) -> tuple[str, ...] | None:
 
 
 class ConsentWatch:
-    """What one model call's consent refusal is: the consent guard told this watch, or the raised error's own words are
-    led by a consent code. A refusal it was told of counts only while no request was counted after it (a fallback that
-    was refused and then sent is not a refusal)."""
+    """What one model call's consent refusal is: the raised error's own code (declared, or leading its words) is a
+    consent code, or the consent guard told this watch of a refusal and no request at all was counted in the watch's
+    scope. Any counted request, before or after a refusal, means something was sent: :meth:`withheld` then says
+    nothing, whatever order the refusals came in."""
 
     def __init__(self, codes: tuple[str, ...]) -> None:
         self.codes, self.told = codes, []
         self.counted: Callable[[], int] = lambda: 0
 
     def tell(self, error: BaseException) -> None:
-        self.told.append((error, self.counted()))
+        self.told.append(error)
 
     def refused(self, error: BaseException) -> str:
-        """The consent code that refused the call, or ``""``."""
+        """The consent code that refused the call, or ``""``: the error's own, or one the guard told of while no
+        request was counted in the scope."""
         code = code_of(error)
         if code in self.codes:
             return code
-        if self.told and self.counted() == self.told[-1][1]:     # no request counted since the guard refused one
-            told = code_of(self.told[-1][0])
+        if self.told and self.counted() == 0:
+            told = code_of(self.told[-1])
             return told if told in self.codes else ""
         return ""
+
+    def withheld(self, error: BaseException) -> str:
+        """The consent code, only when nothing left the machine: :meth:`refused` and no request counted in the scope.
+        ``""`` otherwise (sent, or not known to be withheld)."""
+        return self.refused(error) if self.counted() == 0 else ""
 
 
 @contextmanager

@@ -136,7 +136,7 @@ def _tool_here(action: Any) -> None:
 def _here(value: Any) -> Any:
     """``value`` with each step named as this surface offers it, at the positions the mission library writes them
     (root ``next_action`` / ``reuse``, ``clarification.next_action``, root ``more``, the acceptance question of
-    ``awaiting_human``), and the library's fixed terminal instruction replaced by the dialog in the result's rendered
+    ``awaiting_human``, each pull brief's ``instructions`` in ``awaiting_chat``), and the library's fixed terminal instruction replaced by the dialog in the result's rendered
     ``markdown`` (which quotes the unmet requirement G6 wrote); everything else, caller data and evidence included,
     stays as it is."""
     if not isinstance(value, dict):
@@ -152,6 +152,9 @@ def _here(value: Any) -> Any:
     for waiting in result.get("awaiting_human") if isinstance(result.get("awaiting_human"), list) else ():
         if isinstance(waiting, dict) and waiting.get("kind") == "acceptance" and isinstance(waiting.get("question"), str):
             waiting["question"] = _said_here(waiting["question"])
+    for brief in result.get("awaiting_chat") if isinstance(result.get("awaiting_chat"), list) else ():
+        if isinstance(brief, dict) and isinstance(brief.get("instructions"), str):
+            brief["instructions"] = _said_here(brief["instructions"])
     shown = result.get("result")
     if isinstance(shown, dict) and isinstance(shown.get("markdown"), str):
         shown["markdown"] = _TERMINAL.sub(lambda found: _DIALOG[found[1]], shown["markdown"])

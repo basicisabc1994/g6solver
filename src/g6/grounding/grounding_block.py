@@ -20,6 +20,7 @@ E_SOURCES_REQUIRED = "G6_E_GROUNDING_SOURCES_REQUIRED"
 E_SOURCES_TOO_LARGE = "G6_E_GROUNDING_SOURCES_TOO_LARGE"
 E_CLAIM_REQUIRED = "G6_E_GROUNDING_CLAIM_REQUIRED"
 E_NO_CHECKABLE_SENTENCE = "G6_E_GROUNDING_NO_CHECKABLE_SENTENCE"
+E_SOURCE_KINDS_UNKNOWN = "G6_E_GROUNDING_SOURCE_KINDS_UNKNOWN"
 #: A blocked-escalated result's code, from the worst status among its checks (this order, worst first).
 _BLOCKED_CODES = {
     "conflict": "G6_E_GROUNDING_CONFLICT",
@@ -79,6 +80,10 @@ class GroundingBlock(AIBlock[GroundingInput, dict, dict]):
             return Result.fail(f"[{E_SOURCES_REQUIRED}] {data.op}: sources is required ({{name: text}})")
         if sum(len(t) for t in data.sources.values()) > _MAX_SOURCE_CHARS:
             return Result.fail(f"[{E_SOURCES_TOO_LARGE}] {data.op}: sources exceed {_MAX_SOURCE_CHARS} characters")
+        unknown = set(data.source_kinds) - set(data.sources)
+        if unknown:
+            return Result.fail(f"[{E_SOURCE_KINDS_UNKNOWN}] {data.op}: source_kinds names {len(unknown)} source(s) "
+                               "not among sources; name only the sources you supplied")
         retriever = TextRetriever.from_texts(data.sources, source_kinds=data.source_kinds)
         if data.op == "check_claim":
             if not data.claim.strip():

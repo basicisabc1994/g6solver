@@ -254,7 +254,7 @@ def run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFAU
                 reply = guard(reformulate).complete(REFORMULATE, json.dumps({"query": query, "unmet_needs": open_needs}),
                                                     max_tokens=400)
         except Exception as exc:  # noqa: BLE001 - the consent refusal is told apart by its code; anything else is raised on
-            if watch is None or not watch.refused(exc):
+            if watch is None or not watch.withheld(exc):
                 raise
             stop = "refused"
             break
