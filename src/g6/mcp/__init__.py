@@ -111,6 +111,7 @@ def __getattr__(name: str) -> Any:
 def _denial_for_agent(reply: dict[str, Any]) -> None:
     """Remove authority-bearing sentences from every textual copy in a refusal envelope."""
     from g6.core.agent_guidance import _AUTHORITY
+    from g6.invariants import ERROR_CODE_PATTERN
 
     setting = re.compile(r"\bG6_(?!E_)[A-Z][A-Z0-9_]*\b|~[/\\]\.g6[/\\]\.env|\ballow_sensitive\b", re.I)
 
@@ -119,8 +120,10 @@ def _denial_for_agent(reply: dict[str, Any]) -> None:
             kept = []
             for sentence in re.split(r"(?<=[.!?])\s+", value):
                 if _AUTHORITY.search(sentence) or setting.search(sentence):
-                    # A refusal code remains useful even when its sentence must be withheld.
-                    kept.extend(re.findall(r"\[G6_E_[A-Z0-9_]+\]", sentence))
+                    # A refusal code remains useful even when its sentence must be withheld: each bracketed word
+                    # that is a code by G6's own rule.
+                    kept.extend(f"[{word}]" for word in re.findall(r"\[([A-Z0-9_]+)\]", sentence)
+                                if ERROR_CODE_PATTERN.match(word))
                 else:
                     kept.append(sentence)
             return " ".join(kept)

@@ -201,6 +201,9 @@ CODE_RULES = {
     ("metaharness/reflex.py", "_reason", "rule", "ERROR_CODE_PATTERN.match"): "the code a stopped cycle's reason names",
     ("mcp/review_loop.py", "<module>", "import", "ERROR_CODE_PATTERN from g6.invariants"): "G6's own rule, imported",
     ("mcp/review_loop.py", "step", "rule", "ERROR_CODE_PATTERN.match"): "the code a withheld review's refusal names",
+    ("mcp/__init__.py", "_denial_for_agent", "import", "ERROR_CODE_PATTERN from g6.invariants"): "G6's own rule, imported",
+    ("mcp/__init__.py", "clean", "rule", "ERROR_CODE_PATTERN.match"):
+        "the codes a denial keeps when the sentence naming them is withheld from the agent (04b191cc)",
 }
 #: Places that test a string against a ``G6_E`` literal to decide something else, and what they decide.
 OTHER_FACTS = {

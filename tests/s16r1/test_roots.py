@@ -207,6 +207,10 @@ SOURCE_SITES = {
     # component_catalogue. Planted cases: tests/core/test_catalogue_exemption.py (without the grant an extension is
     # left out of g6_components and g6_find and g6_describe of it is withheld; with it, shown and disclosed).
     'g6.mcp.catalogue.carry',
+    # 3d45b793: a withheld reply's repair block reads its sources' ids to keep a sharing dialog the person declined
+    # closed in that session; it builds no source and sends nothing. Planted cases: tests/core/test_mcp_repair.py (a
+    # withheld reply carries the person's dialog) and tests/core/test_repair_boundaries_review1.py.
+    'g6.mcp.repair.consent_block',
 }
 
 

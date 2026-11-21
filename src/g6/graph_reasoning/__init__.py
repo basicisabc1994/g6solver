@@ -79,7 +79,7 @@ from g6.graph_reasoning.schema import GraphReasoningResult
 __g6_component__ = True
 __g6_block__ = "GraphReasoningBlock"
 __g6_sensitive_ops__: tuple[str, ...] = ()  # no op runs code, writes a file or reaches the network
-__g6_requires__: tuple[str, ...] = ()
+__g6_requires__: tuple[str, ...] = ("_streams",)   # G6's one owner of stdout, which PyReason's output goes to
 # Failure-mode codes (g6.core.failure_modes): what it guards against, and what its own use can cause.
 __g6_mitigates__: tuple[str, ...] = ("overstated_certainty", "contradictory_rules")
 __g6_introduces__: tuple[str, ...] = ()

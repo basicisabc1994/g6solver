@@ -36,7 +36,8 @@ __g6_component__ = True
 __g6_block__ = "CtxGitBlock"
 __g6_family__ = "sources"
 __g6_sensitive_ops__: tuple[str, ...] = SENSITIVE_OPS  # each runs git on your computer; some change it or the network
-__g6_requires__: tuple[str, ...] = ("action_gating", "grounding", "knowledge")  # the gate; the shared reply and notes
+#: the gate; the shared reply and notes; the code family's confined reader of git metadata (g6.code._roots)
+__g6_requires__: tuple[str, ...] = ("action_gating", "code", "grounding", "knowledge")
 # Failure-mode codes (g6.core.failure_modes): what it guards against, and what its own use can cause (repository text
 # can carry instructions an agent might follow).
 __g6_mitigates__: tuple[str, ...] = ("untracked_repo_change",)
