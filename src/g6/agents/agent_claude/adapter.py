@@ -71,6 +71,7 @@ from g6.agents._runtime import (
 )
 from g6.agents._runtime.cli import OUTPUT_LOG
 from g6.core import stop as core_stop
+from g6.core.decoder_limits import UndecodableRecord, decode
 from g6.core.model_calls import note_model_call
 from g6.agents._runtime.consent import consent_run, register_program
 from g6.core.outside import OutsideProgram
@@ -118,18 +119,18 @@ _HALF_CHANGED = (" Claude Code had leave to edit the workspace and its run did n
 
 def _result(text: str) -> dict[str, Any] | None:
     """The result Claude Code printed last (``--output-format json``): the last line that is a JSON object of type
-    ``result``, whatever it printed before it."""
+    ``result``, whatever it printed before it. ``None`` when a line after it is past the decoder's limits: that line may
+    be the result it printed last, and no earlier one stands in for it."""
     for line in reversed(text.splitlines()):
         line = line.strip()
         if not line.startswith("{"):
             continue
         try:
-            try:
-                found = json.loads(line)
-            except (RecursionError, MemoryError):
-                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
+            found = decode(line)
         except json.JSONDecodeError:
             continue
+        except UndecodableRecord:
+            return None
         if isinstance(found, dict) and found.get("type") == "result":
             return found
     return None

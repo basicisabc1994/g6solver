@@ -27,6 +27,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from g6.core.adaptation_gate import is_automated
+from g6.core.decoder_limits import decode
 from g6.core.storage import open_db
 from g6.learning.paired import CONFIRMED, DISCONFIRMED, credit
 from g6.learning.promotion import PromotionPolicy, promote
@@ -261,10 +262,9 @@ class TheoryStore:
 
 def _row_to_theory(row: sqlite3.Row) -> Theory:
     try:
-        try:
-            sources = list(json.loads(row["source_instances"] or "[]"))
-        except (RecursionError, MemoryError):
-            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
+        # a list past the decoder's limits raises (UndecodableRecord): read as empty, it would let the held-out check
+        # (learning.promotion) pass on instances the theory was drawn from
+        sources = list(decode(row["source_instances"] or "[]"))
     except (json.JSONDecodeError, TypeError):
         sources = []
     return Theory(theory_id=row["theory_id"], failure_code=row["failure_code"], instruction=row["instruction"],

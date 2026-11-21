@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from g6.core.decoder_limits import UndecodableRecord, decode
 from g6.self_training.schema import (
     PUBLICATION_THRESHOLD,
     TIER_NAMES,
@@ -138,7 +139,14 @@ class ScorecardStore:
         if tier not in TIER_NAMES:
             raise ValueError(f"tier must be 0-6, got {tier!r}")
         existing = self._scores.get(component)
-        refusal = _promotion_refusal(existing, self.audit_history(component), tier)
+        try:
+            history = self.audit_history(component)
+        except UndecodableRecord as exc:
+            if tier >= PUBLICATION_THRESHOLD:   # the line G6 cannot read may be the latest: no older audit stands in
+                raise PromotionRefused(f"refusing to promote {component} to T{tier}: its audit log holds a line G6 "
+                                       f"cannot read ({exc}), so its latest audit is not known") from None
+            history = []   # a lower tier reads no audit
+        refusal = _promotion_refusal(existing, history, tier)
         if refusal is not None:
             raise PromotionRefused(f"refusing to promote {component} to T{tier}: {refusal}")
         base = existing or MaturityScore(component=component)
@@ -170,7 +178,8 @@ class ScorecardStore:
         return score
 
     def audit_history(self, component: str | None = None) -> list[dict[str, Any]]:
-        """The logged audits, oldest first, optionally for one component. Lines that do not parse are skipped."""
+        """The logged audits, oldest first, optionally for one component. Lines that do not parse are skipped; a line
+        past the decoder's limits raises :class:`UndecodableRecord`, since it may be the latest audit."""
         if not self._audit_log.exists():
             return []
         found = []
@@ -178,10 +187,7 @@ class ScorecardStore:
             if not line.strip():
                 continue
             try:
-                try:
-                    entry = json.loads(line)
-                except (RecursionError, MemoryError):
-                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
+                entry = decode(line)
             except json.JSONDecodeError:
                 continue
             if isinstance(entry, dict) and (component is None or entry.get("component") == component):

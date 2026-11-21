@@ -38,6 +38,7 @@ from typing import Any
 
 from g6.algebra.envelope import OUTPUT_UNRECOGNISED, RUN_FAILED, Refusal
 from g6.core import component_process, confine
+from g6.core.decoder_limits import UndecodableRecord, decode
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.process_tree import ProcessTreeError
 
@@ -126,15 +127,15 @@ def call_worker(request: dict[str, Any], *, seconds: float, memory_mb: int, cap:
         if not row.strip():
             continue
         try:
-            try:
-                line = json.loads(row)
-            except (RecursionError, MemoryError):
-                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
+            line = decode(row)
         except json.JSONDecodeError:
             if run.stopped and number == len(rows):
                 break                       # the last line, cut off when the run was stopped
             record["output_tail"] = run.output[-_TAIL:]
             raise Refusal(OUTPUT_UNRECOGNISED, "G6's worker wrote a line that is not JSON") from None
+        except UndecodableRecord:          # never taken for cut off: the earlier lines would decide in its place
+            record["output_tail"] = run.output[-_TAIL:]
+            raise Refusal(OUTPUT_UNRECOGNISED, "G6's worker wrote a line too deep or too large to read") from None
         if not isinstance(line, dict) or not isinstance(line.get("stage"), str):
             record["output_tail"] = run.output[-_TAIL:]
             raise Refusal(OUTPUT_UNRECOGNISED, "G6's worker wrote a line G6 does not read")

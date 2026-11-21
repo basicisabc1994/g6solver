@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from g6.core.decoder_limits import decode
 from g6.core.llm import LLMCaller, LLMError
 from g6.reasoning.vote import Candidate, VoteResult, weighted_vote
 
@@ -33,7 +34,8 @@ def _escape_lone_backslashes(blob: str) -> str:
 
 
 def first_json_object(text: str) -> dict:
-    """The first balanced ``{...}`` in ``text`` that parses as a JSON object. Raises ``ValueError``."""
+    """The first balanced ``{...}`` in ``text`` that parses as a JSON object. Raises ``ValueError``, and
+    ``UndecodableRecord`` (a ``ValueError``) for one past the decoder's limits, never reading an object inside it."""
     if not text:
         raise ValueError("empty response")
     start = text.find("{")
@@ -56,10 +58,7 @@ def first_json_object(text: str) -> dict:
                 depth -= 1
                 if depth == 0:
                     try:
-                        try:
-                            value = json.loads(_escape_lone_backslashes(text[start:i + 1]))
-                        except (RecursionError, MemoryError):
-                            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
+                        value = decode(_escape_lone_backslashes(text[start:i + 1]))
                     except json.JSONDecodeError:
                         break
                     if isinstance(value, dict):
