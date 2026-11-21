@@ -88,7 +88,9 @@ def test_the_consent_egress_stays_outside_the_observer():
 def test_help_names_the_file_convention_in_fixed_words():
     text = call(build_server(), "g6_help", {})
     said = json.dumps(text)
-    assert "inspection.json" in said and "corrections.json" in said and "G6_WORKFLOW_RECORD=on" in said
+    # The setting is no longer named to the agent: commit 0b400900, lead ruling 2026-11-21 (rc-wrp).
+    assert "inspection.json" in said and "corrections.json" in said and "G6_WORKFLOW_RECORD" not in said
+    assert "a setting named in G6's documentation" in said
 
 
 def test_export_writes_the_file_and_returns_counts(granted, tmp_path):

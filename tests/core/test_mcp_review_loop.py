@@ -277,7 +277,9 @@ def test_nothing_approved_is_blocked_with_how_to_turn_it_on(rig, monkeypatch):
     rig.edit()
     got = rig.step()
     assert got["completion_state"] == "blocked-escalated" and got["warning_card"]["code"] == keys.KEY_MISSING
-    assert "G6_LOOP_CRITIC=codex" in got["report"]
+    # The setting is no longer named to the agent: commit 0b400900, lead ruling 2026-11-21 (rc-wrp).
+    assert "G6_LOOP_CRITIC" not in got["report"] and "a setting named in G6's documentation" in got["report"]
+    assert "to turn on the review-until-clean loop" in got["report"]
     enveloped(got)
 
 
@@ -341,7 +343,8 @@ def test_repeating_a_refused_step_keeps_its_state_and_its_stable_code(rig, monke
     again = rig.step()
     assert (again["ok"], again["completion_state"], again["warning_card"]["code"]) == (
         False, "blocked-escalated", keys.KEY_MISSING)
-    assert "G6_LOOP_CRITIC=codex" in again["report"]
+    # The setting is no longer named to the agent: commit 0b400900, lead ruling 2026-11-21 (rc-wrp).
+    assert "G6_LOOP_CRITIC" not in again["report"] and "a setting named in G6's documentation" in again["report"]
 
 
 def test_repeating_a_stop_with_a_finding_left_open_stays_a_draft(rig):

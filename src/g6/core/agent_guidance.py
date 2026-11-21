@@ -187,17 +187,80 @@ def _without_split_instructions(text: str) -> str:
         text = "".join(kept)
 
 
-def text_for_agent(text: str) -> str:
-    """Remove authority sentences, retaining refusal codes and the person's decision."""
+_CODE = re.compile(r"\[G6_E_[A-Z0-9_]+\]")
+_VALUE = re.compile(r"\s*=\s*[^\s,;)]*[^\s.,;:)]|(?<==)[^\s,;)]*[^\s.,;:)]")
+_SETTING_WORDS = "a setting named in G6's documentation"
+_KEY_FILE_WORDS = "(a file named in G6's documentation)"
+_COMMAND_WORDS = "a command named in G6's documentation"
+#: What a field says when every sentence it held named a setting or command only the person may use.
+WITHHELD_STEP = "G6 left out a setting or command here that only the person may use."
+#: A sentence with fewer words than this besides the named setting or command is the instruction itself, and is
+#: dropped; a longer one states a fact (what ran, why it was refused), so only the name is replaced.
+_FACT_WORDS = 6
+#: A command's arguments: the rest of its clause.
+_ARGUMENTS = re.compile(r".*?(?=[,;:()\n]|[.!?](?:\s|$)|$)", re.S)
+
+
+def _named(regex, words, text: str, *, command: bool = False) -> str:
+    """``text`` with each match of ``regex`` (a setting with its value, or a command with its arguments) as ``words``."""
+    out, pos = [], 0
+    for match in regex.finditer(text):
+        start, end = match.span()
+        if start < pos:
+            continue
+        if start and text[start - 1] == "$":
+            start -= 1
+        tail = _ARGUMENTS.match(text, end) if command else _VALUE.match(text, end)
+        if tail is not None:
+            end = tail.end()
+        out.append(text[pos:start])
+        out.append(_KEY_FILE_WORDS if words is _SETTING_WORDS and match[0].startswith("~") else words)
+        pos = end
+    return "".join(out) + text[pos:]
+
+
+def _phrases_named(sentence: str) -> str | None:
+    """``sentence`` with each setting and command replaced by neutral words; None when it is only the instruction."""
+    rest = _CODE.sub(" ", _named(_AUTHORITY, " ", _named(_SETTING, " ", sentence), command=True))
+    if len(re.findall(r"[A-Za-z]{2,}", rest)) < _FACT_WORDS:
+        return None
+    named = _named(_AUTHORITY, _COMMAND_WORDS, _named(_SETTING, _SETTING_WORDS, sentence), command=True)
+    return None if _instruction(named) else named
+
+
+def _sentences_for_agent(text: str) -> str:
+    """Remove authority sentences whole, retaining refusal codes (help and skill lines, which may be left out)."""
     if not _instruction(text):
         return text
     kept = []
     for sentence in re.split(r"(?<=[.!?])\s+", text):
         if _instruction(sentence):
-            kept.extend(re.findall(r"\[G6_E_[A-Z0-9_]+\]", sentence))
+            kept.extend(_CODE.findall(sentence))
         else:
             kept.append(sentence)
     return " ".join(kept)
+
+
+def text_for_agent(text: str) -> str:
+    """Filter a reply field at phrase level, retaining refusal codes and the person's decision.
+
+    A sentence that is only an instruction to use a setting or command the person controls is dropped. A sentence
+    that states a fact keeps it, with the setting or command replaced by neutral words. A field that held text never
+    comes back empty or as codes alone: it says that G6 left something out (``WITHHELD_STEP``).
+    """
+    if not _instruction(text):
+        return text
+    kept = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        if not _instruction(sentence):
+            kept.append(sentence)
+            continue
+        named = _phrases_named(sentence)
+        kept.extend([named] if named is not None else _CODE.findall(sentence))
+    out = " ".join(kept)
+    if not _CODE.sub("", out).strip() and _CODE.sub("", text).strip():
+        out = " ".join((*_CODE.findall(out), WITHHELD_STEP))
+    return out
 
 
 def reply_for_agent(value, *, _prose: bool = True, _schema=ENVELOPE_CONTRACT):
@@ -293,7 +356,7 @@ def skill_for_agent(text: str | None) -> str | None:
             chunk.append(line)
         elif not split:
             # Blank-line-free lists and wrapped lines are independent units.
-            clean = text_for_agent(line)
+            clean = _sentences_for_agent(line)
             if clean:
                 kept.append(clean + ("\n" if line.endswith("\n") and not clean.endswith("\n") else ""))
     finish()
@@ -318,12 +381,12 @@ def help_for_agent(component: str, help_text: object = None, *,
     text = re.sub(r"\([^()]*\)", lambda m: "" if _instruction(m[0]) else m[0], text)
     lines = []
     for line in text.splitlines():
-        cleaned = "; ".join(filter(None, (text_for_agent(part).strip() for part in line.split(";"))))
+        cleaned = "; ".join(filter(None, (_sentences_for_agent(part).strip() for part in line.split(";"))))
         if cleaned:
             lines.append(cleaned)
     # A command split over lines must not survive clause-level filtering.
     if _AUTHORITY.search("\n".join(lines)):
-        lines = text_for_agent("\n".join(lines)).splitlines()
+        lines = _sentences_for_agent("\n".join(lines)).splitlines()
     for entry in corpus.load()["entries"]:
         if entry["kind"] == "op" and entry["component"] == component:
             template = entry["id"][3:] + ": params_json template " + entry["call"]["arguments"]["params_json"]

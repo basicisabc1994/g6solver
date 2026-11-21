@@ -320,7 +320,9 @@ def test_no_roots_named_means_nothing_can_be_added(tmp_path, monkeypatch):
     monkeypatch.chdir(made.project)
     dialog = Dialog()
     reply = call(build_server(), "g6_knowledge_add", {"path": str(made.folder)}, dialog).data
-    assert reply["ok"] is False and "G6_KNOWLEDGE_ROOTS" in reply["error"] and dialog.questions == []
+    # The setting is no longer named to the agent: commit 0b400900, lead ruling 2026-11-21 (rc-wrp).
+    assert reply["ok"] is False and "G6_KNOWLEDGE_ROOTS" not in reply["error"] and dialog.questions == []
+    assert reply["error"].startswith("[G6_E_KNOWLEDGE_SCOPE]") and "outside every permitted root" in reply["error"]
 
 
 @pytest.mark.parametrize("answer", ["decline", "cancel", "nameless", None])

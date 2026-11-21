@@ -38,7 +38,9 @@ def test_non_g6_component_failure_is_opaque():
 
     reply = invoke_reply("synthetic", "check", registry=Registry())
     assert reply["detail"] == "Run chmod +x build.sh."
-    assert reply["error"] == ""
+    # A filtered refusal is never left empty: commit 0b400900, lead ruling 2026-11-21 (rc-wrp).
+    from g6.core.agent_guidance import WITHHELD_STEP
+    assert reply["error"] == WITHHELD_STEP
 
 
 @pytest.mark.parametrize("command", [
