@@ -476,9 +476,25 @@ class ExecutionSnapshot(dict):
         except (RecursionError, MemoryError):
             raise ValueError("a JSON record exceeds decoder limits") from None
 
+#: Why bytes are not bound: the full manifest disagrees with the reviewed snapshot, or the tree moved while it was read.
+NOT_BOUND = ("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: the files read for the execution record are not the reviewed "
+             "snapshot's ({what}), so no execution record is bound")
+
+
 def bind_execution(change: repo_tests.Change, sparse: dict[str, str], *, deadline: float) -> ExecutionSnapshot:
-    """Capture raw bytes before any review execution. Git-normalised blob bytes are never substituted for them."""
-    return ExecutionSnapshot(sparse, _copy_manifest(change, deadline=deadline))
+    """Capture raw bytes before any review execution. Git-normalised blob bytes are never substituted for them.
+
+    The full manifest is bound to the reviewed snapshot ``sparse`` only when every file in both has the same digest in
+    each, and the tree, read again once the manifest is read, is still ``sparse``; otherwise it raises ``OSError``
+    (``NOT_BOUND``) and nothing is bound (the review of wire-diagnose, 4: bytes changed while the manifest was read
+    and restored before the snapshots are never taken as the reviewed artifact)."""
+    files = _copy_manifest(change, deadline=deadline)
+    differs = sorted(rel for rel, value in sparse.items() if rel in files and files[rel] != value)
+    if differs:
+        raise OSError(NOT_BOUND.format(what="a file's digest differs: " + ", ".join(shown(rel) for rel in differs[:5])))
+    if repo_tests._moved(sparse, repo_tests.snapshot(change.repo)):
+        raise OSError(NOT_BOUND.format(what="the tree changed while they were read"))
+    return ExecutionSnapshot(sparse, files)
 
 def _copy_manifest(change: repo_tests.Change, *, deadline: float,
                    artefact: dict[str, str] | None = None) -> dict[str, str]:

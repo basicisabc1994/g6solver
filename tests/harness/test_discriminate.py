@@ -472,3 +472,62 @@ def test_review3_a_run_with_no_record_of_the_reviewed_bytes_decides_nothing(monk
     assert reading["observed"] == "not_refuted" and reading["consistent_with"] == [], reading
     assert {e["reading"] for e in reading["explanations"]} == {"not_decided"}
     assert "reviewed artifact" in reading["summary"]
+
+
+# --- review 4: the bound bytes are the reviewed snapshot's, or nothing is bound -------------------------------------
+
+def test_review4_a_manifest_that_disagrees_with_the_reviewed_snapshot_binds_nothing(monkeypatch):
+    """Codex review 4 of wire-diagnose, finding 1, its reproducer: an editor's bytes are on disk while the full
+    manifest is read and while the copy is made, and restored for every snapshot. bind_execution, _copy_manifest,
+    _run_check and the attribution are real; the file system around them is synthetic."""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from g6.workforce import repo_tests
+
+    real_bind = verification_search.bind_execution
+    arguments, race, executions, live, reviewed, sha = _restored_race(monkeypatch)
+    root = Path(arguments["repo"])
+    bad = "def add(a, b):\n    return a - b\n"
+
+    class CapturedFile:
+        def is_file(self):
+            return True
+
+        def stat(self):
+            return SimpleNamespace(st_size=len(bad))
+
+        def resolve(self):
+            return root / "calc.py"
+
+    monkeypatch.setattr(verification_search, "bind_execution", real_bind)
+    monkeypatch.setattr(repo_tests, "_git", lambda root, *args, **kw: b"calc.py\0" if "-co" in args else b"")
+    monkeypatch.setattr(repo_tests, "_generated_files", lambda *a, **kw: ({}, {}))
+    monkeypatch.setattr(repo_tests, "_disk", lambda *a: CapturedFile())
+    monkeypatch.setattr(repo_tests, "_digest", lambda path: sha(bad))
+    race[0] = True
+    got = review_patch(**arguments)
+    assert live == reviewed
+    assert not any(r["stage"] == "integrity" for r in got["assessment"]["reasons"])
+    reading = got["assessment"]["explanations"][0]
+    assert {row["reading"] for row in reading["explanations"]} == {"not_decided"}, reading
+    # nothing was bound, so the check ran unbound and its run has no record that names the reviewed artifact
+    assert executions == [(sha(bad), True)] and reading["consistent_with"] == []
+
+
+def test_review4_bind_execution_refuses_a_file_whose_digest_differs_from_the_snapshots():
+    from pathlib import Path
+
+    from g6.workforce import repo_tests
+
+    change = repo_tests.Change(Path("."), "HEAD", "a" * 40, "a" * 40, (), {}, {}, (), ())
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(verification_search, "_copy_manifest", lambda change, **kw: {"calc.py": "b" * 64,
+                                                                                    "other.py": "c" * 64})
+        patch.setattr(repo_tests, "snapshot", lambda root, *a: {"calc.py": "a" * 64})
+        with pytest.raises(OSError, match="G6_E_EXECUTION_ARTIFACT_UNAVAILABLE"):
+            verification_search.bind_execution(change, {"calc.py": "a" * 64}, deadline=1e18)
+        patch.setattr(verification_search, "_copy_manifest", lambda change, **kw: {"calc.py": "a" * 64,
+                                                                                    "other.py": "c" * 64})
+        bound = verification_search.bind_execution(change, {"calc.py": "a" * 64}, deadline=1e18)
+        assert bound.execution["files"] == {"calc.py": "a" * 64, "other.py": "c" * 64}
