@@ -91,7 +91,8 @@ __all__ = ["CegisBlock", "CegisInput", "CegisResult", "Control", "Counterexample
 __g6_refusals__ = {
     "G6_E_CEGIS_BUDGET_EXHAUSTED": "person",
     "G6_E_CEGIS_DOMAIN_BOUNDED": "none",
-    "G6_E_CEGIS_HOLE_UNSUPPORTED": "none",      # a declared limit (__g6_limits__): the selector offers the override
+    # a declared limit (__g6_limits__): its repair is the override kernel's run, as the selector's component_limit says
+    "G6_E_CEGIS_HOLE_UNSUPPORTED": "tool:g6_agentic_run",
     "G6_E_CEGIS_INCONCLUSIVE": "none",
     "G6_E_CEGIS_TEMPLATE_EXTRA": "person",
     "G6_E_CEGIS_TEMPLATE_FAILED": "none",
