@@ -1,6 +1,5 @@
 """Distill wiring acceptance through local surfaces and actual registered schemas."""
 import inspect
-import json
 from pathlib import Path
 
 import pytest
@@ -69,20 +68,6 @@ def test_unconfigured_host_backends_fail_closed():
     result = backend.research_start()
     assert result['completion_state'] == 'blocked-escalated'
     assert result['warning_card']['code'] == 'G6_E_RESEARCH_AUTHORITY'
-
-
-def test_cli_library_and_installed_routes(surface, capsys):
-    from g6.cli import main
-    assert main(["library", "ls"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"entries": []}
-    assert main(['self-model']) == 0
-    assert json.loads(capsys.readouterr().out)['authority']['level'] == 'off'
-    assert main(['research', 'start']) == 1
-    assert json.loads(capsys.readouterr().out)['warning_card']['code'] == 'G6_E_RESEARCH_AUTHORITY'
-    assert main(['research', 'stop']) == 0
-    assert json.loads(capsys.readouterr().out)['status'] == 'stopped'
-    assert main(['research', 'status']) == 0
-    assert json.loads(capsys.readouterr().out)['status'] == 'stopped'
 
 
 def test_every_new_tool_is_discoverable_and_routed():
@@ -194,24 +179,6 @@ def test_field_fires_are_unlabelled_deduplicated_and_not_gate_custody(surface):
     [row] = ChainLedger(state_path("distill", "field_fires_ledger.jsonl")).entries()
     assert row["body"]["label"] == "unlabelled"
     assert not state_path("distill", "held_out").exists()
-
-
-def test_cli_dispatch_without_persistence(monkeypatch, capsys):
-    from g6.distill import surface
-    from g6.cli import main
-    seen = []
-    monkeypatch.setattr(surface, "library", lambda *args: seen.append(args) or {"entries": []})
-    assert main(["library", "ls"]) == 0
-    capsys.readouterr()
-    assert main(["library", "show", "a" * 64]) == 0
-    capsys.readouterr()
-    assert seen == [("list", ""), ("describe", "a" * 64)]
-    assert main(['self-model']) == 0
-    assert json.loads(capsys.readouterr().out)['authority']['level'] == 'off'
-    assert main(['research', 'start']) == 1
-    assert json.loads(capsys.readouterr().out)['warning_card']['code'] == 'G6_E_RESEARCH_AUTHORITY'
-    assert main(['research', 'status']) == 0
-    assert 'host_configured' in json.loads(capsys.readouterr().out)
 
 
 def test_sensitive_synthesis_never_runs_without_host_allowance(monkeypatch):

@@ -32,7 +32,9 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
     backend = Service(jobs=jobs) if backend is None else backend
 
     def g6_failure_record(kind: str, family: str, case_json: str, note: str) -> dict:
-        """Record a reported failure or request locally, as self-observed field data; never held-out evidence."""
+        """Record a reported failure or request locally, as self-observed field data; never held-out evidence.
+        For g6_distill_start to learn from it, case_json holds unit_id, provenance, files, target, changed_lines,
+        before_tests, after_tests and known_wrong: G6 then labels the case by its own confined oracle run."""
         return _call(surface.failure_record, kind, family, case_json, note)
 
     def g6_distill_start(family: str, failure_ids: str = "") -> dict:
@@ -85,7 +87,17 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
         return _call(backend.self_model, section, detail)
 
     def g6_simulate(action_json: str) -> dict:
-        """Simulate with host-measured context; predictions never become acceptance evidence."""
+        """Simulate with host-measured context; predictions never become acceptance evidence.
+        Components are G6 package names such as g6.distill; G6 reads its own import graph and protected set."""
+        import json
+        from g6.core.door import blocked_reply
+        try:
+            action = json.loads(action_json)
+        except (ValueError, RecursionError):
+            action = None
+        if isinstance(action, dict) and (action.get("gate") is not None or action.get("plan") is not None):
+            return blocked_reply("[G6_E_DISTILL_INPUT] Gate and plan readouts are measured by G6, never supplied by "
+                                 "the caller; omit gate and plan.")
         return _call(backend.simulate, action_json)
 
     def g6_extend(request: str, repo: str = "") -> dict:

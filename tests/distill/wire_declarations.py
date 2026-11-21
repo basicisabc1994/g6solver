@@ -3,15 +3,15 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 CLASSES = {
-    "g6_failure_record": ("client_request", "client_repository"),
-    "g6_distill_start": ("client_request", "client_repository", "g6_operational"),
-    "g6_distill_job": ("g6_operational",),
+    "g6_failure_record": ("client_request",),
+    "g6_distill_start": ("client_request", "source:component_data", "source:host_configuration"),
+    "g6_distill_job": ("client_request", "source:jobs"),
     "g6_library": ("g6_operational",),
     "g6_library_decide": ("client_request",),
     "g6_self_model": ("g6_operational",),
     "g6_simulate": ("client_request", "g6_operational"),
     "g6_extend": ("client_request", "client_repository"),
-    **{f"g6_research_{op}": ("source:improvement",) for op in ("start", "stop", "status", "digest")},
+    **{f"g6_research_{op}": ("client_request", "source:improvement") for op in ("start", "stop", "status", "digest")},
 }
 ARGUMENTS = {
     "g6_failure_record": {"kind": "content", "family": "content", "case_json": "content", "note": "content"},

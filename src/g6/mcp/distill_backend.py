@@ -7,6 +7,7 @@ requests cannot supply those capabilities, independence or admission receipts.
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import time
@@ -15,11 +16,46 @@ from g6.core.door import blocked_reply
 from g6.core.ledger import digest
 from g6.core.storage import state_path
 from g6.distill.ledger import Stores
-from g6.distill.records import CapabilityExtension, Concept, FailureRecord, VerifierCandidate
+from g6.distill.records import CapabilityExtension, Concept, Evidence, FailureRecord, VerifierCandidate
+
+#: How long a measured reading of G6's own import graph and protected set stays fresh in this process.
+LOCAL_TTL_S = 3600.
+CASE_FIELDS = ('unit_id', 'provenance', 'files', 'target', 'changed_lines', 'before_tests', 'after_tests', 'known_wrong')
+NEEDS_CASE = ('Distillation learns only from independent training failures. Record the failure with '
+              'g6_failure_record and a case_json object holding unit_id, provenance, files, target, changed_lines, '
+              'before_tests, after_tests and known_wrong; g6_distill_start then labels it by its own confined '
+              'oracle run, and only a case the oracle labels weakened becomes a training failure.')
 
 
 def refused(code, reason):
     return blocked_reply(f'[{code}] {reason}')
+
+
+def _oracle_case(failure):
+    """The executable case a self-observed record carries, or None. The oracle, not the caller, labels it."""
+    from g6.distill.held_out.case_gate import CaseRecord
+    case = failure.provenance.get('case')
+    if failure.observed_by != 'self' or not isinstance(case, dict) or not set(CASE_FIELDS) <= case.keys():
+        return None
+    try:
+        return CaseRecord.model_validate({key: case[key] for key in CASE_FIELDS})
+    except ValueError:
+        return None
+
+
+def _labelled(failure, case, result):
+    """An independent training record whose label is G6's own executed oracle result, never the caller's word."""
+    from g6.distill.held_out.oracle import TEST_PATH
+    body = result.model_dump(mode='json')
+    return FailureRecord(kind=failure.kind, family=failure.family, source='experiment', observed_by='independent',
+        case_ref=case.case_id, split='training',
+        evidence=[Evidence(kind='oracle', digest=digest(body), receipt=f'oracle:{result.label}:{result.reason}')],
+        finding_class=failure.finding_class, met_before=[], g6_commit=failure.g6_commit,
+        observed_at=datetime.now(timezone.utc).isoformat(),
+        provenance={'case': {'before': {TEST_PATH: case.before_tests}, 'after': {TEST_PATH: case.after_tests}},
+                    'labelled_from': failure.record_id, 'oracle': body, 'intake': 'oracle_label',
+                    'scope': 'client_request', **({'other': failure.provenance['other']}
+                                                  if 'other' in failure.provenance else {})})
 
 
 def _put_once(record):
@@ -40,25 +76,65 @@ class Service:
         self.runners = {} if runners is None else dict(runners)
         self.snapshot, self.simulation_inputs = snapshot, simulation_inputs
         self.registration, self.now = registration, now
+        self._graph = None
         self.config = config if config is not None else Path(__file__).parents[1] / 'self_training/autonomy.json'
         for folder, runner in self.runners.items():
             original = runner.stop
             runner.stop = lambda prior=original, key=folder: prior() or self._stop_path(key).exists()
 
-    def self_model(self, section='', detail='compact'):
+    def _local_snapshot(self, now):
         from g6.core import stop
         from g6.self_model.model import Field, NamedField, SelfModel
         from g6.self_training.autonomy_gate import authority
-        if detail not in ('compact', 'full'):
-            raise ValueError('detail must be compact or full')
-        now = self.now()
         def field(name, value):
             return NamedField(name=name, field=Field.measured(value, source='g6.distill.service.local_state',
                 observed_at=now, ttl_s=0.))
-        model = self.snapshot(now) if self.snapshot is not None else SelfModel(
-            state=(field('stop', stop.engaged() is not None), field('budget_room', 'unknown'),
-                   field('isolation', 'unknown')),
-            authority=(field('level', authority(self.config).level),))
+        return SelfModel(state=(field('stop', stop.engaged() is not None), field('budget_room', 'unknown'),
+                                field('isolation', 'unknown')),
+                         authority=(field('level', authority(self.config).level),))
+
+    def _relationships(self, now):
+        """G6's own import graph between its packages (g6.<package>), read from the installed source."""
+        from g6.self_model.simulate import Relationships
+        if self._graph is None or not 0 <= now - self._graph.provenance.observed_at <= LOCAL_TTL_S:
+            import g6
+            from g6.code.design_governance.graph import build, module_of
+            root = Path(g6.__file__).resolve().parent
+            files = {}
+            for path in sorted(root.rglob('*.py')):
+                rel = path.relative_to(root.parent).as_posix()
+                if module_of(rel) is not None:
+                    files[rel] = path.read_text(encoding='utf-8', errors='replace')
+            grouped = build(files, 'g6').grouped(2)
+            imports = tuple(sorted((importer, dependency) for importer, targets in grouped.items()
+                                   for dependency in targets))
+            self._graph = Relationships.measured(imports=imports, corpus=(),
+                source='g6.code.design_governance.graph.build', observed_at=now, ttl_s=LOCAL_TTL_S)
+        return self._graph
+
+    def _protected_manifest(self, now):
+        """The merge gate's complete protected union; an unreadable certificate leaves it unknown (all protected)."""
+        from g6.distill.merge_evidence_gate import protected_set
+        from g6.self_model.model import Field
+        from g6.self_model.risk_gate import ProtectedManifest
+        try:
+            found = protected_set()
+        except ValueError:
+            return None
+        meta = dict(source='g6.distill.merge_evidence_gate.protected_set', observed_at=now, ttl_s=LOCAL_TTL_S)
+        return ProtectedManifest(patterns=Field.measured(tuple(sorted({*found.patterns, *found.bound})), **meta),
+                                 complete=Field.measured(found.complete, **meta))
+
+    def _simulation_inputs(self, now):
+        # No earlier action outcomes are recorded outside a host runner, so forecasts stay unknown, never invented.
+        return {'reference_actions': (), 'relationships': self._relationships(now),
+                'protected_manifest': self._protected_manifest(now)}
+
+    def self_model(self, section='', detail='compact'):
+        if detail not in ('compact', 'full'):
+            raise ValueError('detail must be compact or full')
+        now = self.now()
+        model = self.snapshot(now) if self.snapshot is not None else self._local_snapshot(now)
         reading = model.read(now=now)
         if section:
             if section not in reading:
@@ -70,39 +146,71 @@ class Service:
     def simulate(self, action_json):
         from g6.self_model.simulate import Action, simulate
         action = Action.model_validate_json(action_json)
-        if self.snapshot is None or self.simulation_inputs is None:
-            return refused('G6_E_SELF_MODEL_INPUTS', 'Trusted measured snapshot and simulation context required.')
         now = self.now()
-        return simulate(action, self.snapshot(now), now=now,
-                        **self.simulation_inputs(now)).model_dump(mode='json')
+        snapshot = self.snapshot(now) if self.snapshot is not None else self._local_snapshot(now)
+        inputs = self.simulation_inputs(now) if self.simulation_inputs is not None else self._simulation_inputs(now)
+        return simulate(action, snapshot, now=now, **inputs).model_dump(mode='json')
 
     def distill_start(self, family, failure_ids=''):
         from g6.distill.synthesis import SynthesisCase, Synthesizer
         ids = failure_ids.replace(',', ' ').split()
-        failures = Stores().for_model(FailureRecord).list()
-        failures = [f for f in failures if f.family == family and (not ids or f.record_id in ids)]
-        if (not failures or (ids and set(ids) != {f.record_id for f in failures})
-            or any(f.split != 'training' or f.observed_by != 'independent' for f in failures)):
-            return refused('G6_E_SYNTH_TRAINING_ONLY', 'Exactly independent training failures are required.')
-        cases = []
-        for failure in failures:
+        everything = Stores().for_model(FailureRecord).list()
+        selected = [f for f in everything if f.family == family and (not ids or f.record_id in ids)]
+        if not selected or (ids and set(ids) != {f.record_id for f in selected}):
+            return refused('G6_E_SYNTH_TRAINING_ONLY', 'No failure record of this family matches. ' + NEEDS_CASE)
+        derived = {f.provenance.get('labelled_from'): f for f in everything
+                   if f.family == family and f.observed_by == 'independent' and f.split == 'training'}
+        ready, pending = {}, []
+        for failure in selected:
+            if failure.observed_by == 'independent' and failure.split == 'training':
+                ready[failure.record_id] = failure
+            elif failure.record_id in derived:
+                ready[derived[failure.record_id].record_id] = derived[failure.record_id]
+            elif (case := _oracle_case(failure)) is not None:
+                pending.append((failure, case))
+            else:
+                return refused('G6_E_SYNTH_TRAINING_ONLY', NEEDS_CASE)
+        for failure in ready.values():
             case = failure.provenance.get('case', {})
             if not isinstance(case, dict) or not {'before', 'after'} <= case.keys():
                 return refused('G6_E_SYNTH_TRAINING_ONLY', 'Training failures need supplied before/after source maps.')
-            cases.append(SynthesisCase(failure, case['before'], case['after']))
         if self.synthesizer is None:
             self.synthesizer = Synthesizer()
         synth = self.synthesizer
-        concepts = [c for c in Stores().for_model(Concept).list()
-                    if c.family == family and set(c.from_failures) == {f.record_id for f in failures}
-                    and c.status == 'proposed']
         if self.jobs is None:
             return refused('G6_E_JOB_HOST_REQUIRED', 'Host job store required; no work started.')
         def run():
+            from g6.distill.held_out import oracle
             from g6.distill.synthesis import propose_concept
+            from g6.workforce.repo_tests import RepoRefused
+            failures, labels = list(ready.values()), []
+            for failure, case in pending:
+                workspace = state_path('distill', 'oracle')
+                workspace.mkdir(parents=True, exist_ok=True)
+                try:
+                    result = oracle.label(case, workspace=workspace)
+                except RepoRefused as exc:
+                    return {**refused(exc.code, 'G6 labels a case only inside an operating-system boundary, and '
+                                                'none is available here; no record was labelled.'), 'labels': labels}
+                row = {'record_id': failure.record_id, 'label': result.label, 'reason': result.reason}
+                if result.label == 'positive':
+                    training = _labelled(failure, case, result)
+                    _put_once(training)
+                    row['training_record_id'] = training.record_id
+                    failures.append(training)
+                labels.append(row)
+            if not failures:
+                return {**refused('G6_E_SYNTH_TRAINING_ONLY', "G6's oracle labelled no supplied case weakened, "
+                                                              'so there is no training failure to learn from.'),
+                        'labels': labels}
+            cases = [SynthesisCase(f, f.provenance['case']['before'], f.provenance['case']['after'])
+                     for f in failures]
+            concepts = [c for c in Stores().for_model(Concept).list()
+                        if c.family == family and set(c.from_failures) == {f.record_id for f in failures}
+                        and c.status == 'proposed']
             concept = concepts[-1] if concepts else propose_concept(cases, synthesizer=synth)
             if isinstance(concept, dict):
-                return concept
+                return {**concept, 'labels': labels}
             _put_once(concept)
             result = synth.synthesise(concept, cases)
             for candidate in result.candidates:
@@ -113,7 +221,7 @@ class Service:
             from g6.distill.library import Library
             decisions = decide_batch(result.candidates, Library(), self.registration) if result.candidates else ()
             return {'concept_id': concept.concept_id, **result.model_dump(mode='json'),
-                    'decisions': [asdict(d) for d in decisions]}
+                    'decisions': [asdict(d) for d in decisions], 'labels': labels}
         return self.jobs.start(run)
 
     def distill_job(self, job_id, detail='compact'):
@@ -151,9 +259,13 @@ class Service:
         runner = self._runner(folder)
         config = runner.config if runner is not None else self.config
         if not authority(config).permits('research'):
-            return refused('G6_E_RESEARCH_AUTHORITY', 'Owner research authority is off.')
+            return refused('G6_E_RESEARCH_AUTHORITY', 'Owner research authority is off. The owner grants it in '
+                           'self_training/autonomy.json (level and research), a protected file that changes only '
+                           'through owner issuance; no MCP call grants it. g6_research_status reads it.')
         if runner is None:
-            return refused('G6_E_RESEARCH_HOST_REQUIRED', 'Trusted host runner capabilities are required.')
+            return refused('G6_E_RESEARCH_HOST_REQUIRED', 'No host research runner is attached to this server. The '
+                           "owner's host service attaches one with its engineer missions, budget meter and "
+                           'repository port (docs/research-runner.md); no MCP call creates it.')
         return None
 
     def research_start(self, folder=''):

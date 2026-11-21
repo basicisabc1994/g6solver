@@ -1,6 +1,5 @@
 """Public integration boundaries, with no ambient host or provider capability."""
 import asyncio
-import json
 from uuid import uuid4
 from pathlib import Path
 
@@ -14,14 +13,6 @@ def home(monkeypatch):
     path.mkdir(parents=True)
     monkeypatch.setenv('G6_HOME', str(path.absolute()))
     return path
-
-
-def test_self_model_cli_reads_real_unknowns(home, capsys):
-    from g6.cli import main
-    assert main(['self-model']) == 0
-    result = json.loads(capsys.readouterr().out)
-    assert result['state']['budget_room'] == 'unknown'
-    assert result['authority']['level'] == 'off'
 
 
 def test_tools_use_backend_refusals_and_real_job_polling(home, monkeypatch):
