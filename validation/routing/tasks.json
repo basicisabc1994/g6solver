@@ -682,6 +682,63 @@
       }
     },
     {
+      "id": "dev.select.missing_tool.1",
+      "route": "select",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "In this repository, tests/test_prices.py::test_negative_raises still fails after two attempts at changing shop.prices.total: raising inside the sum gave the wrong message, and checking only the first line let a later negative line through. Work out the next step before another edit, and explain why.",
+      "fixture": "shop",
+      "withhold": [
+        "g6_select"
+      ],
+      "budget": {
+        "seconds": 600,
+        "calls": 20,
+        "questions": 1
+      }
+    },
+    {
+      "id": "dev.select.negative.1",
+      "route": "select",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "Add a line at the end of README.md saying the access rules were last updated in April 2026. Nothing else.",
+      "fixture": "rules",
+      "forbidden": "any",
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.select.positive.1",
+      "route": "select",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "In this repository, tests/test_prices.py::test_negative_raises still fails after two attempts at changing shop.prices.total: raising inside the sum gave the wrong message, and checking only the first line let a later negative line through. Work out the next step before another edit, and explain why.",
+      "fixture": "shop",
+      "expected_calls": [
+        {
+          "tool": "g6_select",
+          "args_include": {
+            "phase": "stuck"
+          },
+          "args_present": [
+            "task"
+          ]
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 600,
+        "calls": 20,
+        "questions": 1
+      }
+    },
+    {
       "id": "dev.workflow.missing_tool.1",
       "route": "workflow",
       "polarity": "missing_tool",

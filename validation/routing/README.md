@@ -568,3 +568,17 @@ them on development fixtures (or the owner rules the drafts' fixtures may join),
 `freeze.retire` (kept beside them as `tasks.retired-7337dbe982f5.json` and `frozen.retired-76b7a6f05b98.json`) and
 written again with `freeze.freeze`. The bars and `gates.json` are unchanged; no session has been run.
 `tests/validation/test_routing_rebind_amendment.py` holds the record to the files.
+
+### The `select` route's development tasks, 2026-11-21 (before any arm)
+
+**State: `evidence_pending`.** `amendments/2026-11-21/select_development_tasks.json` records it: the select route's
+development tasks, written on development fixtures (shop, rules); the 2026-11-17 drafts use moment fixtures and stay
+unextracted. Three tasks were added in the drafts' shape, with no G6, route or selector cue in a prompt:
+`dev.select.positive.1` (a test in `shop` still fails after two attempts; the next step is asked for, and `g6_select`
+with the task and phase `stuck` is expected), `dev.select.negative.1` (a determinate one-line edit in `rules`; any
+G6 call is forbidden) and `dev.select.missing_tool.1` (the positive prompt with `g6_select` withheld). No route
+digest, earlier task, moment task, final task, held-out item, bar or `gates.json` changed; the final-cohort drafts
+stay for the final cohort's own writer. `tasks.json` and `frozen.json` were retired with `freeze.retire` (kept as
+`tasks.retired-a7c5e8f6d7e0.json` and `frozen.retired-814d2b62d100.json`) and written again with `freeze.freeze`; no
+session has been run. `tests/validation/test_routing_select_development_amendment.py` holds the record to the files,
+and the rebind's test now reads what the rebind froze from the copy this amendment retired.
