@@ -97,9 +97,11 @@ def clamp(baseline: str, candidate: str) -> str:
 
 
 def classify(error_type: object, message: str = "", traceback: str = "", *, safety_approved: bool | None = None) -> Triage:
-    """The category, a hint, and the posture; ``safety_approved=False`` (a safety check refused the fix) escalates."""
+    """The category, a hint, and the posture; ``safety_approved=False`` (a safety check refused the fix) escalates.
+    ``error_type`` may be the exception itself: then its own words feed the message hints too, beside ``message``."""
     category, reasons, posture = _category_of(error_type), [], "auto_heal"
-    hinted = [c for pattern, c in _MESSAGE_HINTS if pattern.search(message)]
+    said = "\n".join(text for text in (message, str(error_type) if isinstance(error_type, BaseException) else "") if text)
+    hinted = [c for pattern, c in _MESSAGE_HINTS if pattern.search(said)]
     if category == "unknown":
         reasons.append("unknown_exception_class")
         posture = clamp(posture, "review")
