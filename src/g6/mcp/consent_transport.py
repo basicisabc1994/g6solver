@@ -80,13 +80,22 @@ class _Line(str):
         return joined
 
 
+#: The witness expecting each token still waiting, so the writer's serialising of a message can mark it taken.
+_OWNERS: dict[int, Witness] = {}
+
+
 class Tokened(types.JSONRPCMessage):
     """The message G6 sends (``_Stream.send``): serialised, its text carries its own token (``id`` of this object),
-    so the writer that writes it is paired with this send alone, never with another whose text is the same."""
+    so the writer that writes it is paired with this send alone, never with another whose text is the same. The SDK
+    writer serialises a message as soon as it takes it from the stream, before writing it, so serialising also marks
+    the token taken: from then on only that write's outcome fires or discards its callback."""
 
     def model_dump_json(self, **kwargs):
         text = _Line(super().model_dump_json(**kwargs))
         text.token = id(self)
+        owner = _OWNERS.get(text.token)
+        if owner is not None:
+            owner.take(text.token)
         return text
 
 
@@ -99,21 +108,39 @@ class Witness:
     """A writer G6 owns, seeing each message written. ``expect`` files a send's own callback under its own token;
     ``written(token)`` (the writer, once that send's whole line was written and flushed, or the in-process client
     once it took that send) fires it, once; ``discard(token)`` (a short, failed or cancelled write) removes it
-    without firing. Two sends never share a token, so identical lines never borrow each other's callback."""
+    without firing. Two sends never share a token, so identical lines never borrow each other's callback. ``take``
+    (the writer took the message) leaves the decision to that write: ``untaken_discard`` (a send cancelled or failed
+    on the sender's side) then keeps the callback, and discards only one the stream never took."""
 
     def __init__(self) -> None:
         self._expected: dict[int, tuple[object, Callable[[], None]]] = {}
+        self._taken: set[int] = set()
 
     def expect(self, message: SessionMessage, callback: Callable[[], None]) -> int:
         key = token(message)
         self._expected[key] = (message.message, callback)     # the message held, so its identity is not reused
+        _OWNERS[key] = self
         return key
 
+    def take(self, key: int) -> None:
+        if key in self._expected:
+            self._taken.add(key)
+
+    def untaken_discard(self, key: int | None) -> None:
+        if key not in self._taken:
+            self.discard(key)
+
+    def _drop(self, key: int | None):
+        self._taken.discard(key)
+        if _OWNERS.get(key) is self:
+            del _OWNERS[key]
+        return self._expected.pop(key, None)
+
     def discard(self, key: int | None) -> None:
-        self._expected.pop(key, None)
+        self._drop(key)
 
     def written(self, key: int | None) -> None:
-        held = self._expected.pop(key, None)
+        held = self._drop(key)
         if held is not None:
             try:
                 held[1]()
@@ -320,7 +347,9 @@ class _Stream:
             try:
                 await self.inner.send(packet)
             except BaseException:
-                seen.discard(key)         # a send cancelled or failed before the stream took it: never counted
+                # cancelled or failed on this side: a message the writer already took is decided by its own write;
+                # one the stream never took is never written, so its callback goes
+                seen.untaken_discard(key)
                 raise
             return
         await self.inner.send(packet)
