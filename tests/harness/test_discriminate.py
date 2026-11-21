@@ -351,6 +351,9 @@ def test_review2_a_tree_changed_during_the_review_decides_no_explanation(monkeyp
     monkeypatch.setattr(repo_tests, "derive_tests", lambda *args: ([], 0))
     monkeypatch.setattr(repo_tests, "diff_text", lambda *args: "")
     monkeypatch.setattr(patch_review, "_closing", lambda *args, **kwargs: ({}, [], dict(current)))
+    # the synthetic tree's bytes, bound as bind_execution binds a manifest holding the reviewed snapshot's file set
+    monkeypatch.setattr(verification_search, "bind_execution", lambda change, sparse, *, deadline:
+                        verification_search.ExecutionSnapshot(sparse, dict(sparse)))
     source = "from calc import add\n\ndef test_sum():\n    assert add(2, 3) == 5\n"
     stage = _attributed_stage(monkeypatch, {source: {"patch": "passed", "base": "failed"}})
     run, race = verification_search._run_check, [False]
@@ -568,3 +571,85 @@ def test_review4_a_trusted_stop_while_binding_still_stops_the_review(monkeypatch
     monkeypatch.setattr(verification_search, "bind_execution", bind)
     with pytest.raises(type(raised)):
         review_patch(**arguments)
+
+
+# --- review 1 of wire-diagnose-fu: the bound files are the reviewed snapshot's file set, not only where both agree ---
+
+def test_fu1_a_reviewed_file_missing_while_the_manifest_and_copy_are_read_decides_no_explanation(monkeypatch):
+    """Codex review 1 of wire-diagnose-fu, its reproducer: an editor removes a reviewed file while the manifest and
+    the copy are read and restores it before each snapshot; both reads genuinely omit it."""
+    from contextlib import contextmanager
+    from pathlib import Path
+
+    from g6.core.ledger import digest
+    from g6.mcp.review_reply import compact, review
+    from g6.workforce import repo_tests
+    from tests.harness.test_proposed_checks import result
+
+    real_bind = verification_search.bind_execution
+    arguments, _, _, live, reviewed, _ = _restored_race(monkeypatch)
+    root = Path(arguments["repo"])
+    copied, executions = {}, []
+
+    class MissingFile:
+        def is_file(self):
+            return False
+
+    monkeypatch.setattr(verification_search, "bind_execution", real_bind)
+    monkeypatch.setattr(repo_tests, "_git", lambda root, *args, **kw: b"calc.py\0" if "-co" in args else b"")
+    monkeypatch.setattr(repo_tests, "_generated_files", lambda *a, **kw: ({}, {}))
+    monkeypatch.setattr(repo_tests, "_disk", lambda *a: MissingFile())
+
+    @contextmanager
+    def copy_without_reviewed_file(*args, **kwargs):
+        copied.clear()
+        copied.update({name: verification_search._sha(text) for name, text in kwargs["before"].items()})
+        yield root / "synthetic-copy"
+
+    def execute(copy_root, nodes, **kwargs):
+        executions.append(dict(copied))
+        return (result(nodes, digest=digest(copied)) if "calc.py" in copied
+                else result(failed=nodes, digest=digest(copied)))
+
+    monkeypatch.setattr(repo_tests, "repository_copy", copy_without_reviewed_file)
+    monkeypatch.setattr(repo_tests, "_copy_snapshot", lambda *a, **kw: dict(copied))
+    monkeypatch.setattr(repo_tests, "_run", execute)
+    reply = compact(review(**arguments), "review-wdfu1", None)
+    assert live == reviewed and "calc.py" in reviewed
+    assert executions and all("calc.py" not in one for one in executions)
+    assert not any(r["stage"] == "integrity" for r in reply["assessment"]["reasons"])
+    reading = reply["assessment"]["explanations"][0]
+    assert {e["reading"] for e in reading["explanations"]} == {"not_decided"}, reading
+
+
+@pytest.mark.parametrize("reviewed, manifest", [
+    ({"calc.py": "a" * 64}, {}),                                  # a reviewed file the manifest's read did not find
+    ({"calc.py": "a" * 64}, {"other.py": "c" * 64}),
+    ({"gone.py": ""}, {"gone.py": "d" * 64}),                     # a file the reviewed tree did not hold, now there
+    ({"calc.py": "unreadable"}, {"calc.py": "a" * 64}),           # bytes the snapshot could not read are not shown
+])
+def test_fu1_bind_execution_requires_the_reviewed_snapshots_file_set(monkeypatch, reviewed, manifest):
+    from pathlib import Path
+
+    from g6.workforce import repo_tests
+
+    change = repo_tests.Change(Path("."), "HEAD", "a" * 40, "a" * 40, (), {}, {}, (), ())
+    sparse = {"\0HEAD": "h" * 64, **reviewed}
+    monkeypatch.setattr(verification_search, "_copy_manifest", lambda *a, **kw: dict(manifest))
+    monkeypatch.setattr(repo_tests, "snapshot", lambda *a: dict(sparse))
+    with pytest.raises(OSError, match="G6_E_EXECUTION_ARTIFACT_UNAVAILABLE"):
+        verification_search.bind_execution(change, sparse, deadline=1e18)
+
+
+def test_fu1_bind_execution_binds_a_manifest_holding_the_reviewed_file_set(monkeypatch):
+    from pathlib import Path
+
+    from g6.workforce import repo_tests
+
+    change = repo_tests.Change(Path("."), "HEAD", "a" * 40, "a" * 40, (), {}, {}, (), ())
+    # a file the copy leaves out by its own rule (a cache folder) is required of neither the manifest nor the copy
+    sparse = {"\0HEAD": "h" * 64, "calc.py": "a" * 64, "gone.py": "", "__pycache__/helper.py": "e" * 64}
+    manifest = {"calc.py": "a" * 64, "clean.py": "c" * 64}        # a clean file the snapshot need not list
+    monkeypatch.setattr(verification_search, "_copy_manifest", lambda *a, **kw: dict(manifest))
+    monkeypatch.setattr(repo_tests, "snapshot", lambda *a: dict(sparse))
+    assert verification_search.bind_execution(change, sparse, deadline=1e18).execution["files"] == manifest

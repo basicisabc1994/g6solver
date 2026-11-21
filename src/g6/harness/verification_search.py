@@ -484,17 +484,36 @@ NOT_BOUND = ("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: the files read for the execut
 def bind_execution(change: repo_tests.Change, sparse: dict[str, str], *, deadline: float) -> ExecutionSnapshot:
     """Capture raw bytes before any review execution. Git-normalised blob bytes are never substituted for them.
 
-    The full manifest is bound to the reviewed snapshot ``sparse`` only when every file in both has the same digest in
-    each, and the tree, read again once the manifest is read, is still ``sparse``; otherwise it raises ``OSError``
-    (``NOT_BOUND``) and nothing is bound (the review of wire-diagnose, 4: bytes changed while the manifest was read
-    and restored before the snapshots are never taken as the reviewed artifact)."""
+    The full manifest is bound to the reviewed snapshot ``sparse`` only when it holds the snapshot's file set: each
+    file the snapshot read (a SHA-256) is in the manifest with that digest, each the snapshot found absent ("") is
+    absent from it, and no file the snapshot could not read ("unreadable") is bound; and the tree, read again once the
+    manifest is read, is still ``sparse``. Otherwise it raises ``OSError`` (``NOT_BOUND``) and nothing is bound (the
+    reviews of wire-diagnose, 4, and wire-diagnose-fu, 1: bytes changed, or a file removed, while the manifest was
+    read and restored before the snapshots are never taken as the reviewed artifact). A file the snapshot does not
+    list (one git sees as unchanged) is the manifest's alone, and one the copy leaves out by its own rule
+    (``_left_out``: a cache folder, say) is in neither the manifest nor the copy."""
     files = _copy_manifest(change, deadline=deadline)
-    differs = sorted(rel for rel, value in sparse.items() if rel in files and files[rel] != value)
+
+    def agrees(rel: str, value: str) -> bool:
+        if value == "":
+            return rel not in files
+        return bool(re.fullmatch("[0-9a-f]{64}", value)) and files.get(rel) == value
+
+    differs = sorted(rel for rel, value in sparse.items() if not rel.startswith("\0") and not agrees(rel, value)
+                     and not _left_out(change.repo, rel))
     if differs:
-        raise OSError(NOT_BOUND.format(what="a file's digest differs: " + ", ".join(shown(rel) for rel in differs[:5])))
+        raise OSError(NOT_BOUND.format(what="a reviewed file is missing, unreadable or differs: "
+                                            + ", ".join(shown(rel) for rel in differs[:5])))
     if repo_tests._moved(sparse, repo_tests.snapshot(change.repo)):
         raise OSError(NOT_BOUND.format(what="the tree changed while they were read"))
     return ExecutionSnapshot(sparse, files)
+
+def _left_out(root: Path, rel: str) -> bool:
+    """Whether a copy of the tree leaves ``rel`` out by its own rule (``repo_tests._copy_ignored``, applied to each
+    folder on its path, where git looks: ``_on_disk``), so neither the manifest nor the copy holds it."""
+    parts = PurePosixPath(repo_tests._in(rel)).parts
+    return any(part in repo_tests._copy_ignored(str(root.joinpath(*parts[:i])), [part]) for i, part in enumerate(parts))
+
 
 def _copy_manifest(change: repo_tests.Change, *, deadline: float,
                    artefact: dict[str, str] | None = None) -> dict[str, str]:
@@ -511,9 +530,7 @@ def _copy_manifest(change: repo_tests.Change, *, deadline: float,
     found = {}
     size = 0
     for rel in sorted(set(known) | set(generated)):
-        parts = PurePosixPath(repo_tests._in(rel)).parts     # the folders looked at, where git looks (``_on_disk``)
-        if any(part in repo_tests._copy_ignored(str(root.joinpath(*parts[:i])), [part])
-               for i, part in enumerate(parts)):
+        if _left_out(root, rel):
             continue
         # the one disk rule, as the copy reads the tree (``repository_copy``): a name the system reads as another
         # file's has no path, so the copy holds no file under it and none is recorded under it here
