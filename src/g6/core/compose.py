@@ -86,9 +86,15 @@ class ComposedBlock(AIBlock):
             try:   # a stage's links and constants are read within the registry's visit budget, as an op's parameters
                 links = outer_copy(stage.inputs or ({key: f"caller.{key}" for key in caller_inputs}
                                                     if index == 0 else {}))
-                params = deepcopy(outer_copy(stage.params))
+                params = outer_copy(stage.params)
             except OuterBudgetExceeded as exc:
                 raise CompositionError(f"[G6_E_INPUT_VALIDATION] stage {index}: {exc}") from None
+            for key, value in params.items():   # a constant is data as a linked input is: the same bounded walk,
+                try:                            # before any unbounded copy
+                    params[key] = plain_text(value)
+                except PlainTextLimit as exc:
+                    raise CompositionError(f"[G6_E_INPUT_VALIDATION] stage {index}: {key} must be JSON data: {exc}") from None
+            params = deepcopy(params)
             if "op" in params or "op" in links or set(params) & set(links):
                 raise _error("INVALID_MAPPING", index, "op is fixed and inputs cannot overlap constants")
             for key in required:
