@@ -118,7 +118,7 @@ def test_pending_question_across_two_runs_is_an_obstacle_with_its_receipt():
 
 def test_review_unsent_for_want_of_a_grant_is_an_obstacle_attributed_to_g6_setup():
     loop = {"ending": "untested", "run_id": "f" * 32, "report": "The review was not sent.",
-            "error": "[G6_E_CLOUD_CONSENT_REQUIRED] Results were withheld"}
+            "error": "[G6_E_CLOUD_CONSENT_REQUIRED] Results were withheld", "requests_sent": 0}
     (found,) = ob.obstacles(None, loop, ())
     assert found.kind == "review_unsent" and "G6's own setup" in ob.WORDS[found.kind]
     assert found.receipt.kind == "report" and found.receipt.id == "f" * 32

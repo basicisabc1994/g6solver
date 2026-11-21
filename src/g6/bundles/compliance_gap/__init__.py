@@ -470,12 +470,28 @@ def _structured_record(record: dict, chosen: set[str]) -> tuple[str, str, dict]:
     return reg, kind, fields
 
 
+class _Twice(ValueError):
+    """A JSON object names one key more than once: which of its values is meant cannot be told."""
+
+
+def _unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A JSON object whose keys are each given once, as the line grammar takes one answer for each requirement."""
+    found: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in found:
+            raise _Twice(f"{key[:80]!r} is given more than once in the JSON; give it once")
+        found[key] = value
+    return found
+
+
 def _structured(value: Any, expected: type, opens: str) -> Any:
     """``value`` as structure when it is one (a mapping or list, or JSON text that opens with ``opens``); else None,
-    and the text is read by the line grammar."""
+    and the text is read by the line grammar. JSON text with a key given twice in any object is refused."""
     if isinstance(value, str) and value.lstrip().startswith(opens):
         try:
-            value = json.loads(value)
+            value = json.loads(value, object_pairs_hook=_unique)
+        except _Twice:
+            raise
         except (ValueError, RecursionError, MemoryError) as exc:
             raise ValueError(f"the {expected.__name__} given as JSON could not be read") from exc
         if not isinstance(value, expected):

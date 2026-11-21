@@ -51,7 +51,7 @@ def test_a_consent_refusal_after_a_counted_request_is_never_said_not_sent(tmp_pa
 def test_a_consent_refusal_with_nothing_counted_is_still_not_sent(tmp_path, monkeypatch):
     step, state = _advance(tmp_path, monkeypatch, _refused_after(0, cloud.REQUIRED))
     assert step.code == cloud.REQUIRED and state['stop'].startswith('The review was not sent.')
-    assert 'requests_sent' not in state
+    assert state['requests_sent'] == 0          # kept at zero: only a count present and zero says "not sent"
 
 
 def test_a_sharing_state_failure_after_a_request_does_not_say_nothing_was_shared(tmp_path, monkeypatch):
@@ -86,11 +86,12 @@ def test_recorded_loop_ends_after_a_counted_request_are_not_unsent_reviews():
     assert [one[0].kind for one in fired] == ["refused_run"]
 
 
-@pytest.mark.parametrize("sent, unsent", [(None, True), (1, False)])
+@pytest.mark.parametrize("sent, unsent", [(0, True), (None, False), (1, False)])
 def test_the_review_loop_reply_counts_as_unsent_only_with_nothing_sent(sent, unsent):
     from g6.mcp import review_loop
 
+    # None: no count in the reply, which is unknown (review 4), never zero
     reply = {"ending": "untested", "code": cloud.REQUIRED, "warning_card": {"code": cloud.REQUIRED},
-             "error": f"[{cloud.REQUIRED}] withheld", **({"requests_sent": sent} if sent else {})}
+             "error": f"[{cloud.REQUIRED}] withheld", **({"requests_sent": sent} if sent is not None else {})}
     assert review_loop._unsent(reply) is unsent
 

@@ -103,6 +103,14 @@ def test_a_refused_review_is_recorded_by_its_code_only(repo):
     assert next(e for e in _events(repo) if e.kind == "report_returned").missing == ("run_seconds",)
 
 
+@pytest.mark.parametrize("count", [0, 2, None])
+def test_a_loop_end_keeps_its_request_count_and_zero_is_not_dropped(repo, tmp_path, count):
+    done = {**loop_state(1, done=True, ending="untested"), **({"requests_sent": count} if count is not None else {})}
+    adapters.observe_loop(repo, TASK_TEXT, tmp_path / "s", done, Step("stop", "untested"), at=at(0))
+    ended = next(e for e in _events(repo) if e.kind == "loop_ended")
+    assert ended.data.get("requests_sent", "absent") == (count if count is not None else "absent")
+
+
 def test_a_retried_call_is_one_event_and_a_repeat_is_another(repo):
     for request in ("r1", "r1", "r2"):
         adapters.observe_call(repo, TASK_TEXT, "g6_review_patch", request, sha("args"), started_at=at(0), seconds=0.25)

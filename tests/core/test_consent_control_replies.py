@@ -60,7 +60,8 @@ def test_withheld_review_job_names_its_reviewer_provider(tmp_path, monkeypatch):
             except cloud.LLMError:
                 pass
         return {'ok': False, 'action': 'stop', 'ending': 'untested', 'report': 'PLANTED_REVIEW',
-                'error': f'[{cloud.REQUIRED}] review unsent', 'request_id': 'request', 'run_id': 'run'}
+                'error': f'[{cloud.REQUIRED}] review unsent', 'request_id': 'request', 'run_id': 'run',
+                'requests_sent': 0}      # the loop's count as _step carries it: zero, so "not sent" may be said
 
     monkeypatch.setattr(review_loop, '_step', step)
     async def call():

@@ -163,7 +163,8 @@ def test_an_unsent_review_is_shown_as_g6s_own_obstacle(repo):
     folder = completion_hook.folder("mcp:session-2")
     folder.mkdir(parents=True)
     stop = {"ok": False, "action": "stop", "report": "The review was not sent.", "ending": "untested",
-            "run_id": folder.name, "error": "[G6_E_CLOUD_CONSENT_REQUIRED] Results were withheld"}
+            "run_id": folder.name, "error": "[G6_E_CLOUD_CONSENT_REQUIRED] Results were withheld",
+            "requests_sent": 0}      # as review_loop keeps the loop's count: zero, so "not sent" may be said
     with cloud.collect_sources():
         _as("openai:codex")
         done = tools.stepped(lambda *a: cloud.bind_output(dict(stop), ()), str(repo), TASK_TEXT, "session-2")

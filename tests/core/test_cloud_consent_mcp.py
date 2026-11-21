@@ -321,7 +321,8 @@ def test_unknown_client_still_gets_k_unsent_untested_state_without_report_data(t
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
     monkeypatch.setattr(completion_hook, 'folder', lambda name: tmp_path / 'session')
     monkeypatch.setattr(review_loop, '_step', lambda *a: {'ok': False, 'action': 'stop', 'ending': 'untested',
-        'error': '[G6_E_CLOUD_CONSENT_REQUIRED] no grant', 'report': 'PLANTED_SAVED_REPORT'})
+        'error': '[G6_E_CLOUD_CONSENT_REQUIRED] no grant', 'report': 'PLANTED_SAVED_REPORT',
+        'requests_sent': 0})      # the loop's count as _step carries it: zero, so "not sent" may be said
     jobs = Jobs()
     started = jobs.start(lambda: review_loop.step(str(tmp_path), 'task', 'one'))
     jobs.close()

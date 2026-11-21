@@ -24,7 +24,7 @@ from typing import Any
 
 from g6.core.ledger import digest
 from g6.harness.workflow.adapters import NO_OBSERVATION
-from g6.harness.workflow.obstacle import Obstacle, Outcome, obstacles
+from g6.harness.workflow.obstacle import Obstacle, Outcome, none_sent, obstacles
 from g6.harness.workflow.record import Event, ProjectRecord, Ref, event_id, workflow_source
 
 STATUS = ("obstacle_only", "hypothesis", "several", "insufficient_observation", "unknown_outcome")
@@ -193,19 +193,19 @@ def _question_waits(events, assessment, loop, found) -> list[tuple[Obstacle, tup
 
 
 def _g6_setup_blocks(events, assessment, loop, found) -> list[tuple[Obstacle, tuple[Ref, ...], bool | None]]:
-    ends = []                           # each run's end, in order: the code that refused it, or "" when it completed
-    for run, held in _review_runs(events).items():
+    ends = []    # each run's end, in order: the code that refused it ("" when it completed), and whether any request may
+    for run, held in _review_runs(events).items():    # have gone out (a missing count is unknown, never zero)
         for event in held:
             if event.kind == "loop_ended":
                 ends.append((run, event.data.get("code") or "" if event.data.get("ending") == "untested" else "",
-                             bool(event.data.get("requests_sent"))))
-            elif event.kind == "review_finished":
-                ends.append((run, event.data.get("refusal_code") or "", False))
+                             not none_sent(event.data.get("requests_sent"))))
+            elif event.kind == "review_finished":    # a review job records no request count: it may have sent
+                ends.append((run, event.data.get("refusal_code") or "", True))
     fired = []
     for code in sorted({code for _run, code, _sent in ends if code}):
         last_two = [n for n, (_run, one, _sent) in enumerate(ends) if one == code][-2:]
         if len(last_two) == 2 and not any(one == "" for _run, one, _sent in ends[last_two[0]:last_two[1]]):
-            # unsent only when neither run counted a request; a review refused after one went out is a refused run
+            # unsent only when both runs counted zero requests; one refused after a request, or uncounted, is refused
             unsent = code == "G6_E_CLOUD_CONSENT_REQUIRED" and not any(ends[n][2] for n in last_two)
             kind = "review_unsent" if unsent else "refused_run"
             fired.append((Obstacle(kind, f"this task's runs ({code})", Ref("receipt", ends[last_two[1]][0], digest(code))),

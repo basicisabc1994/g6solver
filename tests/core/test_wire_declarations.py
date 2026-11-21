@@ -176,7 +176,7 @@ def test_mission_tool_names_in_evidence_are_not_protocol_fields():
 def test_structured_compliance_decoder_limits_refuse(monkeypatch, error):
     from g6.bundles import compliance_gap
 
-    def limited(*args):
+    def limited(*args, **kwargs):      # the decoder is called with the duplicate-key hook (review 4)
         raise error("synthetic decoder limit")
 
     monkeypatch.setattr(compliance_gap.json, "loads", limited)

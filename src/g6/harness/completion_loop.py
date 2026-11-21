@@ -1577,10 +1577,10 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         if not code:
             raise
         sent = watch.counted()
+        state["requests_sent"] = sent     # kept even at zero: a reader says "not sent" only on a count present and zero
         if not sent:            # "not sent" only when no request at all was counted in the loop's scope
             state["stop"] = "The review was not sent. " + cloud.WITHHELD
         else:
-            state["requests_sent"] = sent
             state["stop"] = (f"The review stopped part way: {sent} request(s) went out to the reviewer's provider before "
                              "sharing was refused for the next. " + cloud.WITHHELD)
             if code == cloud.STATE_UNAVAILABLE:     # its declared words say nothing was shared, which is not so here

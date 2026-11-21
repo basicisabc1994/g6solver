@@ -82,6 +82,12 @@ def stated_outcome(intent: Mapping | None, confirmed: Sequence, task: str) -> Ou
     return None
 
 
+def none_sent(count: object) -> bool:
+    """Whether a recorded request count says that no request went out: only a count present and zero. A missing or
+    malformed count is unknown, never zero, so it never makes a review "not sent"."""
+    return type(count) is int and count == 0
+
+
 def _review_ref(assessment: Mapping, job_id: str) -> Ref:
     return Ref("review", job_id or "review", sha256(str(assessment.get("report", ""))))
 
@@ -108,7 +114,7 @@ def obstacles(assessment: Mapping | None, loop: Mapping | None, events: Sequence
         error = str(loop.get("error") or "")
         code = error[1:error.index("]")] if error.startswith("[G6_E_") and "]" in error else ""
         ref = Ref("report", str(loop.get("run_id") or "loop")[:64], sha256(str(loop.get("report", "")) + error))
-        if code == CONSENT_REQUIRED and not loop.get("requests_sent"):   # unsent only with no request counted
+        if code == CONSENT_REQUIRED and none_sent(loop.get("requests_sent")):   # unsent only on a count of zero
             found.append(Obstacle("review_unsent", "this loop's review of this patch", ref))
         elif code:
             found.append(Obstacle("refused_run", f"this loop's run ({code})", ref))
@@ -146,5 +152,5 @@ def next_check(found: Sequence[Obstacle], assessment: Mapping | None) -> dict | 
     return None
 
 
-__all__ = ["ACCEPTED", "OBSTACLE_KINDS", "Obstacle", "Outcome", "WORDS", "cut", "next_check", "obstacles",
+__all__ = ["ACCEPTED", "OBSTACLE_KINDS", "Obstacle", "Outcome", "WORDS", "cut", "next_check", "none_sent", "obstacles",
            "stated_outcome"]
