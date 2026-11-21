@@ -111,22 +111,27 @@ def _repaired(tool, arguments, value, capture):
         return value
 
 
-def input_refusal(tool: str, fields, *, arguments=None, session=None) -> dict:
+def input_refusal(tool: str, fields, *, arguments=None, session=None, records=None) -> dict:
     """An undeclared argument is refused before executing or admitting any source.
 
-    Only published field names and G6's program text are returned; no argument value is read back.
+    Only published field names and G6's program text are returned; no argument value is read back. With ``records``
+    (the call's middleware), the refusal's ``Record`` is kept there and counted on delivery; else at once.
     """
     from g6.core.door import blocked_reply
-    from g6.mcp.repair import observe
+    from g6.mcp.repair import observe, observed
 
     reply = blocked_reply('[G6_E_INPUT_VALIDATION] Undeclared tool argument; use only the declared arguments.')
-    reply = observe(tool, arguments, reply, session)
+    if records is None:
+        reply = observe(tool, arguments, reply, session)
+    else:
+        reply, record = observed(tool, arguments, reply, session)
+        records.append(record)
     if reply.get('repair') is not None and reply['repair']['by'] == 'agent':
         reply['repair']['fill'] = sorted(fields)
     return reply
 
 
-def input_error_result(tool: str, fields, *, arguments=None, session=None):
+def input_error_result(tool: str, fields, *, arguments=None, session=None, records=None):
     """G6's public validation envelope, retaining the MCP protocol's error status."""
     from fastmcp.tools.tool import ToolResult
     from mcp import types
@@ -135,7 +140,8 @@ def input_error_result(tool: str, fields, *, arguments=None, session=None):
         def to_mcp_result(self):
             return types.CallToolResult(content=self.content, structuredContent=self.structured_content, isError=True)
 
-    return InputErrorResult(structured_content=input_refusal(tool, fields, arguments=arguments, session=session))
+    return InputErrorResult(structured_content=input_refusal(tool, fields, arguments=arguments, session=session,
+                                                             records=records))
 
 
 #: The MCP client names G6 knows, each with the provider its replies reach. Any other client is ``cloud:unknown``,
@@ -300,15 +306,19 @@ def install(server) -> None:
             with policy.collect_sources() as capture:
                 capture.client_arguments = deepcopy(args)
                 tool = await server.get_tool(context.message.name)
+                # the replies this session already sent are counted (or not) before this call is assessed
+                settled(session)
                 # The source wrapper has *args/**kwargs. FastMCP/Pydantic can
                 # discard extra keys on that wrapper before signature.bind sees
                 # them, including an agent's purported answer to a dialog.
                 # Enforce the published argument names before that conversion.
                 if set(args) - tool.parameters.get('properties', {}).keys():
+                    refusals: list = []
                     result = input_error_result(context.message.name, tool.parameters.get('properties', {}),
-                                                arguments=args, session=session)
+                                                arguments=args, session=session, records=refusals)
                     wire = result.to_mcp_result().model_dump(mode='json', by_alias=True, exclude_none=True)
-                    prepare(session, ctx.request_context.request_id, result, (), body=wire)
+                    prepare(session, ctx.request_context.request_id, result, (), body=wire,
+                            delivered=refusals[0] if refusals else None)
                     return result
                 capture.expected_tool = getattr(getattr(tool, 'fn', None), '_g6_tool_identity', None)
                 capture.client = client_provider(ctx), session
@@ -327,16 +337,14 @@ def install(server) -> None:
                         for child in value:
                             inputs(child)
                 inputs(args)
-                # the replies this session already sent are counted (or not) before this call is assessed
-                settled(session)
                 records: list = []
                 token = _DELIVERY.set(records)
                 try:
                     result = await call_next(context)
                 finally:
                     _DELIVERY.reset(token)
-                delivered = Record(lambda: [record.sent() for record in records],
-                                   lambda: [record() for record in records])
+                delivered = Record(lambda evidence: [record.sent(evidence) for record in records],
+                                   lambda evidence: [record(evidence) for record in records])
                 returned = capture.returned
                 # The rendered reply is serialised once, here. The frozen return is
                 # matched against that serialisation and the ticket is cut from it,

@@ -96,7 +96,9 @@ def test_late_delivery_does_not_restore_an_exhausted_retry_budget(isolated_io):
                     await release.wait()
                 return result
         server.add_middleware(DelayOldReply())
-        async with Client(server, client_info=Implementation(name="unnamed-test", version="test")) as client:
+        from g6.mcp.consent_transport import G6MemoryTransport    # counted as each reply is seen taken
+        async with Client(G6MemoryTransport(server), client_info=Implementation(name="unnamed-test",
+                                                                                version="test")) as client:
             async def refuse(phase):
                 result = await client.call_tool("g6_select", {"task": "review patch", "phase": phase})
                 return result.structured_content["repair"]["retries_left"]

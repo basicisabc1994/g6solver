@@ -18,10 +18,11 @@ Bounded retries: a refusal is never retried unchanged. ``retries_left`` counts d
 session from ``MAX_RETRIES``; a call sent again with the same arguments after a refusal (a ``retry`` class aside)
 leaves none. The digest of a refused call's arguments is kept in memory only, for that comparison. Only a reply
 delivered to the client counts: one withheld for consent was never seen by the agent, so the same call made again
-after the person's grant is its first attempt. ``observed`` returns the reply and its ``Record``: the consent
-transport calls ``sent()`` once it handed the reply to the client, and counts it once the reply is seen written,
-before the session's next call is assessed (``g6.mcp.consent_transport.settled``); a reply not seen written is never
-counted, and a count applies to the session's count as it is then, so a late one never gives back a spent retry.
+after the person's grant is its first attempt. ``observed`` returns the reply and its ``Record``. Where G6 owns the
+writer (its stdio server, ``g6.mcp.stdio``; ``G6MemoryTransport`` in process) every effect runs from that message's
+own callback once it was written, with evidence ``written``; a failed write runs nothing. On any other transport the
+record is ``sent()`` at the handoff and counted once the stream shows it taken (``consent_transport.settled``), with
+evidence ``inferred``. A count applies to the session's count as it is then, so a late one never gives back a retry.
 
 The repair log (``g6.core.repair_log``, ``repairs/repairs.jsonl`` under G6's state folder) is append-only and holds
 codes and ids only, never an argument or a word of text: one ``refused`` row per repair block, and one ``next`` row
@@ -238,25 +239,31 @@ def observe(tool: str, arguments: Any, reply: Any, session: Any = None) -> Any:
     return reply
 
 
-class Record:
-    """What to record about one reply. ``sent()``, once the transport handed it to the client (never for a reply
-    withheld in its place): the repair log learns how the last repair of this tool in the session ended, as that call
-    came back. Calling the record, once the reply is seen written to the client, also counts the attempt (a refusal's
-    retry count and its ``refused`` row). Each step runs once."""
+#: How a delivery effect knows the reply reached the client: ``written``, seen at a writer G6 owns (its stdio writer
+#: after the line's write and flush, ``G6MemoryTransport`` as the in-process client takes it); ``inferred``, from the
+#: handoff on a transport G6 cannot see. Every row says which, so the log never claims more than it saw.
+WRITTEN, INFERRED = "written", "inferred"
 
-    def __init__(self, ended: Callable[[], None], counted: Callable[[], None] | None = None) -> None:
+
+class Record:
+    """What to record about one reply. ``sent(evidence)``: the reply reached the client, so the repair log learns how
+    the last repair of this tool in the session ended, as that call came back. Calling the record also counts the
+    attempt (a refusal's retry count and its ``refused`` row). Each step runs once; a reply withheld in place of this
+    one, or one whose write failed, runs neither."""
+
+    def __init__(self, ended: Callable[[str], None], counted: Callable[[str], None] | None = None) -> None:
         self._ended, self._counted, self._done = ended, counted, set()
 
-    def sent(self) -> None:
+    def sent(self, evidence: str = INFERRED) -> None:
         if "sent" not in self._done:
             self._done.add("sent")
-            self._ended()
+            self._ended(evidence)
 
-    def __call__(self) -> None:
-        self.sent()
+    def __call__(self, evidence: str = INFERRED) -> None:
+        self.sent(evidence)
         if self._counted is not None and "counted" not in self._done:
             self._done.add("counted")
-            self._counted()
+            self._counted(evidence)
 
 
 def observed(tool: str, arguments: Any, reply: Any, session: Any = None) -> tuple[Any, Record]:
@@ -268,12 +275,12 @@ def observed(tool: str, arguments: Any, reply: Any, session: Any = None) -> tupl
         token = state.setdefault("_session", uuid.uuid4().hex[:12])
     is_refused = refused(reply)
 
-    def ended() -> None:
+    def ended(evidence: str) -> None:
         with _LOCK:
             pending = state.pop(("pending", tool), None)
         if pending is not None:
             _log({"event": "next", "id": pending["id"], "session": token, "tool": tool, "code": pending["code"],
-                  "outcome": "not" if is_refused else "resolved"})
+                  "outcome": "not" if is_refused else "resolved", "evidence": evidence})
 
     if not is_refused or "job_id" in reply:
         # a job's reply is bound to the digest of the result the job recorded (g6.metaharness.jobs), so no word is
@@ -312,17 +319,17 @@ def observed(tool: str, arguments: Any, reply: Any, session: Any = None) -> tupl
     found["retries_left"] = left
     code, fix_by, by = found["code"], found["fix_by"], found["by"]
 
-    def counted() -> None:
+    def counted(evidence: str) -> None:
         with _LOCK:
             # counted from the session's count as it is now, never from the one this reply was built on: a reply
             # delivered late after others never gives back a retry they spent
             state[(tool, code)] = {"left": remaining(state.get((tool, code))), "digest": digest}
         repair_id = uuid.uuid4().hex[:12]
         _log({"event": "refused", "id": repair_id, "session": token, "tool": tool, "code": code, "fix_by": fix_by,
-              "by": by})
+              "by": by, "evidence": evidence})
         if by == "person":
             _log({"event": "next", "id": repair_id, "session": token, "tool": tool, "code": code,
-                  "outcome": "person"})
+                  "outcome": "person", "evidence": evidence})
         else:
             with _LOCK:
                 state[("pending", tool)] = {"id": repair_id, "code": code}

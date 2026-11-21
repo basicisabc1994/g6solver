@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """The repair block over MCP (``g6.mcp.repair``): every refused G6 reply says who repairs it and how, from the refusal
 declarations; retries are bounded and never unchanged; the repair log keeps codes and ids only. Tests that need a
-grant use the conftest's ``declared_mcp_grants``; the others run on a fresh client that granted nothing."""
+grant use the conftest's ``declared_mcp_grants``; the others run on a fresh client that granted nothing. Every session
+runs over ``G6MemoryTransport``, whose in-process client G6 sees take each reply, so counts and rows are "written"."""
 from __future__ import annotations
 
 import asyncio
@@ -17,15 +18,18 @@ from fastmcp import Client  # noqa: E402
 from mcp.types import Implementation  # noqa: E402
 
 from g6.mcp import build_server  # noqa: E402
+from g6.mcp.consent_transport import G6MemoryTransport  # noqa: E402
 
 SECRET = "zebra-quartz-17 the person's own words"
 
 
-def _session(calls: list[tuple[str, dict]], client: str = "codex") -> list[dict]:
-    """Each call in one MCP session, in order: its reply."""
+def _session(calls: list[tuple[str, dict]], client: str = "codex", *, seen: bool = True) -> list[dict]:
+    """Each call in one MCP session, in order: its reply (``seen`` False: over FastMCP's stock in-process client, a
+    transport whose writes G6 does not see)."""
     async def run() -> list[dict]:
         out = []
-        async with Client(build_server(), client_info=Implementation(name=client, version="test")) as session:
+        async with Client(G6MemoryTransport(build_server()) if seen else build_server(),
+                          client_info=Implementation(name=client, version="test")) as session:
             for name, arguments in calls:
                 result = await session.call_tool(name, arguments, raise_on_error=False)
                 out.append(result.structured_content or json.loads(result.content[0].text))
@@ -103,8 +107,10 @@ def test_the_repair_log_keeps_codes_and_ids_only_and_says_how_each_repair_ended(
     text = log.read_text(encoding="utf-8")
     assert "zebra" not in text and "later" not in text and "person's own" not in text
     rows = [json.loads(line) for line in text.splitlines()]
-    assert {k for row in rows for k in row} <= {"event", "id", "session", "tool", "code", "fix_by", "by", "outcome"}
+    assert {k for row in rows for k in row} <= {"event", "id", "session", "tool", "code", "fix_by", "by", "outcome",
+                                                "evidence"}
     assert [row["event"] for row in rows] == ["refused", "next"] and rows[1]["outcome"] == "resolved"
+    assert {row["evidence"] for row in rows} == {"written"}             # the in-process client was seen taking each
     assert repair_stats(log)["G6_E_INPUT_VALIDATION"] == {"refused": 1, "resolved": 1, "not": 0, "person": 0,
                                                           "rate": 1.0}
 
@@ -201,7 +207,7 @@ def test_the_same_call_after_a_consent_grant_is_not_a_refusal_sent_unchanged(hom
     call = ("g6_invoke", {"component": "no_such_component", "op": "run", "params_json": "{}"})
 
     async def run() -> list[dict]:
-        async with Client(build_server(), client_info=Implementation(name="codex", version="test"),
+        async with Client(G6MemoryTransport(build_server()), client_info=Implementation(name="codex", version="test"),
                           elicitation_handler=accepting_cloud_elicitation) as session:
             async def reply(name: str, arguments: dict) -> dict:
                 result = await session.call_tool(name, arguments, raise_on_error=False)
@@ -219,7 +225,8 @@ def test_the_same_call_after_a_consent_grant_is_not_a_refusal_sent_unchanged(hom
 
 
 def test_whether_a_reply_was_written_is_looked_for_only_once_the_ledger_is_free(home: Path, monkeypatch) -> None:
-    """Looked for while admission holds the sharing ledger, a reply's writing would make code on the same event loop
+    """On a transport whose writes G6 does not see, the count is inferred from the stream (``settled``). Looked for
+    while admission holds the sharing ledger, a reply's writing would make code on the same event loop
     that reads the ledger itself (as the e2e journey does) wait on a send that waits on the loop. So each look finds
     the ledger free: a read of it from another thread finishes at once."""
     from g6.core import cloud_consent
@@ -234,7 +241,8 @@ def test_whether_a_reply_was_written_is_looked_for_only_once_the_ledger_is_free(
         held.append(reader.is_alive())
         return real(stream)
     monkeypatch.setattr(consent_transport, "_written", look)
-    replies = _session([("g6_select", {"task": "a", "phase": "verify"}), ("g6_select", {"task": "a", "phase": "x"})])
+    replies = _session([("g6_select", {"task": "a", "phase": "verify"}), ("g6_select", {"task": "a", "phase": "x"})],
+                       seen=False)          # the inferred count: G6 looks at the stream, as on HTTP or SSE
     assert [r["ok"] for r in replies] == [True, False] and held and not any(held), held
 
 

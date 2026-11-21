@@ -7,8 +7,11 @@ therefore have one order. Data already handed to transport cannot be recalled.
 """
 from __future__ import annotations
 
+import contextlib
 import contextvars
+import functools
 import json
+import weakref
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from types import MethodType
@@ -22,6 +25,7 @@ from g6.core import cloud_consent as policy
 from g6.core.ledger import digest
 from g6.core.llm import LLMError
 from g6.core.agent_guidance import WITHHELD
+from g6.mcp.repair import INFERRED, WRITTEN
 
 _CONTROL = contextvars.ContextVar('g6_public_mcp_control', default=False)
 _OUTBOUND = contextvars.ContextVar('g6_mcp_source_ticket', default=None)
@@ -83,12 +87,119 @@ def _written(stream) -> bool | None:
     return None
 
 
+class Witness:
+    """A writer G6 owns, seeing each message written: ``expect`` files a message's own callback under its key, and
+    ``written`` (called by the writer once that message's bytes are written and flushed, or taken by the in-process
+    client) fires it, once. A message whose write fails is never ``written``, so its callback never runs."""
+
+    def __init__(self, key: Callable[[SessionMessage], object]) -> None:
+        self.key, self._expected = key, {}
+
+    def expect(self, message: SessionMessage, callback: Callable[[], None]) -> None:
+        self._expected[self.key(message)] = callback
+
+    def written(self, key: object) -> None:
+        callback = self._expected.pop(key, None)
+        if callback is not None:
+            try:
+                callback()
+            except Exception:  # noqa: BLE001 - recording never fails a write already made
+                pass
+
+
+#: The send streams whose writer G6 sees (``g6.mcp.stdio.stdio_server``, ``G6MemoryTransport``), each with its witness.
+_WITNESSES: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+def witness(stream, key: Callable[[SessionMessage], object]) -> Witness:
+    """The witness of ``stream``, a send stream whose every message G6's own writer sees written."""
+    _WITNESSES[stream] = seen = Witness(key)
+    return seen
+
+
+def line(message: SessionMessage) -> str:
+    """The exact text the SDK's stdio writer writes for ``message`` (``mcp.server.stdio``)."""
+    return message.message.model_dump_json(by_alias=True, exclude_none=True) + "\n"
+
+
+class _Taking:
+    """The in-process client's read stream: each message it takes is ``written`` to the server's witness."""
+
+    def __init__(self, inner, seen: Witness) -> None:
+        self.inner, self.seen = inner, seen
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+    async def receive(self):
+        message = await self.inner.receive()
+        self.seen.written(id(message))
+        return message
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return await self.receive()
+        except (anyio.EndOfStream, anyio.ClosedResourceError):
+            raise StopAsyncIteration from None
+
+    async def __aenter__(self):
+        await self.inner.__aenter__()
+        return self
+
+    async def __aexit__(self, *args):
+        return await self.inner.__aexit__(*args)
+
+
+@functools.lru_cache(maxsize=1)
+def _memory_transport():
+    from fastmcp.client.transports import FastMCPTransport
+
+    class G6MemoryTransport(FastMCPTransport):
+        """FastMCP's in-memory transport (``FastMCPTransport.connect_session``, fastmcp 2.14), whose client read
+        stream tells G6 each reply it takes, so a reply is counted as "written" when the in-process client has it."""
+
+        @contextlib.asynccontextmanager
+        async def connect_session(self, **session_kwargs):
+            from fastmcp.client.transports import _enter_server_lifespan
+            from mcp import ClientSession
+            from mcp.shared.memory import create_client_server_memory_streams
+
+            async with create_client_server_memory_streams() as ((client_read, client_write),
+                                                                  (server_read, server_write)):
+                seen, raised = witness(server_write, id), None
+                async with anyio.create_task_group() as tg, _enter_server_lifespan(server=self.server):
+                    tg.start_soon(lambda: self.server._mcp_server.run(
+                        server_read, server_write, self.server._mcp_server.create_initialization_options(),
+                        raise_exceptions=self.raise_exceptions))
+                    try:
+                        async with ClientSession(read_stream=_Taking(client_read, seen), write_stream=client_write,
+                                                 **session_kwargs) as client_session:
+                            yield client_session
+                    except BaseException as exc:  # noqa: BLE001 - raised again once the task group closed, as FastMCP
+                        raised = exc
+                    finally:
+                        tg.cancel_scope.cancel()
+                if raised is not None:
+                    raise raised
+    return G6MemoryTransport
+
+
+def __getattr__(name):
+    if name == 'G6MemoryTransport':      # built on first use, so serving never imports FastMCP's client
+        return _memory_transport()
+    raise AttributeError(name)
+
+
 def _handed(session, stream, ticket: Ticket) -> None:
-    """The ticket's reply was handed to the client: record that (``sent``), and keep it until its writing is seen."""
+    """The ticket's reply was handed to a client on a transport G6 cannot see: record that on inferred evidence
+    (``sent``), and keep it for ``settled``."""
     if ticket.delivered is None:
         return
     try:
-        ticket.delivered.sent()
+        ticket.delivered.sent(INFERRED)
     except Exception:  # noqa: BLE001 - recording never fails a reply already sent
         pass
     unseen = getattr(session, '_g6_unseen', None)
@@ -111,7 +222,7 @@ def settled(session) -> None:
         unseen.remove(entry)
         if written:
             try:
-                entry[1].delivered()
+                entry[1].delivered(INFERRED)
             except Exception:  # noqa: BLE001 - counting an attempt never fails a call
                 pass
 
@@ -215,6 +326,13 @@ class _Stream:
         session knows it went (``settled``). The replies handed before it are settled first, while the stream still
         shows whether they were written. Nothing is awaited after the send, so nothing waits on the client while
         admission holds the sharing ledger."""
+        seen = _WITNESSES.get(self.inner)
+        if seen is not None:
+            # a writer G6 owns: every delivery effect runs from this message's own callback, once it is written
+            if ticket.delivered is not None:
+                seen.expect(packet, functools.partial(ticket.delivered, WRITTEN))
+            await self.inner.send(packet)
+            return
         settled(self.session)
         await self.inner.send(packet)
         _handed(self.session, self.inner, ticket)

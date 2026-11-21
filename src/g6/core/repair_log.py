@@ -22,7 +22,7 @@ from typing import Any
 
 LOG = ("repairs", "repairs.jsonl")
 #: The only fields a row may hold.
-FIELDS = frozenset({"event", "id", "session", "tool", "code", "fix_by", "by", "outcome"})
+FIELDS = frozenset({"event", "id", "session", "tool", "code", "fix_by", "by", "outcome", "evidence"})
 #: Maximum number of waiting rows per process; overflow never waits for disk.
 QUEUE_CAPACITY = 10_000
 #: How long one writer waits for another server's lock on either platform.

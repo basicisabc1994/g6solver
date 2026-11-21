@@ -786,4 +786,9 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
 
 
 def main() -> None:
-    build_server().run()
+    """Serve over stdio through G6's own writer, so each reply is counted once written (``g6.mcp.stdio``)."""
+    import anyio
+
+    from g6.mcp import stdio
+
+    anyio.run(stdio.serve, build_server())
