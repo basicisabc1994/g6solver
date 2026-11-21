@@ -1683,22 +1683,14 @@ def critic_report(said: str, *, marker: str = "") -> dict[str, str]:
         reason: str = ""
 
     body = said[said.rfind("[codex]"):].split("\n", 1)[-1] if "[codex]" in said else said
-    try:
-        protocol = _CriticProtocol.model_validate_json(body, strict=True)
-    except ValueError:
-        protocol = None
-    if protocol is not None:
-        if marker and protocol.read != marker:
-            return {"verdict": "unread", "rule": "", "why": "", "test": "", "error": f"the reply does not quote {marker}"}
-        value = protocol.model_dump(exclude={"read"})
-        return value if value["verdict"] == "defect" else {**value, "test": ""}
-    floor = _floor_critic_report(said, marker=marker)
-    stated, lines = _stated(body)
+    text = _outside_code(body)   # every reader of the verdict, the token and the reasons reads this, never code
+    floor = _floor_critic_report(text, marker=marker)
+    stated, lines = _stated_verdicts(text), [line[1].lower() for line in _VERDICT_LINE.finditer(text)]
     if stated or lines:
         # A verdict the critic states is final and never read by a model: on a verdict line in any layout, or as a JSON
         # object in the reply's text or a json fence, never inside a python or other code fence (a test's code). It
-        # counts only quoting the token, as the whole protocol where it is JSON, and agreeing with every other verdict
-        # the reply states; anything else is a failed review, never a clean one.
+        # counts only quoting the token, as the whole protocol where it is JSON (no key twice), and agreeing with every
+        # other verdict the reply states; anything else is a failed review, never a clean one.
         try:
             protocols = [_CriticProtocol.model_validate(one, strict=True) for one in stated]
         except ValueError:
@@ -1722,35 +1714,52 @@ def critic_report(said: str, *, marker: str = "") -> dict[str, str]:
     return value
 
 
-_FENCE = re.compile(r"^[ \t]*```[ \t]*([^\n`]*)\n(.*?)^[ \t]*```[ \t]*$", re.M | re.S)
+#: A fenced code block in any form: three or more backticks or tildes, any info string, closed by a line of the same
+#: character at least as long, or open to the end of the reply.
+_FENCE = re.compile(r"^[ \t]*(?P<fence>`{3,}|~{3,})(?P<info>[^\n]*)\n(?P<body>.*?)(?:^[ \t]*(?P=fence)[`~]*[ \t]*$|\Z)",
+                    re.M | re.S)
 _VERDICT_LINE = re.compile(r"^[\W_]*verdict[\W_]*[:=][\W_]*(\w+)", re.I | re.M)
 
 
-def _stated(body: str) -> tuple[list[dict], list[str]]:
-    """The verdicts the critic states where its protocol states them: the JSON objects with a ``verdict`` key and the
-    words of its verdict lines (``VERDICT: x``, ``**Verdict:** x``), in the reply's own text and its json fences. A
-    python or any other code fence is code, a reproduction or a fixture, so nothing in it is a verdict; nor is anything
-    after a fence that is never closed."""
-    text = _FENCE.sub(lambda fence: fence[2] if fence[1].strip().lower() == "json" else "", body)
-    opened = re.search(r"^[ \t]*```(?![ \t]*json[ \t]*$)", text, re.M | re.I)
-    text = text[:opened.start()] if opened else text
-    return _stated_verdicts(text), [line[1].lower() for line in _VERDICT_LINE.finditer(text)]
+def _info(fence: re.Match) -> str:
+    words = fence["info"].split()
+    return words[0].lower() if words else ""
+
+
+def _outside_code(body: str) -> str:
+    """The reply without its code: every fenced block (``_FENCE``) is dropped except a json one, which is the protocol's
+    own position and keeps its text. A reproduction or a fixture is code, so nothing in it is a verdict, a reason or
+    the quoted token."""
+    return _FENCE.sub(lambda fence: fence["body"] if _info(fence) == "json" else "", body)
 
 
 def _reproduction(body: str) -> str:
-    """The reproducing test of a line-form reply: its python fence (``_floor_critic_report``'s rule)."""
-    test = re.search(r"^```python\n(.*?)^```", body, re.M | re.S)
-    return test[1].strip() if test else ""
+    """The reproducing test of a line-form reply: its first python fence, in any fence form."""
+    test = next((fence for fence in _FENCE.finditer(body) if _info(fence) == "python"), None)
+    return test["body"].strip() if test else ""
+
+
+class _RepeatedKey(ValueError):
+    """A JSON object names a key twice: which value counts is not the critic's to leave open."""
+
+
+def _once(pairs: list[tuple[str, object]]) -> dict:
+    if len({key for key, _ in pairs}) != len(pairs):
+        raise _RepeatedKey("a key appears twice")
+    return dict(pairs)
 
 
 def _stated_verdicts(body: str) -> list[dict]:
     """Each JSON object in ``body``, outside any other, that has a ``verdict`` key: wherever it stands (alone, after a
     header or a progress line, mid-line). A test's code is inside its object's string, so it is not read again on its
-    own."""
-    found, decoder, at = [], json.JSONDecoder(), body.find("{")
+    own. An object that names any key twice is kept marked, so it never validates as the protocol."""
+    found, strict, loose, at = [], json.JSONDecoder(object_pairs_hook=_once), json.JSONDecoder(), body.find("{")
     while at != -1:
         try:
-            value, end = decoder.raw_decode(body, at)
+            value, end = strict.raw_decode(body, at)
+        except _RepeatedKey:
+            value, end = loose.raw_decode(body, at)
+            value = {**value, "repeated key": True} if isinstance(value, dict) else value
         except (ValueError, RecursionError):
             at = body.find("{", at + 1)
             continue

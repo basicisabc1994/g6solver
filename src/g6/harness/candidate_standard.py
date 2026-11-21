@@ -483,6 +483,10 @@ def with_confirmed(found, standard):
             if (not _same(proposed.get('args', []), answered.get('args', []))
                     or not _same(proposed.get('kwargs', {}), answered.get('kwargs', {}))):
                 continue
+            # The repository tests mapped to the candidate assert the case as it was proposed (``_tests``): once the
+            # person states another outcome for that call, they check the one rejected, so none of them is its check.
+            if not _same(proposed, answered):
+                item['checks'] = 'missing'
             item.update(status='stated', cases=deepcopy(bindings['cases']), text=one.scope, scope=one.scope,
                         confirmed_by=one.answered_by, expectation_id=one.expectation_id)
             # The call it offers runs what the person confirmed, never the alternative they did not choose.

@@ -353,12 +353,12 @@ def read(question: Question) -> Reading:
             except queue.Empty:
                 scope.expired = True  # no more sends after a timed out caller; late result is discarded
                 return finish(reason="model timeout (15 s maximum)")
+            if not ok and trusted_stop(raw):
+                raise raw   # a stop the worker delivered wins over the clock: late or not, it is never a floor reading
             if time.monotonic() - started > scope.timeout:
                 scope.expired = True
                 return finish(reason="model timeout (15 s maximum)")
             if not ok:
-                if trusted_stop(raw):
-                    raise raw
                 timed_out = isinstance(raw, TimeoutError) or isinstance(raw, LLMError) and "TIMEOUT" in str(raw)
                 if timed_out:
                     scope.expired = True

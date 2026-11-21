@@ -48,6 +48,7 @@ from g6.core.consent_callers import SDKClientWrapper, guard, sdk_send
 from g6.core.llm import (AnthropicCaller, EmptyRetry, LLMCaller, LLMError, NoModel, UnusableModel,
                          complete_structured)
 from g6.core.git_name import shown
+from g6.core.semantic import trusted_stop
 from g6.harness import verification_search as vs
 from g6.harness import verification_templates as vt
 from g6.reasoning.budget import Budget, BudgetExhausted, MeteredCaller
@@ -212,6 +213,9 @@ class _Limits:
     def __init__(self, metered: MeteredCaller, raw: LLMCaller, settings: dict, stage: list[str]) -> None:
         self.metered, self.raw, self.settings, self.stage = metered, raw, settings, stage
         self.calls: list[dict] = []
+        #: A trusted stop the caller raised. `complete_structured` turns every caller error into a refusal and keeps
+        #: none of them, so the stage raises this one itself once that call returns (`Proposer._ask`).
+        self.stop: BaseException | None = None
 
     def complete(self, system: str, user: str, *, max_tokens: int = 0) -> str:
         record = {"stage": self.stage[0], "system": system, "user": user, "reply": None, "error": "",
@@ -235,6 +239,8 @@ class _Limits:
             record.update(sent=True, error=str(exc), limit="max_wall_clock_s")
             raise
         except Exception as exc:
+            if trusted_stop(exc):
+                self.stop = exc
             withheld = any(code in str(exc) for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE))
             record.update(sent=not withheld, error=f"{type(exc).__name__}: {' '.join(str(exc).split())[:200]}")
             raise
@@ -408,6 +414,8 @@ class Proposer:
         # repository context were source-bound when `context` read them.
         with cloud.request_sources(self.context.sources):
             got = complete_structured(self.limits, _SYSTEM, user, schema, retries=RETRIES)
+        if self.limits.stop is not None:
+            raise self.limits.stop   # an operator stop, a spent allowance or unconfirmed cleanup ends the proposer
         calls = self.limits.calls[first:]
         activity.update(model_calls=sum(1 for call in calls if call.get("sent")),
                         seconds=round(time.monotonic() - started, 3))
