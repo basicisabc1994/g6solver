@@ -555,11 +555,15 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
 
                 try:
                     ran['receipt'] = receipt_store._record_observation(change.repo, node, source, ran)
+                except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+                    raise
                 except (OSError, ValueError) as exc:
                     if trusted_stop(exc):
                         raise
                     pass   # no receipt means no admitted learning; the observation's existing authority is unchanged
             return ran
+    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+        raise
     except repo_tests.RepoRefused as exc:
         if exc.code == ISOLATION_UNAVAILABLE:
             raise
@@ -1128,6 +1132,8 @@ def _run_mutant(change: repo_tests.Change, rel: str, source: str, ids: list[str]
             return repo_tests._run(copy, ids, roots=roots, timeout_s=timeout_s, network=False, mutant=(rel, source),
                                    copied=True, python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
                                    deadline=deadline, require_isolation=True, links=report)
+    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+        raise
     except repo_tests.RepoRefused as exc:
         if exc.code == ISOLATION_UNAVAILABLE:
             return {"verdict": "refused", "said": "no operating-system boundary can confine it, so it was not run"}
