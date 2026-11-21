@@ -162,10 +162,14 @@ def witness(stream) -> Witness:
 
 
 def unwitness(stream) -> None:
-    """The connection of ``stream`` ended: its witness discards every callback still held, firing none."""
-    seen = _WITNESSES.pop(stream, None)
-    if seen is not None:
-        seen.close()
+    """The connection of ``stream`` ended: its witness discards every callback still held, firing none. Called from a
+    ``finally`` on every exit path; it neither waits nor raises."""
+    try:
+        seen = _WITNESSES.pop(stream, None)
+        if seen is not None:
+            seen.close()
+    except Exception:  # noqa: BLE001 - connection cleanup never replaces the error that ended the connection
+        pass
 
 
 class _Taking:
@@ -217,19 +221,23 @@ def _memory_transport():
             async with create_client_server_memory_streams() as ((client_read, client_write),
                                                                   (server_read, server_write)):
                 seen, raised = witness(server_write), None
-                async with anyio.create_task_group() as tg, _enter_server_lifespan(server=self.server):
-                    tg.start_soon(lambda: self.server._mcp_server.run(
-                        server_read, server_write, self.server._mcp_server.create_initialization_options(),
-                        raise_exceptions=self.raise_exceptions))
-                    try:
-                        async with ClientSession(read_stream=_Taking(client_read, seen), write_stream=client_write,
-                                                 **session_kwargs) as client_session:
-                            yield client_session
-                    except BaseException as exc:  # noqa: BLE001 - raised again once the task group closed, as FastMCP
-                        raised = exc
-                    finally:
-                        tg.cancel_scope.cancel()
-                unwitness(server_write)        # the connection ended: a reply it never read is never counted
+                try:
+                    async with anyio.create_task_group() as tg, _enter_server_lifespan(server=self.server):
+                        tg.start_soon(lambda: self.server._mcp_server.run(
+                            server_read, server_write, self.server._mcp_server.create_initialization_options(),
+                            raise_exceptions=self.raise_exceptions))
+                        try:
+                            async with ClientSession(read_stream=_Taking(client_read, seen),
+                                                     write_stream=client_write, **session_kwargs) as client_session:
+                                yield client_session
+                        except BaseException as exc:  # noqa: BLE001 - raised again once the group closed, as FastMCP
+                            raised = exc
+                        finally:
+                            tg.cancel_scope.cancel()
+                finally:
+                    # the connection ended, on whatever path (an error, a cancellation): a reply it never read is
+                    # never counted; unwitness neither waits nor raises
+                    unwitness(server_write)
                 if raised is not None:
                     raise raised
     return G6MemoryTransport
