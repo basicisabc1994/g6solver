@@ -1465,9 +1465,7 @@
       "explain",
       "check"
     ],
-    "requires": [
-      "_streams"
-    ],
+    "requires": [],
     "sensitive_ops": [],
     "vetting": null
   },
