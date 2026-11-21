@@ -3,6 +3,17 @@
 **Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.**
 
 G6 is a Python library (3.12 or 3.13). Every component works on its own and declares any other component it uses.
+
+For the agentic library route (`from g6._agentic.kernel import run`), the trust boundary is the process. Your
+responders, validators and caller objects run with your own authority in your process. The kernel's original-first
+execution, seals and digests, single use, authority record, confined child and prohibition on using substitutes as
+evidence apply against the MCP client, model replies and child; they do not defend against Python you run in the
+same process on your own objects. Callable pins check accidental changes on a best-effort basis. Code reached through a responder's module globals, and functions held in
+defaults, dictionary values, partial arguments, tuples or lists in closures, instance attributes or a followed class's
+properties, are not followed (review 3 F1: `default_function`, `dict_value`,
+`partial_argument`); in-process seal discovery and rewriting with `gc.get_referrers` is also outside the boundary
+(F4). Over MCP, `g6_agentic_run` accepts data only and builds a caller from G6's own provider callers; a client cannot
+supply a responder, validator or caller object. A substitute remains qualified-draft at best.
 `g6.harness` is the one place they are composed: a standard (a goal and its checks) runs through intake, plan,
 execute, adjudicate and remember.
 

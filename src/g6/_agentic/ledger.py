@@ -6,7 +6,7 @@ The file is owned by the same user as G6: it records what was done, it does not 
 writing it. An entry has a closed schema (:class:`Entry`): codes, names from G6's own declarations, digests, counts
 and historical person metadata. New entries record remote provider consent, local model admission, consent refusal
 or the caller's code allowance, with the observed provider where applicable and an empty name; no override dialog
-is claimed.
+is claimed. Each send's authority is kept alongside the combined authority; historical entries may omit the list.
 No parameter, result, exception text, refusal detail or reason is kept. The writer refuses any other field or value,
 and then nothing is written. :func:`entry` keeps that much of an override's record. It may direct where the loop looks
 next; it never counts as evidence that a change works (design 10.10)."""
@@ -19,7 +19,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, TypeAdapter, model_validator
+from pydantic_core import PydanticCustomError
 
 from g6._agentic import decode
 from g6.core.ledger import ChainLedger
@@ -57,6 +58,11 @@ class Person(_Closed):
     name: str = Field(max_length=200)   # as the person gave it: the one free text an entry holds
     authenticated: Literal[False]
     provider: Name = ""   # optional for historical entries; never stored in the name field
+
+
+class SendAuthority(_Closed):
+    answer: Literal["allowed in code", "provider consent", "local model", "refused by the consent check"]
+    provider: Name
 
 
 class Check(_Closed):
@@ -97,12 +103,28 @@ class Entry(_Closed):
     model: str = Field(pattern=_NAME)
     trigger: Trigger
     person: Person
+    authority_sends: list[SendAuthority] = Field(default_factory=list)  # absent in historical entries
     budget: Limits
     checks: list[Check] = Field(max_length=64)
     rechecked: StrictBool
     recheck_status: str = Field("", pattern=_NAME)
     digests: Digests
     cost: Cost
+
+    @model_validator(mode="after")
+    def _bounded_authority_sends(self) -> Entry:
+        # The bound belongs to this run, including nondefault budgets of any size the kernel accepts; historical
+        # omission remains an empty list. The list is checked by one fixed schema and its length compared in Python,
+        # so no schema is built from the budget (pydantic-core cannot hold a bound past 2**63 - 1).
+        _SENDS.validate_python(self.authority_sends, strict=True)
+        if len(self.authority_sends) > self.budget.max_model_calls:
+            raise PydanticCustomError(   # the same error type a schema bound raises
+                "too_long", "authority_sends holds {actual_length} sends, more than the run's {max_length} model calls",
+                {"actual_length": len(self.authority_sends), "max_length": self.budget.max_model_calls})
+        return self
+
+
+_SENDS = TypeAdapter(list[SendAuthority])
 
 
 def path() -> Path:
@@ -123,6 +145,8 @@ def entry(record: Mapping[str, Any]) -> dict[str, Any]:
         "mode": record.get("mode"), "model": record.get("model"),
         "trigger": {k: trigger[k] for k in ("kind", "code", "exception") if k in trigger},
         "person": dict(record.get("person") or {}),
+        "authority_sends": [{"answer": one.get("answer"), "provider": one.get("provider")}
+                            for one in record.get("authority_sends") or ()],
         "budget": {**budget, "max_wall_clock_s": float(budget.get("max_wall_clock_s", 0))},
         "checks": [{"check": c.get("check"), "passed": c.get("passed")} for c in record.get("checks") or ()],
         "rechecked": bool(record.get("rechecked")),
