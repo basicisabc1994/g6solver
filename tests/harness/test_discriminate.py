@@ -233,3 +233,73 @@ def test_over_mcp_select_offers_the_template_and_the_review_reads_it(repo, monke
     [read] = result["assessment"]["explanations"]
     assert read["observed"] == "unconfirmed_failure" and read["consistent_with"] == ["patch_wrong_for_case"]
     assert [row["reading"] for row in read["explanations"]] == ["consistent", "inconsistent"]
+
+
+# --- review 1: a reading is bound to its own check's run, never to a caller-chosen id ------------------------------
+
+def _colliding_review(monkeypatch):
+    """Codex review 1 of wire-diagnose, its reproducer: the caller's check takes the id the proposer gives its first
+    free-form check (g6p-check-1); the caller's fails on the patch, the proposer's passes on both."""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from g6.harness import patch_review, verification_proposer
+    from g6.workforce import repo_tests
+    from tests.harness.test_verification_proposer import Model
+
+    repo = Path(__file__).resolve().parents[2]
+    # repository I/O is synthetic: nothing here reads or writes the repository
+    change = repo_tests.Change(repo, "HEAD", "a" * 40, "a" * 40, (), {}, {}, (), ())
+    monkeypatch.setattr(repo_tests, "checked_repo", lambda path: repo)
+    monkeypatch.setattr(repo_tests, "_git", lambda *a, **kw: b"")
+    monkeypatch.setattr(repo_tests, "snapshot", lambda root: {})
+    monkeypatch.setattr(repo_tests, "change", lambda *a, **kw: change)
+    monkeypatch.setattr(repo_tests, "test_related", lambda *a: set())
+    monkeypatch.setattr(repo_tests, "ignored_inputs", lambda *a: SimpleNamespace(
+        loadable=[], other=[], complete=True, named_like_modules=[]))
+    monkeypatch.setattr(repo_tests, "derive_tests", lambda *a: ([], 0))
+    monkeypatch.setattr(repo_tests, "diff_text", lambda *a: "")
+    monkeypatch.setattr(patch_review, "_closing", lambda *a, **kw: ({}, [], {}))
+    monkeypatch.setattr(verification_proposer, "boundary", lambda root: "")
+    caller_source = "def test_caller():\n    assert False\n"
+    model_source = "def test_model():\n    assert True\n"
+    stage = Stage(monkeypatch, {caller_source: {"patch": "failed", "base": "passed"},
+                                model_source: {"patch": "passed", "base": "passed"}})
+    proposed = copy.deepcopy(discriminate.CHECK)
+    proposed.update(id="g6p-check-1", requirement_id="R1", source=caller_source)
+    model = Model({"free_form": {"checks": [{"requirement_id": "R1", "intent": "change", "file": "test_model.py",
+                                              "source": model_source}]}})
+    got = review_patch(repo, task=TASK, requirements=[{"id": "R1", "text": "add returns the sum", "checks": []}],
+                       proposed_checks=[proposed], search={"propose": True, "proposer": "free_form"}, llm=model.llm)
+    return got, stage
+
+
+def test_review1_a_caller_id_in_the_proposers_namespace_is_refused_before_anything_runs(monkeypatch):
+    got, stage = _colliding_review(monkeypatch)
+    assert got["completion_state"] == "blocked-escalated" and got["warning_card"]["code"] == "G6_E_INPUT_VALIDATION"
+    assert "g6p-" in got["warning_card"]["message"] and stage.calls == []
+
+
+@pytest.mark.parametrize("ident", ["g6p-check-1", "G6P-relation-2", "g6p-scenario-1"])
+def test_review1_every_validator_refuses_a_caller_id_in_the_proposers_namespace(ident):
+    from g6.harness import verification_templates
+
+    with pytest.raises(ValueError, match="g6p-"):
+        verification_search.proposed_checks([{**_filled(discriminate.TEMPLATE)["proposed_checks"][0], "id": ident}],
+                                            {"diagnosis"})
+    with pytest.raises(ValueError, match="g6p-"):
+        verification_templates.template_instances([{"id": ident, "template": "example.v1", "requirement_id": "R1",
+                                                     "intent": "change", "bindings": {}}], {"R1"})
+
+
+def test_review1_each_reading_is_its_own_checks_result_even_when_ids_collide(monkeypatch):
+    from g6.mcp.review_reply import compact
+
+    # the namespace refusal switched off, to reach the reading with two checks of one id
+    monkeypatch.setattr(verification_search, "reserved_id", lambda ident, **kw: False)
+    got, stage = _colliding_review(monkeypatch)
+    assert len(stage.calls) == 4, got
+    activities = [a for a in got["assessment"]["completion"]["activities"] if a.get("activity") == "proposed check"]
+    assert [a["result"] for a in activities] == ["unconfirmed_failure", "not_refuted"]
+    [reading] = compact(got, "review-wd1", None)["assessment"]["explanations"]
+    assert reading["observed"] == "unconfirmed_failure" and reading["consistent_with"] == ["patch_wrong_for_case"]

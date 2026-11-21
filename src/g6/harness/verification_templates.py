@@ -1481,8 +1481,9 @@ def _refused_bindings(where: str, template: str, bindings: Any, exc: ValidationE
     return BindingsRefused(message + ("; " + "; ".join(named) if named else ""), bindings_help(template, bindings))
 
 
-def template_instances(value, requirement_ids) -> list[TemplateInstance]:
-    """``value`` as the review's template instances, or a ``ValueError`` that names the instance and what is wrong:
+def template_instances(value, requirement_ids, *, generated: bool = False) -> list[TemplateInstance]:
+    """``value`` as the review's template instances, or a ``ValueError`` that names the instance and what is wrong
+    (``generated``: G6's proposer validating its own, whose ids are in ``vs.GENERATED_PREFIX``'s namespace):
     each names a template of ``TEMPLATES`` and a requirement of the review (``requirement_ids``), declares an intent the
     template takes, and holds bindings that are JSON data its bindings model accepts. A request's instance cannot set
     ``provenance``; a ``TemplateInstance`` built by G6's own code keeps its own."""
@@ -1510,7 +1511,7 @@ def template_instances(value, requirement_ids) -> list[TemplateInstance]:
         definition = REGISTRY.get(one.template)
         if definition is None:
             raise ValueError(f"{where}: template must be one of {', '.join(sorted(REGISTRY))}")
-        if vs.reserved_id(one.id):
+        if vs.reserved_id(one.id, generated=generated):
             raise ValueError(f"{where}: {vs.RESERVED_ID}")
         if one.intent not in definition.intents:
             raise ValueError(f"{where}: {one.template} checks that behaviour is kept: its intent is preserve")

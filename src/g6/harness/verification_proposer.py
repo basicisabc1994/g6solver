@@ -487,7 +487,7 @@ class Proposer:
             return
         ident = f"g6p-{template.split('.')[0]}-{len(self.found.instances) + 1}"
         try:
-            [one] = vt.template_instances([{"id": ident, "template": template, **item}], self.ids)
+            [one] = vt.template_instances([{"id": ident, "template": template, **item}], self.ids, generated=True)
         except ValueError as exc:
             self._refused(template, item["requirement_id"], f"its instance was refused: {exc}"[:400])
             return
@@ -550,7 +550,7 @@ class Proposer:
         try:
             [check] = vs.proposed_checks([{"id": ident, "requirement_id": requirement, "intent": item["intent"],
                                            "file": f"test_g6_proposed_{index}.py", "source": item["source"],
-                                           "test": item.get("test", "")}], self.ids)
+                                           "test": item.get("test", "")}], self.ids, generated=True)
             placed = vs.placements(self.root, [check])
         except ValueError as exc:
             self._refused(FREE, requirement, f"it was refused: {exc}"[:400])

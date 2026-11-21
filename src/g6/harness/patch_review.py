@@ -1335,9 +1335,11 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     readings = []
     if any(one.explanations for one in proposed):   # each check's result read against the explanations it states
         from g6.harness import discriminate
-        results = {a["check"]: a.get("result", "error") for a in (search.activities if search is not None else ())}
-        readings = [discriminate.read(one.explanations, results.get(one.id, "error"), check=one.id,
-                                      requirement=one.requirement_id, intent=one.intent)
+        # by the check object itself, never its id, which the caller chose (the review of wire-diagnose, 1)
+        ran = search.checked if search is not None else ()
+        readings = [discriminate.read(one.explanations, next(
+                        (a.get("result", "error") for check, a in ran if check is one), "error"), check=one.id,
+                        requirement=one.requirement_id, intent=one.intent)
                     for one in proposed if one.explanations]
     if formal is not None:
         verification_formal.annotate(evaluated, formal)

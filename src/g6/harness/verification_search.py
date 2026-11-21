@@ -282,11 +282,23 @@ _clock = time.monotonic
 RESERVED_SUFFIX = ".symbolic"
 
 
-def reserved_id(ident: object) -> bool:
-    return isinstance(ident, str) and ident.lower().endswith(RESERVED_SUFFIX)
+#: The prefix of the ids G6's proposer gives its checks, instances and scenarios (``verification_proposer``): a caller's
+#: id never begins with it, in any case, so no record keyed by a check's id can take one for the other (the review of
+#: wire-diagnose, 1).
+GENERATED_PREFIX = "g6p-"
 
 
-RESERVED_ID = f"ids ending in {RESERVED_SUFFIX} are G6's own, for the re-runs of what Z3 finds"
+def reserved_id(ident: object, *, generated: bool = False) -> bool:
+    """Whether ``ident`` is one of G6's own: a symbolic re-run's, or (unless ``generated``, G6's proposer naming its
+    own) the proposer's."""
+    if not isinstance(ident, str):
+        return False
+    lowered = ident.lower()
+    return lowered.endswith(RESERVED_SUFFIX) or (not generated and lowered.startswith(GENERATED_PREFIX))
+
+
+RESERVED_ID = (f"ids ending in {RESERVED_SUFFIX} or beginning with {GENERATED_PREFIX} are G6's own, for the re-runs "
+               "of what Z3 finds and the checks G6's proposer adds")
 
 
 class ProposedCheck(BaseModel):
@@ -332,9 +344,10 @@ def _source_problem(source: str) -> str:
             if size > MAX_SOURCE_BYTES else "")
 
 
-def proposed_checks(value, requirement_ids) -> list[ProposedCheck]:
+def proposed_checks(value, requirement_ids, *, generated: bool = False) -> list[ProposedCheck]:
     """``value`` as the review's proposed checks, or a ``ValueError`` that names the check and what is wrong. Each
-    names a requirement of the review (``requirement_ids``: the normative ones) and declares an intent."""
+    names a requirement of the review (``requirement_ids``: the normative ones) and declares an intent. ``generated``:
+    G6's proposer validating its own, whose ids are in ``GENERATED_PREFIX``'s namespace."""
     if not isinstance(value, (list, tuple)):
         raise ValueError("proposed_checks must be a list of {id, requirement_id, intent, file, source, test}")
     if len(value) > MAX_CHECKS:
@@ -348,7 +361,7 @@ def proposed_checks(value, requirement_ids) -> list[ProposedCheck]:
         if item.get("intent") not in ("preserve", "change"):
             raise ValueError(f"{where}: intent must be preserve (behaviour the patch must keep) or change (behaviour "
                              "the patch must bring); a check that declares neither is not run")
-        if reserved_id(name):
+        if reserved_id(name, generated=generated):
             raise ValueError(f"{where}: {RESERVED_ID}")
         try:
             one = ProposedCheck.model_validate(item)
@@ -778,6 +791,9 @@ class Search:
     next_actions: list[str] = field(default_factory=list)
     defects: list[dict] = field(default_factory=list)
     questions: list[dict] = field(default_factory=list)
+    #: Each check run or listed, with its own activity, in order: what reads a check's result back takes it from here,
+    #: by the check object itself, never by its id (the review of wire-diagnose, 1).
+    checked: list[tuple[ProposedCheck, dict]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -819,8 +835,9 @@ def _activity(one: ProposedCheck, placed: str, origin: Origin = FREE_FORM) -> di
 def not_run(checks: list[ProposedCheck], placed: dict[str, str], why: str,
             origins: dict[str, Origin] | None = None) -> Search:
     """The stage, not run: every check listed as skipped, with why."""
-    return Search(activities=[{**_activity(one, placed[one.id], (origins or {}).get(one.id, FREE_FORM)),
-                               "result": "skipped", "reason": why} for one in checks])
+    listed = [(one, {**_activity(one, placed[one.id], (origins or {}).get(one.id, FREE_FORM)),
+                     "result": "skipped", "reason": why}) for one in checks]
+    return Search(activities=[activity for _, activity in listed], checked=listed)
 
 
 def _summary(found: dict) -> dict:
@@ -867,6 +884,7 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
         origin = (origins or {}).get(one.id, FREE_FORM)
         activity = _activity(one, placed[one.id], origin)
         done.activities.append(activity)
+        done.checked.append((one, activity))
         if stopped or deadline - _clock() < 2 * MIN_RUN_S:
             stopped = True
             activity.update(result="skipped", reason=OUT_OF_TIME)
