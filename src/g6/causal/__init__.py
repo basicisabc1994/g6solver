@@ -69,3 +69,28 @@ __g6_extras__: dict[str, tuple[str, ...]] = {"causal": ("dowhy",)}
 __all__ = ["CausalBlock", "CausalGraph", "CausalInput", "CausalResult", "Refusal", "adjustment_sets",
            "backdoor_paths", "checks", "criteria", "d_separated", "estimate_effect", "finish", "identify",
            "instruments", "read_graph"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_CAUSAL_CERTIFICATE_REFUTED": "person",
+    "G6_E_CAUSAL_ENGINES_DISAGREE": "none",
+    "G6_E_CAUSAL_ENGINE_ERROR": "none",
+    "G6_E_CAUSAL_ENGINE_UNAVAILABLE": "person",
+    "G6_E_CAUSAL_ESTIMATE": "none",
+    "G6_E_CAUSAL_GRAPH_ANSWER": "none",
+    "G6_E_CAUSAL_GRAPH_CYCLE": "input",
+    "G6_E_CAUSAL_GRAPH_INVALID": "input",
+    "G6_E_CAUSAL_INPUT_INVALID": "input",
+    "G6_E_CAUSAL_INPUT_TOO_LARGE": "person",
+    "G6_E_CAUSAL_METHOD_NOT_APPLICABLE": "none",
+    "G6_E_CAUSAL_NOT_IDENTIFIABLE": "none",
+    "G6_E_CAUSAL_ONE_ENGINE": "none",
+    "G6_E_CAUSAL_REFUTATION_INCOMPLETE": "none",
+    "G6_E_CAUSAL_REFUTATION_OFF": "none",
+    "G6_E_CAUSAL_REFUTED": "none",
+    "G6_E_CAUSAL_SELF_LOOP": "input",
+    "G6_E_CAUSAL_TIME_LIMIT": "person",
+    "G6_E_CAUSAL_TIME_LIMIT_TOO_LONG": "person",
+    "G6_E_CAUSAL_UNKNOWN_NODE": "input",
+}

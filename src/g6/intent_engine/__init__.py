@@ -31,3 +31,13 @@ __g6_introduces__: tuple[str, ...] = ()
 
 __all__ = ["Check", "check_output", "harness_checks", "interpret", "apply_intent_floor", "Assumption", "CheckpointSpec", "GoalInput", "IntentContract", "IntentElicitor", "IntentQuestion",
            "IntentSession"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_CRITERIA_UNVERIFIABLE": "none",
+    "G6_E_CRITERION_CHECK_FAILED": "none",
+    "G6_E_INTENT_BLOCKED": "person",
+    "G6_E_INTENT_FLOOR_FAILED": "none",
+    "G6_E_INTENT_REVIEW_FAILED": "none",
+}

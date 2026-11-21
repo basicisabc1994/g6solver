@@ -10,6 +10,7 @@ resolved, and a hard link, which resolving never shows. Each escape is refused; 
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import unicodedata
@@ -141,6 +142,123 @@ def test_the_link_walk_sees_a_junction_named_with_a_trailing_space_in_the_roots_
         os.rmdir(link)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' per-folder case-sensitive flag")
+@pytest.mark.parametrize("made", [False, True])
+def test_a_folder_named_as_the_root_but_for_case_is_outside_it(tmp_path: Path, made: bool) -> None:
+    # in a case-sensitive folder 'WS' is not 'ws', though pathlib compares the two words as equal on Windows: the check
+    # must ask the file system which folder the value reaches, not compare the words
+    from tests.core.test_storage_state_path import make_case_sensitive
+
+    parent = tmp_path.resolve() / "cs"
+    make_case_sensitive(parent)
+    try:
+        root = parent / "ws"
+        root.mkdir()
+        if made:
+            (parent / "WS").mkdir()
+            (parent / "WS" / "secret.txt").write_text("x", encoding="utf-8")
+        for raw in ("../WS/made/kept.json", "../WS/secret.txt", "../WS"):
+            for refuse_links in (False, True):
+                with pytest.raises(PathRefused, match="outside") as refused:
+                    contained(root, raw, refuse_links=refuse_links)
+                assert refused.value.outside
+            with pytest.raises(PathRefused, match="outside"):
+                storage.confined_path(str(parent / "WS" / raw.removeprefix("../WS").lstrip("/")), (root,))
+        assert contained(root, "made/kept.json") == root / "made" / "kept.json"
+    finally:
+        shutil.rmtree(parent)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows delete-pending folders")
+@pytest.mark.parametrize("refuse_links", [False, True])
+def test_a_folder_kept_delete_pending_holds_nothing_and_is_answered_at_once(root: Path, refuse_links: bool) -> None:
+    # every lstat below a folder marked for delete answers access denied while another program's handle keeps it.
+    # Windows marks only an empty folder and makes nothing in a marked one, so nothing is below it: the path is inside
+    # (never OUTSIDE_ROOT, never the raw PermissionError), answered without waiting
+    import time
+
+    from tests.core.test_storage_state_path import delete_pending
+
+    base = root.resolve()
+    with delete_pending(base / "dp"):
+        started = time.perf_counter()
+        given = contained(root, "dp/x.json", refuse_links=refuse_links)
+        took = time.perf_counter() - started
+        assert storage.confined_path(str(base / "dp" / "x.json"), (root,)) == base / "dp" / "x.json"
+    assert given == base / "dp" / "x.json"
+    assert took < 0.05, f"contained waited {took * 1000:.0f} ms"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows access-denied answers")
+@pytest.mark.parametrize("refuse_links", [False, True])
+def test_a_folder_that_cannot_be_read_is_refused_soon_as_input_not_as_outside(root: Path, refuse_links: bool,
+                                                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    # a folder G6 may not read (it is not being deleted) could hide a link: after a brief second ask the path is refused
+    # as one G6 cannot read now (a workspace says INPUT_INVALID), never as outside, never with the raw PermissionError
+    import time
+
+    base = root.resolve()
+    (base / "locked").mkdir()
+    real_lstat = os.lstat
+
+    def denied(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if str(base / "locked") + "\\" in str(path):
+            raise OSError(13, "Access is denied", str(path), 5)
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "lstat", denied)
+    started = time.perf_counter()
+    with pytest.raises(PathRefused, match="a folder on the path cannot be read now") as refused:
+        contained(root, "locked/x.json", refuse_links=refuse_links)
+    took = time.perf_counter() - started
+    assert refused.value.outside is False
+    assert took < 0.05, f"contained waited {took * 1000:.0f} ms"
+
+
+@pytest.mark.parametrize("refuse_links", [False, True])
+def test_paths_inside_are_never_refused_while_folders_on_them_are_removed_and_made(root: Path,
+                                                                                 refuse_links: bool) -> None:
+    # on Windows resolving a path while another thread removes and makes the folders on it can name a $Extend\$Deleted
+    # file or come back with \\?\: the path is inside all the same, so contained looks again at the caller's words
+    # joined onto the root, through the same check (state_path does the same)
+    import threading
+
+    base = root.resolve()
+    stop = threading.Event()
+    refused: list[str] = []
+
+    def write(number: int) -> None:
+        while not stop.is_set():
+            try:
+                shutil.rmtree(base / f"d{number}", ignore_errors=True)
+                (base / f"d{number}" / "a" / "b").mkdir(parents=True, exist_ok=True)
+                (base / f"d{number}" / "a" / "b" / "x.json").write_text("{}", encoding="utf-8")
+            except OSError:                               # Windows: another thread holds the folder just now
+                pass
+
+    def ask(number: int) -> None:
+        for _ in range(1000):
+            raw = f"d{number}/a/b/x.json"
+            try:
+                found = contained(root, raw, refuse_links=refuse_links)
+            except (PathRefused, OSError) as error:
+                refused.append(f"{type(error).__name__}: {error}")
+                continue
+            if found != base / raw:
+                refused.append(f"gave {found}")
+
+    writers = [threading.Thread(target=write, args=(n,)) for n in range(2)]
+    askers = [threading.Thread(target=ask, args=(n,)) for n in range(2)]
+    for thread in writers + askers:
+        thread.start()
+    for thread in askers:
+        thread.join()
+    stop.set()
+    for thread in writers:
+        thread.join()
+    assert (len(refused), refused[:3]) == (0, [])
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows drops a trailing space or dot from a name")
 @pytest.mark.parametrize("raw", ["a.", "a ", "sub./x.txt", "sub /x.txt", "x.txt.", "sub\\x.txt ", "sub\\...\\x"])
 def test_a_part_ending_in_a_space_or_a_dot_is_refused_as_input(root: Path, raw: str) -> None:
@@ -200,16 +318,41 @@ def test_an_absolute_path_is_allowed_only_inside(root: Path) -> None:
 
 
 @pytest.mark.parametrize("raw", ["\\\\attacker.example\\share\\x.txt", "//attacker.example/share/x.txt",
-                                 "\\\\?\\C:\\Windows\\x.txt", "\\\\.\\PhysicalDrive0"])
+                                 "\\\\?\\C:\\Windows\\x.txt", "\\\\.\\PhysicalDrive0", "\\??\\C:\\Windows\\x.txt",
+                                 "/??/C:/Windows/x.txt"])
 def test_a_network_or_device_path_is_refused_before_anything_is_resolved(root: Path, raw: str,
                                                                         monkeypatch: pytest.MonkeyPatch) -> None:
-    # resolving \\host\share on Windows opens it, which reaches the host over SMB (and offers it a login)
+    # resolving \\host\share on Windows opens it, which reaches the host over SMB (and offers it a login); \??\ is the
+    # NT form open takes as it is. Refused as outside on the words, in the same fixed words state_path gives, no path
     def never(self: Path, strict: bool = False) -> Path:
         raise AssertionError("resolved a network or device path")
 
     monkeypatch.setattr(Path, "resolve", never)
-    with pytest.raises(PathRefused, match="network or device"):
+    with pytest.raises(PathRefused, match="network or device") as refused:
         contained(root, raw)
+    assert refused.value.outside is True
+    assert raw not in refused.value.reason
+    with pytest.raises(PathRefused) as from_state_path:
+        storage.state_path(raw)
+    assert from_state_path.value.reason.endswith(refused.value.reason)
+
+
+@pytest.mark.parametrize("system", ["nt", "posix"])
+@pytest.mark.parametrize("raw", ["\\\\name", "\\??\\name", "//name", "/\\name", "\\/name"])
+def test_a_network_or_device_form_is_read_as_the_system_reads_it(raw: str, system: str,
+                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    # Windows reads '\\name' and '\??\name' as network or device paths; Linux and macOS read a backslash as a character
+    # of a plain name, so there only '//name' (a path some systems take as a network one) is refused
+    monkeypatch.setattr(storage.os, "name", system)
+    why = storage._elsewhere(raw)
+    monkeypatch.undo()
+    assert (why is not None) == (system == "nt" or raw.startswith("//")), (raw, system, why)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX names")
+@pytest.mark.parametrize("name", ["\\\\name", "\\??\\name"])
+def test_a_posix_name_holding_backslashes_is_a_plain_name(root: Path, name: str) -> None:
+    assert contained(root, name) == root.resolve() / name
 
 
 @pytest.mark.parametrize("raw", ["", "  ", "a\x00b.txt", "a\nb.txt", "C:secret.txt", "notes.txt:hidden", "CON",
@@ -250,3 +393,166 @@ def test_a_symbolic_link_is_not_a_plain_file(root: Path) -> None:
 def test_state_path_still_refuses_an_escape_from_the_g6_home() -> None:
     with pytest.raises(ValueError, match="escapes"):
         storage.state_path("..", "elsewhere")
+
+
+#: Names a check and open could read two ways on Windows: a stream (open reads 'j::$INDEX_ALLOCATION' as the folder
+#: 'j', pathlib as the drive 'J:'), a control character, half of a UTF-16 character, a device, a trailing space or dot.
+TWO_WAYS = ["j::$INDEX_ALLOCATION", "f.txt:s:$DATA", "a\x01b", "dp\udc80", "con.txt", "COM1.log", "nul", "x.", "x "]
+
+
+def _asked_nothing(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record every lstat and resolve; the input gate must refuse before either is asked."""
+    asked: list[str] = []
+    real_lstat, real_resolve = os.lstat, Path.resolve
+    monkeypatch.setattr(os, "lstat", lambda p, *a, **k: asked.append(f"lstat {p}") or real_lstat(p, *a, **k))
+    monkeypatch.setattr(Path, "resolve", lambda self, strict=False: asked.append(f"resolve {self}")
+                        or real_resolve(self, strict))
+    return asked
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="names Windows reads two ways")
+@pytest.mark.parametrize("name", TWO_WAYS)
+def test_a_name_read_two_ways_is_refused_before_the_file_system_is_asked(root: Path, name: str,
+                                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    # one input gate in every entry point, on the caller's words, before any resolve or lstat: G6's own reason, never a
+    # path, never refused as outside; each name sits below another in a relative path ('j::$INDEX_ALLOCATION' first
+    # is a drive-qualified path, refused as outside)
+    base = root.resolve()
+    asked = _asked_nothing(monkeypatch)
+    calls = [lambda: contained(root, f"sub/{name}/x.json"),
+             lambda: contained(root, f"sub/{name}/x.json", refuse_links=True),
+             lambda: contained(root, f"{base}\\{name}\\x.json"),
+             lambda: contained(root, f"{base}\\{name}\\x.json", refuse_links=True),
+             lambda: storage.confined_path(f"{base}\\{name}\\x.json", (root,))]
+    for call in calls:
+        with pytest.raises(PathRefused) as refused:
+            call()
+        assert refused.value.outside is False
+        assert str(base) not in refused.value.reason and name not in refused.value.reason, refused.value.reason
+    assert asked == []
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows drive letters")
+@pytest.mark.parametrize("refuse_links", [False, True])
+def test_an_absolute_path_on_another_drive_is_outside_before_the_file_system_is_asked(
+        root: Path, refuse_links: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    base = root.resolve()
+    other = "Q:" if base.drive.upper() != "Q:" else "R:"
+    asked = _asked_nothing(monkeypatch)
+    with pytest.raises(PathRefused) as refused:
+        contained(root, other + str(base)[2:] + "\\x.json", refuse_links=refuse_links)
+    assert (refused.value.outside, asked) == (True, [])
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows drive letters")
+@pytest.mark.parametrize("raw", ["C:x", "C:", "C:..\\x", "c:secret.txt", "j::$INDEX_ALLOCATION\\x.json"])
+@pytest.mark.parametrize("refuse_links", [False, True])
+def test_a_drive_qualified_relative_path_is_outside_before_the_file_system_is_asked(
+        root: Path, raw: str, refuse_links: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Windows reads 'C:x' against that drive's current folder, never the root: one rule with state_path, outside, on
+    # the words
+    asked = _asked_nothing(monkeypatch)
+    with pytest.raises(PathRefused) as refused:
+        contained(root, raw, refuse_links=refuse_links)
+    assert (refused.value.outside, asked) == (True, []), refused.value.reason
+    with pytest.raises(PathRefused) as by_state_path:
+        storage.state_path(raw)
+    assert by_state_path.value.outside is True
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junctions and stream names")
+@pytest.mark.parametrize("stream",["j::$INDEX_ALLOCATION", "j:$I30:$INDEX_ALLOCATION"])
+def test_a_stream_name_on_a_one_letter_junction_out_of_the_root_is_refused(root: Path, stream: str) -> None:
+    # open reads '<root>\j::$INDEX_ALLOCATION\secret.txt' as '<root>\j\secret.txt' and goes through the junction;
+    # pathlib reads the part as the drive 'J:', so a walk over pathlib's parts never saw the junction
+    base = root.resolve()
+    if not _junction(base / "j", root.parent / "outside"):
+        pytest.skip("junctions cannot be made here")
+    try:
+        raw = f"{base}\\{stream}\\secret.txt"
+        for call in (lambda: contained(root, raw), lambda: contained(root, raw, refuse_links=True),
+                     lambda: storage.confined_path(raw, (root,))):
+            with pytest.raises(PathRefused):
+                call()
+    finally:
+        os.rmdir(base / "j")
+
+
+class _Interrupted(os.PathLike):
+    def __fspath__(self) -> str:
+        raise KeyboardInterrupt
+
+
+@pytest.mark.parametrize("value", [None, b"x.json", 1], ids=["none", "bytes", "int"])
+@pytest.mark.parametrize("call", ["contained", "refuse_links", "confined_path"])
+def test_a_value_that_is_not_text_is_refused_in_g6s_words(root: Path, value: object, call: str) -> None:
+    # a caller that hands None, bytes or a number gets a refusal in G6's words, not a raw TypeError (nor, for bytes,
+    # "the path is empty"); an interrupt while the value is read is not caught
+    calls = {"contained": lambda v: contained(root, v), "refuse_links": lambda v: contained(root, v, refuse_links=True),
+             "confined_path": lambda v: storage.confined_path(v, (root,))}
+    with pytest.raises(PathRefused, match="not text") as refused:
+        calls[call](value)
+    assert refused.value.outside is False
+    with pytest.raises(KeyboardInterrupt):
+        calls[call](_Interrupted())
+
+
+class _Fails(os.PathLike):
+    """A path object whose ``__fspath__`` raises the caller's own error."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def __fspath__(self) -> str:
+        raise self.error
+
+
+@pytest.mark.parametrize("error", [ValueError("zz-caller"), OSError("zz-caller"), RuntimeError("zz-caller"),
+                                   TypeError("zz-caller")], ids=["valueerror", "oserror", "runtimeerror", "typeerror"])
+@pytest.mark.parametrize("call", ["contained", "refuse_links", "confined_path"])
+def test_a_path_object_that_raises_is_refused_as_not_read_as_text(root: Path, error: Exception, call: str) -> None:
+    # the caller's own error while its path object is read is not the file system's answer, and not raw: refused in
+    # G6's words, not as outside
+    calls = {"contained": lambda v: contained(root, v), "refuse_links": lambda v: contained(root, v, refuse_links=True),
+             "confined_path": lambda v: storage.confined_path(v, (root,))}
+    with pytest.raises(PathRefused) as refused:
+        calls[call](_Fails(error))
+    assert refused.value.outside is False
+    assert "could not be read as text" in refused.value.reason
+    assert "file system" not in refused.value.reason and "zz-" not in refused.value.reason, refused.value.reason
+
+
+#: What an entry point may meet while it decides: an OS error (WinError 87, a stream name lstat cannot take), a
+#: ValueError (a NUL) and a UnicodeError (half of a UTF-16 character encoded for Windows).
+ERRORS = [OSError(22, "zz-os-words", None, 87), ValueError("zz-python-words"),
+          UnicodeEncodeError("utf-16-le", "\udc80", 0, 1, "zz-codec-words")]
+
+
+@pytest.mark.parametrize("where", ["lstat", "resolve"])
+@pytest.mark.parametrize("error", ERRORS, ids=["oserror", "valueerror", "unicodeerror"])
+@pytest.mark.parametrize("call", ["contained", "refuse_links", "confined_path"])
+def test_an_error_while_deciding_is_refused_in_g6s_words(root: Path, where: str, error: Exception, call: str,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    # no raw OSError, ValueError or UnicodeError reaches a caller: a PathRefused in G6's words, not as outside (nothing
+    # decided that the path is outside)
+    base = root.resolve()
+    (base / "sub").mkdir()
+
+    def fails(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise error
+
+    with monkeypatch.context() as patch:
+        patch.setattr(*((os, "lstat") if where == "lstat" else (Path, "resolve")), fails)
+        try:
+            if call == "confined_path":
+                storage.confined_path(str(base / "sub" / "x.json"), (base,))
+            else:
+                contained(base, "sub/x.json", refuse_links=call == "refuse_links")
+        except PathRefused as refused:
+            caught: Exception = refused
+        except Exception as raw:  # noqa: BLE001
+            caught = raw
+        else:
+            caught = AssertionError("nothing refused")
+    assert type(caught) is PathRefused, f"{call} let out {type(caught).__name__}: {caught}"
+    assert caught.outside is False and "zz-" not in caught.reason, caught.reason

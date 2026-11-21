@@ -69,7 +69,8 @@ def test_pending_legacy_differential_is_refused_before_dialog(tmp_path):
     dialog = Dialog()
     reply = asyncio.run(behaviour.confirm(dialog, str(root), TASK))
     assert not dialog.messages
-    assert reply["warning_card"]["code"] == "G6_E_QUESTION_PROBE_UNAVAILABLE"
+    # F1's provenance gate precedes probe admission: this legacy pending entry has no asking-client custody.
+    assert reply["warning_card"]["code"] == "G6_E_CLOUD_CONSENT_REQUIRED"
 
 
 def test_previously_confirmed_error_case_keeps_its_meaning(tmp_path, monkeypatch):

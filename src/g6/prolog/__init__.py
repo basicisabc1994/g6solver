@@ -95,3 +95,34 @@ __g6_outside__ = (SWIPL,)
 
 __all__ = ["CLOSED_WORLD", "PrologBlock", "PrologInput", "PrologResult", "Refusal", "SENSITIVE_OPS", "SWIPL",
            "SWIPL_ENV", "check_program", "driver", "finish", "ops", "prove", "query", "runner", "swipl_version"]
+
+
+__g6_refusals__ = {
+    "G6_E_PROLOG_ANSWERS": "person",
+    "G6_E_PROLOG_CERTIFICATE_REFUTED": "person",
+    "G6_E_PROLOG_CLAUSE_REFUSED": "person",
+    "G6_E_PROLOG_DIRECTIVE_REFUSED": "person",
+    "G6_E_PROLOG_ENGINE_ERROR": "person",
+    "G6_E_PROLOG_GOAL_DERIVABLE": "person",
+    "G6_E_PROLOG_GOAL_ERROR": "person",
+    "G6_E_PROLOG_GOAL_NOT_ALLOWED": "person",
+    "G6_E_PROLOG_GOAL_NOT_DERIVABLE": "person",
+    "G6_E_PROLOG_INFERENCE_LIMIT": "person",
+    "G6_E_PROLOG_INPUT_INVALID": "input",
+    "G6_E_PROLOG_INPUT_TOO_LARGE": "person",
+    "G6_E_PROLOG_MEMORY_LIMIT": "person",
+    "G6_E_PROLOG_NOT_CHECKED": "person",
+    "G6_E_PROLOG_NO_ANSWERS": "person",
+    "G6_E_PROLOG_OUTPUT_TOO_LARGE": "person",
+    "G6_E_PROLOG_OUTPUT_UNRECOGNISED": "person",
+    "G6_E_PROLOG_PROGRAM_READ": "person",
+    "G6_E_PROLOG_RECHECK_UNFINISHED": "person",
+    "G6_E_PROLOG_RUN_FAILED": "person",
+    "G6_E_PROLOG_SWIPL_MISSING": "person",
+    "G6_E_PROLOG_SYNTAX_ERROR": "input",
+    "G6_E_PROLOG_TIME_LIMIT": "person",
+    "G6_E_PROLOG_TIME_LIMIT_TOO_LONG": "person",
+    "G6_E_PROLOG_UNDEFINED_PREDICATE": "person",
+    "G6_E_PROLOG_UNSAFE_GOAL": "person",
+    "G6_E_PROLOG_VERSION_READ": "person",
+}

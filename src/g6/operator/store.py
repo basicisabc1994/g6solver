@@ -632,7 +632,10 @@ class OwnerScope:
         if row is None:
             raise LookupError(NOT_FOUND)
         out = dict(row)
-        out["caps"] = json.loads(out.pop("caps_json"))
+        try:
+            out["caps"] = json.loads(out.pop("caps_json"))
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
         return out
 
     def list_ventures(self) -> list[dict[str, Any]]:
@@ -661,8 +664,11 @@ class OwnerScope:
                 sql += f" AND {column}=?"
                 args.append(value)
         rows = self.conn.execute(sql + " ORDER BY seq", _plain(*args)).fetchall()
-        return [{**{k: r[k] for k in ("seq", "kind", "ref", "at")}, "detail": json.loads(r["detail_json"])}
-                for r in rows]
+        try:
+            return [{**{k: r[k] for k in ("seq", "kind", "ref", "at")}, "detail": json.loads(r["detail_json"])}
+                    for r in rows]
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     def _append_evidence(self, vid: str, kind: str, ref: str, detail: dict[str, Any] | None) -> int:
         """Inside the caller's transaction: a state change and its history commit together or not at all."""

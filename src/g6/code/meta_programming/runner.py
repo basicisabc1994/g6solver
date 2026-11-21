@@ -55,7 +55,10 @@ def run_tests(source: str, tests: str, module: str, *, timeout_s: float) -> dict
     for line in reversed(ran.stdout.splitlines()):
         if line.startswith(mark):
             try:
-                report = json.loads(line[len(mark):])
+                try:
+                    report = json.loads(line[len(mark):])
+                except (RecursionError, MemoryError):
+                    raise ValueError("a JSON record exceeds decoder limits") from None
             except json.JSONDecodeError:
                 report = None
             break

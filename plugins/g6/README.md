@@ -70,6 +70,10 @@ again, so a "thanks" spends nothing. On a new commit it is read again, even if t
 After a review that failed the next stop tries again. If a turn ends with nothing to test and the commit then moves, your
 next prompt starts on the new commit. Wherever a loop did not run, you get one line saying what did not run and why.
 
+When a G6 tool refuses a call and its reply's `repair` block says the agent can fix the call itself, a hook gives the
+agent one line saying so, once per refusal code in a session. A refusal only you can resolve gets no line: the reply
+tells the agent to ask you. Set `G6_HINTS=off` in Claude Code's environment to turn the line off.
+
 ## What the report says, and what it does not
 
 The report starts with how the run ended, in one word: `clean`, when a review of this patch reproduced nothing and no
@@ -109,6 +113,13 @@ kept out of training. It also differs from what was measured:
   The measured runner ran them only with a new test, and sent the latest reviewer's words.
 - The agent has this plugin and G6's server. The measured agent was plain Claude Code. A patch review of the task's text sits
   below the report, and the loop has a two-hour limit.
+
+## Which G6 step fits
+
+The plugin also ships G6's `using-g6` skill, the same text `g6 skills install` copies, which says which G6 step fits each
+point of a coding task. G6's server tells a connected agent the same in a few lines when it connects. When a task starts,
+the prompt hook adds a hint of at most 60 words: the G6 calls that share the most words with the task, and when to call
+G6. It never repeats your prompt, and `G6_HINTS=off` in your key file, `~/.g6/.env`, turns it off.
 
 ## From another client
 

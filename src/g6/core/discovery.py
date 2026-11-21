@@ -22,7 +22,6 @@ from collections import Counter
 from typing import Any
 
 from g6.core import vetting
-from g6.core.confine import UNCONFINED_WARNING
 from g6.core.door import THREAT_STATEMENT
 from g6.core.failure_modes import FailureModeRegistry, declared
 from g6.core.registry import get_registry
@@ -66,6 +65,31 @@ def _docstring(name: str) -> str:
         return ""
 
 
+def runnable(name: str) -> bool:
+    """Whether a component names a block ``g6_invoke`` can run (``__g6_block__`` in its package, read from its source
+    without importing it, and a class of that name defined or imported there)."""
+    try:
+        spec = importlib.util.find_spec(_package(name))
+        if spec is None or not (spec.origin or "").endswith(".py"):
+            return False
+        with open(spec.origin, encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+    except (ImportError, OSError, SyntaxError, ValueError):
+        return False
+    block, bound = None, set()
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        if any(isinstance(t, ast.Name) and t.id == "__g6_block__" for t in targets) \
+                and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            block = node.value.value
+        bound |= {t.id for t in targets if isinstance(t, ast.Name)}
+        if isinstance(node, (ast.ImportFrom, ast.Import)):
+            bound |= {alias.asname or alias.name.split(".")[0] for alias in node.names}
+        if isinstance(node, ast.ClassDef):
+            bound.add(node.name)
+    return bool(block) and block in bound
+
+
 def _guards(name: str) -> list[str]:
     """The titles of the failure modes a component declares it guards against, read without importing it."""
     codes = declared(_package(name)).get("__g6_mitigates__", ())
@@ -100,12 +124,15 @@ def _extras(extras: dict[str, tuple[str, ...]]) -> list[dict[str, Any]]:
             for extra, names in extras.items()]
 
 
-def find(query: str, limit: int = 5) -> list[dict[str, Any]]:
-    """Components ranked by overlap with ``query``. Returns ``[]`` when nothing matches."""
+def find(query: str, limit: int = 5, *, names: list[str] | None = None) -> list[dict[str, Any]]:
+    """Components ranked by overlap with ``query``. Returns ``[]`` when nothing matches. Each hit says whether it can
+    run (``runnable``: it names a block) and through what (``via``: ``g6_invoke``, or ``python`` for a library with no
+    block, which ``g6_invoke`` refuses). ``names`` ranks only those components (by default every registered one), so
+    a component left out does not weigh in the scores either."""
     q = Counter(_tokens(query))
     if not q:
         return []
-    names = get_registry().names()
+    names = get_registry().names() if names is None else names
     docs = {n: Counter(_tokens(_profile(n))) for n in names}
     df = Counter(t for d in docs.values() for t in set(d))
     n_docs = max(1, len(docs))
@@ -122,8 +149,13 @@ def find(query: str, limit: int = 5) -> list[dict[str, Any]]:
         # Explicit workflow intent routing, reported separately from the lexical score.
         score = max((row["score"] for row in scored), default=0) + 1
         scored = [{"component": "metaharness", "score": score, "matched": ["workflow-improvement-intent"],
-                   "route": "metaharness_start", "basis": "explicit workflow intent"},
+                   "route": "metaharness_start", "basis": "explicit workflow intent", "runnable": False,
+                   "via": "metaharness_start"},
                   *(row for row in scored if row["component"] != "metaharness")]
+    for row in scored[:limit]:
+        if "via" not in row:
+            row["runnable"] = runnable(row["component"])
+            row["via"] = "g6_invoke" if row["runnable"] else "python"
     return scored[:limit]
 
 
@@ -144,13 +176,18 @@ def describe(name: str) -> dict[str, Any]:
         info["outside"] = [program.describe() for program in getattr(mod, "__g6_outside__", ())]
         info["extras"] = _extras(getattr(mod, "__g6_extras__", {}))
         info["keys"] = [key.describe() for key in getattr(mod, "__g6_keys__", ())]
-        info["skill"] = skill_text(name)
+        from g6.core.agent_guidance import skill_for_agent
+
+        info["skill"] = skill_for_agent(skill_text(name))
+        info["summary"] = skill_for_agent(info["summary"])
         info["vetting"] = vetting.summary(_package(name))
         info["certificate"] = vetting.certificate(_package(name))
     return info
 
 
 HELP = (
+    "What to do next: call g6_select with your task, the phase you are in (plan, implement, verify, diagnose or stuck) "
+    "and any refusal you got; it returns a few checked calls with their templates, and runs nothing. "
     "Build agents from parts you can check. Use a component alone, connect declared contracts with g6_compose, "
     "or fit an application to a task with Propose -> Test -> Gate -> Approve. For AI building AI: "
     "metaharness_start creates a data-only Python application workflow; metaharness_confirm asks for client consent; "
@@ -183,8 +220,8 @@ HELP = (
     "uses the calling Claude Code / Codex sign-in by default when installed, then the other installed host, then "
     "plain code. G6_LLM_PROVIDER=none in the key file opts out; a different provider asks first. With no model a "
     "model step is refused with a *_NO_MODEL code: do that step yourself and call its check. A sensitive op (it "
-    "runs a program, reaches the network or changes the machine) is refused over MCP unless your user lists it in "
-    "G6_MCP_SENSITIVE where the server is registered; tell them, before they do: " + UNCONFINED_WARNING + " "
+    "runs a program, reaches the network or changes the machine) needs the person's own permission. "
+    "Tell the person; only they can allow it themselves. "
     "To learn which G6 step "
     "fits each point of your work, load the using-g6 skill first; `g6 skills install` copies it into your "
     "agent's skills folder."

@@ -133,18 +133,21 @@ class ActionGatingStore:
         ).fetchone()
         if row is None:
             return None
-        return {
-            "gate_token": row[0],
-            "action_capsule_hash": row[1],
-            "decision": row[2],
-            "completion_state": row[3],
-            "authorized": bool(row[4]),
-            "reason_codes": json.loads(row[5] or "[]"),
-            "audit_id": row[6],
-            "expires_at": row[7],
-            "consumed_at": row[8],
-            "audit_record": json.loads(row[9]) if row[9] else None,
-        }
+        try:
+            return {
+                "gate_token": row[0],
+                "action_capsule_hash": row[1],
+                "decision": row[2],
+                "completion_state": row[3],
+                "authorized": bool(row[4]),
+                "reason_codes": json.loads(row[5] or "[]"),
+                "audit_id": row[6],
+                "expires_at": row[7],
+                "consumed_at": row[8],
+                "audit_record": json.loads(row[9]) if row[9] else None,
+            }
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     def consume_gate_token(self, gate_token: str) -> bool:
         with self._conn:

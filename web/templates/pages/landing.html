@@ -64,7 +64,8 @@ Copy is a draft for the owner's review in the live preview.
             <li class="step">
                 <span class="step__n">4</span>
                 <h2 class="h2">Approve</h2>
-                <p class="lede">Nothing changes until you say yes. Every change is recorded, and can be rolled back.</p>
+                <p class="lede">A new version goes live only when you say yes. Each version is recorded, and you can
+                roll back to one you approved.</p>
             </li>
         </ol>
 
@@ -92,15 +93,14 @@ Copy is a draft for the owner's review in the live preview.
         <div class="pair">
             <div class="pair__item">
                 <h3 class="statement">The meta-harness learns.</h3>
-                <p>It tests changes to how it runs on cases it has never seen, keeps what wins once you approve, and can
-                never touch the checks that judge it.</p>
+                <p>It tests changes to how it runs on held-out cases, keeps what wins once you approve, and blocks the
+                decision when the code that judges a change differs from the code you confirmed.</p>
                 <a class="link" href="{% url 'pages:metaharness' %}">How the meta-harness works</a>
             </div>
             <div class="pair__item">
                 <h3 class="statement">The components know how AI fails.</h3>
                 <p>A prebuilt library of AI primitives, each extending what a model can do or closing one way it fails.
-                Built from some 250 million tokens of hand-reviewed failure traces, towards a complete set: a periodic
-                table of intelligence.</p>
+                Built from reviewing how agents fail, towards a complete set: a periodic table of intelligence.</p>
                 <a class="link" href="{% url 'pages:components' %}">See the components</a>
             </div>
         </div>
@@ -145,8 +145,8 @@ Copy is a draft for the owner's review in the live preview.
             <div><dt>From plain words</dt><dd>passed on by your coding agent.</dd></div>
             <div><dt>With a model of itself</dt><dd>every part and setting written down.</dd></div>
         </dl>
-        <p class="learning__reach">Give it a task you can check and enough examples, and nothing in its design caps how far
-        it can go on that task, up to training a model of its own.
+        <p class="learning__reach">Give it a task you can check and enough examples, and it can keep trying changes on that
+        task, up to training a small adapter for a local model; how far it gets has not been measured in general.
         <a class="link" href="{% url 'pages:research' %}#theory">The working theory</a></p>
     </div>
 </section>
@@ -156,16 +156,20 @@ Copy is a draft for the owner's review in the live preview.
         <h2 class="h2 band__title" id="gives-h">What that gives you</h2>
         <ul class="gives">
             <li><h3 class="statement">Work that checks itself.</h3>
-                <p>Every result carries one of three labels, and says why:
+                <p>Results of G6's checks and work tools returned over its MCP server carry one of three labels, and
+                say why:
                 <span class="state is-verified">verified</span> <span class="state">qualified-draft</span>
-                <span class="state is-blocked">blocked-escalated</span></p></li>
-            <li><h3 class="statement">Agents you can deploy safely.</h3>
-                <p>Every action gated, a stop switch, and no change without your approval.</p></li>
+                <span class="state is-blocked">blocked-escalated</span>.
+                An operation that fails while running is reported as a failure.</p></li>
+            <li><h3 class="statement">Agents that act within what you approve.</h3>
+                <p>Actions that go through G6 are gated, a stop switch halts new work, and no change goes live without your
+                approval.</p></li>
             <li><h3 class="statement">A specialist, without training a model.</h3>
                 <p>Your agent, your data, your examples. Your model's weights never change.</p></li>
-            <li><h3 class="statement">Frontier judgement at local cost.</h3>
-                <p>A frontier model engineers the harness once; a small model on your computer runs it, with no fee per
-                call.</p></li>
+            <li><h3 class="statement">Aiming at frontier judgement at local cost.</h3>
+                <p>The aim: a frontier model improves the harness once, then a small model on your computer runs inside
+                it, with no fee per call. Whether that saves anything on your work is for your own held-out examples to
+                show.</p></li>
         </ul>
     </div>
 </section>
@@ -174,11 +178,11 @@ Copy is a draft for the owner's review in the live preview.
     <div class="wrap">
         <div class="cols">
             <div class="band__head">
-                <h2 class="h2" id="tests">A worked example: G6 engineering itself, on a local model</h2>
+                <h2 class="h2" id="tests">A worked example: the meta-harness changing its harness, on a local model</h2>
             </div>
             <div class="band__body">
                 <p class="lede quiet">Not a benchmark: {{ facts.model }}, an 8-billion-parameter model on one computer,
-                before and after G6 engineered its harness, on {{ facts.per_dataset }} fresh tasks per task set. On your
+                before and after G6 changed its harness, on {{ facts.per_dataset }} fresh tasks per task set. On your
                 work, results will vary with the task and the data you have.</p>
             </div>
         </div>
@@ -285,7 +289,8 @@ pip install ".[all]" &amp;&amp; g6 setup --client claude --allow patch_review.re
         <div class="cols modes-row">
             <div class="band__head">
                 <h3 class="h3" id="modes">You decide how deep it goes</h3>
-                <p class="small quiet">Three levels of access, all open now. Every change still needs your approval.</p>
+                <p class="small quiet">Three levels of access, all open now. At each, the meta-harness puts no new version live
+                without your approval.</p>
             </div>
             <div class="band__body" data-modes>
                 <div class="modes__switch" role="group" aria-label="Level of access">

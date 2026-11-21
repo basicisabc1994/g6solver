@@ -158,7 +158,7 @@ def observe_payload(payload: bytes | None, profile: str, version: str, *, observ
     try:
         if payload is not None and len(payload) <= MAX_INPUT:
             data = json.loads(payload)
-    except (ValueError, UnicodeError, RecursionError):
+    except (ValueError, UnicodeError, RecursionError, MemoryError):
         pass
     try:
         root = Path(os.environ.get("G6_HOME", str(Path.home() / ".g6"))) / "allowances"

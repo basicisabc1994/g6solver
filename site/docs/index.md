@@ -8,7 +8,8 @@ title: G6 — build agents from parts you can check
 # Build agents from parts you can check.
 
 **G6 is free and fully open source** (Apache-2.0). It checks an agent's work, gates its risky actions, and labels
-every result for exactly what was shown. It runs on your computer, with a local model or your own key, and needs no
+results of its checks and work tools returned over G6's MCP server for exactly what was shown. The command line prints the result alone.
+It runs on your computer, with a local model or your own key, and needs no
 account.
 
 [Get started](install.md){ .md-button .md-button--primary } [See the worked examples](bundles/index.md){ .md-button } [View the code](https://github.com/basicisabc1994/g6solver){ .md-button }
@@ -16,7 +17,7 @@ account.
 </div>
 
 Our north star is AI for AI: agents construct applications, propose redesigns and test hypotheses. Application benefits remain to be demonstrated. An AI agent's "done" is a claim, not a fact. G6 turns it into a result you can check. You say what a correct result
-looks like. G6 freezes those checks before the work starts, runs them on the exact output, and labels the result with
+looks like. G6 freezes those checks before the work starts, runs them on the exact output, and labels results of its checks and work tools returned over its MCP server with
 what the evidence supports, and nothing more. Every gap is named, with the next step. Before an agent acts, G6's
 action gate answers allow, ask a person, or block. Each piece is a small component you can use on its own or
 combine, and each worked example applies a restricted subset of them to one problem.
@@ -27,7 +28,7 @@ combine, and each worked example applies a restricted subset of them to one prob
 
 -   **Honest labels**
 
-    Every result is `verified`, `qualified-draft` or `blocked-escalated`. `verified` needs independent evidence, so
+    Results of G6's checks and work tools returned over G6's MCP server are `verified`, `qualified-draft` or `blocked-escalated`. `verified` needs independent evidence, so
     a check you wrote yourself gives `qualified-draft` at best. A label never rises when results are combined.
 
 -   **Evidence you can inspect**

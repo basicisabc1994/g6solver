@@ -48,3 +48,28 @@ __all__ = ["BayesianUpdater", "CognitiveAgent", "CognitiveBridgeBlock", "Cogniti
            "detect_failure_modes", "GuardChange", "PairedTrial", "ControlTrial",
            "AdaptationPromotionGate", "CompiledResearch", "CognitiveAssuranceOrchestrator",
            "ScopedAssertion", "CrossMethodConflictGate"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_COGNITIVE_ADAPTATION_REFUSED": "none",
+    "G6_E_COGNITIVE_APPROVAL_REQUIRED": ("person", "wait"),
+    "G6_E_COGNITIVE_ASSURANCE_BLOCKED": "person",
+    "G6_E_COGNITIVE_BRIDGE_INPUT": "input",
+    "G6_E_COGNITIVE_COMPILE_BLOCKED": "person",
+    "G6_E_COGNITIVE_DOSSIER_BLOCKED": "person",
+    "G6_E_COGNITIVE_EVIDENCE_CONTESTED": "none",
+    "G6_E_COGNITIVE_EVIDENCE_NOT_RECONCILED": "none",
+    "G6_E_COGNITIVE_EVIDENCE_REFUTED": "none",
+    "G6_E_COGNITIVE_EVIDENCE_UNDETERMINED": "none",
+    "G6_E_COGNITIVE_EXECUTION_INCOMPLETE": "none",
+    "G6_E_COGNITIVE_EXECUTION_NOT_APPROVED": "person",
+    "G6_E_COGNITIVE_MODEL_MISSING": "person",
+    "G6_E_COGNITIVE_NOT_PROMOTED": "none",
+    "G6_E_COGNITIVE_NO_PROBE": "none",
+    "G6_E_COGNITIVE_OBLIGATION_NOT_PLANNED": "none",
+    "G6_E_COGNITIVE_PLAN_TAMPERED": "none",
+    "G6_E_COGNITIVE_PREREQUISITE_UNMET": "none",
+    "G6_E_COGNITIVE_SELECTION_INCOMPLETE": "none",
+    "G6_E_COGNITIVE_STEP_FAILED": "none",
+}

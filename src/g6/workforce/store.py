@@ -156,7 +156,10 @@ class VentureStore:
     @staticmethod
     def _venture(row: sqlite3.Row) -> dict:
         d = dict(row)
-        d["runway_rule"] = json.loads(d.pop("runway_rule_json") or "{}")
+        try:
+            d["runway_rule"] = json.loads(d.pop("runway_rule_json") or "{}")
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
         return d
 
     # -- evidence (append only) ---------------------------------------------------
@@ -209,7 +212,10 @@ class VentureStore:
         out = []
         for row in self._conn.execute(sql, args).fetchall():
             d = dict(row)
-            d["detail"] = json.loads(d.pop("detail_json") or "{}")
+            try:
+                d["detail"] = json.loads(d.pop("detail_json") or "{}")
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
             out.append(d)
         return out
 

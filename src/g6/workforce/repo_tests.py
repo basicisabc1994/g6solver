@@ -295,7 +295,7 @@ def probe_observations(output: str) -> list[dict] | None | str:
             return f"an observation holds more than {MAX_OBSERVATION_CHARS} characters"
         try:
             item = json.loads(line, object_pairs_hook=_report_object)
-        except (ValueError, RecursionError):
+        except (ValueError, RecursionError, MemoryError):
             return f"an observation is not JSON: {line[:80]!r}"
         if not (type(item) is dict and set(item) == {"input", "output"}):
             return f"an observation is not {{\"input\": ..., \"output\": ...}}: {line[:80]!r}"
@@ -791,7 +791,10 @@ def read_observation(raw: object) -> dict | None:
             and all(name in found for name, required in OBSERVATION_FIELDS.items() if required)
             and found["verdict"] == OBSERVED_VERDICTS[found["g6_observation"]["result"]]):
         return None
-    return json.loads(json.dumps(found, allow_nan=False))
+    try:
+        return json.loads(json.dumps(found, allow_nan=False))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 class RepoRefused(ValueError):
@@ -2455,7 +2458,7 @@ def _repo_env() -> dict[str, str]:
         return {}
     try:
         found = json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError, MemoryError):
         found = None
     if not isinstance(found, dict) or not all(isinstance(key, str) and isinstance(value, str)
                                               for key, value in found.items()):
@@ -2812,7 +2815,7 @@ def _progress(counts: dict[str, int], counted: Path) -> dict:
     """
     try:
         raw = json.loads(counted.read_text(encoding="utf-8"), object_pairs_hook=_report_object)
-    except (OSError, ValueError, RecursionError):
+    except (OSError, ValueError, RecursionError, MemoryError):
         raw = None
     # Progress has no process verdict yet. An incomplete diagnostic reads its
     # dispositions without pretending the process has already failed.
@@ -2843,7 +2846,7 @@ def _loaded(path: Path) -> tuple[dict[str, str], bool]:
             return {}, False
         found = json.loads(path.read_text(encoding="utf-8"))
         return {str(name): str(file) for name, file in found["modules"].items()}, found["complete"] is True
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError, MemoryError):
         return {}, False
 
 

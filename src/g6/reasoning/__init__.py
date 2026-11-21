@@ -30,3 +30,13 @@ __g6_extras__ = {"graph": ("networkx",)}
 
 __all__ = ["structure_map", "Arm", "Budget", "BudgetExhausted", "Candidate", "Case", "DirectStep", "MeteredCaller", "Verdict",
            "VoteResult", "compare", "first_json_object", "self_consistency", "sign_test_p", "weighted_vote"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_BUDGET_EXHAUSTED": "person",
+    "G6_E_GRAPH_CHECK_FAILED": "none",
+    "G6_E_GRAPH_INPUT": "input",
+    "G6_E_GRAPH_NOT_INSTALLED": "person",
+    "G6_E_METRIC_INPUT": "input",
+}

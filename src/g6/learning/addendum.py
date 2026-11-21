@@ -23,7 +23,7 @@ def trigger_matches(trigger: str, task_meta: Mapping[str, Any] | None) -> bool:
     if trigger.startswith("condition_keys:"):
         try:
             keys = json.loads(trigger.removeprefix("condition_keys:"))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, RecursionError, MemoryError):
             return False
         if not isinstance(keys, list) or not all(isinstance(k, str) and k for k in keys):
             return False

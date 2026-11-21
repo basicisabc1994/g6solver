@@ -339,8 +339,11 @@ class ProjectStore:
 
     @staticmethod
     def _generation(row: sqlite3.Row) -> Generation:
-        return Generation(number=row["number"], state=row["state"], backends=json.loads(row["backends"]),
-                          published_at=row["published_at"])
+        try:
+            return Generation(number=row["number"], state=row["state"], backends=json.loads(row["backends"]),
+                              published_at=row["published_at"])
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     def stage(self, backends: Mapping[str, bool]) -> Generation:
         """A new staging generation; one left staging by a crash is marked abandoned first."""
@@ -409,7 +412,10 @@ class ProjectStore:
                 raise Refused(NOT_PUBLISHED, "the generation lists files of a source that was deleted while it was "
                                              "prepared; nothing was published. Run the operation again.")
             listed = conn.execute("SELECT count(*) FROM member_passages WHERE generation = ?", (generation,)).fetchone()[0]
-            backends = json.loads(row["backends"])
+            try:
+                backends = json.loads(row["backends"])
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
             for name, entry in backends.items():
                 receipt = dict(receipts.get(name) or {})
                 complete = receipt.get("written") == listed and receipt.get("read_back") == listed
@@ -537,12 +543,15 @@ class ProjectStore:
         for r in rows:
             cut = conn.execute("SELECT passage_id, span_start, span_end FROM member_passages WHERE generation = ? "
                                "AND uri = ? ORDER BY position", (generation, r["uri"])).fetchall()
-            out.append(Member(registration_id=r["registration_id"], generation=generation, uri=r["uri"],
-                              relative=r["relative"], file_sha256=r["file_sha256"], size=r["size"],
-                              document_sha256=r["document_sha256"], media_type=r["media_type"],
-                              converter=r["converter"], chunker=r["chunker"], unread=tuple(json.loads(r["unread"])),
-                              passage_ids=tuple(c["passage_id"] for c in cut),
-                              spans=tuple((c["span_start"], c["span_end"]) for c in cut)))
+            try:
+                out.append(Member(registration_id=r["registration_id"], generation=generation, uri=r["uri"],
+                                  relative=r["relative"], file_sha256=r["file_sha256"], size=r["size"],
+                                  document_sha256=r["document_sha256"], media_type=r["media_type"],
+                                  converter=r["converter"], chunker=r["chunker"], unread=tuple(json.loads(r["unread"])),
+                                  passage_ids=tuple(c["passage_id"] for c in cut),
+                                  spans=tuple((c["span_start"], c["span_end"]) for c in cut)))
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
         return out
 
     # -- receipts, rereads, retained bytes and snapshots -------------------------------------------------------------
@@ -695,7 +704,10 @@ class ProjectStore:
                                (generation,)).fetchone()
             if row is None:
                 raise Refused(STATE, "an optional backend is recorded only for a published generation")
-            backends = json.loads(row["backends"])
+            try:
+                backends = json.loads(row["backends"])
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
             entry = backends.get(backend) or {"required": False, "state": "unavailable", "receipt": {},
                                               "registrations": {}}
             if entry.get("required"):
@@ -750,11 +762,17 @@ class ProjectStore:
             at = at if at is not None else datetime.now(UTC)
             for row in rows:
                 registration = conn.execute("SELECT * FROM registrations WHERE id = ?", (row["registration_id"],)).fetchone()
-                passages = json.loads(row["passage_ids"])
+                try:
+                    passages = json.loads(row["passage_ids"])
+                except (RecursionError, MemoryError):
+                    raise ValueError("a JSON record exceeds decoder limits") from None
                 why = may_use(registration, at)
                 why = "revoked" if why == "unknown" else why
                 if not why:
-                    uris = set(json.loads(row["uris"]))
+                    try:
+                        uris = set(json.loads(row["uris"]))
+                    except (RecursionError, MemoryError):
+                        raise ValueError("a JSON record exceeds decoder limits") from None
                     later = conn.execute("SELECT uri FROM tombstones WHERE registration_id = ? AND n > ?",
                                          (row["registration_id"], row["watermark"])).fetchall()
                     if any(t["uri"] == "" or t["uri"] in uris for t in later):
@@ -823,14 +841,17 @@ class ProjectStore:
                 try:
                     holds = any(item.get("source") == registration_id
                                 for item in json.loads(path.read_text(encoding="utf-8")).get("items", []))
-                except (OSError, ValueError, AttributeError):
+                except (OSError, ValueError, AttributeError, RecursionError, MemoryError):
                     holds = True   # a saved context that cannot be read cannot be shown to hold no text of it
                 if holds and path not in packs:
                     packs.append(path)
             conn.executemany("INSERT OR IGNORE INTO pending_removals VALUES (?)", [(self._pending_key(p),) for p in packs])
             if self._has(conn, "jobs"):   # a job's record keeps its counts; the names of files it could not read go
                 for row in conn.execute("SELECT id, body FROM jobs").fetchall():
-                    body = json.loads(row["body"])
+                    try:
+                        body = json.loads(row["body"])
+                    except (RecursionError, MemoryError):
+                        raise ValueError("a JSON record exceeds decoder limits") from None
                     if body.get("registration_id") == registration_id and body.get("unread"):
                         conn.execute("UPDATE jobs SET body = ? WHERE id = ?", (json.dumps({**body, "unread": []}), row["id"]))
             conn.execute("UPDATE dependents SET passage_ids = '[]', uris = '[]' WHERE registration_id = ?",

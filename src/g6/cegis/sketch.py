@@ -8,14 +8,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from g6.cegis._child import validate_source
-from g6.cegis.hole import HOLE_VAR_TPL, Hole, HoleKind, extract_holes
+from g6.cegis.hole import _HOLE_PATTERN, HOLE_VAR_TPL, Hole, HoleKind, extract_holes
 
 #: A control: one value per hole id.
 Control = dict[int, Any]
 
 
 def _literal(value: Any) -> str:
-    return repr(value)  # bool, int and str only (checked by Hole.accepts): their repr is their source
+    return repr(value)  # bool, int, finite float and str only (checked by Hole.accepts): their repr is their source
 
 
 def _default(hole: Hole) -> Any:
@@ -37,6 +37,12 @@ class Sketch:
     def from_src(cls, src: str, lo: int = -32, hi: int = 32, *, fn_name: str = "f") -> Sketch:
         if not fn_name.isidentifier():
             raise ValueError(f"fn_name {fn_name!r} is not a Python name")
+        # the sketch itself first, with every hole as its name, so a sketch G6 refuses as invalid input is refused
+        # before any hole's candidates are asked for (a ??f hole's grid is the part the agentic kernel may substitute)
+        numbered = iter(range(len(src)))
+        why = validate_source(_HOLE_PATTERN.sub(lambda _: HOLE_VAR_TPL.format(i=next(numbered)), src))
+        if why:
+            raise ValueError(f"the sketch is refused: {why}")
         modified, holes = extract_holes(src, lo=lo, hi=hi)
         why = validate_source(modified)  # the child checks every filled-in candidate again before it runs
         if why:

@@ -13,7 +13,8 @@ looks for signs that the tests were weakened, and returns a report your agent sh
 what G6 reproduces and asks again. Merging stays your decision. Patch review makes no model call unless the caller
 turns one on.
 
-Every result carries one of three labels, and G6 never upgrades a label it did not earn:
+Results of G6's checks and work tools returned over G6's MCP server carry one of three labels, and G6 never upgrades a label it did not earn.
+These replies carry `completion_state`; discovery replies such as `g6_components` and `g6_find` do not.
 
 | Label | Meaning |
 |---|---|
@@ -32,8 +33,9 @@ Every result carries one of three labels, and G6 never upgrades a label it did n
   reply says what was claimed. No component you can reach through those doors has such a re-check yet, so nothing that comes
   through them is `verified` today; the one path that can be is G6's file-integrity check (`g6.integrity`) called
   from Python with your own pin. `get_registry().invoke` is the raw library call beneath the doors: it returns a
-  component's own answer, unchecked. From the MCP server, `g6 invoke` and `g6.invoke`, `ok` is false whenever the
-  state is `blocked-escalated`; a blocked result keeps its answer in `result`. G6 re-checks artifacts with its own
+  component's own answer, unchecked. In replies from the MCP server and Python's `g6.invoke`, `ok` is false whenever
+  the state is `blocked-escalated`; a blocked result keeps its answer in `result`. The command line prints the result alone
+  and exits with code 1 for a blocked reply. G6 re-checks artifacts with its own
   code; it does not defend against malicious code in its own process.
 - **Checks are hashed first.** In the harness, each check's source text is hashed before the work runs, so editing a
   check afterwards is caught. The hash covers the source only, not values the check reads from outside it, and the
@@ -110,9 +112,9 @@ Not a programmer? Ready-made **bundles** (double-click apps) are described in th
 
 ## Use it
 
-**From a coding agent (MCP), the main surface:** after `g6 setup`, the agent gets 56 tools.
+**From a coding agent (MCP), the main surface:** after `g6 setup`, the agent gets 58 tools.
 
-- Discovery and composition: `g6_help`, `g6_find`, `g6_components`, `g6_describe`, `g6_invoke`, `g6_compose`.
+- Discovery and composition: `g6_help`, `g6_find`, `g6_components`, `g6_describe`, `g6_invoke`, `g6_compose`; `g6_agentic_run` lets a model stand in for a declared part after a declared limit or computation failure, or replace a successful answer when the caller names a part. Remote admission records provider consent; local admission records local model; process callers record allowed in code; refusal records refused by the consent check. The reply names the model and keeps the original answer beside it.
 - Patch review and missions: `g6_review_patch`, `g6_review_until_clean`, `g6_premortem`, `g6_mission_*` (six).
 - Consent: `g6_cloud_grant`, `g6_cloud_grants`, `g6_cloud_revoke`, `g6_disclosures`.
 - The self-improvement loop: `g6_improve_*` (six). A person agrees in the client's dialog to each start, enrolment,
@@ -241,7 +243,7 @@ recommending a new release. 0.3.0 is in preparation, not published (no tag, noth
 
 | Capability | Label |
 |---|---|
-| Result labels and the envelope on every return, checked by `g6.invariants` | `implemented` |
+| Result labels and envelopes for results of checks and work tools returned over the MCP server, checked by `g6.invariants` | `implemented` |
 | Claim checking against your sources (`grounding.check_claim`) | `implemented`. Studied on one public dataset; the result is on the [Research](site/docs/research.md) page |
 | Action gating: allow, ask a person, or block (`action_gating`) | `implemented`. Studied on a public agent benchmark; the result, its miss included, is on the [Research](site/docs/research.md) page |
 | End-to-end harness: frozen checks, adjudication, memory of failed checks (`g6.harness`) | `implemented` |

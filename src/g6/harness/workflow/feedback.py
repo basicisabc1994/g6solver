@@ -82,7 +82,10 @@ class FeedbackStore:
 
     def entries(self) -> list[dict]:
         """Every entry, oldest first; ``RecordUnreadable`` when the store cannot be read."""
-        return self._chain.entries()
+        try:
+            return self._chain.entries()
+        except (RecursionError, MemoryError):
+            raise RecordUnreadable("a stored JSON record exceeds decoder limits") from None
 
     def _append(self, held, kind: str, ident: str, body: dict) -> None:
         try:
@@ -92,7 +95,10 @@ class FeedbackStore:
 
     def opted_in(self) -> tuple[bool, str]:
         """Whether the person opted in, and why not. The latest opt-out in the store stands over the environment."""
-        latest = next((e["body"]["choice"] for e in reversed(self.entries()) if e["kind"] == "opt"), "")
+        try:
+            latest = next((e["body"]["choice"] for e in reversed(self.entries()) if e["kind"] == "opt"), "")
+        except (RecursionError, MemoryError):
+            raise RecordUnreadable("a stored JSON record exceeds decoder limits") from None
         env = os.environ.get(OPT_IN_ENV)
         if latest == "out":
             return False, "the person opted out of the feedback question"
@@ -121,7 +127,10 @@ class FeedbackStore:
         return ident
 
     def last_invitation(self) -> datetime | None:
-        times = [_time(e["body"]["at"]) for e in self.entries() if e["kind"] == "invited"]
+        try:
+            times = [_time(e["body"]["at"]) for e in self.entries() if e["kind"] == "invited"]
+        except (RecursionError, MemoryError):
+            raise RecordUnreadable("a stored JSON record exceeds decoder limits") from None
         return max(times) if times else None
 
     def reserve_invitation(self, task: str, *, now: datetime) -> str:

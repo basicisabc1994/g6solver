@@ -34,7 +34,7 @@ class BootstrapResult:
 def _array(raw: str, cap: int) -> tuple[str, ...]:
     try:
         value = json.loads(raw)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, RecursionError, MemoryError):
         return ()
     if not isinstance(value, list):
         return ()

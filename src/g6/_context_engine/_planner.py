@@ -153,7 +153,7 @@ def _typed(reply: Any) -> dict[str, Any] | None:
     try:
         text = str(reply)
         proposal = json.loads(text[text.index("{"):text.rindex("}") + 1])
-    except ValueError:
+    except (ValueError, RecursionError, MemoryError):
         return None
     if not isinstance(proposal, dict) or not isinstance(proposal.get("query"), str) or not proposal["query"].strip():
         return None

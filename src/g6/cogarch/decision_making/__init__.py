@@ -53,3 +53,12 @@ __all__ = ["MDP", "SENSITIVE_OPS", "UCB1", "UCT", "BoundedAllocator", "BudgetedB
            "RetryBudgetPolicy", "RetryTask", "ThompsonBernoulli", "Unfinished", "UtilityModel", "VoIThresholdStop",
            "expected_improvement", "expected_information_gain", "expected_utility",
            "expected_value_of_perfect_information", "record_decision", "value_iteration"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_DECISION_CAP": "none",
+    "G6_E_DECISION_COMPUTED": "none",
+    "G6_E_DECISION_INPUT": "input",
+    "G6_E_DECISION_NUMERIC": "none",
+}

@@ -42,3 +42,18 @@ __g6_outside__: tuple = ()
 __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["SENSITIVE_OPS", "CtxLangExtractBlock", "CtxLangExtractInput", "Example", "extraction"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_LANGEXTRACT_EXAMPLE_UNGROUNDED": "none",
+    "G6_E_LANGEXTRACT_EXTRACTED": "none",
+    "G6_E_LANGEXTRACT_INPUT": "input",
+    "G6_E_LANGEXTRACT_MODEL_FAILED": "person",
+    "G6_E_LANGEXTRACT_NO_MODEL": ("tool:g6_select", "no_model"),
+    "G6_E_LANGEXTRACT_PARSE_FAILED": "none",
+    "G6_E_LANGEXTRACT_PATTERN_FAILED": "none",
+    "G6_E_LANGEXTRACT_PATTERN_INVALID": "input",
+    "G6_E_LANGEXTRACT_PATTERN_TIMEOUT": "person",
+    "G6_E_LANGEXTRACT_TOO_LONG": "person",
+}

@@ -123,7 +123,10 @@ def _whole(value: Any, low: int, high: int) -> bool:
 def load_tiers(path: str | Path | None = None) -> Tiers:
     """``tiers.json``, judged: the eight tiers in order, the four modes in order, each field of the shape it must have.
     Every problem is named at once (``ValueError``)."""
-    raw = json.loads(Path(path or TIERS_FILE).read_text(encoding="utf-8"))
+    try:
+        raw = json.loads(Path(path or TIERS_FILE).read_text(encoding="utf-8"))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     if not isinstance(raw, dict) or set(raw) != _FILE_FIELDS:
         raise ValueError(f"tiers.json: holds exactly {sorted(_FILE_FIELDS)}")
     problems: list[str] = []

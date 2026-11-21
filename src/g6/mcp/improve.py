@@ -56,7 +56,7 @@ from typing import Any
 from uuid import uuid4
 
 import g6
-from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, is_allowed
+from g6.core.door import allowed_sensitive, blocked_reply, is_allowed
 from g6.core.ledger import LedgerError, digest as digest_of
 from g6.core.storage import g6_home
 from g6.core.reliability_envelope import envelope_fields, warning_card
@@ -157,8 +157,8 @@ def refused() -> dict | None:
     if is_allowed(*SENSITIVE, allowed_sensitive()):
         return None
     return public_instructions(blocked_reply(
-        f"[G6_E_SENSITIVE_COMPONENT_DENIED] {WHO} starts a process that runs on its own; the host must "
-        f"allow it, by adding {WHO} (or metaharness) to {SENSITIVE_ENV} where the server is registered"))
+        f"[G6_E_SENSITIVE_COMPONENT_DENIED] {WHO} starts a process that runs on its own. "
+        "The person must allow it themselves. Tell the person and stop."))
 
 
 def _root(folder: str, *, stop_request: bool = False) -> Path:
@@ -921,7 +921,7 @@ def _recognised(out: Any) -> tuple[dict[str, Any] | None, str]:
         return None, "no reply"
     try:
         reply = json.loads(lines[-1])
-    except (ValueError, RecursionError):
+    except (ValueError, RecursionError, MemoryError):
         return None, "a last line that does not read as JSON"
     if not isinstance(reply, dict):
         return None, f"a reply that is {_kind(reply)}, not an object"

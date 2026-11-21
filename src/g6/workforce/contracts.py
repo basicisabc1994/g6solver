@@ -452,7 +452,7 @@ def _nested(value: Any) -> Any:
     if isinstance(value, str) and value.lstrip().startswith("{") and len(value) <= _MAX_PARSED_CHARS:
         try:
             return json.loads(value)
-        except ValueError:
+        except (ValueError, RecursionError, MemoryError):
             return None
     return value
 
@@ -540,7 +540,10 @@ def _usage_levels(result: Any) -> list[dict] | None:
     if isinstance(result, str):
         if len(result) > _usage_max_parsed_result_chars:
             return None
-        result = json.loads(result)
+        try:
+            result = json.loads(result)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     if not isinstance(result, dict):
         return None
     return [result] + ([result["result"]] if isinstance(result.get("result"), dict) else [])

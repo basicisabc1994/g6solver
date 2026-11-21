@@ -124,7 +124,7 @@ def parse_messages(output: str) -> tuple[list[dict[str, Any]], list[str]]:
             continue
         try:
             obj = json.loads(raw)
-        except ValueError:
+        except (ValueError, RecursionError, MemoryError):
             obj = None
         line, column = _position(obj.get("pos")) if isinstance(obj, dict) else (None, None)
         if (not isinstance(obj, dict) or obj.get("severity") not in _SEVERITIES or not isinstance(obj.get("data"), str)

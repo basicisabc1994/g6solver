@@ -44,7 +44,9 @@ MIN_EXEMPTION = 20
 ABSENT_TOOL_RULE = ("A tool named here that your server does not list is absent: say so, use `g6_find`, and do not "
                     "call it again.")
 CODES = ("MISSING", "UNKNOWN", "UNROUTED", "ANCHOR", "LINK", "NOT_NAMED", "STALE", "EXEMPT_NAMED", "SINCE", "WORDS",
-         "SERVER", "ABSENT_RULE")
+         "SERVER", "ABSENT_RULE", "UNSELECTABLE")
+#: What ``selectable`` says of a member the selector's corpus offers with text (``g6.skills.corpus.selectable``).
+IN_CORPUS = "corpus"
 
 _KEY = re.compile(r"(mcp:[a-z0-9_-]+/[A-Za-z0-9_]+|op:[a-z0-9_]+/[a-z0-9_]+)\Z")
 _ROUTE_ID = re.compile(r"[a-z][a-z0-9_]*\Z")
@@ -130,7 +132,10 @@ def loads(text: str) -> Manifest:
     both a route and an exemption or with neither, a short exemption or a malformed key or version raises
     ``ManifestError``."""
     try:
-        data = json.loads(text, object_pairs_hook=_pairs)
+        try:
+            data = json.loads(text, object_pairs_hook=_pairs)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     except json.JSONDecodeError as exc:
         raise ManifestError(f"not JSON: {exc}") from exc
     data = _fields("the manifest", data, {"format", "release", "routes", "entries"})
@@ -185,7 +190,10 @@ def manifest_path() -> Path:
 
 def load(path: Path | None = None) -> Manifest:
     """The manifest G6 ships (or the one at ``path``), read strictly (``loads``)."""
-    return loads((path or manifest_path()).read_text(encoding="utf-8"))
+    try:
+        return loads((path or manifest_path()).read_text(encoding="utf-8"))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def dumps(manifest: Manifest) -> str:
@@ -312,7 +320,8 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
           texts: Mapping[str, str], root_words: int, version: str, files: Collection[str],
           details: Mapping[str, str] | None = None, sources: Collection[str] = (),
           servers: Mapping[str, str] | None = None,
-          identifiers: Mapping[str, Collection[str]] | None = None) -> list[Problem]:
+          identifiers: Mapping[str, Collection[str]] | None = None,
+          selectable: Mapping[str, str] | None = None) -> list[Problem]:
     """Every problem in the join of the manifest with the code, sorted; ``[]`` when each MCP tool and each typed op
     resolves to a route or a reasoned exemption and the guidance names nothing else.
 
@@ -322,7 +331,8 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
     the text of detail files that are not themselves guidance surfaces. ``sources``: the modules that construct an
     MCP server, and ``servers`` the known ones (server id to ``module:attribute``). ``identifiers``: for a detail
     file that is a component's own skill, the names that exist in that component's code and the registered
-    components' names.
+    components' names. ``selectable``: member key to ``IN_CORPUS`` when ``g6_select``'s corpus offers it with text, or
+    the reason it is not offered; ``None`` skips that join.
 
     Codes: ``MISSING`` a member with no entry; ``UNKNOWN`` an entry or a route with no member; ``UNROUTED`` a route id
     that is not a route; ``ANCHOR`` an anchor absent from the root skill, repeated in it or shared by two routes;
@@ -331,7 +341,9 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
     ``component.op`` that is not a member; ``EXEMPT_NAMED``
     guidance naming an exempt member; ``SINCE`` an entry from a later version than the manifest's release and the
     code; ``WORDS`` a root skill over its cap; ``SERVER`` a server the recorder does not know, or a known one that
-    was not recorded; ``ABSENT_RULE`` a root skill without the rule for a tool the person's server does not list.
+    was not recorded; ``ABSENT_RULE`` a root skill without the rule for a tool the person's server does not list;
+    ``UNSELECTABLE`` an agent-facing member the selector's corpus neither offers with text nor exempts with a reason of
+    at least ``MIN_EXEMPTION`` characters (counted as routed, it would guide no agent to it).
     """
     problems: list[Problem] = []
 
@@ -444,4 +456,10 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
         add("SERVER", module, "this module constructs an MCP server the recorder does not know")
     for server in sorted(set(servers or {}) - set(registrations)):
         add("SERVER", server, "this known server was not recorded")
+    if selectable is not None:
+        for key, entry in sorted(manifest.entries.items()):
+            said = selectable.get(key, "")
+            if entry.agent_facing and key in have and said != IN_CORPUS and len(said.strip()) < MIN_EXEMPTION:
+                add("UNSELECTABLE", key, "agent-facing, and g6_select's corpus neither offers it with text nor says "
+                                         "why not")
     return sorted(problems, key=lambda p: (CODES.index(p.code), p.key, p.said))

@@ -163,7 +163,10 @@ def from_mapping(mapping: Mapping[str, Any], source: str = "the configuration gi
 def parse(text: str, source: str) -> Connections:
     """Connections from JSON text. Raises :class:`ConfigError`."""
     try:
-        mapping = json.loads(text)
+        try:
+            mapping = json.loads(text)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     except json.JSONDecodeError as exc:
         raise ConfigError(f"{source} is not JSON ({exc.msg} at line {exc.lineno}, column {exc.colno})") from None
     return from_mapping(mapping, source)

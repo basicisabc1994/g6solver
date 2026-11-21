@@ -79,7 +79,10 @@ def load(model_id: str) -> tuple[bytes, dict[str, Any]]:
     """A kept model's weights and record, or a refusal: an id G6 did not issue, or weights changed since G6 wrote
     them."""
     meta_path, weights_path = _files(model_id)
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     weights = weights_path.read_bytes()
     if hashlib.sha256(weights).hexdigest() != meta.get("weights_sha256"):
         raise MLError(UNTRUSTED_CODE, f"the weights of {model_id} are not the ones G6 wrote (their SHA-256 differs "
@@ -96,7 +99,7 @@ def listed() -> list[dict[str, Any]]:
     for path in folder.glob("*.json"):
         try:
             meta = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError, MemoryError):
             continue
         out.append({k: meta.get(k) for k in ("model_id", "kept_at", "task", "features", "layers", "headline",
                                               "rows_sha256")})

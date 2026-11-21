@@ -1,11 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """g6-mcp — a stdio MCP server exposing G6's progressive discovery surface.
 
-56 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
+58 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
+``g6_select``, the staged selector: checked next calls for the agent's situation, and a reroute after a refusal
+(``g6.mcp.selector``);
 ``g6_allowances`` for both providers' quota windows and advisory pacing (``g6.allowance``);
 ``g6_review_patch``, which assesses a Python patch against stated requirements in confined test runs, as a job;
 ``g6_review_until_clean``, one step of the completion loop for a client the plugin's hook cannot reach (``g6.mcp.review_loop``),
-as a job; ``g6_premortem`` and six ``g6_mission_*`` tools (``_create``, ``_clarify``, ``_confirm``, ``_submit``, ``_status``,
+as a job; ``g6_agentic_run``, which runs a confined model substitute after a declared limit or computation failure,
+or replaces a successful answer when the caller names a part. Remote admission records provider consent; local
+admission records local model; process callers record allowed in code; refusal records refused by the consent check.
+The original answer stays beside the substitute (``g6.mcp.agentic``);
+``g6_premortem`` and six ``g6_mission_*`` tools (``_create``, ``_clarify``, ``_confirm``, ``_submit``, ``_status``,
 ``_certificate``) for a coding mission (``g6.mcp.mission``), where what a person allows and confirms goes through the
 client's own dialog and nowhere else, and the check step is the patch review; ``g6_confirm_behaviour``, one behaviour
 question about a task shown in the client's own dialog, whose confirmed answer each later ``g6_review_patch`` of the
@@ -46,7 +52,7 @@ server reads it from its own environment. The meta-harness tools that run a work
 a workflow runs only once a person confirmed it, which G6 records under its state folder, so a confirmation a
 project's files carry does not count. The mission tools that run a repository's code ask for ``workforce.mission``
 (``workforce`` for all), and ``g6_improve_start`` for ``metaharness.improve`` (``metaharness`` covers it too).
-``g6_describe`` says which sensitive ops this server allows. Before you list
+``g6_describe`` says which sensitive ops this server allows once the person shares host_configuration. Before you list
 one, know this (the refusal says it too): Where no operating-system boundary can confine it (macOS, Linux without
 bubblewrap, and Windows before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a
 generated script, a repository's tests) unless you allow it once with g6 setup. Code you allow then has your own
@@ -67,16 +73,43 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import uuid
 from typing import Any
 
 # The server's own setting, the sensitive components or ops (``component.op``) the person allows: the same setting,
 # read the same way, as ``g6 invoke`` and ``g6.invoke`` (``g6.core.door``).
-from g6.core.door import SENSITIVE_ENV, allowed_sensitive
+from g6.core.door import SENSITIVE_ENV as SENSITIVE_ENV, allowed_sensitive
 from g6.mcp.consent_controls import public_instructions
 from g6.core.door import is_allowed as _allowed
 
 _DENIED = "[G6_E_SENSITIVE_COMPONENT_DENIED]"
+
+
+def _denial_for_agent(reply: dict[str, Any]) -> None:
+    """Remove authority-bearing sentences from every textual copy in a refusal envelope."""
+    from g6.core.agent_guidance import _AUTHORITY
+
+    setting = re.compile(r"\bG6_(?!E_)[A-Z][A-Z0-9_]*\b|~[/\\]\.g6[/\\]\.env|\ballow_sensitive\b", re.I)
+
+    def clean(value):
+        if isinstance(value, str):
+            kept = []
+            for sentence in re.split(r"(?<=[.!?])\s+", value):
+                if _AUTHORITY.search(sentence) or setting.search(sentence):
+                    # A refusal code remains useful even when its sentence must be withheld.
+                    kept.extend(re.findall(r"\[G6_E_[A-Z0-9_]+\]", sentence))
+                else:
+                    kept.append(sentence)
+            return " ".join(kept)
+        if isinstance(value, dict):
+            for key, child in value.items():
+                value[key] = clean(child)
+        elif isinstance(value, list):
+            value[:] = [clean(child) for child in value]
+        return value
+
+    clean(reply)
 
 
 def describe_reply(component: str, *, allow_sensitive: frozenset[str] | None = None) -> dict[str, Any]:
@@ -103,7 +136,10 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
 
     request_id = uuid.uuid4().hex[:12]
     try:
-        params = json.loads(params_json or "{}")
+        try:
+            params = json.loads(params_json or "{}")
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     except json.JSONDecodeError as exc:
         return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id)
     if not isinstance(params, dict):
@@ -113,8 +149,16 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
     from g6.core.registry import ComponentRegistry, get_registry
     target = registry if registry is not None else get_registry()
     reply = invoke_checked(component, op, params, allow=allow, registry=GuardedRegistry(target), request_id=request_id,
-                          how_to_allow=f"Only the person who runs this server can allow it, by adding {component}.{op} "
-                                       f"(or {component}) to {SENSITIVE_ENV} where the server is registered.")
+                          how_to_allow="This op is sensitive. The person must allow it themselves. "
+                                       "Tell the person and stop.")
+    if str(reply.get("error", "")).startswith(_DENIED):
+        _denial_for_agent(reply)
+    if op == "help" and reply.get("ok"):
+        from g6.core.agent_guidance import help_for_agent
+
+        result = reply.get("result")
+        if isinstance(result, dict):
+            result["help"] = help_for_agent(component, result.get("help"))
     # The host's permission refusal runs no component code. Operations, including
     # a component's own "ops" implementation, retain the component source scope.
     if type(target) is ComponentRegistry and component in target.names():
@@ -155,9 +199,9 @@ def build_server(surface: Any = None) -> Any:
         raise SystemExit("g6-mcp needs the MCP extra: pip install 'g6[mcp] @ git+https://github.com/basicisabc1994/g6solver'") from exc
 
     from g6.core import discovery
-    from g6.core.registry import get_registry
+    from g6.mcp.instructions import TEXT
 
-    server = FastMCP("g6")
+    server = FastMCP("g6", instructions=TEXT)     # when to call G6, before any skill is read
     from g6.mcp.cloud_consent import install, public_tool, register
     install(server)
     register(server, Context)
@@ -185,21 +229,30 @@ def build_server(surface: Any = None) -> Any:
 
         return report(useful_parallel_work=useful_parallel_work)
 
+    from g6.mcp.catalogue import host_facts, shown_components, unloadable, unshipped_reply
+
     @server.tool()
     def g6_components() -> list[str]:
-        """Every installed G6 component."""
-        return get_registry().names()
+        """Every installed G6 component (an installed extension only once the person shares component_catalogue)."""
+        return shown_components()
 
     @server.tool()
     def g6_find(query: str, limit: int = 5) -> list[dict]:
         """Rank components for a task description; empty list means nothing matched."""
-        return discovery.find(query, limit)
+        return discovery.find(query, limit, names=shown_components())
 
     @server.tool()
     def g6_describe(component: str) -> dict:
-        """Maturity, ops and declared dependencies of one component, and which of its sensitive ops this server
-        allows."""
-        return describe_reply(component)
+        """Maturity, ops and declared dependencies of one component, and, once the person shares host_configuration,
+        this computer's facts about it: which of its sensitive ops this server allows, which extras are installed."""
+        hidden = unshipped_reply(component)     # a name G6 did not ship, before the person shares component_catalogue
+        if hidden is not None:
+            return hidden
+        try:
+            info = describe_reply(component)
+        except Exception as exc:    # a built-in that fails to load: G6's words, not the error's text (paths)
+            return unloadable(component, exc)
+        return host_facts(info)    # this computer's facts only with host_configuration shared
 
     @server.tool()
     def g6_invoke(component: str, op: str, params_json: str = "{}") -> dict:
@@ -214,12 +267,17 @@ def build_server(surface: Any = None) -> Any:
         from g6.mcp.composition import compose_reply
         from g6.core.door import blocked_reply
         try:
-            payload = json.loads(composition_json)
+            try:
+                payload = json.loads(composition_json)
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
         except json.JSONDecodeError:
             return blocked_reply("[G6_E_INPUT_VALIDATION] composition_json must be JSON")
         return compose_reply(payload, allow_sensitive=allowed_sensitive())
 
     _metaharness_tools(server, surface, Context)
+    from g6.mcp import selector
+    selector.register(server)            # g6_select: the staged selector over G6's own corpus; reads no repository
     from g6.mcp import workflow
     workflow.register(server, Context)   # after the consent egress above: it stays the last thing to touch a reply
     return server
@@ -312,8 +370,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         the patch is complete; a check that also passes on the base commit's code is listed in unknowns). Each is
         qualified-draft. A refusal is blocked-escalated with no outcome. Test receipts are kept in a file owned by the
         same user as G6: they stop a caller from claiming that G6 ran a test, not a program running as that user. merge
-        is always requires_separate_approval; nothing is merged. Requires host permission patch_review.review in
-        G6_MCP_SENSITIVE."""
+        is always requires_separate_approval; nothing is merged. This is sensitive; the person must allow it themselves. Tell the person."""
         from g6.core.door import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):
             return public_instructions(blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it"))
@@ -358,8 +415,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         Use one session name for one task, and repeat that task as it was on each call: the first call fixes the session's
         repository, task and base commit, and a call for another repository or task is refused. A later call's base is not
         read, so a commit you make does not move it. Needs a boundary (g6 doctor says what this computer needs) and G6_LOOP_CRITIC=codex in the person's key file, which approves their Codex sign-in. The line
-        G6_LOOP_MODE=scouts, or no critic and G6_LLM_PROVIDER=claude_code, runs the scouts' loop here instead. Requires
-        host permission patch_review.review in G6_MCP_SENSITIVE."""
+        G6_LOOP_MODE=scouts, or no critic and G6_LLM_PROVIDER=claude_code, runs the scouts' loop here instead. This is sensitive; the person must allow it themselves. Tell the person."""
         from g6.core.door import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):
             return public_instructions(blocked_reply(f"{_DENIED} g6_review_until_clean runs repository code and tests a model wrote; the host "
@@ -380,7 +436,10 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         Does not confirm or execute it. Below 30 held-out cases is exploration only."""
         from g6.core.door import blocked_reply
         try:
-            return mh.start(json.loads(specification_json))
+            try:
+                return mh.start(json.loads(specification_json))
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
         except json.JSONDecodeError:
             return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json must be JSON")
 
@@ -417,7 +476,9 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             if not isinstance(files, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in files.items()):
                 raise ValueError("files must map filenames to source strings")
             return mh.propose_code(workflow, files, hypothesis=hypothesis, session=session(ctx))
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             return blocked_reply(f"[G6_E_INPUT_VALIDATION] {exc}")
 
     def runs_code(op: str) -> dict | None:
@@ -426,12 +487,12 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         if _allowed("metaharness", op, allowed_sensitive()):
             return None
         from g6.core.door import blocked_reply
-        return public_instructions(blocked_reply(f"{_DENIED} metaharness.{op} runs the workflow's code; the host must allow it, by adding "
-                             f"metaharness.{op} (or metaharness) to {SENSITIVE_ENV} where the server is registered"))
+        return public_instructions(blocked_reply(f"{_DENIED} metaharness.{op} runs the workflow's code. "
+                             "The person must allow it themselves. Tell the person and stop."))
 
     def metaharness_evaluate_start(workflow: str, proposal_digest: str) -> dict:
         """Start a bounded evaluation job. Poll metaharness_job for its result; no approval is implied. It runs the
-        workflow's code: requires host permission metaharness.evaluate_start in G6_MCP_SENSITIVE."""
+        workflow's code: this is sensitive; the person must allow it themselves. Tell the person."""
         return runs_code("evaluate_start") or jobs.start(lambda: mh.evaluate(workflow, proposal_digest))
 
     def metaharness_job(job_id: str, detail: str = "compact") -> dict:
@@ -443,7 +504,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
 
     def metaharness_run(workflow: str, task_input: str) -> dict:
         """Run the currently approved application version on new input as a job. It runs the workflow's code:
-        requires host permission metaharness.run in G6_MCP_SENSITIVE."""
+        this is sensitive; the person must allow it themselves. Tell the person."""
         return runs_code("run") or jobs.start(lambda: mh.run(workflow, task_input))
 
     def metaharness_inspect(workflow: str) -> dict:
@@ -454,7 +515,10 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         """A candidate profile (``profile_json``: acting fields only), or with none, the declared search space's
         candidates. A candidate changes nothing until it is evaluated, decided and approved by a person."""
         try:
-            profile = json.loads(profile_json) if profile_json else None
+            try:
+                profile = json.loads(profile_json) if profile_json else None
+            except (RecursionError, MemoryError):
+                raise ValueError("a JSON record exceeds decoder limits") from None
         except json.JSONDecodeError as exc:
             from g6.metaharness.api import _blocked
 
@@ -463,7 +527,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
 
     def metaharness_evaluate(workflow: str, proposal_digest: str) -> dict:
         """Measure a candidate against the active version on the held-out split (paired, compute-matched). It runs the
-        workflow's code: requires host permission metaharness.evaluate in G6_MCP_SENSITIVE."""
+        workflow's code: this is sensitive; the person must allow it themselves. Tell the person."""
         return runs_code("evaluate") or mh.evaluate(workflow, proposal_digest)
 
     def metaharness_decide(workflow: str, report_digest: str, proposal_digest: str) -> dict:
@@ -529,7 +593,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         authenticated. Runs no code."""
         from g6.mcp import behaviour
         return await behaviour.confirm(ctx, repo, task, candidates=candidates, review_job=review_job,
-                                       template_instances=template_instances)
+                                       template_instances=template_instances, origin=jobs.origin_inputs)
 
     async def g6_mission_create(repo: str, objective: str, ctx: Any, module: str = "", function: str = "",
                                 helpers: list[str] | None = None, risk: str = "R2", budget_cents: int = 0) -> dict:
@@ -539,7 +603,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         R2) and three attempts. The person is first asked, in the client's own dialog, to allow G6 to run this
         revision's code; a new commit asks again. Decline, cancel or a client without a dialog creates nothing, and
         offer no other way to agree. The name the person gives is recorded as given and is not authenticated. It runs
-        the repository's tests in a copy: requires host permission workforce.mission in G6_MCP_SENSITIVE. Returns a job:
+        the repository's tests in a copy: this is sensitive; the person must allow it themselves. Tell the person. Returns a job:
         poll metaharness_job. Then call g6_mission_confirm; an objective about retries or duplicates first asks a
         question (clarification): answer it with g6_mission_clarify."""
         from g6.mcp import mission
@@ -564,8 +628,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     def g6_mission_clarify(mission_id: str, replay_semantics: str) -> dict:
         """Answer the one question a mission on retries or duplicates asks before its standard is frozen, from
         clarification.permitted_answer. This is your answer, not the person's confirmation: they still confirm the
-        resulting standard with g6_mission_confirm. It runs the repository's tests in a copy: requires host permission
-        workforce.mission in G6_MCP_SENSITIVE. Returns a job: poll metaharness_job."""
+        resulting standard with g6_mission_confirm. It runs the repository's tests in a copy. This is sensitive;
+        the person must allow it themselves. Tell the person. Returns a job: poll metaharness_job."""
         from g6.mcp import mission
 
         return mission.refused() or jobs.start(lambda: mission.clarify(mission_id, replay_semantics))
@@ -576,7 +640,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         cancel or a client without a dialog leaves the mission unconfirmed, and an unconfirmed mission takes no patch;
         ask the person, and offer no other way to confirm. The name the person gives is recorded as given and is not
         authenticated. Once confirmed, G6 reproduces the failure on the frozen commit and starts the mission. It runs
-        the repository's tests in a copy: requires host permission workforce.mission in G6_MCP_SENSITIVE. Returns a job:
+        the repository's tests in a copy: this is sensitive; the person must allow it themselves. Tell the person. Returns a job:
         poll metaharness_job."""
         from g6.mcp import mission
         from g6.mcp.consent import refusal, request_consent
@@ -606,7 +670,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         shows and submit again; never rewrite a test. Returns a job: poll metaharness_job. Its reply is the review's
         compact reply, with assessment.report to show the person as it is, and mission, the mission's state. Every
         outcome is qualified-draft at best, or blocked-escalated. merge is always requires_separate_approval: merging is
-        the person's own decision. Requires host permission workforce.mission in G6_MCP_SENSITIVE."""
+        the person's own decision. This is sensitive; the person must allow it themselves. Tell the person."""
         from g6.mcp import mission
 
         return mission.refused() or jobs.start(
@@ -633,7 +697,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         dialog is open, nothing starts: call this again and they read what stands. The runner runs only the enrolment the
         dialog showed: an enrolment made after it ends the start, and g6_improve_status shows that stop. Refused, with what
         to do, while a runner is alive or when no person has enrolled a domain in the folder, which only a person does, in
-        the client's dialog (g6_improve_enrol). Requires host permission metaharness.improve in G6_MCP_SENSITIVE."""
+        the client's dialog (g6_improve_enrol). This is sensitive; the person must allow it themselves. Tell the person."""
         from g6.mcp import improve
         from g6.mcp.consent import refusal, request_consent
 
@@ -689,14 +753,14 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         cancel or a client without a dialog records nothing; ask the person, and offer no other way to agree. The name they
         give is recorded as given and is not authenticated. If what they read changes while the dialog is open, nothing is
         recorded. The file then runs, as the person, on the Python the runner uses. It starts nothing: g6_improve_start
-        does. Requires host permission metaharness.improve in G6_MCP_SENSITIVE."""
+        does. This is sensitive; the person must allow it themselves. Tell the person."""
         return await person_act(ctx, "enrol", folder)
 
     async def g6_improve_resume(ctx: Any, folder: str = "") -> dict:
         """Lift the pause that holds the loop's ticks, once a person has read why: they are asked in the client's own
         dialog, which says why it is paused, and agree there or nowhere, as for g6_improve_enrol. A stop in place stays.
         Refused with nothing asked when nothing is paused, nothing is enrolled, or the Python file is not the one enrolled.
-        Requires host permission metaharness.improve in G6_MCP_SENSITIVE."""
+        This is sensitive; the person must allow it themselves. Tell the person."""
         return await person_act(ctx, "resume", folder)
 
     async def g6_improve_demote(ctx: Any, generation: int, folder: str = "") -> dict:
@@ -704,8 +768,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         from the version before it: a person agrees in the client's own dialog, which names the generation, what it
         changed, and the generation and profile (by digest) it goes back to, and nowhere else, as for g6_improve_enrol. A
         head that is not that generation, or one with nothing adopted left to take back, is refused with nothing asked, and
-        one that moves while the dialog is open is not taken back. Requires host permission metaharness.improve in
-        G6_MCP_SENSITIVE."""
+        one that moves while the dialog is open is not taken back. This is sensitive; the person must allow it themselves. Tell the person."""
         return await person_act(ctx, "demote", folder, generation)
 
     for tool in (metaharness_inspect, metaharness_propose, metaharness_evaluate, metaharness_decide,
@@ -718,6 +781,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         if "ctx" in tool.__annotations__:  # the real Context type, so the server injects it (annotations are strings)
             tool.__annotations__["ctx"] = context_type
         server.tool()(tool)
+    from g6.mcp import agentic
+    agentic.register(server, context_type, jobs)   # the override kernel's jobs are polled through metaharness_job
 
 
 def main() -> None:

@@ -24,7 +24,15 @@ says exactly which domain it rests on.
   `coding_agent_gate`.
 - A small distilled function to check and test on held-out cases: use `distillation`.
 - A property to decide with no program to synthesise: use `formal`.
-- Over MCP: it has no block, so `g6_invoke` cannot reach it; it is Python only.
+- A floating-point constant: a `??f` hole has no candidate grid and refuses (`G6_E_CEGIS_HOLE_UNSUPPORTED`). Over MCP,
+  `g6_agentic_run` can run a confined model proposal for that grid without a separate override question. Remote
+  admission records provider consent; local admission records local model; refusal records refused by the consent check.
+  Show the model, warning card and original answer beside the substitute; it is qualified-draft at best.
+  Naming the part also permits replacing a successful answer. Process callers use the code's allowance.
+
+## Ops
+
+- `synthesize`: fill a sketch's holes so the function agrees with `cases`, a table of `{input, output}` rows, on`n  `domain` (by default every combination of the values each argument takes in the table). It runs every candidate,`n  so it is sensitive: only where the person allows `cegis.synthesize`.
 
 ## Python API
 
@@ -74,7 +82,7 @@ fallback, promotion or reuse store is involved.
 
 ## Alone and composed
 
-Alone, from Python: `from g6.cegis import Sketch, InputDomain, cegis`. There is no MCP op.
+Alone, from Python: `from g6.cegis import Sketch, InputDomain, cegis`; over MCP, `g6_invoke("cegis", "synthesize", ...)`.
 
 Composed:
 
@@ -120,6 +128,10 @@ Rank-deficient samples refuse. Near-duplicates and repeated tuning against the s
 - No outside program: candidates run in a child Python process that G6 starts itself.
 
 ## Examples
+
+```g6-example op=synthesize
+{"sketch": "def f(x):\n    return x * ?? + ??\n", "cases": [{"input": {"x": 0}, "output": 1}, {"input": {"x": 2}, "output": 7}]}
+```
 
 ```python
 from g6.cegis import InputDomain, Sketch, TableOracle, Z3Verifier, cegis

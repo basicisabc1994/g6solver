@@ -54,6 +54,8 @@ def _codes(name: str) -> dict[str, str]:
 def _init(spec: ComponentSpec) -> str:
     cls = camel(spec.name)
     sensitive = tuple(op.name for op in spec.ops if op.sensitive)
+    codes = _codes(spec.name)
+    declarations = {code: ("input" if name == "INPUT" else "none") for name, code in codes.items()}
     lines = [SPDX, _q(f"{spec.package}: {spec.summary}\n\n"
                      f"An extension in the {spec.family} family, scaffolded by g6.code.component_creator. "
                      "Wrapped results are unchecked; other ops refuse until written. "
@@ -64,6 +66,7 @@ def _init(spec: ComponentSpec) -> str:
              f"__g6_mitigates__: tuple[str, ...] = {tuple(spec.mitigates)!r}",
              f"__g6_introduces__: tuple[str, ...] = {tuple(spec.introduces)!r}",
              "__g6_outside__: tuple = ()", "__g6_extras__: dict[str, tuple[str, ...]] = {}", "",
+             f"__g6_refusals__ = {declarations!r}",
              f'__all__ = ["{cls}Block", "{cls}Input"]', ""]
     return "\n".join(lines)
 
@@ -211,15 +214,18 @@ def render(spec: ComponentSpec) -> dict[str, str]:
 def write(dest: Path, files: dict[str, str]) -> list[dict[str, object]]:
     """Each of ``files`` written under ``dest`` (a new or empty folder, already confined), never over a file; what was
     written, with its size and SHA-256."""
+    from g6.code import _roots
+
     written = []
+    parents: dict[Path, tuple[int, int]] = {}
     for rel, text in files.items():
         target = (dest / rel).resolve()
         if dest not in target.parents:
             raise ValueError(f"{rel} is not inside {dest}")
         if target.exists():
             raise FileExistsError(f"{target} exists; nothing is overwritten")
-        target.parent.mkdir(parents=True, exist_ok=True)
         data = text.encode("utf-8")
+        _roots._prepare_write_parent(target.parent, dest, parents)
         with open(target, "xb") as handle:
             handle.write(data)
         written.append({"path": rel, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()})

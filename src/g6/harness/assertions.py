@@ -65,7 +65,7 @@ class _FieldPredicate:
             if actual is _MISSING:
                 return False
             return _compare(actual, self.op, json.loads(self.expected_json))
-        except (TypeError, ValueError, OverflowError):
+        except (TypeError, ValueError, OverflowError, RecursionError, MemoryError):
             return False
 
 

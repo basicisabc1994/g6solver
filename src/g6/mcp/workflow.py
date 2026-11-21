@@ -62,7 +62,10 @@ def _noted(reply: Any, note: str) -> Any:
         body, refs, metadata = cloud.freeze_output(reply)
     except (TypeError, ValueError):
         return reply
-    noted = json.loads(body)
+    try:
+        noted = json.loads(body)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     noted["workflow"] = {**(noted.get("workflow") or {}), "note": note}
     return cloud.bind_output(noted, refs, metadata=metadata) if refs is not None else noted
 
@@ -81,7 +84,10 @@ def attach(reply: Any, built: Any, where: tuple[str, ...], project: str) -> Any:
     if not built or not isinstance(reply, dict):
         return reply
     body, refs, metadata = cloud.freeze_output(reply)
-    shown = holder = json.loads(body)
+    try:
+        shown = holder = json.loads(body)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     for key in where[:-1]:
         if not isinstance(holder.get(key), dict):
             return reply

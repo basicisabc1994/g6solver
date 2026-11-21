@@ -64,7 +64,10 @@ class ArtifactStore:
         return source
 
     def admission(self, sha: str) -> dict[str, Any]:
-        return json.loads((self.root / "distillates" / sha / "admission.json").read_text(encoding="utf-8"))
+        try:
+            return json.loads((self.root / "distillates" / sha / "admission.json").read_text(encoding="utf-8"))
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
     # adapters -----------------------------------------------------------------------------------------------------
     def put_adapter(self, folder: str | Path) -> str:

@@ -140,7 +140,7 @@ def construct_replay_check(task: str, *, module: str, function: str,
                 values = [state, event, expected]
                 if json.loads(json.dumps(values, allow_nan=False)) != values:
                     continue
-            except (TypeError, ValueError, SyntaxError, RecursionError):
+            except (TypeError, ValueError, SyntaxError, RecursionError, MemoryError):
                 continue
             if not (isinstance(state, dict) and isinstance(event, dict) and isinstance(expected, dict)
                     and state != expected and isinstance(event.get("id"), str) and 0 < len(event["id"]) <= 128):

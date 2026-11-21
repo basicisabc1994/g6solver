@@ -37,3 +37,16 @@ __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["SENSITIVE_OPS", "ChunkError", "CitedSpan", "KnowledgeChunkerBlock", "KnowledgeChunkerInput", "chunk",
            "chunker", "found_at", "span_problems", "spans"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_KNOWLEDGE_CHUNKED": "none",
+    "G6_E_KNOWLEDGE_CHUNK_INPUT": "input",
+    "G6_E_KNOWLEDGE_CHUNK_TOO_MANY": "none",
+    "G6_E_KNOWLEDGE_NO_CITATIONS": "none",
+    "G6_E_KNOWLEDGE_NO_TEXT": "input",
+    "G6_E_KNOWLEDGE_SPANS_MATCH": "none",
+    "G6_E_KNOWLEDGE_SPAN_MISMATCH": "none",
+    "G6_E_KNOWLEDGE_TOKENIZER": "none",
+}

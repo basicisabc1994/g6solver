@@ -522,13 +522,15 @@ def inputs(repo: Path | None = None) -> dict[str, Any]:
     """The keyword arguments of ``g6.skills.routing.check`` as the code stands: ``check(load(), **inputs()) == []`` is
     the inventory test, and any change that adds a tool or an op runs it."""
     import g6
-    from g6.skills import routing
+    from g6.skills import corpus, routing
 
     package = package_root()
     texts = guidance(repo)
     files = frozenset(path.relative_to(package).as_posix() for path in package.rglob("*.md"))
     wanted = {path for route in routing.load().routes.values() for path in route.detail}
     details = {path: (package / path).read_text(encoding="utf-8") for path in sorted(wanted & files - set(texts))}
-    return {"registrations": recorded(), "ops": component_ops(), "texts": texts, "details": details,
+    registered = recorded()
+    return {"registrations": registered, "ops": component_ops(), "texts": texts, "details": details,
             "root_words": routing.root_words(texts[routing.ROOT]), "version": g6.__version__, "files": files,
-            "sources": server_sources(package), "servers": dict(SERVERS), "identifiers": identifiers(sorted(wanted))}
+            "sources": server_sources(package), "servers": dict(SERVERS), "identifiers": identifiers(sorted(wanted)),
+            "selectable": corpus.selectable(registered)}

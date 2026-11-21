@@ -273,7 +273,7 @@ class SqliteIndex(Retrieves):
             source = Source.model_validate(json.loads(row["source"]))
             return Passage(id=row["id"], source=source, document_sha256=row["document_sha256"],
                            start=row["span_start"], end=row["span_end"], text=row["text"])
-        except (ValidationError, ValueError, TypeError):
+        except (ValidationError, ValueError, TypeError, RecursionError, MemoryError):
             raise IndexRefused(FAILED, edited) from None
 
     def find(self, query: str, top_k: int = 10) -> Searched:

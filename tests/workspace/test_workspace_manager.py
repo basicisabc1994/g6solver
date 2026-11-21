@@ -8,6 +8,8 @@ import hashlib
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -122,6 +124,98 @@ def test_d1_a_junction_named_with_a_trailing_space_is_never_read_or_written_thro
         os.rmdir(link)
     assert sorted(p.name for p in outside.iterdir()) == ["secret.txt"]
     assert (outside / "secret.txt").read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junctions and stream names")
+def test_d1_a_stream_name_is_never_read_or_written_through_and_never_lets_a_raw_error_out(home, outside) -> None:
+    # open reads '<ws>\j::$INDEX_ALLOCATION\secret.txt' as '<ws>\j\secret.txt', through the junction 'j'; a file's
+    # index stream ('notes.txt::$INDEX_ALLOCATION') made resolving raise a raw NotADirectoryError. Both are refused as
+    # input G6 does not take, with an absolute path or a relative one; a relative one starting 'j:' is drive-qualified
+    # (read against drive J:'s current folder), so it is outside, as state_path says
+    ws = _task(home)
+    made = subprocess.run(["cmd", "/c", "mklink", "/J", str(ws.root / "j"), str(outside.resolve())],
+                          capture_output=True, text=True, check=False)
+    if made.returncode:
+        pytest.skip("no junction can be made here")
+    try:
+        for raw in ("j::$INDEX_ALLOCATION/secret.txt", "j:$I30:$INDEX_ALLOCATION/made/x.txt",
+                    "notes.txt::$INDEX_ALLOCATION", "notes.txt:s:$INDEX_ALLOCATION/x.txt"):
+            for given in (raw, f"{ws.root}\\{raw}"):
+                code = E.OUTSIDE_ROOT if given.startswith("j:") else E.INPUT_INVALID
+                with pytest.raises(E.WorkspaceRefused) as refused:
+                    ws.read(given)
+                assert refused.value.code == code, given
+                assert ops.write("t1", given, "written", dry_run=False).code == code, given
+    finally:
+        os.rmdir(ws.root / "j")
+    assert sorted(p.name for p in outside.iterdir()) == ["secret.txt"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows drive letters")
+@pytest.mark.parametrize("raw", ["C:notes.txt", "C:", "C:..\\notes.txt"])
+def test_d1_a_drive_qualified_path_is_outside_the_workspace(home, raw) -> None:
+    ws = _task(home)
+    with pytest.raises(E.WorkspaceRefused) as refused:
+        ws.read(raw)
+    assert refused.value.code == E.OUTSIDE_ROOT
+    assert ops.write("t1", raw, "written", dry_run=False).code == E.OUTSIDE_ROOT
+
+
+@pytest.mark.parametrize("value", [None, b"notes.txt", 1], ids=["none", "bytes", "int"])
+def test_d1_a_path_that_is_not_text_is_refused_as_input_not_a_raw_type_error(home, value) -> None:
+    ws = _task(home)
+    with pytest.raises(E.WorkspaceRefused) as refused:
+        ws.read(value)
+    assert refused.value.code == E.INPUT_INVALID
+    with pytest.raises(E.WorkspaceRefused) as refused:
+        ws.write(value, "written")
+    assert refused.value.code == E.INPUT_INVALID
+
+
+class _Fails(os.PathLike):
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def __fspath__(self) -> str:
+        raise self.error
+
+
+@pytest.mark.parametrize("error", [ValueError("zz-caller"), OSError("zz-caller"), RuntimeError("zz-caller")],
+                         ids=["valueerror", "oserror", "runtimeerror"])
+def test_d1_a_path_object_that_raises_is_refused_as_input_in_g6s_words(home, error) -> None:
+    ws = _task(home)
+    for act in (ws.read, lambda p: ws.write(p, "written")):
+        with pytest.raises(E.WorkspaceRefused) as refused:
+            act(_Fails(error))
+        assert refused.value.code == E.INPUT_INVALID
+        assert "could not be read as text" in str(refused.value) and "zz-" not in str(refused.value)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' per-folder case-sensitive flag")
+def test_d1_a_folder_named_as_the_g6_home_but_for_case_is_never_read_or_written(tmp_path, monkeypatch) -> None:
+    # in a case-sensitive folder holding the G6 home 'g6-home', 'G6-HOME' is another folder: a task's write or read of
+    # '../../../G6-HOME/...' leaves the home, though pathlib compares the two words as equal on Windows
+    from tests.core.test_storage_state_path import make_case_sensitive
+
+    parent = tmp_path.resolve() / "cs"
+    make_case_sensitive(parent)
+    try:
+        monkeypatch.setenv("G6_HOME", str(parent / "g6-home"))
+        ws = _task(parent / "g6-home")
+        raw = "../../../G6-HOME/workspaces/t1/x.txt"
+        with pytest.raises(E.WorkspaceRefused) as refused:
+            ws.write(raw, "written by the caller", dry_run=False)
+        assert refused.value.code == E.OUTSIDE_ROOT
+        assert ops.write("t1", raw, "written", dry_run=False).code == E.OUTSIDE_ROOT
+        assert sorted(os.listdir(parent)) == ["g6-home"]
+        (parent / "G6-HOME" / "workspaces" / "t1").mkdir(parents=True)
+        (parent / "G6-HOME" / "workspaces" / "t1" / "x.txt").write_text("kept outside", encoding="utf-8")
+        with pytest.raises(E.WorkspaceRefused) as refused:
+            ws.read(raw)
+        assert refused.value.code == E.OUTSIDE_ROOT
+        assert ops.read("t1", raw).code == E.OUTSIDE_ROOT
+    finally:
+        shutil.rmtree(parent)
 
 
 def test_paths_inside_are_allowed_and_the_check_is_the_shared_one(home) -> None:

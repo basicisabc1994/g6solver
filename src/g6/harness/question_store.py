@@ -50,6 +50,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from contextlib import contextmanager
 from pathlib import Path
+from threading import Lock
+from uuid import uuid4
 
 from g6.core.ledger import ChainLedger, LedgerError, digest
 from g6.core.storage import state_path
@@ -77,6 +79,64 @@ ASKED, SHOWN, ANSWER, MORE = "asked", "shown", "answer", "more"
 RESERVED = "reserved"
 PURPOSES = ("feedback",)
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+_INPUT = re.compile(r"input:[0-9a-f]{64}\Z")
+# Opaque, process-local custody: a persisted token cannot recreate a session after restart. Strong references
+# prevent object-id reuse; bounded eviction withholds old pending questions rather than extending their custody.
+_clients: dict[str, tuple[str, object]] = {}
+_clients_lock = Lock()
+
+
+def _provenance() -> dict | None:
+    """Keep the sources held at ask time, including every input admitted from a review and this call's arguments."""
+    from g6.core import cloud_consent as cloud
+
+    capture = cloud.current_capture()
+    if capture is None or capture.client is None:
+        return None
+    inputs = sorted(source for source in capture.supplied if _INPUT.fullmatch(source))
+    sources = tuple(dict.fromkeys((*cloud.prompt_sources(), *(cloud.Source(
+        source, cloud.sha256('asking-call-input'), source.removeprefix('input:')) for source in inputs))))
+    token = uuid4().hex
+    with _clients_lock:
+        if len(_clients) >= 64:
+            del _clients[next(iter(_clients))]
+        _clients[token] = capture.client
+    return {'version': 'question-sources.v1', 'provider': capture.client[0], 'session': token, 'inputs': inputs,
+            'sources': [{'source': s.source_id, 'item': s.item_id, 'content': s.content_sha256, 'recorded': s.recorded}
+                        for s in sources]}
+
+
+def pending_sources(asked: Asked) -> tuple:
+    """Record a pending question's own sources before use; admit its inputs only to the provider that sent them.
+
+    Consent is per source and provider (the owner's 11-08 rule): a question built from a call's own input may go back
+    to that same provider in any later session (so the person can answer it later, after a reconnect), never to
+    another provider or an unknown one. Legacy records and malformed provenance disclose nothing, even if a later
+    caller supplies the same text. The consent check on the returned sources still makes every recorded revoke win.
+    """
+    from g6.core import cloud_consent as cloud
+    from g6.harness.behaviour_question import CandidateRefused
+
+    capture, record = cloud.current_capture(), asked.provenance
+    try:
+        if not isinstance(record, dict) or record.get('version') != 'question-sources.v1':
+            raise ValueError('no provenance')
+        sources = tuple(cloud.Source(s['source'], s['item'], s['content'], s['recorded']) for s in record['sources'])
+        inputs = record['inputs']
+        if not sources or not isinstance(inputs, list) or not all(
+                isinstance(s, str) and _INPUT.fullmatch(s) for s in inputs) or not set(inputs) <= {
+                    s.source_id for s in sources}:
+            raise ValueError('incomplete provenance')
+        cloud.record_sources(sources)
+        provider = record['provider']
+        if capture is None or capture.client is None or not isinstance(provider, str) \
+                or provider == 'cloud:unknown' or provider != capture.client[0]:
+            raise ValueError('another provider or no provider')
+        capture.supplied.update(inputs)
+        return sources
+    except (KeyError, TypeError, ValueError, AttributeError):
+        cloud.record_sources((cloud.UNKNOWN,))
+        raise CandidateRefused('that pending question has no source custody for this client', cloud.REQUIRED) from None
 
 
 class StoreUnreadable(Exception):
@@ -190,6 +250,7 @@ class Asked:
     candidate: Candidate
     asked_at: str
     number: int
+    provenance: dict | None = None
 
     @property
     def shas(self) -> tuple[str, ...]:
@@ -314,21 +375,32 @@ class TaskQuestions:
             raise StoreUnreadable(self.path, "the store's place holds something that is not a file")
         try:
             ledger = ChainLedger(self.path, validate=self._validate)
-        except (LedgerError, OSError, UnicodeError) as exc:
+        except (LedgerError, OSError, UnicodeError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             raise StoreUnreadable(self.path, str(exc)[:300]) from None
-        if ledger.head() != (kept or ""):
-            entries = ledger.entries()
-            before = entries[-2]["entry_sha256"] if len(entries) >= 2 else ""
-            if not entries or before != (kept or ""):
-                raise StoreUnreadable(self.path, "its chain does not end at the head G6 kept after its last write: "
-                                                 "it was emptied, cut back to an earlier prefix, or replaced")
-            self._keep(ledger.head())   # a stop between a write and its head: the head catches up
+        try:
+            if ledger.head() != (kept or ""):
+                entries = ledger.entries()
+                before = entries[-2]["entry_sha256"] if len(entries) >= 2 else ""
+                if not entries or before != (kept or ""):
+                    raise StoreUnreadable(self.path, "its chain does not end at the head G6 kept after its last write: "
+                                                     "it was emptied, cut back to an earlier prefix, or replaced")
+                self._keep(ledger.head())   # a stop between a write and its head: the head catches up
+        except (RecursionError, MemoryError):
+            raise StoreUnreadable(self.path, "a stored JSON record exceeds decoder limits") from None
         return ledger
 
     def _append(self, ledger: ChainLedger, kind: str, ident: str, body: dict) -> None:
         """One entry, bound to this task, then its head kept."""
-        ledger.append(kind, ident, {**body, "task": self.identity})
-        self._keep(ledger.head())
+        try:
+            ledger.append(kind, ident, {**body, "task": self.identity})
+        except (RecursionError, MemoryError):
+            raise StoreUnreadable(self.path, "a stored JSON record exceeds decoder limits") from None
+        try:
+            self._keep(ledger.head())
+        except (RecursionError, MemoryError):
+            raise StoreUnreadable(self.path, "a stored JSON record exceeds decoder limits") from None
 
     def state(self) -> State:
         """What the store holds now; ``StoreUnreadable`` when it cannot be read."""
@@ -354,21 +426,25 @@ class TaskQuestions:
     def _read(ledger: ChainLedger, default: int, note: str) -> State:
         asked, answers, shown, more = [], [], [], 0
         answer_scenarios, reserved = {}, []
-        for entry in ledger.entries():
-            body = entry["body"]
-            if entry["kind"] == ASKED:
-                asked.append(Asked(_question(body["question"]), _question(body["rule"]) if body.get("rule") else None,
-                                   Candidate(body["candidate"]), body.get("asked_at", ""), len(asked) + 1))
-            elif entry["kind"] == ANSWER:
-                answer = _answer(body["answer"])
-                answers.append(answer)
-                answer_scenarios[answer.sha256] = body.get('scenario_sha256', '')
-            elif entry["kind"] == SHOWN:
-                shown.append(dict(body))
-            elif entry["kind"] == MORE:
-                more += 1
-            elif entry["kind"] == RESERVED:
-                reserved.append(dict(body))
+        try:
+            for entry in ledger.entries():
+                body = entry["body"]
+                if entry["kind"] == ASKED:
+                    asked.append(Asked(_question(body["question"]), _question(body["rule"]) if body.get("rule") else None,
+                                       Candidate(body["candidate"]), body.get("asked_at", ""), len(asked) + 1,
+                                       body.get('provenance')))
+                elif entry["kind"] == ANSWER:
+                    answer = _answer(body["answer"])
+                    answers.append(answer)
+                    answer_scenarios[answer.sha256] = body.get('scenario_sha256', '')
+                elif entry["kind"] == SHOWN:
+                    shown.append(dict(body))
+                elif entry["kind"] == MORE:
+                    more += 1
+                elif entry["kind"] == RESERVED:
+                    reserved.append(dict(body))
+        except (RecursionError, MemoryError):
+            raise StoreUnreadable(ledger.path, "a stored JSON record exceeds decoder limits") from None
         state = State(tuple(asked), tuple(answers), tuple(shown), more, default, note,
                       answer_scenarios=answer_scenarios)
         return State(state.asked, state.answers, state.shown, more, default, note, _standard(state)[1], answer_scenarios,
@@ -394,14 +470,17 @@ class TaskQuestions:
                 raise CandidateRefused(f"the new question's outcomes do not compete: {why}", code)
             self._append(ledger, ASKED, question.sha256, {
                 "question": question.record.decode("ascii"), "rule": rule.record.decode("ascii") if rule is not None
-                else "", "candidate": candidate.data, "asked_at": at or now()})
+                else "", "candidate": candidate.data, "asked_at": at or now(), 'provenance': _provenance()})
             return self._read(ledger, default, note).asked[-1]
 
     def show(self, asked: Asked, result: str, *, shown_at: str, back_at: str, seconds: float) -> None:
         """Record one showing of ``asked``'s form and what came back."""
         with _locked(self.path):
             ledger = self._open()
-            ident = digest(["shown", asked.question.sha256, len(ledger.entries())])
+            try:
+                ident = digest(["shown", asked.question.sha256, len(ledger.entries())])
+            except (RecursionError, MemoryError):
+                raise StoreUnreadable(self.path, "a stored JSON record exceeds decoder limits") from None
             self._append(ledger, SHOWN, ident, {"question_sha256": asked.question.sha256, "result": result,
                                                 "shown_at": shown_at, "back_at": back_at, "seconds": round(seconds, 3)})
 
@@ -441,7 +520,10 @@ class TaskQuestions:
             state = self._read(ledger, default, note)
             if state.left < 1:
                 raise BudgetSpent(note or f"the budget of {state.allowance} question(s) for this task is spent")
-            ident = digest([RESERVED, purpose, len(ledger.entries())])
+            try:
+                ident = digest([RESERVED, purpose, len(ledger.entries())])
+            except (RecursionError, MemoryError):
+                raise StoreUnreadable(self.path, "a stored JSON record exceeds decoder limits") from None
             self._append(ledger, RESERVED, ident, {"purpose": purpose, "reserved_at": at or now()})
             return ident
 
@@ -449,7 +531,10 @@ class TaskQuestions:
         """Record that the person, in ``asked``'s form, let G6 ask one more question on this task."""
         with _locked(self.path):
             ledger = self._open()
-            ident = digest(["more", asked.question.sha256, len(ledger.entries())])
+            try:
+                ident = digest(["more", asked.question.sha256, len(ledger.entries())])
+            except (RecursionError, MemoryError):
+                raise StoreUnreadable(self.path, "a stored JSON record exceeds decoder limits") from None
             self._append(ledger, MORE, ident, {"question_sha256": asked.question.sha256, "by": by, "at": at or now()})
 
 

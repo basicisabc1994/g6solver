@@ -72,3 +72,32 @@ __g6_extras__: dict[str, tuple[str, ...]] = {"formal": ("z3",)}
 
 __all__ = ["DatalogBlock", "DatalogInput", "DatalogResult", "Program", "Refusal", "check_program", "checks", "evaluate",
            "explain", "finish", "parse_goal", "parse_program", "query"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_DATALOG_ANSWER_TOO_LARGE": "person",
+    "G6_E_DATALOG_ARITY_CLASH": "input",
+    "G6_E_DATALOG_CERTIFICATE_REFUTED": "person",
+    "G6_E_DATALOG_ENGINES_DISAGREE": "none",
+    "G6_E_DATALOG_ENGINE_ANSWER": "none",
+    "G6_E_DATALOG_ENGINE_ERROR": "none",
+    "G6_E_DATALOG_INPUT_INVALID": "input",
+    "G6_E_DATALOG_INPUT_TOO_LARGE": "person",
+    "G6_E_DATALOG_NOT_CHECKED": "none",
+    "G6_E_DATALOG_NOT_EVALUATED": "none",
+    "G6_E_DATALOG_NOT_STRATIFIABLE": "input",
+    "G6_E_DATALOG_ONE_ENGINE": "none",
+    "G6_E_DATALOG_PARSE_ERROR": "input",
+    "G6_E_DATALOG_SESSION_FAILED": "none",
+    "G6_E_DATALOG_SESSION_INPUT": "input",
+    "G6_E_DATALOG_SESSION_MISSING": "none",
+    "G6_E_DATALOG_SESSION_READBACK": "none",
+    "G6_E_DATALOG_SOLVER_ERROR": "none",
+    "G6_E_DATALOG_SOLVER_UNAVAILABLE": "person",
+    "G6_E_DATALOG_TIME_LIMIT": "person",
+    "G6_E_DATALOG_TIME_LIMIT_TOO_LONG": "person",
+    "G6_E_DATALOG_TOO_MANY_TUPLES": "none",
+    "G6_E_DATALOG_UNKNOWN_RELATION": "input",
+    "G6_E_DATALOG_UNSAFE_RULE": "input",
+}

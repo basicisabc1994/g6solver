@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
+import warnings
 from pathlib import Path
 
 
@@ -151,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("component")
     i.add_argument("op")
     i.add_argument("params", nargs="?", default="{}", help="JSON object of op parameters")
+    i.add_argument("--json", action="store_true", help="report an invocation failure as JSON")
     st = sub.add_parser("state", help="snapshot, list, roll back or export the state folder")
     st_sub = st.add_subparsers(dest="state_cmd", required=True)
     st_sub.add_parser("ls", help="list snapshots")
@@ -233,24 +236,102 @@ def main(argv: list[str] | None = None) -> int:
         info = discovery.describe(args.component)
         _print(info)
         return 0 if info.get("available") else 1
-    try:
-        params = json.loads(args.params)
-    except json.JSONDecodeError as exc:
-        print(f"params is not JSON: {exc}", file=sys.stderr)
-        return 2
-    from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
+    from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, invoke_checked
     from g6.core.consent_registry import GuardedRegistry
+    from uuid import uuid4
 
     # The same checked call as g6_invoke and g6.invoke: a verified stands only when G6's own re-check reproduces it, a
     # sensitive op runs only when the person lists it in G6_MCP_SENSITIVE, and a blocked reply exits 1.
     name = f"{args.component}.{args.op}"
-    reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(), registry=GuardedRegistry(),
-                           how_to_allow=f"Only the person who runs G6 can allow it, by listing {name} (or "
-                                        f"{args.component}) in {SENSITIVE_ENV} where they run g6.")
+    request_id = uuid4().hex[:12]
+
+    def diagnostic(text: str) -> None:
+        if sys.stderr is None:
+            return
+        try:
+            print(text, file=sys.stderr)
+            sys.stderr.flush()
+        except KeyboardInterrupt:
+            raise
+        except BaseException:  # noqa: BLE001 - a diagnostic stream must not expose its own failures
+            sys.stderr = None
+
+    def output(text: str) -> bool:
+        try:
+            if sys.stdout is None:
+                diagnostic("[G6_E_INVOKE_FAILED] G6: output could not be written.")
+                return False
+            print(text)
+            sys.stdout.flush()
+        except KeyboardInterrupt:
+            raise
+        except BaseException:  # noqa: BLE001 - an output stream may run its own code
+            # Python flushes stdout again at shutdown; a failed stream must not leak then or replace exit 1.
+            sys.stdout = None
+            diagnostic("[G6_E_INVOKE_FAILED] G6: output could not be written.")
+            return False
+        return True
+
+    def failed(message: str, door_reply: dict | None = None, *, code: str = "G6_E_INVOKE_FAILED",
+               exit_code: int = 1) -> int:
+        error = f"[{code}] {message}"
+        reply_request_id = (door_reply.get("request_id") or request_id) if door_reply else request_id
+        failure = blocked_reply(error, request_id=reply_request_id)
+        if door_reply and door_reply.get("run_id"):
+            failure["run_id"] = door_reply["run_id"]
+        if args.json:
+            if not output(json.dumps(failure, indent=2, default=str)):
+                return 1
+        else:
+            diagnostic(f"{error} completion_state: blocked-escalated")
+        return exit_code
+
+    try:
+        params = json.loads(args.params)
+    except (ValueError, RecursionError, MemoryError):
+        return failed("G6: params must be valid JSON.", code="G6_E_INVALID_PARAMS", exit_code=2)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        previous_thread_hook = threading.excepthook
+        thread_reported = False
+        thread_lock = threading.Lock()
+
+        def thread_failed(_args) -> None:
+            nonlocal thread_reported
+            with thread_lock:
+                if not thread_reported:
+                    thread_reported = True
+                    diagnostic("[G6_E_INVOKE_FAILED] G6: a thread failed while the operation was running.")
+
+        try:
+            threading.excepthook = thread_failed
+            reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(), registry=GuardedRegistry(),
+                                   request_id=request_id,
+                                   how_to_allow=f"Only the person who runs G6 can allow it, by listing {name} (or "
+                                                f"{args.component}) in {SENSITIVE_ENV} where they run g6.")
+        except KeyboardInterrupt:
+            raise
+        except BaseException:  # noqa: BLE001 - op failures must not expose library or exception text
+            return failed(f"G6: component {args.component!r}, op {args.op!r} failed while running.")
+        finally:
+            threading.excepthook = previous_thread_hook
+            if caught:
+                diagnostic(f"G6: {len(caught)} warnings captured while the operation was running.")
     if "result" not in reply:
-        print(reply["error"], file=sys.stderr)
+        if args.json:
+            output(json.dumps(reply, indent=2, default=str))
+        else:
+            diagnostic(reply["error"])
         return 1
-    _print(reply["result"])
+    try:
+        encoded = json.dumps(reply["result"], indent=2, default=str)
+    except KeyboardInterrupt:
+        raise
+    except BaseException:  # noqa: BLE001 - JSON encoding may run a result object's own code
+        return failed(f"G6: component {args.component!r}, op {args.op!r}: the result could not be written as JSON.", reply)
+    if not output(encoded):
+        return 1
     return 0 if reply["ok"] else 1
 
 

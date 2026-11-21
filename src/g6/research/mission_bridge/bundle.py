@@ -138,7 +138,10 @@ class Bundle:
 
     def evidence_categories(self) -> list[dict[str, Any]]:
         """The evidence records as written to the ledger (each with its oracle category)."""
-        return [entry["body"] for entry in self.ledger.entries() if entry["kind"] == "evidence"]
+        try:
+            return [entry["body"] for entry in self.ledger.entries() if entry["kind"] == "evidence"]
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def standard_ref(name: str) -> StandardRef:

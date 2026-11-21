@@ -1,8 +1,8 @@
 <!-- The site FAQ (web/content/faq.md) with links to these docs; tests/site/test_docs_copy.py keeps the two the same. -->
 # FAQ
 
-Today's language models already hold the right kind of general intelligence. What they lack is a dependable way to
-put it to work, and G6 is built to be that way.
+Today's language models can do more than they reliably deliver. G6 is a harness around the model that checks and
+challenges its work, so you can see what the evidence supports.
 {: .why }
 
 **Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.**
@@ -20,8 +20,10 @@ G6 tackles these limits through the harness around the model: the system that ma
 reasoning, supports learning and controls actions. The goal is to make existing intelligence work better in practice.
 
 ### Which limits does it answer, and how?
-- **Making things up:** each claim is checked against your sources, and every result is labelled for what its
-  evidence supports.
+- **Making things up:** a claim can be checked against your sources by a word-level check: support means shared
+  words, numbers and negations, not a reading of meaning. In G6's own test it found support for 91 of 100
+  near-verbatim claims but only 19 of 100 paraphrased ones. Results of G6's checks and work tools returned over G6's MCP server are labelled
+  for what its evidence supports. The command line prints the result alone.
 - **Forgetting, and short context:** each call gets just what it needs, marked with its source, and lessons from
   past runs are kept as hints you approve.
 - **No learning on the job:** G6 learns in the harness, so your model never changes and nothing it knew is lost.
@@ -30,7 +32,8 @@ reasoning, supports learning and controls actions. The goal is to make existing 
 - **Benchmarks that do not carry over:** every change is judged only on your own held-out examples.
 - **Unsafe actions and self-improvement:** actions are gated, a stop switch halts new work, and no change goes live
   without evidence and your approval.
-- **Cost:** a frontier model engineers the harness once, then a small model on your own computer runs inside it.
+- **Cost:** the aim is that a frontier model improves the harness once and a small model on your own computer then
+  runs inside it; whether that saves anything on your work is for your own held-out examples to show.
 
 The [home page](index.md) sets out each limit with the components that answer it.
 
@@ -39,8 +42,8 @@ A batteries-included framework for harness self-engineering: it lets the AI syst
 for your work. It has two parts.
 
 - **The meta-harness** is how G6 learns. It finds where your task goes wrong, proposes changes to how it runs, tests
-  each one on cases it has never seen, and keeps a change only when it wins and you approve. It can never change the
-  checks that judge it, which is what makes its self-modification safe.
+  each one on cases it has never seen, and keeps a change only when it wins and you approve. It cannot change the
+  checks that judge it, which limits what a bad change can do; that alone does not make changing itself safe.
 - **The components** are a prebuilt library of AI primitives for capability extension and failure engineering. Each
   extends what a model can do or closes one way it fails, and they layer like slices of Swiss cheese.
 
@@ -49,39 +52,43 @@ other systems. You use it through its MCP server (`g6-mcp`, the main surface), a
 command line, or as a ready-made [worked example](bundles/index.md).
 
 ### Where do the components come from?
-From studying how AI agents fail. Some 250 million tokens of agents' reasoning and failure traces were reviewed by
-hand to find the primitives that real work keeps needing. The aim is a complete set: a periodic table of
+From studying how AI agents fail: agents' reasoning and failure traces were reviewed to find the primitives that
+real work keeps needing. The aim is a complete set: a periodic table of
 intelligence. Each component is one element, listed in the [catalogue](components.md) with the failure it guards
 against.
 
 ### How is G6 different from other AI tools?
-It is a new kind of system. A model predicts text. An agent runs a model in a loop someone wrote by hand. Most AI
-frameworks hand you parts and leave the engineering to you. G6 does the engineering itself, and learns in a different
-way from today's machine learning:
+A model predicts text. An agent runs a model in a loop someone wrote by hand. Most AI frameworks hand you parts and
+leave the engineering to you. G6 adds a loop that proposes changes to the harness and tests each one before you
+approve it, so the engineering is shared between G6, your coding agent and you. It learns in a different way from
+training a model:
 
 - **Explicitly, not implicitly.** Training a model shifts millions of numbers no one can read. G6 learns through the
   harness, a structure written out in full: each change is a prompt, a check, a step or a piece of code you can read,
   test and roll back.
-- **From its own experiments.** It runs experiments on itself, on cases held out from it, and acts on what it finds.
+- **From its own experiments.** It runs experiments on its harness, on cases held out from it, and proposes changes
+  from what it finds; you approve each one.
 - **With a model of itself.** Every component declares what it does and needs, and every way G6 runs a task is
   written down, so it can see its own parts and change them.
 - **From plain words.** With a coding agent, you can teach it in your own language: the agent turns what you say into
   changes, and G6 tests each one before you approve it.
 
-That makes its learning closer to a person's. With its checks and safety mechanisms, it is built for deploying AI
-agents in the real world, on complex, open-ended work that needs human-level reasoning and memory over time.
+That learning can be read, tested and rolled back. G6 is early alpha: whether it helps on your work is for your own
+held-out examples to show.
 
 ### What can I do with it that I could not before?
-Build a specialist from the agent you already run and your own data, without training a model of your own: G6
-engineers the harness for your task on your examples, and your model's weights never change. Then try to cut what
-repeated work costs: pay a frontier model once to engineer the harness, and run a small model on your own computer
+Build a specialist from the agent you already run and your own data, without training a model of your own: G6's
+meta-harness proposes changes to the harness for your task, tests each on your examples and keeps those you approve,
+and your model's weights never change. Then try to cut what repeated work costs: pay a frontier model once to improve
+the harness, and run a small model on your own computer
 inside it, with no fee per call. Whether that saves anything on your work is for your own held-out examples to
 show.
 
 ### How far can it go on one task?
-Give it a task you can check and enough examples with known answers, and nothing in its design caps how far it can go
-on that task. It can engineer prompts, checks, pipelines and code, and even train a model of its own, such as a small
-adapter for a local model, keeping each step only when it wins on cases held out from it. Many of its internals rest
+Give it a task you can check and enough examples with known answers, and it can keep trying changes to prompts,
+checks, pipelines and code, and even train a small adapter for a local model, keeping each step only when it wins on
+cases held out from it. Your examples, your budget, the checks you can state and what the model can do all limit it,
+and how far it gets has not been measured in general. Many of its internals rest
 on established mathematics and computer science, set out in [the working theory](research.md). How far it gets
 on your work depends on your task and the data you have.
 
@@ -154,7 +161,7 @@ harness, and 60 extensions are in the library, each in a family for one kind of 
 | `algebra` | Does exact algebra and calculus for you, such as simplifying a formula, solving an equation, or finding a derivative, an integral or the inverse of a matrix, and checks each answer a second, independent way before handing it over | MCP | `sage_evaluate`, `sage_version` |
 | `algorithm_design` | Suggests textbook algorithms that fit the problem you describe, estimates what each would cost within your limits, and runs a fixed set of standard algorithms on your data, checking each answer a second way | MCP | none |
 | `causal` | Works out from your diagram of what causes what whether data can show the effect of one thing on another and which variables to control for, then estimates the effect and tries to knock it down | MCP | none |
-| `cegis` | Fills the gaps in a code template, then hunts for an input that breaks it, and repeats until none is left in the range you set | Python-only | — |
+| `cegis` | Fills the gaps in a code template, then hunts for an input that breaks it, and repeats until none is left in the range you set | MCP | `synthesize` |
 | `coding_agent_gate` | Checks a coding agent's work before it acts and again before it says the job is done | MCP | none |
 | `cognitive_bridge` | Picks which kind of check a claim needs, such as rules, cause and effect, logic, a prediction or an optimisation, ranks the questions that best tell rival explanations apart, and gathers the results for a reviewer outside the agent to check | MCP | none |
 | `complexity` | Reads a Python package's source without running it, maps its modules, shared state and side effects, and lists everything a change could reach and what it must keep | MCP | none |
@@ -284,7 +291,7 @@ All are implemented and tested. Three have been through a study registered befor
 checking, the action gate and the meta-harness (see [Research](research.md)). None has been studied in real use.
 
 ### Which components can I call over MCP?
-Every extension in the library can be called over MCP, as can 20 of the 38 core components; the other 18 are
+Every extension in the library can be called over MCP, as can 21 of the 38 core components; the other 17 are
 Python-only for now. The tables above say which. `workforce` has tools of its own, `g6_mission_create` and the others,
 and no op for `g6_invoke`.
 

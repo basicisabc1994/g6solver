@@ -65,7 +65,10 @@ def _compiled(sketch: dict, control: dict[int, Any]):
 
 
 def _json(value: Any) -> Any:
-    return json.loads(json.dumps(value, allow_nan=False))
+    try:
+        return json.loads(json.dumps(value, allow_nan=False))
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
 
 
 def same(a: Any, b: Any) -> bool:
@@ -177,7 +180,10 @@ def _search(request: dict) -> dict:
 
 
 def main() -> int:
-    request = json.loads(sys.stdin.read())
+    try:
+        request = json.loads(sys.stdin.read())
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
     _limit(int(request.get("mem_mb", 512)), int(request.get("cpu_s", 30)))
     op = request.get("op")
     reply = _evaluate(request) if op == "evaluate" else _search(request) if op == "search" else {

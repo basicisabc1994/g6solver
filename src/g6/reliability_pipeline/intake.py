@@ -256,11 +256,16 @@ def run_intake(
     # D-G: with request.context_sources attached, a context gap the request names is resolved
     # inside the assessment (it is classified as if the context were present, so it cannot mask
     # an access, infeasible or risky verdict), and the task proceeds as a qualified draft below.
-    _hard_block = {"infeasible", "blocked_missing_access", "blocked_unclear_success", "blocked_missing_context"}
+    _hard_block = {
+        "infeasible": "G6_E_PIPELINE_FEASIBILITY_INFEASIBLE",
+        "blocked_missing_access": "G6_E_PIPELINE_FEASIBILITY_BLOCKED_MISSING_ACCESS",
+        "blocked_unclear_success": "G6_E_PIPELINE_FEASIBILITY_BLOCKED_UNCLEAR_SUCCESS",
+        "blocked_missing_context": "G6_E_PIPELINE_FEASIBILITY_BLOCKED_MISSING_CONTEXT",
+    }
     if feasibility.classification in _hard_block:
         return StageResult.block(
             Stage.INTAKE,
-            f"G6_E_PIPELINE_FEASIBILITY_{feasibility.classification.upper()}",
+            _hard_block[feasibility.classification],
             feasibility.recommended_next_step,
             task_contract=contract,
             feasibility_report=feasibility,

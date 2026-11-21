@@ -85,7 +85,10 @@ def _json(raw: bytes, where: str) -> Any:
     if not raw.strip():
         return {}
     try:
-        return json.loads(raw.decode("utf-8"))
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise _Failed(PROVIDER_ERROR, f"the reply from {where} is not JSON") from exc
 

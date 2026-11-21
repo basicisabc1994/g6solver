@@ -191,7 +191,10 @@ def load_templates(directory: str | Path | None = None) -> dict[str, Template]:
     directory = TEMPLATES_DIR if directory is None else Path(directory)
     out: dict[str, Template] = {}
     for path in sorted(directory.glob("*.json")):
-        template = _template(json.loads(path.read_text(encoding="utf-8")), path.name)
+        try:
+            template = _template(json.loads(path.read_text(encoding="utf-8")), path.name)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
         if path.name != f"{template.name}.json":
             raise ValueError(f"{path.name}: a template file is named <name>.json, here {template.name}.json")
         out[template.name] = template

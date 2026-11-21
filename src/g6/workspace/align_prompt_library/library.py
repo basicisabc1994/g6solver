@@ -142,14 +142,19 @@ class Library:
     def _open(self) -> ChainLedger:
         try:
             return ChainLedger(self.path, validate=_rules)
-        except LedgerCorrupt as exc:
+        except (LedgerCorrupt, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             raise E.WorkspaceRefused(E.LIBRARY_CORRUPT, f"the library's record does not check out ({exc}); nothing "
                                                         "was read or stored") from None
 
     def _versions(self, ledger: ChainLedger) -> dict[str, list[dict]]:
         found: dict[str, list[dict]] = {}
-        for entry in ledger.entries():
-            found.setdefault(entry["body"]["name"], []).append(entry["body"])
+        try:
+            for entry in ledger.entries():
+                found.setdefault(entry["body"]["name"], []).append(entry["body"])
+        except (RecursionError, MemoryError):
+            raise E.WorkspaceRefused(E.LIBRARY_CORRUPT, "the library record exceeds decoder limits; nothing was read or stored") from None
         return found
 
     def _named(self, versions: dict[str, list[dict]], name: str) -> list[dict]:
@@ -222,7 +227,10 @@ class Library:
         """A version's template with ``{{name}}`` placeholders filled from ``values``, in one pass (a value is never
         expanded again). Strict: a placeholder with no value (``LIBRARY_MISSING_VALUE``) or a value with no placeholder
         (``LIBRARY_EXTRA_VALUE``) is refused. Says the digest of the template used and of the text made."""
-        record = self.get(name, version=version, digest=digest)
+        try:
+            record = self.get(name, version=version, digest=digest)
+        except (RecursionError, MemoryError):
+            raise E.WorkspaceRefused(E.LIBRARY_CORRUPT, "the library record exceeds decoder limits; nothing was read or stored") from None
         text, wanted = fill(record["content"], values, label=f"{name!r} version {record['version']}")
         return {"name": record["name"], "version": record["version"], "kind": record["kind"],
                 "template_digest": record["digest"], "text": text, "rendered_digest": digest_of(text),
@@ -244,7 +252,9 @@ class Library:
                 return body
             try:
                 ledger.append(ENTRY, _ident(body["name"], body["version"]), body)
-            except LedgerError as exc:
+            except (LedgerError, RecursionError, MemoryError) as exc:
+                if isinstance(exc, (RecursionError, MemoryError)):
+                    exc = ValueError("a JSON record exceeds decoder limits")
                 raise E.WorkspaceRefused(E.LIBRARY_CORRUPT, f"the library refused the entry ({exc}); nothing was "
                                                             "stored") from None
         return {**_shown(body, content=False), "unchanged": False}
