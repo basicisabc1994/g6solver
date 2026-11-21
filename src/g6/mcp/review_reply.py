@@ -77,7 +77,10 @@ def save(reply: dict, job_id: str) -> str | None:
         from g6.harness import behaviour_runner
 
         behaviour_runner.write_probes(path, reply, data)
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError) as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         return None
     return str(path)
 
@@ -102,7 +105,10 @@ def record(job_id: str, reply: dict, sources: Any) -> None:
             out.flush()
             os.fsync(out.fileno())
         os.replace(part, side)
-    except (OSError, ValueError, TypeError, AttributeError):
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         return
 
 
@@ -128,7 +134,12 @@ def carried(job_id: str, *, expected_sha256: str | None = None) -> tuple | None:
             return None
         return tuple(cloud.Source(one["source"], one["item"], one["content"], one["recorded"])
                      for one in entry["sources"])
-    except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, MemoryError):
+    except OSError as exc:   # its own clause: the decoder-limit handler below re-raises nothing
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
+        return None
+    except (ValueError, TypeError, KeyError, AttributeError, RecursionError, MemoryError):
         # RecursionError: a record swapped for deeply nested JSON does not read back either
         return None
 

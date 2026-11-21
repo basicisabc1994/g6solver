@@ -1693,32 +1693,28 @@ def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
         value = protocol.model_dump(exclude={"read"})
         return value if value["verdict"] == "defect" else {**value, "test": ""}
     floor = _floor_critic_report(said, proof=proof)
-    stated = _stated_verdicts(body)
-    if stated:
-        # A verdict the critic states in JSON, after a header, in a code fence or beside a verdict line, is final and
-        # never read by a model. It counts only as the whole protocol, quoting the token, and agreeing with every
-        # other verdict the reply states; anything else is a failed review, never a clean one.
+    stated, lines = _stated(body)
+    if stated or lines:
+        # A verdict the critic states is final and never read by a model: on a verdict line in any layout, or as a JSON
+        # object in the reply's text or a json fence, never inside a python or other code fence (a test's code). It
+        # counts only quoting the token, as the whole protocol where it is JSON, and agreeing with every other verdict
+        # the reply states; anything else is a failed review, never a clean one.
         try:
             protocols = [_CriticProtocol.model_validate(one, strict=True) for one in stated]
         except ValueError:
-            protocols = []
-        if proof and not (any(one.read == proof for one in protocols) or floor["verdict"] != "unread"):
+            protocols = None
+        if proof and not (floor["verdict"] != "unread" or any(one.read == proof for one in protocols or ())):
             return floor   # the token is quoted by a READ line or by the protocol's own read field, or not at all
-        words = {one.verdict for one in protocols} | ({floor["verdict"]} if re.search(r"^VERDICT:", body, re.M) else set())
-        if not protocols or len(words) != 1 or proof and any(one.read not in ("", proof) for one in protocols):
-            return {"verdict": "unreadable", "rule": "", "why": "the reply states a verdict that is not the protocol's",
-                    "test": "", "error": ""}
-        value = protocols[0].model_dump(exclude={"read"})
+        words = {one.verdict for one in protocols or ()} | set(lines)
+        if protocols is None or len(words) != 1 or proof and any(one.read not in ("", proof) for one in protocols):
+            return {"verdict": "unreadable", "rule": "", "why": "the reply states a verdict that is not the protocol's, "
+                    "or verdicts that differ", "test": "", "error": ""}
+        word, = words
+        value = (protocols[0].model_dump(exclude={"read"}) if protocols else
+                 {**floor, "verdict": word, "test": _reproduction(body)})
         return value if value["verdict"] == "defect" else {**value, "test": ""}
     if floor["verdict"] == "unread":
         return floor
-    if floor["verdict"] in READ_VERDICTS or re.search(r"^VERDICT:\s*\w", body, re.M):
-        # an explicit verdict line is a protocol identifier: final, never reinterpreted by a model, so a stated
-        # failure (unreadable, or any word that is not none or defect) stays a failed review
-        return floor
-    loose = re.search(r"^[\W_]*verdict[\W_]*[:=][\W_]*(\w+)", body, re.I | re.M)
-    if loose and loose[1].lower() not in READ_VERDICTS:
-        return {**floor, "verdict": loose[1].lower()}   # a failure stated in its own layout is never read as clean
     reading = semantic.read(semantic.Question("critic", said, Reply, lambda: floor, "choose"))
     value = reading.value.model_dump() if isinstance(reading.value, BaseModel) else reading.value
     if value["verdict"] != "defect":
@@ -1726,10 +1722,31 @@ def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
     return value
 
 
+_FENCE = re.compile(r"^[ \t]*```[ \t]*([^\n`]*)\n(.*?)^[ \t]*```[ \t]*$", re.M | re.S)
+_VERDICT_LINE = re.compile(r"^[\W_]*verdict[\W_]*[:=][\W_]*(\w+)", re.I | re.M)
+
+
+def _stated(body: str) -> tuple[list[dict], list[str]]:
+    """The verdicts the critic states where its protocol states them: the JSON objects with a ``verdict`` key and the
+    words of its verdict lines (``VERDICT: x``, ``**Verdict:** x``), in the reply's own text and its json fences. A
+    python or any other code fence is code, a reproduction or a fixture, so nothing in it is a verdict; nor is anything
+    after a fence that is never closed."""
+    text = _FENCE.sub(lambda fence: fence[2] if fence[1].strip().lower() == "json" else "", body)
+    opened = re.search(r"^[ \t]*```(?![ \t]*json[ \t]*$)", text, re.M | re.I)
+    text = text[:opened.start()] if opened else text
+    return _stated_verdicts(text), [line[1].lower() for line in _VERDICT_LINE.finditer(text)]
+
+
+def _reproduction(body: str) -> str:
+    """The reproducing test of a line-form reply: its python fence (``_floor_critic_report``'s rule)."""
+    test = re.search(r"^```python\n(.*?)^```", body, re.M | re.S)
+    return test[1].strip() if test else ""
+
+
 def _stated_verdicts(body: str) -> list[dict]:
     """Each JSON object in ``body``, outside any other, that has a ``verdict`` key: wherever it stands (alone, after a
-    header or a progress line, in a code fence, mid-line). A test's code is inside its object's string, so it is not
-    read again on its own."""
+    header or a progress line, mid-line). A test's code is inside its object's string, so it is not read again on its
+    own."""
     found, decoder, at = [], json.JSONDecoder(), body.find("{")
     while at != -1:
         try:

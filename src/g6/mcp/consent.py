@@ -32,6 +32,9 @@ async def elicit(ctx: Any, message: str, schema: dict) -> tuple[str, Any, str]:
         result = await ctx.session.elicit_form(
             message=message, requestedSchema=schema, related_request_id=ctx.request_id)
     except Exception as exc:  # noqa: BLE001 - unavailable consent must never authorize
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         return "unavailable", None, type(exc).__name__
     return str(result.action), getattr(result, "content", None), ""
 

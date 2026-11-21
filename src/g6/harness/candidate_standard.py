@@ -491,6 +491,25 @@ def with_confirmed(found, standard):
     return shown
 
 
+def owns(found, one):
+    """Whether a supplied example.v1 check is one of a candidate's own, whatever its id: every one for a candidate the
+    person confirmed (their answer replaces them all), and, for one not yet confirmed, one whose case is a call the
+    candidate states (the same function, arguments and keyword arguments). The candidate's checks are then the ones
+    its standard states (``checks``)."""
+    if getattr(one, 'template', '') != 'example.v1':
+        return False
+    item = next((i for i in found['standard'] if i['id'] == getattr(one, 'requirement_id', None)), None)
+    if item is None or not item['function']:
+        return False
+    if item['status'] == 'stated':
+        return True
+    bindings = one.bindings if isinstance(one.bindings, dict) else {}
+    cases = bindings.get('cases') if isinstance(bindings.get('cases'), list) else []
+    return bindings.get('function') == item['function'] and any(
+        isinstance(case, dict) and _same(case.get('args', []), own.get('args', []))
+        and _same(case.get('kwargs', {}), own.get('kwargs', {})) for case in cases for own in item['cases'])
+
+
 def build(root, task, *, before=None):
     texts = sources(root)
     for rel, text in (before or {}).items():

@@ -79,7 +79,10 @@ def identity_of(repo: str, task: str) -> str | None:
         return None
     try:
         return qs.task_identity(repo_tests.checked_repo(repo), task)
-    except (repo_tests.RepoRefused, OSError, ValueError):
+    except (repo_tests.RepoRefused, OSError, ValueError) as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         return None
 
 
@@ -95,7 +98,10 @@ def _shared(read: tuple) -> None:
     try:
         cloud.refuse_unshared(capture.client[0] if capture.client is not None else "cloud:unknown", read,
                               supplied=capture.supplied)
-    except LLMError:
+    except LLMError as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         raise bq.CandidateRefused("those question sources are not shared with this client", cloud.REQUIRED) from None
 
 
@@ -140,7 +146,13 @@ def _review_candidates(task: str, review_job: str, template_instances: Any, *, i
         saved_bytes = state_path("reviews", f"{review_job}.json").read_bytes()
         saved = json.loads(saved_bytes)
         _completion = saved["assessment"]["completion"]
-    except (OSError, ValueError, KeyError, TypeError, RecursionError, MemoryError) as exc:
+    except OSError as exc:   # its own clause: the decoder-limit handler below re-raises nothing (json read census)
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
+        raise bq.CandidateRefused(f"G6 holds no finished review with this job id it can read ({type(exc).__name__})",
+                                  NOT_THIS_REVIEW) from None
+    except (ValueError, KeyError, TypeError, RecursionError, MemoryError) as exc:
         raise bq.CandidateRefused(f"G6 holds no finished review with this job id it can read ({type(exc).__name__})",
                                   NOT_THIS_REVIEW) from None
     from g6.mcp import review_binding
@@ -200,7 +212,10 @@ def _with_knowledge(candidates: list[bq.Candidate]) -> list[bq.Candidate]:
                 by=f"normative grant {normative.grant_id}" if normative else "",
                 rule="" if normative else _support.designation_rule(found[0])))
         return out
-    except (ScopeDenied, Refused, bq.CandidateRefused, OSError, ValueError):
+    except (ScopeDenied, Refused, bq.CandidateRefused, OSError, ValueError) as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         return list(candidates)
 
 
@@ -213,7 +228,10 @@ def _designated(state: qs.State, answer: Any) -> None:
         from g6._context_engine._scope import ScopeDenied, access, host_binding
 
         _support.designate(access(host_binding(), "fetch", "local"), state, answer)
-    except (ScopeDenied, Refused, StopIteration, OSError, ValueError):
+    except (ScopeDenied, Refused, StopIteration, OSError, ValueError) as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         return
 
 
@@ -358,6 +376,9 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
     except bq.CandidateRefused as exc:
         return blocked_reply(f"[{exc.code}] {bq.caller_text(exc, literal=False)}")
     except (OSError, ValueError) as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         return blocked_reply(f"[{executable_scenario.UNAVAILABLE}] {bq.caller_text(exc, literal=False)}")
     if reading.answer is None:
         return _reply(PENDING, reading.why, state=state, asked=asked, plan=plan, reading=reading)
@@ -372,7 +393,10 @@ def enforced(repo: str, task: str) -> Any:
         return None
     try:
         root = repo_tests.checked_repo(repo)
-    except (repo_tests.RepoRefused, OSError, ValueError):
+    except (repo_tests.RepoRefused, OSError, ValueError) as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         return None
     store = qs.TaskQuestions(qs.task_identity(root, task))
     if not store.exists():

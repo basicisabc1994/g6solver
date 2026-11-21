@@ -353,6 +353,9 @@ class TaskQuestions:
                 raise OSError("its head's place holds something that is not a file")
             text = self.head.read_text(encoding="ascii").strip()
         except (OSError, UnicodeError) as exc:
+            from g6.core.semantic import trusted_stop
+            if trusted_stop(exc):
+                raise
             raise StoreUnreadable(self.path, f"its head cannot be read: {exc}"[:300]) from None
         if not _HEX64.match(text):
             raise StoreUnreadable(self.path, "its head is not the SHA-256 of a ledger entry")
@@ -375,7 +378,12 @@ class TaskQuestions:
             raise StoreUnreadable(self.path, "the store's place holds something that is not a file")
         try:
             ledger = ChainLedger(self.path, validate=self._validate)
-        except (LedgerError, OSError, UnicodeError, RecursionError, MemoryError) as exc:
+        except OSError as exc:   # its own clause: the decoder-limit handler below re-raises nothing
+            from g6.core.semantic import trusted_stop
+            if trusted_stop(exc):
+                raise
+            raise StoreUnreadable(self.path, str(exc)[:300]) from None
+        except (LedgerError, UnicodeError, RecursionError, MemoryError) as exc:
             if isinstance(exc, (RecursionError, MemoryError)):
                 exc = ValueError("a JSON record exceeds decoder limits")
             raise StoreUnreadable(self.path, str(exc)[:300]) from None

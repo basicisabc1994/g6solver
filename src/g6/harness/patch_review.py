@@ -1005,15 +1005,17 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict] | None
                 candidates, texts, before=original,
                 budget=verification_search.MAX_CHECKS - len(proposed) - len(instances))
             # One source of truth: a candidate's checks are those its standard states, after the person's confirmed
-            # answer. A supplied check under one of their ids only advertised the candidate: it never runs in its place.
+            # answer. A supplied check under one of their ids, or one that is the candidate's own by what it calls
+            # (``owns``: any id), only advertised the candidate: it never runs in its place.
             own = {c.id for c in (*generated, *compiled)} | {one['check'] for one in candidate_skipped}
             mine = {c.id: c for c in compiled}
+            replaced = [c for c in instances if c.id in own or candidate_standard.owns(candidates, c)]
             candidate_skipped.extend(dict(activity='candidate check', check=c.id, origin='caller',
                 candidate_id=c.requirement_id, result='skipped', model_calls=0, seconds=0.0,
-                reason="the candidate's own check runs under this id, as its standard states it")
-                for c in instances if c.id in mine and c.bindings != mine[c.id].bindings)
+                reason="the candidate's own check runs in its place, as its standard states it")
+                for c in replaced if c.id not in mine or c.bindings != mine[c.id].bindings)
             proposed = [*(c for c in proposed if c.id not in own), *generated]
-            instances = [*(c for c in instances if c.id not in own), *compiled]
+            instances = [*(c for c in instances if all(c is not gone for gone in replaced)), *compiled]
             config = config or verification_search.search_config(None)
         from g6.harness import outcome_history
 

@@ -61,5 +61,10 @@ def matches(path: Path, identity: str, *, data: bytes | None = None) -> bool:
         record = json.loads(side.read_bytes())
         return record == {"version": "review-binding.v1", "task_identity": identity,
                           "reply_sha256": hashlib.sha256(path.read_bytes() if data is None else data).hexdigest()}
-    except (OSError, ValueError, TypeError, RecursionError, MemoryError):
+    except OSError as exc:   # its own clause: the decoder-limit handler below re-raises nothing
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
+        return False
+    except (ValueError, TypeError, RecursionError, MemoryError):
         return False

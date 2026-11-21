@@ -666,6 +666,9 @@ def resolve(tree: Tree, dotted: str, side: str) -> Target:
     try:   # a RecursionError or a MemoryError, Python's parser out of depth, is G6's own error (review I3), not here
         found, star = _top_level(ast.parse(tree.text(rel, side)), attribute)
     except (SyntaxError, ValueError, OSError, repo_tests.RepoRefused) as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         raise Inapplicable(f"{dotted}: {rel} could not be read or parsed {WHERE[side]} ({type(exc).__name__})") from exc
     if found is None:
         raise Inapplicable(f"{dotted}: no top-level name {attribute} in {rel} {WHERE[side]}"
@@ -1834,7 +1837,10 @@ def _declared(tree: Tree, side: str) -> tuple[str, tuple[list[str], list[dict], 
             continue
         try:
             text = tree.text(rel, side)
-        except (ValueError, OSError, repo_tests.RepoRefused):
+        except (ValueError, OSError, repo_tests.RepoRefused) as exc:
+            from g6.core.semantic import trusted_stop
+            if trusted_stop(exc):
+                raise
             continue
         parsed = _toml(text) if rel == "pyproject.toml" else _ini(text)
         if parsed is not None:
@@ -2157,7 +2163,10 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
     for item in edges.values():
         try:
             text = tree.text(item["file"], PATCH).splitlines()[item["line"] - 1].strip()[:200]
-        except (ValueError, IndexError, OSError):
+        except (ValueError, IndexError, OSError) as exc:
+            from g6.core.semantic import trusted_stop
+            if trusted_stop(exc):
+                raise
             text = ""
         violations.append({key: item[key] for key in ("rule", "from", "to", "file", "line", "lazy", "why", "chain")}
                           | {"text": text})
