@@ -57,15 +57,16 @@ def test_state_reader_is_exact(value, expected):
     assert states.state_of(value) == expected
 
 
-@pytest.mark.parametrize("outcome", [
-    "[G6_E_INPUT_VALIDATION] planted",
-    json.dumps({"error": "[G6_E_INPUT_VALIDATION] planted"}),
-    json.dumps({"warning_card": {"message": "G6_E_INPUT_VALIDATION"}}),
+@pytest.mark.parametrize("outcome, code", [
+    ("[G6_E_INPUT_VALIDATION] planted", "G6_E_INPUT_VALIDATION"),
+    (json.dumps({"error": "[G6_E_INPUT_VALIDATION] planted"}), "G6_E_INPUT_VALIDATION"),
+    ("planted G6_E_INPUT_VALIDATION", ""),
+    (json.dumps({"warning_card": {"message": "G6_E_INPUT_VALIDATION"}}), ""),
 ])
-def test_selector_never_reads_message_as_code(outcome):
+def test_selector_reads_a_leading_code_never_one_inside_a_message(outcome, code):
     from g6.core.selector import _read
 
-    assert _read(outcome)["code"] == "unknown"
+    assert _read(outcome)["code"] == code
 
 
 def test_selector_reads_declared_code():
@@ -91,13 +92,13 @@ def test_repair_missing_fields_are_declared_first():
     assert _named({"missing": "task", "error": "repo"}, ["task", "repo"]) == []
 
 
-def test_effect_is_declared_not_named():
+def test_a_declared_effect_only_tightens():
     from g6.core.selector import _acts
 
-    entry = {"kind": "op", "id": "op:sample.send_report", "needs": {"sensitive": ""}}
-    assert _acts(entry) == "unknown"
-    assert _acts({**entry, "effects": ["outward"]}) == "outward"
-    assert _acts({**entry, "effects": ["internal"]}) == "internal"
+    entry = {"kind": "op", "id": "op:sample.summarise", "needs": {"sensitive": ""}}
+    assert _acts(entry) == ""
+    assert _acts({**entry, "effects": ["outward"]})
+    assert _acts({**entry, "id": "op:sample.send_report", "effects": ["internal"]})   # the name still acts
 
 
 def test_reflex_reads_a_declared_or_leading_code_never_one_inside_the_reason():
@@ -152,12 +153,12 @@ def test_missing_author_cannot_establish_separate_reviewer():
     assert Evidence("review", ref="patch", reviewer="Bob").problem(author="")
 
 
-def test_declared_internal_tool_can_be_next():
+def test_a_tool_that_does_not_act_can_be_next():
     from g6.core import selector
 
     reply = selector.select("help using G6", considering=["g6_help"], rerank="lexical")
     assert reply["next"]["id"] is not None
-    assert next(c for c in reply["candidates"] if c["id"] == reply["next"]["id"])["acts"] == "internal"
+    assert next(c for c in reply["candidates"] if c["id"] == reply["next"]["id"])["acts"] == ""
 
 
 def test_a_code_that_is_not_a_g6_code_never_hides_the_card():

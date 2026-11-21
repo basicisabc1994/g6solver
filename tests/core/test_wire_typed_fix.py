@@ -265,6 +265,37 @@ def test_a_fallback_that_was_refused_then_sent_and_failed_was_sent():
     assert limited.calls[-1]["sent"] is True
 
 
+# --- slice 3: the selector (causes D-acts, D-read) ---------------------------------------------------------------------
+
+def test_a_safety_question_is_routed_to_the_action_gate():
+    from g6.core import selector
+
+    assert selector.select("is it safe to run this git push", phase="implement", rerank="lexical")["next"]["id"] == (
+        "op:action_gating.evaluate")
+
+
+def test_a_declared_effect_only_adds_acting():
+    from g6.core.selector import _acts
+
+    entry = {"kind": "op", "id": "op:sample.send_report", "needs": {"sensitive": ""}}
+    assert _acts({**entry, "effects": ["internal"]})                       # its name says it sends
+    assert _acts({**entry, "needs": {"sensitive": "runs code"}, "effects": ["internal"]})
+    quiet = {"kind": "op", "id": "op:sample.summarise", "needs": {"sensitive": ""}}
+    assert _acts(quiet) == "" and _acts({**quiet, "effects": ["internal"]}) == ""
+    assert _acts({**quiet, "effects": ["outward"]})
+
+
+def test_the_selector_reads_a_text_reply_and_a_replys_error_by_their_lead():
+    import json
+
+    from g6.core.selector import _read
+
+    assert _read("[G6_E_INPUT_VALIDATION] [ACTION_GATING_ERROR] evaluate: action")["code"] == "G6_E_INPUT_VALIDATION"
+    assert _read(json.dumps({"error": "[G6_E_INPUT_VALIDATION] planted"}))["code"] == "G6_E_INPUT_VALIDATION"
+    assert _read("the words name G6_E_INPUT_VALIDATION")["code"] == ""
+    assert _read("defect_detected")["word"] == "defect_detected"
+
+
 def test_missing_fields_are_declared_first_then_read_from_the_schema_names_the_refusal_says():
     from g6.mcp.repair import _named
 

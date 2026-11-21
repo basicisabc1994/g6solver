@@ -628,7 +628,8 @@ def _components_and_ops() -> tuple[dict[str, Any], list[dict[str, Any]]]:
                     " This op is sensitive. The person must allow it themselves; tell the person and stop."
                     if op in sensitive else ""),
                 "sensitive": op in sensitive, "cost": cost, "phases": phases,
-                "validated": validated, "issues": issues, "fill": fill, "effects": list(effects_of(module, op)),
+                "validated": validated, "issues": issues, "fill": fill,
+                **({"effects": list(effects)} if (effects := effects_of(module, op)) != ("unknown",) else {}),
             })
     return components, ops
 
