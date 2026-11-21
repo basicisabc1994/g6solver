@@ -242,6 +242,10 @@ SHAPES = {
 }
 STATUS = {'passed': (True, False), 'failed': (False, True), 'error': (False, False)}
 LEARNED = {'passed': 'not_refuted', 'failed': 'defect_detected', 'error': 'check_error'}
+#: The one documented exception to agreement (lead ruling, 2026-11-21): a check whose own file could not be collected
+#: is failed to the live reader, but learning records it as an error, because the cause can be a module this
+#: environment lacks, and unusable execution evidence never becomes a reproduced defect.
+LEARNED_AS = {'own_file_uncollected': 'error'}
 
 
 @pytest.mark.parametrize('shape', sorted(SHAPES))
@@ -268,16 +272,37 @@ def test_learning_reads_every_report_shape_as_the_live_reader_does(tmp_path, mon
     ident = receipt_store._record(body, learning=repo_tests._learning_binding(
         ran, [node], repository='c' * 64, check_digests={FILE: hashlib.sha256(CHECK.encode()).hexdigest()}))
     learned = receipt_store.lookup_learning(ident, artifact_digest=body['source_before'])
-    assert outcome_history._status(learned, node) == STATUS[expected]
+    agreed = LEARNED_AS.get(shape, expected)   # the live reader's result, but for the one ruled exception
+    assert outcome_history._status(learned, node) == STATUS[agreed]
     # A receipt bound before readings (its phases beside it) never reads as a result the live reader does not give.
     older = {**{key: value for key, value in learned.items() if key != 'readings'}, 'test_outcomes': ran['test_outcomes']}
-    assert outcome_history._status(older, node) in {STATUS[expected], (False, False)}
+    assert outcome_history._status(older, node) in {STATUS[agreed], (False, False)}
     admitted = []
     monkeypatch.setattr(outcome_history, '_record', lambda root, row: admitted.append(row)
                         if outcome_history._admitted(row, 'c' * 64) else None)
     outcome_history.record_stated(SimpleNamespace(repo=Path.cwd(), files=[]), {node: CHECK},
                                   [{'receipt': ident, 'provenance': 'stated'}], artifact=body['source_before'])
-    assert [row['classification'] for row in admitted] == [LEARNED[expected]]
+    assert [row['classification'] for row in admitted] == [LEARNED[agreed]]
+
+
+def test_a_collection_error_never_becomes_a_reproduced_defect(monkeypatch):
+    # Lead ruling, 2026-11-21: whatever the bound reading says, a collection_error run is never a defect.
+    body = {'repository_id': 'c' * 64, 'source_before': 'd' * 64, 'source_after': 'd' * 64,
+            'check_digests': {FILE: 'b' * 64}, 'tests': {'requested': [NODE], 'collected': []},
+            'readings': {NODE: 'failed'}, 'result': {'verdict': 'collection_error', 'completed': False}}
+    assert outcome_history._status(body, NODE) == (False, False)
+    monkeypatch.setattr(receipt_store, 'lookup', lambda *args, **kwargs: body)
+    monkeypatch.setattr(outcome_history, 'repository_id', lambda root: 'c' * 64)
+    row = {'schema': outcome_history.SCHEMA, 'repository_id': 'c' * 64, 'receipt': 'owned', 'artifact_digest': 'd' * 64,
+           'source_after': 'd' * 64, 'classification': 'defect_detected', 'node': NODE, 'modules': [],
+           'finding': 'stated check', 'method': 'review', 'check': {'source': '', 'file': FILE, 'sha256': 'b' * 64}}
+    assert not outcome_history._admitted(row, 'c' * 64)
+    assert outcome_history._admitted({**row, 'classification': 'check_error'}, 'c' * 64)
+    recorded = []
+    monkeypatch.setattr(outcome_history, '_record', lambda root, value: recorded.append(value['classification']))
+    outcome_history.record_stated(SimpleNamespace(repo=Path.cwd(), files=[]), {NODE: ''},
+                                  [{'receipt': 'owned', 'provenance': 'stated'}], artifact='d' * 64)
+    assert recorded == ['check_error']
 
 
 @pytest.mark.parametrize('result', ['passed', 'failed', 'error'])

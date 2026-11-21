@@ -120,8 +120,10 @@ def _status(body: dict, node: str) -> tuple[bool, bool]:
             **result, 'test_outcomes': phases})
         found = reading(report.wire(), node)['result']
     # The receipt's own verdict bounds the reading: a binding never makes a pass or a failure the run did not give.
+    # A check whose own file could not be collected (``collection_error``) is never a defect, though the live reader
+    # calls it failed: the cause can be a module this environment lacks (lead ruling, 2026-11-21).
     verdict = result.get('verdict')
-    return found == 'passed' and verdict == 'passed', found == 'failed' and verdict in {'failed', 'collection_error'}
+    return found == 'passed' and verdict == 'passed', found == 'failed' and verdict == 'failed'
 
 
 def _observation_status(result: dict) -> tuple[bool, bool]:
