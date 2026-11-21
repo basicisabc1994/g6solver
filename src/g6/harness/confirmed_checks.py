@@ -137,6 +137,9 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
             except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
                 raise
             except (OSError, ValueError) as exc:
+                from g6.core.semantic import trusted_stop
+                if trusted_stop(exc):
+                    raise
                 record_error(result, "scenario", exc, [])
                 result["result"], result["detail"] = NOT_RUN, str(exc)
                 continue
@@ -193,6 +196,9 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, repo_tests.RepoRefused):
             raise   # an operator stop, unconfirmed cleanup or a refusal still reaches the door
         except Exception as exc:
+            from g6.core.semantic import trusted_stop
+            if trusted_stop(exc):
+                raise
             record_error(result, step, exc, on_the_patch)
         result["result"], result["detail"] = patch_result(on_the_patch)
         failing = next((found for found in on_the_patch if _failed(found)), None)
@@ -215,6 +221,9 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
             except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, repo_tests.RepoRefused):
                 raise
             except Exception as exc:
+                from g6.core.semantic import trusted_stop
+                if trusted_stop(exc):
+                    raise
                 record_error(result, "reproduction", exc, on_the_patch)
     return found
 

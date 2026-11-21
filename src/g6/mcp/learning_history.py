@@ -46,7 +46,10 @@ async def forget_reply(ctx, params_json: str, *, allow: frozenset[str]) -> dict:
             'scope': 'one repository outcome history; separate execution receipts remain'}), caller=params)
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise   # both are OSErrors: an operator stop or unconfirmed cleanup must reach the enclosing door
-    except OSError:
+    except OSError as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         return blocked_reply('[G6_E_INPUT_VALIDATION] could not finish removing history; use learning_history.list '
                              'to inspect what remains. Do not retry around a permission refusal.')
     except ValueError:

@@ -1085,6 +1085,9 @@ def _stage(stopped: list[dict], what: str, run, *args, **kwargs):
     except (*LETS_THROUGH, repo_tests.RepoRefused):
         raise
     except Exception as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         from g6.harness import verification_search
         stopped.append({"activity": "search stage", "stage": what, "result": "error",
                         "reason": verification_search.stopped(exc), "stopped": what, "seconds": 0.0, "model_calls": 0})
@@ -1476,7 +1479,10 @@ def _authored(check: str, change, root: Path) -> bool:
         return _written(check, change, root)
     except LETS_THROUGH:
         raise
-    except (repo_tests.RepoRefused, OSError):
+    except (repo_tests.RepoRefused, OSError) as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         return True
 
 
@@ -1512,6 +1518,9 @@ def _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, r
     except LETS_THROUGH:
         raise   # the review's own rule: an operator stop or unconfirmed cleanup reaches the door, here as everywhere
     except Exception as exc:   # G6's own work: this run decides no field, so it never fails the review
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         return {"checks": ids, "why": f"G6 could not run them again ({type(exc).__name__})"}
     if _loaded_elsewhere(change, ran) or (ran.get("source_before") and ran["source_before"] != artifact):
         return {"checks": ids, "why": "the run again is not read: it loaded code from outside the tree, or began on "
@@ -1538,7 +1547,10 @@ def _check_shas(root: Path, checks: Sequence[str]) -> dict[str, str]:
             found[check] = id_of(check, hashlib.sha256(path.read_bytes()).hexdigest(), digest=True)
         except LETS_THROUGH:
             raise
-        except OSError:
+        except OSError as exc:
+            from g6.core.semantic import trusted_stop
+            if trusted_stop(exc):
+                raise
             continue
     return found
 
@@ -1884,7 +1896,10 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                                               refuted_by_difference=differs)
             except LETS_THROUGH:
                 raise
-            except (OSError, ValueError):
+            except (OSError, ValueError) as exc:
+                from g6.core.semantic import trusted_stop
+                if trusted_stop(exc):
+                    raise
                 assessment['completion']['activities'].append({'activity': 'outcome history', 'result': 'error',
                     'reason': 'history could not be written; evidence authority unchanged', 'model_calls': 0,
                     'seconds': 0.0})
@@ -1893,7 +1908,10 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
             outcome_history.record_stated(change, history_sources, runs, artifact=artifact)
         except LETS_THROUGH:
             raise
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            from g6.core.semantic import trusted_stop
+            if trusted_stop(exc):
+                raise
             assessment['completion']['activities'].append({'activity': 'outcome history', 'result': 'error',
                 'reason': 'stated history could not be written', 'model_calls': 0, 'seconds': 0.0})
     learned = outcome_history.read(change.repo).learned(assessment['completion']['activities'])

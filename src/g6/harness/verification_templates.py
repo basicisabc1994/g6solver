@@ -1667,11 +1667,17 @@ def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInsta
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
             raise   # an operator stop or unconfirmed process cleanup must reach the enclosing door
         except (Inapplicable, ValueError, OSError, SyntaxError, repo_tests.RepoRefused) as exc:
+            from g6.core.semantic import trusted_stop
+            if trusted_stop(exc):
+                raise
             why = str(exc) if isinstance(exc, Inapplicable) else (
                 f"G6 could not read what it names ({type(exc).__name__})")
             _not_applied(found, one, definition, {**_listing(one), "result": "refused",
                                                   "reason": f"{why} {FALLBACK}"})
         except Exception as exc:   # RecursionError, MemoryError, any other: an activity's error (the VS-3 review, I2)
+            from g6.core.semantic import trusted_stop
+            if trusted_stop(exc):
+                raise
             _not_applied(found, one, definition, {**_listing(one), "result": "error", "reason": vs.stopped(exc),
                                                   "stopped": f"template instance {one.id}"})
     return found

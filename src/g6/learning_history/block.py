@@ -57,4 +57,7 @@ class LearningHistoryBlock(AIBlock):
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
             raise   # both are OSErrors: an operator stop or unconfirmed cleanup must reach the enclosing door
         except (OSError, ValueError) as exc:
+            from g6.core.semantic import trusted_stop
+            if trusted_stop(exc):
+                raise
             return Result.fail(f'[G6_E_INPUT_VALIDATION] history unavailable ({type(exc).__name__})')

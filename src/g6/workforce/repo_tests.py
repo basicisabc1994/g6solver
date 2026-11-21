@@ -889,6 +889,9 @@ def _git(repo: Path, *args: str | bytes, ok: tuple[int, ...] = (0,), timeout_s: 
     except git_env.UnsafeGitConfig as exc:
         raise RepoRefused("G6_E_GIT_COMMAND_FAILED", f"git {args[0]} not run: {exc}") from exc
     except (OSError, subprocess.SubprocessError) as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         raise RepoRefused("G6_E_GIT_COMMAND_FAILED", f"git {args[0]} failed ({type(exc).__name__})") from exc
 
 
@@ -2242,7 +2245,10 @@ def _digest(path: Path) -> str:
         return digest.hexdigest()
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
-    except (OSError, RepoRefused):
+    except (OSError, RepoRefused) as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         return "unreadable"
 
 
@@ -2356,6 +2362,9 @@ def _submodule(repo: Path, rel: str, budget: dict) -> str:
     except _OverCap as cap:
         return NOT_HASHED + str(cap)
     except OSError as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         where = (Path(exc.filename).relative_to(repo).as_posix() if exc.filename and _within(repo, Path(exc.filename))
                  else shown_name(rel))
         return NOT_HASHED + HASH_UNREADABLE.format(path=where)
@@ -3170,6 +3179,9 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
             raise
         except OSError as exc:
+            from g6.core.semantic import trusted_stop
+            if trusted_stop(exc):
+                raise
             if isinstance(exc, confine.NotStarted):
                 isolation = confine.not_started(isolation, exc)
             found = result("could_not_start", None, "", [])
@@ -4059,6 +4071,9 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
             raise
         except (OSError, RepoRefused, CopyNotRun) as exc:
+            from g6.core.semantic import trusted_stop
+            if trusted_stop(exc):
+                raise
             if require_isolation and getattr(exc, "code", "") == ISOLATION_UNAVAILABLE:
                 raise
             results[rel] = _not_run_report(str(exc))
@@ -4095,6 +4110,9 @@ def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = ()
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
     except (OSError, RepoRefused, CopyNotRun) as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         if require_isolation and getattr(exc, "code", "") == ISOLATION_UNAVAILABLE:
             raise
         return _not_run_report(str(exc))

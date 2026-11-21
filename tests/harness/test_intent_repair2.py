@@ -4,6 +4,8 @@ review path; a critic's explicit verdict is final in any layout; a confirmation 
 and a confirmed model candidate's advertised call stays admissible. FakeLLM and monkeypatched seams only."""
 from __future__ import annotations
 
+import ast
+import asyncio
 import json
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -11,11 +13,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from g6.core import component_process, semantic
+from g6.core import component_process, semantic, storage
 from g6.core.llm import FakeLLM, LLMError
 from g6.harness import behaviour_question as bq, behaviour_runner, candidate_standard as cs
-from g6.harness import completion_loop as loop, outcome_history, patch_review, verification_search as vs
+from g6.harness import completion_loop as loop, executable_scenario, outcome_history, patch_review
+from g6.harness import verification_search as vs
 from g6.harness.confirmed_expectation import ConfirmedExpectation, ExpectationStandard
+from g6.learning_history import block as history_block
+from g6.mcp import learning_history as history_mcp
 from g6.self_maintenance.envelope import StopUnreadable
 from g6.self_maintenance.usage import ProviderStop
 from g6.workforce import receipt_store, repo_tests
@@ -167,9 +172,65 @@ def site_repository_id(monkeypatch, tmp_path, raise_):
     receipt_store.repository_id(tmp_path)
 
 
+def site_repo_digest(monkeypatch, tmp_path, raise_):
+    """repo_tests._digest: a file's digest, between checkpoints."""
+    monkeypatch.setattr(component_process, "checkpoint", raise_)
+    repo_tests._digest(tmp_path / "missing.py")
+
+
+def site_run_at_base(monkeypatch, tmp_path, raise_):
+    """repo_tests.run_at_base: the copy and run at the base commit."""
+    monkeypatch.setattr(repo_tests, "inside", raise_)
+    repo_tests.run_at_base(CHANGE, ["test_x.py"])
+
+
+def site_review_stage(monkeypatch, tmp_path, raise_):
+    """patch_review._stage: a search stage's own error."""
+    patch_review._stage([], "fixture", raise_)
+
+
+def site_review_authored(monkeypatch, tmp_path, raise_):
+    """patch_review._authored: whether the patch wrote a stated check."""
+    monkeypatch.setattr(patch_review, "_written", raise_)
+    patch_review._authored("test_x.py", CHANGE, tmp_path)
+
+
+def site_review_check_shas(monkeypatch, tmp_path, raise_):
+    """patch_review._check_shas: each stated check's identity."""
+    (tmp_path / "test_x.py").write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(patch_review, "id_of", raise_)
+    patch_review._check_shas(tmp_path, ["test_x.py::test_x"])
+
+
+def site_read_probes(monkeypatch, tmp_path, raise_):
+    """behaviour_runner.read_probes: the observation custody's side file."""
+    behaviour_runner.read_probes(SimpleNamespace(with_suffix=raise_), b"")
+
+
+def site_scenario_load(monkeypatch, tmp_path, raise_):
+    """executable_scenario.load: the held scenario record."""
+    monkeypatch.setattr(storage, "state_path", raise_)
+    executable_scenario.load(SimpleNamespace(sha256="a" * 64))
+
+
+def site_history_list(monkeypatch, tmp_path, raise_):
+    """learning_history.list: the block's read of the history."""
+    monkeypatch.setattr(repo_tests, "checked_repo", raise_)
+    history_block.LearningHistoryBlock().infer(history_block.HistoryInput(op="list", repo="fixture"))
+
+
+def site_history_forget(monkeypatch, tmp_path, raise_):
+    """learning_history.forget over MCP: the read before the dialog."""
+    monkeypatch.setattr(repo_tests, "checked_repo", raise_)
+    asyncio.run(history_mcp.forget_reply(None, json.dumps({"repo": "fixture"}),
+                                         allow=frozenset({"learning_history.forget"})))
+
+
 SITES = [site_semantic_resolver, site_semantic_worker, site_critic_parser, site_critic_send, site_review_round_history,
          site_reproduction_history, site_scout_host, site_patch_now, site_advance, site_search, site_run_check,
-         site_run_check_receipt, site_run_mutant, site_repository_id]
+         site_run_check_receipt, site_run_mutant, site_repository_id, site_repo_digest, site_run_at_base,
+         site_review_stage, site_review_authored, site_review_check_shas, site_read_probes, site_scenario_load,
+         site_history_list, site_history_forget]
 
 
 @pytest.mark.parametrize("stop", sorted(STOPS))
@@ -191,6 +252,86 @@ def test_one_predicate_names_every_trusted_stop(stop):
     assert not semantic.trusted_stop(LLMError("G6_E_TIMEOUT"))
     assert not semantic.trusted_stop(OSError("disk full"))
 
+
+
+# --- the class: in every try that lets a stop through, every handler that could still catch one lets it through -----
+
+#: Every module that holds a handler on the critic and review path, or one that lets an execution-control signal
+#: through by type.
+GUARDED = ("g6.core.semantic", "g6.harness.completion_loop", "g6.harness.verification_search",
+           "g6.workforce.receipt_store", "g6.workforce.repo_tests", "g6.harness.patch_review",
+           "g6.harness.behaviour_runner", "g6.harness.confirmed_checks", "g6.harness.executable_scenario",
+           "g6.harness.verification_formal", "g6.harness.verification_templates", "g6.learning_history.block",
+           "g6.mcp.learning_history")
+STOP_TYPES = (component_process.ExecutionInterrupted, component_process.ContainmentFailure, StopUnreadable,
+              ProviderStop, LLMError)
+
+
+def _names(module, tree) -> dict:
+    """The module's names, with those its functions import for themselves."""
+    import importlib
+
+    names = dict(vars(module))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for alias in node.names:
+                try:
+                    found = getattr(importlib.import_module(node.module), alias.name)
+                except AttributeError:
+                    found = importlib.import_module(f"{node.module}.{alias.name}")
+                names.setdefault(alias.asname or alias.name, found)
+    return names
+
+
+def _caught(handler: ast.ExceptHandler, names: dict) -> tuple[type, ...]:
+    if handler.type is None:
+        return (BaseException,)
+    value = eval(compile(ast.Expression(handler.type), "<handler>", "eval"), names)  # noqa: S307
+    return value if isinstance(value, tuple) else (value,)
+
+
+def _reraises(handler: ast.ExceptHandler) -> bool:
+    return len(handler.body) == 1 and isinstance(handler.body[0], ast.Raise) and handler.body[0].exc is None
+
+
+def _asks_first(handler: ast.ExceptHandler) -> bool:
+    """The handler's first statement (after an import) is ``if trusted_stop(<its exception>)[ or ...]: raise``."""
+    body = [one for one in handler.body if not isinstance(one, ast.ImportFrom)]
+    first = body[0] if body else None
+    if not isinstance(first, ast.If) or not (len(first.body) == 1 and isinstance(first.body[0], ast.Raise)
+                                             and first.body[0].exc is None):
+        return False
+    test = first.test.values[0] if isinstance(first.test, ast.BoolOp) and isinstance(first.test.op, ast.Or) else first.test
+    if (isinstance(test, ast.Attribute) and test.attr == "stopped" and isinstance(test.value, ast.Name)
+            and test.value.id == handler.name):
+        return True   # an ExecutionInterrupted that is a component window's own timeout, not a stop (repo_tests._git)
+    return (isinstance(test, ast.Call) and getattr(test.func, "id", "") == "trusted_stop" and len(test.args) == 1
+            and isinstance(test.args[0], ast.Name) and test.args[0].id == handler.name)
+
+
+def _stop_aware(handlers, names) -> bool:
+    return any(_asks_first(one) or _reraises(one) and any(issubclass(stop, _caught(one, names))
+                                                          for stop in STOP_TYPES[:2]) for one in handlers)
+
+
+@pytest.mark.parametrize("name", GUARDED)
+def test_every_try_that_lets_a_stop_through_lets_every_stop_through(name):
+    import importlib
+
+    module = importlib.import_module(name)
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+    names, swallowed = _names(module, tree), []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try | ast.TryStar) or not _stop_aware(node.handlers, names):
+            continue
+        through: set[type] = set()
+        for handler in node.handlers:
+            caught = _caught(handler, names)
+            reaching = [stop for stop in STOP_TYPES if stop not in through and issubclass(stop, caught)]
+            through.update(reaching)   # whatever this handler does, a later one never sees these
+            if reaching and not _reraises(handler) and not _asks_first(handler):
+                swallowed.append((handler.lineno, [stop.__name__ for stop in reaching]))
+    assert swallowed == [], f"{name}: a handler catches a trusted stop it must let through: {swallowed}"
 
 # --- (b) an explicit verdict is final in any layout --------------------------------------------------------------------
 

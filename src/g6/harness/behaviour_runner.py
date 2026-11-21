@@ -172,7 +172,10 @@ def read_probes(path: Path, data: bytes) -> dict[str, str]:
         return value["probes"]
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
-    except (OSError, ValueError, TypeError, KeyError, RecursionError, MemoryError):
+    except (OSError, ValueError, TypeError, KeyError, RecursionError, MemoryError) as exc:
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
         return {}
 
 
@@ -746,7 +749,10 @@ def run(copy: Path, data: dict, node: str, *, timeout_s: int, deadline: float) -
                 raw = handle.read(MAX_FRAME + len(MAGIC) + 5)
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
             raise
-        except OSError:
+        except OSError as exc:
+            from g6.core.semantic import trusted_stop
+            if trusted_stop(exc):
+                raise
             code, raw = None, b""
         finally:
             cleanup = plan.release()

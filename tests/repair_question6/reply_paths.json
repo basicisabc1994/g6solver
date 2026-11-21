@@ -279,7 +279,9 @@
     "_stage/branches": [
       "except (*LETS_THROUGH, repo_tests.RepoRefused)",
       "raise *",
-      "except Exception"
+      "except Exception",
+      "if trusted_stop(exc)",
+      "raise *"
     ],
     "_assess.reason/branches": [
       "if node"
@@ -398,7 +400,9 @@
     "_authored/branches": [
       "except LETS_THROUGH",
       "raise *",
-      "except (repo_tests.RepoRefused, OSError)"
+      "except (repo_tests.RepoRefused, OSError)",
+      "if trusted_stop(exc)",
+      "raise *"
     ],
     "_closing.read": [
       "(written, _self_checked(evaluated, change, Path(root), runs), repo_tests.snapshot(root))"
@@ -412,6 +416,8 @@
       "except LETS_THROUGH",
       "raise *",
       "except Exception",
+      "if trusted_stop(exc)",
+      "raise *",
       "if _loaded_elsewhere(change, ran) or (ran.get('source_before') and ran['source_before'] != artifact)",
       "if ran.get('verdict') not in repo_tests.RAN"
     ],
@@ -427,7 +433,9 @@
       "if check in found or path.is_symlink() or (not path.is_file()) or (not path.resolve().is_relative_to(top))",
       "except LETS_THROUGH",
       "raise *",
-      "except OSError"
+      "except OSError",
+      "if trusted_stop(exc)",
+      "raise *"
     ],
     "_check_shas": [
       "found"

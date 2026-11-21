@@ -536,6 +536,9 @@ def _symbolic(prepared, formal: Formal, *, deadline: float, budget: int, skip: s
             activity.update(result="skipped", reason=vs.OUT_OF_TIME, formal=parts(record))
             continue
         except Exception as exc:   # ast.unparse or Z3's reading out of depth, any other: the VS-3 review's fix pass, I2
+            from g6.core.semantic import trusted_stop
+            if trusted_stop(exc):
+                raise
             why = vs.stopped(exc)
             record["correspondence"]["reason"] = why
             activity.update(result="error", reason=why, stopped=f"the symbolic search of {one.id}",

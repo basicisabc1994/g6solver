@@ -276,7 +276,12 @@ def load(question) -> Scenario:
         return scenario
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError, MemoryError) as exc:
+    except OSError as exc:   # its own clause: the decoder-limit handler below re-raises nothing (json read census)
+        from g6.core.semantic import trusted_stop
+        if trusted_stop(exc):
+            raise
+        raise ValueError(f"{UNAVAILABLE}: the executable scenario is unavailable; ask for confirmation again") from exc
+    except (ValueError, KeyError, TypeError, AttributeError, RecursionError, MemoryError) as exc:
         if isinstance(exc, (RecursionError, MemoryError)):
             exc = ValueError("a JSON record exceeds decoder limits")
         raise ValueError(f"{UNAVAILABLE}: the executable scenario is unavailable; ask for confirmation again") from exc
