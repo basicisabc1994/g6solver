@@ -153,6 +153,12 @@ CHILDREN = {
     ("self_maintenance/usage.py", "WatchedCodex", "g6.core.consent_callers.ConsentCodex"): PROGRAM,   # codex
     ("self_maintenance/usage.py", "_complete_host", "g6.core.host_models._run"): PROGRAM,   # claude or codex, one request
     ("self_maintenance/usage.py", "_launch", "g6.core.host_models._run"): PROGRAM,          # a session's own claude
+    # _OWNED_HOST_CLASSES (ce2daf65): the exact identities of G6's own watched host classes, built at import from the
+    # four callers and the two watched classes above; the same claude and codex, started by the same launch
+    ("self_maintenance/usage.py", "<module>", "g6.core.host_models.ClaudeCodeCaller"): PROGRAM,
+    ("self_maintenance/usage.py", "<module>", "g6.core.host_models.CodexCaller"): PROGRAM,
+    ("self_maintenance/usage.py", "<module>", "g6.core.consent_callers.ConsentClaude"): PROGRAM,
+    ("self_maintenance/usage.py", "<module>", "g6.core.consent_callers.ConsentCodex"): PROGRAM,
 }
 #: The packages whose children the inventory reads.
 PACKAGES = ("mcp", "metaharness", "self_maintenance")
@@ -278,7 +284,7 @@ def test_each_g6_child_starts_on_the_interpreter_and_the_import_path_the_server_
     ``_environment``, read from the code; a sandbox run starts isolated in a folder of G6's own; another program is not
     G6's Python."""
     for (rel, owner, _), kind in CHILDREN.items():
-        body = ast.unparse(_functions(rel)[owner])
+        body = (SRC / rel).read_text(encoding="utf-8") if owner == "<module>" else ast.unparse(_functions(rel)[owner])
         if kind == G6_CHILD:
             [start] = [n for n in ast.walk(_functions(rel)[owner]) if isinstance(n, ast.Call)
                        and ast.unparse(n.func) == "subprocess.Popen"]
@@ -1189,8 +1195,10 @@ AROUND = {
     ("metaharness/runner.py", "act.unchanged", "return None"): ("after", HANDED),
     ("metaharness/runner.py", "act.unchanged",
      "return _blocked(TERMS_CHANGED, f\"what the person read is no longer what stand"): ("after", HANDED),
+    # the same handler, which f702f18e widened to the decoder's limits (RecursionError, MemoryError)
     ("metaharness/runner.py", "act_main",
-     "except (ValueError, KeyError, TypeError) around request = json.loads(sys.stdin.read())"): ("after", NOT_KNOWN),
+     "except (ValueError, KeyError, TypeError, RecursionError, MemoryError) around request = json.loads(sys.stdin.read())"):
+        ("after", NOT_KNOWN),
     ("metaharness/runner.py", "act_main",
      "return 1 if reply['completion_state'] == 'blocked-escalated' else 0"): ("after", HANDED),
     ("metaharness/runner.py", "as_recorded",
@@ -1915,6 +1923,9 @@ PATH_PLACES = {
     ("metaharness/runner.py", "_g6_terms"): (WORDS, 1, "what a pinned interpreter's act names as its G6"),
     ("cegis/runner.py", "<module>"): (MADE_WHOLE, 2, "the cegis child (-I) appends the folder of the server's g6, "
                                                      "resolved in the parent"),
+    # the agentic kernel merge (334c6254): its confined child is built as the cegis child is
+    ("_agentic/_child.py", "<module>"): (MADE_WHOLE, 1, "the override kernel's child (-I) appends the folder of the "
+                                                         "server's g6, resolved in the parent"),
     ("workforce/truth.py", "<module>"): (MADE_WHOLE, 8, "a repository's tests (-I) put the repository first, resolved in "
                                                         "the parent"),
     ("workforce/truth.py", "run_isolated"): (WORDS, 1, "says the test's child runs -I"),
@@ -1949,6 +1960,7 @@ PATH_PLACES = {
     ("code/_build.py", "write_files"): (NOT_IMPORT, 1, "a folder a build writes into"),
     ("code/_roots.py", "parse"): (NOT_IMPORT, 1, "a configured root folder"),
     ("code/_roots.py", "_given"): (NOT_IMPORT, 1, "a configured root folder"),
+    ("code/_roots.py", "_lexically_outside"): (NOT_IMPORT, 1, "a path under a configured root, read by its words"),
     ("core/component_certificate.py", "inside"): (NOT_IMPORT, 1, "a file a certificate names"),
     ("core/confine.py", "child_environment"): (NOT_IMPORT, 1, "a confined child's home and tool folders, never its "
                                                               "import path"),
@@ -1964,9 +1976,10 @@ PATH_PLACES = {
     ("self_training/persistence.py", "_resolve_store_dir"): (NOT_IMPORT, 1, "a scorecard store folder"),
     ("sources/australian_legal_corpus/block.py", "_register"): (NOT_IMPORT, 1, "a downloaded file"),
     ("sources/ctx_git/config.py", "parse"): (NOT_IMPORT, 1, "a git repository's own paths"),
-    ("sources/ctx_git/config.py", "repository"): (NOT_IMPORT, 2, "a git repository's own paths"),
-    ("sources/ctx_git/config.py", "_common"): (NOT_IMPORT, 1, "a git repository's own paths"),
-    ("sources/ctx_git/config.py", "_alternates"): (NOT_IMPORT, 1, "a git repository's own paths"),
+    # 65eb0260 and the storage follow-ups moved the metadata entries' checks into _metadata_entry and _includes
+    ("sources/ctx_git/config.py", "repository"): (NOT_IMPORT, 1, "a git repository's own paths"),
+    ("sources/ctx_git/config.py", "_metadata_entry"): (NOT_IMPORT, 1, "a git repository's own paths"),
+    ("sources/ctx_git/config.py", "_includes"): (NOT_IMPORT, 1, "a git repository's own paths"),
     ("sources/ctx_git/config.py", "destination"): (NOT_IMPORT, 1, "a git repository's own paths"),
     ("sources/ctx_git/config.py", "inside"): (NOT_IMPORT, 1, "a git repository's own paths"),
     ("workforce/bench.py", "_inside"): (NOT_IMPORT, 1, "a file inside a repository copy"),
@@ -2001,7 +2014,9 @@ RULED = (("mcp/improve.py", "_import_path"), ("mcp/improve.py", "_pinned_python"
 #: How each child's import path built from a folder made whole is made, read from the code: the function, and what in it
 #: makes the folder whole before any child sees it.
 MADE = {
-    ("cegis/runner.py", "<module>"): [("cegis/runner.py", "_call", "Path(g6.__file__).resolve()")],
+    # SubprocessRunner's, named by its class: 2e3cc2ae added the kernel child's in-process runner, with a _call of its own
+    ("cegis/runner.py", "<module>"): [("cegis/runner.py", "SubprocessRunner", "Path(g6.__file__).resolve()")],
+    ("_agentic/_child.py", "<module>"): [("_agentic/_child.py", "launch", "Path(g6.__file__).resolve()")],
     ("workforce/truth.py", "<module>"): [("workforce/truth.py", "run_isolated", "Path(repo).resolve()"),
                                          ("workforce/truth.py", "run_suite", "Path(repo).resolve()")],
     ("workforce/repo_tests.py", "<module>"): [("workforce/repo_tests.py", "checked_repo", "given.resolve()"),

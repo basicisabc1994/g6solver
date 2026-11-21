@@ -10,6 +10,8 @@ from g6.mcp import improve
 # Each matching function is listed, including false positives. A newly added
 # call or environment builder fails the inventory until its purpose is named.
 PLACES = {
+    # the agentic kernel merge (334c6254): G6's own child, -I under confinement, a kept-variable environment
+    "_agentic/_child.py": ("launch", "isolated override-kernel worker, component protocol"),
     "agents/_runtime/cli.py": ("clean_environment environment locate run", "outside agent CLI, not a loop child"),
     "algebra/runner.py": ("_environment _execute run_sage", "isolated algebra worker and outside Sage, component protocol"),
     "algorithm_design/autonomous.py": ("_run", "reply envelope named env, no child"),
@@ -70,7 +72,8 @@ PLACES = {
     "harness/behaviour_runner.py": ("run", "repository behaviour scenario, confined, deliberately imports the copy"),
     "evidence/mapping.py": ("Row About", "evidence record field named environment, no child"),
     "sources/ctx_git/config.py": ("load", "configuration reader, no child"),
-    "sources/ctx_git/runner.py": ("clone_session run session", "outside Git"),
+    # session and clone_session now take their environment from _prepared, built by safe_git_env (5bfe22fc)
+    "sources/ctx_git/runner.py": ("run", "outside Git"),
     "sources/ctx_vision/ocr.py": ("read", "outside OCR program"),
     "workforce/_certificate_formal.py": ("check", "certificate scripts under core sandbox"),
     "workforce/_certificate_runner.py": ("observe", "certificate scripts under core sandbox"),
