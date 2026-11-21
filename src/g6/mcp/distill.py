@@ -18,7 +18,8 @@ def _call(fn, *args) -> dict:
     from g6.core.ledger import LedgerError
     try:
         return fn(*args)
-    except (ValueError, KeyError, LedgerError) as exc:
+    except (ValueError, KeyError, LedgerError, RecursionError) as exc:
+        # RecursionError: a decoder's depth limit on deeply nested input is an input refusal like any other.
         code = getattr(exc, 'code', '')
         if isinstance(code, str) and code.startswith('G6_E_'):
             return blocked_reply(f'[{code}] Backend refused the operation; no authority was granted.')

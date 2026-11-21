@@ -92,6 +92,11 @@ def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", 
             except (ValueError, KeyError, LedgerError):
                 verdicts.append("abstain")
         if verdicts:
+            # Authority is the library's at reporting time, never the snapshot taken before the run: a demotion
+            # or withdrawal that completed meanwhile applies, and a method no longer in the library reports nothing.
+            entry = next((e for e in Library().list() if e.candidate_id == entry.candidate_id), None)
+            if entry is None:
+                continue
             verdict = "concern" if "concern" in verdicts else "abstain" if "abstain" in verdicts else "no_concern"
             found = observation(entry, verdict)
             found["seconds"] = time.monotonic() - began

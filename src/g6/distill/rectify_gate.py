@@ -17,6 +17,14 @@ from .ledger import Stores
 from .records import CapabilityExtension, FailureMode, FailureRecord, LibraryEntry, Rectification
 
 
+def _key(record: FailureRecord) -> str | None:
+    """The record's class, or None for a malformed record (an unnamed other) that no class can hold."""
+    try:
+        return class_key(record)
+    except LedgerError:
+        return None
+
+
 class Rectifier:
     def __init__(self, stores: Stores | None = None):
         self.stores = stores or Stores()
@@ -72,7 +80,7 @@ class Rectifier:
         key = class_key(failure)
         if rect.failure_mode != key:
             raise LedgerError("rectification names a different failure mode/class")
-        same = [row for row in failures if class_key(row) == key]
+        same = [row for row in failures if _key(row) == key]
         self._pinning(rect, require_current=rect.outcome != "failed")
         known = {row.record_id for row in same}
         replayed = set(rect.pinning.replayed)
@@ -89,6 +97,7 @@ class Rectifier:
         return rect
 
     def _state(self, failures, rects):
+        failures = [row for row in failures if _key(row) is not None]
         grouped = defaultdict(list)
         for row in failures:
             grouped[class_key(row)].append(row)
@@ -125,16 +134,19 @@ class Rectifier:
             changed_at=at, reason=f"removing check recurred: {rect.rect_id}",
             decided_by=dict(gate_version="distill.findings.recurrence.v1", person=None)))))
 
-    def reconcile(self) -> None:
-        """Append derived snapshots; never rewrite a prior decision or consume an event twice."""
+    def reconcile(self) -> dict:
+        """Append derived snapshots; never rewrite a prior decision or consume an event twice.
+
+        A malformed old record (an unnamed other class) is skipped and reported, never fatal to the whole log."""
         logs = self._logs()
+        malformed = [row.record_id for row in logs[FailureRecord] if _key(row) is None]
         states = self._state(logs[FailureRecord], logs[Rectification])
         for key, state in states.items():
             rects = [row for row in logs[Rectification] if row.failure_mode == key]
             removed = [row for row in rects if row.class_removed and row.outcome == "held" and row.pinning]
             if removed:
                 last = removed[-1]
-                recurrence = [row for row in logs[FailureRecord] if class_key(row) == key
+                recurrence = [row for row in logs[FailureRecord] if _key(row) == key
                               and row.record_id not in last.pinning.replayed]
                 if recurrence:
                     # Demote before writing the failed decision; retry is safe if
@@ -144,6 +156,7 @@ class Rectifier:
             old = [row for row in logs[FailureMode] if row.mode_code == key]
             if not old or old[-1] != state:
                 self._append_once(state)
+        return {"malformed": malformed}
 
     def mode(self, code: str) -> FailureMode | None:
         """Fresh derived state; read-only, including after an interrupted reconcile."""

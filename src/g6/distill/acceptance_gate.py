@@ -38,6 +38,7 @@ from g6.safety_engine import weakening
 
 from .detectors import SEED_TEMPLATES
 from .facts import _extract_facts
+from .judging import JUDGING_PATHS
 from .ledger import Stores
 from .library import Library
 from .records import (AcceptanceEvidence, Cost, DecidedBy, FieldEvidence,
@@ -143,14 +144,8 @@ def _policy_digest():
 
 
 def _judging_digest():
-    """Pin reused detector, execution and statistics code as well as this gate."""
-    paths = ("src/g6/distill/acceptance_gate.py", "src/g6/distill/records.py", "src/g6/distill/ledger.py",
-             "src/g6/distill/library.py", "src/g6/distill/facts.py", "src/g6/distill/detectors.py",
-             "src/g6/safety_engine/weakening.py", "src/g6/distillation/sandbox.py", "src/g6/core/source_check.py",
-             "src/g6/core/sandbox.py", "src/g6/core/component_process.py", "src/g6/core/binomial.py",
-             "src/g6/reasoning/compare.py", "src/g6/metaharness/gate.py", "src/g6/metaharness/schema.py",
-             "src/g6/metaharness/evaluate.py")
-    return digest({p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in paths})
+    """Pin reused detector, execution and statistics code as well as this gate (the merge gate protects each)."""
+    return digest({p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in JUDGING_PATHS})
 
 
 def _plain(path: Path, root: Path) -> Path:

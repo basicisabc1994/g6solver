@@ -33,6 +33,11 @@ def library(op: str = "list", entry_id: str = "") -> dict:
     return {"entry": current.model_dump(mode="json"), "requested_entry_id": entry_id}
 
 
+def unclassified(kind: str, family: str) -> str:
+    """The named "other" class of a report no one has classified yet (intake.class_key needs a name)."""
+    return f"unclassified {kind} report in {family}"
+
+
 def failure_record(kind: str, family: str, case_json: str, note: str) -> dict:
     if not family.strip() or len(family) > 200 or len(note) > 8000 or len(case_json) > 100_000:
         raise ValueError("failure requires a family and bounded case and note")
@@ -44,7 +49,8 @@ def failure_record(kind: str, family: str, case_json: str, note: str) -> dict:
                         case_ref=digest(case), split=case.get("split", "field"), evidence=[],
                         finding_class="other", met_before=[], g6_commit="unknown",
                         observed_at=datetime.now(timezone.utc).isoformat(),
-                        provenance={"case": case, "note": note, "intake": "client_request"})
+                        provenance={"case": case, "note": note, "intake": "client_request",
+                                    "other": unclassified(kind, family)})
     return {"record_id": Stores().for_model(FailureRecord).put(row), "observed_by": "self"}
 
 
@@ -81,5 +87,6 @@ def record_reproduction(event: dict) -> None:
     row = FailureRecord(kind="missed_defect", family="test_weakening", source="k_loop", observed_by="self",
                         case_ref=case_ref, split="field", evidence=[], finding_class="other", met_before=[],
                         g6_commit="unknown", observed_at=datetime.now(timezone.utc).isoformat(),
-                        provenance={"case": body, "intake": "untrusted_tool_response"})
+                        provenance={"case": body, "intake": "untrusted_tool_response",
+                                    "other": unclassified("missed_defect", "test_weakening")})
     store.put(row)
