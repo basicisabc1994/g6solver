@@ -1021,6 +1021,20 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict] | None
 
         retained, retained_origins, retained_skipped = outcome_history.retained_checks(
             change, next((req.id for req in stated if req.provenance in NORMATIVE), 'retained'))
+        if confirmed is not None and confirmed.expectations:
+            # One gate at scheduling, whoever made the check: none asserting an outcome the person rejected runs.
+            from g6.harness import candidate_standard
+
+            gone = candidates if candidates is not None else {'rejected': candidate_standard.rejections(confirmed)}
+            activity = 'candidate check' if thin else 'proposed check'
+            proposed, dropped = candidate_standard.gate(gone, proposed, activity, 'caller')
+            instances, more = candidate_standard.gate(gone, instances, activity, 'caller')
+            retained, old = candidate_standard.gate(gone, retained, 'retained check', 'retained')
+            for one in (*dropped, *more, *old):
+                candidate_origins.pop(one['check'], None)
+                retained_origins.pop(one['check'], None)
+            candidate_skipped.extend((*dropped, *more))
+            retained_skipped.extend(old)
         if (confirmed is not None and confirmed.expectations) or any(
                 one.template == 'differential.v1' for one in instances) or any(
                 origin.template == 'differential.v1' for origin in retained_origins.values()):

@@ -98,8 +98,9 @@ def test_confirming_a_drops_explicitly_rejected_b():
     assert _scheduled(applied, raw["function"], raw["args"], {"returns": 0})
     model = next(c for c in found["standard"] if c["origin"] == "model_proposal")
     saved, = model["cheapest_check"]["arguments"]["template_instances"]
-    assert cs.owns(applied, SimpleNamespace(template="example.v1", requirement_id=model["id"],
-                                            bindings=saved["bindings"]))
+    kept, _ = cs.gate(applied, [SimpleNamespace(id="saved", template="example.v1", requirement_id=model["id"],
+                                                bindings=saved["bindings"])], "proposed check", "caller")
+    assert not kept   # rewritten for Area B: the scheduling gate drops it (owns() no longer decides this)
 
 
 def test_control_another_call_of_the_same_function_stays():

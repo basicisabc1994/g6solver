@@ -206,11 +206,16 @@ def test_confirmation_removes_other_generated_checks_for_rejected_outcome():
     assert not [(i.requirement_id, i.bindings) for i in instances if _asserts_rejected(i)]
 
 
-def test_a_saved_call_carrying_the_rejected_case_is_the_candidates_own():
+def test_a_saved_call_carrying_the_rejected_case_never_runs():
+    # Rewritten for Area B: the one gate at scheduling drops it, whatever id or candidate it names (owns() no longer
+    # decides this).
     found, raw, applied = _confirmed_b()
     model = next(c for c in found["standard"] if c["origin"] == "model_proposal")
     saved, = model["cheapest_check"]["arguments"]["template_instances"]
-    supplied = SimpleNamespace(template="example.v1", requirement_id=model["id"], bindings=saved["bindings"])
-    assert cs.owns(applied, supplied)
+    for requirement in (model["id"], "caller.rule"):
+        supplied = SimpleNamespace(id="saved", template="example.v1", requirement_id=requirement,
+                                   bindings=saved["bindings"])
+        kept, skipped = cs.gate(applied, [supplied], "proposed check", "caller")
+        assert not kept and [one["reason"] for one in skipped] == [cs.REJECTED]
     shown = next(c for c in applied["standard"] if c["id"] == model["id"])
     assert "template_instances" not in shown["cheapest_check"]["arguments"], shown["cheapest_check"]

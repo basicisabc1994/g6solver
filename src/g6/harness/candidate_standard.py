@@ -132,18 +132,24 @@ def _name(node, aliases):
     return ''
 
 
+def _aliases(nodes):
+    """The names the imports among ``nodes`` bind, each to the dotted name it stands for."""
+    aliases = {}
+    for node in nodes:
+        if isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            aliases.update({a.asname or a.name: f'{node.module}.{a.name}' for a in node.names})
+        if isinstance(node, ast.Import):
+            aliases.update({a.asname or a.name.split('.')[0]: a.name if a.asname else a.name.split('.')[0]
+                            for a in node.names})
+    return aliases
+
+
 def _test_functions(trees):
     """Each repository test function, its node id, and the module imports visible inside it (and all of them)."""
     for rel, tree in trees.items():
         if not repo_tests.is_test_related(rel):
             continue
-        aliases = {}
-        for node in tree.body:
-            if isinstance(node, ast.ImportFrom) and node.module and not node.level:
-                aliases.update({a.asname or a.name: f'{node.module}.{a.name}' for a in node.names})
-            if isinstance(node, ast.Import):
-                aliases.update({a.asname or a.name.split('.')[0]: a.name if a.asname else a.name.split('.')[0]
-                                for a in node.names})
+        aliases = _aliases(tree.body)
 
         def walk(body, prefix=''):
             for test in body:
@@ -472,15 +478,9 @@ def with_confirmed(found, standard):
     shown = deepcopy(found)
     if standard is None:
         return shown
-    rejected, outcomes = set(), []   # the mapped tests and the (function, case) pairs that assert a rejected outcome
+    rejected, outcomes = set(), rejections(standard)   # the mapped tests, and every outcome the person rejected
     for one in standard.expectations:
         bindings = one.instance.bindings
-        # Every outcome the question offered and the person did not choose is rejected for that typed call, whether
-        # or not it is the one a candidate proposed.
-        asked = one.question
-        call = dict(args=list(asked.args), **({'kwargs': dict(asked.kwargs)} if asked.kwargs else {}))
-        outcomes.extend((asked.requirement_id, asked.function, _full(dict(call, **dict(outcome))))
-                        for label, outcome in asked.outcomes.items() if label != one.option)
         for item in shown['standard']:
             if (item['id'] != one.requirement_id or item['kind'] == 'preservation'
                     or item['function'] != bindings['function'] or len(item['cases']) != 1):
@@ -514,14 +514,120 @@ def with_confirmed(found, standard):
                 arguments['template_instances'] = [_instance(item)]
             else:
                 arguments.pop('template_instances', None)
-    shown['rejected'] = [dict(function=function, case=case) for _, function, case in outcomes]
+    shown['rejected'] = outcomes
     return shown
+
+
+def rejections(standard):
+    """Every outcome a confirmed question offered and the person did not choose, rejected for that typed call (its
+    function, arguments and keyword arguments) whether or not a candidate proposed it: ``{function, case}`` each."""
+    found = []
+    for one in standard.expectations if standard is not None else ():
+        asked = one.question
+        call = dict(args=list(asked.args), **({'kwargs': dict(asked.kwargs)} if asked.kwargs else {}))
+        found.extend(dict(function=asked.function, case=_full(dict(call, **dict(outcome))))
+                     for label, outcome in asked.outcomes.items() if label != one.option)
+    return found
 
 
 def _rejects(outcomes, item, case):
     """Whether ``case`` of ``item`` asserts an outcome the person rejected for that same typed call."""
-    return any(ident != item['id'] and function == item['function'] and _same(_full(case), rejected)
-               for ident, function, rejected in outcomes)
+    return any(gone['function'] == item['function'] and _hits(case, gone['case']) for gone in outcomes)
+
+
+def _called(case, gone):
+    """Whether ``case`` is the typed call of the rejected case ``gone``: the same arguments and keyword arguments."""
+    full = _full(case)
+    return _same(full['args'], gone['args']) and _same(full['kwargs'], gone['kwargs'])
+
+
+def _hits(case, gone):
+    """Whether ``case`` asserts the rejected outcome ``gone`` of the same typed call. Two results are the same where
+    their JSON is, or where both are results Python compares equal, as an ``==`` assertion of either does."""
+    if not isinstance(case, dict) or not _called(case, gone):
+        return False
+    said, wrong = ({k: v for k, v in _full(one).items() if k not in ('args', 'kwargs')} for one in (case, gone))
+    if _same(said, wrong):
+        return True
+    try:
+        return said.keys() == wrong.keys() == {'returns'} and bool(said['returns'] == wrong['returns'])
+    except (RecursionError, MemoryError):   # a comparison that fails cannot clear the case
+        return True
+
+
+#: Why a check is not scheduled: it asserts, or may assert, an outcome the person rejected (``gate``).
+REJECTED = 'it asserts an outcome the person rejected for that call'
+
+
+def gate(found, checks, activity, origin):
+    """The one gate at check scheduling: ``checks`` (template instances or proposed checks, whoever made them) without
+    any that asserts an outcome the person rejected for that typed call (``found['rejected']``), and a skipped activity
+    for each one dropped. An example.v1 case of the rejected outcome, any differential.v1 call of the rejected typed
+    call (its outcome is the reference's, which G6 cannot read), and a proposed check whose test asserts the rejected
+    outcome, or calls the rejected typed call more often than it asserts an outcome the person did not reject."""
+    gone = found.get('rejected') or () if found else ()
+    kept, skipped = [], []
+    for one in checks:
+        if gone and _asserts_rejected(one, gone):
+            skipped.append(dict(activity=activity, check=one.id, origin=origin, candidate_id=one.requirement_id,
+                                requirement=one.requirement_id, intent=getattr(one, 'intent', ''), result='skipped',
+                                reason=REJECTED, model_calls=0, seconds=0.0))
+        else:
+            kept.append(one)
+    return kept, skipped
+
+
+def _asserts_rejected(one, gone):
+    if not hasattr(one, 'template'):
+        return _source_rejects(one, gone)
+    bindings = one.bindings if isinstance(one.bindings, dict) else {}
+    mine = [each['case'] for each in gone if each['function'] == bindings.get('function')]
+    if one.template == 'example.v1':
+        return any(_hits(case, wrong) for case in bindings.get('cases') or () for wrong in mine)
+    if one.template == 'differential.v1':
+        return any(isinstance(call, dict) and _called(call, wrong)
+                   for call in bindings.get('calls') or () for wrong in mine)
+    return False
+
+
+def _scanned(tree, test):
+    """What runs for a check's named test: that test, and its module's code that is no other test (every test when
+    none is named)."""
+    path = test.split('[', 1)[0].split('::') if test else None
+    parts = []
+
+    def walk(body, prefix):
+        for node in body:
+            if path is not None and isinstance(node, ast.ClassDef) and node.name.startswith('Test'):
+                if [*prefix, node.name] == path[:len(prefix) + 1]:
+                    walk(node.body, [*prefix, node.name])
+                continue
+            if (path is not None and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name.startswith('test') and [*prefix, node.name] != path):
+                continue
+            parts.append(node)
+    walk(tree.body, [])
+    return parts
+
+
+def _source_rejects(one, gone):
+    try:
+        tree = ast.parse(str(one.source))
+    except (SyntaxError, ValueError, MemoryError, RecursionError):
+        return False   # it cannot be collected, so it runs as a broken check and passes nothing
+    parts = _scanned(tree, getattr(one, 'test', '') or '')
+    aliases = _aliases([node for part in parts for node in ast.walk(part)])
+    for wrong in gone:
+        function = wrong['function']
+        asserted = [case for part in parts for case in _asserted(part, function, aliases)]
+        if any(_hits(case, wrong['case']) for case in asserted):
+            return True
+        calls = sum(1 for part in parts for node in ast.walk(part) if isinstance(node, ast.Call)
+                    and _name(node.func, aliases) == function and (case := _case(node)) is not None
+                    and _called(case, wrong['case']))
+        if calls > sum(1 for case in asserted if _called(case, wrong['case'])):
+            return True   # a call of the rejected typed call G6 cannot read as asserting another outcome
+    return False
 
 
 def owns(found, one):
@@ -533,9 +639,6 @@ def owns(found, one):
         return False
     bindings = one.bindings if isinstance(one.bindings, dict) else {}
     cases = bindings.get('cases') if isinstance(bindings.get('cases'), list) else []
-    if any(isinstance(case, dict) and gone['function'] == bindings.get('function') and _same(_full(case), gone['case'])
-           for case in cases for gone in found.get('rejected', ())):
-        return True   # a saved call carrying an outcome the person rejected only advertised its candidate
     item = next((i for i in found['standard'] if i['id'] == getattr(one, 'requirement_id', None)), None)
     if item is None or not item['function']:
         return False
@@ -587,12 +690,18 @@ def checks(found, texts, *, before=None, budget=20):
             unconfirmed='this behaviour is still a candidate and decides no requirement')
         return True
 
+    def allowed(item, made):
+        """``made`` without any check asserting an outcome the person rejected (``gate``), before any is admitted."""
+        kept, dropped = gate(found, made, 'candidate check', item['origin'])
+        skipped.extend(dropped)
+        return kept
+
     # Concrete missing examples and API signatures precede potentially numerous mapped tests.
     for item in found['standard']:
         instance = _instance(item)
-        if instance and admit(item, instance['id']):
-            instances.extend(one.model_copy(update={'provenance': 'model_hypothesis'})
-                             for one in vt.template_instances([instance], [item['id']]))
+        made = allowed(item, vt.template_instances([instance], [item['id']])) if instance else []
+        if made and admit(item, instance['id']):
+            instances.extend(one.model_copy(update={'provenance': 'model_hypothesis'}) for one in made)
         if item['kind'] == 'preservation' and item['function'] not in symbols:
             skipped.append(dict(activity='candidate check', check=item['id'] + '.signature', origin=item['origin'],
                 candidate_id=item['id'],
@@ -628,16 +737,25 @@ def checks(found, texts, *, before=None, budget=20):
             if rel not in texts:
                 continue
             ident = item['id'] + '.mapped.' + hashlib.sha256(node.encode()).hexdigest()[:8]
+            try:
+                made = vs.proposed_checks([dict(id=ident, requirement_id=item['id'], intent='preserve', file=rel,
+                                                source=texts[rel], test=test)], [item['id']])
+            except ValueError as exc:
+                made, error = None, str(exc)
+            if made is not None:
+                made = allowed(item, made)
+                if not made:
+                    seen.add(node)
+                    continue
             if admit(item, ident):
                 seen.add(node)
-                try:
-                    proposed.extend(vs.proposed_checks([dict(id=ident, requirement_id=item['id'], intent='preserve',
-                        file=rel, source=texts[rel], test=test)], [item['id']]))
-                except ValueError as exc:
+                if made is not None:
+                    proposed.extend(made)
+                else:
                     origins.pop(ident, None)
                     skipped.append(dict(activity='candidate check', check=ident, origin=item['origin'],
                         candidate_id=item['id'],
-                        result='skipped', reason=str(exc), model_calls=0, seconds=0.0))
+                        result='skipped', reason=error, model_calls=0, seconds=0.0))
     return proposed, instances, origins, skipped
 
 
