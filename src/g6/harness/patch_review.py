@@ -991,6 +991,14 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
                 placed = verification_search.placements(root, proposed)
             except ValueError as exc:
                 raise _Refused("G6_E_INPUT_VALIDATION", str(exc)) from exc
+            if not isinstance(before, verification_search.ExecutionSnapshot) and any(
+                    one.explanations for one in proposed):
+                # an explanation is read only from a run shown to be on these bytes (the review of wire-diagnose, 3):
+                # bound here, before anything runs; bytes that cannot be bound leave every such reading not_decided
+                try:
+                    before = verification_search.bind_execution(change, before, deadline=deadline)
+                except OSError:
+                    pass
         # Rule 11: only a normative requirement is assessed; the others are listed, and their checks never run.
         listed = [req for req in stated if req.provenance not in NORMATIVE]
         stated = [req for req in stated if req.provenance in NORMATIVE]
@@ -1400,15 +1408,17 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                                  "again": again, "observed": observed},
                   confirmed=(confirmed, enforced) if confirmed is not None else None)
     if any(one.explanations for one in proposed):   # each check's result read against the explanations it states,
-        from g6.harness import discriminate         # beside the decided fields, which it does not change
+        from g6.harness import discriminate, verification_search   # beside the decided fields, which it leaves
         # last, once the closing checks have given every integrity reason: a run the review cannot attribute to the
-        # reviewed artifact decides no explanation (the review of wire-diagnose, 2)
-        attributable = not any(r["stage"] == "integrity" for r in reply["assessment"]["reasons"])
+        # reviewed artifact decides no explanation (the review of wire-diagnose, 2), and a run is attributed only by
+        # its own record of the bytes it ran on (verification_search.attributed; the review of wire-diagnose, 3)
+        clean = not any(r["stage"] == "integrity" for r in reply["assessment"]["reasons"])
         # by the check object itself, never its id, which the caller chose (the review of wire-diagnose, 1)
-        ran = search.checked if search is not None else ()
-        reply["assessment"]["explanations"] = [discriminate.read(one.explanations, next(
-            (a.get("result", "error") for check, a in ran if check is one), "error"), check=one.id,
-            requirement=one.requirement_id, intent=one.intent, attributable=attributable)
+        ran = {id(check): a for check, a in (search.checked if search is not None else ())}
+        reply["assessment"]["explanations"] = [discriminate.read(
+            one.explanations, ran.get(id(one), {}).get("result", "error"), check=one.id,
+            requirement=one.requirement_id, intent=one.intent,
+            attributable=clean and verification_search.attributed(ran.get(id(one), {}), artifact))
             for one in proposed if one.explanations]
     return reply
 

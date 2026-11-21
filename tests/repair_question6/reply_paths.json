@@ -248,6 +248,8 @@
       "if proposed",
       "except ValueError",
       "raise _Refused('G6_E_INPUT_VALIDATION', str(exc))",
+      "if not isinstance(before, verification_search.ExecutionSnapshot) and any((one.explanations for one in proposed))",
+      "except OSError",
       "if confirmed is not None and confirmed.expectations",
       "except LETS_THROUGH",
       "raise *",

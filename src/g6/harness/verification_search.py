@@ -868,9 +868,16 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
             checks, patch_only=lambda ident: (origins or {}).get(ident, FREE_FORM).patch_only)
 
     def read(at_base: bool) -> dict:
+        # a differential probe, and a check whose result is read against explanations, run on the bound bytes only
+        bound = before is not None and (origin.template == 'differential.v1' or bool(one.explanations))
         ran = _run_check(change, activity["placed"], one.source, node, at_base=at_base,
-                         timeout_s=_bound(deadline - _clock()), **rooted,
-                         **({'artefact': before} if before is not None and origin.template == 'differential.v1' else {}))
+                         timeout_s=_bound(deadline - _clock()), **rooted, **({'artefact': before} if bound else {}))
+        if one.explanations and 'g6_observation' not in ran:
+            # the run's own record of the bytes it ran on, which the reading's attribution is taken from (``attributed``),
+            # kept apart from the pytest report it is not part of
+            record = ran.pop('execution_artifact', None)
+            if record and not at_base:
+                activity.execution_artifacts.append(record)
         found = _guarded(change, ran, reading(ran, node))
         if origin.template == "differential.v1":   # the binding as the run's reading read it from its record
             activity.owned_runs.append(found.get("owned_probe") is True and bool(found.get('execution_artifact')))
@@ -926,6 +933,16 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
         except Exception as exc:
             activity.update(result="error", reason=stopped(exc), stopped=f"the check {one.id}")
     return done
+
+
+def attributed(activity: dict, artifact: str) -> bool:
+    """Whether a check's run on the patch is shown to be on the reviewed bytes: the run's own record of the copy it ran
+    in (``_run_check``'s ``execution_artifact``, made only when the copy's files were the bytes bound before anything
+    ran and the run began on that copy) names the reviewed artifact's digest. No record, or another digest, is False:
+    attribution is shown, never assumed (the review of wire-diagnose, 3)."""
+    runs = getattr(activity, "execution_artifacts", None) or []
+    return bool(runs) and all(isinstance(run, dict) and run.get("artifact_digest") == artifact
+                              and not run.get("base_commit") for run in runs)
 
 
 #: Pool compatibility's guard (``patch_review._loaded_elsewhere``), as a check's run reads it.

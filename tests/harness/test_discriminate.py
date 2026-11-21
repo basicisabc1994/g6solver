@@ -41,6 +41,26 @@ def _filled(arguments: dict, source: str = SOURCE) -> dict:
     return out
 
 
+def _attributed_stage(monkeypatch, outcomes: dict) -> Stage:
+    """``Stage``'s recorded runs, where a run on the patch made on the bound bytes (``artefact``) carries the run's own
+    record of them, as ``verification_search._run_check`` writes it: a reading is decided only from such a run (the
+    review of wire-diagnose, 3)."""
+    from g6.core.ledger import digest
+
+    stage = Stage(monkeypatch, outcomes)
+    recorded = verification_search._run_check
+
+    def run_check(change, placed, source, node, *, at_base, timeout_s, artefact=None, **kwargs):
+        ran = recorded(change, placed, source, node, at_base=at_base, timeout_s=timeout_s)
+        if artefact is not None and not at_base:
+            ran = {**ran, "execution_artifact": {"version": "execution-run.v1", "artifact_digest": digest(artefact),
+                                                 "base_commit": "", "files": {}}}
+        return ran
+
+    monkeypatch.setattr(verification_search, "_run_check", run_check)
+    return stage
+
+
 def _review_calls(reply: dict) -> list[dict]:
     calls = [c["call"] for c in reply["candidates"] if isinstance(c.get("call"), dict)]
     calls += [reply["next"]["call"]] if isinstance(reply["next"].get("call"), dict) else []
@@ -166,7 +186,7 @@ def test_the_reading_is_consistent_inconsistent_or_not_decided_per_explanation(o
 def test_the_review_reads_the_observed_result_against_the_predictions(repo, monkeypatch, patch, base, observed, fits):
     (repo / "calc.py").write_text(FIXED)
     Tiers(monkeypatch)
-    plain_stage = Stage(monkeypatch, {SOURCE: {"patch": patch, "base": base}})
+    plain_stage = _attributed_stage(monkeypatch, {SOURCE: {"patch": patch, "base": base}})
     arguments = _filled(discriminate.TEMPLATE)
     plain = copy.deepcopy(arguments)
     del plain["proposed_checks"][0]["explanations"]
@@ -205,7 +225,7 @@ def test_over_mcp_select_offers_the_template_and_the_review_reads_it(repo, monke
     monkeypatch.setenv("G6_MCP_SENSITIVE", "patch_review.review")
     (repo / "calc.py").write_text(FIXED)
     Tiers(monkeypatch)
-    Stage(monkeypatch, {SOURCE: {"patch": "failed", "base": "passed"}})
+    _attributed_stage(monkeypatch, {SOURCE: {"patch": "failed", "base": "passed"}})
     server = build_server()
 
     def data(reply) -> dict:
@@ -263,7 +283,7 @@ def _colliding_review(monkeypatch):
     monkeypatch.setattr(verification_proposer, "boundary", lambda root: "")
     caller_source = "def test_caller():\n    assert False\n"
     model_source = "def test_model():\n    assert True\n"
-    stage = Stage(monkeypatch, {caller_source: {"patch": "failed", "base": "passed"},
+    stage = _attributed_stage(monkeypatch, {caller_source: {"patch": "failed", "base": "passed"},
                                 model_source: {"patch": "passed", "base": "passed"}})
     proposed = copy.deepcopy(discriminate.CHECK)
     proposed.update(id="g6p-check-1", requirement_id="R1", source=caller_source)
@@ -332,7 +352,7 @@ def test_review2_a_tree_changed_during_the_review_decides_no_explanation(monkeyp
     monkeypatch.setattr(repo_tests, "diff_text", lambda *args: "")
     monkeypatch.setattr(patch_review, "_closing", lambda *args, **kwargs: ({}, [], dict(current)))
     source = "from calc import add\n\ndef test_sum():\n    assert add(2, 3) == 5\n"
-    stage = Stage(monkeypatch, {source: {"patch": "passed", "base": "failed"}})
+    stage = _attributed_stage(monkeypatch, {source: {"patch": "passed", "base": "failed"}})
     run, race = verification_search._run_check, [False]
 
     def run_with_editor(*args, **kwargs):
@@ -354,3 +374,101 @@ def test_review2_a_tree_changed_during_the_review_decides_no_explanation(monkeyp
     [reading] = compact(got, "wd2", None)["assessment"]["explanations"]
     assert {row["reading"] for row in reading["explanations"]} == {"not_decided"}, reading
     assert reading["consistent_with"] == [] and "integrity" in reading["summary"]
+
+
+# --- review 3: attribution is shown by the run's own record of the bytes it ran on, never assumed ------------------
+
+def _restored_race(monkeypatch, *, bind=True):
+    """Codex review 3 of wire-diagnose, its reproducer: an editor saves other bytes while the check's copy is made and
+    restores the tree before the closing snapshot, so no integrity reason is given. The copy, the run and the bytes
+    are synthetic; the copy's record (``_copy_snapshot``) is what the fake copy holds, and the reviewed bytes are bound
+    as ``bind_execution`` binds them (or, with ``bind=False``, cannot be)."""
+    import hashlib
+    import sys
+    from contextlib import contextmanager
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from g6.core.ledger import digest
+    from g6.harness import patch_review
+    from g6.workforce import repo_tests
+    from tests.harness.test_proposed_checks import result
+
+    root = Path(__file__).resolve().parents[2]
+    good, bad = "def add(a, b):\n    return a + b\n", "def add(a, b):\n    return a - b\n"
+
+    def sha(text):
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    reviewed = {"calc.py": sha(good)}
+    live, copied, race, executions = dict(reviewed), {}, [False], []
+    change = repo_tests.Change(root, "HEAD", "a" * 40, "a" * 40, ("calc.py",), {"calc.py": bad}, {"calc.py": good},
+                               ("calc.py",), ())
+    monkeypatch.setattr(repo_tests, "checked_repo", lambda path: root)
+    monkeypatch.setattr(repo_tests, "_git", lambda *args, **kwargs: b"")
+    monkeypatch.setattr(repo_tests, "snapshot", lambda path: dict(live))
+    monkeypatch.setattr(repo_tests, "change", lambda *args, **kwargs: change)
+    monkeypatch.setattr(repo_tests, "test_related", lambda *args: set())
+    monkeypatch.setattr(repo_tests, "ignored_inputs", lambda *args: SimpleNamespace(
+        loadable=[], other=[], complete=True, named_like_modules=[]))
+    monkeypatch.setattr(repo_tests, "derive_tests", lambda *args: ([], 0))
+    monkeypatch.setattr(repo_tests, "diff_text", lambda *args: "")
+    monkeypatch.setattr(repo_tests, "interpreter", lambda *args: sys.executable)
+    monkeypatch.setattr(patch_review, "_closing", lambda *args, **kwargs: ({}, [], dict(live)))
+
+    def bound(change, sparse, *, deadline):
+        if not bind:
+            raise OSError("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: links need a materialised-byte adapter")
+        return verification_search.ExecutionSnapshot(sparse, dict(reviewed))
+
+    monkeypatch.setattr(verification_search, "bind_execution", bound)
+
+    @contextmanager
+    def copy_tree(*args, **kwargs):
+        live["calc.py"] = sha(bad if race[0] else good)      # an editor saves other bytes while the copy is made
+        copied.clear()
+        copied.update(live)
+        copied.update({name: sha(text) for name, text in kwargs["before"].items()})
+        live.update(reviewed)                                  # and restores them before the closing snapshot
+        yield root / "synthetic-copy"
+
+    def execute(copy_root, nodes, **kwargs):
+        [node] = nodes
+        failed = copied["calc.py"] == sha(bad)
+        executions.append((copied["calc.py"], failed))
+        return result(failed=[node], digest=digest(copied)) if failed else result([node], digest=digest(copied))
+
+    monkeypatch.setattr(repo_tests, "repository_copy", copy_tree)
+    monkeypatch.setattr(repo_tests, "_copy_snapshot", lambda path, **kwargs: dict(copied))
+    monkeypatch.setattr(repo_tests, "_run", execute)
+    monkeypatch.setattr(repo_tests, "run_at_base", lambda change, nodes, **kwargs: result(nodes, digest="b" * 64))
+    chosen = selector.select("my patch broke a test", "diagnose", last_outcome="defect_detected")
+    source = "from calc import add\n\ndef test_sum():\n    assert add(2, 3) == 5\n"
+    arguments = {**_filled(chosen["next"]["call"]["arguments"], source), "repo": str(root), "task": TASK}
+    return arguments, race, executions, live, reviewed, sha
+
+
+def test_review3_a_run_shown_to_be_on_the_reviewed_bytes_decides_and_a_restored_race_does_not(monkeypatch):
+    from g6.mcp.review_reply import compact
+
+    arguments, race, executions, live, reviewed, sha = _restored_race(monkeypatch)
+    control = review_patch(**arguments)
+    assert control["assessment"]["explanations"][0]["consistent_with"] == ["check_stale_or_wrong"], control
+    race[0] = True
+    got = review_patch(**arguments)
+    assert live == reviewed and not any(r["stage"] == "integrity" for r in got["assessment"]["reasons"])
+    # the race's copy is not the reviewed bytes: refused before it ran, so only the control's run happened
+    assert executions == [(sha("def add(a, b):\n    return a + b\n"), False)]
+    [reading] = compact(got, "wd3-race", None)["assessment"]["explanations"]
+    assert {e["reading"] for e in reading["explanations"]} == {"not_decided"}, reading
+
+
+def test_review3_a_run_with_no_record_of_the_reviewed_bytes_decides_nothing(monkeypatch):
+    arguments, race, executions, live, reviewed, sha = _restored_race(monkeypatch, bind=False)
+    got = review_patch(**arguments)
+    assert executions, "the check ran"
+    assert not any(r["stage"] == "integrity" for r in got["assessment"]["reasons"])
+    [reading] = got["assessment"]["explanations"]
+    assert reading["observed"] == "not_refuted" and reading["consistent_with"] == [], reading
+    assert {e["reading"] for e in reading["explanations"]} == {"not_decided"}
+    assert "reviewed artifact" in reading["summary"]
