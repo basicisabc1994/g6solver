@@ -325,13 +325,13 @@ def asks(said: str) -> bool:
     return semantic.decide("asks_question", said, bool(_ASKS.search(_QUOTED.sub(" ", said)))).value
 
 
-def _floor_critic_report(said: str, *, proof: str = "") -> dict[str, str]:
+def _floor_critic_report(said: str, *, marker: str = "") -> dict[str, str]:
     """The critic's reply: its rule, verdict, reasons and test. Only what follows any progress lines counts, and a test
-    comes with a verdict of defect or not at all. ``proof``: the line it must quote from its pack, because a critic that
+    comes with a verdict of defect or not at all. ``marker``: the line it must quote from its pack, because a critic that
     could not read the pack still answers, and "none" from it looks like a clean review."""
     body = said[said.rfind("[codex]"):].split("\n", 1)[-1] if "[codex]" in said else said
-    if proof and not re.search(rf"^READ:\s*{re.escape(proof)}\s*$", body, re.M):
-        return {"verdict": "unread", "rule": "", "why": "", "test": "", "error": f"the reply does not quote {proof}"}
+    if marker and not re.search(rf"^READ:\s*{re.escape(marker)}\s*$", body, re.M):
+        return {"verdict": "unread", "rule": "", "why": "", "test": "", "error": f"the reply does not quote {marker}"}
     verdict = re.search(r"^VERDICT:\s*(\w+)", body, re.M)
     rule = re.search(r"^RULE:\s*(.*?)(?=^VERDICT:)", body, re.M | re.S)
     why = re.search(r"^WHY:\s*(.*?)(?=^```|\Z)", body, re.M | re.S)
@@ -633,14 +633,14 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
             "left_out": "" if usable else failed or "it exercised nothing on the base commit"}
 
 
-def _issue(task: str, proof: str) -> str:
+def _issue(task: str, marker: str) -> str:
     """The pack's first part: the token a reply must quote, then the task."""
-    return f"issue.txt:\n{proof}\n\n{task}"
+    return f"issue.txt:\n{marker}\n\n{task}"
 
 
-def _head(patch: str, task: str, proof: str) -> str:
+def _head(patch: str, task: str, marker: str) -> str:
     """The start of the pack, what a review must read whole: the issue, then the patch."""
-    return f"{_issue(task, proof)}\n\ncandidate.patch:\n{patch}"
+    return f"{_issue(task, marker)}\n\ncandidate.patch:\n{patch}"
 
 
 def _cut(head: str, parents: list[str], fits: bool, mask: Callable[[str], str] = lambda text: text) -> str:
@@ -655,11 +655,11 @@ def _cut(head: str, parents: list[str], fits: bool, mask: Callable[[str], str] =
     return pack[:room]
 
 
-def _pack(change: repo_tests.Change, shown: Shown, task: str, proof: str) -> str:
+def _pack(change: repo_tests.Change, shown: Shown, task: str, marker: str) -> str:
     """What L9's critic reads in its folder, as text, since it has no tools: the issue, the patch, and of the base commit
     the files the patch touches, all as ``_shown`` made them from the caller's one read of ``change``: reading anything
     here would make a second patch. This is the pack before anything is masked; ``_masked_pack`` is what is sent."""
-    head = _head(shown.text, task, proof)
+    head = _head(shown.text, task, marker)
     return _cut(head, list(shown.parents), len(head) <= MAX_PACK_CHARS)
 
 
@@ -917,14 +917,14 @@ def _remasked(part: str) -> str:
     return head + newline + _seen(rest).masked()
 
 
-def _masked_pack(change: repo_tests.Change, shown: Shown, task: str, proof: str) -> tuple[str, bool]:
+def _masked_pack(change: repo_tests.Change, shown: Shown, task: str, marker: str) -> tuple[str, bool]:
     """The pack as it is sent, and whether masking left the reviewer short of reading the task or the patch whole, the parts
     a review must read whole (``_hides``, the one rule for both). What looks like a secret is masked in each part alone (the
     task, the patch, each parent file), each by ``_seen``'s one rule, so a rule that reads on to the end never reads from one
     part into the next; the patch and the parent files as ``_shown`` masks them, from ``change``'s one read."""
     task_seen = _seen(task)
     hidden = shown.hidden or _hides((number, row) for row, cuts in enumerate(task_seen.cuts) for _, _, number in cuts)
-    return _cut(_sent_head(shown.masked, task, proof), list(shown.masked_parents), _read_whole(shown.masked, task),
+    return _cut(_sent_head(shown.masked, task, marker), list(shown.masked_parents), _read_whole(shown.masked, task),
                 _remasked), hidden
 
 
@@ -950,9 +950,9 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
     shown = _shown(change, patch)
     if whole and not _read_whole(shown.masked, task):
         return {**found, "error": TOO_LONG}
-    proof = f"review {uuid.uuid4().hex}"
-    pack = _pack(change, shown, task, proof)
-    sent, hidden = _masked_pack(change, shown, task, proof)
+    marker = f"review {uuid.uuid4().hex}"
+    pack = _pack(change, shown, task, marker)
+    sent, hidden = _masked_pack(change, shown, task, marker)
     masked = max(sent.count(MASK) - pack.count(MASK), 1) if sent != pack else 0
     try:
         refs = tuple(cloud.Source.text(cloud.repository_source(change.repo), rel, sent)
@@ -963,7 +963,7 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
             refs += told_sources or (cloud.UNKNOWN,)
         with cloud.request_sources(refs):
             found = critic_report(consent.guard(caller).complete(
-                system + critic_protocol_prompt(), sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), proof=proof)
+                system + critic_protocol_prompt(), sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), marker=marker)
     except (LLMError, OSError) as exc:
         if trusted_stop(exc):
             raise   # from the critic's send or the reader of its reply: a stop is never a failed review
@@ -1674,7 +1674,7 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
 
 
 @scoped
-def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
+def critic_report(said: str, *, marker: str = "") -> dict[str, str]:
     from g6.core import semantic
 
     class Reply(BaseModel):
@@ -1688,11 +1688,11 @@ def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
     except ValueError:
         protocol = None
     if protocol is not None:
-        if proof and protocol.read != proof:
-            return {"verdict": "unread", "rule": "", "why": "", "test": "", "error": f"the reply does not quote {proof}"}
+        if marker and protocol.read != marker:
+            return {"verdict": "unread", "rule": "", "why": "", "test": "", "error": f"the reply does not quote {marker}"}
         value = protocol.model_dump(exclude={"read"})
         return value if value["verdict"] == "defect" else {**value, "test": ""}
-    floor = _floor_critic_report(said, proof=proof)
+    floor = _floor_critic_report(said, marker=marker)
     stated, lines = _stated(body)
     if stated or lines:
         # A verdict the critic states is final and never read by a model: on a verdict line in any layout, or as a JSON
@@ -1703,10 +1703,10 @@ def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
             protocols = [_CriticProtocol.model_validate(one, strict=True) for one in stated]
         except ValueError:
             protocols = None
-        if proof and not (floor["verdict"] != "unread" or any(one.read == proof for one in protocols or ())):
+        if marker and not (floor["verdict"] != "unread" or any(one.read == marker for one in protocols or ())):
             return floor   # the token is quoted by a READ line or by the protocol's own read field, or not at all
         words = {one.verdict for one in protocols or ()} | set(lines)
-        if protocols is None or len(words) != 1 or proof and any(one.read not in ("", proof) for one in protocols):
+        if protocols is None or len(words) != 1 or marker and any(one.read not in ("", marker) for one in protocols):
             return {"verdict": "unreadable", "rule": "", "why": "the reply states a verdict that is not the protocol's, "
                     "or verdicts that differ", "test": "", "error": ""}
         word, = words

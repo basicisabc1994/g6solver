@@ -44,7 +44,7 @@ def _read(said, monkeypatch):
     monkeypatch.delenv("G6_DISABLE_LLM", raising=False)
     parser = _parser()
     with semantic.request(llm=parser):
-        got = loop.critic_report(said, proof=TOKEN)
+        got = loop.critic_report(said, marker=TOKEN)
     return got, parser
 
 
@@ -62,7 +62,7 @@ def test_python_protocol_fixture_is_not_a_clean_critic_verdict(monkeypatch):
             f"def test_response():\n    expected = {json.dumps(NONE)}\n    assert api.review() == expected\n```\n")
     monkeypatch.delenv("G6_DISABLE_LLM", raising=False)
     with semantic.request(llm=None):
-        got = loop.critic_report(said, proof=TOKEN)
+        got = loop.critic_report(said, marker=TOKEN)
     assert got["verdict"] not in loop.READ_VERDICTS, got
 
 
@@ -71,7 +71,7 @@ def test_json_in_any_code_fence_but_json_is_not_a_verdict(monkeypatch, fence):
     said = f"READ: {TOKEN}\nSome thoughts.\n```{fence}\n{json.dumps({**NONE, 'read': TOKEN})}\n```\n"
     monkeypatch.delenv("G6_DISABLE_LLM", raising=False)
     with semantic.request(llm=None):
-        got = loop.critic_report(said, proof=TOKEN)
+        got = loop.critic_report(said, marker=TOKEN)
     assert got["verdict"] not in loop.READ_VERDICTS, got
 
 

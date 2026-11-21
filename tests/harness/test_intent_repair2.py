@@ -44,8 +44,8 @@ CHECK = vs.ProposedCheck(id="retained-edge", requirement_id="R1", intent="preser
 
 def _critic_pack(monkeypatch):
     monkeypatch.setattr(loop, "_shown", lambda *args: SimpleNamespace(masked=""))
-    monkeypatch.setattr(loop, "_pack", lambda change, shown, task, proof: f"READ: {proof}\n")
-    monkeypatch.setattr(loop, "_masked_pack", lambda change, shown, task, proof: (f"READ: {proof}\n", False))
+    monkeypatch.setattr(loop, "_pack", lambda change, shown, task, marker: f"READ: {marker}\n")
+    monkeypatch.setattr(loop, "_masked_pack", lambda change, shown, task, marker: (f"READ: {marker}\n", False))
     return SimpleNamespace(repo=Path("fixture"), sources=("calc.py",))
 
 
@@ -361,7 +361,7 @@ def test_explicit_failure_in_any_layout_is_final_and_never_parsed(monkeypatch, l
     monkeypatch.delenv("G6_DISABLE_LLM", raising=False)
     parser = _parser()
     with semantic.request(llm=parser):
-        got = loop.critic_report(LAYOUTS[layout], proof=TOKEN)
+        got = loop.critic_report(LAYOUTS[layout], marker=TOKEN)
     assert got["verdict"] not in loop.READ_VERDICTS, got
     assert loop._round_outcome({**got, "results": {}, "file": "test_critic.py"}) == "review_failed"
     assert not parser.calls, layout
@@ -373,7 +373,7 @@ def test_explicit_defect_after_a_header_keeps_its_test_and_is_never_parsed(monke
               "error": ""}
     parser = _parser()
     with semantic.request(llm=parser):
-        got = loop.critic_report(f"READ: {TOKEN}\n```json\n{json.dumps(stated)}\n```", proof=TOKEN)
+        got = loop.critic_report(f"READ: {TOKEN}\n```json\n{json.dumps(stated)}\n```", marker=TOKEN)
     assert got == stated and not parser.calls
 
 
@@ -381,7 +381,7 @@ def test_explicit_json_without_the_quoted_token_is_unread(monkeypatch):
     monkeypatch.delenv("G6_DISABLE_LLM", raising=False)
     parser = _parser()
     with semantic.request(llm=parser):
-        got = loop.critic_report(json.dumps({**FAILED, "verdict": "none"}), proof=TOKEN)
+        got = loop.critic_report(json.dumps({**FAILED, "verdict": "none"}), marker=TOKEN)
     assert got["verdict"] == "unread" and not parser.calls
 
 
@@ -389,7 +389,7 @@ def test_control_a_reply_with_no_explicit_verdict_is_read_by_the_model(monkeypat
     monkeypatch.delenv("G6_DISABLE_LLM", raising=False)
     parser = _parser()
     with semantic.request(llm=parser):
-        got = loop.critic_report(f"READ: {TOKEN}\nI found nothing wrong with the change.\n", proof=TOKEN)
+        got = loop.critic_report(f"READ: {TOKEN}\nI found nothing wrong with the change.\n", marker=TOKEN)
     assert parser.calls and got["verdict"] == "none"
 
 

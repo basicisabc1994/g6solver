@@ -82,11 +82,11 @@ def test_critic_structured_reply_and_exact_proof_boundary():
     value = {"verdict": "defect", "rule": "retain saved work", "why": "edits vanish", "test": "assert kept", "error": ""}
     said = "READ: receipt-7\nThe edit is lost. Here is a reproducer."
     with semantic.request(llm=FakeLLM(default=json.dumps({"value": value}))):
-        assert critic_report(said, proof="receipt-7")["verdict"] == "defect"
+        assert critic_report(said, marker="receipt-7")["verdict"] == "defect"
         # A model cannot create the receipt the critic failed to echo.
-        assert critic_report("never read it", proof="receipt-7")["verdict"] == "unread"
+        assert critic_report("never read it", marker="receipt-7")["verdict"] == "unread"
     with semantic.request(llm=None):
-        assert critic_report(said, proof="receipt-7")["verdict"] == "unreadable"
+        assert critic_report(said, marker="receipt-7")["verdict"] == "unreadable"
 
 
 def test_critic_accepts_declared_json_directly_and_never_reads_nested_receipts():
@@ -95,10 +95,10 @@ def test_critic_accepts_declared_json_directly_and_never_reads_nested_receipts()
              "test": "assert kept", "error": ""}
     fake = FakeLLM(default="invalid")
     with semantic.request(llm=fake):
-        assert critic_report(json.dumps(value), proof="receipt-7")["verdict"] == "defect"
-        assert critic_report(json.dumps({**value, "read": "wrong"}), proof="receipt-7")["verdict"] == "unread"
-        assert critic_report(json.dumps({"data": value}), proof="receipt-7")["verdict"] == "unread"
-        assert critic_report(json.dumps({**value, "error": "G6_E_CLOUD_CONSENT_REQUIRED"}), proof="receipt-7")["verdict"] == "unread"
+        assert critic_report(json.dumps(value), marker="receipt-7")["verdict"] == "defect"
+        assert critic_report(json.dumps({**value, "read": "wrong"}), marker="receipt-7")["verdict"] == "unread"
+        assert critic_report(json.dumps({"data": value}), marker="receipt-7")["verdict"] == "unread"
+        assert critic_report(json.dumps({**value, "error": "G6_E_CLOUD_CONSENT_REQUIRED"}), marker="receipt-7")["verdict"] == "unread"
     assert not fake.calls
 
 
@@ -106,7 +106,7 @@ def test_critic_model_cannot_replace_an_explicit_legacy_verdict():
     from g6.harness.completion_loop import critic_report
     fake = FakeLLM(default='{"value":{"verdict":"none","rule":"","why":"","test":"","error":""}}')
     with semantic.request(llm=fake):
-        result = critic_report("READ: receipt-7\nRULE: retain work\nVERDICT: defect\nWHY: lost edit", proof="receipt-7")
+        result = critic_report("READ: receipt-7\nRULE: retain work\nVERDICT: defect\nWHY: lost edit", marker="receipt-7")
     assert result["verdict"] == "defect"
     assert not fake.calls
 
@@ -118,7 +118,7 @@ def test_critic_explicit_failure_verdict_is_final_and_a_failed_review(verdict):
     fake = FakeLLM(default='{"value":{"verdict":"none","rule":"","why":"","test":"","error":""}}')
     with semantic.request(llm=fake):
         got = loop.critic_report(f"READ: receipt-7\nVERDICT: {verdict}\nWHY: I could not read the code",
-                                 proof="receipt-7")
+                                 marker="receipt-7")
     assert got["verdict"] == verdict.lower() and not fake.calls
     assert loop._round_outcome({**got, "results": {}, "file": "test_review.py"}) == "review_failed"
 

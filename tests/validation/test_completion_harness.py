@@ -134,15 +134,15 @@ def test_the_scout_gate_counts_as_l9_counts(raw, numbers):
     assert loop.scout_gate(raw, **numbers) == we.scout_gate(raw, **numbers)
 
 
-@pytest.mark.parametrize("said, proof", [
+@pytest.mark.parametrize("said, marker", [
     ("READ: review abc\nRULE: a rule\nVERDICT: defect\nWHY: why\n```python\ndef test_x():\n    assert 0\n```\n",
      "review abc"),
     ("READ: review abc\nRULE: a rule\nVERDICT: none\nWHY: nothing\n", "review abc"),
     ("RULE: a rule\nVERDICT: none\n", "review abc"),      # did not read the pack
     ("no form at all", ""),
 ])
-def test_the_critics_reply_is_read_as_l9_reads_it(said, proof):
-    assert loop.critic_report(said, proof=proof) == we.critic_report(said, proof=proof)
+def test_the_critics_reply_is_read_as_l9_reads_it(said, marker):
+    assert loop.critic_report(said, marker=marker) == we.critic_report(said, proof=marker)
 
 
 # --- arm K, the review-until-clean loop: ``reviews_until_clean`` and ``advance`` on the same reviews -------------------------
