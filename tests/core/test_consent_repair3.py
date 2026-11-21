@@ -157,6 +157,18 @@ def _named(text: str) -> str | None:
     return next((word for word in re.findall(r"\w+", text) if checker_accepts(word)), None)
 
 
+#: A code inside a provider's words no longer names G6's refusal: these six take the site's default (wire-typed debate
+#: brief CONVERGED.md, slice 2, "Changed tests").
+_INSIDE_THE_WORDS = {"HTTP 500 from https://model: G6_E_MODEL_REFUSED: a server's body says this",
+                     "two: G6_E_FIRST then G6_E_SECOND", "G6_E_lower then G6_E_UPPER", "(G6_E_IN_BRACKETS)",
+                     "G6_E_AT_THE_END.", "a-G6_E_HYPHENED-b"}
+assert _INSIDE_THE_WORDS <= set(TEXTS)
+
+
+def _site_reads(text: str) -> str | None:
+    return None if text in _INSIDE_THE_WORDS else _named(text)
+
+
 def _raise(exc: Exception):
     raise exc
 
@@ -165,8 +177,8 @@ def _raise(exc: Exception):
 def test_a_code_named_in_words_is_read_by_g6s_rule_and_found_as_before(text):
     before = _BEFORE.search(text)
     assert _named(text) == (before[1] if before else None)
-    assert reflex._reason({"reason": text}) == (_named(text) or reflex.CYCLE)
-    assert code(mission._guarded(lambda: _raise(ValueError(text)))) == (_named(text) or mission.REFUSED)
+    assert reflex._reason({"reason": text}) == (_site_reads(text) or reflex.CYCLE)
+    assert code(mission._guarded(lambda: _raise(ValueError(text)))) == (_site_reads(text) or mission.REFUSED)
 
 
 @pytest.fixture(scope="module")
@@ -185,7 +197,7 @@ def test_a_model_failure_is_refused_with_the_code_its_words_name_by_g6s_rule(har
         def propose(self, view, dev):
             raise LLMError(text)
 
-    assert code(harness.propose(Fails())) == (_named(text) or "G6_E_META_MODEL_FAILED")
+    assert code(harness.propose(Fails())) == (_site_reads(text) or "G6_E_META_MODEL_FAILED")
 
 
 #: Each place in PACKAGES that decides whether a string is a G6 code, by module, innermost function, how and what:

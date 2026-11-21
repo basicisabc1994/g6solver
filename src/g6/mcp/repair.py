@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import uuid
 import weakref
@@ -47,6 +48,7 @@ MAX_RETRIES = 2
 _LOCK = threading.Lock()
 _SESSIONS: weakref.WeakKeyDictionary[Any, dict[str, Any]] = weakref.WeakKeyDictionary()
 _LOCAL: dict[str, Any] = {}          # the store of a call that comes with no session (in-process)
+_FIELD = re.compile(r"[a-z][a-z0-9_]*")
 
 
 def _state(session: Any) -> dict[str, Any]:
@@ -154,9 +156,17 @@ def _entry(data: dict[str, Any], tool: str) -> dict[str, Any] | None:
 
 
 def _named(reply: dict[str, Any], schema: list[str]) -> list[str]:
-    """The tool schema fields in the refusal's declared missing list."""
+    """The fields of the tool's schema the refusal declares ``missing``; where it declares none, those its own words name
+    (only schema names can come out). A malformed declaration names none."""
     inner = _inner(reply)
-    words = set(missing_of(inner))
+    declared = missing_of(inner)
+    if declared is not None:
+        words = set(declared)
+    else:
+        card = inner.get("warning_card") if isinstance(inner.get("warning_card"), dict) else {}
+        said = " ".join(str(x) for x in (inner.get("error", ""), card.get("message", ""), card.get("why", ""))
+                        if isinstance(x, str))
+        words = set(_FIELD.findall(said.lower()))
     return [field for field in schema if field in words]
 
 

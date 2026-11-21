@@ -85,7 +85,7 @@ def test_review_observer_records_typed_refusal_code(monkeypatch, declared):
     if declared:
         reply["code"] = "G6_E_INPUT_VALIDATION"
     assert adapters.observe_review("synthetic", "task", "job", reply, started_at="now", finished_at="now") == ""
-    assert events["review_finished"]["refusal_code"] == ("G6_E_INPUT_VALIDATION" if declared else "unknown")
+    assert events["review_finished"]["refusal_code"] == ("G6_E_INPUT_VALIDATION" if declared else "G6_E_PLANTED")
 
 
 @pytest.mark.parametrize("declared", [False, True])
@@ -103,4 +103,4 @@ def test_model_attempt_does_not_guess_withheld_from_message(declared):
         SimpleNamespace(last_usage=None), dict(verification_search.PROPOSER_SETTINGS), ["synthetic"])
     with pytest.raises(LLMError):
         limited.complete("system", "user")
-    assert limited.calls[-1]["sent"] is (False if declared else None)
+    assert limited.calls[-1]["sent"] is False   # a consent refusal before any request: declared or leading its words

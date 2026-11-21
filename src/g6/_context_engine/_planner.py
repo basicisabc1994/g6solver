@@ -32,7 +32,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from g6.core.refusals import code_of
+from g6.core.refusals import watching_consent
 
 from g6.core import cloud_consent
 from g6.core.consent_callers import guard
@@ -248,12 +248,13 @@ def run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFAU
             stop = "no_new_passage" if limits.model_calls == 0 else "budget"
             break
         open_needs = [n.text for n in declared if not _covered(n.text, list(items.values()))]
+        watch = None
         try:   # the model's question depends on what was retrieved, so it is sent under those sources' consent
-            with cloud_consent.request_sources(tuple(sources.values())):
+            with watching_consent(cloud_consent.REQUIRED) as watch, cloud_consent.request_sources(tuple(sources.values())):
                 reply = guard(reformulate).complete(REFORMULATE, json.dumps({"query": query, "unmet_needs": open_needs}),
                                                     max_tokens=400)
         except Exception as exc:  # noqa: BLE001 - the consent refusal is told apart by its code; anything else is raised on
-            if code_of(exc) != cloud_consent.REQUIRED:
+            if watch is None or not watch.refused(exc):
                 raise
             stop = "refused"
             break

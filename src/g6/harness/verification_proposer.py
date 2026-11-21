@@ -42,7 +42,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from g6.core.refusals import code_of
+from g6.core.refusals import watching_consent
 
 from g6.core import cloud_consent as cloud
 from g6.core.consent_callers import SDKClientWrapper, guard, sdk_send
@@ -231,14 +231,18 @@ class _Limits:
             raise BudgetExhausted(record["error"])
         started = time.monotonic()
         before = getattr(self.raw, "last_usage", None)
+        watch = None
         try:
-            text = self.metered.complete(system, user, max_tokens=self.settings["max_output_tokens"])
+            with watching_consent() as watch:
+                text = self.metered.complete(system, user, max_tokens=self.settings["max_output_tokens"])
         except BudgetExhausted as exc:
             record.update(sent=True, error=str(exc), limit="max_wall_clock_s")
             raise
         except Exception as exc:
-            withheld = code_of(exc) in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)
-            record.update(sent=False if withheld else None, error=f"{type(exc).__name__}: {' '.join(str(exc).split())[:200]}")
+            # not sent only when consent refused it and no request was counted around it; where the count cannot
+            # tell, it was sent
+            withheld = watch is not None and bool(watch.refused(exc)) and watch.counted() == 0
+            record.update(sent=not withheld, error=f"{type(exc).__name__}: {' '.join(str(exc).split())[:200]}")
             raise
         finally:
             record["seconds"] = round(time.monotonic() - started, 3)

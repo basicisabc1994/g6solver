@@ -29,7 +29,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from g6.core.refusals import code_of
+from g6.core.refusals import watching_consent
 
 from g6.core import cloud_consent
 from g6.core.consent_callers import guard
@@ -170,11 +170,12 @@ def extract(acc: Access, passage_ids: Sequence[str], *, caller: Any, limits: Lim
     if not read:
         return []
     shown = "\n\n".join(f"[{n}]\n{item['view']['text']}" for n, item in enumerate(read, 1))   # views, never raw text
+    watch = None
     try:
-        with cloud_consent.request_sources(tuple(refs)):
+        with watching_consent(cloud_consent.REQUIRED) as watch, cloud_consent.request_sources(tuple(refs)):
             reply = guard(caller).complete(SYSTEM, shown, max_tokens=2_000)
     except Exception as exc:  # noqa: BLE001 - the consent refusal is told apart by its code; anything else is raised on
-        if code_of(exc) != cloud_consent.REQUIRED:
+        if watch is None or not watch.refused(exc):
             raise
         raise Refused(NOT_SENT, "the extraction was not sent: a source among these passages is not shared with this "
                                 "model's provider, so nothing left this machine and no relation is kept") from None

@@ -147,3 +147,127 @@ def test_the_queue_trigger_refuses_an_auto_name_in_sql():
         conn.execute("UPDATE actions SET status='approved' WHERE action_id='a'")
         assert conn.execute("SELECT status FROM actions").fetchone()[0] == "approved"
 
+
+# --- slice 2: codes and missing fields (causes B1-B6, C) ---------------------------------------------------------------
+
+def test_a_mission_refusal_with_no_code_keeps_the_stable_default_and_the_code_leads_its_words():
+    from g6.mcp import mission
+
+    def fails():
+        raise ValueError("no such mission")
+
+    reply = mission._guarded(fails)
+    assert reply["warning_card"]["code"] == mission.REFUSED
+    assert reply["error"].startswith(f"[{mission.REFUSED}]")
+
+
+def test_no_route_declares_the_code_its_first_coded_reason_leads_with():
+    from g6.core.refusals import code_of
+    from g6.workforce.scheduler import NoRoute
+
+    refused = NoRoute((("a", "too dear"), ("reproduce:run_tests", "[G6_E_ISOLATION_UNAVAILABLE] no boundary here")))
+    assert code_of(refused) == "G6_E_ISOLATION_UNAVAILABLE"
+    assert code_of(NoRoute((("a", "too dear G6_E_INSIDE"),))) == "unknown"
+
+
+def test_a_review_step_with_no_task_is_an_input_refusal_on_its_card():
+    from g6.mcp import review_loop
+
+    assert review_loop._step("repo", "", "session")["warning_card"]["code"] == "G6_E_INPUT_VALIDATION"
+
+
+def test_a_code_that_is_not_a_g6_code_never_hides_the_card():
+    from g6.core import cloud_consent
+    from g6.core.refusals import code_of
+
+    assert code_of({"code": "not a code", "warning_card": {"code": cloud_consent.REQUIRED}}) == cloud_consent.REQUIRED
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("G6_E_LLM_TIMEOUT: no answer in time", "G6_E_LLM_TIMEOUT"),
+    ("[G6_E_SENSITIVE_COMPONENT_DENIED] refused", "G6_E_SENSITIVE_COMPONENT_DENIED"),
+    ("G6_E_ALONE", "G6_E_ALONE"),
+    ("HTTP 500 from https://model: G6_E_MODEL_REFUSED: a body", "unknown"),
+    ("see G6_E_INSIDE here", "unknown"),
+    ("G6_E_AT_THE_END.", "unknown"),
+    ("[G6_E_UNCLOSED refused", "unknown"),
+])
+def test_a_code_is_read_only_where_it_leads_the_words(text, expected):
+    from g6.core.refusals import code_of
+
+    assert code_of(ValueError(text)) == expected
+    assert code_of({"error": text}) == expected
+
+
+def test_a_step_that_was_not_refused_records_no_code():
+    from g6.mcp.workflow import _Step
+
+    assert _Step({"action": "stop", "ending": "clean", "ok": True,
+                  "warning_card": {"code": "G6_E_REVIEW_UNTIL_CLEAN"}}).code == ""
+    assert _Step({"action": "stop"}).code == ""
+    assert _Step({"action": "stop", "ok": False, "error": "[G6_E_GIT_REPO_INVALID] x",
+                  "warning_card": {"code": "G6_E_GIT_REPO_INVALID"}}).code == "G6_E_GIT_REPO_INVALID"
+
+
+def _limits(failed):
+    from types import SimpleNamespace
+
+    from g6.harness import verification_proposer, verification_search
+
+    return verification_proposer._Limits(SimpleNamespace(check=lambda: None, complete=failed),
+                                         SimpleNamespace(last_usage=None), dict(verification_search.PROPOSER_SETTINGS),
+                                         ["synthetic"])
+
+
+def test_a_consent_refusal_before_any_request_is_recorded_as_not_sent():
+    from g6.core import cloud_consent as cloud
+    from g6.core.llm import LLMError
+
+    def refused(*args, **kwargs):
+        raise cloud._refusal(LLMError(f"{cloud.REQUIRED}: withheld"))   # what the consent guard raises
+
+    limited = _limits(refused)
+    with pytest.raises(LLMError):
+        limited.complete("system", "user")
+    assert limited.calls[-1]["sent"] is False
+
+
+def test_an_error_naming_the_consent_code_after_a_counted_request_was_sent():
+    from g6.core import cloud_consent as cloud
+    from g6.core.llm import LLMError
+    from g6.core.model_calls import note_model_call
+
+    def sent_then_failed(*args, **kwargs):
+        note_model_call()
+        raise LLMError(f"{cloud.REQUIRED}: the provider's words")
+
+    limited = _limits(sent_then_failed)
+    with pytest.raises(LLMError):
+        limited.complete("system", "user")
+    assert limited.calls[-1]["sent"] is True
+
+
+def test_a_fallback_that_was_refused_then_sent_and_failed_was_sent():
+    from g6.core import cloud_consent as cloud
+    from g6.core.llm import LLMError
+    from g6.core.model_calls import note_model_call
+
+    def two_callers(*args, **kwargs):
+        try:
+            raise cloud._refusal(LLMError(f"{cloud.REQUIRED}: withheld"))
+        except LLMError as first:
+            note_model_call()
+            raise LLMError(f"every caller failed: {first}; HTTP 500") from None
+
+    limited = _limits(two_callers)
+    with pytest.raises(LLMError):
+        limited.complete("system", "user")
+    assert limited.calls[-1]["sent"] is True
+
+
+def test_missing_fields_are_declared_first_then_read_from_the_schema_names_the_refusal_says():
+    from g6.mcp.repair import _named
+
+    assert _named({"missing": ["task"], "error": "[G6_E_INPUT_VALIDATION] repo"}, ["task", "repo"]) == ["task"]
+    assert _named({"missing": "task", "error": "[G6_E_INPUT_VALIDATION] repo"}, ["task", "repo"]) == []
+    assert _named({"error": "[G6_E_INPUT_VALIDATION] field task is required"}, ["task", "repo"]) == ["task"]

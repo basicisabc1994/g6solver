@@ -8,13 +8,17 @@ from pathlib import Path
 import pytest
 
 
-def test_mission_exception_code_is_a_field():
-    from g6.mcp.mission import _guarded
+def test_mission_exception_code_is_declared_or_leads_its_words():
+    from g6.mcp.mission import REFUSED, _guarded
 
     def work():
         raise ValueError("G6_E_INPUT_VALIDATION planted")
 
-    assert _guarded(work)["code"] == "unknown"
+    def inside():
+        raise ValueError("planted G6_E_INPUT_VALIDATION")
+
+    assert _guarded(work)["code"] == "G6_E_INPUT_VALIDATION"
+    assert _guarded(inside)["code"] == REFUSED
 
     class Refusal(ValueError):
         code = "G6_E_INPUT_VALIDATION"
@@ -25,11 +29,13 @@ def test_mission_exception_code_is_a_field():
     assert _guarded(refused)["code"] == "G6_E_INPUT_VALIDATION"
 
 
-def test_corpus_fill_does_not_scan_prose():
+def test_corpus_fill_reads_a_declaration_first():
     from g6.skills.corpus import _fill
 
-    assert _fill("task planted in message", {"repo": "x"}, {"task": None, "repo": None}) == ["repo"]
-    assert _fill({"missing": ["task", "invented"]}, {"repo": "x"}, {"task": None, "repo": None}) == ["task"]
+    fields = {"task": None, "repo": None}
+    assert _fill("task planted in message", {"repo": "x"}, fields, ("task", "invented")) == ["task"]
+    assert _fill("task planted in message", {"repo": "x"}, fields, ()) == ["repo"]
+    assert _fill("the task is missing", {"repo": "x"}, fields) == ["task"]   # no declaration: the base's reading
 
 
 def test_effect_metadata_uses_explicit_declaration():

@@ -31,7 +31,8 @@ from __future__ import annotations
 
 import ast
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -766,30 +767,102 @@ LAYERS: dict[str, tuple[str, ...]] = {
 }
 
 
-# Typed metadata readers: messages are for people only.
-_TYPED_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
+# Shared readers of a refusal's code and missing fields: a declared field first; where none is declared, the code that
+# leads the refusal's own words (G6's producers write it there), never a code found elsewhere in the words.
+#: The word a text starts with: ``[WORD]``, or ``WORD`` ended by ``:``, whitespace or the end of the text.
+_LEAD = re.compile(r"\[(\w+)\]|(\w+)(?=[:\s]|\Z)")
+
+
+def _g6_code(value: object) -> bool:
+    from g6.invariants import ERROR_CODE_PATTERN     # G6's own rule for a code: its envelope checker's
+
+    return isinstance(value, str) and "\n" not in value and ERROR_CODE_PATTERN.match(value) is not None
+
+
+def leading_code(text: object) -> str | None:
+    """The G6 code at the very start of ``text`` (optionally inside ``[...]``), or None."""
+    found = _LEAD.match(text) if isinstance(text, str) else None
+    word = (found[1] or found[2]) if found else None
+    return word if _g6_code(word) else None
 
 
 def code_of(value: object) -> str:
-    """Read a code from a refusal/exception, never from its message."""
+    """The code of a refusal: a reply's card, its top-level ``code``, or its ``error`` mapping (a holder whose code is not
+    a G6 code is skipped), then the code leading its ``error`` text; an exception's declared ``.code``, then the code
+    leading its text. ``"unknown"`` when there is none."""
     if isinstance(value, Mapping):
-        holders = (value, value.get("warning_card"), value.get("error"))
-        for holder in holders:
-            if not isinstance(holder, Mapping) or "code" not in holder:
-                continue
-            code = holder["code"]
-            return code if isinstance(code, str) and _TYPED_CODE.fullmatch(code) else "unknown"
-        return "unknown"
-    code = getattr(value, "code", None)
-    return code if isinstance(code, str) and _TYPED_CODE.fullmatch(code) else "unknown"
+        for holder in (value.get("warning_card"), value, value.get("error")):
+            if isinstance(holder, Mapping) and _g6_code(holder.get("code")):
+                return holder["code"]
+        return leading_code(value.get("error")) or "unknown"
+    declared = getattr(value, "code", None)
+    if _g6_code(declared):
+        return declared
+    return (leading_code(str(value)) if isinstance(value, BaseException) else None) or "unknown"
 
 
-def missing_of(value: object) -> tuple[str, ...]:
-    """Declared missing input fields, in order; malformed declarations give none."""
-    missing = value.get("missing") if isinstance(value, Mapping) else getattr(value, "missing", None)
+def refusal_code(reply: object) -> str:
+    """The code of a refused reply (one that carries an ``error``), or ``""`` for a reply that was not refused or names
+    no code."""
+    if not isinstance(reply, Mapping) or not reply.get("error"):
+        return ""
+    code = code_of(reply)
+    return "" if code == "unknown" else code
+
+
+def missing_of(value: object) -> tuple[str, ...] | None:
+    """Declared missing input fields, in order. ``None`` when nothing is declared (the key is absent), so a reader can
+    fall back to its own grammar; ``()`` for a declaration that is malformed."""
+    if isinstance(value, Mapping):
+        if "missing" not in value:
+            return None
+        missing = value["missing"]
+    elif hasattr(value, "missing"):
+        missing = value.missing
+    else:
+        return None
     if not isinstance(missing, (list, tuple)) or not all(isinstance(f, str) and f for f in missing):
         return ()
     return tuple(dict.fromkeys(missing))
+
+
+class ConsentWatch:
+    """What one model call's consent refusal is: the consent guard told this watch, or the raised error's own words are
+    led by a consent code. A refusal it was told of counts only while no request was counted after it (a fallback that
+    was refused and then sent is not a refusal)."""
+
+    def __init__(self, codes: tuple[str, ...]) -> None:
+        self.codes, self.told = codes, []
+        self.counted: Callable[[], int] = lambda: 0
+
+    def tell(self, error: BaseException) -> None:
+        self.told.append((error, self.counted()))
+
+    def refused(self, error: BaseException) -> str:
+        """The consent code that refused the call, or ``""``."""
+        code = code_of(error)
+        if code in self.codes:
+            return code
+        if self.told and self.counted() == self.told[-1][1]:     # no request counted since the guard refused one
+            told = code_of(self.told[-1][0])
+            return told if told in self.codes else ""
+        return ""
+
+
+@contextmanager
+def watching_consent(*codes: str) -> Iterator[ConsentWatch]:
+    """A :class:`ConsentWatch` over the calls made inside: the consent guard's latch and an observer-bearing count."""
+    from g6.core import cloud_consent
+    from g6.core.model_calls import counting
+
+    watch = ConsentWatch(codes or (cloud_consent.REQUIRED, cloud_consent.STATE_UNAVAILABLE))
+    with cloud_consent.telling_refusals(watch.tell), counting(before_call=_observe) as counted:
+        watch.counted = counted
+        yield watch
+
+
+def _observe() -> None:
+    """An observer that only makes the count follow the call into the threads and pool tasks it starts."""
 
 
 class RefusalDetail(str):
@@ -800,7 +873,7 @@ class RefusalDetail(str):
     """
 
     def __new__(cls, message: str, *, code: str = "unknown", missing: tuple[str, ...] = ()):
-        if not isinstance(code, str) or (code != "unknown" and not _TYPED_CODE.fullmatch(code)):
+        if not isinstance(code, str) or (code != "unknown" and not _g6_code(code)):
             raise ValueError("a refusal needs a declared G6 code or unknown")
         if not isinstance(missing, tuple) or not all(isinstance(field, str) and field for field in missing):
             raise ValueError("missing must be a tuple of field names")

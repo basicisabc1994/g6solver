@@ -26,7 +26,8 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from g6.core.refusals import code_of
+from g6.core.refusals import leading_code
+from g6.invariants import ERROR_CODE_PATTERN
 
 from g6.metaharness.lessons import ROOT_CAUSES, Lesson, repeats
 from g6.metaharness.lessons import stuck as recurring
@@ -164,8 +165,13 @@ def stages(rows: Iterable[Mapping[str, Any]]) -> tuple[StageMeasurement, ...]:
 
 
 def _reason(row: Mapping[str, Any]) -> str:
-    """Read the cycle refusal code field; never interpret its human reason."""
-    return code_of(row)
+    """Why a cycle went no further, as a stable code: the row's own code; else the code leading its reason (a step the
+    harness blocked carries it there), a G6 code by G6's own rule; else ``CYCLE``."""
+    code = _text(row.get("code"))
+    if code and code != CYCLE:
+        return code
+    led = leading_code(row.get("reason")) or ""
+    return led if ERROR_CODE_PATTERN.match(led) else CYCLE
 
 
 def _refused_by(row: Mapping[str, Any]) -> str:

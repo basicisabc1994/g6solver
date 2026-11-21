@@ -74,18 +74,21 @@ def test_selector_reads_declared_code():
     assert _read(json.dumps({"code": "G6_E_INPUT_VALIDATION", "error": "G6_E_PLANTED"}))["code"] == "G6_E_INPUT_VALIDATION"
 
 
-def test_workflow_never_reads_message_as_code():
+def test_workflow_reads_a_declared_or_leading_code_never_one_inside_the_words():
     from g6.mcp.workflow import _Step
 
-    assert _Step({"error": "[G6_E_INPUT_VALIDATION] planted"}).code == "unknown"
+    assert _Step({"error": "[G6_E_INPUT_VALIDATION] planted"}).code == "G6_E_INPUT_VALIDATION"
+    assert _Step({"error": "planted G6_E_INPUT_VALIDATION"}).code == ""
     assert _Step({"code": "G6_E_INPUT_VALIDATION", "error": "[G6_E_PLANTED]"}).code == "G6_E_INPUT_VALIDATION"
 
 
-def test_repair_missing_fields_are_typed():
+def test_repair_missing_fields_are_declared_first():
     from g6.mcp.repair import _named
 
-    assert _named({"error": "task repo", "warning_card": {"message": "task"}}, ["task", "repo"]) == []
+    # with no declaration, the schema names the refusal's own words hold (the base's reading)
+    assert _named({"error": "task repo", "warning_card": {"message": "task"}}, ["task", "repo"]) == ["task", "repo"]
     assert _named({"missing": ["task", "invented"], "error": "repo"}, ["task", "repo"]) == ["task"]
+    assert _named({"missing": "task", "error": "repo"}, ["task", "repo"]) == []
 
 
 def test_effect_is_declared_not_named():
@@ -97,10 +100,11 @@ def test_effect_is_declared_not_named():
     assert _acts({**entry, "effects": ["internal"]}) == "internal"
 
 
-def test_reflex_code_is_not_recovered_from_reason():
-    from g6.metaharness.reflex import _reason
+def test_reflex_reads_a_declared_or_leading_code_never_one_inside_the_reason():
+    from g6.metaharness.reflex import CYCLE, _reason
 
-    assert _reason({"reason": "G6_E_INPUT_VALIDATION planted"}) == "unknown"
+    assert _reason({"reason": "G6_E_INPUT_VALIDATION planted"}) == "G6_E_INPUT_VALIDATION"
+    assert _reason({"reason": "planted G6_E_INPUT_VALIDATION"}) == CYCLE
     assert _reason({"code": "G6_E_INPUT_VALIDATION", "reason": "G6_E_PLANTED"}) == "G6_E_INPUT_VALIDATION"
 
 
@@ -156,10 +160,11 @@ def test_declared_internal_tool_can_be_next():
     assert next(c for c in reply["candidates"] if c["id"] == reply["next"]["id"])["acts"] == "internal"
 
 
-def test_explicit_unknown_code_is_not_replaced_by_card_fallback():
+def test_a_code_that_is_not_a_g6_code_never_hides_the_card():
     from g6.core.refusals import code_of
 
-    assert code_of({"code": "unknown", "warning_card": {"code": "G6_E_INVOKE_FAILED"}}) == "unknown"
+    assert code_of({"code": "unknown", "warning_card": {"code": "G6_E_INVOKE_FAILED"}}) == "G6_E_INVOKE_FAILED"
+    assert code_of({"code": "unknown"}) == "unknown"
 
 
 def test_typed_refusal_preserves_code_and_missing_without_parsing():

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from g6.core.refusals import code_of
+from g6.invariants import ERROR_CODE_PATTERN
 
 
 #: The card a step carries: the stable code of a result that is a draft, whatever the loop found.
@@ -80,7 +81,7 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
     from g6.workspace._envelope import WorkspaceRefused
 
     if not task.strip() or not session.strip():
-        return {**blocked_reply("a task and a session are needed: name one session for one task"),
+        return {**blocked_reply("[G6_E_INPUT_VALIDATION] a task and a session are needed: name one session for one task"),
                 "code": "G6_E_INPUT_VALIDATION", "missing": [key for key, value in (("task", task), ("session", session)) if not value.strip()]}
     folder = completion_hook.folder(f"mcp:{session}")
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -90,7 +91,7 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
             asked = _asked(repo, task, base, folder)
         done = loop.advance(asked["repo"], asked["task"], asked["base"], folder, said=reason, answered=bool(reason.strip()))
     except repo_tests.RepoRefused as exc:
-        return {**blocked_reply(str(exc), request_id=request_id), "code": exc.code}
+        return {**blocked_reply(f"[{exc.code}] {exc}", request_id=request_id), "code": exc.code}
     except WorkspaceRefused:
         done = loop.Step(loop.WAIT, loop.ALREADY_RUNNING, loop.BUSY)
     if done.action == loop.WAIT:      # the step that is running owns the state, so nothing of it is read here
@@ -144,7 +145,7 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     if capture is not None and capture.review_unsent and capture.refused_provider:
         metadata['review_provider'] = capture.refused_provider
     code = code_of(result)
-    if code != 'unknown':
+    if ERROR_CODE_PATTERN.match(code):
         metadata['error_code'] = code
     return bind_output(result, (Source.text(repository_source(repo), "completion-report", body),
                                 Source.text(input_source(task), "task", task), *(refs or ()),

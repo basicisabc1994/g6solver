@@ -24,7 +24,7 @@ from functools import wraps
 from pathlib import Path
 from typing import Any
 
-from g6.core.refusals import code_of
+from g6.core.refusals import refusal_code
 
 from g6.core.cloud_consent import sha256
 from g6.core.ledger import digest
@@ -119,7 +119,7 @@ def observe_review(repo: str | os.PathLike, task: str, job_id: str, reply: Any, 
     assessment = reply.get("assessment") if isinstance(reply.get("assessment"), dict) else None
     scope = (assessment or {}).get("scope") if isinstance((assessment or {}).get("scope"), dict) else {}
     search = scope.get("search") if isinstance(scope.get("search"), dict) else {}
-    refused = code_of(reply)
+    refused = refusal_code(reply) or None
     ref = _saved_ref(job_id, saved) if assessment else None
     reasons = [r for r in (assessment or {}).get("reasons") or [] if isinstance(r, dict)]
     data = {"outcome": str((assessment or {}).get("outcome") or "")[:80] or None,

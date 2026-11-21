@@ -62,7 +62,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from g6.core.refusals import code_of
+from g6.core.refusals import watching_consent
 
 from g6.cegis import InputDomain, SearchResult, cegis
 from g6.context.redact import MASK, mask_paths, secret_spans
@@ -1546,18 +1546,20 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
     def tree() -> str:
         return digest(repo_tests.snapshot(root))
 
+    watch = None
     try:
-        if not reviewing:
-            _scouts(change, task, session, state, shipped, scout, AT_STOP)
-            if all(one["left_out"] for one in state["sets"].values()):
-                return _finish(session, state, _report(root, task, base, state, "no probe set could run"),
-                               patch=_patch_now(root, base))
-        loop = Repairs(rounds, reviewed if reviewing else check, tree, answered, asks(said))
-        got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
-                    max_iterations=MAX_REPAIRS + 1, timeout_s=LOOP_S - (time.time() - state["started"]))
+        with watching_consent() as watch:
+            if not reviewing:
+                _scouts(change, task, session, state, shipped, scout, AT_STOP)
+                if all(one["left_out"] for one in state["sets"].values()):
+                    return _finish(session, state, _report(root, task, base, state, "no probe set could run"),
+                                   patch=_patch_now(root, base))
+            loop = Repairs(rounds, reviewed if reviewing else check, tree, answered, asks(said))
+            got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
+                        max_iterations=MAX_REPAIRS + 1, timeout_s=LOOP_S - (time.time() - state["started"]))
     except LLMError as exc:
-        code = code_of(exc)
-        if code not in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE):
+        code = watch.refused(exc) if watch is not None else ""
+        if not code:
             raise
         state["stop"] = "The review was not sent. " + cloud.WITHHELD
         return refused(state["stop"], code, "cloud_consent_missing", untested=True)

@@ -34,6 +34,7 @@ from g6.core.reliability_envelope import envelope_fields, warning_card
 from g6.core.storage import g6_home, state_path
 from g6.harness import Memory, run
 from g6.integrity import build_manifest, manifest_sha256
+from g6.invariants import ERROR_CODE_PATTERN
 from g6.learning import TheoryStore
 from g6.metaharness.evaluate import EvaluationReport, evaluate, standard_for
 from g6.metaharness.artifacts import ArtifactError, ArtifactStore
@@ -567,9 +568,9 @@ class MetaHarness:
         try:
             raw = list(strategy.propose(view, runner))
         except LLMError as exc:
-            why = str(exc)          # human text; only the declared code is used for routing
+            why = str(exc)          # its declared code, or the one leading its words, by G6's own rule
             code = code_of(exc)
-            return _blocked(code, why, why)
+            return _blocked(code if ERROR_CODE_PATTERN.match(code) else "G6_E_META_MODEL_FAILED", why, why)
         except Exception as exc:  # noqa: BLE001 - a failing strategy proposes nothing; it never raises through
             why = f"{type(exc).__name__}: {exc}"
             plan = recovery.for_proposal(why, ())

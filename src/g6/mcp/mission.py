@@ -45,6 +45,7 @@ from g6.core.ledger import digest
 from g6.harness import verification_search
 from g6.harness.patch_review import DEFECT, INTEGRITY
 from g6.intent_engine import IntentElicitor
+from g6.invariants import ERROR_CODE_PATTERN
 from g6.mcp import review_reply
 from g6.mcp.consent_controls import host_controls, public_instructions
 from g6.reliability_pipeline import premortem as checklist
@@ -154,20 +155,20 @@ def reply(found: dict, *, control_id: str | None = None) -> dict:
 
 
 def _refusal(said: str, code: str = REFUSED) -> dict:
-    result = _here(blocked_reply(said))
+    result = _here(blocked_reply(f"[{code}] {said}"))
     result["mcp_guidance"] = dict(MCP_GUIDANCE)
     result["code"] = code
-    if code != "unknown":
-        result["warning_card"]["code"] = code
     return result
 
 
 def _guarded(work: Callable[[], dict]) -> dict:
-    """``work()``, or a blocked reply with the exception's declared code (unknown if absent)."""
+    """``work()``, or what refused it as a blocked reply with its code: the exception's declared one, the one leading its
+    words (``g6.core.refusals.code_of``), when it is a G6 code by G6's own rule; else ``REFUSED``."""
     try:
         return work()
     except (ValueError, LookupError, OSError, subprocess.SubprocessError) as exc:
-        return _refusal(str(exc), code_of(exc))
+        code = code_of(exc)
+        return _refusal(str(exc), code if ERROR_CODE_PATTERN.match(code) else REFUSED)
 
 
 def _bound(shown: list[str], who: str) -> api.Approver:

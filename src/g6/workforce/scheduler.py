@@ -250,6 +250,13 @@ class NoRoute(ValueError):
         self.rejected = rejected
         super().__init__("; ".join(f"{oid}: {why}" for oid, why in rejected) or "no option was offered")
 
+    @property
+    def code(self) -> str:
+        """The G6 code that leads the first rejected reason holding one (each reason is G6's own words), or ``""``."""
+        from g6.core.refusals import leading_code
+
+        return next((found for _, why in self.rejected if (found := leading_code(why))), "")
+
 
 @dataclass(frozen=True)
 class Choice:
