@@ -12,6 +12,7 @@ import pytest
 from pydantic import BaseModel
 
 from g6.core import confine
+from g6.core.agent_guidance import _ExternalText, _GuidanceText, _MixedText
 from g6.core.ai_block import AIBlock
 from g6.core.block_contract import BlockContract
 from g6.core.compose import Stage, compose
@@ -50,6 +51,19 @@ def test_template_instances_take_caller_text_that_crossed_the_mcp_ingress_as_pla
 
 def test_template_instances_still_refuse_a_str_subclass_from_outside_g6():
     foreign = {**INSTANCE, "bindings": {**INSTANCE["bindings"], "calls": [{"args": [Foreign("a")]}]}}
+    with pytest.raises(ValueError, match="bindings must be JSON data: a Foreign is not"):
+        vt.template_instances([foreign], {"R1"})
+
+
+@pytest.mark.parametrize("marker", [_ExternalText, _GuidanceText, _MixedText])
+def test_template_instances_refuse_a_subclass_of_g6s_own_marks(marker):
+    # only G6's three receipt types are unwrapped; a caller's subclass of one is a str subclass from outside G6
+    class Foreign(marker):
+        pass
+
+    text = Foreign(("a",)) if marker is _MixedText else Foreign("a")
+    foreign = {**INSTANCE, "bindings": {**INSTANCE["bindings"], "calls": [{"args": [text]}]}}
+    assert "a Foreign is not" in vt.literal_problem(foreign["bindings"])
     with pytest.raises(ValueError, match="bindings must be JSON data: a Foreign is not"):
         vt.template_instances([foreign], {"R1"})
 

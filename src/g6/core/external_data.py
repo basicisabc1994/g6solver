@@ -219,9 +219,10 @@ def plain_text(value, *, _depth=0):
     A validator that admits only exact ``str`` admits caller text that crossed G6's ingress; the receipt is a reply
     role, never part of a stored record. Any other ``str`` subclass is left as it is, for the validator to refuse.
     Containers are copied (dict, list, tuple); nothing else changes. Below ``_MAX_GUIDANCE_DEPTH`` levels a value is
-    returned as it is, for the validator's own depth limit to refuse.
+    returned as it is, for the validator's own depth limit to refuse. Only those exact three types are unwrapped: a
+    caller's subclass of one is a ``str`` subclass from outside G6 and is left as it is too.
     """
-    if isinstance(value, (_ExternalText, _GuidanceText, _MixedText)):
+    if type(value) in (_ExternalText, _GuidanceText, _MixedText):
         return str.__str__(value)
     if _depth > _MAX_GUIDANCE_DEPTH:
         return value
