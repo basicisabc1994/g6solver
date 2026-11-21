@@ -205,7 +205,10 @@ def test_mcp_tool_return_paths_keep_historical_text(monkeypatch, text, branch):
     tree = ast.parse(Path(mcp.__file__).read_text(encoding='utf-8'))
     node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == 'g6_review_patch')
     node.decorator_list = []
+    # The tool body is lifted out of its enclosing function, so the name that function imports is supplied here
+    # (g6.mcp keeps it as a lazy public attribute, not a module global).
     namespace = {**vars(mcp), '_allowed': lambda *a: branch != 'denied', 'allowed_sensitive': lambda: (),
+                 'public_instructions': mcp.public_instructions,
                  '_DENIED': '[G6_E_SENSITIVE_DENIED]',
                  'jobs': SimpleNamespace(start=lambda run, **k: run())}
     exec(compile(ast.Module(body=[node], type_ignores=[]), '<current MCP tool>', 'exec',
