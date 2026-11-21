@@ -25,7 +25,8 @@ REVIEWS = {
         {"id": "R1", "status": "failed", "checks": [{"id": "tests/test_calc.py::test_add", "verdict": "failed"}]}]},
 }
 FILE = "g6_review_1/test_add.py"
-LOOP = {"reviews": [{"n": 1, "verdict": "defect", "file": FILE, "rule": "add returns the sum", "why": "it subtracts",
+LOOP = {"evidence_status": "observed_by_g6",   # G6's own loop, as completion_loop._reviews_report stamps it
+        "reviews": [{"n": 1, "verdict": "defect", "file": FILE, "rule": "add returns the sum", "why": "it subtracts",
                      "results": {FILE: "failed"}, "patch": sha("p1")},
                     {"n": 2, "verdict": "clean", "file": "", "rule": "", "why": "", "results": {FILE: "passed"},
                      "patch": sha("p2")}],

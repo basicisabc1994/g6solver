@@ -513,6 +513,12 @@
     "_one_line/branches": [
       "if ord(ch) < 32 or ord(ch) == 127"
     ],
+    "_report_evidence": [
+      "[{**run, 'evidence_status': 'observed_by_g6' if g6_observed or run.get('receipt') in matched else 'asserted'} for run in runs]"
+    ],
+    "_report_evidence/branches": [
+      "if g6_observed or run.get('receipt') in matched"
+    ],
     "_reply/branches": [
       "if r['code'] in {CONFIRMED_FAILED, CONFIRMED_NOT_RUN}",
       "if 'integrity' in stages",
@@ -520,6 +526,8 @@
       "if 'evidence' in stages",
       "if first_action and outcome == INSUFFICIENT",
       "if unknowns",
+      "if runs and all((run['evidence_status'] == 'observed_by_g6' for run in runs))",
+      "if activity.get('activity') in ('proposed check', 'template instance')",
       "if issuer_inputs is not None",
       "if confirmed is not None"
     ],
@@ -586,7 +594,23 @@
       "text"
     ],
     "_at_base": [
-      "at_base_observations((assessment.get('scope') or {}).get('checks_run') or [])"
+      "at_base_observations([run for run in (assessment.get('scope') or {}).get('checks_run') or [] if _observed(assessment, run)])"
+    ],
+    "_observed/branches": [
+      "if item is not None"
+    ],
+    "_observed": [
+      "item.get('evidence_status', inherited) == 'observed_by_g6'",
+      "inherited == 'observed_by_g6' and all((one.get('evidence_status', inherited) == 'observed_by_g6' for one in leaves))"
+    ],
+    "_assertion/branches": [
+      "if verdict in ('failed', 'fail', 'crashed', 'timed_out', 'run_inconsistent')",
+      "if item.get('passed') is not None or item.get('verdict', item.get('result')) in ('pass', 'passed')"
+    ],
+    "_assertion": [
+      "f'the agent reports {code(verdict)}; G6 did not run it'",
+      "f\"the agent reports {item.get('passed', 'an unspecified number')} passed; G6 did not run it\"",
+      "f\"the agent reports {code(item.get('verdict', item.get('result', 'a result')))}; G6 did not run it\""
     ],
     "code/branches": [
       "if literal or confirmed",
@@ -607,17 +631,20 @@
     ],
     "_headline/branches": [
       "if outcome == 'test_integrity_compromised'",
-      "if first in ('test_weakened', 'runner_configuration_changed', 'gate_shortcut')"
+      "if first in ('test_weakened', 'runner_configuration_changed', 'gate_shortcut')",
+      "if outcome == 'supported_within_scope' and (not _observed(assessment))"
     ],
     "_headline": [
       "f'**{plain}** ({outcome}). Qualified draft: merging needs your separate approval.'"
     ],
     "_findings/branches": [
       "if r['code'] in TO_DO",
+      "if reproduction.get('kind') != 'static' and (not _observed(assessment, found))",
       "if reproduction.get('kind') == 'static'",
       "if reproduction.get('command')",
       "if found.get('code') == 'confirmed_expectation_failed'",
       "if found.get('code') == 'derived_test_regressed'",
+      "if not _observed(assessment, found)",
       "if found.get('result') == 'counterexample'",
       "if str(reproduction.get('at_base', 'not run')).startswith('not run')"
     ],
@@ -628,6 +655,7 @@
       "[[f\"- {code(item.get('requirement', ''), 40)} {code(item.get('text', ''), 80)}: {code(_words(str(item.get('reason', ''))), 120)}; to settle it: {code(item.get('settle_by', ''), 140)}\" + _issuer(assessment, item.get('requirement'))] for item in (assessment.get('completion') or {}).get('not_established', [])]"
     ],
     "_shown/branches": [
+      "if not _observed(assessment, item)",
       "if item.get('kind') != 'preserve' and checks and all((base.get(c) in ('failed', 'timed_out') for c in checks))"
     ],
     "_shown": [
@@ -663,6 +691,7 @@
     "_proposed/branches": [
       "if not own",
       "if a.get('requirement')",
+      "if _observed(assessment, a)",
       "if len(own) > 3"
     ],
     "_proposed": [
@@ -672,6 +701,7 @@
     "_steps/branches": [
       "if search.get('template_instances') or search.get('proposed_checks')",
       "if search.get('model_calls')",
+      "if not _observed(assessment, run)",
       "if run.get('check') == 'stated checks at the base commit' and run.get('outcomes')",
       "if run.get('verdict') == 'run_inconsistent'",
       "if run.get('verdict') == 'crashed'",
@@ -679,6 +709,7 @@
       "if s.get('tier') == 3 and 'not run' in str(s.get('reason', ''))",
       "if codes",
       "if len(codes) > 4",
+      "if outcome == 'supported_within_scope' and (not _observed(assessment))",
       "if skipped",
       "if len(skipped) > 2"
     ],
@@ -702,7 +733,8 @@
     "_confirmed/branches": [
       "if statement.get('checked')",
       "if statement.get('refute')",
-      "if isinstance(question.get('outcomes'), dict)"
+      "if isinstance(question.get('outcomes'), dict)",
+      "if _observed(assessment, check)"
     ],
     "_confirmed": [
       "items"
@@ -718,6 +750,7 @@
       "'\\n'.join(lines)"
     ],
     "_loop_lines/branches": [
+      "if not _observed(loop)",
       "if failing",
       "if ran",
       "if ran and loop.get('boundary')",
@@ -729,6 +762,7 @@
       "if failing"
     ],
     "_loop_lines": [
+      "['## What the completion loop reported', '- The agent reports probe results; G6 did not run it.', f\"- Reported reason: {code(loop.get('reason'))}.\", *_cut([[f\"- Reported set {code(one.get('label'))}: {code(one.get('ran', 0))} probes; left out: {code(one.get('left_out', ''))}.\"] for one in sets], BUDGET['findings'], 'loop.sets'), *[f'- Reported failing probe: {code(case, 200)}.' for case in failing[:BUDGET['findings']]]]",
       "[*lines, '', 'A model wrote these probes, so none of them passes a requirement.']"
     ],
     "_times": [
@@ -744,6 +778,7 @@
       "next((run['results'][file] for run in reversed(reviews) if file in run['results']), None)"
     ],
     "_review_lines/branches": [
+      "if not _observed(loop)",
       "if reviews",
       "if loop.get('ending')",
       "if count",
@@ -764,6 +799,7 @@
       "if loop.get('boundary')"
     ],
     "_review_lines": [
+      "['## What the reviews reported', '- The agent reports review results; G6 did not run it.', f\"- Reported reason: {code(loop.get('reason'))}.\", *_cut([[f\"- Reported review {code(one.get('n'))}: {code(one.get('rule'))}; {code(one.get('file'))}; result {code(one.get('verdict'))}.\", *[f\"  - {code(test)}: {_assertion({'result': result})}.\" for test, result in (one.get('results') or {}).items()]] for one in reviews], BUDGET['findings'], 'loop.reviews')]",
       "[*lines, '', '## What this loop does not show', *LOOP_LIMITS]"
     ],
     "completion_report": [

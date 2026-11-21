@@ -47,10 +47,11 @@ no `task` the op is refused with `G6_E_CODING_AGENT_GATE_TASK_REQUIRED`.
 - `proceed_with_caution`: act, with a targeted check of the risk the findings name.
 - `revise`: fix the draft. A claim needs `{"kind": "file", "ref": "<path>"}` for the file you read; a readiness word
   needs a passing run, and on your own evidence alone the answer must also say it is not independently checked.
-- `report_consistent`: the caller's report is consistent; its test evidence is asserted. Say "the agent reports N passed; G6 did not run it".
-- `pass`: every test item is `observed_by_g6` through a stored receipt for the host-bound artifact; report its scope.
-  `block` and `needs_review` read `blocked-escalated`; every other verdict
-  reads `qualified-draft`; nothing here is `verified`.
+- `report_consistent`: the report is consistent but its tests are asserted; say "the agent reports N passed; G6
+  did not run it".
+- `pass`: every test item is `observed_by_g6` through a host-bound stored receipt; report its scope.
+  `block` and `needs_review` read `blocked-escalated`; every other verdict reads `qualified-draft`; nothing here is
+  `verified`.
 
 Evidence counts only with structure: `file` a path, `test` the command and its `exit_code`, `log` non-empty `output`,
 `diff` unified-diff `output` with an `@@` hunk (every diff's text is scanned, counted or not), `review` a `ref`
@@ -72,7 +73,7 @@ For protected changes, supply a host-owned `ProtectedPathsPolicy(protected=("rul
 to the block constructor, or `protected_paths_policy=` to either Python gate, and pass `touched_paths`.
 Policy and exemption objects forbid unknown fields. Supplying paths without a policy blocks
 (`G6_E_PROTECTED_POLICY_MISSING`); a configured policy without paths, ambiguous paths or evaluator failures
-blocks (`G6_E_PROTECTED_POLICY_FAILED`). Existing text-only calls remain available.
+blocks (`G6_E_PROTECTED_POLICY_FAILED`).
 
 Paths are repository-relative and case-folded; globs and directory prefixes match with path boundaries. Unknown
 paths remain `unclassified`. `PathExemption(pattern=..., expires_at=...)` requires a timezone; an expired exemption
@@ -93,19 +94,19 @@ Composed:
 
 - `g6.coding_agent_gate.review.tighten(decision, llm)` adds an opt-in model reviewer through an injected
   `g6.core.llm` caller. It can only make a decision stricter; a failed call leaves it as it was.
-- `metaharness`: `g6.metaharness.coding` offers `scan_diff` as the optional `no-shortcut` check of a coding
-  workflow, so, in a profile that adds it, a change whose diff shows a shortcut `scan_diff` reads fails that run.
+- `metaharness`: `g6.metaharness.coding` offers `scan_diff` as a coding workflow's optional `no-shortcut` check;
+  in a profile that adds it, a diff showing a shortcut fails that run.
 - `safety_engine`: `detect_test_weakening` reads the test files before and after a change; this gate sees only
-  the diff text you send. Run both on a change that touches tests.
+  the diff you send. Run both when tests change.
 - `workforce`: `g6.workforce.repo_tests.run(..., receipt=True)` writes the test receipts this gate reads
   (`g6.workforce.receipt_store`).
 
 ## Failure modes it catches
 
 - `hallucinated_success` (an agent reporting work as done that the evidence does not back up): `verify_answer`
-  returns `report_consistent` with counted asserted evidence and no finding. Only stored host-bound test receipts can yield `pass`. A readiness
-  claim without a passing run, claims without any counted file, a failing exit code or a `verifier` status of `fail` each forces
-  `revise`; a shortcut in the answer or the diff forces `block`.
+  gives at most `report_consistent` on asserted evidence; only host-bound test receipts yield `pass`. A readiness
+  claim without a passing run, claims without any counted file, a failing exit code or a `verifier` status of `fail`
+  each forces `revise`; a shortcut in the answer or the diff forces `block`.
 
 - `unapproved_protected_change`: supplied path policies require independent host-observed review; missing policy, invalid paths and policy evaluation failure block; expired exemptions do not bypass review.
 
@@ -134,8 +135,8 @@ your own caller.
 {"task": "Fix the off-by-one in paginate()", "answer": "Changed range(n) to range(n + 1) in paginate(); the result is not independently checked beyond the run below.", "task_contract": "paginate(10, 3) returns 4 pages; existing tests stay green", "evidence": [{"kind": "file", "ref": "src/page.py"}, {"kind": "test", "ref": "pytest -q tests/test_page.py", "output": "3 passed", "exit_code": 0}], "claims": ["paginate() is in src/page.py"]}
 ```
 
-The reply is `pass`, `qualified-draft`, with `evidence_basis` `caller-declared`: no rule objected, and the evidence
-is the caller's word.
+The reply is `report_consistent`, `qualified-draft`, with `evidence_basis` `caller-declared`: no rule objected,
+and the evidence is the caller's word.
 
 ```g6-example op=preflight
 {"task": "Deploy the auth change to production", "proposed_action": "skip the flaky login test and deploy", "risk_tier": "high"}
@@ -171,8 +172,8 @@ assert stricter.verdict == "revise"  # the opt-in model reviewer can only tighte
 ## The four open problems
 
 - **Learning signals**: Not yet: the gate writes nothing. Each finding carries a stable `code` and the envelope's
-  evidence lists `finding_codes`, so a caller can log them as labelled incidents. Inside a meta-harness coding
-  workflow, a run that fails the `no-shortcut` check is recorded with that failed check.
+  evidence lists `finding_codes`, so a caller can log them as labelled incidents; a meta-harness run that fails the
+  `no-shortcut` check is recorded with it.
 - **Evaluators the model cannot influence**: its rules are fixed code with no model call, and the optional reviewer
   can only tighten. The agent being checked cannot change the rules through a call, but it supplies the evidence they
   read, which is why a pass stays `qualified-draft`. Not yet: the gate's code is not digest-pinned (the meta-harness

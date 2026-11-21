@@ -257,6 +257,24 @@ def test_combined_check_validation_returns_keep_historical_text(monkeypatch, bra
     same(patch_review.review_patch(**args), frozen(review_entry_68ca0eb.review_patch, patch_review)(**args))
 
 
+def attributed(reply):
+    """The reply without the leaves the review adds to attribute its own runs (80e25df4), which the frozen 68ca0eb
+    reply never had. Each is removed only where the review writes it and must say G6 ran that check; every other
+    leaf, report text included, is still compared."""
+    reply = copy.deepcopy(reply)
+    assessment = reply['assessment']
+    completion = assessment.get('completion') or {}
+    required = [assessment, *reply['evidence'], *assessment['scope']['checks_run']]
+    optional = [*(completion.get('activities') or []),
+                *((completion.get('defects_reproduced') or {}).get('proposed_checks') or []),
+                *(one['check'] for one in (assessment.get('confirmed_expectations') or {}).get('expectations') or [])]
+    for leaf in required:
+        assert leaf.pop('evidence_status') == 'observed_by_g6'
+    for leaf in optional:
+        assert leaf.pop('evidence_status', 'observed_by_g6') == 'observed_by_g6'
+    return reply
+
+
 @pytest.mark.parametrize('text', TEXTS)
 def test_full_reply_and_report_each_outcome_keep_every_text_leaf(tmp_path, monkeypatch, text):
     from tests.repair_question2.helpers import REQUIREMENTS, TASK, repo, stated
@@ -288,4 +306,4 @@ def test_full_reply_and_report_each_outcome_keep_every_text_leaf(tmp_path, monke
         with monkeypatch.context() as old:
             old.setattr(patch_report, 'render', renderer_68ca0eb.render)
             expected = frozen(review_entry_68ca0eb._reply, patch_review)(*bound.args, **bound.kwargs)
-        same(actual, expected)
+        same(attributed(actual), expected)

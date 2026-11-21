@@ -61,7 +61,7 @@ def test_an_honest_fix_is_a_qualified_draft_with_its_checks(repo):
     assert rows["Shortcuts in the diff"]["result"] == "passed"
     assert rows["Original tests on the new code"]["result"] == "not applicable"
     assert "caught by the tests" in rows["Small deliberate mistakes on the changed lines"]["detail"]
-    assert rows["The agent's report against what G6 saw"]["result"] == "pass"
+    assert rows["The agent's report against the supplied evidence"]["result"] == "report_consistent"
 
 
 def test_a_test_pinned_to_the_wrong_answer_needs_a_person(repo):
@@ -109,7 +109,7 @@ def test_a_report_of_passing_tests_over_failing_ones_is_flagged(repo):
     result = _check(repo, "Fixed add(); all tests pass.")
     rows = _rows(result)
     assert rows["Your tests on the change"]["result"] == "failed" and "test_add" in rows["Your tests on the change"]["detail"]
-    report = rows["The agent's report against what G6 saw"]
+    report = rows["The agent's report against the supplied evidence"]
     # the gate's own severity: a failing run and a readiness claim without a passing run are "revise"
     assert report["result"] == "revise" and "exited non-zero" in report["detail"] and "'all tests pass'" in report["detail"]
     assert "Small deliberate mistakes on the changed lines" not in rows   # only on a passing run
