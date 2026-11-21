@@ -62,3 +62,29 @@ def test_heading_witness_offset_uses_commonmark_line_boundaries():
     from g6.core.markdown import parse
     [head] = parse("x\u2028y\n# Real\n").headings
     assert head.start == 4
+
+
+@pytest.mark.parametrize(("text", "truncated"), [
+    ("> " * 19 + "read?\n", False),
+    ("> " * 20 + "dropped?\n", True),
+    ("- " * 9 + "read\n", False),          # a list level is two: its list and its item
+    ("- " * 10 + "dropped\n", True),
+    ("- " * 12 + "> " * 12 + "dropped\n", True),
+])
+def test_a_document_says_when_the_reader_dropped_nested_content(text, truncated):
+    from g6.core.markdown import parse
+    doc = parse(text)
+    assert doc.truncated is truncated
+    if not truncated:
+        assert doc.prose().strip().endswith(("read?", "read"))
+
+
+DEEP_CODE = "\n".join("> " * 20 + line for line in ("```python", "def f():", "    return 1", "```")) + "\n"
+
+
+def test_code_in_a_reply_nested_past_the_reader_is_never_taken_as_the_code():
+    from g6.harness.completion_loop import critic_report
+    assert python_code(DEEP_CODE) == DEEP_CODE
+    assert proposed_code(DEEP_CODE) == DEEP_CODE.strip() + "\n"
+    found = critic_report("VERDICT: defect\nWHY: x\n" + DEEP_CODE)
+    assert found["verdict"] == "unreadable" and found["test"] == "" and found["error"]

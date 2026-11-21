@@ -169,5 +169,6 @@ def test_the_completion_loop_reads_the_kinds_by_the_ids_it_reads_results_by():
 def test_the_junit_prefix_is_read_from_the_report_or_left_unknown():
     assert rt._junit_prefix({("t", "test_a")}, {("t", "test_a")}) == ""
     assert rt._junit_prefix({("t", "test_a"), ("", "broken")}, {("ci.t", "test_a"), ("ci", "broken")}) == "ci"
-    # two prefixes would fit: none is chosen, and the report's text decides those testcases
-    assert rt._junit_prefix({("t", "test_a")}, {("ci.t", "test_a"), ("cd.t", "test_a")}) == ""
+    # two prefixes would fit: the prefix is unknown (None, never "" for none), no record binds, the report's text decides
+    assert rt._junit_prefix({("t", "test_a")}, {("ci.t", "test_a"), ("cd.t", "test_a")}) is None
+    assert rt._junit_prefix({("t", "test_a")}, {("x.y", "test_b")}) is None

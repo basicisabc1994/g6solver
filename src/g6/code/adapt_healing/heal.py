@@ -58,7 +58,9 @@ def error_parts(error: str) -> tuple[str, str]:
 
 def proposed_code(reply: str) -> str:
     """The first fenced Python block of a reply, else the whole reply."""
-    blocks = [b.content for b in parse(reply or "").code_blocks if b.info in ("", "py", "python")]
+    doc = parse(reply or "")
+    # a reply nested past what the reader parses went partly unread: the whole reply is proposed, and fails to parse
+    blocks = [] if doc.truncated else [b.content for b in doc.code_blocks if b.info in ("", "py", "python")]
     return (blocks[0] if blocks else reply or "").strip() + "\n"
 
 

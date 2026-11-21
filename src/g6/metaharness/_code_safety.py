@@ -20,6 +20,8 @@ def skill_text_problems(text: str) -> tuple[str, ...]:
     if _DANGEROUS.search(text):
         return ("G6_E_META_SKILL_CODE: file, dynamic execution or process capability",)
     document = parse(text)
+    if document.truncated:
+        return ("G6_E_META_SKILL_CODE: text nested deeper than the reader parses requires review",)
     blocks = document.code_blocks
     regions = []
     for block in blocks:
@@ -35,6 +37,8 @@ def skill_text_problems(text: str) -> tuple[str, ...]:
     rest = text
     for block in reversed(blocks):
         rest = rest[:block.start] + "\n" + rest[block.end:]
+    if "```" in rest:   # a fence marker the reader did not take as a fenced block (an inline span, a one-line JSON
+        return ("G6_E_META_SKILL_CODE: unclosed code fence",)   # string): its code is unscanned, as at c5782df1
     if _HEADERS.search(rest):
         regions.append(rest)
     if not blocks and not regions:

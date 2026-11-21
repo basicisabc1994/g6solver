@@ -37,7 +37,13 @@ class Document:
         self.offsets = [0]
         for line in self.lines:
             self.offsets.append(self.offsets[-1] + len(line))
-        self.tokens = MarkdownIt("commonmark").parse(text)
+        reader = MarkdownIt("commonmark")
+        self.tokens = reader.parse(text)
+        # The parser stops reading a container's content at its nesting limit and drops it silently (a quote 20
+        # deep). Every reader of a document that went unread must fail closed on ``truncated``, never on its tokens.
+        limit = reader.options["maxNesting"]
+        self.truncated = any(t.type in ("blockquote_open", "list_item_open") and t.level >= limit - 1
+                             for t in self.tokens)
 
     def span(self, token: Token) -> tuple[int, int]:
         start, end = token.map or (0, 0)

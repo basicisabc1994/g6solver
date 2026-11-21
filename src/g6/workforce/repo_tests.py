@@ -2706,23 +2706,34 @@ def _junit_case(node: str) -> tuple[str, str]:
     return ".".join(names[:-1]), names[-1]
 
 
-def _junit_prefix(keys: Iterable[tuple[str, str]], cases: Iterable[tuple[str, str]]) -> str:
-    """The prefix the run's ``--junit-prefix`` put before every testcase's classname, read from the report itself: ""
-    when each record's testcase stands in it as named, else the one prefix that puts every record's testcase there
-    (the part before ``.classname``, or the whole classname of a collection error's testcase, whose own is empty);
-    "" when no single prefix does, so the records reach no testcase and the report's text decides as before."""
+def _junit_prefix(keys: Iterable[tuple[str, str]], cases: Iterable[tuple[str, str]]) -> str | None:
+    """The prefix the run's ``--junit-prefix`` put before every testcase's classname, read from the report itself: the
+    one prefix (none, "", among them) that puts every record's testcase in the report, the candidates being none and
+    each part before ``.classname`` (or the whole classname of a collection error's testcase, whose own is empty).
+    ``None`` when the prefix is unknown: no candidate fits, or more than one does (``ci/test_a.py`` beside
+    ``test_a.py`` under prefix ``ci``), and then no record binds to any testcase."""
     keys, cases = set(keys), set(cases)
-    if keys <= cases:
-        return ""
-    found = set()
+    found = {""}
     for cls, name in keys:
         found |= {case_cls if not cls else case_cls[:-len(cls) - 1] for case_cls, case_name in cases
                   if case_name == name and (not cls or case_cls.endswith("." + cls))}
-    found.discard("")
-    if len(found) != 1:
-        return ""
-    [prefix] = found
-    return prefix if {(f"{prefix}.{cls}" if cls else prefix, name) for cls, name in keys} <= cases else ""
+    fits = [prefix for prefix in sorted(found)
+            if {((f"{prefix}.{cls}" if cls else prefix) if prefix else cls, name) for cls, name in keys} <= cases]
+    return fits[0] if len(fits) == 1 else None
+
+
+#: The phase of one ``<failure>`` or ``<error>`` pytest's JUnit writer puts in a testcase (``LogXML``): a call's failure
+#: is a ``failure``; a set-up's or tear-down's error names its phase first; a collection error is marked as one.
+def _junit_phase(problem: ElementTree.Element) -> str:
+    message = problem.get("message") or ""
+    if problem.tag == "failure":
+        return "call"
+    if message == "collection failure":
+        return "collect"
+    for phase in ("setup", "teardown"):
+        if message.startswith(f"failed on {phase} with "):
+            return phase
+    return ""
 
 
 def _counts(report: Path, repo: Path, roots: tuple[Path, ...],
@@ -2735,10 +2746,11 @@ def _counts(report: Path, repo: Path, roots: tuple[Path, ...],
     failure and error comes from outside the repository. Where those come from is read from the bootstrap's typed
     failure records (``records``: ``_placed``), each counted against the testcase its node id is written as
     (``_junit_case``, behind the run's own ``--junit-prefix``: ``_junit_prefix``), so both sides count in the report's
-    identity space: a testcase is outside only when every record that reaches it is. A failed testcase no record
-    reaches (a run whose record holds none, a prefix the report does not show, a failure pytest reports without an
-    exception) is read from the report's text by ``_blame``, as before the records, so an unknown placement is never
-    weaker than that reading. The report is read with no document type (so no
+    identity space. A record places only the failure or error of its own phase (``_junit_phase``); every other one
+    (a run whose record holds none, a prefix the report leaves unknown, a phase pytest failed without an exception,
+    such as a strict XPASS) is read from the report's text by ``_blame``, as before the records, so an unknown
+    placement is never weaker than that reading and an own failure in any phase keeps the testcase inside. The report
+    is read with no document type (so no
     entity is ever expanded) and within ``JUNIT_BYTES`` and ``JUNIT_ELEMENTS``; past them its tallies are unread."""
     try:
         root = read_xml(report, limit=JUNIT_BYTES, elements=JUNIT_ELEMENTS)
@@ -2751,7 +2763,7 @@ def _counts(report: Path, repo: Path, roots: tuple[Path, ...],
     keys = {node: _junit_case(node) for node in records or {}}
     prefix = _junit_prefix(keys.values(), tests)
     reached: dict[tuple[str, str], list[dict[str, str]]] = {}
-    for node, (cls, name) in keys.items():
+    for node, (cls, name) in keys.items() if prefix is not None else ():
         key = ((f"{prefix}.{cls}" if cls else prefix) if prefix else cls, name)
         reached.setdefault(key, []).extend(records[node])
     for case, children in tests.items():
@@ -2766,10 +2778,12 @@ def _counts(report: Path, repo: Path, roots: tuple[Path, ...],
             continue
         total["failures" if failures else "errors"] += 1
         total["collection"] += collection
-        if case in reached:
-            blames = {_placed(record, repo, roots) for record in reached[case]}
-        else:
-            blames = {_blame(problem, repo, roots, collection=collection) for problem in failures + errors}
+        blames = set()
+        for problem in failures + errors:
+            phase = _junit_phase(problem)
+            own = [record for record in reached.get(case, ()) if phase and record["when"] == phase]
+            blames |= ({_placed(record, repo, roots) for record in own} if own
+                       else {_blame(problem, repo, roots, collection=collection)})
         total["placed"] += collection and "" not in blames
         total["outside"] += blames == {"outside"}
     return total

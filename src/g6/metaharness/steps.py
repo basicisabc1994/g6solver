@@ -33,7 +33,10 @@ def _caller(ctx: Any) -> Any:
 
 def python_code(text: str) -> str:
     """The first fenced block that defines a function, else the first fenced block, else the whole reply."""
-    blocks = [b.content for b in parse(text or "").code_blocks]
+    doc = parse(text or "")
+    if doc.truncated:   # part of the reply went unread: the whole reply is the code, which then fails to parse
+        return text or ""
+    blocks = [b.content for b in doc.code_blocks]
     return next((b for b in blocks if _has_function(b)), blocks[0] if blocks else (text or ""))
 
 

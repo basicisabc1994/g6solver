@@ -321,6 +321,8 @@ def asks(said: str) -> bool:
     from g6.core.markdown import parse
 
     doc = parse(said)
+    if doc.truncated:   # part of the reply went unread: read all of it as it stands, a question mark counts
+        return bool(_ASKS.search(said))
     html = [token.content for token in doc.tokens if token.type == "html_block"]
     html += [child.content for token in doc.tokens if token.type == "inline"
              for child in token.children or () if child.type == "html_inline"]
@@ -369,7 +371,11 @@ def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
     rule = re.search(r"^RULE:\s*(.*?)(?=^VERDICT:)", body, re.M | re.S)
     from g6.core.markdown import parse
 
-    blocks = parse(body).code_blocks
+    doc = parse(body)
+    if doc.truncated:
+        return {"verdict": "unreadable", "rule": "", "why": "", "test": "",
+                "error": "the reply nests deeper than G6's reader parses, so part of it went unread"}
+    blocks = doc.code_blocks
     prose = body[:blocks[0].start] if blocks else body
     why = re.search(r"^WHY:\s*(.*)", prose, re.M | re.S)
     test = next((b.content for b in blocks if b.info == "python"), "")
