@@ -8,6 +8,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 from g6.core.http import Client, Request, Response
 
 _TOOLS = Path(__file__).resolve().parents[2] / "tools"
@@ -126,3 +128,67 @@ def test_the_committed_corpus_entries_of_the_motion_and_bayesian_registers_take_
     assert {r["id"] for r in rows if r["status"] == "held"} == {e["id"] for e in held}
     assert {"openstax-up1-2016-6.2", "bolstad-14"} <= {e["id"] for e in held}
     assert len(fetched) == len(entries) - len(held)
+
+
+def test_the_committed_actr_register_fetches_the_manual_and_holds_the_book() -> None:
+    # Ignoring sources, fetching rules, or treating the book's file hash as a web hash loses source coverage.
+    path = _TOOLS.parent / "src/g6/cogarch/cog_arch_actr/source_register.json"
+    fetched = []
+
+    def transport(request: Request) -> Response:
+        fetched.append(request.url)
+        return Response(status=200, headers={}, body=TEXT, url=request.url)
+
+    client = Client(resolver=lambda host, port: ["93.184.216.34"], transport=transport, min_interval=0.0)
+    rows = check_sources.check([path], client)
+    assert [(r["id"], r["status"]) for r in rows] == [
+        ("actr-manual", "changed"), ("braisby-gellatly-2005", "held")]
+    assert fetched == ["http://act-r.psy.cmu.edu/actr7.x/reference-manual.pdf"]
+
+
+@pytest.mark.parametrize("shape", ["entries", "sources"])
+def test_both_register_shapes_compare_the_file_bytes(tmp_path, shape):
+    # Dropping either adapter, or comparing a clause hash, must fail the same content check.
+    source = {"url": "https://books.example.org/manual.pdf"}
+    if shape == "entries":
+        register = {"entries": [{**source, "id": "manual", "sha256": hashlib.sha256(TEXT).hexdigest()}]}
+    else:
+        register = {"component": "example", "sources": {
+            "manual": {**source, "file_sha256": hashlib.sha256(TEXT).hexdigest()}}, "rules": [
+                {"id": "clause", "source": "manual", "clause_sha256": "0" * 64}]}
+    path = tmp_path / "source_register.json"
+    path.write_text(json.dumps(register), encoding="utf-8")
+    assert check_sources.check([path], _client(200, TEXT))[0]["status"] == "unchanged"
+    assert check_sources.main(["--check"], client=_client(200, TEXT), paths=[path]) == 0
+    assert check_sources.main(["--check"], client=_client(200, b"revised"), paths=[path]) == 1
+    assert check_sources.check([path], _client(404))[0]["status"] == "unreachable"
+
+
+def test_a_sources_corpus_file_is_held_or_rehashed_without_a_url(tmp_path):
+    # The ACT-R book has no web URL; its file_sha256 is still checkable under --corpus.
+    path = tmp_path / "source_register.json"
+    path.write_text(json.dumps({"component": "example", "sources": {
+        "book": {"corpus_file": "book.md", "file_sha256": hashlib.sha256(TEXT).hexdigest()}},
+        "rules": []}), encoding="utf-8")
+    assert check_sources.check([path], _no_fetch())[0]["status"] == "held"
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    book = corpus / "book.md"
+    book.write_bytes(TEXT)
+    assert check_sources.check([path], _no_fetch(), corpus=corpus)[0]["status"] == "unchanged"
+    book.write_bytes(b"revised")
+    assert check_sources.main(["--check", "--corpus", str(corpus)], client=_no_fetch(), paths=[path]) == 1
+
+
+@pytest.mark.parametrize("register", [
+    {}, {"other": []}, {"entries": {}}, {"sources": []},
+    {"entries": [], "sources": {}}, {"entries": [{"id": "missing-fields"}]},
+    {"component": "example", "sources": {"book": {"corpus_file": "book.md"}}, "rules": []},
+])
+def test_an_unknown_or_malformed_register_fails_clearly_without_fetching(tmp_path, capsys, register):
+    # A skipped unknown shape, a raw KeyError, or an accidental fetch must never count as a successful check.
+    path = tmp_path / "source_register.json"
+    path.write_text(json.dumps(register), encoding="utf-8")
+    assert check_sources.main(["--check"], client=_no_fetch(), paths=[path]) == 1
+    message = capsys.readouterr().out
+    assert "invalid source register" in message and "source_register.json" in message

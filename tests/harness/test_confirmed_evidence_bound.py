@@ -549,7 +549,15 @@ def test_every_place_an_artefact_digest_reaches_the_issuer_comes_from_the_bytes_
     assert "binding = {'artefact': before} if before is not None else {}" in ast.unparse(run)
     review = (ROOT / "src" / "g6" / "harness" / "patch_review.py").read_text(encoding="utf-8")
     assert "deadline=deadline, artifact=artifact, roots=roots, before=before," in review
-    assert "before = repo_tests.snapshot(root)\n        artifact = digest(before)" in review
+    # db861331 reserves closing time between these statements; the data binding, not adjacency, is the invariant.
+    review_fn = next(n for n in ast.walk(ast.parse(review))
+                     if isinstance(n, ast.FunctionDef) and n.name == "review_patch")
+    assignments = [n for n in ast.walk(review_fn) if isinstance(n, ast.Assign)]
+    [snapshot] = [n for n in assignments if ast.unparse(n) == "before = repo_tests.snapshot(root)"]
+    [artefact] = [n for n in assignments if ast.unparse(n) == "artifact = digest(before)"]
+    assert snapshot.lineno < artefact.lineno
+    assert not any(isinstance(n, ast.Name) and n.id == "before" and snapshot.lineno < n.lineno < artefact.lineno
+                   for n in ast.walk(review_fn))
 
 
 # --- finding 10: the report keeps the meaning ---------------------------------------------------------------------
