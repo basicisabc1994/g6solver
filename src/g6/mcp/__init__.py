@@ -148,7 +148,7 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
         params = json.loads(params_json or "{}")
     except json.JSONDecodeError as exc:
         return reply_for_agent(blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id))
-    except (RecursionError, MemoryError):
+    except (ValueError, RecursionError, MemoryError):   # a decoder limit: too deep, too large, an integer too long
         return reply_for_agent(blocked_reply("[G6_E_INPUT_VALIDATION] params_json: a JSON record exceeds decoder limits",
                                              request_id=request_id))
     if not isinstance(params, dict):
@@ -278,7 +278,7 @@ def build_server(surface: Any = None) -> Any:
             payload = json.loads(composition_json)
         except json.JSONDecodeError:
             return blocked_reply("[G6_E_INPUT_VALIDATION] composition_json must be JSON")
-        except (RecursionError, MemoryError):
+        except (ValueError, RecursionError, MemoryError):   # a decoder limit: too deep, too large, an integer too long
             return blocked_reply("[G6_E_INPUT_VALIDATION] composition_json: a JSON record exceeds decoder limits")
         return compose_reply(payload, allow_sensitive=allowed_sensitive())
 
@@ -445,11 +445,12 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         Does not confirm or execute it. Below 30 held-out cases is exploration only."""
         from g6.core.guidance_builders import blocked_reply
         try:
-            return mh.start(json.loads(specification_json))
+            specification = json.loads(specification_json)
         except json.JSONDecodeError:
             return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json must be JSON")
-        except (RecursionError, MemoryError):
+        except (ValueError, RecursionError, MemoryError):   # a decoder limit: too deep, too large, an integer too long
             return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json: a JSON record exceeds decoder limits")
+        return mh.start(specification)
 
     async def metaharness_confirm(workflow: str, workflow_digest: str, ctx: Any) -> dict:
         """Confirm the frozen task, checks, split and baseline: the person answers in the client's dialog, bound to the
@@ -528,7 +529,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             from g6.metaharness.api import _blocked
 
             return _blocked("G6_E_META_SCHEMA", f"profile_json is not JSON: {exc}")
-        except (RecursionError, MemoryError):
+        except (ValueError, RecursionError, MemoryError):   # a decoder limit: too deep, too large, an integer too long
             from g6.metaharness.api import _blocked
 
             return _blocked("G6_E_META_SCHEMA", "profile_json: a JSON record exceeds decoder limits")
