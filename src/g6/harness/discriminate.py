@@ -14,7 +14,8 @@ decides nothing.
 ``read`` reads the observed classification against the stated predictions, deterministically, through
 ``g6.harness.workflow.diagnose.Explanation.predicts``: each explanation is ``consistent`` (it predicted what was
 observed), ``inconsistent`` (the check ran to another result) or ``not_decided`` (the check ended in a check error,
-was skipped or stopped). The words are "consistent with", never "cause": one run of a check the caller proposed
+was skipped or stopped, or the review gave an integrity reason, so the run may not be the reviewed artifact's). The
+words are "consistent with", never "cause": one run of a check the caller proposed
 changes no outcome and no requirement, and the review stays qualified-draft.
 """
 from __future__ import annotations
@@ -90,17 +91,22 @@ def explanations(value: Any, intent: str) -> tuple[dict[str, str], ...]:
 
 
 def read(stated: tuple[dict[str, str], ...], observed: str, *, check: str, requirement: str,
-         intent: str) -> dict[str, Any]:
-    """The observed classification of one check's run, read against its stated explanations (module docstring)."""
+         intent: str, attributable: bool = True) -> dict[str, Any]:
+    """The observed classification of one check's run, read against its stated explanations (module docstring).
+    ``attributable``: false when the review gave an integrity reason (the tree changed while it ran, say), so the run
+    may not be the reviewed artifact's and every explanation is ``not_decided``."""
     from g6.harness.workflow.diagnose import Explanation
 
     held = [(Explanation(one["id"], one["id"], one["predicts"]), one["said"]) for one in stated]
-    decided = observed in PREDICTABLE[intent]
+    decided = attributable and observed in PREDICTABLE[intent]
     rows = [{"id": e.id, "said": said, "predicts": e.predicts,
              "reading": NOT_DECIDED if not decided else CONSISTENT if e.predicts == observed else INCONSISTENT}
             for e, said in held]
     fits = [row["id"] for row in rows if row["reading"] == CONSISTENT]
-    if not decided:
+    if not attributable:
+        summary = (f"The check ended {observed}, but the review gave an integrity reason, so the run may not be the "
+                   "reviewed artifact's: no explanation is read for or against.")
+    elif not decided:
         summary = f"The check ended {observed}, which decides nothing: no explanation is read for or against."
     elif fits:
         others = [row["id"] for row in rows if row["reading"] == INCONSISTENT]

@@ -366,8 +366,6 @@
       "if found['result'] == confirmed_checks.FAILED",
       "if found['result'] != confirmed_checks.PASSED or found.get('scenario_unavailable')",
       "if search is not None",
-      "if any((one.explanations for one in proposed))",
-      "if search is not None",
       "if formal is not None",
       "if final is None",
       "if repo_tests._moved(before, final)",
@@ -389,7 +387,8 @@
       "if self_checked",
       "if proposals",
       "if confirmed is not None",
-      "if readings"
+      "if any((one.explanations for one in proposed))",
+      "if search is not None"
     ],
     "_assess": [
       "reply"

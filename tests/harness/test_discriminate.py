@@ -303,3 +303,54 @@ def test_review1_each_reading_is_its_own_checks_result_even_when_ids_collide(mon
     assert [a["result"] for a in activities] == ["unconfirmed_failure", "not_refuted"]
     [reading] = compact(got, "review-wd1", None)["assessment"]["explanations"]
     assert reading["observed"] == "unconfirmed_failure" and reading["consistent_with"] == ["patch_wrong_for_case"]
+
+
+# --- review 2: a reading is decided only from a run attributable to the reviewed artifact --------------------------
+
+def test_review2_a_tree_changed_during_the_review_decides_no_explanation(monkeypatch):
+    """Codex review 2 of wire-diagnose, its reproducer: an editor changes the tree while the proposed check runs, so
+    the closing check finds repository_changed_during_review; the reading, made from that run, decides nothing."""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from g6.harness import patch_review
+    from g6.mcp.review_reply import compact
+    from g6.workforce import repo_tests
+
+    root = Path(__file__).resolve().parents[2]
+    current = {"calc.py": "a" * 64}
+    # repository I/O is synthetic: nothing here reads or writes the repository
+    change = repo_tests.Change(root, "HEAD", "a" * 40, "a" * 40, (), {}, {}, (), ())
+    monkeypatch.setattr(repo_tests, "checked_repo", lambda path: root)
+    monkeypatch.setattr(repo_tests, "_git", lambda *args, **kwargs: b"")
+    monkeypatch.setattr(repo_tests, "snapshot", lambda path: dict(current))
+    monkeypatch.setattr(repo_tests, "change", lambda *args, **kwargs: change)
+    monkeypatch.setattr(repo_tests, "test_related", lambda *args: set())
+    monkeypatch.setattr(repo_tests, "ignored_inputs", lambda *args: SimpleNamespace(
+        loadable=[], other=[], complete=True, named_like_modules=[]))
+    monkeypatch.setattr(repo_tests, "derive_tests", lambda *args: ([], 0))
+    monkeypatch.setattr(repo_tests, "diff_text", lambda *args: "")
+    monkeypatch.setattr(patch_review, "_closing", lambda *args, **kwargs: ({}, [], dict(current)))
+    source = "from calc import add\n\ndef test_sum():\n    assert add(2, 3) == 5\n"
+    stage = Stage(monkeypatch, {source: {"patch": "passed", "base": "failed"}})
+    run, race = verification_search._run_check, [False]
+
+    def run_with_editor(*args, **kwargs):
+        if race[0] and not kwargs["at_base"]:
+            current["calc.py"] = "b" * 64           # an editor changes the tree after the review's first snapshot
+        return run(*args, **kwargs)
+
+    monkeypatch.setattr(verification_search, "_run_check", run_with_editor)
+    chosen = selector.select("my patch broke a test", "diagnose", last_outcome="defect_detected")
+    arguments = {**_filled(chosen["next"]["call"]["arguments"], source), "repo": str(root), "task": TASK}
+    control = review_patch(**arguments)
+    assert control["assessment"]["outcome"] != "test_integrity_compromised", control
+    assert control["assessment"]["explanations"][0]["consistent_with"] == ["check_stale_or_wrong"]
+    race[0] = True
+    got = review_patch(**arguments)
+    assert len(stage.calls) == 4, got
+    assert got["assessment"]["outcome"] == "test_integrity_compromised", got
+    assert any(r["code"] == "repository_changed_during_review" for r in got["assessment"]["reasons"])
+    [reading] = compact(got, "wd2", None)["assessment"]["explanations"]
+    assert {row["reading"] for row in reading["explanations"]} == {"not_decided"}, reading
+    assert reading["consistent_with"] == [] and "integrity" in reading["summary"]

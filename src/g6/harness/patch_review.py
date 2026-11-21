@@ -1332,15 +1332,6 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                  for req in stated]
     if search is not None:
         verification_search.annotate(evaluated, search)
-    readings = []
-    if any(one.explanations for one in proposed):   # each check's result read against the explanations it states
-        from g6.harness import discriminate
-        # by the check object itself, never its id, which the caller chose (the review of wire-diagnose, 1)
-        ran = search.checked if search is not None else ()
-        readings = [discriminate.read(one.explanations, next(
-                        (a.get("result", "error") for check, a in ran if check is one), "error"), check=one.id,
-                        requirement=one.requirement_id, intent=one.intent)
-                    for one in proposed if one.explanations]
     if formal is not None:
         verification_formal.annotate(evaluated, formal)
     written, self_checked, final = _closing(root, change, stated_ids, evaluated, runs, until=limit - REPLY_S)
@@ -1408,8 +1399,17 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                   issuer_inputs={"check_sha": check_sha, "written": lambda check: written.get(check, True),
                                  "again": again, "observed": observed},
                   confirmed=(confirmed, enforced) if confirmed is not None else None)
-    if readings:   # beside the decided fields, which it does not change
-        reply["assessment"]["explanations"] = readings
+    if any(one.explanations for one in proposed):   # each check's result read against the explanations it states,
+        from g6.harness import discriminate         # beside the decided fields, which it does not change
+        # last, once the closing checks have given every integrity reason: a run the review cannot attribute to the
+        # reviewed artifact decides no explanation (the review of wire-diagnose, 2)
+        attributable = not any(r["stage"] == "integrity" for r in reply["assessment"]["reasons"])
+        # by the check object itself, never its id, which the caller chose (the review of wire-diagnose, 1)
+        ran = search.checked if search is not None else ()
+        reply["assessment"]["explanations"] = [discriminate.read(one.explanations, next(
+            (a.get("result", "error") for check, a in ran if check is one), "error"), check=one.id,
+            requirement=one.requirement_id, intent=one.intent, attributable=attributable)
+            for one in proposed if one.explanations]
     return reply
 
 
