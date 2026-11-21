@@ -298,6 +298,9 @@ class ProposedCheck(BaseModel):
     #: The template instance a compiled check came from (``Origin.instance``), set only by G6's own code and never
     #: read from a request, so learning keeps it with the check it retains.
     _instance: dict | None = PrivateAttr(default=None)
+    #: How its Origin judges it when that is not ``classify``'s way (``judge``, ``keep_observations``, ``patch_only``),
+    #: described so learning can restore it or, when it cannot, never runs the retained check as evidence.
+    _judging: dict | None = PrivateAttr(default=None)
 
 
 def _file_problem(file: str) -> str:

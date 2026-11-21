@@ -339,6 +339,10 @@ def record_check(change, check, placed: str, patch: dict, base: dict | None, cla
     if isinstance(instance, dict):
         # A compiled template's instance, so a retained finding replays as the template does (``resolution``).
         row['check']['template_instance'] = instance
+    judging = getattr(check, '_judging', None)
+    if isinstance(judging, dict):
+        # How its origin judged it, so a retained run is judged the same way or not run as evidence at all.
+        row['check']['judging'] = judging
     if base is not None:
         other = receipt_store.lookup_learning(base.get('receipt', ''), artifact_digest=base.get('source_before', ''),
                                      _observations=True)
@@ -418,12 +422,18 @@ def retained_checks(change, requirement: str):
             skipped.append({**activity, 'result': 'skipped',
                             'reason': 'retained node has no source bytes within the 64 KiB replay limit'})
             continue
+        judged = _judging(check['judging']) if 'judging' in check else {}
+        if judged is None:
+            skipped.append({**activity, 'result': 'skipped', 'reason': UNJUDGED})
+            continue
         if len(checks) >= CAP:
             skipped.append({**activity, 'result': 'skipped', 'reason': 'retained check limit of 5; overlap then recency'})
             continue
+        # A check its origin judged its own way keeps the intent that judge read; any other runs as preserve.
+        intent = check.get('intent', 'preserve') if judged else 'preserve'
         try:
             # Apply all of the existing proposed-check byte and placement restrictions again.
-            one = vs.proposed_checks([{'id': ident, 'requirement_id': requirement, 'intent': 'preserve',
+            one = vs.proposed_checks([{'id': ident, 'requirement_id': requirement, 'intent': intent,
                                       'file': check['file'], 'source': check['source'], 'test': check.get('test', '')}],
                                      {requirement})[0]
             vs.placements(change.repo, [one])
@@ -439,10 +449,37 @@ def retained_checks(change, requirement: str):
         instance = check.get('template_instance')
         instance = instance if isinstance(instance, dict) else None
         checks[-1]._instance = instance   # its own re-run's record keeps it too
+        checks[-1]._judging = check.get('judging') if judged else None
         origins[ident] = vs.Origin(activity='retained check', label='retained', about={'origin': 'retained'},
                                   proposed_by='G6 retained a previously reproduced check',
                                   unconfirmed='a retained proposed check decides no requirement',
                                   template='differential.v1' if check.get('refuted_by_difference') else '',
                                   refuted_by_difference=check.get('refuted_by_difference', False),
-                                  instance=instance)
+                                  instance=instance, **judged)
     return checks, origins, skipped
+
+
+#: The judges a retained check's origin may name and have restored (``verification_templates.compiled_check``).
+JUDGES = frozenset({'g6.harness.verification_formal._judge'})
+UNJUDGED = ('its origin judged it its own way, and that judge cannot be restored here, so it is not run as evidence: '
+            'review the change again to run it as its template does')
+
+
+def _judging(judging) -> dict | None:
+    """The ``Origin`` fields a retained check's record restores (``judge``, ``keep_observations``, ``patch_only``), or
+    None when any of them cannot be restored."""
+    import functools
+    import importlib
+
+    if not isinstance(judging, dict) or not all(type(judging.get(key)) is bool
+                                                for key in ('keep_observations', 'patch_only')):
+        return None
+    found = {'keep_observations': judging['keep_observations'], 'patch_only': judging['patch_only']}
+    judge = judging.get('judge')
+    if judge is None:
+        return found
+    if (not isinstance(judge, dict) or judge.get('call') not in JUDGES or type(judge.get('args')) is not list
+            or not all(type(arg) in (int, str, bool) for arg in judge['args'])):
+        return None
+    module, _, name = judge['call'].rpartition('.')
+    return {**found, 'judge': functools.partial(getattr(importlib.import_module(module), name), *judge['args'])}

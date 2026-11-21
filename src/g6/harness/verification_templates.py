@@ -66,6 +66,7 @@ import collections
 import configparser
 import dataclasses
 import difflib
+import functools
 import hashlib
 import inspect
 import itertools
@@ -1628,6 +1629,17 @@ def compiled_check(root: Path, one: TemplateInstance, data: dict, notes: list[st
                   "bindings": one.bindings},
               **origin}
     check._instance = fields["instance"]   # learning retains it with the check (``outcome_history.record_check``)
+    judge = fields.get("judge")
+    if judge is not None or fields.get("keep_observations") or fields.get("patch_only"):
+        # a named partial of plain arguments can be restored (``outcome_history.retained_checks``); anything else
+        # is described as unrestorable, and its retained check is then never run as evidence
+        plain = (isinstance(judge, functools.partial) and not judge.keywords
+                 and all(type(arg) in (int, str, bool) for arg in judge.args))
+        check._judging = {"judge": None if judge is None else {
+                              "call": f"{judge.func.__module__}.{judge.func.__qualname__}" if plain else "",
+                              "args": list(judge.args) if plain else []},
+                          "keep_observations": bool(fields.get("keep_observations")),
+                          "patch_only": bool(fields.get("patch_only"))}
     return check, placed, vs.Origin(**fields)
 
 
