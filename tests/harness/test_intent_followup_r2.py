@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Repair 2 of claude/wire-intent-fu (Codex review 2): a trusted stop in any link of a fallback chain, through any
-wrapper G6 reads, ends the proposer and the semantic reader with the stop itself, and G6 never changes a caller it is
-handed; until FallbackCaller itself stops on a stop (a bound hunk), a chain that fails in every link fails closed. A
-critic's reply is read through CommonMark, so code at any container depth and any line ending is code. A key is
+"""Repair 2 of claude/wire-intent-fu (Codex review 2): until FallbackCaller itself stops on a stop (a bound hunk), the
+proposer and the semantic reader ask no model through a caller that may hold a fallback chain, through any wrapper G6
+reads, and G6 never changes a caller it is handed. A critic's reply is read through CommonMark, so code at any container depth and any line ending is code. A key is
 compared decoded. A confirmation drops every check, mapped or generated, asserting the rejected outcome."""
 from __future__ import annotations
 
@@ -16,7 +15,6 @@ import pytest
 from g6.core import semantic
 from g6.core.consent_callers import destination
 from g6.core.llm import FakeLLM, FallbackCaller, LLMError, TimingLLMCaller
-from g6.core.stop import STOPPED
 from g6.harness import behaviour_question as bq, candidate_standard as cs
 from g6.harness import completion_loop as loop, verification_proposer as vp, verification_search as vs
 from g6.harness.confirmed_expectation import ConfirmedExpectation, ExpectationStandard
@@ -47,41 +45,44 @@ def _raises(error):
     return answer
 
 
-# --- 1, 2 and 6: fallback chains ---------------------------------------------------------------------------------------
+# --- 1, 2 and 6: fallback chains (rewritten: no model is asked through a caller that may hold one) --------------------
+
+def _unsafe(stages):
+    return stages and all(a["result"] == "skipped" and a["reason"] == semantic.FALLBACK_UNSAFE for a in stages)
+
+
+def _stages(proposer):
+    return [a for a in proposer.found.activities if a["activity"] == "proposer stage"]
+
 
 @pytest.mark.parametrize("kind", ["provider", "model"])
 @pytest.mark.parametrize("position", ["outer", "inner"])
-def test_proposer_stop_through_timing_wrapper(monkeypatch, kind, position):
-    stop = _stop(kind)
-    fallback = FakeLLM(default='{"instances":[]}')
-    timed = TimingLLMCaller(FallbackCaller([FakeLLM(_raises(stop)), fallback]), lambda elapsed: None)
+def test_proposer_asks_no_chain_behind_a_timing_wrapper(monkeypatch, kind, position):
+    first, fallback = FakeLLM(_raises(_stop(kind))), FakeLLM(default='{"instances":[]}')
+    timed = TimingLLMCaller(FallbackCaller([first, fallback]), lambda elapsed: None)
     caller = timed if position == "outer" else FallbackCaller([timed])
-    with pytest.raises(type(stop)) as caught:
-        _proposer(monkeypatch, caller).templates()
-    assert caught.value is stop and not fallback.calls
+    proposer = _proposer(monkeypatch, caller)
+    proposer.templates()
+    assert _unsafe(_stages(proposer)) and not first.calls and not fallback.calls
 
 
 @pytest.mark.parametrize("kind", ["provider", "model"])
-def test_semantic_fallback_preserves_original_stop(kind):
-    stop = _stop(kind)
-    fallback = FakeLLM(default='{"value":false}')
-    with semantic.request(llm=FallbackCaller([FakeLLM(_raises(stop)), fallback])):
-        with pytest.raises(type(stop)) as caught:
-            semantic.decide("refusal", "synthetic refusal classification", False)
-    assert caught.value is stop and not fallback.calls
+def test_semantic_reader_asks_no_chain(kind):
+    first, fallback = FakeLLM(_raises(_stop(kind))), FakeLLM(default='{"value":false}')
+    with semantic.request(llm=FallbackCaller([first, fallback])):
+        got = semantic.decide("refusal", "synthetic refusal classification", False)
+    assert (got.by, got.reason) == ("floor", semantic.FALLBACK_UNSAFE) and not first.calls and not fallback.calls
 
 
-def test_fallback_caller_is_reusable_across_reviews(monkeypatch):
+def test_fallback_caller_reads_the_same_across_reviews(monkeypatch):
     backend = FakeLLM(default='{"instances":[]}')
     caller = FallbackCaller([backend])
     assert destination(caller).local
-    first = _proposer(monkeypatch, caller)
-    first.templates()
-    assert all(a["result"] == "replied" for a in first.found.activities if a["activity"] == "proposer stage")
-    before = len(backend.calls)
-    second = _proposer(monkeypatch, caller)
-    second.templates()
-    assert len(backend.calls) > before
+    for _ in range(2):
+        review = _proposer(monkeypatch, caller)
+        review.templates()
+        assert _unsafe(_stages(review)) and caller._callers[0] is backend
+    assert not backend.calls
 
 
 def test_g6_never_changes_a_caller_it_is_handed(monkeypatch):
@@ -89,45 +90,36 @@ def test_g6_never_changes_a_caller_it_is_handed(monkeypatch):
     inner = FallbackCaller(list(links))
     caller = TimingLLMCaller(inner, lambda elapsed: None)
     _proposer(monkeypatch, caller).templates()
-    with semantic.request(llm=caller), pytest.raises(LLMError):
-        semantic.decide("refusal", "synthetic", False)   # the interim rule (below): the reader sends once
-    assert caller._inner is inner and inner._callers == links
+    with semantic.request(llm=caller):
+        got = semantic.decide("refusal", "synthetic", False)
+    assert got.reason == semantic.FALLBACK_UNSAFE
+    assert caller._inner is inner and inner._callers == links and not any(one.calls for one in links)
 
 
-def test_control_in_the_proposer_an_ordinary_link_failure_still_falls_back(monkeypatch):
-    fallback = FakeLLM(default='{"instances":[]}')
-    _proposer(monkeypatch, FallbackCaller([FakeLLM(_raises(LLMError("G6_E_PROVIDER_FAILED"))), fallback])).templates()
-    assert fallback.calls
+@pytest.mark.parametrize("hidden", ["opaque", "guarded_unknown"])
+def test_a_caller_g6_cannot_read_through_counts_as_holding_a_chain(monkeypatch, hidden):
+    from g6.core import consent_callers
 
+    class Opaque:
+        def __init__(self):
+            self.inner = FallbackCaller([FakeLLM(default='{"instances":[]}')])
 
-def test_interim_a_semantic_reading_never_falls_back_past_a_failed_link():
-    """The reader allows one send a reading, so a chain's next link is refused and the chain fails in every link; until
-    the hunk, that ends the step as the interim rule says, where it used to be the floor."""
-    fallback = FakeLLM(default='{"value":true}')
-    with semantic.request(llm=FallbackCaller([FakeLLM(_raises(LLMError("G6_E_PROVIDER_FAILED"))), fallback])):
-        with pytest.raises(LLMError) as caught:
-            semantic.decide("refusal", "synthetic", False)
-    assert semantic.trusted_stop(caught.value) and not fallback.calls
+        def complete(self, system, user, *, max_tokens=0):
+            return self.inner.complete(system, user, max_tokens=max_tokens)
 
-
-def test_interim_a_chain_failing_in_every_link_ends_the_proposer_closed(monkeypatch):
-    broken = FakeLLM(_raises(LLMError("G6_E_PROVIDER_FAILED")))
-    proposer = _proposer(monkeypatch, FallbackCaller([broken, FakeLLM(_raises(LLMError("G6_E_PROVIDER_FAILED")))]))
+    caller = Opaque() if hidden == "opaque" else consent_callers.guard(Opaque())
+    assert semantic.holds_fallback(caller)
+    proposer = _proposer(monkeypatch, caller)
     proposer.templates()
-    stages = [a for a in proposer.found.activities if a["activity"] == "proposer stage"]
-    assert stages[0]["result"] == "failed" and stages[0]["code"] == STOPPED, stages[0]
-    assert all(a["result"] == "skipped" and a["reason"] == vp.FALLBACK_FAILED for a in stages[1:]), stages
-    assert len(broken.calls) == 1
+    assert _unsafe(_stages(proposer)) and not caller.inner._callers[0].calls
 
 
-def test_interim_a_chain_failing_in_every_link_ends_the_reader_closed():
-    chain = FallbackCaller([FakeLLM(_raises(LLMError("G6_E_PROVIDER_FAILED"))),
-                            FakeLLM(_raises(LLMError("G6_E_PROVIDER_FAILED")))])
-    with semantic.request(llm=chain):
-        with pytest.raises(LLMError) as caught:
-            semantic.decide("refusal", "synthetic", False)
-    assert str(caught.value).startswith(STOPPED) and semantic.trusted_stop(caught.value)
-
+def test_control_a_caller_without_a_chain_is_asked(monkeypatch):
+    plain = FakeLLM(default='{"instances":[]}')
+    assert not semantic.holds_fallback(TimingLLMCaller(plain, lambda elapsed: None))
+    proposer = _proposer(monkeypatch, TimingLLMCaller(plain, lambda elapsed: None))
+    proposer.templates()
+    assert plain.calls and not any(a.get("reason") == semantic.FALLBACK_UNSAFE for a in _stages(proposer))
 
 # --- 3: code at any depth, any line ending ----------------------------------------------------------------------------
 

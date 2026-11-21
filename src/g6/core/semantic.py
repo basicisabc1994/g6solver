@@ -17,7 +17,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from copy import copy, deepcopy
+from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import wraps
 from types import MappingProxyType
@@ -26,8 +26,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from g6.core import cloud_consent as cloud
-from g6.core.consent_callers import CallerWrapper, destination, guard, provider_from_env, wrapper_slot
-from g6.core.llm import DEFAULT_MAX_TOKENS, FallbackCaller, LLMError, NoModel
+from g6.core.consent_callers import (caller_kind, destination, guard, provider_from_env, watched_host,
+                                     wrapper_slot)
+from g6.core.llm import FallbackCaller, LLMError, NoModel
 from g6.core.model_calls import counting
 
 Combine = Literal["choose", "raise_only", "add_only"]
@@ -59,68 +60,36 @@ def trusted_stop(error: BaseException) -> bool:
 # --- fallback chains: a stop is never a reason to ask the next caller ---------------------------------------------------
 #
 # ``FallbackCaller`` (core/llm.py, bound) asks its next caller after any ``LLMError``, and a provider's stop and the
-# model door's stop are both LLMErrors. Until it stops on a stop itself (a hunk waiting for issuance), G6 sends through
-# ``watched``: a private copy of the caller it was handed in which each link of each chain, through every wrapper G6
-# reads, carries a stop out of the chain unchanged. The caller it was handed is never changed.
+# model door's stop are both LLMErrors. Until it stops on a stop itself (a hunk waiting for issuance), G6 asks no model
+# through a caller that may hold one (``holds_fallback``): the proposer skips its model stages and this reader keeps its
+# floor, each saying why (``FALLBACK_UNSAFE``). G6 never copies or changes a caller it is handed to make one safe.
 
-#: Why a fallback chain whose every link failed ends the step that asked it (the interim rule while the hunk waits):
-#: a link behind a wrapper G6 cannot read may have failed on a stop, and nothing in the chain's error says so.
-FALLBACK_FAILED = "a fallback chain failed; G6 cannot tell whether a stop was in it"
-
-
-class StopCarried(Exception):
-    """What one link of a fallback chain raised that must end the step, carried past the chain's next links as an error
-    that is not an ``LLMError``: a trusted stop, which the step raises itself (``original_stop``), or a nested chain's
-    own report that every link failed, which ends the step closed (``chain_failed``, the interim rule)."""
-
-    def __init__(self, stop: BaseException) -> None:
-        super().__init__(str(stop))
-        self.stop = stop
+#: Why no model is asked through a caller that may hold a fallback chain, until the chain stops on a stop itself.
+FALLBACK_UNSAFE = "a fallback chain cannot yet be stopped safely"
 
 
-def original_stop(error: BaseException) -> BaseException | None:
-    """The trusted stop ``error`` is or carries (``StopCarried``), or None."""
-    inner = error.stop if isinstance(error, StopCarried) else error
-    return inner if trusted_stop(inner) else None
+def holds_fallback(caller: Any) -> bool:
+    """Whether a ``FallbackCaller`` may be reachable from ``caller``: read, never changed, through every wrapper G6
+    knows (``consent_callers.wrapper_slot``) and G6's own guarded forms. A caller G6 cannot read through (a class it does
+    not know, a cycle) counts as holding one."""
+    from g6.core import consent_callers
 
-
-def chain_failed(error: BaseException) -> bool:
-    """Whether ``error`` is, or carries, a fallback chain's own report that every link failed (``FallbackCaller``'s
-    fixed text), at any depth of nested chains."""
-    inner = error.stop if isinstance(error, StopCarried) else error
-    return isinstance(inner, LLMError) and str(inner).startswith("every caller failed")
-
-
-def watched(caller: Any, _seen: frozenset[int] = frozenset()) -> Any:
-    """A private copy of ``caller`` whose fallback chains, at any depth and through every wrapper G6 reads
-    (``consent_callers.wrapper_slot``), carry a trusted stop out unchanged (``StopCarried``). Anything that is not a
-    chain or such a wrapper is the same object. ``caller`` itself, and everything it holds, is left as it was."""
-    if id(caller) in _seen:
-        return caller
-    seen = _seen | {id(caller)}
-    if isinstance(caller, FallbackCaller):
-        chain = copy(caller)
-        chain._callers = tuple(_Link(watched(one, seen)) for one in caller._callers)
-        return chain
-    slot = wrapper_slot(caller)
-    if not slot:
-        return caller
-    outer, inner = copy(caller), getattr(caller, slot)
-    setattr(outer, slot, tuple(watched(one, seen) for one in inner) if slot == "_callers" else watched(inner, seen))
-    return outer
-
-
-class _Link(CallerWrapper):
-    """One link of a watched chain: a trusted stop, or a nested chain that failed in every link, leaves it as
-    ``StopCarried``, so the chain asks no later link."""
-
-    def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
-        try:
-            return self.inner.complete(system, user, max_tokens=max_tokens)
-        except LLMError as exc:
-            if trusted_stop(exc) or chain_failed(exc):
-                raise StopCarried(exc) from exc
-            raise
+    stack, seen = [caller], set()
+    while stack:
+        one = stack.pop()
+        if id(one) in seen or isinstance(one, FallbackCaller) or type(one) is consent_callers._Unknown:
+            return True
+        seen.add(id(one))
+        slot = wrapper_slot(one)
+        if slot:
+            inner = getattr(one, slot, None)
+            stack.extend(inner if slot == "_callers" and isinstance(inner, (list, tuple)) else (inner,))
+        elif isinstance(one, consent_callers._Consent):
+            if one._guards is not None:   # a guarded native: the backend it sends through
+                stack.append(one._guards)
+        elif caller_kind(one) == "unknown" and not watched_host(one):
+            return True
+    return False
 
 @dataclass(frozen=True)
 class Kind:
@@ -347,7 +316,7 @@ def _send(caller, q, policy, scope):
     with cloud.request_sources(sources), counting(before_call=admit_once):
         if not scope.active:
             raise TimeoutError()
-        return guard(watched(caller)).complete(system, user, max_tokens=2048)
+        return guard(caller).complete(system, user, max_tokens=2048)
 
 
 def read(question: Question) -> Reading:
@@ -393,6 +362,8 @@ def read(question: Question) -> Reading:
                 return finish(reason="no model available")
         if scope.llm is None or isinstance(scope.llm, NoModel):
             return finish(reason="no model configured")
+        if holds_fallback(scope.llm):
+            return finish(reason=FALLBACK_UNSAFE)
         cached = scope.cache.get(key)
         if cached and cached[0] == signature and cached[1] is scope.llm:
             value, reason = deepcopy(cached[2:])
@@ -419,11 +390,8 @@ def read(question: Question) -> Reading:
             except queue.Empty:
                 scope.expired = True  # no more sends after a timed out caller; late result is discarded
                 return finish(reason="model timeout (15 s maximum)")
-            if not ok and original_stop(raw) is not None:
-                raise original_stop(raw)   # a stop the worker delivered wins over the clock: never a floor reading
-            if not ok and chain_failed(raw):   # the interim rule (``FALLBACK_FAILED``): never a floor reading either
-                from g6.core.stop import STOPPED
-                raise LLMError(f"{STOPPED}: {FALLBACK_FAILED}") from raw
+            if not ok and trusted_stop(raw):
+                raise raw   # a stop the worker delivered wins over the clock: never a floor reading
             if time.monotonic() - started > scope.timeout:
                 scope.expired = True
                 return finish(reason="model timeout (15 s maximum)")

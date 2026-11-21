@@ -48,8 +48,7 @@ from g6.core.consent_callers import SDKClientWrapper, guard, sdk_send
 from g6.core.llm import (AnthropicCaller, EmptyRetry, LLMCaller, LLMError, NoModel, UnusableModel,
                          complete_structured)
 from g6.core.git_name import shown
-from g6.core.semantic import FALLBACK_FAILED, chain_failed, original_stop, watched
-from g6.core.stop import STOPPED
+from g6.core.semantic import FALLBACK_UNSAFE, holds_fallback, trusted_stop
 from g6.harness import verification_search as vs
 from g6.harness import verification_templates as vt
 from g6.reasoning.budget import Budget, BudgetExhausted, MeteredCaller
@@ -217,8 +216,6 @@ class _Limits:
         #: A trusted stop the caller raised. ``complete_structured`` turns every caller error into a refusal and keeps
         #: none of them, so the stage raises this one itself once that call returns (``Proposer._ask``).
         self.stop: BaseException | None = None
-        #: Whether a fallback chain failed in every link (``semantic.FALLBACK_FAILED``).
-        self.chain_failed = False
 
     def complete(self, system: str, user: str, *, max_tokens: int = 0) -> str:
         record = {"stage": self.stage[0], "system": system, "user": user, "reply": None, "error": "",
@@ -242,10 +239,8 @@ class _Limits:
             record.update(sent=True, error=str(exc), limit="max_wall_clock_s")
             raise
         except Exception as exc:
-            if original_stop(exc) is not None:
-                self.stop = original_stop(exc)
-            elif chain_failed(exc):
-                self.chain_failed = True
+            if trusted_stop(exc):
+                self.stop = exc
             withheld = any(code in str(exc) for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE))
             record.update(sent=not withheld, error=f"{type(exc).__name__}: {' '.join(str(exc).split())[:200]}")
             raise
@@ -369,6 +364,7 @@ class Proposer:
         self.stage = [""]
         self.ready = ""   # why no model is asked, once known
         raw = llm if llm is not None else default_caller()
+        unsafe = holds_fallback(_backend(raw))
         if skip:
             self.ready = skip
         elif isinstance(raw, NoModel):
@@ -376,6 +372,8 @@ class Proposer:
                           "none; a review asks a model only when the person opted in")
         elif isinstance(raw, UnusableModel) or not callable(getattr(raw, "complete", None)):
             self.ready = f"the configured model cannot be used: {getattr(raw, 'reason', 'it has no complete method')}"
+        elif unsafe:   # a stop in a link would make the chain ask the next (semantic module)
+            self.ready = FALLBACK_UNSAFE
         else:
             why = boundary(root)
             if why:
@@ -386,9 +384,8 @@ class Proposer:
         budget = Budget(max_model_calls=settings["max_model_calls"],
                         max_output_chars=settings["max_model_calls"] * settings["max_output_tokens"] * CHARS_PER_TOKEN,
                         max_wall_clock_s=left)
-        # A private copy of the caller (``semantic.watched``): a stop in any link of a fallback chain ends the proposer,
-        # and the caller the review was handed is never changed.
-        backend = guard(watched(_backend(raw)))
+        # A caller that may hold a fallback chain is never guarded (guarding sets its links) and never asked.
+        backend = _backend(raw) if unsafe else guard(_backend(raw))
         self.limits = _Limits(MeteredCaller(backend, budget), backend, settings, self.stage)
         self.context: RepositoryContext | None = None
         self.stopped = ""   # why every later stage is skipped (the cap, the time)
@@ -423,12 +420,6 @@ class Proposer:
             got = complete_structured(self.limits, _SYSTEM, user, schema, retries=RETRIES)
         if self.limits.stop is not None:
             raise self.limits.stop   # an operator stop, a spent allowance or unconfirmed cleanup ends the proposer
-        if self.limits.chain_failed:   # the interim rule: no later stage runs on a chain that may have hidden a stop
-            self.stopped = FALLBACK_FAILED
-            activity.update(result="failed", code=STOPPED, reason=FALLBACK_FAILED, model_calls=sum(
-                1 for call in self.limits.calls[first:] if call.get("sent")), seconds=round(time.monotonic() - started, 3))
-            self._record(self.limits.calls[first:])
-            return None
         calls = self.limits.calls[first:]
         activity.update(model_calls=sum(1 for call in calls if call.get("sent")),
                         seconds=round(time.monotonic() - started, 3))

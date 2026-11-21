@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Repair 1 of claude/wire-intent-fu (Codex review 1): a trusted stop in any caller of a fallback chain ends the
-proposer; every reader of a critic's reply, deterministic or model, reads only the text outside code, cut at the last
-progress label outside code; a fence closes only on its own character; any repeated key or broken object that states a
-verdict is unreadable; a confirmation drops the rejected outcome's tests from every candidate."""
+"""Repair 1 of claude/wire-intent-fu (Codex review 1), rewritten for review 4: no model is asked through a caller that
+may hold a fallback chain; every reader of a critic's reply, deterministic or model, reads only the text outside code,
+cut at the last progress label outside code; a fence closes only on its own character; any repeated key or broken
+object that states a verdict is unreadable; a confirmation drops the rejected outcome's tests from every candidate."""
 from __future__ import annotations
 
 import json
@@ -53,23 +53,26 @@ def test_proposer_does_not_fallback_after_trusted_stop(monkeypatch, kind, nested
     def stopped(system, user):
         raise stop
 
-    fallback = FakeLLM(default='{"instances":[]}')
-    first = FallbackCaller([FakeLLM(stopped)]) if nested else FakeLLM(stopped)
-    proposer = _proposer(monkeypatch, FallbackCaller([first, fallback]))
-    with pytest.raises(type(stop)) as caught:
-        proposer.templates()
-    assert caught.value is stop
-    assert not fallback.calls
-
-
-def test_control_an_ordinary_failure_still_falls_back(monkeypatch):
-    def broken(system, user):
-        raise LLMError("G6_E_PROVIDER_FAILED: 500")
-
-    fallback = FakeLLM(default='{"instances":[]}')
-    proposer = _proposer(monkeypatch, FallbackCaller([FakeLLM(broken), fallback]))
+    # Until the chain stops on a stop itself (a held hunk of core/llm.py), no model is asked through a caller that may
+    # hold one: the stages say why, nothing is raised or asked, and the caller handed in is left as it was.
+    fallback, stopping = FakeLLM(default='{"instances":[]}'), FakeLLM(stopped)
+    first = FallbackCaller([stopping]) if nested else stopping
+    chain = FallbackCaller([first, fallback])
+    links = chain._callers
+    proposer = _proposer(monkeypatch, chain)
     proposer.templates()
-    assert fallback.calls
+    stages = [a for a in proposer.found.activities if a["activity"] == "proposer stage"]
+    assert stages and all(a["result"] == "skipped" and a["reason"] == semantic.FALLBACK_UNSAFE for a in stages)
+    assert not stopping.calls and not fallback.calls
+    assert chain._callers is links and chain._callers[0] is first
+
+
+def test_control_a_caller_without_a_chain_is_still_asked(monkeypatch):
+    plain = FakeLLM(default='{"instances":[]}')
+    proposer = _proposer(monkeypatch, plain)
+    proposer.templates()
+    assert plain.calls
+    assert not any(a.get("reason") == semantic.FALLBACK_UNSAFE for a in proposer.found.activities)
 
 
 # --- 2, 3 and 4: what every reader of the reply reads --------------------------------------------------------------------

@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Repair 3 of claude/wire-intent-fu (Codex review 3): a reply CommonMark cannot read whole is unreadable before any
 cut; a JSON-looking object that does not decode is unreadable when it names verdict or its extent cannot be found,
-found without recursion; every confirmation rejects every other outcome its question offered; a nested chain that fails
-in every link is carried out like a stop. FakeLLM and synthetic inputs only."""
+found without recursion; every confirmation rejects every other outcome its question offered; no model is asked
+through a caller that may hold a fallback chain (rewritten for review 4). FakeLLM and synthetic inputs only."""
 from __future__ import annotations
 
 import json
@@ -14,7 +14,6 @@ import pytest
 
 from g6.core import markdown, semantic
 from g6.core.llm import FakeLLM, FallbackCaller, LLMError
-from g6.core.stop import STOPPED
 from g6.harness import behaviour_question as bq, candidate_standard as cs
 from g6.harness import completion_loop as loop, verification_proposer as vp, verification_search as vs
 from g6.harness.confirmed_expectation import ConfirmedExpectation, ExpectationStandard
@@ -110,26 +109,28 @@ def test_control_another_call_of_the_same_function_stays():
     assert _scheduled(applied, raw["function"], [3.0, 2], {"raises": "TypeError"})
 
 
-# --- 4: a nested chain that fails in every link ----------------------------------------------------------------------
+# --- 4: a nested chain (rewritten for the rule that no model is asked through a caller that may hold a chain) ---------
 
 def _broken(system, user):
     raise LLMError("G6_E_PROVIDER_FAILED: fixture")
 
 
-def test_nested_failed_chain_stops_proposer_before_outer_fallback(monkeypatch):
+def test_nested_chain_skips_the_proposer_and_asks_no_link(monkeypatch):
     monkeypatch.setattr(vp, "boundary", lambda root: "")
     monkeypatch.setattr(vp, "context", lambda *args, **kwargs: SimpleNamespace(text="fixture", sources=()))
-    fallback = FakeLLM(default='{"instances":[]}')
+    inner, fallback = FakeLLM(_broken), FakeLLM(default='{"instances":[]}')
     proposer = vp.Proposer(Path.cwd(), SimpleNamespace(), [], vs.search_config({"propose": True}),
-                           llm=FallbackCaller([FallbackCaller([FakeLLM(_broken)]), fallback]),
+                           llm=FallbackCaller([FallbackCaller([inner]), fallback]),
                            deadline=time.monotonic() + 100, room=20)
     proposer.templates()
-    assert proposer.stopped == semantic.FALLBACK_FAILED and not fallback.calls
+    stages = [a for a in proposer.found.activities if a["activity"] == "proposer stage"]
+    assert stages and all(a["reason"] == semantic.FALLBACK_UNSAFE for a in stages)
+    assert not inner.calls and not fallback.calls
 
 
-def test_nested_failed_chain_ends_a_semantic_reading_closed():
-    fallback = FakeLLM(default='{"value":true}')
-    with semantic.request(llm=FallbackCaller([FallbackCaller([FakeLLM(_broken)]), fallback])):
-        with pytest.raises(LLMError) as caught:
-            semantic.decide("refusal", "synthetic", False)
-    assert str(caught.value).startswith(STOPPED) and not fallback.calls
+def test_nested_chain_keeps_a_semantic_reading_on_its_floor():
+    inner, fallback = FakeLLM(_broken), FakeLLM(default='{"value":true}')
+    with semantic.request(llm=FallbackCaller([FallbackCaller([inner]), fallback])):
+        got = semantic.decide("refusal", "synthetic", False)
+    assert (got.by, got.reason, got.value) == ("floor", semantic.FALLBACK_UNSAFE, False)
+    assert not inner.calls and not fallback.calls
