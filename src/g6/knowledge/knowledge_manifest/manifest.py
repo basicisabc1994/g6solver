@@ -130,7 +130,7 @@ class Store:
                                 title=doc["title"], locator=doc["locator"])
             passage = Passage(id=row["id"], source=source, document_sha256=row["document_sha256"],
                               start=row["span_start"], end=row["span_end"], text=row["text"])
-        except (ValidationError, ValueError, TypeError):
+        except (ValidationError, ValueError, TypeError, RecursionError, MemoryError):
             raise StoreError(STORE, edited) from None
         if passage_problems(passage, document):
             raise StoreError(STORE, edited)
