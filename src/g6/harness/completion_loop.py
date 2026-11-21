@@ -1682,9 +1682,10 @@ def critic_report(said: str, *, marker: str = "") -> dict[str, str]:
         value: _CriticValue
         reason: str = ""
 
-    body = _reply_part(said.replace("\r\n", "\n").replace("\r", "\n"))
-    text = _outside_code(body)   # every reader, deterministic or model, reads this, never code
-    if text is None:   # nested past what CommonMark reads: what it holds is unknown, so nothing reads it
+    said = said.replace("\r\n", "\n").replace("\r", "\n")
+    # Nested past what CommonMark reads, the reply is unknown: nothing of it is cut, filtered or read.
+    text = None if markdown.parse(said).truncated else _outside_code(body := _reply_part(said))
+    if text is None:
         return {"verdict": "unreadable", "rule": "", "why": "the reply nests deeper than G6 reads", "test": "",
                 "error": ""}
     floor = _floor_critic_report(text, marker=marker)
@@ -1788,29 +1789,55 @@ def _once(pairs: list[tuple[str, object]]) -> dict:
 #: What stands for an object that cannot be the protocol: it names ``verdict``, so the reply counts as stating one, and
 #: it never validates, so that reply is a failed review.
 _BROKEN = {"verdict": None, "broken": True}
+#: Where a JSON object may begin: a brace and then a string or the closing brace, as JSON writes one.
+_OBJECT = re.compile(r"\{\s*[\"}]")
+
+
+def _extent(body: str, at: int) -> int | None:
+    """The end of the JSON-looking object that begins at ``at``, found by its brackets and strings alone, without
+    recursion, so no depth hides it; None when its brackets do not close in order or a string never ends."""
+    closers, i = [], at
+    while i < len(body):
+        char = body[i]
+        if char == '"':
+            token = _STRING.match(body, i)
+            if token is None:
+                return None
+            i = token.end()
+            continue
+        if char in "{[":
+            closers.append("}" if char == "{" else "]")
+        elif char in "}]":
+            if not closers or closers.pop() != char:
+                return None
+            if not closers:
+                return i + 1
+        i += 1
+    return None
 
 
 def _stated_verdicts(body: str) -> list[dict]:
     """Each JSON object in ``body``, outside any other, that has a ``verdict`` key: wherever it stands (alone, after a
     header or a progress line, mid-line). A test's code is inside its object's string, so it is not read again on its
-    own. An object that names any key twice, at any depth, or that breaks off after naming ``verdict``, counts as a
-    stated verdict that is not the protocol (``_BROKEN``); a brace in prose that names no verdict is prose."""
-    found, decoder, at = [], json.JSONDecoder(object_pairs_hook=_once), body.find("{")
-    while at != -1:
+    own. A JSON-looking object (``_OBJECT``) that does not decode, for any reason (a key named twice at any depth, a
+    malformed value, a depth or size past the decoder's limits), counts as a stated verdict that is not the protocol
+    (``_BROKEN``) when it names a key twice, when a string in it decodes to ``verdict``, or when where it ends cannot
+    be found (``_extent``). A brace in prose that starts no object, or a closed one that names no verdict, is prose."""
+    found, decoder, until = [], json.JSONDecoder(object_pairs_hook=_once), 0
+    for start in _OBJECT.finditer(body):
+        at = start.start()
+        if at < until:
+            continue   # inside an object already read
         try:
-            value, end = decoder.raw_decode(body, at)
-        except _RepeatedKey:
-            found.append(_BROKEN)
-            at = body.find("{", at + 1)
-            continue
-        except (ValueError, RecursionError) as exc:
-            if _names_verdict(body[at:getattr(exc, "pos", at)]):
+            value, until = decoder.raw_decode(body, at)
+        except (ValueError, RecursionError, MemoryError) as exc:
+            end = _extent(body, at)
+            if isinstance(exc, _RepeatedKey) or end is None or _names_verdict(body[at:end]):
                 found.append(_BROKEN)
-            at = body.find("{", at + 1)
+            until = len(body) if end is None else end
             continue
         if isinstance(value, dict) and "verdict" in value:
             found.append(value)
-        at = body.find("{", end)
     return found
 
 

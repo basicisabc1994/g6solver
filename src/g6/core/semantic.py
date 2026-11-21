@@ -69,8 +69,9 @@ FALLBACK_FAILED = "a fallback chain failed; G6 cannot tell whether a stop was in
 
 
 class StopCarried(Exception):
-    """A trusted stop one link of a fallback chain raised, carried past the chain's next links as an error that is not
-    an ``LLMError``: ``stop`` is the stop itself, which the step that asked raises (``original_stop``)."""
+    """What one link of a fallback chain raised that must end the step, carried past the chain's next links as an error
+    that is not an ``LLMError``: a trusted stop, which the step raises itself (``original_stop``), or a nested chain's
+    own report that every link failed, which ends the step closed (``chain_failed``, the interim rule)."""
 
     def __init__(self, stop: BaseException) -> None:
         super().__init__(str(stop))
@@ -79,14 +80,15 @@ class StopCarried(Exception):
 
 def original_stop(error: BaseException) -> BaseException | None:
     """The trusted stop ``error`` is or carries (``StopCarried``), or None."""
-    if isinstance(error, StopCarried):
-        return error.stop
-    return error if trusted_stop(error) else None
+    inner = error.stop if isinstance(error, StopCarried) else error
+    return inner if trusted_stop(inner) else None
 
 
 def chain_failed(error: BaseException) -> bool:
-    """Whether ``error`` is a fallback chain's own report that every link failed (``FallbackCaller``'s fixed text)."""
-    return isinstance(error, LLMError) and str(error).startswith("every caller failed")
+    """Whether ``error`` is, or carries, a fallback chain's own report that every link failed (``FallbackCaller``'s
+    fixed text), at any depth of nested chains."""
+    inner = error.stop if isinstance(error, StopCarried) else error
+    return isinstance(inner, LLMError) and str(inner).startswith("every caller failed")
 
 
 def watched(caller: Any, _seen: frozenset[int] = frozenset()) -> Any:
@@ -109,13 +111,14 @@ def watched(caller: Any, _seen: frozenset[int] = frozenset()) -> Any:
 
 
 class _Link(CallerWrapper):
-    """One link of a watched chain: a trusted stop leaves it as ``StopCarried``, so the chain asks no later link."""
+    """One link of a watched chain: a trusted stop, or a nested chain that failed in every link, leaves it as
+    ``StopCarried``, so the chain asks no later link."""
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
         try:
             return self.inner.complete(system, user, max_tokens=max_tokens)
         except LLMError as exc:
-            if trusted_stop(exc):
+            if trusted_stop(exc) or chain_failed(exc):
                 raise StopCarried(exc) from exc
             raise
 

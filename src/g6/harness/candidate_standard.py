@@ -475,6 +475,12 @@ def with_confirmed(found, standard):
     rejected, outcomes = set(), []   # the mapped tests and the (function, case) pairs that assert a rejected outcome
     for one in standard.expectations:
         bindings = one.instance.bindings
+        # Every outcome the question offered and the person did not choose is rejected for that typed call, whether
+        # or not it is the one a candidate proposed.
+        asked = one.question
+        call = dict(args=list(asked.args), **({'kwargs': dict(asked.kwargs)} if asked.kwargs else {}))
+        outcomes.extend((asked.requirement_id, asked.function, _full(dict(call, **dict(outcome))))
+                        for label, outcome in asked.outcomes.items() if label != one.option)
         for item in shown['standard']:
             if (item['id'] != one.requirement_id or item['kind'] == 'preservation'
                     or item['function'] != bindings['function'] or len(item['cases']) != 1):
@@ -489,7 +495,6 @@ def with_confirmed(found, standard):
             # so none of them is a check of this candidate or of any other.
             if not _same(proposed, answered):
                 rejected.update(item['checks'] if isinstance(item['checks'], list) else ())
-                outcomes.append((item['id'], item['function'], _full(proposed)))
                 item['checks'] = 'missing'
             item.update(status='stated', cases=deepcopy(bindings['cases']), text=one.scope, scope=one.scope,
                         confirmed_by=one.answered_by, expectation_id=one.expectation_id)
