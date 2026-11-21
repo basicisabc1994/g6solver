@@ -57,6 +57,7 @@ shares its process with pytest and its report. Shares the process control (``g6.
 invoked here.
 """
 from __future__ import annotations
+from g6.core.guidance_builders import confine_not_started, confine_record, confine_refusal, confine_refused, confine_summary
 
 import ast
 import configparser
@@ -3076,7 +3077,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
     began = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     head = _git(repo, "rev-parse", "--verify", "-q", "HEAD", ok=(0, 1)).decode().strip() if receipt else ""
     command = f"pytest {len(ids)} test id(s) in place"
-    isolation = confine.summary([])
+    isolation = confine_summary([])
     own_config: list[str] = []   # the arguments of the empty configuration G6 names when the repository has none
 
     def result(verdict: str, counts: dict | None, output: str, moved: list[str]) -> dict:
@@ -3144,10 +3145,10 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
             read_write=(str(work), str(own), *([str(repo)] if mine else [])),
             read_only=(*reads, *environment, *([] if mine else [str(repo)]), top), network=network),
             python)
-        isolation = confined.record()
-        said = confine.refused(confined)
+        isolation = confine_record(confined)
+        said = confine_refused(confined)
         if not said and require_isolation and not isolation.get("backend"):
-            said = confine.refusal(confined)
+            said = confine_refusal(confined)
         if said:
             raise RepoRefused(ISOLATION_UNAVAILABLE, said)
         try:
@@ -3159,7 +3160,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
             raise
         except OSError as exc:
             if isinstance(exc, confine.NotStarted):
-                isolation = confine.not_started(isolation, exc)
+                isolation = confine_not_started(isolation, exc)
             found = result("could_not_start", None, "", [])
             return {**found, "said": SAID["could_not_start"].format(error=type(exc).__name__)}
         finally:

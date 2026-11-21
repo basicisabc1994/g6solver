@@ -133,8 +133,8 @@ def _try(check: Check, output: str) -> str:
 
 def _envelope(state: str, code: str, message: str, *, request_id: str, run_id: str, evidence: list[dict] | None = None,
               **extra: Any) -> dict[str, Any]:
-    from g6.core.door import door_envelope
-    from g6.core.reliability_envelope import warning_card
+    from g6.core.guidance_builders import door_envelope
+    from g6.core.guidance_builders import warning_card
 
     # Plan A1: the issuer's verified is the certificate's (kept in certificate.state); this door does not re-run the
     # checks, so it holds it at qualified-draft with a G6_E_PROMOTION_LAW card.

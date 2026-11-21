@@ -41,7 +41,7 @@ HOLDS = ("every field of the review: each requirement's status, assessment.compl
 def review(repo: str | os.PathLike, **kwargs: Any) -> dict:
     """``review_patch`` for a job over MCP: what it lets reach an enclosing door is named here, for a job has none."""
     from g6.core import component_process
-    from g6.core.door import blocked_reply
+    from g6.core.guidance_builders import blocked_reply
     from g6.core.stop import STOPPED
     from g6.harness.patch_review import review_patch
 
@@ -139,7 +139,8 @@ def _shorten(value: Any, items: int, chars: int, where: str, cut: set[str]) -> A
         if len(value) <= chars:
             return value
         cut.add(where)
-        return value[:chars - 3] + "..."
+        from g6.core.external_data import shortened
+        return shortened(value, value[:chars - 3] + "...")
     if isinstance(value, list | tuple):
         if len(value) > items:
             cut.add(where)
@@ -202,11 +203,12 @@ def finish(reply: Any, job_id: str) -> Any:
         return reply
     from g6.core import cloud_consent as cloud
     from g6.core.storage import g6_home
-    body, refs, _ = cloud.freeze_output(reply)
+    from g6.core.external_data import detached
     # the reply's task binding (review_binding.BoundReply) goes with the copy, so save writes it
     custody = getattr(reply, "custody", None)
     try:
-        reply = custody(json.loads(body)) if callable(custody) else json.loads(body)
+        copy, refs, _ = detached(reply)
+        reply = custody(copy) if callable(custody) else copy
     except (RecursionError, MemoryError):
         raise ValueError("a JSON record exceeds decoder limits") from None
     # A job entered through a declared producer already carries that contract.

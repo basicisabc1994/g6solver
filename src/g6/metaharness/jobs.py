@@ -14,7 +14,10 @@ from g6.core.ledger import digest
 from threading import Lock
 from uuid import uuid4
 
-from g6.core.door import blocked_reply
+from g6.core.guidance_builders import blocked_reply
+from g6.core.agent_guidance import reply_for_agent
+from g6.core.external_data import freeze_output, receipts, restore
+
 
 DETAILS = ("compact", "full")
 #: An exact caller-supplied input (``cloud_consent.input_source``).
@@ -25,24 +28,28 @@ _INPUT = re.compile(r"input:[0-9a-f]{64}")
 class _FrozenResult:
     body: str
     body_sha256: str
+    external: tuple = ()
 
     @classmethod
     def of(cls, value):
-        body = json.dumps(value, separators=(',', ':'), allow_nan=False)
-        return cls(body, cloud.sha256(body))
+        body = json.dumps(reply_for_agent(value), separators=(',', ':'), allow_nan=False)
+        return cls(body, cloud.sha256(body), receipts(value))
 
     @classmethod
-    def completed(cls, ident, result_body):
-        body = json.dumps({"ok": True, "job_id": ident, "status": "completed"},
-                          separators=(',', ':'))[:-1] + ',"result":' + result_body + '}'
-        return cls(body, cloud.sha256(body))
+    def completed(cls, ident, result_body, *, authored_envelope=True, external=()):
+        # Legacy flag grants no exemption. Raw JSON always has default ownership.
+        try:
+            result = restore(json.loads(result_body), external)
+        except (RecursionError, MemoryError):
+            raise ValueError("a JSON record exceeds decoder limits") from None
+        return cls.of({"ok": True, "job_id": ident, "status": "completed", "result": result})
 
     def read(self):
         body, expected = self.body, self.body_sha256
         if cloud.sha256(body) != expected:
             raise ValueError('retained result digest mismatch')
         try:
-            return json.loads(body)
+            return restore(json.loads(body), self.external)
         except (RecursionError, MemoryError):
             raise ValueError("a JSON record exceeds decoder limits") from None
 
@@ -81,27 +88,29 @@ class Jobs:
             capture.client, capture.supplied = origin[0], set(origin[1])
             try:
                 result = operation()
-                body, known, metadata = cloud.freeze_output(result)
+                body, known, metadata = freeze_output(result)
                 refs = cloud.boundary_sources(carried=(*(known if known is not None else
                     cloud.current_sources() or (cloud.UNKNOWN,)), *capture.sources))
                 metadata = shown_metadata = _FrozenResult.of(metadata)
                 shown_refs = refs
                 # Freeze before a compactor can mutate the producer's object.
-                full = _FrozenResult.completed(ident, body)
+                # Default prose filtering has already run on the frozen bytes.
+                # Only exact external receipts can exempt data in either poll.
+                full = _FrozenResult.completed(ident, body, external=receipts(result))
                 if compact:
                     try:
                         # A compactor must render the full snapshot, not reread
                         # the producer's mutable result under its old receipt.
                         # A result's process-local custody (a review's task binding) goes with the copy.
                         custody = getattr(result, "custody", None)
-                        copy = json.loads(body)
+                        copy = restore(json.loads(body), receipts(result))
                         detached = cloud.bind_output(custody(copy) if callable(custody) else copy, refs,
                                                      metadata=metadata.read())
                         shown = compact(detached, ident)
-                        body, known, shown_metadata = cloud.freeze_output(shown)
+                        body, known, shown_metadata = freeze_output(shown)
                         shown_refs = cloud.boundary_sources(carried=(*refs, *(known or ()), *capture.sources))
                         shown_metadata = _FrozenResult.of(shown_metadata)
-                        shown = _FrozenResult.completed(ident, body)
+                        shown = _FrozenResult.completed(ident, body, external=receipts(shown))
                     except Exception:
                         shown = full
                         shown_refs, shown_metadata = refs, metadata

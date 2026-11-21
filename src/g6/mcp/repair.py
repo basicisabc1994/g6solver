@@ -42,6 +42,7 @@ from typing import Any
 from g6.core.repair_log import append as _log
 from g6.core.repair_log import repair_stats
 
+
 MAX_RETRIES = 2
 _LOCK = threading.Lock()
 _SESSIONS: weakref.WeakKeyDictionary[Any, dict[str, Any]] = weakref.WeakKeyDictionary()

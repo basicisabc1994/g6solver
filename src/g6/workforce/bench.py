@@ -54,6 +54,7 @@ a copy).
 The answer is an envelope the single reader judges: a refusal is ``ok: false`` with the reason.
 """
 from __future__ import annotations
+from g6.core.guidance_builders import confine_summary
 
 import hashlib
 import importlib.util
@@ -219,7 +220,7 @@ def run(op: str, params: dict, *, venture: str | None = None) -> dict:
         return _refused(NOT_STARTED.format(why=unstarted))
     found = {"passed": not unstarted and all(results.values()) and (suite or {}).get("status") != "fail",
              "tests": results, "applied": sorted(files), "integrity": {"test_files_unchanged": True, "test_files": compared},
-             "isolation": confine.summary(runs)}
+             "isolation": confine_summary(runs)}
     if suite is not None:
         found["suite"] = suite
     if causes:
@@ -351,7 +352,7 @@ def _in_place(params: dict, venture: str | None) -> dict:
                                    "counts": {key: found[key] for key in ("passed", "failed", "not_passed", "total")},
                                    "said": found["said"], "seconds": found["seconds"],
                                    "interpreter_source": found["interpreter_source"],
-                                   "isolation": found.get("isolation") or confine.summary([])}}
+                                   "isolation": found.get("isolation") or confine_summary([])}}
 
 
 def _refused(why: str) -> dict:

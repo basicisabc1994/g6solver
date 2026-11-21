@@ -24,10 +24,11 @@ from typing import Any
 
 import g6
 from g6.core import stop
+
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import LedgerError, digest
 from g6.core.llm import LLMError
-from g6.core.reliability_envelope import envelope_fields, warning_card
+from g6.core.guidance_builders import envelope_fields, warning_card
 from g6.core.storage import g6_home, state_path
 from g6.harness import Memory, run
 from g6.integrity import build_manifest, manifest_sha256

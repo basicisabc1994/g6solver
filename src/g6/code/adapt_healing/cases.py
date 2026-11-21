@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from g6.code._types import CodeRefused
-from g6.core.sandbox import run_script
+from g6.core.guidance_builders import script_run as run_script
 
 BAD_TEST = "G6_E_HEAL_BAD_TEST"
 SOLUTION = "solution.py"

@@ -109,7 +109,7 @@ print(json.dumps({"steps": spec["steps"], "first_loss": losses[0], "last_loss": 
 
 def sandbox_trainer(spec: LoraSpec, rows: Sequence[tuple[str, str]], out: Path) -> dict[str, Any]:
     """Train in a bounded child process; the adapter's files are written to ``out``."""
-    from g6.core.sandbox import run_script
+    from g6.core.guidance_builders import script_run as run_script
 
     files = {"spec.json": json.dumps(asdict(spec)),
              "examples.jsonl": "\n".join(json.dumps([p, c]) for p, c in rows)}

@@ -825,7 +825,7 @@
     ],
     "_shorten": [
       "value",
-      "value[:chars - 3] + '...'",
+      "shortened(value, value[:chars - 3] + '...')",
       "[_shorten(one, items, chars, where, cut) for one in value[:items]]",
       "{key: _shorten(one, items, chars, where, cut) for key, one in value.items()}",
       "value"

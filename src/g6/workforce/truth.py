@@ -7,6 +7,7 @@ sim_users/ground_truth pattern); a missing or failing test is False, never an ex
 a broken seed cannot stop a round silently. Extraction is code: a claim's phrases, or an
 assertive shape with no binding (certified, approved, used by N, N%)."""
 from __future__ import annotations
+from g6.core.guidance_builders import confine_not_started, confine_record, confine_refused
 
 import json
 import os
@@ -348,8 +349,8 @@ def run_isolated(nodeid: str, repo: Path, timeout: float | None = None) -> bool:
         config, result = Path(config_dir) / "pytest.ini", Path(config_dir) / "result.json"
         config.write_text("[pytest]\n", encoding="utf-8")
         confined = _confined(config_dir, repo, python)
-        LAST_RUN["isolation"] = confined.record()
-        said = confine.refused(confined)
+        LAST_RUN["isolation"] = confine_record(confined)
+        said = confine_refused(confined)
         if said:
             LAST_RUN.update(nodeid=nodeid, rc=None, started=False, timed_out=False, tally=None, stdout="", stderr=said,
                             refused=said)
@@ -373,7 +374,7 @@ def run_isolated(nodeid: str, repo: Path, timeout: float | None = None) -> bool:
             raise  # no further work may assume that the owned process stopped
         except OSError as exc:  # never spawned: it did not start
             if isinstance(exc, confine.NotStarted):
-                LAST_RUN["isolation"] = confine.not_started(LAST_RUN["isolation"], exc)
+                LAST_RUN["isolation"] = confine_not_started(LAST_RUN["isolation"], exc)
             LAST_RUN.update(nodeid=nodeid, rc=None, started=False, timed_out=False, tally=None, stdout="",
                             stderr=f"{type(exc).__name__}: {exc}")
             return False
@@ -422,8 +423,8 @@ def run_suite(repo: Path, timeout: float | None = None) -> dict:
         config, result = Path(scratch) / "pytest.ini", Path(scratch) / "result.json"
         config.write_text("[pytest]\n", encoding="utf-8")
         confined = _confined(scratch, Path(repo), python)
-        found["isolation"] = confined.record()
-        said = confine.refused(confined)
+        found["isolation"] = confine_record(confined)
+        said = confine_refused(confined)
         if said:
             found["why"] = said
             return found
@@ -449,7 +450,7 @@ def run_suite(repo: Path, timeout: float | None = None) -> dict:
             raise
         except OSError as exc:
             if isinstance(exc, confine.NotStarted):
-                found["isolation"] = confine.not_started(found["isolation"], exc)
+                found["isolation"] = confine_not_started(found["isolation"], exc)
             found["why"] = f"the test runner could not start: {type(exc).__name__}"
             return found
         except subprocess.TimeoutExpired as exc:  # started when the boot said so, then did not finish

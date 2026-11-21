@@ -62,6 +62,7 @@ candidate. These rank after MCP calls, take at most ``LIBRARY_SLOTS``, and are n
 """
 from __future__ import annotations
 
+
 import copy
 import itertools
 import json
@@ -477,7 +478,7 @@ def remedy_for(outcome: str, data: dict[str, Any] | None = None) -> dict[str, An
 
 # -- stage helpers ----------------------------------------------------------------------------------------------
 def _refuse(message: str, request_id: str, run_id: str) -> dict[str, Any]:
-    from g6.core.door import blocked_reply
+    from g6.core.guidance_builders import blocked_reply
 
     return {**blocked_reply(f"[G6_E_INPUT_VALIDATION] {message}", request_id=request_id), "run_id": run_id}
 
@@ -883,7 +884,7 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
            request_id: str = "", run_id: str = "") -> dict[str, Any]:
     """The selection for the agent's situation (module docstring). ``corpus`` stands in for the shipped corpus in
     tests."""
-    from g6.core.reliability_envelope import envelope_fields, warning_card
+    from g6.core.guidance_builders import envelope_fields, warning_card
     from g6.skills.corpus import PHASES, _expanded as expanded     # the reply is deep-copied at the end
 
     if not isinstance(task, str) or not task.strip():

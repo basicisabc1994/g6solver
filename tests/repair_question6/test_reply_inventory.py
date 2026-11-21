@@ -221,7 +221,12 @@ def test_mcp_tool_return_paths_keep_historical_text(monkeypatch, text, branch):
     monkeypatch.setattr(behaviour, 'reviewed', lambda *a, **k: {'assessment': {'report': text}})
     expected = FunctionType(tool_68ca0eb.g6_review_patch.__code__, namespace,
                             argdefs=tool_68ca0eb.g6_review_patch.__defaults__)
-    same(namespace['g6_review_patch']('unused', 'task'), expected('unused', 'task'))
+    historical = expected('unused', 'task')
+    if branch == 'unreadable':
+        # Its remedy names a setting, now filtered: commit 0b400900, lead ruling 2026-11-21 (rc-wrp).
+        from g6.core.agent_guidance import reply_for_agent
+        historical = reply_for_agent(historical)
+    same(namespace['g6_review_patch']('unused', 'task'), historical)
 
 
 @pytest.mark.parametrize('text', TEXTS)
