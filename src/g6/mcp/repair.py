@@ -20,9 +20,8 @@ leaves none. The digest of a refused call's arguments is kept in memory only, fo
 delivered to the client counts: one withheld for consent was never seen by the agent, so the same call made again
 after the person's grant is its first attempt. ``observed`` returns the reply and its ``Record``. Where G6 owns the
 writer (its stdio server, ``g6.mcp.stdio``; ``G6MemoryTransport`` in process) every effect runs from that message's
-own callback once it was written, with evidence ``written``; a failed write runs nothing. On any other transport the
-record is ``sent()`` at the handoff and counted once the stream shows it taken (``consent_transport.settled``), with
-evidence ``inferred``. A count applies to the session's count as it is then, so a late one never gives back a retry.
+own callback once all of it was written, with evidence ``written``; a failed or short write runs nothing. On any
+other transport every effect runs at the handoff (``consent_transport._handed``), with evidence ``inferred``. A count applies to the session's count as it is then, so a late one never gives back a retry.
 
 The repair log (``g6.core.repair_log``, ``repairs/repairs.jsonl`` under G6's state folder) is append-only and holds
 codes and ids only, never an argument or a word of text: one ``refused`` row per repair block, and one ``next`` row

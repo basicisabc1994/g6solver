@@ -19,8 +19,10 @@ from g6.mcp.consent_transport import line, witness
 
 
 class WrittenStdout:
-    """stdout as the SDK's stdio writer uses it (``write`` a line, then ``flush``): once both returned, the line is
-    ``written`` to the witness; a write or flush that raises tells it nothing."""
+    """stdout as the SDK's stdio writer uses it (``write`` a line, then ``flush``): once both returned, with the whole
+    line accepted, the line is ``written`` to the witness. A write or flush that raises, or a write that says it took
+    fewer characters than the line holds, tells it nothing. A write that returns no count (``None``, as some file
+    objects do) raised nothing and is taken as having accepted the line."""
 
     def __init__(self, inner, seen) -> None:
         self.inner, self.seen, self._line = inner, seen, None
@@ -31,7 +33,8 @@ class WrittenStdout:
     async def write(self, data):
         self._line = None
         written = await self.inner.write(data)
-        self._line = data
+        if written is None or isinstance(written, int) and written == len(data):
+            self._line = data
         return written
 
     async def flush(self):

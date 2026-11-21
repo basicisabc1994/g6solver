@@ -69,7 +69,6 @@ def test_failed_stdout_does_not_resolve_previous_repair(monkeypatch):
             stdin=EmptyInput(), stdout=BrokenOutput()
         ) as (_, outbound):
             await send(outbound, session, 1, reply, record)
-        transport.settled(session)
 
     asyncio.run(run())
     assert not [r for r in rows if r.get("outcome") == "resolved"], rows
@@ -113,8 +112,7 @@ def test_flushed_refusal_counts_while_writer_is_busy_with_next_reply(monkeypatch
                     await second_started.wait()
                     await pending
                 # Reply 1 has flushed; the writer is now occupied with reply 2.
-                # Settlement runs here just as it does before the next request.
-                transport.settled(session)
+                # (Its count came from its own callback at the flush; nothing settles later.)
                 again, _ = repair.observed("g6_invoke", {"a": 1}, BAD, session)
             finally:
                 release_first.set()

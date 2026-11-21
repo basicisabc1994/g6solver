@@ -7,6 +7,7 @@ therefore have one order. Data already handed to transport cannot be recalled.
 """
 from __future__ import annotations
 
+import collections
 import contextlib
 import contextvars
 import functools
@@ -60,9 +61,8 @@ class Ticket:
     body_sha256: str
     job: dict | None = None
     control: dict | None = None
-    #: What to record about this reply (``g6.mcp.repair.Record``): ``sent()`` once the transport handed these exact
-    #: bytes to the client, never for a reply withheld in their place; called once they are seen written
-    #: (``settled``), which counts the attempt the agent saw.
+    #: What to record about this reply (``g6.mcp.repair.Record``), called once these exact bytes were written on a
+    #: writer G6 owns (``Witness``), or at the handoff elsewhere (``_handed``); never for a reply withheld in their place.
     delivered: Callable[[], None] | None = field(default=None, compare=False, repr=False)
     #: The reply to the client's own request, from a catalogue or selector tool to a client G6 cannot name
     #: (``g6.mcp.cloud_consent.CATALOGUE_TOOLS``). Admission reads it once it takes that mark (the issuance hunk);
@@ -70,36 +70,24 @@ class Ticket:
     requester: bool = False
 
 
-def _written(stream) -> bool | None:
-    """Whether a message handed to ``stream`` earlier was written to the client, as far as can be seen now: the
-    stream's one reader takes a message and comes back for the next only once it has handled it (the stdio writer
-    after it wrote and flushed the line, an in-process client after it read it). So the reader waiting again with
-    nothing left in the stream: written; the reader gone (a write failed and the writer stopped), or a stream with no
-    such statistics: not seen written; anything else (the reader still busy): ``None``, not decided yet."""
-    statistics = getattr(stream, 'statistics', None)
-    if statistics is None:
-        return False
-    seen = statistics()
-    if seen.open_receive_streams == 0:
-        return False
-    if seen.current_buffer_used == 0 and seen.tasks_waiting_receive > 0:
-        return True
-    return None
-
-
 class Witness:
     """A writer G6 owns, seeing each message written: ``expect`` files a message's own callback under its key, and
     ``written`` (called by the writer once that message's bytes are written and flushed, or taken by the in-process
-    client) fires it, once. A message whose write fails is never ``written``, so its callback never runs."""
+    client) fires the oldest one filed under that key, once. Two messages with the same key (a request id reused
+    after its reply, so the same line) keep a callback each, fired in the order they were sent, which is the order
+    the one writer writes them. A message whose write fails is never ``written``, so its callback never runs."""
 
     def __init__(self, key: Callable[[SessionMessage], object]) -> None:
         self.key, self._expected = key, {}
 
     def expect(self, message: SessionMessage, callback: Callable[[], None]) -> None:
-        self._expected[self.key(message)] = callback
+        self._expected.setdefault(self.key(message), collections.deque()).append(callback)
 
     def written(self, key: object) -> None:
-        callback = self._expected.pop(key, None)
+        waiting = self._expected.get(key)
+        callback = waiting.popleft() if waiting else None
+        if waiting is not None and not waiting:
+            del self._expected[key]
         if callback is not None:
             try:
                 callback()
@@ -193,38 +181,17 @@ def __getattr__(name):
     raise AttributeError(name)
 
 
-def _handed(session, stream, ticket: Ticket) -> None:
-    """The ticket's reply was handed to a client on a transport G6 cannot see: record that on inferred evidence
-    (``sent``), and keep it for ``settled``."""
+def _handed(ticket: Ticket) -> None:
+    """The ticket's reply was handed to a client on a transport whose writer G6 cannot see (the stock in-process
+    client, HTTP, SSE): every delivery effect runs now, at the handoff, on evidence ``inferred``, so retries stay
+    bounded there and no row claims more than the handoff. It takes the repair state's own lock and queues log rows;
+    it never waits, so it may run while admission holds the sharing ledger."""
     if ticket.delivered is None:
         return
     try:
-        ticket.delivered.sent(INFERRED)
+        ticket.delivered(INFERRED)
     except Exception:  # noqa: BLE001 - recording never fails a reply already sent
         pass
-    unseen = getattr(session, '_g6_unseen', None)
-    if unseen is None:
-        unseen = session._g6_unseen = []
-    unseen.append((stream, ticket))
-
-
-def settled(session) -> None:
-    """Before a call of this session is assessed, and before each reply it sends: count each reply it already handed
-    to the client that is now seen written (``_written``), in the order they went; drop one seen not written; stop at
-    the first not decided yet, kept with those after it for later. Nothing here waits, so nothing waits while
-    admission holds the sharing ledger (it only takes the repair state's own lock and queues log rows); a reply the
-    session sends last, with no call or reply after it, is never counted."""
-    unseen = getattr(session, '_g6_unseen', None)
-    for entry in list(unseen or ()):
-        written = _written(entry[0])
-        if written is None:
-            break
-        unseen.remove(entry)
-        if written:
-            try:
-                entry[1].delivered(INFERRED)
-            except Exception:  # noqa: BLE001 - counting an attempt never fails a call
-                pass
 
 
 def _request_key(request_id):
@@ -322,20 +289,17 @@ class _Stream:
         await anyio.to_thread.run_sync(handoff)
 
     async def _hand(self, packet, ticket: Ticket) -> None:
-        """Send ``packet`` and record it handed in the same step: the client cannot read it, and call again, before the
-        session knows it went (``settled``). The replies handed before it are settled first, while the stream still
-        shows whether they were written. Nothing is awaited after the send, so nothing waits on the client while
-        admission holds the sharing ledger."""
+        """Send ``packet``. On a writer G6 owns, its delivery effects wait for its own callback (``Witness``);
+        otherwise they run in the same step as the send (``_handed``), so the client cannot read it and call again
+        first. Nothing is awaited after the send, so nothing waits on the client while admission holds the ledger."""
         seen = _WITNESSES.get(self.inner)
         if seen is not None:
-            # a writer G6 owns: every delivery effect runs from this message's own callback, once it is written
             if ticket.delivered is not None:
                 seen.expect(packet, functools.partial(ticket.delivered, WRITTEN))
             await self.inner.send(packet)
             return
-        settled(self.session)
         await self.inner.send(packet)
-        _handed(self.session, self.inner, ticket)
+        _handed(ticket)
 
 
 class _Session:

@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import threading
 from pathlib import Path
 
 import pytest
@@ -224,26 +223,17 @@ def test_the_same_call_after_a_consent_grant_is_not_a_refusal_sent_unchanged(hom
     assert unchanged["repair"]["by"] == "person" and unchanged["repair"]["retries_left"] == 0, unchanged["repair"]
 
 
-def test_whether_a_reply_was_written_is_looked_for_only_once_the_ledger_is_free(home: Path, monkeypatch) -> None:
-    """On a transport whose writes G6 does not see, the count is inferred from the stream (``settled``). Looked for
-    while admission holds the sharing ledger, a reply's writing would make code on the same event loop
-    that reads the ledger itself (as the e2e journey does) wait on a send that waits on the loop. So each look finds
-    the ledger free: a read of it from another thread finishes at once."""
-    from g6.core import cloud_consent
-    from g6.mcp import consent_transport
+def test_a_transport_g6_cannot_see_counts_at_the_handoff_and_says_inferred(home: Path) -> None:
+    """Over FastMCP's stock in-process client (as over HTTP or SSE) G6 does not see the writes: retries stay bounded,
+    counted at the handoff, and every row says its evidence is "inferred"."""
+    from g6.core.repair_log import flush
 
-    real, held = consent_transport._written, []
-
-    def look(stream):
-        reader = threading.Thread(target=cloud_consent.grants, daemon=True)
-        reader.start()
-        reader.join(5)
-        held.append(reader.is_alive())
-        return real(stream)
-    monkeypatch.setattr(consent_transport, "_written", look)
-    replies = _session([("g6_select", {"task": "a", "phase": "verify"}), ("g6_select", {"task": "a", "phase": "x"})],
-                       seen=False)          # the inferred count: G6 looks at the stream, as on HTTP or SSE
-    assert [r["ok"] for r in replies] == [True, False] and held and not any(held), held
+    replies = _session([("g6_select", {"task": "a", "phase": "one"}), ("g6_select", {"task": "a", "phase": "one"})],
+                       seen=False)
+    assert [r["repair"]["retries_left"] for r in replies] == [2, 0] and replies[1]["repair"]["by"] == "person"
+    assert flush(10)
+    rows = [json.loads(line) for line in (home / "repairs" / "repairs.jsonl").read_text("utf-8").splitlines()]
+    assert rows and {row["evidence"] for row in rows} == {"inferred"}, rows
 
 
 def _grant_calls(value: object) -> list[dict]:

@@ -291,7 +291,7 @@ def install(server) -> None:
 
     class ConsentEgress(Middleware):
         async def on_call_tool(self, context, call_next):
-            from g6.mcp.consent_transport import call_body, install as install_transport, prepare, settled
+            from g6.mcp.consent_transport import call_body, install as install_transport, prepare
             from g6.mcp.repair import Record
             ctx = context.fastmcp_context
             session = None
@@ -306,8 +306,6 @@ def install(server) -> None:
             with policy.collect_sources() as capture:
                 capture.client_arguments = deepcopy(args)
                 tool = await server.get_tool(context.message.name)
-                # the replies this session already sent are counted (or not) before this call is assessed
-                settled(session)
                 # The source wrapper has *args/**kwargs. FastMCP/Pydantic can
                 # discard extra keys on that wrapper before signature.bind sees
                 # them, including an agent's purported answer to a dialog.

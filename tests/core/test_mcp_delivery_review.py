@@ -118,7 +118,7 @@ def test_late_delivery_does_not_restore_an_exhausted_retry_budget(isolated_io):
 def test_stdio_failure_does_not_record_undelivered_repair(isolated_io):
     from fastmcp.tools.tool import ToolResult
     from mcp import types
-    from mcp.server.stdio import stdio_server
+    from g6.mcp.stdio import stdio_server  # G6's stdio entry: the writer whose writes G6 sees
     from mcp.shared.message import SessionMessage
     from g6.mcp import consent_transport as transport
 
