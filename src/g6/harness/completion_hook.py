@@ -79,8 +79,11 @@ def _one_prompt(session: Path) -> Any:
 def _here(cwd: str) -> tuple[Path, str] | None:
     """The repository at ``cwd`` and its HEAD; None outside a repository with a commit, where there is nothing to test the
     work against."""
+    from g6.core.storage import _elsewhere
     from g6.workforce import repo_tests
 
+    if _elsewhere(str(cwd)):   # a network or device folder is never asked about (``repo_tests.checked_repo``)
+        return None
     try:
         top = repo_tests._git(Path(cwd), "rev-parse", "--show-toplevel").decode("utf-8", "replace").strip()
         repo = repo_tests.checked_repo(top)
