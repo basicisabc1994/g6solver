@@ -261,12 +261,15 @@ class TheoryStore:
 
 
 def _row_to_theory(row: sqlite3.Row) -> Theory:
+    # a source list G6 cannot read raises: read as empty, it would let the held-out check (learning.promotion) pass on
+    # instances the theory was drawn from
     try:
-        # a list past the decoder's limits raises (UndecodableRecord): read as empty, it would let the held-out check
-        # (learning.promotion) pass on instances the theory was drawn from
-        sources = list(decode(row["source_instances"] or "[]"))
-    except (json.JSONDecodeError, TypeError):
-        sources = []
+        sources = decode(row["source_instances"] or "[]")
+    except json.JSONDecodeError:
+        sources = None
+    if not isinstance(sources, list):
+        raise ValueError(f"theory {row['theory_id']!r}: its source instances cannot be read, so the instances it was "
+                         "drawn from are not known")
     return Theory(theory_id=row["theory_id"], failure_code=row["failure_code"], instruction=row["instruction"],
                   trigger=row["trigger"], rationale=row["rationale"], prior_strength=row["prior_strength"],
                   confirmations=row["confirmations"], disconfirmations=row["disconfirmations"],

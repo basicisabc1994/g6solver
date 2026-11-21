@@ -135,18 +135,18 @@ class ScorecardStore:
 
     def promote(self, component: str, tier: int) -> MaturityScore:
         """Set ``component``'s tier by decision. Raises :class:`PromotionRefused` while it is flagged (to raise it), or
-        for T5 and above unless its latest audit passed on a reviewed rubric. Never clears a flag (audit 008, ST-009)."""
+        for T5 and above unless its latest audit passed on a reviewed rubric, which an audit line G6 cannot read after
+        its last readable one leaves unknown. Never clears a flag (audit 008, ST-009)."""
         if tier not in TIER_NAMES:
             raise ValueError(f"tier must be 0-6, got {tier!r}")
         existing = self._scores.get(component)
-        try:
-            history = self.audit_history(component)
-        except UndecodableRecord as exc:
-            if tier >= PUBLICATION_THRESHOLD:   # the line G6 cannot read may be the latest: no older audit stands in
-                raise PromotionRefused(f"refusing to promote {component} to T{tier}: its audit log holds a line G6 "
-                                       f"cannot read ({exc}), so its latest audit is not known") from None
-            history = []   # a lower tier reads no audit
-        refusal = _promotion_refusal(existing, history, tier)
+        logged = self._logged()
+        mine = [i for i, entry in enumerate(logged) if entry is not None and entry.get("component") == component]
+        if tier >= PUBLICATION_THRESHOLD and None in logged[mine[-1] + 1 if mine else 0:]:
+            # a line G6 cannot read after its last readable audit may be its latest: no older audit stands in for it
+            raise PromotionRefused(f"refusing to promote {component} to T{tier}: its audit log holds a line G6 cannot "
+                                   "read after its last readable audit, so its latest audit is not known")
+        refusal = _promotion_refusal(existing, [logged[i] for i in mine], tier)
         if refusal is not None:
             raise PromotionRefused(f"refusing to promote {component} to T{tier}: {refusal}")
         base = existing or MaturityScore(component=component)
@@ -193,6 +193,22 @@ class ScorecardStore:
             if isinstance(entry, dict) and (component is None or entry.get("component") == component):
                 found.append(entry)
         return found
+
+    def _logged(self) -> list[dict[str, Any] | None]:
+        """Every audit line in order: its entry, or ``None`` for a line G6 cannot read (malformed, not an object, or
+        past the decoder's limits), whose component is not known."""
+        if not self._audit_log.exists():
+            return []
+        out: list[dict[str, Any] | None] = []
+        for line in self._audit_log.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                entry = decode(line)
+            except (json.JSONDecodeError, UndecodableRecord):
+                entry = None
+            out.append(entry if isinstance(entry, dict) else None)
+        return out
 
 
 __all__ = ["PromotionRefused", "ScorecardStore"]

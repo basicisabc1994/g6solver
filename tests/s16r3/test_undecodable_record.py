@@ -146,6 +146,87 @@ def test_a_stopped_workers_cut_off_last_line_is_still_dropped(monkeypatch):
     assert [line['stage'] for line in lines] == ['answer'] and stopped == 'time'
 
 
+# --- the malformed variant: a record G6 cannot read for any reason -------------------------------------------------
+
+def _audit_store(tmp_path, *lines):
+    from g6.self_training.persistence import ScorecardStore
+    from g6.self_training.schema import AuditResult
+
+    store = ScorecardStore(tmp_path)
+    store.append_audit(AuditResult(component='example', tier=5, passed_threshold=True, rubric_reviewed=True))
+    with open(store.store_dir / store.AUDIT_LOG, 'a', encoding='utf-8') as log:
+        for line in lines:
+            log.write((line if isinstance(line, str) else line.model_dump_json()) + '\n')
+    return store
+
+
+@pytest.mark.parametrize('unreadable', ['{"component":"example","tier":2,"passed_threshold":fal', '[1, 2]'])
+def test_a_malformed_latest_audit_refuses_a_publication_promotion(tmp_path, unreadable):
+    from g6.self_training.persistence import PromotionRefused
+
+    store = _audit_store(tmp_path, unreadable)
+    with pytest.raises(PromotionRefused, match='latest audit is not known'):
+        store.promote('example', 6)
+    assert store.promote('example', 3).current_tier == 3
+
+
+def test_a_malformed_line_followed_by_another_components_audit_still_refuses(tmp_path):
+    from g6.self_training.persistence import PromotionRefused
+    from g6.self_training.schema import AuditResult
+
+    store = _audit_store(tmp_path, '{"component":"exam', AuditResult(component='other', tier=1))
+    with pytest.raises(PromotionRefused, match='latest audit is not known'):
+        store.promote('example', 6)
+
+
+def test_a_malformed_line_before_the_latest_readable_audit_decides_nothing(tmp_path):
+    from g6.self_training.schema import AuditResult
+
+    store = _audit_store(tmp_path, '{"component":"exam',
+                         AuditResult(component='example', tier=5, passed_threshold=True, rubric_reviewed=True))
+    assert store.promote('example', 6).current_tier == 6
+
+
+@pytest.mark.parametrize('stored', ['["i1", ', '5', '{"i1": 1}'])
+def test_a_theory_whose_sources_are_malformed_is_not_read_as_having_none(tmp_path, stored):
+    from g6.learning.schema import Theory
+    from g6.learning.theory_store import TheoryStore
+
+    store = TheoryStore(tmp_path / 'theories.db', scope='s')
+    theory = Theory.new('G6_E_X', 'do the thing', source_instances=['i1'])
+    store.add_candidates([theory])
+    store._conn.execute('UPDATE theories SET source_instances=? WHERE theory_id=?', (stored, theory.theory_id))
+    store._conn.commit()
+    with pytest.raises(ValueError, match='source instances'):
+        store.get(theory.theory_id)
+    store.close()
+
+
+def test_a_malformed_final_result_never_resurrects_an_earlier_one():
+    from g6.agents.agent_claude.adapter import _result
+
+    earlier = json.dumps({'type': 'result', 'is_error': False, 'result': 'old success'})
+    assert _result(earlier + '\n{"type":"result","is_error":true,"result":"fai') is None
+    assert _result(earlier + '\n{"type":"system"}\nnot json') == json.loads(earlier)
+
+
+@pytest.mark.parametrize('reply', [
+    '{"answer": "outer", "data": [{"answer": "inner"}] oops}',        # balanced, malformed
+    '{"answer": "outer", "data": {"answer": "inner"}',                 # never closed
+])
+def test_a_malformed_outer_object_never_promotes_an_inner_answer(reply):
+    from g6.reasoning.steps import first_json_object
+
+    with pytest.raises(ValueError):
+        first_json_object(reply)
+
+
+def test_a_malformed_object_beside_the_answer_is_still_passed_over():
+    from g6.reasoning.steps import first_json_object
+
+    assert first_json_object('the set {1, 2}, so {"answer": "3"}') == {'answer': '3'}
+
+
 # --- the class: a translation inside a handler of the module's own ----------------------------------------------------
 
 LIMITS = {'RecursionError', 'MemoryError'}

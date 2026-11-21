@@ -34,13 +34,14 @@ def _escape_lone_backslashes(blob: str) -> str:
 
 
 def first_json_object(text: str) -> dict:
-    """The first balanced ``{...}`` in ``text`` that parses as a JSON object. Raises ``ValueError``, and
-    ``UndecodableRecord`` (a ``ValueError``) for one past the decoder's limits, never reading an object inside it."""
+    """The first balanced ``{...}`` in ``text`` that parses as a JSON object. Raises ``ValueError``. A balanced span
+    that does not parse is passed over whole, never an object inside it read as the reply's; a ``{`` never closed, or a
+    span past the decoder's limits (``UndecodableRecord``, a ``ValueError``), raises, since what it holds is not known."""
     if not text:
         raise ValueError("empty response")
     start = text.find("{")
     while start != -1:
-        depth, in_str, esc = 0, False, False
+        depth, in_str, esc, end = 0, False, False, -1
         for i in range(start, len(text)):
             c = text[i]
             if in_str:
@@ -57,14 +58,17 @@ def first_json_object(text: str) -> dict:
             elif c == "}":
                 depth -= 1
                 if depth == 0:
-                    try:
-                        value = decode(_escape_lone_backslashes(text[start:i + 1]))
-                    except json.JSONDecodeError:
-                        break
-                    if isinstance(value, dict):
-                        return value
+                    end = i
                     break
-        start = text.find("{", start + 1)
+        if end == -1:
+            raise ValueError("an object in the response is never closed")
+        try:
+            value = decode(_escape_lone_backslashes(text[start:end + 1]))
+        except json.JSONDecodeError:
+            value = None
+        if isinstance(value, dict):
+            return value
+        start = text.find("{", end + 1)
     raise ValueError("no JSON object in response")
 
 

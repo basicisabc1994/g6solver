@@ -119,17 +119,16 @@ _HALF_CHANGED = (" Claude Code had leave to edit the workspace and its run did n
 
 def _result(text: str) -> dict[str, Any] | None:
     """The result Claude Code printed last (``--output-format json``): the last line that is a JSON object of type
-    ``result``, whatever it printed before it. ``None`` when a line after it is past the decoder's limits: that line may
-    be the result it printed last, and no earlier one stands in for it."""
+    ``result``, whatever it printed before it. ``None`` when a line after it that opens an object cannot be read
+    (malformed, cut off, or past the decoder's limits): that line may be the result it printed last, and no earlier one
+    stands in for it."""
     for line in reversed(text.splitlines()):
         line = line.strip()
         if not line.startswith("{"):
             continue
         try:
             found = decode(line)
-        except json.JSONDecodeError:
-            continue
-        except UndecodableRecord:
+        except (json.JSONDecodeError, UndecodableRecord):
             return None
         if isinstance(found, dict) and found.get("type") == "result":
             return found
