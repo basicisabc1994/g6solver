@@ -18,9 +18,7 @@ PLACES = {
     "bundles/server.py": ("caller_from_settings", "outside model CLI configuration"),
     "cegis/runner.py": ("_call", "isolated fixed CEGIS worker, component protocol"),
     "cli/setup.py": ("register_clients", "outside client registration command"),
-    "code/_build.py": ("run_checks", "candidate code under core sandbox"),
     "code/_roots.py": ("load", "configuration reader, no child"),
-    "code/adapt_library_synthesizer/ingestion.py": ("pdf_text", "PDF parser under core sandbox"),
     "code/swe_diagnostics/read.py": ("detect_build_env", "repository dependency description, no child"),
     "code/swe_diagnostics/block.py": ("detect_build_env", "repository dependency description, no child"),
     "cogarch/cog_arch_aixi/agent.py": ("episode environment register_environment unregister_environment", "simulation environment, no child"),
@@ -44,8 +42,10 @@ PLACES = {
                                                                 "loop children's one transport since the issuance window"),
     "core/process_tree.py": ("__init__", "generic process transport, takes caller environment"),
     "core/sandbox.py": ("run_script", "isolated candidate scripts, deliberately imports sandbox code"),
+    # b076aa08: the one receiver of core sandbox's run, for code/_build.run_checks, the library synthesizer's
+    # pdf_text and distillation's run_batch (candidate code and the PDF parser, still under core sandbox)
+    "core/guidance_builders.py": ("script_run", "core sandbox's run, its constructed text marked for the agent"),
     "csf/rollback.py": ("_git", "outside Git"),
-    "distillation/sandbox.py": ("run_batch", "candidate scripts under core sandbox"),
     "formal/four_valued.py": ("evaluate _env", "logic environment, no child"),
     "harness/completion_loop.py": ("run", "reply envelope named env, no child"),
     "harness/patch_review.py": ("_reply", "reply envelope named env, no child"),
