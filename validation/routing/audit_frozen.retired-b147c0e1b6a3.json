@@ -1,0 +1,11 @@
+{
+  "retired": {
+    "protocol_digest": "6bae13591c0d3a3e7b62125088fb5678df98afbc585cff46ca9e71b385be34b3",
+    "retention_tasks_digest": "f292aa18a8d96d675c75597c7a6734a0959484641dc9284ccabb26aac0c09e2d",
+    "fixtures_digest": "119eae181f1fefaffbe1e0b5e7779e913423c507278aa2d2f4d5f5eb9e56036a",
+    "checks_digest": "d455f82c834768be876d5cd7bf1a09393351d72d2cec70a0fa5be2d4f397db8f",
+    "previous_moment_pins_digest": "69e2cb49644e427bfc695e6c2b01c735f345fac90e328ab91af40235b90bbddd"
+  },
+  "reason": "2026-11-17 before any arm, audit authoring correction: module imports avoid unused repair-only imports and solution cues in the rounding, ownership and UTC seeds. Defect behavior, prompts, budgets, checks and every existing bar remain unchanged. Initial fixture bytes are archived beside this amendment.",
+  "digest": "b147c0e1b6a331ff2b9d93830265b3d378892424bcfcf7f512fa3051eebd2ebe"
+}

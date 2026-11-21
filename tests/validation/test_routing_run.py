@@ -251,6 +251,67 @@ def test_a_session_gets_only_its_tasks_servers_through_the_trial_server() -> Non
     assert f'mcp_servers.g6.env.{run.WITHHOLD_ENV}="g6_find,g6_describe"' in codex
 
 
+def test_a_replys_code_is_its_own_envelopes_not_a_code_its_text_mentions() -> None:
+    """The moment pilot (2026-11-16) read g6_help's answer as refused with G6_E_PROMOTION_LAW, a code its help text
+    only names. A code is the reply's own: the envelope's warning card, or an error that leads with it."""
+    help_text = "Build agents from parts you can check.\nA promotion is refused with G6_E_PROMOTION_LAW when ..."
+    assert run._code([{"type": "text", "text": help_text}]) == ""
+    refused = json.dumps({"ok": False, "completion_state": "blocked-escalated",
+                          "warning_card": {"code": "G6_E_CLOUD_CONSENT_REQUIRED", "message": "see G6_E_OTHER"}})
+    assert run._code([{"type": "text", "text": refused}]) == "G6_E_CLOUD_CONSENT_REQUIRED"
+    job = json.dumps({"ok": True, "job_id": "b5", "status": "completed",
+                      "result": {"ok": False, "error": "[G6_E_CLOUD_CONSENT_REQUIRED] Results were withheld ...",
+                                 "warning_card": {"code": "G6_E_CLOUD_CONSENT_REQUIRED"}}})
+    assert run._code([{"type": "text", "text": job}]) == "G6_E_CLOUD_CONSENT_REQUIRED"      # the pilot's real shape
+    pending = json.dumps({"ok": True, "job_id": "b5", "status": "pending", "completion_state": "qualified-draft"})
+    assert run._code([{"type": "text", "text": pending}]) == ""
+    led = json.dumps({"ok": False, "error": "[G6_E_SENSITIVE_COMPONENT_DENIED] patch_review.review runs ..."})
+    assert run._code([{"type": "text", "text": led}]) == "G6_E_SENSITIVE_COMPONENT_DENIED"
+    answered = json.dumps({"ok": True, "completion_state": "qualified-draft", "result": {"note": "G6_E_X is a code"}})
+    assert run._code([{"type": "text", "text": answered}]) == ""
+    assert run._code("[G6_E_SENSITIVE_COMPONENT_DENIED] patch_review.review is not allowed") == \
+        "G6_E_SENSITIVE_COMPONENT_DENIED"
+    assert run._code({"message": "Error calling tool 'g6_review_patch': [G6_E_INPUT_VALIDATION] bad repo"}) == \
+        "G6_E_INPUT_VALIDATION"
+
+
+@pytest.mark.parametrize(("reply", "expected"), [
+    ("Note: G6_E_X is documented here", ""),
+    ("README.md says the refusal is: G6_E_X", ""),
+    (json.dumps({"error": "Something: G6_E_X"}), ""),
+    ("G6_E_A op: G6_E_B is mentioned later", "G6_E_A"),
+], ids=["note", "readme-quote", "json-error", "leading-code-wins"])
+def test_a_replys_leading_code_allows_only_stack_transport_prefixes(reply: str, expected: str) -> None:
+    assert run._code(reply) == expected
+    assert run._code([{"type": "text", "text": reply}]) == expected
+    assert run._code({"message": reply}) == expected
+    for text in ("G6_E_X details", "[G6_E_X] op: details",
+                 "Error calling tool 'g6_find': G6_E_X details",
+                 "Error executing tool g6_find: [G6_E_X] details"):
+        assert run._code(text) == "G6_E_X"
+        assert run._code(json.dumps({"error": text})) == "G6_E_X"
+
+
+def test_a_command_that_only_names_a_pytest_file_is_no_test_run() -> None:
+    assert not run.TEST_COMMAND.search("powershell -Command \"rg --files -g pytest.ini -g setup.cfg\"")
+    assert not run.TEST_COMMAND.search("Get-Content pytest-plugins.txt")
+    for command in ("python -m pytest tests/test_money.py -q", "pytest -q", "python -B -m pytest -p no:cacheprovider",
+                    "cd x && pytest", "python -m unittest discover"):
+        assert run.TEST_COMMAND.search(command), command
+
+
+def test_a_codex_session_lets_its_trial_servers_tools_run_without_an_approval_nobody_can_give() -> None:
+    """`codex exec` asks no one: with no setting, every MCP call fails "requires approval, but approval policy is
+    never" (seen in the moment pilot, 2026-11-16). Each trial server's tools are approved, as a person who always
+    allows G6's tools would set them; nothing else is approved and the sandbox stays workspace-write."""
+    config = run.mcp_config({"servers": ["g6", "abstraction"]}, python="python")
+    codex = run.CLIENTS["codex"].argv("codex", Path("mcp.json"), config)
+    for name in ("g6", "abstraction"):
+        assert f'mcp_servers.{name}.default_tools_approval_mode="approve"' in codex
+    assert codex[codex.index("--sandbox") + 1] == "workspace-write"
+    assert not any("bypass" in part or part == "--approve-for-me" for part in codex)
+
+
 def test_the_codex_parser_reads_calls_and_the_final_message() -> None:
     events = "\n".join([
         json.dumps({"type": "item.completed", "item": {"type": "mcp_tool_call", "server": "g6", "tool": "g6_invoke",

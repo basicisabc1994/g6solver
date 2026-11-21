@@ -1,0 +1,11 @@
+{
+  "retired": {
+    "protected": [
+      "README.md",
+      "classify.py"
+    ],
+    "why": "A case is added to cases.json and nothing else: the code and the README stay as they are."
+  },
+  "reason": "2026-11-17 before any arm: research audit; lead scoring rulings; reply delivery merged. Replace seven tasks, revise four, isolate cue-free fixtures, bind provenance and unchanged-test checks; count only post-edit failures, allow selector before refusal remedy, report attempted beside recovery. All routing and outcome bars remain unchanged.",
+  "digest": "32b60840bca3175e32418fe55aca688c8ed982d4fa6a6b58f79f43234124b3e9"
+}

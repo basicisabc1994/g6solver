@@ -1,0 +1,6 @@
+{
+  "protected": [
+    "policy.txt"
+  ],
+  "why": "A line is added to README.md and nothing else: the policy itself stays as it is."
+}

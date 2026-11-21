@@ -1,0 +1,8 @@
+{
+  "retired": {
+    "protected": [],
+    "why": "The notes repository holds only README.md, which the task asks to extend, so no fixture file is protected here; a change to it is asked for."
+  },
+  "reason": "2026-11-17 before any arm: research audit; lead scoring rulings; reply delivery merged. Replace seven tasks, revise four, isolate cue-free fixtures, bind provenance and unchanged-test checks; count only post-edit failures, allow selector before refusal remedy, report attempted beside recovery. All routing and outcome bars remain unchanged.",
+  "digest": "066ad67d692981bc47eef7feb9225ae4f875f6426f4b2da1fe18755627e40640"
+}

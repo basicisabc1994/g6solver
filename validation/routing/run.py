@@ -28,10 +28,12 @@ session was started when this was built, so neither has been observed: README.md
     python validation/routing/run.py run --client codex --cohort development --out <folder>
     python validation/routing/run.py score --client codex --cohort development --out <folder>
     python validation/routing/run.py release --out <codex's final folder> --out <claude's final folder>
+    python validation/routing/run.py outcome --out <moment before folder> --out <moment after folder>
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import functools
 import hashlib
@@ -73,6 +75,34 @@ WITHHOLD_ENV = "G6_ROUTING_WITHHOLD"
 SENSITIVE_ENV = "G6_MCP_SENSITIVE"
 GRACE_S = 60.0
 UNFINISHED = "G6_E_ROUTING_SESSION_UNFINISHED"
+#: The moment-of-need cohort: its frozen list, its bars, their pins, and the fixtures only it uses (kept apart from
+#: ``fixtures/`` so the development cohort's bound digest of the fixtures does not move).
+MOMENT_TASKS, MOMENT_GATES, MOMENT_PINS = HERE / "moment_tasks.json", HERE / "moment_gates.json", HERE / "moment_frozen.json"
+MOMENT_FIXTURES = HERE / "moment_fixtures"
+#: The moment cohort's outcome arm: the held-out checks (one folder per task id, never copied where a session reads)
+#: and the outcome bar, both pinned in ``moment_frozen.json`` beside the list and the moment bars.
+OUTCOME, OUTCOME_GATES = HERE / "moment_outcome", HERE / "moment_outcome_gates.json"
+#: The sources the person grants for every moment session beyond the fixtures, and those a task's session starts
+#: without (its own frozen file, so the frozen task list is untouched), pinned beside the list.
+MOMENT_WITHHELD = HERE / "moment_withheld.json"
+#: What ``moment_frozen.json`` pins. ``fixtures_digest`` binds every file of every fixture a moment task names
+#: (``fixtures/*`` and ``moment_fixtures/ledger``), so a run on a fixture changed after the freeze refuses first.
+MOMENT_PIN_KEYS = ("bars_digest", "tasks_digest", "outcome_bars_digest", "checks_digest", "withheld_digest",
+                   "fixtures_digest")
+#: What a session's final diff leaves out: what the interpreter and pytest write as they run.
+UNKEPT = (":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/.pytest_cache/**", ":(exclude,glob)**/*.pyc")
+#: The Claude Code plugin this tree ships (hooks and skills): a moment session of Claude Code loads it.
+PLUGIN = HERE.parents[1] / "plugins" / "g6"
+#: What the moment cohort's Claude Code arm may run beyond the development arm's tools: the tests, and nothing else.
+TEST_RUNS = ("Bash(python -m pytest:*)", "Bash(python3 -m pytest:*)", "Bash(py -m pytest:*)", "Bash(pytest:*)")
+#: A moment session is not started while the person's decisions share a source the cohort says a session lacks.
+NOT_FRESH = "G6_E_ROUTING_NOT_FRESH"
+#: A moment session is not started while the person's decisions do not share a source its task needs.
+NOT_GRANTED = "G6_E_ROUTING_NOT_GRANTED"
+#: A moment session is not started while a review's reply, asked in a copy of its own G6 home, would not come back.
+REPLY_WITHHELD = "G6_E_ROUTING_REPLY_WITHHELD"
+#: Where a G6 home keeps the reviews it saved; a review's reply names this folder (``g6.mcp.review_reply.finish``).
+REVIEWS = "reviews"
 
 
 def _load(name: str, path: Path) -> Any:
@@ -119,6 +149,12 @@ def _shown() -> dict[str, str]:
     return out
 
 
+def development_fixtures() -> dict[str, Path]:
+    """Only the frozen development inventory binds its routes; moment-only additions are separate."""
+    tasks = freeze.bound(TASKS, pins()["tasks_digest"], what="the development task list")
+    return {name: FIXTURES / name for name in sorted({task["fixture"] for task in tasks["tasks"]})}
+
+
 def route_digests(manifest: Any = None) -> dict[str, str]:
     """Route id -> the digest that binds a route: its anchor, its members, what its own section of the root skill
     says, the bytes of each of its detail files, what the servers show for each of its tools (description and input
@@ -159,7 +195,7 @@ def route_digests(manifest: Any = None) -> dict[str, str]:
         "root": _sha(rest), "installed": {path: found for path, found in installed.items() if path not in owned},
         "shown": {key: found for key, found in sorted(shown.items()) if key not in routed},
         "spoken": {tool: text for tool, text in sorted(spoken.items()) if f"mcp:g6/{tool}" not in routed},
-        "fixtures": {path.name: freeze.tree_digest(path) for path in sorted(FIXTURES.iterdir()) if path.is_dir()}})
+        "fixtures": {name: freeze.tree_digest(path) for name, path in development_fixtures().items()}})
     return out
 
 
@@ -251,6 +287,234 @@ def load_tasks(path: Path = TASKS, *, cohort: str = "development") -> dict[str, 
     return tasks
 
 
+def moment_pins() -> dict[str, str]:
+    """The pinned digests of the moment bars, the moment task list, the outcome bar and the held-out checks
+    (``moment_frozen.json``)."""
+    try:
+        return score.pinned(MOMENT_PINS, MOMENT_PIN_KEYS)
+    except score.TaskError as exc:
+        raise freeze.FrozenError(str(exc)) from exc
+
+
+def load_moment_gates() -> dict[str, Any]:
+    """The moment bars, when they are the pinned ones."""
+    return score.validate_moment_gates(freeze.bound(MOMENT_GATES, moment_pins()["bars_digest"], what="the moment bars"))
+
+
+def load_outcome_gates() -> dict[str, Any]:
+    """The outcome bar, when it is the pinned one."""
+    return score.validate_outcome_gates(freeze.bound(OUTCOME_GATES, moment_pins()["outcome_bars_digest"],
+                                                     what="the outcome bar"))
+
+
+def load_withheld() -> dict[str, Any]:
+    """The moment cohort's per-task withheld sources (``moment_withheld.json``), when they are the pinned ones, checked
+    against the frozen moment list."""
+    return score.validate_moment_withheld(freeze.bound(MOMENT_WITHHELD, moment_pins()["withheld_digest"],
+                                                       what="the moment cohort's withheld sources"), load_moment())
+
+
+def fixtures_digest() -> str:
+    """The digest of every fixture a task of the frozen moment list names: fixture name -> the digest of its folder
+    as it stands (each file's path and the sha256 of its bytes)."""
+    return freeze.digest({name: freeze.tree_digest(path) for name, path in active_moment_fixtures().items()})
+
+
+def active_moment_fixtures() -> dict[str, Path]:
+    """Resolve every fixture in the active bound inventory, including moment-only copies."""
+    tasks = freeze.bound(MOMENT_TASKS, moment_pins()["tasks_digest"], what="the moment task list")
+    return {name: fixture_dir(name) for name in sorted({task["fixture"] for task in tasks["tasks"]})}
+
+
+def fixture_paths(task: Mapping[str, Any]) -> dict[str, str]:
+    """The file roles for a task's fixture; checks and probes use this same table."""
+    return dict(score.fixture_paths.FILES[task["fixture"]])
+
+
+def moment_fixtures() -> str:
+    """The digest of the moment fixtures as they stand, when it is the pinned one: a fixture changed after the freeze
+    runs and scores nothing."""
+    found = fixtures_digest()
+    if found != moment_pins()["fixtures_digest"]:
+        raise freeze.FrozenError(f"the moment fixtures have digest {found}, and {moment_pins()['fixtures_digest']} is "
+                                 "the one pinned: a fixture file changed since the cohort was frozen")
+    return found
+
+
+def outcome_checks() -> str:
+    """The digest of the held-out checks as they stand, when it is the pinned one: a check changed after the freeze
+    scores nothing."""
+    found = freeze.tree_digest(OUTCOME)
+    if found != moment_pins()["checks_digest"]:
+        raise freeze.FrozenError(f"the held-out checks ({OUTCOME.name}) have digest {found}, and "
+                                 f"{moment_pins()['checks_digest']} is the one pinned")
+    return found
+
+
+def load_moment(path: Path = MOMENT_TASKS) -> dict[str, Any]:
+    """The moment task list at ``path``, checked: inside its format, its header the frozen list's own, and every task
+    the frozen list's own (a list may hold fewer tasks, to try one first, never a changed one). The moment list binds
+    no route: it is run before and after the guidance changes, and each session records what guidance it had."""
+    tasks = score.validate_moment_tasks(freeze.read(path))
+    frozen = freeze.bound(MOMENT_TASKS, moment_pins()["tasks_digest"], what="the moment task list")
+    if {k: v for k, v in tasks.items() if k != "tasks"} != {k: v for k, v in frozen.items() if k != "tasks"}:
+        raise freeze.FrozenError("the moment list's header is not the frozen list's own")
+    own = {task["id"]: task for task in frozen["tasks"]}
+    for task in tasks["tasks"]:
+        if own.get(task["id"]) != task:
+            raise freeze.FrozenError(f"task {task['id']} is not the frozen moment list's own task")
+    return tasks
+
+
+def user_home() -> Path:
+    """The person's home folder, where ``g6 setup`` writes the guidance each client reads."""
+    return Path.home()
+
+
+def guidance(workspace: Path, client: "Client", plugin: Path | None = None) -> dict[str, Any]:
+    """The digests of the G6 guidance a session could read: the skill installed in its workspace, the plugin it
+    loaded, what the servers show (instructions, tool descriptions and schemas), and what ``g6 setup`` writes in the
+    person's home for each client (the skill folders, and Codex's ``AGENTS.md``). An absent one is "". The labels name
+    no folder of the person's machine. The before and after arms are compared on these."""
+    from g6.core import skills
+
+    home = user_home()
+
+    def tree(path: Path) -> str:
+        return freeze.tree_digest(path) if path.is_dir() else ""
+
+    def one(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
+
+    return {"workspace_skill": tree(Path(workspace) / client.skills_dir / skills.GUIDE),
+            "plugin": tree(plugin) if plugin is not None else "", "servers": freeze.digest(_shown()),
+            "user": {f"~/.claude/skills/{skills.GUIDE}": tree(home / ".claude" / "skills" / skills.GUIDE),
+                     f"~/.codex/skills/{skills.GUIDE}": tree(home / ".codex" / "skills" / skills.GUIDE),
+                     "~/.codex/AGENTS.md": one(home / ".codex" / "AGENTS.md")}}
+
+
+def _plugin(scratch: Path) -> Path | None:
+    """A copy of the plugin this tree ships, for one session: its hooks and skills as shipped, its ``.mcp.json`` left
+    out because the session's trial server stands in its place. ``None`` when this tree ships no plugin."""
+    if not PLUGIN.is_dir():
+        return None
+    target = Path(scratch) / "plugin"
+    shutil.copytree(PLUGIN, target, ignore=shutil.ignore_patterns(".mcp.json", "__pycache__"))
+    return target
+
+
+def _fresh(tasks: Mapping[str, Any], provider: str, withheld: Mapping[str, Any], task_id: str) -> None:
+    """Refuse a moment session, before anything starts, while the person's decisions share with ``provider`` a source
+    the cohort says a session starts without and the person is not asked to grant (the component catalogue included:
+    it is not pre-seeded), or do not share a granted source the task needs (``withheld``: every granted source but
+    those the task withholds; a withheld one is taken out of the session's copy by ``trial_home``)."""
+    from g6.agents._runtime.model import AgentRefusal
+    from g6.core import cloud_consent as cloud
+
+    lacks = [source for source in tasks["ungranted"] if source not in withheld["granted"]]
+    needs = [source for source in withheld["granted"] if source not in withheld["withheld"].get(task_id, ())]
+    try:
+        held = [source for source in lacks if cloud.preview(source, provider)[0]]
+        missing = [source for source in needs if not cloud.preview(source, provider)[0]]
+    except (cloud.LLMError, OSError, ValueError) as exc:
+        raise AgentRefusal(cloud.STATE_UNAVAILABLE, "the person's sharing decisions could not be read "
+                                                    f"({type(exc).__name__})", detail={"started": False}) from None
+    if held:
+        raise AgentRefusal(NOT_FRESH, f"{', '.join(held)} {'is' if len(held) == 1 else 'are'} shared with {provider}, "
+                                      "and a moment session starts without it: revoke it (g6_cloud_revoke) for the "
+                                      "run, or run where it is not shared", detail={"started": False})
+    if missing:
+        raise AgentRefusal(NOT_GRANTED, f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} not shared "
+                                        f"with {provider}, and this task's session starts with it: grant it in the "
+                                        "client's own dialog (run.py sources lists it)", detail={"started": False})
+
+
+def _shares(home: Path, provider: str, sources: Sequence[str]) -> list[str]:
+    """The ``sources`` that the decisions in G6 home ``home`` do not share with ``provider``, read as G6 reads them
+    (``cloud_consent``'s own opener, which checks the chain against its checkpoint, and its own reading of the
+    decisions)."""
+    from g6.core import cloud_consent as cloud
+
+    folder = Path(home) / "cloud_consent"
+    decisions = cloud._decisions(cloud._open(folder)) if folder.is_dir() else {}
+    return [source for source in sources
+            if (decisions.get((cloud.source_id(source), provider)) or {}).get("kind") != "grant"]
+
+
+def reply_probe(home: Path, workspace: Path, client: str) -> dict[str, Any]:
+    """Whether a review's reply comes back in a session's G6 home: ``server.probe`` (G6's own server, built as the
+    session's is, in this process, over an in-memory connection) with ``home`` as its G6 home, the review allowed and
+    model calls off, on ``workspace``, from ``client``. The settings are this process's only while it runs. The
+    runner makes the home and the workspace again before the session starts."""
+    probe = (sys.modules.get("g6_validation_routing_server")
+             or _load("g6_validation_routing_server", HERE / "server.py")).probe
+    given = {"G6_HOME": str(home), SENSITIVE_ENV: "patch_review.review", "G6_DISABLE_LLM": "1"}
+    before = {name: os.environ.get(name) for name in given}
+    os.environ.update(given)
+    try:
+        return probe("g6", str(workspace), client)
+    finally:
+        for name, value in before.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _ready(task: Mapping[str, Any], home: Path, workspace: Path, withheld: Mapping[str, Any],
+           withhold: Sequence[str], client: "Client", session: dict[str, Any]) -> None:
+    """Refuse a moment session before it starts unless its own G6 home is as the task needs, asked of that home and
+    not of the person's: through G6's own reader, the session's copy shares every source the task starts with (its
+    environment, its fixture, its workspace, the folder its home keeps reviews in, and each granted source it does
+    not withhold) and none it withholds; and through G6's own server (``reply_probe``), a review's reply comes back,
+    or, for a task that withholds sources, is withheld on them. The probe's answer goes in the record
+    (``reply_probe``)."""
+    from g6.agents._runtime.model import AgentRefusal
+    from g6.core import cloud_consent as cloud
+
+    needs = ["agent_environment", f"routing-fixture.{task['fixture']}", cloud.repository_source(workspace),
+             cloud.repository_source(Path(home) / REVIEWS),
+             *(source for source in withheld["granted"] if source not in withhold)]
+    missing = _shares(home, client.provider, needs)
+    if missing:
+        raise AgentRefusal(NOT_GRANTED, f"the session's own copy of the sharing decisions does not share "
+                                        f"{', '.join(missing)} with {client.provider}", detail={"started": False})
+    if withhold and len(_shares(home, client.provider, withhold)) != len(withhold):
+        raise AgentRefusal(NOT_FRESH, "the session's own copy shares a source its task withholds",
+                           detail={"started": False})
+    found = reply_probe(home, workspace, client.name)
+    session["reply_probe"] = {key: found.get(key) for key in ("reply", "code", "unshared")}
+    if withhold:
+        named = [source for source in withhold if source in found.get("named", ())]
+        if found.get("reply") != "withheld" or not named or not set(named) <= set(found.get("unshared", ())):
+            raise AgentRefusal(NOT_FRESH, "a review's reply in a copy of the session's home was not withheld on the "
+                                          f"sources the task withholds ({found.get('reply')})", detail={"started": False})
+    elif found.get("reply") != "returned":
+        raise AgentRefusal(REPLY_WITHHELD, f"a review's reply in a copy of the session's home was {found.get('reply')}"
+                                           f" (unshared: {', '.join(found.get('unshared') or ()) or 'none named'}); the"
+                                           " session would get no review result", detail={"started": False})
+
+
+@contextlib.contextmanager
+def _environment(runner: Any, extra: Mapping[str, str]) -> Any:
+    """For one session, ``runner``'s client is given ``extra`` beside its own environment (the plugin's hooks start G6
+    in the client's environment, so they get the session's G6 home); afterwards the runner is as it was. A stand-in
+    with no environment, or nothing extra, is left alone."""
+    base = getattr(runner, "environment", None)
+    if base is None or not extra:
+        yield
+        return
+    own = vars(runner).get("environment")
+    runner.environment = lambda scratch: {**base(scratch), **extra}
+    try:
+        yield
+    finally:
+        if own is None:
+            del runner.environment
+        else:
+            runner.environment = own
+
+
 @dataclass(frozen=True)
 class Client:
     name: str
@@ -260,6 +524,7 @@ class Client:
     argv: Callable[[str, Path, Mapping[str, Any]], list[str]]          # (program path, mcp config file, config) -> argv
     parse: Callable[[str], tuple[list[dict[str, Any]], str, float | None]]   # event text -> calls, final text, cost
     finished: Callable[[str], bool]                                    # whether the events hold the client's terminal event
+    steps: Callable[[str], list[dict[str, Any]]]                       # event text -> the session's steps, in order
 
 
 def _events(text: str) -> list[dict[str, Any]]:
@@ -366,6 +631,147 @@ def finished_codex(text: str) -> bool:
     return "turn.completed" in kinds and "turn.failed" not in kinds and "error" not in kinds
 
 
+#: A shell command that runs tests, and what a test run's output says when it failed.
+#: Only a whole command word counts: a command that names ``pytest.ini`` or ``pytest-plugins.txt`` runs no tests.
+TEST_COMMAND = re.compile(r"(?<![\w.-])(?:pytest|unittest)(?![\w.-])")
+_FAILED = re.compile(r"\b\d+ (?:failed|errors?)\b|\bExit code [1-9]")
+_G6_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
+#: Only FastMCP's and the MCP SDK's transport prefixes may precede a refused call's leading code.
+TRANSPORT_PREFIXES = (r"Error calling tool '[a-z][a-z0-9_]*': ", r"Error executing tool [a-z][a-z0-9_]*: ")
+_LEADING_CODE = re.compile(r"\s*(?:" + "|".join(TRANSPORT_PREFIXES) + r")?\[?(G6_E_[A-Z0-9_]+)\]?")
+#: Claude Code's file tools, and the argument that names the file each one changes.
+EDIT_TOOLS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
+
+
+def _said(content: Any) -> str:
+    """The text of a tool result or an error, whatever shape it came in."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(part if isinstance(part, str) else str(part.get("text", "")) if isinstance(part, dict) else ""
+                         for part in content)
+    if isinstance(content, dict):
+        return str(content.get("message", content.get("text", "")))
+    return ""
+
+
+def _code(content: Any) -> str:
+    """The ``G6_E_*`` code a reply carries as its own: how a refused call is told from an answered one. A JSON reply's
+    code is its envelope's (``warning_card.code``, else a top-level or ``error`` code); a text reply's is the code an
+    error leads with. A code the reply's text only mentions (help text, a note) is not the reply's code."""
+    text = _said(content)
+    try:
+        value = json.loads(text)
+    except ValueError:
+        value = None
+    if isinstance(value, dict) and "job_id" in value and isinstance(value.get("result"), dict):
+        value = value["result"]          # a finished job (metaharness_job) wraps the reply it ran: that reply's code
+    if isinstance(value, dict):
+        for holder in (value.get("warning_card"), value, value.get("error")):
+            code = holder.get("code") if isinstance(holder, dict) else None
+            if isinstance(code, str) and _G6_CODE.fullmatch(code):
+                return code
+        error = value.get("error")
+        found = _LEADING_CODE.match(error.split("\n", 1)[0]) if isinstance(error, str) else None
+        return found.group(1) if found else ""
+    found = _LEADING_CODE.match(text.split("\n", 1)[0])
+    return found.group(1) if found else ""
+
+
+def _step_call(server: Any, tool: Any, args: Any, valid: Any, state: str = "", code: str = "") -> dict[str, Any]:
+    return {"kind": "call", **_call(server, tool, args, valid, state), "code": code}
+
+
+def _grant_success(content: Any) -> bool:
+    """A grant's positive status, including the public sharing envelope's informational consent code."""
+    try:
+        value = json.loads(_said(content))
+    except (ValueError, RecursionError):
+        return False
+    if not isinstance(value, dict) or value.get("ok") is False or _code(content) not in ("", "G6_E_CLOUD_CONSENT"):
+        return False
+    result = value.get("result", value)
+    return isinstance(result, dict) and result.get("status") == "granted"
+
+
+def steps_claude(text: str) -> list[dict[str, Any]]:
+    """The steps of a ``claude -p --output-format stream-json`` session in the order its log holds them: each MCP
+    call (as ``parse_claude`` reads it, with the code its reply carried), each file a file tool changed, each shell
+    command that ran tests (failed when its result is an error or says tests failed), and the final message."""
+    out: list[dict[str, Any]] = []
+    pending: dict[str, dict[str, Any]] = {}
+    for event in _events(text):
+        message = event.get("message")
+        parts = message.get("content") if isinstance(message, dict) else None
+        for part in parts if isinstance(parts, list) else ():
+            if not isinstance(part, dict):
+                continue
+            name, args = part.get("name"), part.get("input")
+            if part.get("type") == "tool_use" and isinstance(name, str):
+                if name.startswith("mcp__"):
+                    step = _step_call(*_tool(name), args, True)
+                elif name in EDIT_TOOLS and isinstance(args, dict):
+                    step = {"kind": "edit", "path": str(args.get(EDIT_TOOLS[name], ""))}
+                elif name == "Bash" and isinstance(args, dict) and TEST_COMMAND.search(str(args.get("command", ""))):
+                    step = {"kind": "test", "command": str(args.get("command", "")), "failed": None}
+                else:
+                    continue
+                out.append(step)
+                pending[repr(part.get("id"))] = step
+            elif part.get("type") == "tool_result" and repr(part.get("tool_use_id")) in pending:
+                step = pending.pop(repr(part.get("tool_use_id")))
+                if step["kind"] == "call":
+                    step.update(valid=step["valid"] and part.get("is_error", False) is False,
+                                result_state=_state(part.get("content")), code=_code(part.get("content")))
+                    if step["tool"] == "g6_cloud_grant":
+                        step["remedy_succeeded"] = _grant_success(part.get("content"))
+                elif step["kind"] == "test":
+                    step["failed"] = part.get("is_error") is True or bool(_FAILED.search(_said(part.get("content"))))
+        if event.get("type") == "result":
+            said = event.get("result")
+            out.append({"kind": "final", "text": said if isinstance(said, str) else ""})
+    return out
+
+
+def steps_codex(text: str) -> list[dict[str, Any]]:
+    """The steps of a ``codex exec --json`` session in the order its log holds them: each MCP call (as
+    ``parse_codex`` reads it, with the code its reply or error carried), each file a ``file_change`` item changed,
+    each command that ran tests (failed on a non-zero exit code or a failed status), each agent message, and the
+    last agent message as the final one."""
+    out: list[dict[str, Any]] = []
+    for event in _events(text):
+        item = event.get("item")
+        if not isinstance(item, dict) or event.get("type") != "item.completed":
+            continue
+        kind = item.get("type")
+        if kind == "mcp_tool_call":
+            result = item.get("result") if isinstance(item.get("result"), dict) else {}
+            out.append(_step_call(item.get("server"), item.get("tool"), item.get("arguments"),
+                                  item.get("status") == "completed" and not item.get("error"),
+                                  _state(result.get("content")),
+                                  _code(result.get("content")) or _code(item.get("error"))))
+            if item.get("tool") == "g6_cloud_grant":
+                out[-1]["remedy_succeeded"] = _grant_success(result.get("content"))
+        elif kind == "file_change":
+            changes = item.get("changes")
+            out += [{"kind": "edit", "path": str(change.get("path", ""))}
+                    for change in (changes if isinstance(changes, list) else ()) if isinstance(change, dict)]
+        elif kind == "command_execution":
+            command = item.get("command")
+            command = " ".join(map(str, command)) if isinstance(command, list) else str(command or "")
+            if TEST_COMMAND.search(command):
+                code = item.get("exit_code")
+                out.append({"kind": "test", "command": command,
+                            "failed": (type(code) is int and code != 0) or item.get("status") == "failed"})
+        elif kind == "agent_message":
+            out.append({"kind": "text", "text": item.get("text") if isinstance(item.get("text"), str) else ""})
+    for step in reversed(out):
+        if step["kind"] == "text":
+            step["kind"] = "final"
+            break
+    return out
+
+
 def reading(client: str, data: bytes | None, exit_code: Any) -> dict[str, Any]:
     """The one reading of a session: its state, code, calls, final text, cost and questions, from its event log's
     bytes and its exit code. ``run`` writes it and ``read_sessions`` (so ``score`` and ``release``) takes it again
@@ -377,7 +783,7 @@ def reading(client: str, data: bytes | None, exit_code: Any) -> dict[str, Any]:
     finished = data is not None and type(exit_code) is int and exit_code == 0 and spec.finished(text)
     return {"state": "completed" if finished else "interrupted", "code": "" if finished else UNFINISHED,
             "calls": tuple(calls), "final_text": final, "cost_usd": cost,
-            "questions": sum(call["tool"] in DIALOG_TOOLS for call in calls)}
+            "questions": sum(call["tool"] in DIALOG_TOOLS for call in calls), "timeline": tuple(spec.steps(text))}
 
 
 def _claude_argv(program: str, config_file: Path, config: Mapping[str, Any]) -> list[str]:
@@ -389,12 +795,28 @@ def _claude_argv(program: str, config_file: Path, config: Mapping[str, Any]) -> 
             "Agent", "--max-turns", "30"]
 
 
+def _claude_moment_argv(program: str, config_file: Path, config: Mapping[str, Any], plugin: Path | None) -> list[str]:
+    """The moment cohort's Claude Code session: the development arm's, with the plugin this tree ships loaded (its
+    hooks and skills, as installed) and the tests allowed to run, so a test run can fail and be seen. The rest of the
+    shell, the web and sub-agents stay refused."""
+    servers = [f"mcp__{name}" for name in config["mcpServers"]]
+    return [program, "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "default",
+            "--setting-sources", "project", "--strict-mcp-config", "--mcp-config", str(config_file),
+            *(["--plugin-dir", str(plugin)] if plugin is not None else []),
+            "--allowedTools", *servers, "Read", "Glob", "Grep", "Edit", "Write", "Skill", *TEST_RUNS,
+            "--disallowedTools", "BashOutput", "KillShell", "PowerShell", "WebFetch", "WebSearch", "Task", "Agent",
+            "--max-turns", "40"]
+
+
 def _codex_argv(program: str, config_file: Path, config: Mapping[str, Any]) -> list[str]:
     argv = [program, "exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check", "--ephemeral",
             "--color", "never"]
     for name, server in config["mcpServers"].items():
+        # `codex exec` asks no one, so with no setting every MCP call fails ("requires approval, but approval policy
+        # is never"): the trial server's tools are approved, as a person who always allows G6's tools sets them.
         argv += ["-c", f"mcp_servers.{name}.command={json.dumps(server['command'])}",
-                 "-c", f"mcp_servers.{name}.args={json.dumps(server['args'])}"]
+                 "-c", f"mcp_servers.{name}.args={json.dumps(server['args'])}",
+                 "-c", f'mcp_servers.{name}.default_tools_approval_mode="approve"']
         for key, value in server.get("env", {}).items():
             argv += ["-c", f"mcp_servers.{name}.env.{key}={json.dumps(value)}"]
     return [*argv, "-"]
@@ -412,55 +834,82 @@ def _codex_program() -> Any:
 
 CLIENTS: dict[str, Client] = {
     "claude_code": Client("claude_code", "anthropic:claude_code", ".claude/skills", _claude_program, _claude_argv,
-                          parse_claude, finished_claude),
+                          parse_claude, finished_claude, steps_claude),
     "codex": Client("codex", "openai:codex", ".codex/skills", _codex_program, _codex_argv, parse_codex,
-                    finished_codex),
+                    finished_codex, steps_codex),
 }
 
 
-def mcp_config(task: Mapping[str, Any], python: str = sys.executable, home: Path | None = None) -> dict[str, Any]:
+def mcp_config(task: Mapping[str, Any], python: str = sys.executable, home: Path | None = None, *,
+               moment: bool = False) -> dict[str, Any]:
     """The servers one session gets: each of the task's servers, started through ``server.py`` so the task's withheld
     tools are absent from what the client lists, with the host permissions the task states (and no other), with the
     digest of the ``g6`` package the tasks are bound to (a server that imports another serves nothing), and, when
-    ``home`` is given, with that folder as its G6 home so a session never touches the person's own G6 state."""
+    ``home`` is given, with that folder as its G6 home so a session never touches the person's own G6 state. A moment
+    session states its permissions even when they are none, so a registration of the person's own cannot add any."""
     env = {WITHHOLD_ENV: ",".join(task.get("withhold", ())), BOUND_ENV: package_digest()}
-    if task.get("permissions"):
-        env[SENSITIVE_ENV] = ",".join(task["permissions"])
+    if task.get("permissions") or moment:
+        env[SENSITIVE_ENV] = ",".join(task.get("permissions", ()))
     if home is not None:
         env["G6_HOME"] = str(home)
     return {"mcpServers": {name: {"command": python, "args": ["-P", str(HERE / "server.py"), name], "env": dict(env)}
                            for name in task.get("servers", ["g6"])}}
 
 
-def trial_home(out_dir: Path, session: str = "") -> Path:
+def home_for(out_dir: Path, session: str) -> Path:
+    """Where one session's G6 home is: ``<out>/g6_homes/<task id>.<repeat>``."""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", session):
+        raise freeze.FrozenError(f"a session's name is its task id and repeat, not {session!r}")
+    return Path(out_dir).resolve() / "g6_homes" / session
+
+
+def trial_home(out_dir: Path, session: str = "", *, withhold: Sequence[str] = ()) -> Path:
     """A G6 home for a trial's servers: ``<out>/g6_home``, or, for one session, ``<out>/g6_homes/<session>``, made
     empty. It holds the person's sharing decisions (so a granted source is not withheld from the session) and nothing
     else of theirs. The decisions are read as G6 reads them (``cloud_consent``'s own locked reader, which checks the
     chain and its checkpoint), written with their checkpoint, and the copy is read back through G6's ledger reader
-    before anything uses it."""
+    before anything uses it.
+
+    ``withhold`` (plain source names) is the trial's one overlay, and it can only remove sharing: the copy is the
+    person's rows, each with its own kind, id and body, in their order, less every grant and revoke of a withheld
+    source, chained again in the session's home. A withheld source then has no decision in the copy, which reads as
+    not shared everywhere the session's G6 reads it (its servers and the plugin's hooks); a row is never added, and
+    a grant the person makes during the session is appended to the copy as usual. The person's own decisions are
+    only read."""
     from g6.core import cloud_consent as cloud
     from g6.core.ledger import ChainLedger
 
+    withhold = sorted(set(withhold))
+    if not all(re.fullmatch(r"[a-z0-9_]+", source) for source in withhold):
+        raise ValueError("a withheld source is a plain source name")
     home = Path(out_dir).resolve() / "g6_home"
     if session:
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+", session):
-            raise freeze.FrozenError(f"a session's name is its task id and repeat, not {session!r}")
-        home = Path(out_dir).resolve() / "g6_homes" / session
+        home = home_for(out_dir, session)
         if home.exists():
             shutil.rmtree(home, onexc=_writable)
     with cloud._locked() as ledger:
         head = ledger.head()
         data = ledger.path.read_bytes() if ledger.path.is_file() else b""
+        rows = ledger.entries()
     home.mkdir(parents=True, exist_ok=True)
     if data:
         folder = home / "cloud_consent"
         folder.mkdir(exist_ok=True)
-        (folder / "events.jsonl").write_bytes(data)
+        kept = [row for row in rows if not (row["kind"] in ("grant", "revoke") and row["body"]["source"] in withhold)]
+        if len(kept) == len(rows):
+            (folder / "events.jsonl").write_bytes(data)
+        else:
+            copy = ChainLedger(folder / "events.jsonl", validate=cloud._validate)
+            for row in kept:
+                copy.append(row["kind"], row["id"], row["body"])
+            head = copy.head()
         (folder / "head").write_text(head, encoding="ascii", newline="\n")
         copy = ChainLedger(folder / "events.jsonl", expect_head=head, validate=cloud._validate)
-        if copy.head() != head or copy.verify():
+        own = [(row["kind"], row["id"], row["body"]) for row in kept]
+        if copy.head() != head or copy.verify() or [(r["kind"], r["id"], r["body"]) for r in copy.entries()] != own \
+                or any(source in withhold for source, _ in cloud._decisions(copy)):
             raise cloud.LLMError(f"{cloud.STATE_UNAVAILABLE}: the trial's copy of the sharing decisions does not "
-                                 "read as the person's own; nothing was started")
+                                 "read as the person's own less the withheld sources; nothing was started")
     return home
 
 
@@ -476,6 +925,13 @@ def _served(home: Path | None) -> dict[str, Any]:
         if isinstance(found, dict) and isinstance(found.get("server"), str) and isinstance(found.get("g6"), str):
             out[found["server"]] = {"g6": found["g6"], "serves": found.get("serves") is True}
     return out
+
+
+def fixture_dir(name: str) -> Path:
+    """The synthetic repository a task names: in ``fixtures/``, or, for one only the moment cohort uses, in
+    ``moment_fixtures/``."""
+    shared = FIXTURES / name
+    return shared if shared.is_dir() else MOMENT_FIXTURES / name
 
 
 def workspace_for(task: Mapping[str, Any], out_dir: Path) -> Path:
@@ -497,14 +953,21 @@ def prepare(task: Mapping[str, Any], out_dir: Path, client: Client) -> Path:
     workspace = workspace_for(task, out_dir)
     if workspace.exists():
         shutil.rmtree(workspace, onexc=_writable)      # git's object files are read-only on Windows
-    shutil.copytree(FIXTURES / task["fixture"], workspace, ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(fixture_dir(task["fixture"]), workspace, ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(skills.guide_dir(), workspace / client.skills_dir / skills.GUIDE,
                     ignore=shutil.ignore_patterns("__pycache__"))
     for argv in (["init", "-q"], ["add", "-A"],
                  ["-c", "user.name=routing-trial", "-c", "user.email=routing-trial@example.invalid", "commit", "-q",
                   "-m", "fixture"]):
-        subprocess.run(["git", *argv], cwd=workspace, check=True, capture_output=True)
+        _git(workspace, *argv)
     return workspace
+
+
+def _git(cwd: Path, *argv: str, env: Mapping[str, str] | None = None) -> bytes:
+    """What git prints for ``argv`` in ``cwd``: the one program this file starts directly. ``CalledProcessError`` when
+    it fails."""
+    return subprocess.run(["git", *argv], cwd=cwd, env=None if env is None else dict(env), check=True,
+                          capture_output=True, timeout=120).stdout
 
 
 def fixture_sources(task: Mapping[str, Any]) -> tuple[Any, ...]:
@@ -512,7 +975,7 @@ def fixture_sources(task: Mapping[str, Any]) -> tuple[Any, ...]:
     file's bytes in its content digest."""
     from g6.core import cloud_consent as cloud
 
-    root = FIXTURES / task["fixture"]
+    root = fixture_dir(task["fixture"])
     content = freeze.digest({"prompt": task["prompt"],
                              "files": {path.relative_to(root).as_posix(): cloud.sha256(path.read_bytes())
                                        for path in sorted(root.rglob("*")) if path.is_file()}})
@@ -521,17 +984,23 @@ def fixture_sources(task: Mapping[str, Any]) -> tuple[Any, ...]:
 
 def sources(tasks: Mapping[str, Any], out_dir: Path, client: str, cohort: str) -> list[dict[str, str]]:
     """What a person grants before a run, per provider: the client's own environment, each fixture, and each
-    workspace folder the agent can read."""
+    workspace folder the agent can read; for the moment cohort also each source ``moment_withheld.json`` grants."""
     from g6.core import cloud_consent as cloud
 
     provider = CLIENTS[client].provider
     wanted = {"agent_environment": "the client's own configuration and whatever else it reads"}
+    if cohort == score.MOMENT:
+        wanted.update(load_withheld()["granted"])
     for task in tasks["tasks"]:
         if task["cohort"] == cohort:
             wanted[f"routing-fixture.{task['fixture']}"] = f"the synthetic fixture {task['fixture']} and its prompts"
             workspace = workspace_for(task, out_dir)
             workspace.mkdir(parents=True, exist_ok=True)
             wanted[cloud.repository_source(workspace)] = f"the workspace folder {workspace}"
+            if cohort == score.MOMENT:                  # a review's reply names where the session's home keeps it
+                reviews = home_for(out_dir, f"{task['id']}.0") / REVIEWS
+                wanted[cloud.repository_source(reviews)] = (f"the folder in which the session of {task['id']} keeps "
+                                                            f"G6's saved reviews, in its own trial G6 home: {reviews}")
     return [{"source": source, "provider": provider, "what": what} for source, what in sorted(wanted.items())]
 
 
@@ -546,27 +1015,52 @@ def _record(log: Path, transcript: Any, session: Mapping[str, Any]) -> None:
         handle.write(json.dumps({**transcript.to_json(), "session": dict(session)}, sort_keys=True) + "\n")
 
 
-def _keep(out_dir: Path, data: bytes) -> str:
-    """Keep an event log's bytes in the run's folder under their sha256, and answer it."""
+def _keep(out_dir: Path, data: bytes, suffix: str = ".log") -> str:
+    """Keep an event log's bytes (or, ``.diff``, a session's final diff) in the run's folder under their sha256, and
+    answer it."""
     digest = hashlib.sha256(data).hexdigest()
     folder = Path(out_dir) / EVENTS
     folder.mkdir(parents=True, exist_ok=True)
-    if not (folder / f"{digest}.log").is_file():
-        (folder / f"{digest}.log").write_bytes(data)
+    if not (folder / f"{digest}{suffix}").is_file():
+        (folder / f"{digest}{suffix}").write_bytes(data)
     return digest
 
 
-def kept(out_dir: Path, digest: str) -> tuple[bytes | None, str]:
-    """(the kept event log named by ``digest``, "") or (``None``, why it cannot be read as that log)."""
+def kept(out_dir: Path, digest: str, suffix: str = ".log") -> tuple[bytes | None, str]:
+    """(the kept event log, or with ``.diff`` the kept final diff, named by ``digest``, "") or (``None``, why it
+    cannot be read as that file)."""
+    what = "final diff" if suffix == ".diff" else "event log"
     if not re.fullmatch(r"[0-9a-f]{64}", digest or ""):
-        return None, "the row names no event log"
-    path = Path(out_dir) / EVENTS / f"{digest}.log"
+        return None, f"the row names no {what}"
+    path = Path(out_dir) / EVENTS / f"{digest}{suffix}"
     if not path.is_file():
-        return None, "the event log the row names is not in the run's folder"
+        return None, f"the {what} the row names is not in the run's folder"
     data = path.read_bytes()
     if hashlib.sha256(data).hexdigest() != digest:
-        return None, "the kept event log does not hash to the digest the row names"
+        return None, f"the kept {what} does not hash to the digest the row names"
     return data, ""
+
+
+def _head(workspace: Path) -> str:
+    """The commit ``prepare`` made of the fixture: what a session's final diff is taken against."""
+    return _git(workspace, "rev-parse", "HEAD").decode("ascii").strip()
+
+
+def final_diff(workspace: Path, base: str, client: Client) -> bytes:
+    """The workspace as the session left it, against the fixture commit ``base``: every change, deletion and new file
+    (a git-ignored one and the agent's own commits too), as a binary git diff with no line ending rewritten. What the
+    interpreter and pytest write (``UNKEPT``) and the skill the runner installed are left out. Read through an index
+    of its own, so the workspace's index stays as the session left it."""
+    from g6.core import skills
+
+    spec = [".", *UNKEPT, f":(exclude){client.skills_dir}/{skills.GUIDE}"]
+    raw = ("-c", "core.autocrlf=false", "-c", "core.safecrlf=false")
+    with tempfile.TemporaryDirectory(prefix="g6_routing_diff_", ignore_cleanup_errors=True) as tmp:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
+        _git(workspace, *raw, "read-tree", base, env=env)
+        _git(workspace, *raw, "add", "-A", "--force", "--", *spec, env=env)
+        return _git(workspace, *raw, "diff", "--cached", "--binary", "--full-index", "--no-renames", "--no-color",
+                    "--no-ext-diff", "--no-textconv", base, "--", *spec, env=env)
 
 
 def _produced(program: str, detected: Any, digests: dict[str, str]) -> str:
@@ -598,7 +1092,18 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
     starts. A final cohort is run once per client and repeat whatever the folder: the record is written beside the
     gate file before the first session, and only a run in which no session was started is taken back (void).
     ``runner`` stands in for the client in tests; its transcripts say so (``produced``), and no stand-in's
-    transcript can pass a gate's reading."""
+    transcript can pass a gate's reading.
+
+    The moment cohort (``cohort="moment"``) runs from ``moment_tasks.json`` or a part of it. Each session also starts
+    only while the person's decisions share none of the sources the list says a session lacks (``NOT_FRESH``), its
+    server states the task's permissions even when they are none, its client is given the session's G6 home, a
+    Claude Code session loads the plugin this tree ships and may run the tests, and its record names the digests of
+    the guidance it could read (``guidance``) and the digest of its final diff (``final_diff_sha256``: the workspace as
+    the session left it against the fixture commit, kept as ``<out_dir>/events/<sha256>.diff`` before the next session
+    on that fixture wipes the folder; "" when no workspace was made). A moment session also starts only while the
+    person shares every source ``moment_withheld.json`` grants that its task does not withhold (``NOT_GRANTED``); the
+    ones its task withholds are taken out of its home's copy of the decisions (``trial_home``), and its record names
+    them (``withheld_sources``)."""
     from g6.agents._runtime import cli
     from g6.agents._runtime.consent import consent_run
     from g6.agents._runtime.model import AgentRefusal
@@ -607,8 +1112,18 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
     from g6.core import stop as core_stop
 
     spec = CLIENTS[client]
-    tasks = load_tasks(Path(tasks_path), cohort=cohort)
-    load_gates()
+    moment = cohort == score.MOMENT
+    withheld: dict[str, Any] = {}
+    if moment:
+        tasks = load_moment(Path(tasks_path))
+        load_moment_gates()
+        withheld = load_withheld()
+        moment_fixtures()
+        listed, bars = moment_pins()["tasks_digest"], moment_pins()["bars_digest"]
+    else:
+        tasks = load_tasks(Path(tasks_path), cohort=cohort)
+        load_gates()
+        listed, bars = freeze.digest(tasks), pins()["bars_digest"]
     scheduled = sorted((t for t in tasks["tasks"] if t["cohort"] == cohort), key=lambda t: t["id"])
     out_dir = Path(out_dir)
     if cohort == "final" and final_run(client, repeat) is not None:
@@ -628,7 +1143,7 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
                            detail={"started": False})
     real = runner is None
     runner = runner or cli.CliAgentRunner(spec.program())
-    bound = {"tasks": freeze.digest(tasks), "bars": pins()["bars_digest"], "g6": package_digest()}
+    bound = {"tasks": listed, "bars": bars, "g6": package_digest()}
     run_id = uuid.uuid4().hex
     if cohort == "final":
         _final_record({"client": client, "repeat": repeat, "run": run_id, "tasks_digest": bound["tasks"],
@@ -640,27 +1155,42 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
         said = {"task_id": task["id"], "client": client, "repeat": repeat,
                 "produced": "" if real else f"stand-in:{type(runner).__name__}"}
         session: dict[str, Any] = {"run": run_id, "bound": {**bound, "task": freeze.digest(task)}, "served": {}}
+        withhold = list(withheld["withheld"].get(task["id"], [])) if moment else []
+        if moment:
+            session["withheld_sources"], session["reply_probe"] = withhold, None
         ended: dict[str, Any] = {"state": "interrupted", "code": UNFINISHED}     # until the session says otherwise
-        data, exit_code, seconds, home = None, None, 0.0, None
+        data, exit_code, seconds, home, workspace, base = None, None, 0.0, None, None, ""
         try:
             program = runner.locate() if hasattr(runner, "locate") else spec.name
             if real:
                 said["produced"] = _produced(program, runner.require(stop=core_stop.engaged), programs)
-            try:
-                home = trial_home(out_dir, f"{task['id']}.{repeat}")
-            except (cloud.LLMError, OSError, ValueError) as exc:
-                raise AgentRefusal(cloud.STATE_UNAVAILABLE, "the person's sharing decisions could not be read for "
-                                                            f"the session's G6 home ({type(exc).__name__})") from None
-            workspace = prepare(task, out_dir, spec)
-            config = mcp_config(task, python, home)
+            if moment:
+                _fresh(tasks, spec.provider, withheld, task["id"])
+            for attempt in ("probe", "session") if moment else ("session",):
+                try:                                    # the probe asks the session's own home; then it is made again
+                    home = trial_home(out_dir, f"{task['id']}.{repeat}", withhold=withhold)
+                except (cloud.LLMError, OSError, ValueError) as exc:
+                    raise AgentRefusal(cloud.STATE_UNAVAILABLE, "the person's sharing decisions could not be read "
+                                                                f"for the session's G6 home ({type(exc).__name__})") from None
+                workspace = prepare(task, out_dir, spec)
+                if attempt == "probe":
+                    _ready(task, home, workspace, withheld, withhold, spec, session)
+            base = _head(workspace) if moment else ""
+            config = mcp_config(task, python, home, moment=moment)
             with tempfile.TemporaryDirectory(prefix="g6_routing_", ignore_cleanup_errors=True) as tmp:
                 scratch = Path(tmp)
                 config_file = scratch / "mcp.json"
                 config_file.write_text(json.dumps(config), encoding="utf-8")
+                plugin = _plugin(scratch) if moment and client == "claude_code" else None
+                argv = _claude_moment_argv(program, config_file, config, plugin) if moment and client == "claude_code" \
+                    else spec.argv(program, config_file, config)
+                if moment:
+                    session["guidance"] = guidance(workspace, spec, plugin)
                 result = None
                 try:
-                    with cloud.request_sources(fixture_sources(task)):
-                        result = consent_run(runner, spec.argv(program, config_file, config), provider=spec.provider,
+                    with _environment(runner, {"G6_HOME": str(home)} if moment else {}), \
+                            cloud.request_sources(fixture_sources(task)):
+                        result = consent_run(runner, argv, provider=spec.provider,
                                              prompt=task["prompt"], cwd=workspace,
                                              seconds=task["budget"]["seconds"] + GRACE_S, scratch=scratch)
                     exit_code, seconds = getattr(result, "exit_code", None), float(getattr(result, "elapsed_s", 0.0))
@@ -681,6 +1211,12 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
         except Exception as exc:  # noqa: BLE001 - a fault of this runner's own: the task has its row and the run goes on
             session["fault"] = type(exc).__name__
         finally:
+            if moment:                                 # the final work, kept before the next session wipes the folder
+                try:
+                    session["final_diff_sha256"] = _keep(out_dir, final_diff(workspace, base, spec), ".diff") \
+                        if base else ""
+                except Exception as exc:  # noqa: BLE001 - a diff that cannot be made costs the session no row
+                    session["final_diff_sha256"], session["diff_fault"] = "", type(exc).__name__
             try:
                 session["served"] = _served(home)
                 if home is not None:
@@ -730,9 +1266,16 @@ def read_sessions(out_dir: Path, client: str, cohort: str, tasks: Mapping[str, A
 
     With ``tasks`` (the gate's reading) each record is held to the files as they stand: a record that names another
     task, task list, bars or ``g6`` package raises ``FrozenError``; a record that names none, or, for the final
-    cohort, is not of the run recorded beside the gate file, is a fault."""
+    cohort, is not of the run recorded beside the gate file, is a fault.
+
+    A moment record is held to the pinned moment list and bars, and not to this tree's ``g6`` package: its two arms
+    run on two trees. It must name the package it ran on, and its servers must have found that one. It must name the
+    sources its task withholds (``withheld_sources``), as the pinned withheld file says."""
+    moment = cohort == score.MOMENT
     by_id = {task["id"]: task for task in tasks["tasks"]} if tasks is not None else {}
-    want = {"tasks": freeze.digest(tasks), "bars": pins()["bars_digest"], "g6": package_digest()} if tasks else {}
+    want = ({"tasks": moment_pins()["tasks_digest"], "bars": moment_pins()["bars_digest"]} if moment else
+            {"tasks": freeze.digest(tasks), "bars": pins()["bars_digest"], "g6": package_digest()}) if tasks else {}
+    withheld = load_withheld()["withheld"] if moment and tasks else {}
     out = []
     for row in _rows(out_dir, client, cohort):
         typed = Transcript.from_json(row)
@@ -749,8 +1292,13 @@ def read_sessions(out_dir: Path, client: str, cohort: str, tasks: Mapping[str, A
                         f"one it would be scored on now ({now[:12]}): a record is scored on what it ran on")
                 if name not in bound:
                     fault = fault or "the row's record names no digests of what the session ran on"
+            ran_on = bound.get("g6") if moment else want["g6"]
+            if moment and not re.fullmatch(r"[0-9a-f]{64}", str(ran_on or "")):
+                fault = fault or "the row's record names no digest of the g6 package the session ran on"
+            if moment and record.get("withheld_sources") != withheld.get(typed.task_id, []):
+                fault = fault or "the row's record does not name the sources its task withholds"
             served = record.get("served") if isinstance(record.get("served"), dict) else {}
-            if any(not isinstance(found, dict) or found.get("g6") != want["g6"] or found.get("serves") is not True
+            if any(not isinstance(found, dict) or found.get("g6") != ran_on or found.get("serves") is not True
                    for found in served.values()):
                 fault = fault or "a server of the session found another g6 package than the one the tasks bind"
             if cohort == "final":
@@ -790,10 +1338,146 @@ def gate_reading(out_dir: Path, *, client: str, cohort: str, tasks_path: Path | 
     return report
 
 
-def release(out_dirs: Sequence[Path]) -> dict[str, Any]:
+def moment_reading(out_dir: Path, *, client: str) -> dict[str, Any]:
+    """One arm of the moment cohort for one client, read as ``gate_reading`` reads a cohort: the pinned moment list
+    and bars, the transcripts read again from the kept event logs, the ``evidence`` block. ``arm`` names the ``g6``
+    package and the guidance the arm's sessions ran with, so two arms can be told apart and compared."""
+    tasks, gates = load_moment(), load_moment_gates()
+    sessions = read_sessions(out_dir, client, score.MOMENT, tasks)
+    report = score.score_moment(tasks, [session.transcript for session in sessions], gates, client=client,
+                                schemas=schemas(), require_client=True)
+    ids = {task["id"] for task in tasks["tasks"]}
+    gate = [s for s in sessions if s.transcript.client == client and s.transcript.repeat == 0
+            and s.transcript.task_id in ids]
+    report["evidence"] = {
+        "read_from": f"{EVENTS}/<sha256>.log",
+        "rederived": sum(not s.fault and s.transcript.state == "completed" for s in gate),
+        "unevidenced": {s.transcript.task_id: s.fault for s in gate if s.fault},
+        "sessions_with_a_server_record": sum(bool(s.record.get("served")) for s in gate)}
+    bound = [s.record.get("bound") if isinstance(s.record.get("bound"), dict) else {} for s in gate]
+    seen = [s.record["guidance"] for s in gate if isinstance(s.record.get("guidance"), dict)]
+    report["arm"] = {"g6": sorted({str(b.get("g6", "")) for b in bound}),
+                     "guidance": list({freeze.digest(g): g for g in seen}.values())}
+    if report["decision"] == "pass" and report["evidence"]["unevidenced"]:
+        report["decision"] = "unevidenced"
+    report["outcome"] = outcome_reading(out_dir, tasks, gate)
+    return report
+
+
+def outcome_reading(out_dir: Path, tasks: Mapping[str, Any], gate: Sequence[Session]) -> dict[str, Any]:
+    """The arm's outcome block (``score.outcome_report``): each scheduled task's outcome, from its gate session's state
+    and the final diff its record names, read from the run's folder and held to its digest, against the pinned
+    held-out checks. A task with no session, or whose record names no kept diff, has none: a positive one fails. A
+    session whose record does not bind (its ``fault``) cannot pass. The checks runner is made once, when a check is
+    first run (``check_runner``)."""
+    digest, runner = outcome_checks(), functools.cache(check_runner)
+    moment_fixtures()                                  # a kept diff is applied to the pinned fixtures only
+    by_id = {session.transcript.task_id: session for session in gate}
+    rows = []
+    for task in tasks["tasks"]:
+        found, args = by_id.get(task["id"]), {"fixture": fixture_dir(task["fixture"]), "folder": OUTCOME / task["id"]}
+        if found is None:
+            row = score.outcome(task, "unavailable", None, **args)
+            row["why"] = "no session was run for the task, so no final diff was kept"
+        else:
+            data, why = kept(out_dir, str(found.record.get("final_diff_sha256", "")), ".diff")
+            state = "unevidenced" if found.fault else found.transcript.state
+            row = score.outcome(task, state, data, runner=runner, **args)
+            if data is None:
+                row["why"] = f"no final diff was kept: {why}"
+        rows.append(row)
+    return score.outcome_report(rows, digest)
+
+
+class _Confined(score.PlainRunner):
+    """Runs a task's checks inside the operating-system boundary ``g6.core.confine`` gives a child of this interpreter:
+    the run's own folder is all it may write, and it reaches no network."""
+
+    def __init__(self, backend: str) -> None:
+        super().__init__(f"confined: {backend}")
+
+    def folder(self) -> Any:
+        from g6.core import confine
+
+        return confine.run_folder(prefix="g6_outcome_", ignore_cleanup_errors=True)
+
+    def run(self, argv: list[str], *, cwd: Path, env: dict[str, str], seconds: float) -> int | None:
+        from g6.core import component_process, confine
+
+        plan = confine.plan(confine.Confinement(read_write=(str(Path(cwd).parent),),
+                                                read_only=confine.interpreter_paths(sys.executable)), sys.executable)
+        try:
+            if plan.backend is None:
+                raise score.TaskError(f"the held-out checks could not be confined here ({plan.why}); nothing was run")
+            with component_process.window(seconds):
+                return component_process.run_contained(argv, env=env, cwd=cwd, confined=plan).returncode
+        except component_process.ExecutionInterrupted:
+            return None
+        finally:
+            plan.release()
+
+
+def _probe(runner: Any) -> bool:
+    """Whether ``runner`` runs a check that passes: a check of nothing, in an empty repository. A runner that cannot
+    start or confine the run answers no."""
+    with tempfile.TemporaryDirectory(prefix="g6_outcome_probe_", ignore_cleanup_errors=True) as tmp:
+        fixture, checks = Path(tmp) / "fixture", Path(tmp) / "checks"
+        fixture.mkdir()
+        checks.mkdir()
+        (checks / "test_probe.py").write_text("def test_probe():\n    assert True\n", encoding="utf-8")
+        try:
+            return score.run_checks(fixture, checks, b"", runner=runner)["exit_code"] == 0
+        except (score.TaskError, OSError):
+            return False
+
+
+def check_runner() -> Any:
+    """What runs the held-out checks: inside an operating-system boundary where a backend can confine a child of this
+    interpreter and a probe check passes in it, otherwise a plain subprocess with a timeout. Its ``how`` says which, and
+    why, in every outcome row that ran a check."""
+    from g6.core import confine
+
+    name, why = confine.backend(sys.executable)
+    if name is None:
+        return score.PlainRunner(f"unconfined: {why}")
+    runner = _Confined(name)
+    if _probe(runner):
+        return runner
+    return score.PlainRunner(f"unconfined: the {name} backend could not run a probe check here")
+
+
+def compare(before: Path, after: Path, *, client: str) -> dict[str, Any]:
+    """The before and after arms of one client, each read again from its own folder's kept logs, paired by task
+    (``score.compare``: an exact McNemar test per kind, and no claim), with what each arm ran on, and the outcome of
+    the work paired by positive task beside the moment hits (``score.compare_outcome``, against the pinned outcome
+    bar, with no claim)."""
+    first, second = moment_reading(Path(before), client=client), moment_reading(Path(after), client=client)
+    return {**score.compare(first, second), "outcome": score.compare_outcome(first, second, load_outcome_gates()),
+            "arms": {"before": first["arm"], "after": second["arm"]}}
+
+
+def outcome_release(pairs: Sequence[tuple[Path, Path]]) -> dict[str, Any]:
+    """The outcome bar read across the clients (``score.outcome_bar``): each (before folder, after folder) pair is
+    compared for every client with a moment log in both, and a client found in two pairs is refused. ``clients`` holds
+    each client's paired outcome; a client in no pair is ``unread``. It claims nothing."""
+    gates, found = load_outcome_gates(), {}
+    for before, after in pairs:
+        for client in sorted(CLIENTS):
+            if _log(Path(before), client, score.MOMENT).is_file() and _log(Path(after), client, score.MOMENT).is_file():
+                if client in found:
+                    raise score.TaskError(f"{client}'s arms are in two pairs of folders: an arm is read once")
+                found[client] = compare(Path(before), Path(after), client=client)["outcome"]
+    return {"clients": found, "bar": score.outcome_bar(found, gates, clients=sorted(CLIENTS)), "claim": None}
+
+
+def release(out_dirs: Sequence[Path], cohort: str = "final") -> dict[str, Any]:
     """The release reading, made here because the pins are here: each client's final report is made again from the
     kept event logs of its folder (a report file is never read), then read by ``score.release`` against the pinned
-    bars."""
+    bars. For the moment cohort, each client's arm in the folders given, against the moment bars."""
+    if cohort == score.MOMENT:
+        found = [moment_reading(Path(out), client=client)
+                 for out in out_dirs for client in sorted(CLIENTS) if _log(Path(out), client, cohort).is_file()]
+        return score.release_moment(found, bars_digest=moment_pins()["bars_digest"])
     reports = [gate_reading(Path(out), client=client, cohort="final")
                for out in out_dirs for client in sorted(CLIENTS) if _log(Path(out), client, "final").is_file()]
     return score.release(reports, bars_digest=pins()["bars_digest"])
@@ -809,25 +1493,39 @@ def schemas() -> dict[str, dict[str, Any]]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("command", choices=("sources", "run", "score", "release"))
+    parser.add_argument("command", choices=("sources", "run", "score", "release", "compare", "outcome"))
     parser.add_argument("--client", choices=sorted(CLIENTS))
-    parser.add_argument("--cohort", choices=score.COHORTS, default="development")
+    parser.add_argument("--cohort", choices=(*score.COHORTS, score.MOMENT), default="development")
     parser.add_argument("--out", type=Path, action="append", required=True)
     parser.add_argument("--repeat", type=int, default=0)
     args = parser.parse_args(argv)
+    moment = args.cohort == score.MOMENT
     if args.command == "release":
-        print(json.dumps(release(args.out), indent=2))
+        print(json.dumps(release(args.out, score.MOMENT if moment else "final"), indent=2))
+        return 0
+    if args.command == "compare":
+        if args.client is None or len(args.out) != 2:
+            parser.error("compare takes --client and two --out: the before arm's folder, then the after arm's")
+        print(json.dumps(compare(args.out[0], args.out[1], client=args.client), indent=2))
+        return 0
+    if args.command == "outcome":
+        if len(args.out) % 2:
+            parser.error("outcome takes --out in pairs: a before arm's folder, then its after arm's")
+        print(json.dumps(outcome_release(list(zip(args.out[::2], args.out[1::2]))), indent=2))
         return 0
     if args.client is None or len(args.out) != 1:
         parser.error(f"{args.command} takes --client and one --out")
-    out, path = args.out[0], FINAL_TASKS if args.cohort == "final" else TASKS
+    out = args.out[0]
+    path = MOMENT_TASKS if moment else FINAL_TASKS if args.cohort == "final" else TASKS
     if args.command == "sources":
-        print(json.dumps(sources(load_tasks(path, cohort=args.cohort), out, args.client, args.cohort), indent=2))
+        listed = load_moment(path) if moment else load_tasks(path, cohort=args.cohort)
+        print(json.dumps(sources(listed, out, args.client, args.cohort), indent=2))
     elif args.command == "run":
         states = [t.state for t in run(path, out, client=args.client, cohort=args.cohort, repeat=args.repeat)]
         print(json.dumps({state: states.count(state) for state in score.STATES}))
     else:
-        report = gate_reading(out, client=args.client, cohort=args.cohort)
+        report = moment_reading(out, client=args.client) if moment else \
+            gate_reading(out, client=args.client, cohort=args.cohort)
         target = out / f"report-{args.client}-{args.cohort}.json"
         target.write_text(freeze.render(report), encoding="utf-8", newline="\n")
         print(json.dumps({"decision": report["decision"], "gates": report["gates"], "report": str(target)}, indent=2))

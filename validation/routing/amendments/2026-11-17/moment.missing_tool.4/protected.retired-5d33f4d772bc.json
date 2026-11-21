@@ -1,0 +1,19 @@
+{
+  "retired": {
+    "protected": [
+      "README.md",
+      "ledger/__init__.py",
+      "ledger/amounts.py",
+      "ledger/cache.py",
+      "ledger/money.py",
+      "ledger/report.py",
+      "tests/test_amounts.py",
+      "tests/test_dates.py",
+      "tests/test_money.py",
+      "tests/test_report.py"
+    ],
+    "why": "Only ledger/dates.py is fixed: the tests are right and stay as they are, and so does the rest of the ledger."
+  },
+  "reason": "2026-11-17 before any arm: research audit; lead scoring rulings; reply delivery merged. Replace seven tasks, revise four, isolate cue-free fixtures, bind provenance and unchanged-test checks; count only post-edit failures, allow selector before refusal remedy, report attempted beside recovery. All routing and outcome bars remain unchanged.",
+  "digest": "5d33f4d772bcec99ce0b474395e7375313b1076a9cc5f79bfbb3e40ea597789a"
+}

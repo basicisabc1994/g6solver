@@ -1,0 +1,12 @@
+{
+  "retired": {
+    "bars_digest": "9aa0237097e7dd22f013664850d3008513ac750834f577d793cab6f28556de59",
+    "tasks_digest": "1976b25f8d885fcb60086adbacd48d7f9bea0c85db79e88a159ab5f235933a75",
+    "outcome_bars_digest": "bbdb333860ee44545b5b337213319e0780572f1fbd3fa24b8bc6abfe837dd1f8",
+    "checks_digest": "6787d535ad8440824a72c81a25c75f8538e1f9141c5ff9c7f7d82ea2fcba05be",
+    "withheld_digest": "9c031f4cfab260cd8101a1ff9efcc975f7c831b1eeae375c5da5661dfdb8e4a2",
+    "fixtures_digest": "4084d2f1097198d53d304f83ff1a5113fcf8534083b320a05586922c351bab76"
+  },
+  "reason": "2026-11-17 before any arm: research audit; lead scoring rulings; reply delivery merged. Replace seven tasks, revise four, isolate cue-free fixtures, bind provenance and unchanged-test checks; count only post-edit failures, allow selector before refusal remedy, report attempted beside recovery. All routing and outcome bars remain unchanged.",
+  "digest": "e491cf6fec23d5dcc8e38a344be22f99f13c6870bc7c430c0e12e4442729babc"
+}

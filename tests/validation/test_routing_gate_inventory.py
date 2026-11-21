@@ -167,7 +167,7 @@ def test_the_untouched_run_passes_by_every_door(copy: SimpleNamespace, capsys: p
 #: Every field of a transcript row, by what the gate's reading does with it. A field added to ``Transcript`` is
 #: classified here or the inventory fails.
 REDERIVED = {"state": "interrupted", "code": "G6_E_OTHER", "calls": [], "questions": 9, "cost_usd": 99.0,
-             "final_text": "something else"}
+             "final_text": "something else", "timeline": [{"kind": "final", "text": "something else"}]}
 HELD = {"task_id": "final.unknown.task", "client": "claude_code", "repeat": 1, "produced": "", "exit_code": 1,
         "events_sha256": "0" * 64, "seconds": 100000.0}
 

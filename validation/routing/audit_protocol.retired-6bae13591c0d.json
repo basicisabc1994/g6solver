@@ -1,0 +1,436 @@
+{
+  "retired": {
+    "format": "g6.routing_audit_protocol/1",
+    "date": "2026-11-17",
+    "before_any_arm": true,
+    "source": "owner-audit-2026-11-17",
+    "new_bar": null,
+    "arms": [
+      "alone",
+      "with_g6"
+    ],
+    "retention_arms": [
+      "retained",
+      "fresh"
+    ],
+    "controls": {
+      "unit": "same client and task; never pool clients",
+      "model": "identical model/version/settings per pair, recorded in model",
+      "budget": "identical seconds, model-call and question caps per pair; charge G6 calls inside the same cap",
+      "alone": "agent alone, with no G6 server, tools, hooks, skills or history",
+      "with_g6": "same agent plus G6 with admitted sources; no extra human assistance",
+      "order": "alternate alone-first and with_g6-first by task inventory index, separately per client",
+      "existing_before_after": "report separately; guidance-before still has G6 and is not an agent-alone control",
+      "retention": "A then B in one fixture repository; B begins from its registered snapshot, not A's final diff; retained imports only A's context/history, fresh imports none; alternate B condition order by pair index",
+      "learning": "report B paired by same A, B seed, model and budgets; A need not succeed, but its history must be kept",
+      "no_peeking": "prompts and fixture copies alone reach agents; held-out checks and defect mappings remain outside; blind adjudication uses a copy of kept snapshots"
+    },
+    "measures": {
+      "task_success": "final kept diff passes every registered hidden check; unknown if not observed; abandoned or unfinished ended session fails",
+      "defects": "registered defect IDs; independent adjudicator maps G6 claims to IDs and evaluates hidden checks on the snapshot reviewed; false=confirmed defect, true=false alarm; unknown and unmatched claims reported",
+      "missed": "confirmed defects not claimed by G6, even if the agent independently repairs them; alone therefore has no G6 finds",
+      "wall_time": "full started session elapsed wall seconds, including waits, retries and G6",
+      "cost_or_calls": "reported total model cost in USD, otherwise exact model-call count, including delegated G6 calls; null when not recorded, with coverage; never estimated",
+      "abandonment": "started and ended session without a kept final diff; empty kept diff is not abandonment; unrun and ongoing separately",
+      "calibration": "each exact completion/review label once per session; share with a passing final diff, full labelled denominator and unknown count; verified is unexpected and flagged",
+      "retention": "B retained-A-history versus identical B fresh, paired, no new release bar"
+    },
+    "labels": [
+      "verified",
+      "qualified-draft",
+      "blocked-escalated",
+      "test_integrity_compromised",
+      "defect_detected",
+      "insufficient_evidence",
+      "supported_within_scope"
+    ],
+    "tasks": [
+      {
+        "id": "moment.before_done.1",
+        "fixture": "shop_m",
+        "snapshot": "fixtures/shop_m",
+        "fixture_digest": "b0226b0373f74fb0e3f2b9f43cb5f2699113d038af017a95a0cd4501daef4345",
+        "checks": [
+          "task_outcome"
+        ],
+        "defects": [
+          "task_outcome"
+        ],
+        "source_task_digest": "2ecc6df66a75cef6a0fcefb10974ed8894989a72cc498fc527b44601cba2b4d5",
+        "budget": {
+          "seconds": 900,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.before_done.2",
+        "fixture": "shop_m",
+        "snapshot": "fixtures/shop_m",
+        "fixture_digest": "b0226b0373f74fb0e3f2b9f43cb5f2699113d038af017a95a0cd4501daef4345",
+        "checks": [
+          "task_outcome"
+        ],
+        "defects": [
+          "task_outcome"
+        ],
+        "source_task_digest": "27ca7e44b5b2339b43c732057d8a01bdfb334a4ef83b520edfe12392a1bc81e9",
+        "budget": {
+          "seconds": 900,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.before_done.3",
+        "fixture": "classify_m",
+        "snapshot": "fixtures/classify_m",
+        "fixture_digest": "286cc7f6c5fbe5e656ca66f3bcbc5b8fd15a37301c3aee8ec6c6e74e6a3c8758",
+        "checks": [
+          "task_outcome"
+        ],
+        "defects": [
+          "task_outcome"
+        ],
+        "source_task_digest": "d9402455d6b606af1ae053856939ecdc9f7d4a42affe5dadad936a2963fe9e84",
+        "budget": {
+          "seconds": 900,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.before_done.4",
+        "fixture": "invoices",
+        "snapshot": "fixtures/invoices",
+        "fixture_digest": "5a14740bbab712e93064f4404999ee95f5d3aa1a4612f234bec20ecea785c8c8",
+        "checks": [
+          "task_outcome"
+        ],
+        "defects": [
+          "task_outcome"
+        ],
+        "source_task_digest": "7cb7fec7fe4f702fc99d5797d301629ec5d103d69f1ca7253435ffd77dfb61d9",
+        "budget": {
+          "seconds": 900,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.stuck.1",
+        "fixture": "fees",
+        "snapshot": "fixtures/fees",
+        "fixture_digest": "4dc38811eda4617f487f0b33934b6fbfbc78b31e976418106518efef3730bf28",
+        "checks": [
+          "task_outcome"
+        ],
+        "defects": [
+          "task_outcome"
+        ],
+        "source_task_digest": "3ea47330f6a289d6a2a4fad6565ffce5c6cc2072d4bfef84cfbf737ba0183b6d",
+        "budget": {
+          "seconds": 1200,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.stuck.2",
+        "fixture": "stock",
+        "snapshot": "fixtures/stock",
+        "fixture_digest": "004387f5e189b6fe706733bfb891ee2a9728afca594029f873ecbc9f5a2879b7",
+        "checks": [
+          "task_outcome"
+        ],
+        "defects": [
+          "task_outcome"
+        ],
+        "source_task_digest": "9e543c6330de23ca8c830cc1831e36cebf3204fca6c55b2c417abd8cb6e92d74",
+        "budget": {
+          "seconds": 1200,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.stuck.3",
+        "fixture": "ledger_amounts",
+        "snapshot": "fixtures/ledger_amounts",
+        "fixture_digest": "013e9e39eb39fd38af23ef1f2f7d5db0e625868e2a46460c83d8b292a56b0fb3",
+        "checks": [
+          "task_outcome"
+        ],
+        "defects": [
+          "task_outcome"
+        ],
+        "source_task_digest": "f3164bd01a33e2152d1b1a29e44bfcbeb6e2f73c4dc6c14c83bacb6ec00f1134",
+        "budget": {
+          "seconds": 1200,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.stuck.4",
+        "fixture": "ledger_report",
+        "snapshot": "fixtures/ledger_report",
+        "fixture_digest": "ae483d8a7a810bad9a8047a2cadb081906bb65635f271f6500e5d25b167f9f51",
+        "checks": [
+          "task_outcome"
+        ],
+        "defects": [
+          "task_outcome"
+        ],
+        "source_task_digest": "3cfe821490daeb2681e48868fa94738ef4ece9c6732068be179c4621db60911f",
+        "budget": {
+          "seconds": 1200,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.after_refusal.1",
+        "fixture": "shop_m",
+        "snapshot": "fixtures/shop_m",
+        "fixture_digest": "b0226b0373f74fb0e3f2b9f43cb5f2699113d038af017a95a0cd4501daef4345",
+        "checks": [
+          "task_outcome"
+        ],
+        "defects": [
+          "task_outcome"
+        ],
+        "source_task_digest": "7302f127a636aab6c07bcafce98dfa0de4e3da464fec9d252bdf834b87299e5b",
+        "budget": {
+          "seconds": 900,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.after_refusal.2",
+        "fixture": "classify_m",
+        "snapshot": "fixtures/classify_m",
+        "fixture_digest": "286cc7f6c5fbe5e656ca66f3bcbc5b8fd15a37301c3aee8ec6c6e74e6a3c8758",
+        "checks": [
+          "task_outcome"
+        ],
+        "defects": [
+          "task_outcome"
+        ],
+        "source_task_digest": "71a29f6b5cf2ffb7d0e37e89dbb09d3591ef4238c7425045a066b4cb1c331639",
+        "budget": {
+          "seconds": 900,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.after_refusal.3",
+        "fixture": "shop_m",
+        "snapshot": "fixtures/shop_m",
+        "fixture_digest": "b0226b0373f74fb0e3f2b9f43cb5f2699113d038af017a95a0cd4501daef4345",
+        "checks": [
+          "task_outcome"
+        ],
+        "defects": [
+          "task_outcome"
+        ],
+        "source_task_digest": "f2ff680ed45f952c2376926c32da2e94d5985bd2a17f161e5212c2f4c321f309",
+        "budget": {
+          "seconds": 900,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.after_refusal.4",
+        "fixture": "classify_m",
+        "snapshot": "fixtures/classify_m",
+        "fixture_digest": "286cc7f6c5fbe5e656ca66f3bcbc5b8fd15a37301c3aee8ec6c6e74e6a3c8758",
+        "checks": [
+          "task_outcome"
+        ],
+        "defects": [
+          "task_outcome"
+        ],
+        "source_task_digest": "b7261c862ffeebe969e1ef97cbe85a5672660d88201bf2dc3b947f066e648bf7",
+        "budget": {
+          "seconds": 900,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.negative.1",
+        "fixture": "notes_m",
+        "snapshot": "fixtures/notes_m",
+        "fixture_digest": "4dc881a64ffb94468c9250db641098bf9d1bb750e11a437b6fa11cc36bf791ea",
+        "checks": [],
+        "defects": [],
+        "source_task_digest": "391f2e8d2c49c200d394bac77d1045eeba53dde24e2376bde8b17787d32fe3ad",
+        "budget": {
+          "seconds": 300,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.negative.2",
+        "fixture": "classify_m",
+        "snapshot": "fixtures/classify_m",
+        "fixture_digest": "286cc7f6c5fbe5e656ca66f3bcbc5b8fd15a37301c3aee8ec6c6e74e6a3c8758",
+        "checks": [],
+        "defects": [],
+        "source_task_digest": "c5c48261e91001255c4294b6bbe5d6fd7c553ff54e200a1a117bfb72a2609720",
+        "budget": {
+          "seconds": 300,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.negative.3",
+        "fixture": "shop_m",
+        "snapshot": "fixtures/shop_m",
+        "fixture_digest": "b0226b0373f74fb0e3f2b9f43cb5f2699113d038af017a95a0cd4501daef4345",
+        "checks": [],
+        "defects": [],
+        "source_task_digest": "bd5f9f645f040bc2426f42bfba296b8cdd8f534f9cba5b20b53d9ab923ccd5e4",
+        "budget": {
+          "seconds": 300,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.negative.4",
+        "fixture": "rules_m",
+        "snapshot": "fixtures/rules_m",
+        "fixture_digest": "b279f96c4d2311c862587b26a1129879cf9a63b7bc1ad8197b0c8f474915a899",
+        "checks": [],
+        "defects": [],
+        "source_task_digest": "12865c46176d72d177466351eadbc109edcb2c15806b80f553a85c4dd262328e",
+        "budget": {
+          "seconds": 300,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.negative.5",
+        "fixture": "shop_m",
+        "snapshot": "fixtures/shop_m",
+        "fixture_digest": "b0226b0373f74fb0e3f2b9f43cb5f2699113d038af017a95a0cd4501daef4345",
+        "checks": [],
+        "defects": [],
+        "source_task_digest": "c987322767e5545db268c4ec83de197e2eeda775978b1b0787431322b148da07",
+        "budget": {
+          "seconds": 300,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.negative.6",
+        "fixture": "classify_m",
+        "snapshot": "fixtures/classify_m",
+        "fixture_digest": "286cc7f6c5fbe5e656ca66f3bcbc5b8fd15a37301c3aee8ec6c6e74e6a3c8758",
+        "checks": [],
+        "defects": [],
+        "source_task_digest": "8c7bb4c00ffa8348271b9d43f90e5e548c81dbf7a5d8f6a118ab50e2073303f7",
+        "budget": {
+          "seconds": 300,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.negative.7",
+        "fixture": "classify_m",
+        "snapshot": "fixtures/classify_m",
+        "fixture_digest": "286cc7f6c5fbe5e656ca66f3bcbc5b8fd15a37301c3aee8ec6c6e74e6a3c8758",
+        "checks": [],
+        "defects": [],
+        "source_task_digest": "614aa4c975cc8b17a17945f9ccc4e535a5b3f69fb4f9e3d9d723cdd5ab183d49",
+        "budget": {
+          "seconds": 300,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.negative.8",
+        "fixture": "shop_m",
+        "snapshot": "fixtures/shop_m",
+        "fixture_digest": "b0226b0373f74fb0e3f2b9f43cb5f2699113d038af017a95a0cd4501daef4345",
+        "checks": [],
+        "defects": [],
+        "source_task_digest": "3b5d6176b455f9cc5ab03925e4765fa342abff2d4b9a3a05560b124d118ffb13",
+        "budget": {
+          "seconds": 300,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.missing_tool.1",
+        "fixture": "shop_m",
+        "snapshot": "fixtures/shop_m",
+        "fixture_digest": "b0226b0373f74fb0e3f2b9f43cb5f2699113d038af017a95a0cd4501daef4345",
+        "checks": [],
+        "defects": [],
+        "source_task_digest": "c11a72ddffd8e8fea44329311c487ad3a544947ed75c97cd73fa9762d70b7604",
+        "budget": {
+          "seconds": 900,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.missing_tool.2",
+        "fixture": "classify_m",
+        "snapshot": "fixtures/classify_m",
+        "fixture_digest": "286cc7f6c5fbe5e656ca66f3bcbc5b8fd15a37301c3aee8ec6c6e74e6a3c8758",
+        "checks": [],
+        "defects": [],
+        "source_task_digest": "f8d88ca79693df3ce312f2ba1040f034f72a000e633e653d0c4a953cef964972",
+        "budget": {
+          "seconds": 900,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.missing_tool.3",
+        "fixture": "fees",
+        "snapshot": "fixtures/fees",
+        "fixture_digest": "4dc38811eda4617f487f0b33934b6fbfbc78b31e976418106518efef3730bf28",
+        "checks": [],
+        "defects": [],
+        "source_task_digest": "7ebe9ecb7321ab59af3f56f07e6922b98316cbabcec71f4ec834c63fb5aba7ee",
+        "budget": {
+          "seconds": 1200,
+          "model_calls": 20,
+          "questions": 1
+        }
+      },
+      {
+        "id": "moment.missing_tool.4",
+        "fixture": "stock",
+        "snapshot": "fixtures/stock",
+        "fixture_digest": "004387f5e189b6fe706733bfb891ee2a9728afca594029f873ecbc9f5a2879b7",
+        "checks": [],
+        "defects": [],
+        "source_task_digest": "84872b1ec3139f6f914608cb7a9bdb37cb8f7479e702ca046713ddf6b9b92ca2",
+        "budget": {
+          "seconds": 1200,
+          "model_calls": 20,
+          "questions": 1
+        }
+      }
+    ]
+  },
+  "reason": "2026-11-17 before any arm: narrow the retention intervention to G6's saved history alone. Both B agent conversations start fresh; retained imports the digest-bound G6 history left by A, fresh imports none. This removes the ordinary agent-context confound; all tasks, checks, budgets and release bars stand.",
+  "digest": "6bae13591c0d3a3e7b62125088fb5678df98afbc585cff46ca9e71b385be34b3"
+}
