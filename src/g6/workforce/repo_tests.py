@@ -609,12 +609,13 @@ def _records_on_failures(records: object, phases: Mapping[str, PhaseRecord]) -> 
     """Whether every typed failure record (``failure_records``) stands on a failure: a test's on a phase its outcomes
     record as failed, a collection error's (``collect``) on a node that ran no phase. A record on a phase that passed
     (or a phase never recorded) makes the whole report unknown, never a reading of that test (review 1, finding 2)."""
-    if type(records) is not dict:
-        return True   # absent, or a type the field's own check refuses
-    return all(type(record) is dict and (
-        (record.get("when") == "collect" and node not in phases)
-        or (node in phases and phases[node].get(record.get("when")) == "failed"))
-        for node, found in records.items() if type(found) is list for record in found)
+    if records is None:
+        return True   # absent
+    if not REPORT_FIELDS["failure_records"].accepts(records):
+        return False  # malformed: the report is unreadable, and no member of it is used as a key
+    return all((record["when"] == "collect" and node not in phases)
+               or (node in phases and phases[node].get(record["when"]) == "failed")
+               for node, found in records.items() for record in found)
 
 
 def read_report(raw: object) -> RunReport:
@@ -2705,6 +2706,25 @@ def _junit_case(node: str) -> tuple[str, str]:
     return ".".join(names[:-1]), names[-1]
 
 
+def _junit_prefix(keys: Iterable[tuple[str, str]], cases: Iterable[tuple[str, str]]) -> str:
+    """The prefix the run's ``--junit-prefix`` put before every testcase's classname, read from the report itself: ""
+    when each record's testcase stands in it as named, else the one prefix that puts every record's testcase there
+    (the part before ``.classname``, or the whole classname of a collection error's testcase, whose own is empty);
+    "" when no single prefix does, so the records reach no testcase and the report's text decides as before."""
+    keys, cases = set(keys), set(cases)
+    if keys <= cases:
+        return ""
+    found = set()
+    for cls, name in keys:
+        found |= {case_cls if not cls else case_cls[:-len(cls) - 1] for case_cls, case_name in cases
+                  if case_name == name and (not cls or case_cls.endswith("." + cls))}
+    found.discard("")
+    if len(found) != 1:
+        return ""
+    [prefix] = found
+    return prefix if {(f"{prefix}.{cls}" if cls else prefix, name) for cls, name in keys} <= cases else ""
+
+
 def _counts(report: Path, repo: Path, roots: tuple[Path, ...],
             records: dict[str, list[dict[str, str]]] | None = None) -> dict[str, int] | None:
     """pytest's own tallies from its JUnit report, or None when it wrote none that can be read. One outcome per test
@@ -2713,11 +2733,12 @@ def _counts(report: Path, repo: Path, roots: tuple[Path, ...],
     its result also has one, with nothing in it: ``run`` takes those off the passes). Also: ``collection``, the
     collection errors, and ``placed``, those whose module or file was read; ``outside``, the failed tests whose every
     failure and error comes from outside the repository. Where those come from is read from the bootstrap's typed
-    failure records (``records``: ``_placed``) whenever the run's own record holds any, each counted against the
-    testcase its node id is written as (``_junit_case``), so both sides count in the report's identity space: a
-    testcase is outside only when every record that reaches it is, and one no record reaches is the repository's own
-    (a collection error none reaches is not placed). ``_blame`` reads the report's text only for a run whose record
-    holds none (a record made before the bootstrap kept them). The report is read with no document type (so no
+    failure records (``records``: ``_placed``), each counted against the testcase its node id is written as
+    (``_junit_case``, behind the run's own ``--junit-prefix``: ``_junit_prefix``), so both sides count in the report's
+    identity space: a testcase is outside only when every record that reaches it is. A failed testcase no record
+    reaches (a run whose record holds none, a prefix the report does not show, a failure pytest reports without an
+    exception) is read from the report's text by ``_blame``, as before the records, so an unknown placement is never
+    weaker than that reading. The report is read with no document type (so no
     entity is ever expanded) and within ``JUNIT_BYTES`` and ``JUNIT_ELEMENTS``; past them its tallies are unread."""
     try:
         root = read_xml(report, limit=JUNIT_BYTES, elements=JUNIT_ELEMENTS)
@@ -2727,9 +2748,12 @@ def _counts(report: Path, repo: Path, roots: tuple[Path, ...],
     for case in root.iter("testcase"):
         tests.setdefault((case.get("classname") or "", case.get("name") or ""), []).extend(case)
     total = dict.fromkeys(("tests", "passed", "failures", "errors", "skipped", "collection", "placed", "outside"), 0)
+    keys = {node: _junit_case(node) for node in records or {}}
+    prefix = _junit_prefix(keys.values(), tests)
     reached: dict[tuple[str, str], list[dict[str, str]]] = {}
-    for node, found in (records or {}).items():
-        reached.setdefault(_junit_case(node), []).extend(found)
+    for node, (cls, name) in keys.items():
+        key = ((f"{prefix}.{cls}" if cls else prefix) if prefix else cls, name)
+        reached.setdefault(key, []).extend(records[node])
     for case, children in tests.items():
         failures = [child for child in children if child.tag == "failure"]
         errors = [child for child in children if child.tag == "error"]
@@ -2742,9 +2766,8 @@ def _counts(report: Path, repo: Path, roots: tuple[Path, ...],
             continue
         total["failures" if failures else "errors"] += 1
         total["collection"] += collection
-        if records:
-            blames = ({_placed(record, repo, roots) for record in reached.get(case, ())}
-                      or {"" if collection else "inside"})
+        if case in reached:
+            blames = {_placed(record, repo, roots) for record in reached[case]}
         else:
             blames = {_blame(problem, repo, roots, collection=collection) for problem in failures + errors}
         total["placed"] += collection and "" not in blames

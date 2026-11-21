@@ -349,8 +349,12 @@ def _visible(html: str) -> str:
     """The visible text of ``html`` (a reply's HTML blocks and inline tags), each piece apart, so a question mark that
     ends one is still seen as ending a sentence."""
     reader = _Visible()
-    reader.feed(html)
-    reader.close()
+    try:
+        reader.feed(html)
+        reader.close()
+    except (AssertionError, ValueError):   # the stdlib parser's refusals of malformed markup (a bogus marked section)
+        # read as it stands, each tag-like span a space, so a question mark that ends a sentence before one counts
+        return re.sub(r"<[^<>]*>", " ", html)
     return "\n".join(reader.parts)
 
 

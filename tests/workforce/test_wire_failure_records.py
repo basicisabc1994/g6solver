@@ -164,3 +164,10 @@ def test_the_completion_loop_reads_the_kinds_by_the_ids_it_reads_results_by():
     assert rt.read_report(ran).valid
     got = loop._read(SimpleNamespace(repo=Path("."), sources=()), [ran])
     assert got.kinds == {"tests/test_x.py::test_cross": "AssertionError"} and set(got.kinds) == set(got.results)
+
+
+def test_the_junit_prefix_is_read_from_the_report_or_left_unknown():
+    assert rt._junit_prefix({("t", "test_a")}, {("t", "test_a")}) == ""
+    assert rt._junit_prefix({("t", "test_a"), ("", "broken")}, {("ci.t", "test_a"), ("ci", "broken")}) == "ci"
+    # two prefixes would fit: none is chosen, and the report's text decides those testcases
+    assert rt._junit_prefix({("t", "test_a")}, {("ci.t", "test_a"), ("cd.t", "test_a")}) == ""

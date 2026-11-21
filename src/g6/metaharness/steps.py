@@ -46,7 +46,9 @@ def _has_function(source: str) -> bool:
 
 
 def shown_tests(task: str) -> tuple[list[str], list[str]]:
-    """Shown imports and assertions, parsed as Python statements, never run here."""
+    """Shown imports and assertions, parsed as Python statements, never run here: wherever they stand, inside a shown
+    ``def test_...():`` too (the line reading this replaced took each such line, so that is the floor). A code block
+    that does not parse whole is read line by line, as the prose around the blocks is."""
     doc = parse(task or "")
     regions = [b.content for b in doc.code_blocks]
     rest = task or ""
@@ -54,13 +56,16 @@ def shown_tests(task: str) -> tuple[list[str], list[str]]:
         rest = rest[:block.start] + "\n" + rest[block.end:]
     regions += rest.splitlines()
     imports, assertions = [], []
-    for region in regions:
-        source = textwrap.dedent(region)
+    while regions:
+        source = textwrap.dedent(regions.pop(0))
         try:
             tree = ast.parse(source)
         except (SyntaxError, ValueError, RecursionError):
+            if "\n" in source.strip():
+                regions[:0] = source.splitlines()
             continue
-        for node in tree.body:
+        shown = (n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom, ast.Assert)))
+        for node in sorted(shown, key=lambda n: (n.lineno, n.col_offset)):   # in the order the task shows them
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 imports.append(ast.get_source_segment(source, node))
             elif isinstance(node, ast.Assert):
