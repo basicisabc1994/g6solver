@@ -769,9 +769,10 @@ def test_a_declared_limit_code_points_at_the_override_tool_marked_unavailable_un
     data = json.loads(json.dumps(corpus.load()))
     data["components"]["grounding"]["limits"] = ["G6_E_GROUNDING_EXAMPLE_LIMIT"]
     reply = selector.select("check a claim", last_outcome="[G6_E_GROUNDING_EXAMPLE_LIMIT] too long", corpus=data)
-    assert reply["remedy"]["tool"] == "g6_agentic_run" and reply["remedy"]["available"] is False
-    assert all(_call_tool(c) != "g6_agentic_run" for c in reply["candidates"])
-    assert reply["next"]["tell_person"] is False and reply["next"]["id"] != "tool:g6_agentic_run"
+    # registered since the agentic kernel merge (334c6254): as PENDING_TOOLS says, the remedy is available once the
+    # corpus holds the tool, and is offered as the call (a sensitive one: the person allows the run)
+    assert reply["remedy"]["tool"] == "g6_agentic_run" and reply["remedy"]["available"] is True
+    assert reply["next"]["tell_person"] is False and reply["next"]["id"] == "tool:g6_agentic_run"
 
 
 def test_metaharness_recovery_remedies_are_mapped_by_component() -> None:

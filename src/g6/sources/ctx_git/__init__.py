@@ -70,6 +70,7 @@ __g6_refusals__ = {
     "G6_E_GIT_NO_ROOT": "person",
     "G6_E_GIT_OUTPUT_TOO_LARGE": "person",
     "G6_E_GIT_OUTSIDE_ROOT": "person",
+    "G6_E_GIT_PATH_INVALID": "person",      # a metadata path G6 cannot check (a link, an unreadable folder): theirs
     "G6_E_GIT_READ": "none",
     "G6_E_GIT_READ_BACK_DIFFERS": "person",
     "G6_E_GIT_REJECTED": "person",

@@ -91,6 +91,7 @@ __all__ = ["CegisBlock", "CegisInput", "CegisResult", "Control", "Counterexample
 __g6_refusals__ = {
     "G6_E_CEGIS_BUDGET_EXHAUSTED": "person",
     "G6_E_CEGIS_DOMAIN_BOUNDED": "none",
+    "G6_E_CEGIS_HOLE_UNSUPPORTED": "none",      # a declared limit (__g6_limits__): the selector offers the override
     "G6_E_CEGIS_INCONCLUSIVE": "none",
     "G6_E_CEGIS_TEMPLATE_EXTRA": "person",
     "G6_E_CEGIS_TEMPLATE_FAILED": "none",
@@ -99,4 +100,8 @@ __g6_refusals__ = {
     "G6_E_CEGIS_TEMPLATE_TRAINING": "none",
     "G6_E_CEGIS_TIMEOUT": "person",
     "G6_E_CEGIS_UNSAT": "none",
+    "G6_E_INPUT_VALIDATION": "input",
+    "G6_E_ISOLATION_UNAVAILABLE": ("person", "No operating-system boundary can confine the run here. Tell the person: "
+                                   "g6 doctor says what this computer needs. Never allow an unconfined run yourself.",
+                                   "g6 doctor"),
 }

@@ -159,8 +159,9 @@ INTENTS: dict[str, tuple[re.Pattern[str], dict[str, dict[str, float]]]] = {
 #: so the op acts even when its component does not list it among its sensitive ops.
 OUTWARD_WORDS = frozenset({"push", "send", "publish", "pay", "delete", "deploy", "drop", "remove", "write"})
 #: Tools a remedy may name before they are registered (built on another branch): such a remedy is marked
-#: ``available: false`` until the corpus holds the tool, and is never offered as a call.
-PENDING_TOOLS = {"g6_agentic_run": "the override kernel's tool (plan revision 8, phase D), built on its own branch"}
+#: ``available: false`` until the corpus holds the tool, and is never offered as a call. None now: the override
+#: kernel's g6_agentic_run (plan revision 8, phase D) is registered since the agentic kernel merge.
+PENDING_TOOLS: dict[str, str] = {}
 UNKNOWN_UNTIL_OBSERVED = (
     "whether this server has the sensitive op allowed: only a G6_E_SENSITIVE_COMPONENT_DENIED refusal says it is not",
     "whether a sharing grant exists for a source: only a withheld reply (G6_E_CLOUD_CONSENT_REQUIRED) says it does not",
