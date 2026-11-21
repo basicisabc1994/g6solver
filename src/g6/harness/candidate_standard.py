@@ -611,24 +611,87 @@ def _scanned(tree, test):
 
 
 def _source_rejects(one, gone):
+    """Whether a check given as Python source asserts, or may assert, a rejected outcome: a check G6 compiled from a
+    template (retained ones included) by the typed bindings it carries (``_compiled_rejects``); any other by its test
+    and its module's other code. There, every reference to a rejected function (its name, an alias, its module's
+    attribute, a star import of its module) must be the callee of a call with literal arguments; any other reference
+    (a variable, ``*args``, the function passed as a value or bound to another name) may call it in a way G6 cannot
+    read, so the check is dropped."""
+    from g6.harness import behaviour_runner
+
     try:
-        tree = ast.parse(str(one.source))
-    except (SyntaxError, ValueError, MemoryError, RecursionError):
-        return False   # it cannot be collected, so it runs as a broken check and passes nothing
+        source = behaviour_runner.expanded(str(one.source))
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, TypeError, MemoryError, RecursionError):
+        return True   # source G6 cannot read: it may assert anything
+    template = next((ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
+                     and [getattr(t, 'id', '') for t in node.targets] == ['TEMPLATE']
+                     and isinstance(node.value, ast.Constant)), None)
+    if template is not None:
+        return _compiled_rejects(source, template, gone)
     parts = _scanned(tree, getattr(one, 'test', '') or '')
-    aliases = _aliases([node for part in parts for node in ast.walk(part)])
+    nodes = [node for part in parts for node in ast.walk(part)]
     for wrong in gone:
         function = wrong['function']
+        module, _, short = function.rpartition('.')
+        aliases = _aliases(nodes)
+        if any(isinstance(node, ast.ImportFrom) and node.module == module and any(a.name == '*' for a in node.names)
+               for node in nodes):
+            aliases.setdefault(short, function)
+        literal = {id(node.func) for node in nodes if isinstance(node, ast.Call)
+                   and _name(node.func, aliases) == function and _case(node) is not None}
+        if any(isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load)
+               and id(node) not in literal and _name(node, aliases) == function for node in nodes):
+            return True   # a reference G6 cannot read as a call with literal arguments
         asserted = [case for part in parts for case in _asserted(part, function, aliases)]
         if any(_hits(case, wrong['case']) for case in asserted):
             return True
-        calls = sum(1 for part in parts for node in ast.walk(part) if isinstance(node, ast.Call)
-                    and _name(node.func, aliases) == function and (case := _case(node)) is not None
-                    and _called(case, wrong['case']))
+        calls = sum(1 for node in nodes if isinstance(node, ast.Call) and id(node.func) in literal
+                    and _called(_case(node), wrong['case']))
         if calls > sum(1 for case in asserted if _called(case, wrong['case'])):
             return True   # a call of the rejected typed call G6 cannot read as asserting another outcome
     return False
 
+
+def _compiled_rejects(source, template, gone):
+    """A compiled check (``TEMPLATE``) by its typed bindings, as G6's runner reads them (``behaviour_runner.bindings``):
+    an example.v1 case of a rejected outcome, or any differential.v1 call of a rejected typed call. A compiled check of
+    any other template, or one whose bindings G6 cannot read, is dropped when its source names a rejected function."""
+    from g6.harness import behaviour_runner
+
+    read = behaviour_runner.bindings(source) if template in behaviour_runner.RUN_TEMPLATES else None
+    data = read[1] if read else {}
+    spec = data.get('function')
+    name = (f'{spec[1]}.{spec[2]}' if spec[1] else spec[2]) if (
+        isinstance(spec, list) and len(spec) >= 3 and all(isinstance(part, str) for part in spec[:3])) else None
+    for wrong in gone:
+        short = wrong['function'].rpartition('.')[2]
+        if name is None:
+            if re.search(rf'\b{re.escape(short)}\b', source):
+                return True
+            continue
+        if name != wrong['function'] and name.rpartition('.')[2] != short:
+            continue   # a function of another name (its module may differ from the one asked: the name decides)
+        if template == 'differential.v1':
+            if any(not isinstance(call, dict) or _called(call, wrong['case']) for call in data.get('calls') or ()):
+                return True
+        elif any(not isinstance(case, dict) or _called(case, wrong['case']) and (
+                _typed(case) is None or _hits(_typed(case), wrong['case'])) for case in data.get('cases') or ()):
+            return True
+    return False
+
+
+def _typed(case):
+    """A compiled example.v1 case as an example case states it (``returns``, ``raises`` or ``effect``), or None."""
+    call = {'args': case.get('args', []), 'kwargs': case.get('kwargs', {})}
+    error = case.get('error')
+    if case.get('expect') == 'returns' and 'value' in case:
+        return dict(call, returns=case['value'])
+    if case.get('expect') == 'raises' and isinstance(error, list) and len(error) >= 3 and isinstance(error[2], str):
+        return dict(call, raises=error[2].rpartition('.')[2])
+    if case.get('expect') == 'effect' and 'value' in case:
+        return dict(call, effect={'argument': case.get('argument'), 'equals': case['value']})
+    return None
 
 def owns(found, one):
     """Whether a supplied example.v1 check is one of a candidate's own, whatever its id: every one for a candidate the

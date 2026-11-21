@@ -1021,20 +1021,7 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict] | None
 
         retained, retained_origins, retained_skipped = outcome_history.retained_checks(
             change, next((req.id for req in stated if req.provenance in NORMATIVE), 'retained'))
-        if confirmed is not None and confirmed.expectations:
-            # One gate at scheduling, whoever made the check: none asserting an outcome the person rejected runs.
-            from g6.harness import candidate_standard
 
-            gone = candidates if candidates is not None else {'rejected': candidate_standard.rejections(confirmed)}
-            activity = 'candidate check' if thin else 'proposed check'
-            proposed, dropped = candidate_standard.gate(gone, proposed, activity, 'caller')
-            instances, more = candidate_standard.gate(gone, instances, activity, 'caller')
-            retained, old = candidate_standard.gate(gone, retained, 'retained check', 'retained')
-            for one in (*dropped, *more, *old):
-                candidate_origins.pop(one['check'], None)
-                retained_origins.pop(one['check'], None)
-            candidate_skipped.extend((*dropped, *more))
-            retained_skipped.extend(old)
         if (confirmed is not None and confirmed.expectations) or any(
                 one.template == 'differential.v1' for one in instances) or any(
                 origin.template == 'differential.v1' for origin in retained_origins.values()):
@@ -1331,6 +1318,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             skip=INTEGRITY_SKIP if any(r["stage"] == "integrity" for r in reasons) else "",
             budget=verification_search.MAX_CHECKS - prepared.instances - len(proposed))
     compiled = list(prepared.checks) if prepared is not None else []
+    rejected_skipped: list[dict] = []
     if proposed or compiled or retained:   # retained checks keep proposed authority
         from g6.harness import verification_search   # checks, each on the patch and at the base commit
         checks, where = [*compiled, *proposed, *retained], {**(prepared.placed if prepared else {}), **(placed or {})}
@@ -1340,7 +1328,21 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             previous = origins.get(ident, verification_search.FREE_FORM)
             origins[ident] = replace(previous, activity=origin.activity, proposed_by=origin.proposed_by,
                 label=origin.label, unconfirmed=origin.unconfirmed, about={**previous.about, **origin.about})
-        if any(r["stage"] == "integrity" for r in reasons):
+        if confirmed is not None:
+            # The one gate where checks are about to run, after every source (the caller's, the candidates', the
+            # proposer's, the retained ones): none asserting an outcome the person rejected runs, whoever made it.
+            from g6.harness import candidate_standard
+
+            gone, kept = {"rejected": candidate_standard.rejections(confirmed)}, []
+            for one in checks:
+                origin = origins.get(one.id, verification_search.FREE_FORM)
+                allowed, dropped = candidate_standard.gate(gone, [one], origin.activity, origin.label)
+                kept += allowed
+                rejected_skipped += dropped
+            checks = kept
+        if not checks:
+            search = None
+        elif any(r["stage"] == "integrity" for r in reasons):
             search = verification_search.not_run(checks, where, INTEGRITY_SKIP, origins)
         else:
             search = _stage(stopped, "the proposed and compiled checks", verification_search.search, change, checks,
@@ -1351,11 +1353,11 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         follow_ups = [*follow_ups, *(search.next_actions if search is not None else ())]
     if formal is not None:
         verification_formal.finish(formal, search)
-    if retained_skipped:
+    if retained_skipped or rejected_skipped:
         from g6.harness import verification_search
 
         search = search or verification_search.Search()
-        search.activities.extend(retained_skipped)
+        search.activities.extend([*retained_skipped, *rejected_skipped])
     if candidate_skipped:
         from g6.harness import verification_search
         search = search or verification_search.Search()
