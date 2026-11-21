@@ -88,6 +88,55 @@ def test_template_instances_refuse_a_class_that_only_compares_equal_to_g6s_marks
         vt.template_instances([foreign], {"R1"})
 
 
+def _cyclic():
+    bad = []
+    bad.extend((bad, bad))
+    return bad
+
+
+def _wide():
+    # no cycle, but each level holds the one below twice: 2**40 values when expanded
+    value = ["a"]
+    for _ in range(40):
+        value = [value, value]
+    return value
+
+
+@pytest.mark.parametrize("shape", ["top", "bindings", "wide"])
+def test_a_value_that_holds_itself_or_expands_past_the_limits_is_refused_at_once(shape):
+    import time
+
+    from g6.harness import patch_review
+
+    instances = (_cyclic() if shape == "top" else
+                 [{**INSTANCE, "bindings": {**INSTANCE["bindings"], "calls": _cyclic() if shape == "bindings"
+                                            else [{"args": [_wide()]}]}}])
+    started = time.monotonic()
+    reply = patch_review.review_patch(".", task="malformed template input", requirements=[],
+                                      template_instances=instances, timeout_s=1)
+    assert time.monotonic() - started < 5
+    assert reply["ok"] is False and reply["warning_card"]["code"] == "G6_E_INPUT_VALIDATION", reply
+
+
+@pytest.mark.parametrize("value", [_cyclic(), {"k": _wide()}], ids=["cycle", "wide"])
+def test_unwrapping_is_bounded_and_refuses_what_it_cannot_read(value):
+    from g6.core.external_data import PlainTextLimit, plain_text
+
+    with pytest.raises(PlainTextLimit):
+        plain_text(value)
+
+
+def test_a_caller_candidate_that_holds_itself_is_refused_as_input():
+    from g6.harness import behaviour_question as bq
+
+    candidate = {"requirement_id": "R1", "function": "calc.add", "args": _cyclic(),
+                 "outcomes": {"A": {"returns": 3}, "B": {"returns": 4}}, "cited": "add two numbers",
+                 "evidence": ["calc.py: add returns a + b"]}
+    with pytest.raises(bq.CandidateRefused) as refused:
+        bq.caller_candidates("add two numbers", [candidate])
+    assert refused.value.code == bq.INVALID
+
+
 @pytest.mark.parametrize("build", [
     lambda plan: confine_record(plan),
     lambda plan: confine_not_started(plan.record(), OSError("the child did not start")),

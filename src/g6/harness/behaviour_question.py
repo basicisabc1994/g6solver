@@ -219,8 +219,11 @@ class Candidate:
                 raise CandidateRefused("a probe digest names G6's differential runner")
             record["probe_sha256"] = probe_sha256
         # Caller text that crossed G6's MCP ingress carries G6's own reply receipt; the record holds plain str.
-        from g6.core.external_data import plain_text
-        record = plain_text(record)
+        from g6.core.external_data import PlainTextLimit, plain_text
+        try:   # a bounded walk: a record holding itself, or past the limits, is refused as input
+            record = plain_text(record)
+        except PlainTextLimit as exc:
+            raise CandidateRefused(f"a candidate is JSON data: {exc}") from None
         for name in ("requirement_id", "function", "cited", "scope", "rule"):
             if type(record[name]) is not str:
                 raise CandidateRefused(f"a candidate's {name} is text")

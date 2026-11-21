@@ -1486,9 +1486,7 @@ def template_instances(value, requirement_ids) -> list[TemplateInstance]:
     each names a template of ``TEMPLATES`` and a requirement of the review (``requirement_ids``), declares an intent the
     template takes, and holds bindings that are JSON data its bindings model accepts. A request's instance cannot set
     ``provenance``; a ``TemplateInstance`` built by G6's own code keeps its own."""
-    from g6.core.external_data import plain_text
-    # A request's text that crossed G6's MCP ingress carries G6's own reply receipt; an instance holds plain str.
-    value = plain_text(value)
+    from g6.core.external_data import PlainTextLimit, plain_text
     if not isinstance(value, (list, tuple)):
         raise ValueError("template_instances must be a list of {id, template, requirement_id, intent, bindings}")
     if len(value) > vs.MAX_CHECKS:
@@ -1505,6 +1503,12 @@ def template_instances(value, requirement_ids) -> list[TemplateInstance]:
         if data.get("intent") not in ("preserve", "change"):
             raise ValueError(f"{where}: intent must be preserve (behaviour the patch must keep) or change (behaviour "
                              "the patch must bring); an instance that declares neither is not run")
+        # A request's text that crossed G6's MCP ingress carries G6's own reply receipt; an instance holds plain str.
+        # Unwrapped only once the shape and count are checked, by a bounded walk that refuses a value holding itself.
+        try:
+            data = plain_text(data)
+        except PlainTextLimit as exc:
+            raise ValueError(f"{where}: bindings must be JSON data: {exc}") from None
         try:
             one = TemplateInstance.model_validate(data)
         except ValidationError as exc:

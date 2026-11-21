@@ -213,28 +213,52 @@ def caller_echo(value):
     return external_value(value)
 
 
-def plain_text(value, *, _depth=0):
+#: The most values (containers, keys and leaves) ``plain_text`` reads in one value.
+MAX_PLAIN_VALUES = 100_000
+
+
+class PlainTextLimit(ValueError):
+    """A value G6 takes as data holds itself, or is past the depth or the count of values G6 reads."""
+
+
+def plain_text(value):
     """``value`` with G6's own text receipts (external, guidance, mixed) as plain ``str``, at a validator boundary.
 
     A validator that admits only exact ``str`` admits caller text that crossed G6's ingress; the receipt is a reply
     role, never part of a stored record. Any other ``str`` subclass is left as it is, for the validator to refuse.
-    Containers are copied (dict, list, tuple); nothing else changes. Below ``_MAX_GUIDANCE_DEPTH`` levels a value is
-    returned as it is, for the validator's own depth limit to refuse. Only those exact three types are unwrapped: a
+    Containers are copied (dict, list, tuple); nothing else changes. Only those exact three types are unwrapped: a
     caller's subclass of one is a ``str`` subclass from outside G6 and is left as it is too. Types are compared by
     identity, never by equality, which a foreign metaclass defines.
+
+    The walk is bounded: a container that holds itself, more than ``_MAX_GUIDANCE_DEPTH`` levels, or more than
+    ``MAX_PLAIN_VALUES`` values read (a value held twice is read twice) raise ``PlainTextLimit``, before any more is read.
     """
+    budget = [MAX_PLAIN_VALUES]
+    return _plain(value, 0, set(), budget)
+
+
+def _plain(value, depth, active, budget):
+    budget[0] -= 1
+    if budget[0] < 0:
+        raise PlainTextLimit(f"a value G6 takes as data holds more than {MAX_PLAIN_VALUES} values")
     kind = type(value)
     if kind is _ExternalText or kind is _GuidanceText or kind is _MixedText:
         return str.__str__(value)
-    if _depth > _MAX_GUIDANCE_DEPTH:
+    if not (kind is dict or kind is list or kind is tuple):
         return value
-    if type(value) is dict:
-        return {plain_text(key, _depth=_depth + 1): plain_text(child, _depth=_depth + 1) for key, child in value.items()}
-    if type(value) is list:
-        return [plain_text(child, _depth=_depth + 1) for child in value]
-    if type(value) is tuple:
-        return tuple(plain_text(child, _depth=_depth + 1) for child in value)
-    return value
+    if depth >= _MAX_GUIDANCE_DEPTH:
+        raise PlainTextLimit(f"a value G6 takes as data is nested deeper than {_MAX_GUIDANCE_DEPTH} levels")
+    if id(value) in active:
+        raise PlainTextLimit("a value G6 takes as data holds itself")
+    active.add(id(value))
+    try:
+        if kind is dict:
+            return {_plain(key, depth + 1, active, budget): _plain(child, depth + 1, active, budget)
+                    for key, child in value.items()}
+        children = [_plain(child, depth + 1, active, budget) for child in value]
+        return children if kind is list else tuple(children)
+    finally:
+        active.discard(id(value))
 
 
 def quoted_content(value):
