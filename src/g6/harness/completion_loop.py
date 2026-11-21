@@ -1061,6 +1061,11 @@ class Step:
     ending: str = ""
 
 
+#: The sharing state could not be read after a request of this review had gone out (``G6_E_CLOUD_CONSENT_STATE`` says
+#: nothing was shared, which a counted request makes untrue).
+CONSENT_STATE_AFTER_SEND = "G6_E_CLOUD_CONSENT_STATE_AFTER_SEND"
+
+
 def _load(session: Path) -> dict:
     path = session / "state.json"
     if not path.is_file():
@@ -1561,7 +1566,15 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         code = watch.refused(exc) if watch is not None else ""
         if not code:
             raise
-        state["stop"] = "The review was not sent. " + cloud.WITHHELD
+        sent = watch.counted()
+        if not sent:            # "not sent" only when no request at all was counted in the loop's scope
+            state["stop"] = "The review was not sent. " + cloud.WITHHELD
+        else:
+            state["requests_sent"] = sent
+            state["stop"] = (f"The review stopped part way: {sent} request(s) went out to the reviewer's provider before "
+                             "sharing was refused for the next. " + cloud.WITHHELD)
+            if code == cloud.STATE_UNAVAILABLE:     # its declared words say nothing was shared, which is not so here
+                code = CONSENT_STATE_AFTER_SEND
         return refused(state["stop"], code, "cloud_consent_missing", untested=True)
     except repo_tests.RepoRefused as exc:
         if exc.code != ISOLATION_UNAVAILABLE:

@@ -108,7 +108,7 @@ def obstacles(assessment: Mapping | None, loop: Mapping | None, events: Sequence
         error = str(loop.get("error") or "")
         code = error[1:error.index("]")] if error.startswith("[G6_E_") and "]" in error else ""
         ref = Ref("report", str(loop.get("run_id") or "loop")[:64], sha256(str(loop.get("report", "")) + error))
-        if code == CONSENT_REQUIRED:
+        if code == CONSENT_REQUIRED and not loop.get("requests_sent"):   # unsent only with no request counted
             found.append(Obstacle("review_unsent", "this loop's review of this patch", ref))
         elif code:
             found.append(Obstacle("refused_run", f"this loop's run ({code})", ref))

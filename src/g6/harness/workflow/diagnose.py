@@ -197,14 +197,17 @@ def _g6_setup_blocks(events, assessment, loop, found) -> list[tuple[Obstacle, tu
     for run, held in _review_runs(events).items():
         for event in held:
             if event.kind == "loop_ended":
-                ends.append((run, event.data.get("code") or "" if event.data.get("ending") == "untested" else ""))
+                ends.append((run, event.data.get("code") or "" if event.data.get("ending") == "untested" else "",
+                             bool(event.data.get("requests_sent"))))
             elif event.kind == "review_finished":
-                ends.append((run, event.data.get("refusal_code") or ""))
+                ends.append((run, event.data.get("refusal_code") or "", False))
     fired = []
-    for code in sorted({code for _run, code in ends if code}):
-        last_two = [n for n, (_run, one) in enumerate(ends) if one == code][-2:]
-        if len(last_two) == 2 and not any(one == "" for _run, one in ends[last_two[0]:last_two[1]]):
-            kind = "review_unsent" if code == "G6_E_CLOUD_CONSENT_REQUIRED" else "refused_run"
+    for code in sorted({code for _run, code, _sent in ends if code}):
+        last_two = [n for n, (_run, one, _sent) in enumerate(ends) if one == code][-2:]
+        if len(last_two) == 2 and not any(one == "" for _run, one, _sent in ends[last_two[0]:last_two[1]]):
+            # unsent only when neither run counted a request; a review refused after one went out is a refused run
+            unsent = code == "G6_E_CLOUD_CONSENT_REQUIRED" and not any(ends[n][2] for n in last_two)
+            kind = "review_unsent" if unsent else "refused_run"
             fired.append((Obstacle(kind, f"this task's runs ({code})", Ref("receipt", ends[last_two[1]][0], digest(code))),
                           (), None))
     return fired

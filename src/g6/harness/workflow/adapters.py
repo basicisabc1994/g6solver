@@ -168,7 +168,8 @@ def observe_loop(repo: str | os.PathLike, task: str, session: Path, state: Mappi
         last = reviews[-1].get("patch") if reviews else ""
         native = digest([len(reviews), ending, code])
         run.write("loop_ended", native, at=at, artifact=last or "",
-                  data={"ending": ending or None, "code": code or None, "reviews": len(reviews)})
+                  data={"ending": ending or None, "code": code or None, "reviews": len(reviews),
+                        "requests_sent": state.get("requests_sent") or None})
         seconds = run.seconds()
         run.write("report_returned", native, at=at, artifact=last or "", data={"run_seconds": seconds},
                   refs=_report_ref(session), missing=() if seconds is not None else ("run_seconds",))

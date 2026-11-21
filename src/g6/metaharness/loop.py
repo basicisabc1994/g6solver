@@ -2448,7 +2448,7 @@ class ShadowLoop:
                                    "again, and a person reads this before the loop goes on"})
         if halted is not None and halted.code in HOLDS:    # a fault that is on the record, and holds the loop for a person
             held.append({"outcome": "error", "code": halted.code,
-                         "reason": f"{halted.said}: nothing was sent, and nothing is adopted"})
+                         "reason": f"{halted.said}: the request it met was not sent, and nothing is adopted"})
         return held
 
     def _made(self, row: dict[str, Any]) -> list[dict[str, Any]]:

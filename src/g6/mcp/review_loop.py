@@ -116,8 +116,17 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
         result = {"ok": True, **said, **envelope_fields(
             reliability_label="qualified-draft", warning_card=warning_card(CODE, *card), evidence=evidence, request_id=request_id,
             run_id=folder.name, degradation_reason=card[0][:300])}
+    if code and state.get("requests_sent"):     # a review refused after a request went out: never "not sent"
+        result["requests_sent"] = state["requests_sent"]
     from g6.core.cloud_consent import bind_output
     return bind_output(result, loop.source_refs(state))
+
+
+def _unsent(result: dict) -> bool:
+    """Whether a step's reply is a review that was not sent: untested for want of a grant, with no request counted."""
+    from g6.core.cloud_consent import REQUIRED
+
+    return result.get('ending') == 'untested' and code_of(result) == REQUIRED and not result.get('requests_sent')
 
 
 def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
@@ -130,11 +139,10 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
         # envelope fields and the fixed busy message; do not load its report.
         from g6.mcp.consent_controls import public_instructions
         return public_instructions(result)
-    from g6.core.cloud_consent import REQUIRED, current_capture, input_source
+    from g6.core.cloud_consent import current_capture, input_source
     capture = current_capture()
     if capture is not None:
-        capture.review_unsent = (result.get('ending') == 'untested' and
-            code_of(result) == REQUIRED)
+        capture.review_unsent = _unsent(result)
     body, refs, _ = freeze_output(result)
     try:
         result = json.loads(body)
