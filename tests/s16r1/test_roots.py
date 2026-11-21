@@ -207,11 +207,6 @@ SOURCE_SITES = {
     # component_catalogue. Planted cases: tests/core/test_catalogue_exemption.py (without the grant an extension is
     # left out of g6_components and g6_find and g6_describe of it is withheld; with it, shown and disclosed).
     'g6.mcp.catalogue.carry',
-    # A catalogue or selector reply to a client G6 cannot name (cloud:unknown) that holds only that client's own
-    # request of the call goes back on its session without admission; any other source still takes admission. Planted
-    # cases: tests/core/test_catalogue_exemption.py (the built-in catalogue and the selector answered; an extension's
-    # text left out) and tests/core/test_mcp_repair.py (another tool's reply withheld, saying how to go on).
-    'g6.mcp.cloud_consent._own_request_only',
 }
 
 

@@ -142,7 +142,10 @@ def input_error_result(tool: str, fields, *, arguments=None, session=None):
 #: which no grant covers.
 CLIENTS = {'claude-code': 'anthropic:claude_code', 'claude code': 'anthropic:claude_code',
            'codex': 'openai:codex', 'codex-mcp-client': 'openai:codex'}
-#: G6's catalogue and selector (the owner's decision 1, 2026-11-16): built-in text, answered to any client.
+#: G6's catalogue and selector (the owner's decision 1, 2026-11-16): built-in text. A reply of one of them to a client
+#: G6 cannot name is marked as the reply to the client's own request (``requester``), so admission may send that
+#: client back the exact bytes it supplied, unless the person revoked them, recording the disclosure; every other
+#: source of the reply still needs what admission always needs, and ``cloud:unknown`` has no grant.
 CATALOGUE_TOOLS = frozenset({'g6_select', 'g6_find', 'g6_describe', 'g6_components', 'g6_help'})
 
 
@@ -153,16 +156,6 @@ def client_provider(ctx: Any) -> str:
         return 'cloud:unknown'
     # Exact protocol names, never a caller-supplied provider argument or a substring match.
     return CLIENTS.get(name, 'cloud:unknown')
-
-
-def _own_request_only(tool: str, provider: str, sources, supplied) -> bool:
-    """Whether a reply of G6's catalogue or selector to a client G6 cannot name holds nothing but that client's own
-    request of this call: each source the exact bytes it sent (as admission reads a supplied input). Such a reply goes
-    back over the session the request came in on, so it discloses nothing the client did not send; every other
-    source (an extension's text, this computer's facts) still takes admission, which refuses ``cloud:unknown``."""
-    return (provider == 'cloud:unknown' and tool in CATALOGUE_TOOLS and bool(sources) and all(
-        source.recorded and source.source_id in supplied and source.source_id == 'input:' + source.content_sha256
-        for source in sources))
 
 
 async def request_grant(ctx: Any, source: str, provider: str, *, description: str = '', label: str = '') -> dict:
@@ -292,7 +285,8 @@ def install(server) -> None:
 
     class ConsentEgress(Middleware):
         async def on_call_tool(self, context, call_next):
-            from g6.mcp.consent_transport import call_body, install as install_transport, prepare
+            from g6.mcp.consent_transport import call_body, install as install_transport, prepare, settled
+            from g6.mcp.repair import Record
             ctx = context.fastmcp_context
             session = None
             try:
@@ -333,16 +327,16 @@ def install(server) -> None:
                         for child in value:
                             inputs(child)
                 inputs(args)
+                # the replies this session already sent are counted (or not) before this call is assessed
+                settled(session)
                 records: list = []
                 token = _DELIVERY.set(records)
                 try:
                     result = await call_next(context)
                 finally:
                     _DELIVERY.reset(token)
-
-                def delivered():
-                    for record in records:
-                        record()
+                delivered = Record(lambda: [record.sent() for record in records],
+                                   lambda: [record() for record in records])
                 returned = capture.returned
                 # The rendered reply is serialised once, here. The frozen return is
                 # matched against that serialisation and the ticket is cut from it,
@@ -352,14 +346,14 @@ def install(server) -> None:
                 matches = _matches_return(returned, result, wire)
                 public = matches and returned[3]
                 refs = (() if public else returned[2]) if matches else None
-                if refs and _own_request_only(context.message.name, capture.client[0], refs, capture.supplied):
-                    refs = ()
                 if refs == ():
                     prepare(session, ctx.request_context.request_id, result, (), body=wire, delivered=delivered)
                     return result
                 sources = refs if refs is not None else (policy.UNKNOWN,)
+                requester = capture.client[0] == 'cloud:unknown' and context.message.name in CATALOGUE_TOOLS
                 prepare(session, ctx.request_context.request_id, result, sources, capture.supplied, capture.job,
-                        metadata=returned[4] if matches else None, body=wire, delivered=delivered)
+                        metadata=returned[4] if matches else None, body=wire, delivered=delivered,
+                        requester=requester)
                 return result
     server.add_middleware(ConsentEgress())
 

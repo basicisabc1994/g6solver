@@ -56,17 +56,64 @@ class Ticket:
     body_sha256: str
     job: dict | None = None
     control: dict | None = None
-    #: Called once these exact bytes are handed to the client, never for a reply withheld in their place: what counts
-    #: an attempt the agent saw (``g6.mcp.repair.observed``).
+    #: What to record about this reply (``g6.mcp.repair.Record``): ``sent()`` once the transport handed these exact
+    #: bytes to the client, never for a reply withheld in their place; called once they are seen written
+    #: (``settled``), which counts the attempt the agent saw.
     delivered: Callable[[], None] | None = field(default=None, compare=False, repr=False)
+    #: The reply to the client's own request, from a catalogue or selector tool to a client G6 cannot name
+    #: (``g6.mcp.cloud_consent.CATALOGUE_TOOLS``). Admission reads it once it takes that mark (the issuance hunk);
+    #: until then such a reply is withheld, as any reply to ``cloud:unknown`` is.
+    requester: bool = False
 
 
-def _delivered(ticket: Ticket | None) -> None:
-    if ticket is not None and ticket.delivered is not None:
-        try:
-            ticket.delivered()
-        except Exception:  # noqa: BLE001 - counting an attempt never fails a reply already sent
-            pass
+def _written(stream) -> bool | None:
+    """Whether a message handed to ``stream`` earlier was written to the client, as far as can be seen now: the
+    stream's one reader takes a message and comes back for the next only once it has handled it (the stdio writer
+    after it wrote and flushed the line, an in-process client after it read it). So the reader waiting again with
+    nothing left in the stream: written; the reader gone (a write failed and the writer stopped), or a stream with no
+    such statistics: not seen written; anything else (the reader still busy): ``None``, not decided yet."""
+    statistics = getattr(stream, 'statistics', None)
+    if statistics is None:
+        return False
+    seen = statistics()
+    if seen.open_receive_streams == 0:
+        return False
+    if seen.current_buffer_used == 0 and seen.tasks_waiting_receive > 0:
+        return True
+    return None
+
+
+def _handed(session, stream, ticket: Ticket) -> None:
+    """The ticket's reply was handed to the client: record that (``sent``), and keep it until its writing is seen."""
+    if ticket.delivered is None:
+        return
+    try:
+        ticket.delivered.sent()
+    except Exception:  # noqa: BLE001 - recording never fails a reply already sent
+        pass
+    unseen = getattr(session, '_g6_unseen', None)
+    if unseen is None:
+        unseen = session._g6_unseen = []
+    unseen.append((stream, ticket))
+
+
+def settled(session) -> None:
+    """Before a call of this session is assessed, and before each reply it sends: count each reply it already handed
+    to the client that is now seen written (``_written``), in the order they went; drop one seen not written; stop at
+    the first not decided yet, kept with those after it for later. Nothing here waits, so nothing waits while
+    admission holds the sharing ledger (it only takes the repair state's own lock and queues log rows); a reply the
+    session sends last, with no call or reply after it, is never counted."""
+    unseen = getattr(session, '_g6_unseen', None)
+    for entry in list(unseen or ()):
+        written = _written(entry[0])
+        if written is None:
+            break
+        unseen.remove(entry)
+        if written:
+            try:
+                entry[1].delivered()
+            except Exception:  # noqa: BLE001 - counting an attempt never fails a call
+                pass
 
 
 def _request_key(request_id):
@@ -75,10 +122,12 @@ def _request_key(request_id):
     return (type(request_id), request_id) if type(request_id) in (str, int) else None
 
 
-def prepare(session, request_id, result, sources, supplied=(), job=None, *, metadata=None, body=None, delivered=None):
+def prepare(session, request_id, result, sources, supplied=(), job=None, *, metadata=None, body=None, delivered=None,
+            requester=False):
     """Cut the ticket for this reply. ``body`` is the caller's one serialisation of ``result``, when it has matched
     the sources against one: the ticket then names those bytes, never a second reading of the live reply.
-    ``delivered`` is called once those bytes reach the client, not when a withheld reply goes in their place."""
+    ``delivered`` is the reply's ``g6.mcp.repair.Record`` (``Ticket.delivered``); ``requester`` marks a catalogue or
+    selector reply to a client G6 cannot name (``Ticket.requester``)."""
     key = _request_key(request_id)
     if key is None:
         return
@@ -89,7 +138,7 @@ def prepare(session, request_id, result, sources, supplied=(), job=None, *, meta
     except (RecursionError, MemoryError):
         raise ValueError("a JSON record exceeds decoder limits") from None
     session._g6_tickets[key] = Ticket(tuple(sources), provider(session), frozenset(supplied),
-                                    digest(body), controls['job'], controls['metadata'], delivered)
+                                    digest(body), controls['job'], controls['metadata'], delivered, bool(requester))
 
 
 def _refused(message, ticket, recipient='cloud:unknown', session=None):
@@ -148,8 +197,7 @@ class _Stream:
             ticket = Ticket(() if control else policy.current_sources() or (policy.UNKNOWN,),
                             actual, supplied, digest(root.model_dump(mode='json', exclude_none=True)))
         if not ticket.sources:
-            await self.inner.send(packet)
-            _delivered(ticket)
+            await self._hand(packet, ticket)
             return
 
         def handoff():
@@ -157,12 +205,19 @@ class _Stream:
             supplied = ticket.supplied if actual == ticket.provider else ()
             try:
                 with policy.admission(actual, ticket.sources, ticket.body_sha256, supplied=supplied):
-                    anyio.from_thread.run(self.inner.send, packet)
+                    anyio.from_thread.run(self._hand, packet, ticket)
             except (LLMError, RecursionError, MemoryError):
                 anyio.from_thread.run(self.inner.send, _refused(packet, ticket, actual, self.session))
-            else:
-                _delivered(ticket)
         await anyio.to_thread.run_sync(handoff)
+
+    async def _hand(self, packet, ticket: Ticket) -> None:
+        """Send ``packet`` and record it handed in the same step: the client cannot read it, and call again, before the
+        session knows it went (``settled``). The replies handed before it are settled first, while the stream still
+        shows whether they were written. Nothing is awaited after the send, so nothing waits on the client while
+        admission holds the sharing ledger."""
+        settled(self.session)
+        await self.inner.send(packet)
+        _handed(self.session, self.inner, ticket)
 
 
 class _Session:
