@@ -30,16 +30,14 @@ class CircuitState(Enum):
 
 #: Statuses that mean "slow down", not "broken".
 _TRANSIENT_STATUS = frozenset({408, 429})
-#: g6.core.llm.RATE_LIMITED, written out: no runtime module imports the model caller (AGENT_RUNTIME-02).
-RATE_LIMITED = "G6_E_LLM_RATE_LIMITED"
 _TRANSIENT_WORDS = ("rate limit", "rate_limit", "ratelimit", "too many requests", "request timeout", "http 408",
                     "http 429", "error code: 408", "error code: 429")
 
 
 def is_transient_provider_error(error: object) -> bool:
     """Whether ``error`` is a rate limit or request timeout: an integer HTTP ``status_code`` (or ``http_status``, or a
-    refusal's ``detail["status_code"]``) settles it, and so does a refusal's typed ``G6_E_LLM_RATE_LIMITED`` code;
-    otherwise its words do (rate limits known only by a provider's words stay transient, as at the base)."""
+    refusal's ``detail["status_code"]``) settles it; otherwise its words do, as at the base (a refusal led by the rate
+    limit code says ``rate_limit``; rate limits known only by a provider's words stay transient)."""
     if error is None:
         return False
     detail = getattr(error, "detail", None)
@@ -47,8 +45,6 @@ def is_transient_provider_error(error: object) -> bool:
                   detail.get("status_code") if isinstance(detail, dict) else None):
         if type(value) is int:
             return value in _TRANSIENT_STATUS
-    if getattr(error, "code", None) == RATE_LIMITED:
-        return True
     text = str(error).lower()
     return any(word in text for word in _TRANSIENT_WORDS)
 

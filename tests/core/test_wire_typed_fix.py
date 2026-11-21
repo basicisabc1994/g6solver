@@ -348,11 +348,10 @@ def test_a_declared_source_kind_cannot_split_one_host():
 
 
 def test_a_rate_limit_is_read_from_typed_fields_first():
-    from g6.agents._runtime.breaker import RATE_LIMITED, is_transient_provider_error
+    from g6.agents._runtime.breaker import is_transient_provider_error
     from g6.agents._runtime.model import AgentRefusal
     from g6.core import llm
 
-    assert RATE_LIMITED == llm.RATE_LIMITED
     assert is_transient_provider_error(AgentRefusal(llm.RATE_LIMITED, "slow down", backend_failure=True))
     assert is_transient_provider_error(AgentRefusal("G6_E_AGENT_X", "x", detail={"status_code": 429}))
     assert not is_transient_provider_error(AgentRefusal("G6_E_AGENT_X", "rate limit", detail={"status_code": 500}))
