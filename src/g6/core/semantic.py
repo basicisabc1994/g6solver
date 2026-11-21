@@ -91,6 +91,43 @@ def holds_fallback(caller: Any) -> bool:
             return True
     return False
 
+
+#: Why no model is asked through a caller whose wrappers G6 cannot send through without changing them (``owned``).
+NOT_OWNED = "G6 cannot send through this caller without changing it"
+
+
+def owned(caller: Any) -> Any:
+    """The form G6 sends through ``caller`` by: its leaf in the guarded form ``consent_callers.guard`` makes (given a
+    leaf, guard changes nothing; given a wrapper, it would set the wrapper's inner caller), under a view of each
+    wrapper G6 knows that shares the wrapper's own state and holds the guarded form where the wrapper holds its inner
+    caller. The caller handed in, and every wrapper of it, is neither changed nor copied. None when a wrapper cannot
+    be viewed so. Only for a caller ``holds_fallback`` clears: no chain and no cycle."""
+    path = []
+    while slot := wrapper_slot(caller):
+        if slot == "_callers" or len(path) >= 64:
+            return None
+        path.append((caller, slot))
+        caller = getattr(caller, slot)
+    sender = guard(caller)
+    for wrapper, slot in reversed(path):
+        sender = _view(wrapper, slot, sender)
+        if sender is None:
+            return None
+    return sender
+
+
+def _view(wrapper: Any, slot: str, inner: Any) -> Any:
+    """``wrapper`` as G6 sends through it: an object of a subclass of its class made here, sharing its state (one
+    ``__dict__``, so what it counts or records is the wrapper's own), whose ``slot`` reads ``inner``."""
+    kind = type(wrapper)
+    try:
+        made = type(kind.__name__, (kind,), {slot: property(lambda self: inner), "__module__": kind.__module__})
+        view = object.__new__(made)
+        view.__dict__ = wrapper.__dict__
+    except (TypeError, AttributeError, ValueError):
+        return None
+    return view
+
 @dataclass(frozen=True)
 class Kind:
     combine: Combine
@@ -316,7 +353,10 @@ def _send(caller, q, policy, scope):
     with cloud.request_sources(sources), counting(before_call=admit_once):
         if not scope.active:
             raise TimeoutError()
-        return guard(caller).complete(system, user, max_tokens=2048)
+        sender = owned(caller)
+        if sender is None:
+            raise LLMError(NOT_OWNED)   # read() checked it first; never a stop
+        return sender.complete(system, user, max_tokens=2048)
 
 
 def read(question: Question) -> Reading:
@@ -364,6 +404,8 @@ def read(question: Question) -> Reading:
             return finish(reason="no model configured")
         if holds_fallback(scope.llm):
             return finish(reason=FALLBACK_UNSAFE)
+        if owned(scope.llm) is None:
+            return finish(reason=NOT_OWNED)
         cached = scope.cache.get(key)
         if cached and cached[0] == signature and cached[1] is scope.llm:
             value, reason = deepcopy(cached[2:])

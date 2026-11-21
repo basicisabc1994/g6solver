@@ -48,7 +48,7 @@ from g6.core.consent_callers import SDKClientWrapper, guard, sdk_send
 from g6.core.llm import (AnthropicCaller, EmptyRetry, LLMCaller, LLMError, NoModel, UnusableModel,
                          complete_structured)
 from g6.core.git_name import shown
-from g6.core.semantic import FALLBACK_UNSAFE, holds_fallback, trusted_stop
+from g6.core.semantic import FALLBACK_UNSAFE, NOT_OWNED, holds_fallback, owned, trusted_stop
 from g6.harness import verification_search as vs
 from g6.harness import verification_templates as vt
 from g6.reasoning.budget import Budget, BudgetExhausted, MeteredCaller
@@ -337,7 +337,9 @@ def _backend(caller: LLMCaller) -> LLMCaller:
     limits meter and cap: the retry would ask again, for more tokens, past both, and its attempts would be neither
     counted nor kept (reviewer B's B4; ``MeteredCaller``: wrap the backend, not the retry). An empty reply is then the
     stage's to read, as any reply is."""
-    while isinstance(caller, EmptyRetry):
+    seen = set()
+    while isinstance(caller, EmptyRetry) and id(caller) not in seen:   # a cycle ends the walk (holds_fallback refuses it)
+        seen.add(id(caller))
         caller = caller._inner
     return caller
 
@@ -364,7 +366,10 @@ class Proposer:
         self.stage = [""]
         self.ready = ""   # why no model is asked, once known
         raw = llm if llm is not None else default_caller()
-        unsafe = holds_fallback(_backend(raw))
+        # Read first, unwrapping nothing: a chain or a cycle is refused before any walk that a cycle would not end.
+        unsafe = holds_fallback(raw)
+        provider = raw if unsafe else _backend(raw)
+        sender = None if unsafe else owned(provider)   # G6's own form: the caller handed in is never changed
         if skip:
             self.ready = skip
         elif isinstance(raw, NoModel):
@@ -374,6 +379,8 @@ class Proposer:
             self.ready = f"the configured model cannot be used: {getattr(raw, 'reason', 'it has no complete method')}"
         elif unsafe:   # a stop in a link would make the chain ask the next (semantic module)
             self.ready = FALLBACK_UNSAFE
+        elif sender is None:
+            self.ready = NOT_OWNED
         else:
             why = boundary(root)
             if why:
@@ -384,8 +391,7 @@ class Proposer:
         budget = Budget(max_model_calls=settings["max_model_calls"],
                         max_output_chars=settings["max_model_calls"] * settings["max_output_tokens"] * CHARS_PER_TOKEN,
                         max_wall_clock_s=left)
-        # A caller that may hold a fallback chain is never guarded (guarding sets its links) and never asked.
-        backend = _backend(raw) if unsafe else guard(_backend(raw))
+        backend = provider if sender is None else sender   # with no sender, nothing is asked (``ready``)
         self.limits = _Limits(MeteredCaller(backend, budget), backend, settings, self.stage)
         self.context: RepositoryContext | None = None
         self.stopped = ""   # why every later stage is skipped (the cap, the time)
