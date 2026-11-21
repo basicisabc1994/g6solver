@@ -165,9 +165,9 @@ def _elsewhere_folder(folder: Any) -> dict | None:
     """A network or device folder, refused on its words before anything asks the file system about it
     (``storage._elsewhere``, as ``repo_tests.checked_repo``): asking Windows about a share opens it over the network.
     A stop never asks this: it must reach any runner, wherever its folder is."""
-    from g6.core.storage import _elsewhere
+    from g6.workforce.repo_tests import elsewhere
 
-    why = _elsewhere(folder) if isinstance(folder, str) else None
+    why = elsewhere(folder) if isinstance(folder, str) else None
     return _blocked(NOT_A_FOLDER, f"{why}; nothing was done", "Name a local folder.") if why else None
 
 

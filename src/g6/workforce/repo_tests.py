@@ -1064,13 +1064,33 @@ def _index_path(repo: Path, rel: str, linked: dict[Path, bool] | None = None) ->
     return rel
 
 
+#: Windows' reserved DOS device names: in any folder, with any extension or trailing dots or spaces, the system reads
+#: such a name as the device (``C:\\x\\nul.txt`` is ``\\\\.\\NUL``), so asking about it opens the device.
+_DEVICES = frozenset({"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+                      *(f"{kind}{n}" for kind in ("COM", "LPT") for n in "0123456789\u00b9\u00b2\u00b3")})
+_DEVICE = ("the path names a Windows device (CON, PRN, AUX, NUL, COM1-9, LPT1-9, in any folder and with any "
+           "extension), which G6 never asks about: Windows opens the device for it")
+
+
+def elsewhere(text: str) -> str | None:
+    """Why ``text`` names a network share, a device, or (on Windows) a reserved DOS device name in any of its folders,
+    on its words alone, or None: the one rule each entry point that takes a repository or folder applies before any
+    file system call (``storage._elsewhere``, then the device names)."""
+    from g6.core.storage import _elsewhere
+
+    if why := _elsewhere(text):
+        return why
+    if os.name == "nt" and any(part.rstrip(" .").split(".")[0].rstrip(" ").upper() in _DEVICES
+                               for part in re.split(r"[\\/]", text)):
+        return _DEVICE
+    return None
+
+
 def checked_repo(path: str | Path) -> Path:
     """The repository's top folder, or a refusal: a full path, a folder, a git work tree, and its top. A network or
     device path is refused on its words, before anything asks the file system about it (``storage._elsewhere``, the
     rule every path entry point applies first): asking Windows about a share opens it over the network."""
-    from g6.core.storage import _elsewhere
-
-    if why := _elsewhere(str(path)):
+    if why := elsewhere(str(path)):
         raise RepoRefused("G6_E_INPUT_VALIDATION", why)
     given = Path(str(path))
     if not given.is_absolute():

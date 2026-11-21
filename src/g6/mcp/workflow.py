@@ -203,9 +203,9 @@ def _project(repo: str) -> str | None:
     words, before anything asks the file system about it (``storage._elsewhere``, as ``repo_tests.checked_repo``)."""
     from pathlib import Path
 
-    from g6.core.storage import _elsewhere
+    from g6.workforce.repo_tests import elsewhere
 
-    if not isinstance(repo, str) or _elsewhere(repo):
+    if not isinstance(repo, str) or elsewhere(repo):
         return None
     try:
         return project_id(repo) if isinstance(repo, str) and Path(repo).is_absolute() and Path(repo).is_dir() else None

@@ -89,6 +89,12 @@ def _admitted(row: dict, repository: str) -> bool:
             return (classification == 'counterexample' and passed and _status(base, row['node'])[0]
                     and isinstance(patch_observed, list) and bool(patch_observed)
                     and isinstance(base_observed, list) and bool(base_observed) and patch_observed != base_observed)
+        judging = check.get('judging')
+        if (classification == 'counterexample' and isinstance(judging, dict) and judging.get('patch_only') is True
+                and _judging(judging) is not None):
+            # A patch-only check (a formal replay of intent change) is judged on the patch alone, by its own judge
+            # (``verification_formal._judge``): it has no base run, and its failure on the patch is the finding.
+            return failed
         if not failed or base is None:
             return False
         return _status(base, row['node'])[0] if classification == 'counterexample' else _status(base, row['node'])[1]
@@ -422,7 +428,8 @@ def retained_checks(change, requirement: str):
             skipped.append({**activity, 'result': 'skipped',
                             'reason': 'retained node has no source bytes within the 64 KiB replay limit'})
             continue
-        judged = _judging(check['judging']) if 'judging' in check else {}
+        judged = (_judging(check['judging']) if 'judging' in check else
+                  None if _judged_its_own_way(check.get('template_instance')) else {})
         if judged is None:
             skipped.append({**activity, 'result': 'skipped', 'reason': UNJUDGED})
             continue
@@ -463,6 +470,21 @@ def retained_checks(change, requirement: str):
 JUDGES = frozenset({'g6.harness.verification_formal._judge'})
 UNJUDGED = ('its origin judged it its own way, and that judge cannot be restored here, so it is not run as evidence: '
             'review the change again to run it as its template does')
+
+
+def _judged_its_own_way(instance) -> bool:
+    """Whether a row kept before judging descriptors names an instance whose check a template judges its own way (a
+    formal template, or a multi-step access rule, replayed by ``verification_formal``): such a row cannot be judged as
+    it was, so it is never run as evidence. An instance that cannot be read again is treated the same way."""
+    from g6.harness import verification_templates as vt
+
+    if not isinstance(instance, dict):
+        return False
+    try:
+        one = vt.TemplateInstance.model_validate({'id': 'retained', **instance})
+        return bool(vt.REGISTRY[one.template].formal) or vt.multi_step(one)
+    except Exception:  # noqa: BLE001 - an instance G6 cannot read again is not judged generically either
+        return True
 
 
 def _judging(judging) -> dict | None:
