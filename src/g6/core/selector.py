@@ -59,6 +59,11 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
 The library route offers only registered, non-sensitive operations whose templates passed the door and operation
 checks. Several considered operations may be offered as ``g6.invoke`` calls. A blockless component gets no library
 candidate. These rank after MCP calls, take at most ``LIBRARY_SLOTS``, and are never ``next``.
+
+In diagnosis (phase ``diagnose``, or a ``last_outcome`` whose outcome is ``defect_detected``) each ``g6_review_patch``
+template carries a discriminating check (``g6.harness.discriminate.TEMPLATE``): one proposed check, with at least two
+competing explanations each predicting a different result of its run, for the agent to write and run. The review reads
+the result against them ("consistent with", never the cause). Ranking is unchanged; no model is called.
 """
 from __future__ import annotations
 
@@ -768,6 +773,21 @@ def _validate(entry: dict[str, Any], call: dict[str, Any]) -> tuple[bool, list[s
     return found, [] if found else [f"the skill has no section {call['section']}"]
 
 
+def _discriminate() -> Any:
+    from g6.harness import discriminate
+
+    return discriminate
+
+
+def _reviews(call: Any) -> bool:
+    return isinstance(call, dict) and call.get("tool") == "g6_review_patch"
+
+
+def _discriminating(call: dict[str, Any]) -> dict[str, Any]:
+    """A ``g6_review_patch`` template with the discriminating check (``g6.harness.discriminate.TEMPLATE``) added."""
+    return {"tool": call["tool"], "arguments": {**call["arguments"], **copy.deepcopy(_discriminate().TEMPLATE)}}
+
+
 #: At most this many checked library forms, ranked after MCP calls and never ``next``.
 LIBRARY_SLOTS = 2
 _PERSONS_OWN = ("This op is sensitive. The person decides whether to allow it themselves. "
@@ -972,11 +992,20 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     chosen = ([first] if first else []) + sorted((k for k in must + rest if k != first),
                                                  key=lambda k: (bool(acting[k]), rank.get(k, len(rank)), k))
 
+    # in diagnosis (the phase, or a review that reproduced a defect), each g6_review_patch template carries a
+    # discriminating check: competing explanations, each predicting a different result of one proposed check
+    diagnosing = phase == "diagnose" or seen["word"] == "defect_detected"
+    if diagnosing and remedy is not None and _reviews(remedy["call"]):
+        remedy["call"] = _discriminating(remedy["call"])
+        remedy["action"] += " " + _discriminate().SAY
+
     # 6. validation
     candidates = []
     for key in chosen:
         entry = entries[key]
         call = remedy["call"] if key == first else entry["call"]
+        if diagnosing and _reviews(call) and key != first:
+            call = _discriminating(call)
         by = ["remedy"] if key == first else list(ranked_by.get(key, []))
         if key == scheduled and "scheduler" not in by:
             by.append("scheduler")
@@ -984,7 +1013,8 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         candidate = {"id": key, "kind": entry["kind"], "call": call, "establishes": entry["establishes"],
                      "not_established": entry["not_established"], "needs": entry["needs"], "cost": entry["cost"],
                      "ranked_by": by, "score": round(scores.get(key, 0.0), 3), "validated": valid, "issues": issues,
-                     "fill": list(entry.get("fill", ())) if call == entry["call"] and entry["kind"] == "op" else [],
+                     "fill": list(entry.get("fill", ())) if call == entry["call"] and entry["kind"] == "op" else
+                     list(_discriminate().FILL) if diagnosing and _reviews(call) else [],
                      "allowed_by_default": not entry["needs"]["sensitive"], "acts": acting[key]}
         if entry["kind"] == "op":
             candidate["component"] = entry["component"]
@@ -999,7 +1029,10 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
                               "check and a run as given through g6_invoke, made when the corpus was built from "
                               "shipped code; a Python form names only what the corpus lists"
                               + (f" ({len(library)} offered, after every call over MCP, never next)" if library
-                                 else "")})
+                                 else "")
+                              + ("; in diagnosis, a g6_review_patch template carries one proposed check whose "
+                                 "competing explanations each predict a different result of it"
+                                 if diagnosing and any(_reviews(c["call"]) for c in candidates) else "")})
 
     # the op whose outcome last_outcome reports (the reply's own component and op) is never next again
     reported = f"op:{seen['component']}.{seen['op']}" if seen["component"] and seen["op"] else ""
@@ -1018,7 +1051,8 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         # a call that acts outside G6 is never next: the scheduler's pick only when it does not act
         pick = first or (scheduled if scheduled in open_ else "") or open_[0]
         found = next(c for c in candidates if c["id"] == pick)
-        nxt = {"id": pick, "call": found["call"], "tell_person": False, "say": _fill_say(found),
+        say = _discriminate().SAY if diagnosing and _reviews(found["call"]) else _fill_say(found)
+        nxt = {"id": pick, "call": found["call"], "tell_person": False, "say": say,
                "validated": found["validated"], "fill": found["fill"],
                "why": "remedy " + remedy["key"] if pick == first else why if pick == scheduled else
                "the first candidate that does not act outside G6"

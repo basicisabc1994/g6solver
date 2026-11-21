@@ -366,6 +366,8 @@
       "if found['result'] == confirmed_checks.FAILED",
       "if found['result'] != confirmed_checks.PASSED or found.get('scenario_unavailable')",
       "if search is not None",
+      "if any((one.explanations for one in proposed))",
+      "if search is not None",
       "if formal is not None",
       "if final is None",
       "if repo_tests._moved(before, final)",
@@ -386,10 +388,11 @@
       "if missing",
       "if self_checked",
       "if proposals",
-      "if confirmed is not None"
+      "if confirmed is not None",
+      "if readings"
     ],
     "_assess": [
-      "_reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons, artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects, first_action=MISSING_IMPORT_ASK.format(name=missing[0]) if missing else SELF_CHECKED_ASK.format(ids=self_checked) if self_checked else '', prepared=prepared, adequacy=adequacy, config=config, counts={'template_instances': len(instances), 'proposed_checks': len(proposed), 'model_calls': proposals.calls if proposals else 0}, roots=roots, stopped=stopped, proposer=proposals, issuer_inputs={'check_sha': check_sha, 'written': lambda check: written.get(check, True), 'again': again, 'observed': observed}, confirmed=(confirmed, enforced) if confirmed is not None else None)"
+      "reply"
     ],
     "_authored": [
       "_written(check, change, root)",
@@ -832,6 +835,7 @@
     ],
     "compact/branches": [
       "if not isinstance(assessment, dict)",
+      "if assessment.get('explanations')",
       "if saved",
       "if len(json.dumps(shown, ensure_ascii=False)) - kept <= BUDGET"
     ],

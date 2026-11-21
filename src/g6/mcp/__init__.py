@@ -309,7 +309,9 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         text, at most 64 kilobytes, test: an optional node identifier in it}]: each runs confined, with no network, in a
         copy of the patch and one of the base commit's code, and is classified (counterexample, fails_on_base_too,
         not_refuted, unconfirmed_failure for a change check that fails on the patch whatever the base gives,
-        behaviour_changed or check_error). A proposed check never passes a requirement: a counterexample or a failure
+        behaviour_changed or check_error). A check may add explanations, 2 to 4 competing {id, said, predicts}, each
+        predicting a different one of those results (never check_error); assessment.explanations reads the result
+        against them: consistent with, never the cause, and it changes nothing else. A proposed check never passes a requirement: a counterexample or a failure
         of the change gives at most insufficient_evidence, with a reproduction in next_actions: the command G6's run
         amounted to (PYTHONPATH=src where G6 put src on the path, the import roots before the top folder as G6's run
         had them, an empty configuration where the repository has none). Anything else, a conftest or a pytest configuration say, is refused. Optional template_instances,

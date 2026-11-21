@@ -81,6 +81,8 @@ requirement and never gives ``defect_detected`` or ``test_integrity_compromised`
 change gives a reason with stage ``evidence`` (so at most ``insufficient_evidence``) and its reproduction in the next
 actions. A reason says what the check found in G6's own words; what the check printed or failed with, which is the
 caller's text, stays in ``assessment.completion``. Where no operating-system boundary can confine those runs the review is refused, whatever the person allowed.
+A check that states competing ``explanations`` has its result read against them in ``assessment.explanations``
+(``g6.harness.discriminate``: consistent with, never the cause), which decides no other field.
 
 Optional ``template_instances`` (``g6.harness.verification_templates``): instances of G6's reviewed templates, each
 naming a requirement, an intent and bindings that are data (dotted names G6 finds in the files, JSON literals), counted
@@ -1330,6 +1332,13 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                  for req in stated]
     if search is not None:
         verification_search.annotate(evaluated, search)
+    readings = []
+    if any(one.explanations for one in proposed):   # each check's result read against the explanations it states
+        from g6.harness import discriminate
+        results = {a["check"]: a.get("result", "error") for a in (search.activities if search is not None else ())}
+        readings = [discriminate.read(one.explanations, results.get(one.id, "error"), check=one.id,
+                                      requirement=one.requirement_id, intent=one.intent)
+                    for one in proposed if one.explanations]
     if formal is not None:
         verification_formal.annotate(evaluated, formal)
     written, self_checked, final = _closing(root, change, stated_ids, evaluated, runs, until=limit - REPLY_S)
@@ -1386,7 +1395,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     self_checked = ", ".join(self_checked)
     if self_checked:
         reason("evidence", SELF_CHECKED, SELF_CHECKED_DETAIL.format(ids=self_checked))
-    return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
+    reply = _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
                   artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects,
                   first_action=(MISSING_IMPORT_ASK.format(name=missing[0]) if missing else
                                 SELF_CHECKED_ASK.format(ids=self_checked) if self_checked else ""),
@@ -1397,6 +1406,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                   issuer_inputs={"check_sha": check_sha, "written": lambda check: written.get(check, True),
                                  "again": again, "observed": observed},
                   confirmed=(confirmed, enforced) if confirmed is not None else None)
+    if readings:   # beside the decided fields, which it does not change
+        reply["assessment"]["explanations"] = readings
+    return reply
 
 
 def _authored(check: str, change, root: Path) -> bool:

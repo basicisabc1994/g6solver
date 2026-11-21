@@ -5,7 +5,7 @@ In the worked examples a finished review's whole reply ran to 64,000 characters 
 as a tool result: it saves a result over 50,000 characters (or 25,000 tokens) to a file, and warns over 10,000 tokens.
 :func:`finish` saves the whole reply as JSON under G6's state folder (``reviews/<job id>.json``) and gives the compact
 reply ``metaharness_job`` returns by default: ``assessment.report`` first, then the outcome, the reasons, the next
-actions and the unknowns, the merge authorisation, the job id, the envelope's fields, and where the full assessment is
+actions and the unknowns (and ``explanations``, where a proposed check stated competing ones), the merge authorisation, the job id, the envelope's fields, and where the full assessment is
 (that file, and ``metaharness_job`` with ``detail="full"``, which returns the whole reply as it was before). The report
 is never cut, and every integrity reason is kept whole and first. The other lists keep their first items and each
 text its first characters, at most, so the rest of the reply stays within ``BUDGET`` characters whatever the review
@@ -174,7 +174,9 @@ def compact(reply: dict, job_id: str, saved: str | None) -> dict:
             "assessment": {"report": report, "outcome": assessment.get("outcome"),
                            "reasons": [*integrity, *short(others, "assessment.reasons")],
                            "next_actions": short(assessment.get("next_actions") or [], "assessment.next_actions"),
-                           "unknowns": short(assessment.get("unknowns") or [], "assessment.unknowns")},
+                           "unknowns": short(assessment.get("unknowns") or [], "assessment.unknowns"),
+                           **({"explanations": short(assessment["explanations"], "assessment.explanations")}
+                              if assessment.get("explanations") else {})},
             "merge": short(reply.get("merge"), "merge"),
             "job_id": job_id,
             "full_assessment": {

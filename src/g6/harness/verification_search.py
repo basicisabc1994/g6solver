@@ -32,7 +32,10 @@ runs. ``file`` is a relative path whose name is ``test_<name>.py``: never a conf
 holds installed code, or a link (``placements``). G6 places each check in a folder of its own, ``g6_check_`` and the
 first 12 hexadecimal digits of the SHA-256 of its text, inside the folder ``file`` names (``placement``), never where a
 path already exists in the repository. Each check's provenance is ``proposed``: the calling agent is a model, and its
-proposals are never taken as independent of the patch's author (VS-D2). Nothing here calls a model.
+proposals are never taken as independent of the patch's author (VS-D2). A source that is still a template's placeholder
+is refused. A check may carry ``explanations``, competing explanations each predicting a different result of it
+(``g6.harness.discriminate``); the review reads its result against them and changes nothing else. Nothing here calls a
+model.
 
 ``search`` runs each check twice, confined with no network, each time in a fresh scratch copy that holds no repository
 history (no ``.git``) and only that check overlaid: on the patched tree, then at the base commit's code
@@ -106,7 +109,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -114,7 +117,7 @@ from g6.core import component_process
 from g6.core.ledger import digest
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.git_name import shown
-from g6.harness import verification_controller
+from g6.harness import discriminate, verification_controller
 from g6.harness.patch_review import (
     NORMATIVE,
     NOT_ESTABLISHED,
@@ -287,7 +290,9 @@ RESERVED_ID = f"ids ending in {RESERVED_SUFFIX} are G6's own, for the re-runs of
 
 
 class ProposedCheck(BaseModel):
-    """A check the caller proposes: ``{id, requirement_id, intent, file, source, test}`` (``proposed_checks``)."""
+    """A check the caller proposes: ``{id, requirement_id, intent, file, source, test}`` (``proposed_checks``), and
+    optionally ``explanations``, competing explanations each predicting a different result of it
+    (``g6.harness.discriminate``), validated by ``proposed_checks``."""
     model_config = ConfigDict(extra="forbid")
     id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$")
     requirement_id: str = Field(min_length=1, max_length=200)
@@ -295,6 +300,7 @@ class ProposedCheck(BaseModel):
     file: str = Field(min_length=1, max_length=300)
     source: str = Field(min_length=1)
     test: str = Field(default="", max_length=300)
+    explanations: Any = None
 
 
 def _file_problem(file: str) -> str:
@@ -352,10 +358,17 @@ def proposed_checks(value, requirement_ids) -> list[ProposedCheck]:
         # A proposal is always its Python text, including when a Python caller supplies a compiler-owned str subclass.
         one = one.model_copy(update={"source": str.__str__(one.source)})
         problem = _file_problem(one.file) or _source_problem(one.source) or (
+            "source is still the template's placeholder: write the test's text"
+            if discriminate.placeholder(one.source) else "") or (
             "test must name a test inside the file as pytest does: test_x, TestX::test_x or test_x[case]"
             if one.test and not _NODE.fullmatch(one.test) else "")
         if problem:
             raise ValueError(f"{where}: {problem}")
+        if one.explanations is not None:
+            try:
+                one = one.model_copy(update={"explanations": discriminate.explanations(one.explanations, one.intent)})
+            except ValueError as exc:
+                raise ValueError(f"{where}: {exc}") from None
         if one.requirement_id not in requirement_ids:
             raise ValueError(f"{where}: requirement_id {one.requirement_id!r} names no requirement this review assesses")
         found.append(one)

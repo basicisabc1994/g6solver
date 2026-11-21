@@ -61,7 +61,11 @@ For a Python task, work in this order (each step in full: `references/lifecycle.
    To have the model the person configured for G6 propose more checks, add `search: {"propose": true}`: what it
    proposes runs as your proposed checks do, never passes a requirement, and gives at most insufficient evidence.
 6. **Repair.** Fix what G6 reproduced, add each reproduction as a stated check, and review again. Stop after 3
-   rounds, when a round changes nothing, or when the report says only the person can decide.
+   rounds, when a round changes nothing, or when the report says only the person can decide. Where it is unclear
+   whether the patch or the old test is wrong, call `g6_select` with phase diagnose and the review's reply as
+   last_outcome: its review template holds one proposed check with competing explanations, each predicting a
+   different result. Write that check from the task, run it, and read which explanation the result is consistent
+   with before you repair.
 7. **Honesty.** Never call a patch `verified`, and never merge for the person. The result rests on your own tests:
    do not rewrite them to change it. The report's not-established list is the to-do list.
 
