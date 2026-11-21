@@ -7,7 +7,6 @@ therefore have one order. Data already handed to transport cannot be recalled.
 """
 from __future__ import annotations
 
-import collections
 import contextlib
 import contextvars
 import functools
@@ -70,27 +69,54 @@ class Ticket:
     requester: bool = False
 
 
+class _Line(str):
+    """A message's serialised text that carries its write's token through the SDK writer's ``json + "\\n"``."""
+
+    token: int | None = None
+
+    def __add__(self, other):
+        joined = _Line(str.__add__(self, other))
+        joined.token = self.token
+        return joined
+
+
+class Tokened(types.JSONRPCMessage):
+    """The message G6 sends (``_Stream.send``): serialised, its text carries its own token (``id`` of this object),
+    so the writer that writes it is paired with this send alone, never with another whose text is the same."""
+
+    def model_dump_json(self, **kwargs):
+        text = _Line(super().model_dump_json(**kwargs))
+        text.token = id(self)
+        return text
+
+
+def token(message: SessionMessage) -> int:
+    """The token of one send: its message object's identity (``Tokened``), held alive while its callback waits."""
+    return id(message.message)
+
+
 class Witness:
-    """A writer G6 owns, seeing each message written: ``expect`` files a message's own callback under its key, and
-    ``written`` (called by the writer once that message's bytes are written and flushed, or taken by the in-process
-    client) fires the oldest one filed under that key, once. Two messages with the same key (a request id reused
-    after its reply, so the same line) keep a callback each, fired in the order they were sent, which is the order
-    the one writer writes them. A message whose write fails is never ``written``, so its callback never runs."""
+    """A writer G6 owns, seeing each message written. ``expect`` files a send's own callback under its own token;
+    ``written(token)`` (the writer, once that send's whole line was written and flushed, or the in-process client
+    once it took that send) fires it, once; ``discard(token)`` (a short, failed or cancelled write) removes it
+    without firing. Two sends never share a token, so identical lines never borrow each other's callback."""
 
-    def __init__(self, key: Callable[[SessionMessage], object]) -> None:
-        self.key, self._expected = key, {}
+    def __init__(self) -> None:
+        self._expected: dict[int, tuple[object, Callable[[], None]]] = {}
 
-    def expect(self, message: SessionMessage, callback: Callable[[], None]) -> None:
-        self._expected.setdefault(self.key(message), collections.deque()).append(callback)
+    def expect(self, message: SessionMessage, callback: Callable[[], None]) -> int:
+        key = token(message)
+        self._expected[key] = (message.message, callback)     # the message held, so its identity is not reused
+        return key
 
-    def written(self, key: object) -> None:
-        waiting = self._expected.get(key)
-        callback = waiting.popleft() if waiting else None
-        if waiting is not None and not waiting:
-            del self._expected[key]
-        if callback is not None:
+    def discard(self, key: int | None) -> None:
+        self._expected.pop(key, None)
+
+    def written(self, key: int | None) -> None:
+        held = self._expected.pop(key, None)
+        if held is not None:
             try:
-                callback()
+                held[1]()
             except Exception:  # noqa: BLE001 - recording never fails a write already made
                 pass
 
@@ -99,15 +125,10 @@ class Witness:
 _WITNESSES: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
-def witness(stream, key: Callable[[SessionMessage], object]) -> Witness:
+def witness(stream) -> Witness:
     """The witness of ``stream``, a send stream whose every message G6's own writer sees written."""
-    _WITNESSES[stream] = seen = Witness(key)
+    _WITNESSES[stream] = seen = Witness()
     return seen
-
-
-def line(message: SessionMessage) -> str:
-    """The exact text the SDK's stdio writer writes for ``message`` (``mcp.server.stdio``)."""
-    return message.message.model_dump_json(by_alias=True, exclude_none=True) + "\n"
 
 
 class _Taking:
@@ -121,7 +142,8 @@ class _Taking:
 
     async def receive(self):
         message = await self.inner.receive()
-        self.seen.written(id(message))
+        if isinstance(message, SessionMessage):
+            self.seen.written(token(message))
         return message
 
     def __aiter__(self):
@@ -157,7 +179,7 @@ def _memory_transport():
 
             async with create_client_server_memory_streams() as ((client_read, client_write),
                                                                   (server_read, server_write)):
-                seen, raised = witness(server_write, id), None
+                seen, raised = witness(server_write), None
                 async with anyio.create_task_group() as tg, _enter_server_lifespan(server=self.server):
                     tg.start_soon(lambda: self.server._mcp_server.run(
                         server_read, server_write, self.server._mcp_server.create_initialization_options(),
@@ -258,7 +280,7 @@ class _Stream:
     async def send(self, message):
         # Freeze the actual packet. Neither a later mutation nor a serializer's
         # additional text can inherit an earlier result's source ticket.
-        packet = SessionMessage(types.JSONRPCMessage.model_validate_json(
+        packet = SessionMessage(Tokened.model_validate_json(
             message.message.model_dump_json(by_alias=True, exclude_none=True)), metadata=message.metadata)
         root, ticket = packet.message.root, _OUTBOUND.get()
         if isinstance(root, types.JSONRPCResponse | types.JSONRPCError):
@@ -294,9 +316,12 @@ class _Stream:
         first. Nothing is awaited after the send, so nothing waits on the client while admission holds the ledger."""
         seen = _WITNESSES.get(self.inner)
         if seen is not None:
-            if ticket.delivered is not None:
-                seen.expect(packet, functools.partial(ticket.delivered, WRITTEN))
-            await self.inner.send(packet)
+            key = seen.expect(packet, functools.partial(ticket.delivered, WRITTEN)) if ticket.delivered else None
+            try:
+                await self.inner.send(packet)
+            except BaseException:
+                seen.discard(key)         # a send cancelled or failed before the stream took it: never counted
+                raise
             return
         await self.inner.send(packet)
         _handed(ticket)

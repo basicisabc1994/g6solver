@@ -15,33 +15,43 @@ from io import TextIOWrapper
 
 import anyio
 
-from g6.mcp.consent_transport import line, witness
+from g6.mcp.consent_transport import witness
 
 
 class WrittenStdout:
-    """stdout as the SDK's stdio writer uses it (``write`` a line, then ``flush``): once both returned, with the whole
-    line accepted, the line is ``written`` to the witness. A write or flush that raises, or a write that says it took
-    fewer characters than the line holds, tells it nothing. A write that returns no count (``None``, as some file
-    objects do) raised nothing and is taken as having accepted the line."""
+    """stdout as the SDK's stdio writer uses it (``write`` a line, then ``flush``). Each line G6 sent carries its own
+    send's token (``consent_transport.Tokened``): once its write took the whole line and the flush returned, that
+    token is ``written`` to the witness; a write that took less, or a write or flush that raises, discards that token
+    without firing it. A write that returns no count (``None``, as some file objects do) raised nothing and is taken
+    as having accepted the line. A line with no token (a reply G6 withheld in another's place) tells it nothing."""
 
     def __init__(self, inner, seen) -> None:
-        self.inner, self.seen, self._line = inner, seen, None
+        self.inner, self.seen, self._pending = inner, seen, None
 
     def __getattr__(self, name):
         return getattr(self.inner, name)
 
     async def write(self, data):
-        self._line = None
-        written = await self.inner.write(data)
+        key, self._pending = getattr(data, "token", None), None
+        try:
+            written = await self.inner.write(data)
+        except BaseException:
+            self.seen.discard(key)
+            raise
         if written is None or isinstance(written, int) and written == len(data):
-            self._line = data
+            self._pending = key
+        else:
+            self.seen.discard(key)                  # a short write: not the whole line, never counted
         return written
 
     async def flush(self):
-        await self.inner.flush()
-        done, self._line = self._line, None
-        if done is not None:
-            self.seen.written(done)
+        key, self._pending = self._pending, None
+        try:
+            await self.inner.flush()
+        except BaseException:
+            self.seen.discard(key)
+            raise
+        self.seen.written(key)
 
 
 @asynccontextmanager
@@ -54,7 +64,7 @@ async def stdio_server(stdin=None, stdout=None):
         stdout = anyio.wrap_file(TextIOWrapper(sys.stdout.buffer, encoding="utf-8"))
     out = WrittenStdout(stdout, None)
     async with sdk_stdio_server(stdin=stdin, stdout=out) as (read_stream, write_stream):
-        out.seen = witness(write_stream, line)
+        out.seen = witness(write_stream)
         yield read_stream, write_stream
 
 
