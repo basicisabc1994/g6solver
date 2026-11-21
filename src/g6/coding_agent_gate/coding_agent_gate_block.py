@@ -21,13 +21,14 @@ what a caller sends, not against code running as that user.
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictInt
 
 from g6.coding_agent_gate.evidence import Evidence, VerifierResult
 from g6.coding_agent_gate.gate import preflight, verify_answer
 from g6.coding_agent_gate.protected_paths import ProtectedPathsPolicy
+from g6.coding_agent_gate.references import usable_path
 from g6.core.ai_block import AIBlock
 from g6.core.block_contract import BlockContract
 from g6.core.maturity import component_maturity
@@ -48,10 +49,20 @@ _OPS: dict[str, str] = {
 }
 
 
+def _path_text(value: str) -> str:
+    if not usable_path(value):
+        raise ValueError("a path or command must hold no NUL and no unpaired surrogate")
+    return value
+
+
+#: Text the gate may resolve as a path (a file ref, a test command's file arguments, the root, a touched path).
+PathText = Annotated[str, AfterValidator(_path_text)]
+
+
 class EvidenceIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["file", "test", "log", "diff", "review"]
-    ref: str = Field("", max_length=2_000)
+    ref: PathText = Field("", max_length=2_000)
     output: str = Field("", max_length=_MAX_TEXT)
     exit_code: StrictInt | None = None
     reviewer: str = Field("", max_length=200)
@@ -82,8 +93,8 @@ class CodingAgentGateInput(BaseModel):
     verifier: VerifierIn | None = None
     risk_tier: str = Field("", max_length=40)
     author: str = Field("", max_length=200)
-    touched_paths: list[str] | None = Field(None, max_length=1000)
-    repo_root: str | None = Field(None, max_length=4000)
+    touched_paths: list[PathText] | None = Field(None, max_length=1000)
+    repo_root: PathText | None = Field(None, max_length=4000)
     require_task_contract: bool = True
     request_id: str = Field("", max_length=100)
     run_id: str = Field("", max_length=100)

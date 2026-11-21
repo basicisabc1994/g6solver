@@ -60,8 +60,9 @@ class Evidence:
             from g6.workforce.receipt_store import check, counts_as_pass
 
             status, body = check(self.receipt, artifact_digest=self.artifact_digest)
+            # An exit code is an int, never a bool or float: True == 1 must not match a failed receipt.
             if (status == "matched" and body is not None and self.ref == self.receipt
-                    and self.exit_code == (0 if counts_as_pass(body) else 1)):
+                    and _is_int(self.exit_code) and self.exit_code == (0 if counts_as_pass(body) else 1)):
                 return "observed_by_g6"
         return "asserted"
 

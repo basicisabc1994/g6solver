@@ -30,6 +30,17 @@ def named_tests(command: str) -> list[str]:
         return []
 
 
+def usable_path(text: str) -> bool:
+    """Whether the text can name a path on every OS G6 runs on: no NUL and no unpaired surrogate (UTF-8)."""
+    if "\x00" in text:
+        return False
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _relative(ref: str) -> str:
     return _LINE.sub("", ref).replace("\\", "/").removeprefix("./")
 
@@ -42,6 +53,8 @@ def check_references(evidence, *, repo_root: str | None, paths) -> list[str]:
     """
     if repo_root is None and paths is None:
         return []
+    if repo_root is not None and not usable_path(repo_root):
+        raise ValueError("repo_root is not a usable path: it holds a NUL or an unpaired surrogate")
     allowed = {_relative(str(p)) for p in paths} if paths is not None else None
     root = Path(repo_root).resolve() if repo_root is not None and repo_root.strip() else None
     missing = []
@@ -54,6 +67,9 @@ def check_references(evidence, *, repo_root: str | None, paths) -> list[str]:
             missing.append(item.ref)  # an unparseable command cannot establish that its references resolve
             continue
         for ref in refs:
+            if not usable_path(ref):
+                missing.append(ref)  # no path holds a NUL or an unpaired surrogate, so it cannot resolve
+                continue
             rel = _relative(ref.split("::", 1)[0])
             if repo_root is not None:
                 target = (root / rel).resolve() if root is not None else None

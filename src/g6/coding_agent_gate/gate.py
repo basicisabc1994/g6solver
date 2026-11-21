@@ -375,8 +375,11 @@ def verify_answer(task: str, answer: str, *, evidence: Iterable[Evidence] = (),
     checks = ("answer_present", "task_contract", "evidence_structure", "test_exit_codes", "verifier_status",
               "claims_have_files", "readiness_claims", "risk_tier", "review_required", "shortcut_tripwire(text)")
     verdict = strictest("verify_answer", f)
-    tests = [e for e in evidence if e.kind == "test"]
-    if verdict == "pass" and not (tests and all(e.evidence_status == "observed_by_g6" for e in tests)):
+    # A pass needs at least one counted G6-observed test, every counted test observed, and no rejected test item:
+    # rejected evidence never contributes to a pass.
+    tests = [e for e in counted if e.kind == "test"]
+    if verdict == "pass" and (not tests or any(e.kind == "test" for e, _ in rejected)
+                              or not all(e.evidence_status == "observed_by_g6" for e in tests)):
         verdict = "report_consistent"
     return GateDecision("verify_answer", verdict, tier, terms, tuple(f), counted, rejected,
                         verifier=None if verifier is None else v, verifier_counted=v_counted,
