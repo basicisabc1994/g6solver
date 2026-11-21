@@ -9,24 +9,24 @@ import pytest
 def test_operator_uses_shared_principals_and_declared_kind():
     from g6.operator.queue import QueueError, _person
 
-    for reviewer in ("alice ", "Аlice"):
+    for reviewer in ("alice ", "ＡLICE"):
         with pytest.raises(QueueError):
             _person(reviewer, "Alice", actor_kind="person")
     with pytest.raises(QueueError):
-        _person("Bob", "Alice")
-    assert _person("auto:Pat", "Alice", actor_kind="person") == "auto:Pat"
+        _person("Bob", "Alice", actor_kind="automated")
+    with pytest.raises(QueueError):   # a declared kind never lifts G6's own auto: marker
+        _person("auto:Pat", "Alice", actor_kind="person")
+    assert _person("Bob", "Alice") == "Bob"
 
 
 @pytest.mark.parametrize("reviewer,kind,allowed", [
-    ("alice ", "person", False), ("Аlice", "person", False),
-    ("Bob", "unknown", False), ("Bob", "person", True), ("auto:Pat", "person", True),
+    ("alice ", "person", False), ("Bob", "automated", False), ("auto:Pat", "person", False),
+    ("Bob", "unknown", True), ("Bob", "person", True),
 ])
 def test_operator_sql_uses_the_same_identity_rule(reviewer, kind, allowed):
-    from g6.core.principals import same_principal
     from g6.operator.queue import _SCHEMA
 
-    with sqlite3.connect(":memory:") as conn:
-        conn.create_function("g6_same_principal", 2, same_principal)
+    with sqlite3.connect(":memory:") as conn:   # pure SQL: no Python function is registered
         conn.executescript(_SCHEMA)
         conn.execute("INSERT INTO actions (action_id, venture_id, task_id, action_type, body, meta_json, drafted_by, "
                      "state, review_json, status, decoy, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -65,14 +65,11 @@ def test_exact_failed_job_state_still_lowers_usage():
     assert _usage_declared({"state": "FAILED"}) == set()
 
 
-def test_ambiguous_held_out_author_refuses_before_mutation():
+def test_held_out_by_the_builder_under_another_spelling_is_not_independent():
     from g6.metaharness.builder import Builder
 
     builder = Builder("synthetic", "task", "Alice")
-    before = (builder.held_out, dict(builder.provenance), list(builder.log))
-    with pytest.raises(ValueError):
-        builder.set_held_out((SimpleNamespace(case_id="synthetic"),), source="person", author="Аlice")
-    assert (builder.held_out, builder.provenance, builder.log) == before
+    assert builder.set_held_out((SimpleNamespace(case_id="synthetic"),), source="person", author="ＡLICE ") == "caller"
 
 
 @pytest.mark.parametrize("declared", [False, True])

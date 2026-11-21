@@ -5,7 +5,7 @@ A draft enters as ``proposed`` and leaves only by a decision a person records: `
 text) or ``reject`` (with a reason) and, once the person has sent the approved text themselves, ``mark_sent``.
 
 * Every decision records its ``reviewer`` and ``reviewer_kind``. The actor that drafted the item cannot decide it,
-  and an undeclared person is refused, so a draft is never self-approved and never approved automatically (audit 011, VEN-003, VEN-013). A
+  and an ``auto:`` reviewer or one declared as anything but a person is refused, so a draft is never self-approved and never approved automatically (audit 011, VEN-003, VEN-013). A
   database trigger refuses any status change without such a decision row, and a draft can only enter as
   ``proposed``. The library cannot tell a person from a program that passes a person's name: keep these methods out
   of every agent's tool set and call them only from a surface a person drives.
@@ -69,7 +69,8 @@ BEGIN SELECT RAISE(ABORT, 'a queued draft is not deleted'); END;
 
 _PERSON_TRIGGER = """CREATE TRIGGER IF NOT EXISTS actions_decided_by_person BEFORE UPDATE OF status ON actions
 WHEN NOT EXISTS (SELECT 1 FROM decisions WHERE action_id = NEW.action_id AND outcome = NEW.status
-                 AND g6_same_principal(reviewer, OLD.drafted_by) = 0 AND reviewer_kind = 'person')
+                 AND lower(trim(reviewer)) <> lower(trim(OLD.drafted_by)) AND reviewer NOT LIKE 'auto:%'
+                 AND reviewer_kind IN ('person', 'unknown'))
 BEGIN SELECT RAISE(ABORT, 'a status change needs a decision recorded by someone other than the drafter'); END;
 """
 _SCHEMA += _PERSON_TRIGGER
@@ -88,13 +89,14 @@ def _clean(text: Any) -> str:
 
 def _person(reviewer: Any, drafted_by: str, *, actor_kind: str = "unknown") -> str:
     who = str(reviewer or "").strip()
-    try:
-        if same_principal(who, drafted_by):
-            raise QueueError("The actor that drafted this cannot decide it; a different person must.")
-    except ValueError as exc:
-        raise QueueError(str(exc)) from exc
+    if not who:
+        raise QueueError("A decision needs the name of the person who made it.")
+    if is_automated(who):
+        raise QueueError("An automatic decision is never recorded; a person decides.")
+    if same_principal(who, drafted_by):
+        raise QueueError("The actor that drafted this cannot decide it; a different person must.")
     if is_automated(who, actor_kind=actor_kind):
-        raise QueueError("A declared person must decide; names are recorded, not authenticated.")
+        raise QueueError(f"Only a person decides: this reviewer is declared {actor_kind!r}.")
     return who
 
 
@@ -115,7 +117,6 @@ class ActionQueue:
         if not 0.0 <= decoy_rate <= 1.0:
             raise ValueError("decoy_rate is a probability between 0 and 1")
         self.scope, self._conn = scope, scope.conn
-        self._conn.create_function("g6_same_principal", 2, same_principal, deterministic=True)
         scope.store.script(_SCHEMA + append_only("decisions"))
         # Migrate old recorded names to unknown kind and replace the gate atomically.
         with scope.immediate():

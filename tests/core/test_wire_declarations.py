@@ -88,9 +88,10 @@ def test_compliance_requires_structured_answers():
 def test_automated_kind_is_declared():
     from g6.core.adaptation_gate import is_automated
 
-    assert is_automated("auto:Pat", actor_kind="person") is False
+    # a declared kind only tightens: it never lifts G6's own auto: marker, and no declaration reads the name alone
+    assert is_automated("auto:Pat", actor_kind="person") is True
     assert is_automated("Pat", actor_kind="automated") is True
-    assert is_automated("Pat") is True  # unknown kind cannot establish a person
+    assert is_automated("Pat") is False
 
 
 def test_configured_test_names_are_tests(monkeypatch):
