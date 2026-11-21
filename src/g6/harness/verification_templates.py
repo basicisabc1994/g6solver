@@ -1621,7 +1621,12 @@ def compiled_check(root: Path, one: TemplateInstance, data: dict, notes: list[st
                           "it only inside its operating-system boundary, with no network. Read it before you run it, "
                           "or run it in a container."),
               "template": one.template,
-              "refuted_by_difference": one.template == "differential.v1" and one.intent == "preserve", **origin}
+              "refuted_by_difference": one.template == "differential.v1" and one.intent == "preserve",
+              # what a finding's replay names (``resolution``); a person's confirmed check is enforced, never replayed
+              "instance": None if one.provenance == "person_confirmed" else {
+                  "template": one.template, "requirement_id": one.requirement_id, "intent": one.intent,
+                  "bindings": one.bindings},
+              **origin}
     return check, placed, vs.Origin(**fields)
 
 

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Client-only consent for learning_history.forget, reached through the existing generic tool."""
+import asyncio
 import json
 
 from pydantic import ValidationError
@@ -11,6 +12,12 @@ from g6.harness.outcome_history import LETS_THROUGH
 from g6.learning_history.block import HistoryInput
 from g6.mcp import consent
 from g6.workforce import repo_tests
+
+
+def _read(repo: str):
+    root = repo_tests.checked_repo(repo)
+    history = outcome_history.read(root)
+    return root, history, outcome_history.fingerprint(history.repository) if history.repository else ''
 
 
 async def forget_reply(ctx, params_json: str, *, allow: frozenset[str]) -> dict:
@@ -25,11 +32,10 @@ async def forget_reply(ctx, params_json: str, *, allow: frozenset[str]) -> dict:
         return blocked_reply('[G6_E_SENSITIVE_COMPONENT_DENIED] learning_history.forget requires the person to '
                              'allow this sensitive op. Tell the person and stop.')
     try:
-        root = repo_tests.checked_repo(data.repo)
-        history = outcome_history.read(root)
+        # Reading the repository and its history is file work: it runs off the event loop.
+        root, history, expected = await asyncio.to_thread(_read, data.repo)
         if not history.repository:
             return blocked_reply('[G6_E_INPUT_VALIDATION] repository has no committed identity; nothing removed')
-        expected = outcome_history.fingerprint(history.repository)
         asked = consent.question('Erase G6 learning history for this repository?',
             {'repository_id': history.repository, 'History digest': expected,
              'Retained checks': len(history.retained), 'Admitted trials': len(history.rows),
@@ -40,7 +46,7 @@ async def forget_reply(ctx, params_json: str, *, allow: frozenset[str]) -> dict:
         answer = await consent.request_consent(ctx, asked)
         if answer.status != 'accepted':
             return {'ok': False, **consent.refusal(answer, nothing='No learning history was removed.')}
-        outcome_history.forget(root, history.repository, expected=expected)
+        await asyncio.to_thread(outcome_history.forget, root, history.repository, expected=expected)
         return door_reply('learning_history', 'forget', Success({
             'repository_id': history.repository, 'forgotten': True,
             'scope': 'one repository outcome history; separate execution receipts remain'}), caller=params)

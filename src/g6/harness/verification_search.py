@@ -818,6 +818,9 @@ class Origin:
     keep_observations: bool = False
     patch_only: bool = False
     judge: Callable[[str, dict, dict | None], dict] | None = None
+    #: The template instance a compiled check came from, in its request form (``{template, requirement_id, intent,
+    #: bindings}``): a finding's replay names it, so the replay compiles and judges it as the template does.
+    instance: dict | None = None
 
 
 FREE_FORM = Origin()
@@ -1004,7 +1007,8 @@ def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_
         done.defects.append({"check": one.id, "requirement": one.requirement_id, "provenance": PROPOSED,
                              "result": result, "code": REASONS[result], "detail": verdict["detail"],
                              "reproduction": reproduction, "evidence_class": evidence_class(on_patch),
-                             **({"template": origin.template} if origin.template else {})})
+                             **({"template": origin.template} if origin.template else {}),
+                             **({"template_instance": origin.instance} if origin.instance else {})})
         done.next_actions.append(
             f"{about}: {result.replace('_', ' ')}, not confirmed. To reproduce it, copy the tree without its .git "
             f"folder, write the check's text (sha256 {activity['sha256']}) to {activity['placed']}, and run "

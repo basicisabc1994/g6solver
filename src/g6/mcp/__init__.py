@@ -261,7 +261,8 @@ def build_server(surface: Any = None) -> Any:
             from g6.mcp.learning_history import forget_reply
 
             return await forget_reply(ctx, params_json, allow=allowed_sensitive())
-        return invoke_reply(component, op, params_json)
+        # A component runs off the event loop, as it did when this tool was synchronous: other requests keep running.
+        return await asyncio.to_thread(invoke_reply, component, op, params_json)
 
     g6_invoke.__annotations__['ctx'] = Context
     server.tool()(g6_invoke)

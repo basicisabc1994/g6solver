@@ -45,7 +45,13 @@ def build(assessment: dict, *, repo: str, task: str) -> list[dict]:
         requirement = next((r for r in stated if r['id'] == ident),
                            {'id': ident or 'retained', 'text': 'The previously reproduced expectation holds', 'checks': []})
         args = {'repo': repo, 'task': task, 'requirements': [requirement]}
-        if reproduction.get('text'):
+        instance = failure.get('template_instance')
+        if isinstance(instance, dict):
+            # A compiled template's finding replays its instance, so the review compiles and judges it as the template
+            # does (a differential instance's difference refutes; a formal one replays its traces), never as free text.
+            args['template_instances'] = [{**instance, 'id': 'settle-reproduction',
+                                           'requirement_id': requirement['id']}]
+        elif reproduction.get('text'):
             # The reproduction ran the selected test only; the replay selects the same one.
             test = str(reproduction.get('node', '')).partition('::')[2]
             args['proposed_checks'] = [{'id': 'settle-reproduction', 'requirement_id': requirement['id'],
