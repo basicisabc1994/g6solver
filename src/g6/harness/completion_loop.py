@@ -45,7 +45,7 @@ code as it was. L9's runner waits for the agent inside the loop, and a hook cann
 ``Repairs`` replays the rounds in the state, and hands back when a new round's failures must go to the agent.
 """
 from __future__ import annotations
-from g6.core.semantic import scoped
+from g6.core.semantic import scoped, trusted_stop
 
 import bisect
 import difflib
@@ -67,7 +67,7 @@ from pydantic import BaseModel, ConfigDict
 
 from g6.cegis import InputDomain, SearchResult, cegis
 from g6.context.redact import MASK, mask_paths, secret_spans
-from g6.core import component_process, host_models, keys
+from g6.core import host_models, keys
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.core.llm import LLMCaller, LLMError, _start_model_call
@@ -549,9 +549,9 @@ def record_reproductions(change: repo_tests.Change, probes: Path, *, deadline: f
             try:
                 outcome_history.record_check(change, one.model_copy(update={'intent': 'preserve'}), node, patch,
                     base, 'counterexample', origin='k_loop', engine='g6_review_until_clean')
-            except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
-                raise   # both are OSErrors: an operator stop or unconfirmed cleanup must reach the enclosing door
-            except (OSError, ValueError):
+            except (OSError, ValueError) as exc:
+                if trusted_stop(exc):
+                    raise   # a stop is an OSError too: it must reach the enclosing door
                 activities[-1]['history_note'] = 'outcome history could not be written'
     return activities
 
@@ -616,6 +616,8 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
                 with cloud.request_sources(origins if again else ()):
                     host(asked + again, copy, where, left)
         except (LLMError, repo_tests.CopyNotRun, OSError) as exc:
+            if trusted_stop(exc):
+                raise   # a stop ends the run, never one scout's failed set
             failed = f"{type(exc).__name__}: {exc}"[:400]
         got, origins = _snapshot_probe(run_set(change, where / "probes", at_base=True, deadline=deadline))
         cloud.record_sources(origins)
@@ -963,6 +965,8 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
             found = critic_report(consent.guard(caller).complete(
                 system + critic_protocol_prompt(), sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), proof=proof)
     except (LLMError, OSError) as exc:
+        if trusted_stop(exc):
+            raise   # from the critic's send or the reader of its reply: a stop is never a failed review
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
     if hidden and found["verdict"] == "none":
         found = {**found, "verdict": "failed", "error": HIDDEN}
@@ -1026,9 +1030,9 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
         try:
             outcome_history.record_check(change, one, node, patch_run, base_run, classification,
                                           origin=origin, engine='g6_review_until_clean', refuted_by_difference=differs)
-        except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
-            raise
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            if trusted_stop(exc):
+                raise
             retained_search.activities.append({'activity': 'outcome history', 'result': 'error',
                 'reason': 'retained history could not be written', 'model_calls': 0, 'seconds': 0})
     # A retained finding stays proposed evidence; it never joins the K loop's repair findings.
@@ -1346,7 +1350,9 @@ def _patch_now(root: Path, base: str) -> str:
     tree, but of the new files only those its ``change`` holds, so one taken earlier misses a file added since."""
     try:
         return digest(repo_tests.diff_text(repo_tests.change(root, base)))
-    except (OSError, ValueError):     # a RepoRefused is a ValueError
+    except (OSError, ValueError) as exc:     # a RepoRefused is a ValueError
+        if trusted_stop(exc):
+            raise
         return ""
 
 
@@ -1638,7 +1644,7 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                     max_iterations=MAX_REPAIRS + 1, timeout_s=LOOP_S - (time.time() - state["started"]))
     except LLMError as exc:
-        if not any(code in str(exc) for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)):
+        if trusted_stop(exc) or not any(code in str(exc) for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)):
             raise
         state["stop"] = "The review was not sent. " + cloud.WITHHELD
         code = cloud.STATE_UNAVAILABLE if cloud.STATE_UNAVAILABLE in str(exc) else cloud.REQUIRED
@@ -1687,17 +1693,54 @@ def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
         value = protocol.model_dump(exclude={"read"})
         return value if value["verdict"] == "defect" else {**value, "test": ""}
     floor = _floor_critic_report(said, proof=proof)
+    stated = _stated_verdicts(body)
+    if stated:
+        # A verdict the critic states in JSON, after a header, in a code fence or beside a verdict line, is final and
+        # never read by a model. It counts only as the whole protocol, quoting the token, and agreeing with every
+        # other verdict the reply states; anything else is a failed review, never a clean one.
+        try:
+            protocols = [_CriticProtocol.model_validate(one, strict=True) for one in stated]
+        except ValueError:
+            protocols = []
+        if proof and not (any(one.read == proof for one in protocols) or floor["verdict"] != "unread"):
+            return floor   # the token is quoted by a READ line or by the protocol's own read field, or not at all
+        words = {one.verdict for one in protocols} | ({floor["verdict"]} if re.search(r"^VERDICT:", body, re.M) else set())
+        if not protocols or len(words) != 1 or proof and any(one.read not in ("", proof) for one in protocols):
+            return {"verdict": "unreadable", "rule": "", "why": "the reply states a verdict that is not the protocol's",
+                    "test": "", "error": ""}
+        value = protocols[0].model_dump(exclude={"read"})
+        return value if value["verdict"] == "defect" else {**value, "test": ""}
     if floor["verdict"] == "unread":
         return floor
     if floor["verdict"] in READ_VERDICTS or re.search(r"^VERDICT:\s*\w", body, re.M):
         # an explicit verdict line is a protocol identifier: final, never reinterpreted by a model, so a stated
         # failure (unreadable, or any word that is not none or defect) stays a failed review
         return floor
+    loose = re.search(r"^[\W_]*verdict[\W_]*[:=][\W_]*(\w+)", body, re.I | re.M)
+    if loose and loose[1].lower() not in READ_VERDICTS:
+        return {**floor, "verdict": loose[1].lower()}   # a failure stated in its own layout is never read as clean
     reading = semantic.read(semantic.Question("critic", said, Reply, lambda: floor, "choose"))
     value = reading.value.model_dump() if isinstance(reading.value, BaseModel) else reading.value
     if value["verdict"] != "defect":
         value = {**value, "test": ""}
     return value
+
+
+def _stated_verdicts(body: str) -> list[dict]:
+    """Each JSON object in ``body``, outside any other, that has a ``verdict`` key: wherever it stands (alone, after a
+    header or a progress line, in a code fence, mid-line). A test's code is inside its object's string, so it is not
+    read again on its own."""
+    found, decoder, at = [], json.JSONDecoder(), body.find("{")
+    while at != -1:
+        try:
+            value, end = decoder.raw_decode(body, at)
+        except (ValueError, RecursionError):
+            at = body.find("{", at + 1)
+            continue
+        if isinstance(value, dict) and "verdict" in value:
+            found.append(value)
+        at = body.find("{", end)
+    return found
 
 
 class _CriticValue(BaseModel):

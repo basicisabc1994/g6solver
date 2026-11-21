@@ -994,7 +994,7 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict] | None
             # The existing request (including an injected fake/None) remains authoritative.
             with semantic.use_request(**({'llm': llm} if llm is not None else {})):
                 candidates = candidate_standard.from_sources({**original, **texts}, task, repo=root,
-                                                             advertised=template_instances)
+                                                             advertised=template_instances, confirmed=confirmed)
             # The person's confirmed answer first: the check scheduled for a candidate is the one they confirmed.
             candidates = candidate_standard.with_confirmed(candidates, confirmed)
             stated, assumed, unmapped, proposed, instances, config = _inputs(
@@ -1004,10 +1004,16 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict] | None
             generated, compiled, candidate_origins, candidate_skipped = candidate_standard.checks(
                 candidates, texts, before=original,
                 budget=verification_search.MAX_CHECKS - len(proposed) - len(instances))
-            used = {c.id for c in proposed} | {c.id for c in instances}
-            proposed.extend(c for c in generated if c.id not in used)
-            instances.extend(c for c in compiled if c.id not in used)
-            candidate_origins = {key: value for key, value in candidate_origins.items() if key not in used}
+            # One source of truth: a candidate's checks are those its standard states, after the person's confirmed
+            # answer. A supplied check under one of their ids only advertised the candidate: it never runs in its place.
+            own = {c.id for c in (*generated, *compiled)} | {one['check'] for one in candidate_skipped}
+            mine = {c.id: c for c in compiled}
+            candidate_skipped.extend(dict(activity='candidate check', check=c.id, origin='caller',
+                candidate_id=c.requirement_id, result='skipped', model_calls=0, seconds=0.0,
+                reason="the candidate's own check runs under this id, as its standard states it")
+                for c in instances if c.id in mine and c.bindings != mine[c.id].bindings)
+            proposed = [*(c for c in proposed if c.id not in own), *generated]
+            instances = [*(c for c in instances if c.id not in own), *compiled]
             config = config or verification_search.search_config(None)
         from g6.harness import outcome_history
 

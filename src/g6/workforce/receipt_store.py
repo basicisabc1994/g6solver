@@ -77,7 +77,7 @@ def store_path() -> Path:
 
 def repository_id(root: Path) -> str:
     """SHA-256 of sorted root commit ids; no path, URL or uncommitted repository identity."""
-    from g6.core import component_process
+    from g6.core.semantic import trusted_stop
     from g6.workforce import repo_tests
 
     try:
@@ -85,9 +85,9 @@ def repository_id(root: Path) -> str:
         if not roots or any(len(one) not in (40, 64) or any(c not in '0123456789abcdef' for c in one) for one in roots):
             return ''
         return hashlib.sha256('\n'.join(roots).encode('ascii')).hexdigest()
-    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
-        raise   # both are OSErrors: an operator stop or unconfirmed cleanup must reach the enclosing door
-    except (OSError, ValueError, repo_tests.RepoRefused):
+    except (OSError, ValueError, repo_tests.RepoRefused) as exc:
+        if trusted_stop(exc):
+            raise   # a stop is an OSError too: it must reach the enclosing door
         return ''
 
 

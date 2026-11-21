@@ -341,9 +341,18 @@ def _ident(raw):
     return 'candidate.' + hashlib.sha256(json.dumps(bound, sort_keys=True).encode()).hexdigest()[:12]
 
 
-def _advertised(instances, symbols):
+def _advertised(instances, symbols, confirmed=None):
     """Model proposals an earlier reply advertised as ``cheapest_check`` calls: each supplied example.v1 instance whose
-    candidate id is the digest of its own function and cases (``_ident``), for a function the repository defines."""
+    candidate id is the digest of its own function and cases (``_ident``), for a function the repository defines. Once
+    the person confirmed a case for that candidate, the call G6 advertises carries the confirmed case under the
+    candidate's id (``with_confirmed``): that instance is admitted when ``confirmed`` holds exactly its function and
+    cases for that id, and the candidate keeps the id."""
+    held = []
+    for answer in confirmed.expectations if confirmed is not None else ():
+        try:
+            held.append((answer.requirement_id, {key: answer.instance.bindings[key] for key in ('function', 'cases')}))
+        except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
+            continue
     found = []
     for one in instances if isinstance(instances, (list, tuple)) else ():
         try:
@@ -354,8 +363,13 @@ def _advertised(instances, symbols):
                 text=f'{bindings["function"]}: a model proposal an earlier reply advertised', kind='example',
                 function=bindings['function'], cases=bindings['cases'])).model_dump(exclude_unset=True)
             item = dict(proposal, origin='model_proposal')
-            if proposal['function'] in symbols and one['requirement_id'] == _ident(item):
+            if proposal['function'] not in symbols:
+                continue
+            if one['requirement_id'] == _ident(item):
                 found.append(item)
+            elif any(ident == one['requirement_id'] and _same(stated, {key: bindings[key] for key in stated})
+                     for ident, stated in held):
+                found.append(dict(item, id=one['requirement_id']))
         except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
             continue
     return found
@@ -369,9 +383,10 @@ def _instance(item):
                 bindings=dict(function=item['function'], cases=item['cases']))
 
 
-def from_sources(texts, task, *, repo, advertised=None):
+def from_sources(texts, task, *, repo, advertised=None, confirmed=None):
     """Pure static input seam, also used by the bounded repository adapter. ``advertised``: the template instances a
-    review was given, whose model candidates an earlier reply advertised (``_advertised``)."""
+    review was given, whose model candidates an earlier reply advertised (``_advertised``); ``confirmed``: the
+    person's confirmed answers, which keep a confirmed model candidate's advertised call admissible."""
     trees = _trees(texts)
     symbols = _symbols(trees)
     floor = [dict(i, origin='task_text') for i in _floor(task, symbols)]
@@ -383,13 +398,13 @@ def from_sources(texts, task, *, repo, advertised=None):
         model_calls = scope.calls - calls
     model = [p.model_dump(exclude_unset=True) if isinstance(p, Proposal) else p for p in reading.value]
     # choose governs the model reading; task-text items are an independent source and always retained.
-    items = [*floor, *(item for item, _, _ in boundaries), *_advertised(advertised, symbols)]
+    items = [*floor, *(item for item, _, _ in boundaries), *_advertised(advertised, symbols, confirmed)]
     for proposal in model:
         if proposal['function'] in symbols:
             items.append(dict(proposal, origin='model_proposal'))
     standard, unknowns, seen, basis = [], [], set(), {}
     for raw in items:
-        ident = _ident(raw)
+        ident = raw.pop('id', None) or _ident(raw)
         if ident in seen:
             continue
         seen.add(ident)
