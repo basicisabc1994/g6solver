@@ -65,7 +65,8 @@ LETS_THROUGH = (ExecutionInterrupted, ContainmentFailure)
 SCHEMA = "g6.test_receipt/1"
 OBSERVATION_SCHEMA = 'g6.observation_receipt/1'
 #: What a learning binding may add beside a receipt (``repo_tests._learning_binding``): ``readings`` is the live
-#: reader's result for each requested id; ``test_outcomes`` only a binding written before readings holds.
+#: reader's result for each requested id, with its ``collection`` qualifier (a bare result string only in a binding
+#: written before qualifiers); ``test_outcomes`` only a binding written before readings holds.
 LEARNING = ('repository_id', 'check_digests', 'test_outcomes', 'readings')
 KIND = "test-receipt"
 #: Why an evidence item that cites a receipt is, or is not, G6-observed (``check``). Not "verified": that word is a

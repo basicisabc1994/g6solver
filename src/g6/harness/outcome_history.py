@@ -23,6 +23,11 @@ CAP = 5
 CLASSIFICATIONS = frozenset({'counterexample', 'unconfirmed_failure', 'defect_detected', 'not_refuted',
                              'fails_on_base_too', 'check_error'})
 REPRODUCED = frozenset({'counterexample', 'defect_detected'})
+#: The most trials ranking builds: the bridge refuses about 6,600 (``cognitive_bridge.snapshot.MAX_ITEMS``), so
+#: older rows past it are cut from ranking, newest kept, and the reply says so (``CUT``).
+MAX_TRIALS = 3000
+CUT = ('{cut} older admitted row(s) were cut from ranking to stay within the selector\'s size limit; '
+       'the newest {kept} were ranked')
 repository_id = receipt_store.repository_id
 LETS_THROUGH = (ExecutionInterrupted, ContainmentFailure)
 
@@ -91,45 +96,35 @@ def _admitted(row: dict, repository: str) -> bool:
 
 
 def _status(body: dict, node: str) -> tuple[bool, bool]:
-    from g6.harness.verification_search import reading
-    from g6.workforce import repo_tests
+    """(pass, defect) for ``node`` in a receipt, by the one rule (``verification_search.evidence_class``) over the
+    reading the receipt binds, its qualifiers and the receipt's own verdict."""
+    from g6.harness.verification_search import DEFECT, PASS, evidence_class
 
     result = body.get('result', {})
     if body.get('source_before') != body.get('source_after'):
         return False, False
     if body.get('schema') == receipt_store.OBSERVATION_SCHEMA:
-        return _observation_status(result) if result.get('verdict') in {'passed', 'failed'} else (False, False)
-    readings = body.get('readings')
-    if type(readings) is dict:
-        # The live reader's result for this requested id, bound when the run was read (``repo_tests._learning_binding``),
-        # so a qualifier it honours (an operating-system error, a collection that stopped) is never lost here.
-        found = readings.get(node)
+        # The separate observation receipt has one result and no pytest phase report.
+        complete = result.get('completed') is True and result.get('degraded') is False
+        found = {'result': result.get('verdict') if complete else 'error'}
     else:
-        # A receipt bound before readings: the same live reader, over only what the receipt carries. A receipt keeps no
-        # failure text, so the reader cannot say how a failure happened and reads it as an error, never a defect.
-        phases = body.get('test_outcomes', result.get('test_outcomes'))
-        if type(phases) is dict:   # ledger JSON sorts mapping keys: restore the producer's phase order
-            phases = {name: ({**{phase: record[phase] for phase in repo_tests.REPORT_PHASES if phase in record},
-                             **{key: value for key, value in record.items() if key not in repo_tests.REPORT_PHASES}}
-                            if type(record) is dict else record)
-                      for name, record in phases.items()}
-        tests = body.get('tests', {})
-        report = repo_tests.read_report({
-            'said': '', 'output': '', 'rootdir': '', 'setup_errors': {},
-            'collected_ids': tests.get('collected', []), 'omitted_ids': tests.get('omitted', []),
-            **result, 'test_outcomes': phases})
-        found = reading(report.wire(), node)['result']
+        readings = body.get('readings')
+        bound = readings.get(node) if type(readings) is dict else None
+        if type(bound) is dict:
+            # The live reader's reading, bound when the run was read (``repo_tests._learning_binding``), with its
+            # ``collection`` qualifier; one bound without it cannot rule a collection error out.
+            found = {'result': bound.get('result'), 'collection': bound.get('collection') is not False}
+        elif bound == 'passed':
+            # A bare result, bound before qualifiers: a pass the live reader gave is still one; a bare failure cannot
+            # say its file was collected, so it is an error.
+            found = {'result': 'passed'}
+        else:
+            # A receipt bound before readings keeps neither failure text nor the probe record the live reader needs
+            # (``probe_observations``), so it cannot say a failure or a pass: an error.
+            found = {'result': 'error'}
     # The receipt's own verdict bounds the reading: a binding never makes a pass or a failure the run did not give.
-    # A check whose own file could not be collected (``collection_error``) is never a defect, though the live reader
-    # calls it failed: the cause can be a module this environment lacks (lead ruling, 2026-11-21).
-    verdict = result.get('verdict')
-    return found == 'passed' and verdict == 'passed', found == 'failed' and verdict == 'failed'
-
-
-def _observation_status(result: dict) -> tuple[bool, bool]:
-    """The separate observation receipt has one result and no pytest phase report."""
-    complete = result.get('completed') is True and result.get('degraded') is False
-    return complete and result['verdict'] == 'passed', complete and result['verdict'] == 'failed'
+    decided = evidence_class({**found, 'verdict': result.get('verdict')})
+    return decided == PASS, decided == DEFECT
 
 
 @dataclass(frozen=True)
@@ -156,7 +151,7 @@ class History:
                 unique[key] = row
         return tuple(unique.values())
 
-    def learned(self, activities=()) -> dict:
+    def learned(self, activities=(), *, cut: int = 0) -> dict:
         retained = [a for a in activities if a.get('origin') == 'retained']
         missing = sum(any(not (self.root / rel).is_file() for rel in row.get('modules', []))
                       for row in self.retained) if self.root is not None else 0
@@ -164,15 +159,22 @@ class History:
                 'stale_checks': max(missing, sum(a.get('result') == 'stale' for a in retained)),
                 'admitted_trials': len(self.rows), 'rejected_trials': self.rejected,
                 'ran': [a['check'] for a in retained if any(r.get('on') == 'patch' for r in a.get('runs', []))],
-                **({'history_unavailable': self.unavailable} if self.unavailable else {})}
+                **({'history_unavailable': self.unavailable} if self.unavailable else {}),
+                **({'history_cut': CUT.format(cut=cut, kept=len(self.rows) - cut)} if cut else {})}
+
+    def ranked(self, variants) -> tuple[dict, ...]:
+        """The newest admitted rows whose trials fit ``MAX_TRIALS`` with these variants (each row is at most one trial
+        per variant), so ranking never passes the bridge's own size limit however long the history grows."""
+        return self.rows[max(0, len(self.rows) - MAX_TRIALS // max(1, len(variants))):]
 
     def selector(self, context, variants):
-        """Evaluator-owned translation; no caller-supplied trial, success flag or free text is read."""
+        """Evaluator-owned translation; no caller-supplied trial, success flag or free text is read. Only ``ranked``
+        rows become trials; the caller says how many were cut (``learned``'s ``cut``)."""
         from g6.cognitive_bridge import EvaluatedTrial, MetacognitiveMethodSelector
 
         trials = []
         admitted = set()
-        for row in self.rows:
+        for row in self.ranked(variants):
             for variant in variants:
                 if row.get('method') != variant.method:
                     continue
@@ -186,23 +188,25 @@ class History:
                 admitted.add(ident)
         return MetacognitiveMethodSelector(trials, admit_trial=lambda trial: trial.trial_id in admitted)
 
-    def candidate_scores(self, entries: dict, phase: str) -> dict[str, float]:
+    def candidate_scores(self, entries: dict, phase: str) -> tuple[dict[str, float], int]:
+        """Each review entry's score from admitted history, and how many older rows the bound cut from ranking."""
         from g6.cognitive_bridge import MethodVariant, ProblemSignature
 
         if not self.rows:
-            return {}
+            return {}, 0
         variants = []
         for key, entry in entries.items():
             call = entry.get('call') or {}
             if call.get('tool') in {'g6_review_patch', 'g6_review_until_clean'}:
                 variants.append(MethodVariant(key, 'review', 'pytest', call['tool'], 'review', 1, kind='reviewer'))
         if not variants:
-            return {}
+            return {}, 0
         context = ProblemSignature('software_engineering', 'bug_fix', 'patch', 1, 100)
         decision = self.selector(context, variants).select(context, variants, required_methods=['review'],
                                                            max_optional=len(variants) - 1)
-        return {r['variant_id']: 2 * (r['smoothed_success_proxy'] - .5)
-                for r in decision.ordered_variants if r['training_cases']}
+        return ({r['variant_id']: 2 * (r['smoothed_success_proxy'] - .5)
+                 for r in decision.ordered_variants if r['training_cases']},
+                len(self.rows) - len(self.ranked(variants)))
 
 
 def read(root: Path) -> History:

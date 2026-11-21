@@ -524,8 +524,10 @@ def record_reproductions(change: repo_tests.Change, probes: Path, *, deadline: f
                 continue
             patch = vs._run_check(change, node, one.source, node, at_base=False,
                                    timeout_s=int(min(RUN_S, deadline - _clock())))
-        # Recorded synthetic old fixtures have no receipts: they cannot add learning or spend a base run.
-        if not patch.get('receipt') or vs._guarded(change, patch, vs.reading(patch, node))['result'] != 'failed':
+        # Recorded synthetic old fixtures have no receipts: they cannot add learning or spend a base run. The one rule
+        # (``vs.evidence_class``) decides both runs, so a collection or probe error is never reproduced.
+        if (not patch.get('receipt')
+                or vs.evidence_class(vs._guarded(change, patch, vs.reading(patch, node))) != vs.DEFECT):
             continue
         if deadline - _clock() < vs.MIN_RUN_S:
             activities.append({'activity': 'K reproduction control', 'check': one.id, 'result': 'skipped',
@@ -535,7 +537,7 @@ def record_reproductions(change: repo_tests.Change, probes: Path, *, deadline: f
                              timeout_s=int(min(RUN_S, deadline - _clock())))
         _, refs, _ = cloud.freeze_output(base)
         cloud.record_sources(refs or (cloud.UNKNOWN,))
-        passed = vs._guarded(change, base, vs.reading(base, node))['result'] == 'passed'
+        passed = vs.evidence_class(vs._guarded(change, base, vs.reading(base, node))) == vs.PASS
         activities.append({'activity': 'K reproduction control', 'check': one.id,
                            'result': 'reproduced' if passed else 'not_reproduced',
                            'reason': 'patch fails and base passes' if passed else 'base did not pass',

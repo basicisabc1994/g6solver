@@ -48,9 +48,11 @@ def world(tmp_path, monkeypatch):
                 ran = result([node])
         sha = hashlib.sha256(source.encode()).hexdigest()
         ran['source_before'] = digest({'code': code, 'check': sha})
+        # The live reading bound as a confined run binds it (``repo_tests._learning_binding``).
         body = {'source_before': ran['source_before'], 'source_after': ran['source_before'],
                 'repository_id': receipt_store.repository_id(change.repo),
                 'check_digests': {placed: sha}, 'tests': {'requested': [node], 'collected': [node]},
+                'readings': repo_tests._learning_binding(ran, [node], repository='', check_digests={})['readings'],
                 'isolation': ran['isolation'], 'result': {**ran, 'completed': ran['verdict'] == 'passed'}}
         ran['receipt'] = receipt_store._record(body)
         return ran

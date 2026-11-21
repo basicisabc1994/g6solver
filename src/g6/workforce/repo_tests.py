@@ -3246,11 +3246,14 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
 def _learning_binding(found: dict, ids: list[str], *, repository: str, check_digests: dict[str, str]) -> dict:
     """What a receipt binds for outcome learning only (``receipt_store._record``'s ``learning``): the repository
     identity, the check bytes, and each requested id's result as the live reader (``verification_search.reading``)
-    gives it, so learning never reads the run a second way."""
+    gives it, with its ``collection`` qualifier, so learning never reads the run a second way and
+    ``verification_search.evidence_class`` decides from the whole reading."""
     from g6.harness.verification_search import reading
 
+    readings = {node: reading(found, node) for node in ids}
     return {'repository_id': repository, 'check_digests': check_digests,
-            'readings': {node: reading(found, node)['result'] for node in ids}}
+            'readings': {node: {'result': found['result'], 'collection': found.get('collection') is True}
+                         for node, found in readings.items()}}
 
 
 #: Git-ignored files that can change a run (review I2): runner configuration, start-up and path files.

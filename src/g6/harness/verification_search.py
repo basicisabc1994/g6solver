@@ -676,6 +676,25 @@ def reading(ran: dict, node: str) -> dict:
     return error(f"its tests did not run to a pass or a fail ({verdict})")
 
 
+#: What one run's reading is evidence of (``evidence_class``).
+DEFECT, PASS = "defect", "pass"
+
+
+def evidence_class(found: dict) -> str:
+    """What one run's reading (``reading``, or one rebuilt from a receipt) is evidence of, the one rule every learning
+    and reproduction consumer reads it by: ``defect`` (its check failed in a run whose verdict is failed), ``pass``
+    (it passed in a run whose verdict is passed) or ``check_error``. A check whose own file was not collected
+    (``collection``), whatever the run's verdict, and any error, a probe's included, is ``check_error``: the cause can
+    be an import or a module this environment lacks, so it is never defect evidence (lead ruling, 2026-11-21). The
+    live search's classification (``classify``) is not this rule."""
+    result, verdict = found.get("result"), found.get("verdict")
+    if result == "passed" and verdict == repo_tests.PASSED:
+        return PASS
+    if result == "failed" and verdict == repo_tests.FAILED and found.get("collection") is not True:
+        return DEFECT
+    return CHECK_ERROR
+
+
 def _canonical(value) -> str:
     return json.dumps(value, sort_keys=True)
 
@@ -984,7 +1003,7 @@ def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_
                                               f"{said} is in assessment.completion"))
         done.defects.append({"check": one.id, "requirement": one.requirement_id, "provenance": PROPOSED,
                              "result": result, "code": REASONS[result], "detail": verdict["detail"],
-                             "reproduction": reproduction,
+                             "reproduction": reproduction, "evidence_class": evidence_class(on_patch),
                              **({"template": origin.template} if origin.template else {})})
         done.next_actions.append(
             f"{about}: {result.replace('_', ' ')}, not confirmed. To reproduce it, copy the tree without its .git "

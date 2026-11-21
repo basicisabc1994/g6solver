@@ -440,7 +440,6 @@ def test_duplicate_json_keys_and_wrong_plugin_types_cannot_be_sanitized_to_reada
 # Every product function that reads per-test report fields, found by AST. A new
 # consumer fails this inventory until it goes through the producer's reader.
 CONSUMERS = {
-    "harness/outcome_history.py": {"_status"},  # receipt phase data projected through the producer reader
     "harness/patch_review.py": {"_confined", "_listing", "_failed_ids", "phases_of", "_in_repository", "_verdicts", "_observed", "_on_base", "_not_loaded", "_not_found", "_collection_errors"},
     "harness/verification_search.py": {"reading", "_messages", "_refused_access", "_uncollected", "search"},
     "harness/completion_loop.py": {"_read"},

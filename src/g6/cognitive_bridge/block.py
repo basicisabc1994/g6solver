@@ -345,8 +345,9 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
                 selector = history.selector(context, variants) if history.rows else MetacognitiveMethodSelector()
                 decision = selector.select(context, variants,
                                      required_methods=d.required_methods)
+                cut = len(history.rows) - len(history.ranked(variants))
                 return publish(_answered({"component": self.name, "op": d.op, **decision.to_dict(),
-                                  **({'ranked_by': history.note, 'learned': history.learned()} if history.rows or history.rejected else {}),
+                                  **({'ranked_by': history.note, 'learned': history.learned(cut=cut)} if history.rows or history.rejected else {}),
                                   "evidence_note": history.note if history.rows or history.rejected else
                                       "no past trial data admitted over stateless MCP; cold-start ranking only"}), where="CognitiveBridgeBlock.infer")
             if d.op == "plan_methods":

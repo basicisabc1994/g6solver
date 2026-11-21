@@ -376,9 +376,9 @@ CLASSIFIED = {
     ("harness/confirmed_checks.py", "read"): "a proposed check's run",
     ("harness/completion_loop.py", "_read"): "a probe set's run",
     ("harness/completion_loop.py", "record_reproductions"): "a proposed check's run",
-    ("harness/outcome_history.py", "_status"): "not a run report: a receipt's bound live reading, or the live reader "
-                                               "over what an older receipt carries",
-    ("harness/outcome_history.py", "_observation_status"): "not a run report: a stored observation receipt's own result",
+    ("harness/outcome_history.py", "_status"): "not a run report: a receipt's bound live reading, or a stored "
+                                               "observation receipt's own result, by verification_search's "
+                                               "evidence_class",
     ("harness/completion_loop.py", "_outcome"): "one case's phases: the reader's own rule, a fixture error unknown",
     ("mcp/review_loop.py", "_step"): "words: completion_loop.read_report, the loop's report.md against its digest, "
                                      "another function of that name; not a run report",

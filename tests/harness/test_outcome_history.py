@@ -65,8 +65,10 @@ def receipt(repo='a' * 64, *, passed=False, source='source'):
 
 
 def phase_receipt(node, *, passed=False):
-    # ``readings``: the live reader's result a confined run binds (``repo_tests._learning_binding``).
-    return {'tests': {'requested': [node], 'collected': [node]}, 'readings': {node: 'passed' if passed else 'failed'},
+    # ``readings``: the live reader's result, with its collection qualifier, a confined run binds
+    # (``repo_tests._learning_binding``).
+    return {'tests': {'requested': [node], 'collected': [node]},
+            'readings': {node: {'result': 'passed' if passed else 'failed', 'collection': False}},
             'test_outcomes': {node: {'setup': 'passed', 'call': 'passed' if passed else 'failed',
                                      'teardown': 'passed'}},
             'result': {'verdict': 'passed' if passed else 'failed', 'total': 1, 'not_passed': 0,

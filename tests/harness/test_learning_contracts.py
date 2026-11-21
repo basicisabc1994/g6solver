@@ -15,7 +15,7 @@ from tests.harness.efu2_cases import FAILED, NODE, PASSED, report
 def test_resolution_serializes_compiler_source_without_custody():
     source = ExecutableSource('def test_edge(): pass\n', {'kind': 'example'})
     assessment = {'requirements': [], 'completion': {'defects_reproduced': {'proposed_checks': [
-        {'result': 'counterexample', 'requirement': 'R', 'check': 'edge',
+        {'result': 'counterexample', 'requirement': 'R', 'check': 'edge', 'evidence_class': 'defect',
          'reproduction': {'text': source}}]}}}
     got = resolution.build(assessment, repo='fixture', task='keep behavior')
     text = got[0]['cheapest_check']['arguments']['proposed_checks'][0]['source']

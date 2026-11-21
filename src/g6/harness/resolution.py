@@ -36,15 +36,22 @@ def build(assessment: dict, *, repo: str, task: str) -> list[dict]:
     for failure in completion.get('defects_reproduced', {}).get('proposed_checks', []):
         if failure.get('result') not in ('counterexample', 'unconfirmed_failure'):
             continue
+        # The patch run's reading by the one rule (``verification_search.evidence_class``): a collection or probe
+        # error reproduced no expectation, whatever the live search classified.
+        if failure.get('evidence_class') not in ('defect', 'pass'):
+            continue
         reproduction = failure.get('reproduction', {})
         ident = failure.get('requirement', '')
         requirement = next((r for r in stated if r['id'] == ident),
                            {'id': ident or 'retained', 'text': 'The previously reproduced expectation holds', 'checks': []})
         args = {'repo': repo, 'task': task, 'requirements': [requirement]}
         if reproduction.get('text'):
+            # The reproduction ran the selected test only; the replay selects the same one.
+            test = str(reproduction.get('node', '')).partition('::')[2]
             args['proposed_checks'] = [{'id': 'settle-reproduction', 'requirement_id': requirement['id'],
                 'intent': 'preserve' if failure['result'] == 'counterexample' else 'change',
-                'file': 'test_settle_reproduction.py', 'source': str(reproduction['text'])}]
+                'file': 'test_settle_reproduction.py', 'source': str(reproduction['text']),
+                **({'test': test} if test else {})}]
         entry(ident, f"The expectation reproduced by {failure.get('check', 'the proposed check')} is unconfirmed.",
               {'tool': 'g6_review_patch', 'arguments': args}, check=failure.get('check', ''),
               person=f"confirm whether the reproduced expectation for {ident or 'the retained check'} is intended "

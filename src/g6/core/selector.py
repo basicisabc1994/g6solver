@@ -925,8 +925,10 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
     for key in calls:
         add(key, CONSIDERED_BONUS, "considering")
     # Python-only evaluator input supplied by the MCP adapter, never a tool argument.
+    history_cut = 0
     if _history is not None and _history.rows:
-        for key, value in _history.candidate_scores(entries, phase).items():
+        history_scores, history_cut = _history.candidate_scores(entries, phase)
+        for key, value in history_scores.items():
             if key in scores:
                 scores[key] += value
                 ranked_by.setdefault(key, []).append(_history.note)
@@ -1063,8 +1065,8 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         **envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
                           request_id=request_id, run_id=run_id)})
     if _history is not None and (_history.rows or _history.rejected):
-        reply['learned'] = _history.learned()
-        reply['evidence_note'] = _history.note
+        reply['learned'] = _history.learned(cut=history_cut)
+        reply['evidence_note'] = _history.note + ('; ' + reply['learned']['history_cut'] if history_cut else '')
     if len(json.dumps(reply)) > MAX_REPLY_BYTES:       # the input bounds keep a reply well within it; this says so
         return _refuse(f"the reply would be over {MAX_REPLY_BYTES // 1024} KB: pass fewer or shorter entries in "
                        "considering", request_id, run_id)
