@@ -50,8 +50,10 @@ def test_doctor_and_install_page_agree(monkeypatch, platform):
     assert check.detail in page
     for _, (_, _, command) in doctor.EXTRAS.items():
         assert command in page
-    for command in ("claude auth login", "codex login", "g6 doctor"):
-        assert command in page
+    # The published Get started page may hold no sign-in or log-in text (web/pages/guard.py, tests/site/test_honesty.py),
+    # so the page sends the reader to doctor for the client's own command, and
+    # test_unconfigured_model_prints_sign_in_guidance holds that doctor prints both commands.
+    assert "g6 doctor" in page and "with the command doctor prints" in page
 
 
 def test_unconfigured_model_prints_sign_in_guidance():

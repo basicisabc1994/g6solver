@@ -37,13 +37,13 @@ separately. This grants read/execute access to all AppContainers on that folder.
 | Missing piece | What it blocks | Command (Linux, Windows and macOS) |
 |---|---|---|
 | `fastmcp` / `mcp` | MCP server | `python -m pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"` |
-| `anthropic` | Anthropic API calls; Claude Code sign-in needs no SDK | `python -m pip install "g6[anthropic] @ git+https://github.com/basicisabc1994/g6solver"` |
+| `anthropic` | Anthropic API calls; a model used through Claude Code needs no SDK | `python -m pip install "g6[anthropic] @ git+https://github.com/basicisabc1994/g6solver"` |
 | `z3-solver` (module `z3`) | Z3 formal methods | `python -m pip install "g6[formal] @ git+https://github.com/basicisabc1994/g6solver"` |
 | `ortools` | OR-Tools constraint solving and optimisation | `python -m pip install "g6[optim] @ git+https://github.com/basicisabc1994/g6solver"` |
 | `hypothesis` / `numpy` | Abstraction property checks | `python -m pip install "g6[abstraction] @ git+https://github.com/basicisabc1994/g6solver"` |
-| A configured model | Model-backed operations | Sign in to Claude Code with `claude auth login` or Codex with `codex login`, then choose that provider in `g6 setup`. Doctor does not check sign-in status. |
+| A configured model | Model-backed operations | Set up Claude Code or Codex with the command doctor prints, then choose that provider in `g6 setup`. Doctor does not check that the program is set up. |
 
-If the host program is absent, doctor names its install command. A sign-in is needed only for model-backed operations;
+If the host program is absent, doctor names its install command. A set-up program is needed only for model-backed operations;
 model-free checks work without one. Register the MCP server in your coding client with `g6 setup`, choose what it may
 run, then reconnect the client and accept its source-sharing dialog for data you intend to share. Doctor does not
 exercise that handshake or consent. Patch review refuses when no supported boundary can start, even if general
