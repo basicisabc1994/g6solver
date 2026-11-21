@@ -10,8 +10,9 @@ from __future__ import annotations
 import contextvars
 import json
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MethodType
+from typing import Callable
 
 import anyio
 from mcp import types
@@ -55,6 +56,17 @@ class Ticket:
     body_sha256: str
     job: dict | None = None
     control: dict | None = None
+    #: Called once these exact bytes are handed to the client, never for a reply withheld in their place: what counts
+    #: an attempt the agent saw (``g6.mcp.repair.observed``).
+    delivered: Callable[[], None] | None = field(default=None, compare=False, repr=False)
+
+
+def _delivered(ticket: Ticket | None) -> None:
+    if ticket is not None and ticket.delivered is not None:
+        try:
+            ticket.delivered()
+        except Exception:  # noqa: BLE001 - counting an attempt never fails a reply already sent
+            pass
 
 
 def _request_key(request_id):
@@ -63,9 +75,10 @@ def _request_key(request_id):
     return (type(request_id), request_id) if type(request_id) in (str, int) else None
 
 
-def prepare(session, request_id, result, sources, supplied=(), job=None, *, metadata=None, body=None):
+def prepare(session, request_id, result, sources, supplied=(), job=None, *, metadata=None, body=None, delivered=None):
     """Cut the ticket for this reply. ``body`` is the caller's one serialisation of ``result``, when it has matched
-    the sources against one: the ticket then names those bytes, never a second reading of the live reply."""
+    the sources against one: the ticket then names those bytes, never a second reading of the live reply.
+    ``delivered`` is called once those bytes reach the client, not when a withheld reply goes in their place."""
     key = _request_key(request_id)
     if key is None:
         return
@@ -76,7 +89,7 @@ def prepare(session, request_id, result, sources, supplied=(), job=None, *, meta
     except (RecursionError, MemoryError):
         raise ValueError("a JSON record exceeds decoder limits") from None
     session._g6_tickets[key] = Ticket(tuple(sources), provider(session), frozenset(supplied),
-                                    digest(body), controls['job'], controls['metadata'])
+                                    digest(body), controls['job'], controls['metadata'], delivered)
 
 
 def _refused(message, ticket, recipient='cloud:unknown', session=None):
@@ -136,6 +149,7 @@ class _Stream:
                             actual, supplied, digest(root.model_dump(mode='json', exclude_none=True)))
         if not ticket.sources:
             await self.inner.send(packet)
+            _delivered(ticket)
             return
 
         def handoff():
@@ -146,6 +160,8 @@ class _Stream:
                     anyio.from_thread.run(self.inner.send, packet)
             except (LLMError, RecursionError, MemoryError):
                 anyio.from_thread.run(self.inner.send, _refused(packet, ticket, actual, self.session))
+            else:
+                _delivered(ticket)
         await anyio.to_thread.run_sync(handoff)
 
 

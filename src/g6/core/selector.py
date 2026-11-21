@@ -51,7 +51,8 @@ The stages, each reported in ``mechanisms`` as run or skipped, with why:
    (``registry.build_typed_input``) and, for an op that computes over its input alone, a run of the template as
    given through ``g6_invoke``'s path. An op template is ``validated`` only when that run was not refused; any
    other carries ``fill``, the fields to supply, and is ``next`` only with them and ``FILL_HINTS``' or G6's generic
-   instruction in ``say``. An op call in ``considering`` is checked against the fields the corpus recorded. No
+   instruction in ``say``. A tool template's ``fill`` is the fields it leaves as placeholders, and ``say`` gives what
+   each needs (``FIELD_NEEDS``). An op call in ``considering`` is checked against the fields the corpus recorded. No
    component is imported here, so a reply never depends on what the host can import. ``allowed_by_default`` is
    false for a call with a sensitive allowance, which the person grants where the server is registered. Every issue
    is attached to its candidate.
@@ -725,9 +726,44 @@ FILL_HINTS = {
 }
 
 
+#: What a tool template's ``<field>`` placeholder needs, where the field's name alone does not say; a placeholder in
+#: words of its own (``<the same parameters>``) says it itself, and any other the tool's description says.
+FIELD_NEEDS = {
+    "repo": "the absolute path of the repository's folder",
+    "task": "the task, in the person's words",
+    "query": "what you are looking for, in your own words",
+    "component": "a component's name, as g6_find or the refusal names it",
+    "op": "the op's name, as g6_describe lists it",
+    "params_json": "the op's parameters as one JSON object",
+    "source": "the source identifier the withheld reply names",
+    "provider": "the provider the withheld reply names",
+    "job_id": "the job_id the earlier reply returned",
+    "workflow": "the workflow metaharness_start returned",
+    "mission_id": "the mission_id g6_mission_create returned",
+    "session": "the session the last g6_review_until_clean reply returned",
+}
+
+
+def _holes(call: dict[str, Any] | None) -> list[str]:
+    """The fields a tool template leaves as placeholders (``<...>``), to be filled before the call is made."""
+    arguments = (call or {}).get("arguments", {})
+    return sorted(k for k, v in arguments.items() if isinstance(v, str) and v.startswith("<") and v.endswith(">"))
+
+
+def _needs(call: dict[str, Any], field: str) -> str:
+    said = call["arguments"][field][1:-1]
+    return said if said != field else FIELD_NEEDS.get(field, "as the tool's description says")
+
+
 def _fill_say(candidate: dict[str, Any]) -> str:
-    """What ``next`` says about an op's template: for one that ran as given on placeholders or defaults, to fill
-    them before relying on its answer; for one not known to run as given, the fields to fill and why."""
+    """What ``next`` says about a template: for a tool's, each placeholder to fill and what it needs; for an op's
+    that ran as given on placeholders or defaults, to fill them before relying on its answer; for an op's not known
+    to run as given, the fields to fill and why."""
+    if candidate["kind"] == "tool":
+        fields = candidate["fill"]
+        needs = [f"{field} ({_needs(candidate['call'], field)})" for field in fields]
+        return (f"Fill {', '.join(needs[:-1])} and {needs[-1]}" if len(needs) > 1 else
+                f"Fill {needs[0]}" if needs else "") + (" before you make this call." if needs else "")
     if candidate["kind"] != "op":
         return ""
     if candidate["validated"]:
@@ -984,7 +1020,8 @@ def select(task: str, phase: str = "", last_outcome: str = "", considering: Any 
         candidate = {"id": key, "kind": entry["kind"], "call": call, "establishes": entry["establishes"],
                      "not_established": entry["not_established"], "needs": entry["needs"], "cost": entry["cost"],
                      "ranked_by": by, "score": round(scores.get(key, 0.0), 3), "validated": valid, "issues": issues,
-                     "fill": list(entry.get("fill", ())) if call == entry["call"] and entry["kind"] == "op" else [],
+                     "fill": _holes(call) if entry["kind"] == "tool" else
+                     list(entry.get("fill", ())) if call == entry["call"] and entry["kind"] == "op" else [],
                      "allowed_by_default": not entry["needs"]["sensitive"], "acts": acting[key]}
         if entry["kind"] == "op":
             candidate["component"] = entry["component"]

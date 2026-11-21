@@ -164,6 +164,38 @@ def test_a_next_call_whose_template_is_not_known_to_run_says_what_to_fill() -> N
             assert nxt["say"] and (not nxt["fill"] or all(f in nxt["say"] for f in nxt["fill"])), nxt
 
 
+def _holes(call: dict) -> list[str]:
+    return sorted(k for k, v in call.get("arguments", {}).items()
+                  if isinstance(v, str) and v.startswith("<") and v.endswith(">"))
+
+
+@pytest.mark.parametrize("task,phase", [("review my patch before I say it is done", "verify"),
+                                        ("the task does not say whether a negative price is refused", "plan"),
+                                        ("my agent keeps failing on the same kind of task", "stuck")])
+def test_a_tool_templates_placeholders_are_its_fill_and_next_says_what_each_needs(task: str, phase: str) -> None:
+    reply = selector.select(task, phase, limit=8)
+    tools = [c for c in reply["candidates"] if c["kind"] == "tool" and c["call"] is not None]
+    assert tools and all(c["fill"] == _holes(c["call"]) for c in tools), [(c["id"], c["fill"]) for c in tools]
+    nxt = reply["next"]
+    assert nxt["id"].startswith("tool:") and nxt["fill"] == _holes(nxt["call"]) and nxt["fill"], nxt
+    assert all(f in nxt["say"] for f in nxt["fill"]), nxt["say"]
+
+
+def test_the_repo_and_task_placeholders_say_what_they_need() -> None:
+    nxt = selector.select("review my patch before I say it is done", "verify")["next"]
+    assert nxt["id"] == "tool:g6_review_patch" and nxt["fill"] == ["repo", "task"], nxt
+    assert "repository" in nxt["say"] and "task" in nxt["say"], nxt["say"]
+
+
+def test_a_placeholder_that_says_what_it_needs_is_quoted_in_next() -> None:
+    hole = json.dumps({"ok": False, "completion_state": "blocked-escalated",
+                       "warning_card": {"code": "G6_E_CEGIS_HOLE_UNSUPPORTED"},
+                       "result": {"component": "cegis", "op": "synthesize"}})
+    nxt = selector.select("fill the float hole in the sketch", "implement", hole)["next"]
+    assert nxt["id"] == "tool:g6_agentic_run" and "params_json" in nxt["fill"], nxt
+    assert "the same parameters" in nxt["say"], nxt["say"]
+
+
 def test_a_safety_question_while_planning_raises_the_premortem_too() -> None:
     reply = selector.select("should I run this database migration against production", "plan", limit=5)
     assert {"op:action_gating.evaluate", "tool:g6_premortem"} <= set(_ids(reply, 3)), _ids(reply, 5)
