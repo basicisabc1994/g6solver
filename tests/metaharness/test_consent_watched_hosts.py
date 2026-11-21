@@ -128,9 +128,10 @@ def test_a_session_launch_step_outside_its_run_sends_nothing(programs, accepted_
 
 
 @pytest.fixture
-def lookups(monkeypatch):
+def lookups(monkeypatch, tmp_path):
     """Each lookup of a host program, recorded; the lookup itself is the real one, which under the suite's guard finds no
     program. Nothing is started."""
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
     looked = []
     for kind in (host_models.ClaudeCodeCaller, host_models.CodexCaller):
         def locate(self, _real=kind.locate):
