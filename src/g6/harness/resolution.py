@@ -11,8 +11,16 @@ def build(assessment: dict, *, repo: str, task: str) -> list[dict]:
               {'checks': [c['id'] for c in r.get('checks', []) if c.get('provenance', 'stated') == 'stated']}
               for r in requirements]
     out = []
+    # The review's own scope, so each call runs against what the review ran against: the base commit it resolved (a
+    # moving name such as HEAD read once, as a commit) and the import roots it ran with.
+    scope = assessment.get('scope') or {}
+    within = {**({'base': scope['base_commit']} if isinstance(scope.get('base_commit'), str)
+                 and scope['base_commit'] else {}),
+              **({'import_roots': list(scope['import_roots'])} if isinstance(scope.get('import_roots'), list)
+                 and scope['import_roots'] else {})}
 
     def entry(requirement, behaviour, call, *, person=None, model=False, check=''):
+        call['arguments'].update(within)
         needs = {'isolation': True, 'sensitive_allow': 'patch_review.review',
                  'consent': ['client_request', 'client_repository'], 'model': model}
         out.append({'requirement': requirement, **({'check': check} if check else {}),

@@ -1,4 +1,5 @@
 """Reproductions for review 4. All execution state is held in memory."""
+import inspect
 import json
 from contextlib import nullcontext
 from pathlib import Path
@@ -7,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from g6.core.ledger import ChainLedger, digest
-from g6.harness import outcome_history as h, resolution
+from g6.harness import outcome_history as h, patch_review, resolution
 from g6.harness import verification_search as vs, verification_templates as vt
 from g6.harness.behaviour_runner import ExecutableSource
 from g6.workforce import receipt_store
@@ -125,6 +126,39 @@ def test_retained_differential_resolution_keeps_template_semantics(monkeypatch):
     assert args["template_instances"][0]["bindings"] == instance.bindings
     for check, node, patch, base, classification, label, differs in repeated.outcomes:
         assert check._instance == origin.instance
+
+
+@pytest.mark.parametrize("field,expected", [
+    ("base", "b" * 40),
+    ("import_roots", ["lib"]),
+], ids=["base", "import-roots"])
+def test_resolution_keeps_review_scope(field, expected):
+    failure = {
+        "check": "edge", "requirement": "R", "result": "counterexample",
+        "evidence_class": "defect",
+        "reproduction": {
+            "text": "def test_edge():\n    assert False\n",
+            "node": "g6_check_x/test_edge.py::test_edge",
+            "base_commit": "b" * 40,
+            "environment": {"PYTHONPATH": "lib;src"},
+        },
+    }
+    args = resolution.build(
+        assessment_for([failure]), repo=str(Path.cwd()), task="Keep edge"
+    )[0]["cheapest_check"]["arguments"]
+    default = inspect.signature(patch_review.review_patch).parameters[field].default
+    observed = args.get(field, default)
+    assert observed == expected, (field, observed, expected)
+
+
+def test_every_generated_call_keeps_the_review_scope_and_a_review_without_one_adds_none():
+    # A requirement the review left not established gets a call too; it runs against the same base and import roots.
+    missing = {"id": "M", "text": "Keep zero", "checks": [], "status": "not_established"}
+    assessment = {**assessment_for([]), "requirements": [missing]}
+    args = resolution.build(assessment, repo="fixture", task="keep")[0]["cheapest_check"]["arguments"]
+    assert (args["base"], args["import_roots"]) == ("b" * 40, ["lib"])
+    plain = resolution.build({"requirements": [missing], "completion": {}}, repo="fixture", task="keep")
+    assert not {"base", "import_roots"} & set(plain[0]["cheapest_check"]["arguments"])
 
 
 @pytest.mark.parametrize("instance", [
