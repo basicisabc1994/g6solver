@@ -33,6 +33,7 @@ import ast
 import re
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -832,11 +833,12 @@ def missing_of(value: object) -> tuple[str, ...] | None:
 class ConsentWatch:
     """Whether a model call was refused for consent, and whether anything was sent, as two questions.
 
-    :meth:`refused` recognises the refusal whatever was counted: the consent guard told this watch, or a consent code
-    is the error's own (declared, or leading its words), or one of the errors it was raised from or within, or one of
-    the reasons in G6's own fallback summary (``every caller failed: name: reason; ...``, ``g6.core.llm``). The count
-    decides only the wording: :meth:`withheld` is the refusal when no request at all was counted in the watch's scope
-    (nothing left the machine), and ``""`` once any request was counted, whatever order they came in."""
+    :meth:`refused` recognises the refusal from typed signals only, whatever was counted: the consent guard told this
+    watch, or a consent code is the error's own (declared, or leading its words), or that of an error it was raised from
+    or within, or of an error it carries as structured data (``failures``: ``(name, error)`` pairs, the fallback
+    caller's per-caller errors). A summary's joined text is never re-parsed: a provider's words inside it cannot name a
+    refusal. The count decides only the wording: :meth:`withheld` is the refusal when no request at all was counted in
+    the watch's scope (nothing left the machine), and ``""`` once any request was counted, whatever order they came in."""
 
     def __init__(self, codes: tuple[str, ...]) -> None:
         self.codes, self.told = codes, []
@@ -845,19 +847,34 @@ class ConsentWatch:
     def tell(self, error: BaseException) -> None:
         self.told.append(error)
 
+    def mark(self) -> int:
+        """Where the latch stands now, for :meth:`told_since`."""
+        return len(self.told)
+
+    def told_since(self, mark: int) -> BaseException | None:
+        """The latest consent refusal the guard told of after ``mark``, or None: the typed signal a caller reads after
+        each round of model calls, whatever the round returned."""
+        return next((told for told in reversed(self.told[mark:]) if code_of(told) in self.codes), None)
+
     def refused(self, error: BaseException) -> str:
         """The consent code that refused the call, or ``""``; it never depends on what was counted."""
         for told in reversed(self.told):
             if (code := code_of(told)) in self.codes:
                 return code
         seen: set[int] = set()
-        failed: BaseException | None = error
-        while failed is not None and id(failed) not in seen:     # the error, then what it was raised from or within
+        pending: list[BaseException] = [error]
+        while pending:          # the error, what it was raised from or within, and the errors it carries as data
+            failed = pending.pop()
+            if id(failed) in seen:
+                continue
             seen.add(id(failed))
-            for code in (code_of(failed), *_fallback_codes(str(failed))):
-                if code in self.codes:
-                    return code
-            failed = failed.__cause__ or failed.__context__
+            if (code := code_of(failed)) in self.codes:
+                return code
+            carried = getattr(failed, "failures", None)
+            if isinstance(carried, (list, tuple)):
+                pending += [one[1] for one in carried
+                            if isinstance(one, tuple) and len(one) == 2 and isinstance(one[1], BaseException)]
+            pending += [one for one in (failed.__cause__, failed.__context__) if one is not None]
         return ""
 
     def withheld(self, error: BaseException) -> str:
@@ -873,20 +890,22 @@ def watching_consent(*codes: str) -> Iterator[ConsentWatch]:
     from g6.core.model_calls import counting
 
     watch = ConsentWatch(codes or (cloud_consent.REQUIRED, cloud_consent.STATE_UNAVAILABLE))
-    with cloud_consent.telling_refusals(watch.tell), counting(before_call=_observe) as counted:
-        watch.counted = counted
-        yield watch
+    token = _WATCHES.set((*_WATCHES.get(), watch))
+    try:
+        with cloud_consent.telling_refusals(watch.tell), counting(before_call=_observe) as counted:
+            watch.counted = counted
+            yield watch
+    finally:
+        _WATCHES.reset(token)
 
 
-#: G6's own summary of a fallback chain (``g6.core.llm.FallbackCaller``): ``every caller failed: name: reason; ...``.
-_FALLBACK = re.compile(r"every caller failed: (.*)", re.S)
-_FALLBACK_REASON = re.compile(r"(?:^|; )[^:;]*: (\[?\w+\]?)")
+_WATCHES: ContextVar[tuple[ConsentWatch, ...]] = ContextVar("g6_consent_watches", default=())
 
 
-def _fallback_codes(text: str) -> list[str]:
-    """The code leading each failure reason of a fallback summary that leads ``text``; none for any other text."""
-    found = _FALLBACK.match(text)
-    return [code for lead in _FALLBACK_REASON.findall(found[1]) if (code := leading_code(lead))] if found else []
+def current_watch() -> ConsentWatch | None:
+    """The innermost :class:`ConsentWatch` this context runs inside, or None."""
+    watches = _WATCHES.get()
+    return watches[-1] if watches else None
 
 
 def _observe() -> None:

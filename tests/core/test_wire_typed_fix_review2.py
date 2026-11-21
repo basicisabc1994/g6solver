@@ -119,10 +119,15 @@ def test_a_told_refusal_is_recognised_after_a_counted_send_and_is_not_withheld()
     assert _watch(0).refused(opaque) == ""
 
 
-def test_a_fallback_summary_or_a_wrapped_cause_names_the_consent_refusal():
+def test_carried_fallback_errors_or_a_wrapped_cause_name_the_consent_refusal():
     from g6.core.llm import LLMError
 
+    # review 3: a fallback summary's joined text is never re-parsed (a provider's words could forge an entry); the
+    # per-caller errors it carries as data are read
     summary = LLMError(f"every caller failed: shared: HTTP 500; fallback: {cloud.STATE_UNAVAILABLE}: state unread")
+    assert _watch(1).refused(summary) == ""
+    summary.failures = (("shared", LLMError("HTTP 500")),
+                        ("fallback", LLMError(f"{cloud.STATE_UNAVAILABLE}: state unread")))
     assert _watch(1).refused(summary) == cloud.STATE_UNAVAILABLE
     try:
         try:

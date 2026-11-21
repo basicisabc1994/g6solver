@@ -62,7 +62,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from g6.core.refusals import watching_consent
+from g6.core.refusals import current_watch, watching_consent
 
 from g6.cegis import InputDomain, SearchResult, cegis
 from g6.context.redact import MASK, mask_paths, secret_spans
@@ -954,6 +954,8 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     A review's ``unrun`` says why its test shows nothing on the latest run, so a later run updates it, or takes it away."""
     n, results, failed, failing, where = len(reviews) + 1, {}, {}, set(), session / "sets" / "critic"
     diagnostics = {}
+    watch = current_watch()                 # the consent guard's latch, read after this round's critic calls
+    mark = watch.mark() if watch is not None else 0
     read, kept, mine = repo_tests.diff_read(change), session / "rounds" / f"round-{n}.patch", critic_file(n)
     patch = read.text
     kept.parent.mkdir(parents=True, exist_ok=True)
@@ -989,8 +991,11 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
                                told_sources=diagnostics[mine]), told=told, claimed=claimed)
         if (where / mine).is_file():
             run(mine)
-    if any(code in said.get("error", "") for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)):
-        raise LLMError(said["error"])
+    # A round the critic could not answer ends as the consent refusal the guard told of during it (typed: the latch),
+    # never by reading its diagnostic text, which is the provider's words and is cut short.
+    told = watch.told_since(mark) if watch is not None and said.get("error") else None
+    if told is not None:
+        raise told
     said.update(n=n, patch=digest(patch), file=mine, results=results, failed=failed)
     reviews.append(said)
     if said["verdict"] not in READ_VERDICTS or not failing:
@@ -1530,8 +1535,13 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
 
     def check() -> tuple[set[str], str]:
         if critic is not None and "critic" not in state:
+            mark = watch.mark() if watch is not None else 0
             state["critic"] = run_critic(change, task, critic, shipped.critic, session / "sets" / "critic",
                                          patch=repo_tests.diff_read(change), system_sources=shipped.sources)
+            told = watch.told_since(mark) if watch is not None and state["critic"].get("error") else None
+            if told is not None:    # the latch after the critic's round, whatever it returned
+                del state["critic"]
+                raise told
         seen = []
         state["ran"] = {}
         for label, one in state["sets"].items():
