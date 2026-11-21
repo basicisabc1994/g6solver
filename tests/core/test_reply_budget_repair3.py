@@ -110,10 +110,36 @@ def test_real_mcp_completed_job_retains_leaf_controls():
     assert "G6_E_INPUT_VALIDATION" not in encoded
 
 
-def test_no_issued_code_uses_size_withholding_instead_of_input_validation():
+def test_no_issued_code_keeps_the_stable_input_validation_code():
+    # Lead ruling (2026-11-21): G6_E_INPUT_VALIDATION is the stable code for an
+    # oversize reply with no issued code; only a withheld non-G6 code value
+    # takes G6_E_REPLY_WITHHELD.
     shown = sent({"payload": "x" * CAP}, budget.ENVELOPE)
-    assert shown["warning_card"]["code"] == budget.REPLY_WITHHELD
-    assert "G6_E_INPUT_VALIDATION" not in json.dumps(shown)
+    assert shown["warning_card"]["code"] == "G6_E_INPUT_VALIDATION"
+    nested_reply, schema = nested({"payload": "x" * CAP}, 3)
+    assert sent(nested_reply, schema)["warning_card"]["code"] == "G6_E_INPUT_VALIDATION"
+
+
+@pytest.mark.parametrize("reply", [
+    {"payload": "x" * CAP},
+    {"code": "application", "payload": "x" * CAP},
+    {"warning_card": {"code": "G6_E_" + "A" * 80}, "payload": "x" * CAP},
+], ids=["no-code", "non-code-value", "overlong-code"])
+def test_every_code_reply_budget_can_emit_is_declared_in_refusals(reply):
+    from g6.core import refusals
+    from tests.core.test_refusals import SRC, written
+
+    def declared(code):
+        return code in refusals.LAYERS and "core" in refusals.LAYERS[code][1].split()
+
+    # Every code the module itself writes, read by the refusal census.
+    own = written(SRC / "core" / "reply_budget.py")
+    assert own and all(declared(code) for code in own), sorted(c for c in own if not declared(c))
+    # Every code its fallback paths put on the wire when no issued code exists.
+    for shown in (budget.fit_reply(reply), budget.oversize_refusal(reply), budget.fixed_refusal(),
+                  sent(reply, budget.ENVELOPE)):
+        code = shown["warning_card"]["code"]
+        assert code in own and declared(code), code
 
 
 def test_projection_deduplicates_codes_and_lists_counts_before_dropping_diagnostics():

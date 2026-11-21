@@ -674,6 +674,7 @@ LAYERS: dict[str, tuple[str, ...]] = {
     "G6_E_QUESTION_STANDARD_SUPERSEDED": ("none", "harness"),
     "G6_E_QUESTION_STORE_UNREADABLE": ("none", "harness"),
     "G6_E_QUESTION_UNCONFIRMED": ("none", "mcp"),
+    "G6_E_REPLY_WITHHELD": ("none", "core"),
     "G6_E_RESOURCE_LIMIT": ("person", "core",
         "The run was over a resource limit: tell the person; a narrower input may fit."),
     "G6_E_REVIEW_UNTIL_CLEAN": ("none", "mcp", "Show the reply's report to the person as it is."),

@@ -268,9 +268,14 @@ def _fallback_code(controls):
     code = _original_code(controls)
     if code:
         return code
-    # With no issued code, only the explicit size-withholding code is applicable.
-    # Compaction cannot diagnose an input-validation failure.
-    return REPLY_WITHHELD
+    current = controls
+    while isinstance(current, dict):
+        if "code_notice" in current:
+            return REPLY_WITHHELD
+        current = current.get("result")
+    # The stable no-code fallback (lead ruling, 2026-11-21). Component data in a
+    # code position instead takes the distinct withholding code above.
+    return "G6_E_INPUT_VALIDATION"
 
 
 def fixed_refusal(code=REPLY_WITHHELD, *, controls=None):
