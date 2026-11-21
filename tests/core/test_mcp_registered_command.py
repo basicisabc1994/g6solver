@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import g6
 from g6.cli import main
 
 OSS = Path(__file__).resolve().parents[2]
@@ -50,7 +51,10 @@ def _registered(home: Path, monkeypatch, client: str) -> list[str]:
 @pytest.mark.parametrize("client", ["claude", "codex"])
 def test_setup_registers_the_server_so_the_folder_it_starts_in_is_never_on_its_import_path(tmp_path, monkeypatch,
                                                                                          client):
-    assert _registered(tmp_path, monkeypatch, client) == [sys.executable, "-P", "-c", "from g6.mcp import main; main()"]
+    # -P keeps the folder off; this installation's start file then puts its G6 root ahead of installed packages.
+    start = str(Path(g6.__file__).resolve().parent / "core" / "child_imports.py")
+    assert _registered(tmp_path, monkeypatch, client) == [sys.executable, "-P", start,
+                                                          "-c", "from g6.mcp import main; main()"]
 
 
 def _project(root: Path) -> Path:

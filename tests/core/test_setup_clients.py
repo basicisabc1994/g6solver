@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import g6
 from g6.cli import main
 
 
@@ -20,7 +21,8 @@ def test_setup_registers_explicit_client_with_absolute_interpreter_and_skills(tm
     assert main(["setup", "--client", "codex", "--refuse-unconfined", "--allow", "patch_review.review"]) == 0
     assert calls[0][:4] == ["C:/tools/codex.exe", "mcp", "add", "g6"]
     assert "G6_MCP_SENSITIVE=patch_review.review" in calls[0]
-    assert calls[0][-5:] == ["--", sys.executable, "-P", "-c", "from g6.mcp import main; main()"]
+    start = str(Path(g6.__file__).resolve().parent / "core" / "child_imports.py")
+    assert calls[0][calls[0].index("--"):] == ["--", sys.executable, "-P", start, "-c", "from g6.mcp import main; main()"]
     assert (tmp_path / ".codex" / "skills" / "using-g6" / "SKILL.md").is_file()
 
 

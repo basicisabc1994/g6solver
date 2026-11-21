@@ -386,7 +386,8 @@ def test_no_observer_is_stopped_and_every_observer_is_detached_from_the_code():
     assert imported == {
         "__future__", "argparse", "base64", "collections.abc", "copy", "datetime", "json", "os", "pathlib", "shlex",
         "subprocess", "sys", "threading", "typing", "g6.allowance", "g6._allowance.programs",
-        "g6._allowance.readers", "g6._allowance.store"}
+        "g6._allowance.readers", "g6._allowance.store",
+        "g6.core.child_imports"}  # builds the observer's argv; it starts and ends no process
     # Nothing reaches a module by a name made at run time.
     assert not {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)} & {
         "getattr", "setattr", "__import__", "eval", "exec", "globals", "locals", "vars", "compile", "importlib"}

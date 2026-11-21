@@ -28,7 +28,7 @@ from typing import Any
 
 from g6._allowance.programs import program
 from g6.allowance import CLAUDE_SUPPORT, CLAUDE_VERSION, profile_token, utc_now
-from g6.core.child_imports import python_command
+from g6.core.child_imports import python_args
 
 MAX_INPUT = 1024 * 1024
 # An observer's own budget, from its start: binding lookup, input, parsing and writing.
@@ -103,7 +103,7 @@ def preview(original_config: Mapping[str, Any], *, python: str, profile: str, sh
     token = base64.urlsafe_b64encode(command.encode("utf-8")).decode("ascii")
     # Every value is attached to its option: an accepted token such as "--" or
     # "-local-profile" is then a value on every shell, never an option.
-    args = [*python_command("g6._allowance.statusline", python=python, isolated=False), "--renderer=" + token, "--shell=" + shell,
+    args = [python, *python_args("g6._allowance.statusline", isolated=False), "--renderer=" + token, "--shell=" + shell,
             "--profile=" + profile, "--version=" + version]
     changed = copy.deepcopy(dict(original_config))
     changed["statusLine"]["command"] = _quote(args, invocation_shell)
@@ -189,7 +189,7 @@ def observe_in_worker(payload: bytes, profile: str, version: str, *, timeout: fl
             # The observer is told the length, so it can tell a whole input from
             # one cut short by this process ending. An input over the limit is
             # not sent at all.
-            args = [*python_command("g6._allowance.statusline", python=program(sys.executable), isolated=False),
+            args = [program(sys.executable), *python_args("g6._allowance.statusline", isolated=False),
                     "--observe", "--profile=" + profile,
                     "--version=" + version, "--observed-at=" + at.isoformat(), "--length=" + str(len(payload))]
             if generation is not None:

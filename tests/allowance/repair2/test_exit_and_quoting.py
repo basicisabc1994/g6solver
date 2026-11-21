@@ -7,11 +7,16 @@ import os
 import shlex
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
+import g6
 from g6._allowance import statusline
 from g6.allowance import CLAUDE_VERSION
+
+#: The file the observer's Python runs first, in this installation's resolved G6 package.
+START = str(Path(g6.__file__).resolve().parent / "core" / "child_imports.py")
 
 windows = pytest.mark.skipif(os.name != "nt", reason="native Windows shells and exit codes")
 SHELLS = ("cmd", "powershell", "sh")
@@ -113,9 +118,11 @@ def test_the_values_that_reach_a_shell_form_are_these_and_all_take_the_one_rule(
     preview = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "preview")
     args = next(node for node in ast.walk(preview) if isinstance(node, ast.Assign)
                 and ast.unparse(node.targets[0]) == "args")
+    # The start is G6's child command (-P, this installation's start file, -m and the module): its pieces are the
+    # interpreter, the start file (a path, free like the interpreter's) and fixed text, all through the same _quote.
     assert [ast.unparse(element) for element in args.value.elts] == [
-        "python", "'-P'", "'-m'", "'g6._allowance.statusline'", "'--renderer=' + token", "'--shell=' + shell",
-        "'--profile=' + profile", "'--version=' + version"]
+        "python", "*python_args('g6._allowance.statusline', isolated=False)", "'--renderer=' + token",
+        "'--shell=' + shell", "'--profile=' + profile", "'--version=' + version"]
     forms = [node for node in ast.walk(preview) if isinstance(node, ast.Call) and ast.unparse(node.func) == "_quote"]
     assert [ast.unparse(node) for node in forms] == ["_quote(args, invocation_shell)"]
     # Of the five values, four have an alphabet of their own that no form reads as syntax; the fifth is free.
@@ -155,7 +162,8 @@ def test_every_character_in_the_interpreter_path_is_refused_or_read_back_by_the_
             continue
         accepted.append((python, _preview(python, shell)))
     assert len(accepted) >= 60
-    expected = ["-P", "-m", "g6._allowance.statusline", "--renderer=" + base64.urlsafe_b64encode(b"echo rendered").decode(),
+    expected = ["-P", START, "-m", "g6._allowance.statusline",
+                "--renderer=" + base64.urlsafe_b64encode(b"echo rendered").decode(),
                 "--shell=cmd", "--profile=p", "--version=" + CLAUDE_VERSION]
     if shell == "sh":
         for python, command in accepted:

@@ -147,8 +147,9 @@ TAKEN = {
                       "subprocess": {"Popen", "PIPE", "DEVNULL", "list2cmdline", "CREATE_NEW_PROCESS_GROUP"}},
     "store.py": {"os": {"fsync", "replace", "environ", "path"}},
 }
+# g6.core.child_imports builds the observer's argv (the interpreter, flags and G6's root); it starts nothing itself.
 OWN = {"g6.allowance", "g6._allowance", "g6._allowance.advice", "g6._allowance.programs", "g6._allowance.readers",
-       "g6._allowance.store", "g6.self_maintenance.usage"}
+       "g6._allowance.store", "g6.self_maintenance.usage", "g6.core.child_imports"}
 
 
 def test_the_feature_starts_two_programs_and_each_is_resolved_first():
