@@ -357,13 +357,20 @@ def test_every_file_a_session_reads_is_bound_by_a_digest(guidance: SimpleNamespa
             owners.setdefault(path, set()).add(route_id)
     files = sorted(path for folder in (guidance.package, guidance.fixtures) for path in folder.rglob("*") if path.is_file())
     assert len(files) > 15
+    # since 2f356dcb only the development tasks' fixtures join what every session reads; a fixture only the moment
+    # cohort names is bound by the moment pins' fixtures digest instead
+    development = set(run.development_fixtures())
+    moment_only = run.fixtures_digest()
     for path in files:
         if path == guidance.root:
             continue                                         # line by line, below
         kept = path.read_bytes()
         path.write_bytes(kept + b"\nchanged\n")
         inside = path.relative_to(guidance.package).as_posix() if guidance.package in path.parents else ""
-        assert _moved(guidance) == owners.get(inside, {run.EVERY_ROUTE}), path.name
+        if guidance.fixtures in path.parents and path.relative_to(guidance.fixtures).parts[0] not in development:
+            assert _moved(guidance) == set() and run.fixtures_digest() != moment_only, path.name
+        else:
+            assert _moved(guidance) == owners.get(inside, {run.EVERY_ROUTE}), path.name
         path.write_bytes(kept)
     assert _moved(guidance) == set()
     extra = guidance.package / "skills" / "using-g6" / "references" / "new.md"

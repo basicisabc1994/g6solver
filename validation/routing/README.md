@@ -553,3 +553,18 @@ For already-recorded data only:
 
 The export adapter and actual controlled trials are pending; this amendment specifies the recording contract
 and scoring only. Nothing above reports a measured user benefit, abandonment rate or retention effect.
+
+### Development re-freeze, 2026-11-21 (before any arm)
+
+**State: `evidence_pending`.** `amendments/2026-11-21/routing_rebind.json` records it: tool and route text changed by
+the 0.3.0 wiring merges; re-frozen before any F0 arm runs. Every route digest, and the digest of what every session
+reads, changed on the 0.3.0 release candidate. As the 2026-11-17 fix pass deferred to this integration line, the
+development list now binds every route as it stands, the `select` route's included; no task was added, removed or
+changed. The `select` route still has no development task: the drafts in
+`amendments/2026-11-17/select_tasks.unbound.json` use moment fixtures (fees, notes_m, rules_m, stock), which the
+2026-11-17 registration keeps apart from the development cohort, so they were not extracted. Until the lead writes
+them on development fixtures (or the owner rules the drafts' fixtures may join), the two task-coverage checks of
+`tests/validation/test_routing_tasks.py` fail for `select` alone. `tasks.json` and `frozen.json` were retired with
+`freeze.retire` (kept beside them as `tasks.retired-7337dbe982f5.json` and `frozen.retired-76b7a6f05b98.json`) and
+written again with `freeze.freeze`. The bars and `gates.json` are unchanged; no session has been run.
+`tests/validation/test_routing_rebind_amendment.py` holds the record to the files.
