@@ -1688,8 +1688,13 @@ def critic_report(said: str, *, marker: str = "") -> dict[str, str]:
     if text is None:
         return {"verdict": "unreadable", "rule": "", "why": "the reply nests deeper than G6 reads", "test": "",
                 "error": ""}
+    stated = _stated_verdicts(text)
+    if stated is None:
+        return {"verdict": "unreadable", "rule": "", "why": "the reply may state a verdict G6 cannot read: an object "
+                "that does not close or decode, a key named twice, or verdict outside any object", "test": "",
+                "error": ""}
     floor = _floor_critic_report(text, marker=marker)
-    stated, lines = _stated_verdicts(text), [line[1].lower() for line in _VERDICT_LINE.finditer(text)]
+    lines = [line[1].lower() for line in _VERDICT_LINE.finditer(text)]
     if stated or lines:
         # A verdict the critic states is final and never read by a model: on a verdict line in any layout, or as a JSON
         # object in the reply's text or a json fence, never inside a python or other code fence (a test's code). It
@@ -1762,19 +1767,17 @@ def _reproduction(body: str) -> str:
     return test.content.strip() if test else ""
 
 
-#: A JSON string token, read as JSON reads it, so an escaped key (``"\u0076erdict"``) is the key it spells.
-_STRING = re.compile(r'"(?:[^"\\\n]|\\.)*"')
+#: A string token as the scan reads one: to its unescaped closing quote, or to the end of its line when it has none.
+_TOKEN = re.compile(r'"((?:[^"\\\n]|\\[^\n])*)"?')
+#: One escape in a string token: decoded as JSON decodes it where it can be, leniently where it cannot.
+_ESCAPE = re.compile(r'\\(u[0-9a-fA-F]{4}|.)')
+_ESCAPED = {"b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+_KEY = re.compile(r"\s*:")
+_JSON_OPEN = re.compile(r'\{\s*"')
 
 
-def _names_verdict(fragment: str) -> bool:
-    for token in _STRING.finditer(fragment):
-        try:
-            if json.loads(token[0]) == "verdict":
-                return True
-        except ValueError:
-            continue
-    return False
-
+def _unescaped(inner: str) -> str:
+    return _ESCAPE.sub(lambda m: chr(int(m[1][1:], 16)) if len(m[1]) == 5 else _ESCAPED.get(m[1], m[1]), inner)
 
 class _RepeatedKey(ValueError):
     """A JSON object names a key twice: which value counts is not the critic's to leave open."""
@@ -1786,60 +1789,59 @@ def _once(pairs: list[tuple[str, object]]) -> dict:
     return dict(pairs)
 
 
-#: What stands for an object that cannot be the protocol: it names ``verdict``, so the reply counts as stating one, and
-#: it never validates, so that reply is a failed review.
-_BROKEN = {"verdict": None, "broken": True}
-#: Where a JSON object may begin: a brace and then a string or the closing brace, as JSON writes one.
-_OBJECT = re.compile(r"\{\s*[\"}]")
-
-
-def _extent(body: str, at: int) -> int | None:
-    """The end of the JSON-looking object that begins at ``at``, found by its brackets and strings alone, without
-    recursion, so no depth hides it; None when its brackets do not close in order or a string never ends."""
-    closers, i = [], at
+def _stated_verdicts(body: str) -> list[dict] | None:
+    """Each JSON object in ``body`` (the reply outside code) that holds a string decoding to ``verdict``, outermost,
+    decoded; None when the reply might state a verdict G6 cannot read. One pass over brackets and strings, escape-aware
+    and without recursion, so no depth and no decoder failure hides a verdict. None when: a JSON-looking object (a brace
+    before a string, or one holding a key) never closes in order; a verdict string stands in no such object, or its
+    outermost one does not decode whole (with no key twice); or any object names a key twice. A brace in prose that
+    starts no object, or a closed object that names no verdict, is prose."""
+    stack, objects, verdicts, i = [], [], [], 0   # open brackets; every brace as [opener, start, end, keys]
     while i < len(body):
         char = body[i]
         if char == '"':
-            token = _STRING.match(body, i)
-            if token is None:
-                return None
-            i = token.end()
+            token = _TOKEN.match(body, i)
+            text, i = _unescaped(token[1]), token.end()
+            top = stack[-1] if stack else None
+            if top is not None and top[0] == "{" and _KEY.match(body, i):
+                if text in top[3]:
+                    return None   # a key named twice: which value counts is not the critic's to leave open
+                top[3].add(text)
+            if text.strip().casefold() == "verdict":
+                verdicts.append([one for one in stack if one[0] == "{"])
             continue
         if char in "{[":
-            closers.append("}" if char == "{" else "]")
+            stack.append([char, i, None, set()])
+            if char == "{":
+                objects.append(stack[-1])
         elif char in "}]":
-            if not closers or closers.pop() != char:
-                return None
-            if not closers:
-                return i + 1
+            opener = "{" if char == "}" else "["
+            if any(one[0] == opener for one in stack):
+                while stack[-1][0] != opener:
+                    stack.pop()   # an unclosed bracket inside: it stays without an end
+                stack.pop()[2] = i + 1
         i += 1
-    return None
 
+    def looks(one):
+        return bool(one[3]) or bool(_JSON_OPEN.match(body, one[1]))
 
-def _stated_verdicts(body: str) -> list[dict]:
-    """Each JSON object in ``body``, outside any other, that has a ``verdict`` key: wherever it stands (alone, after a
-    header or a progress line, mid-line). A test's code is inside its object's string, so it is not read again on its
-    own. A JSON-looking object (``_OBJECT``) that does not decode, for any reason (a key named twice at any depth, a
-    malformed value, a depth or size past the decoder's limits), counts as a stated verdict that is not the protocol
-    (``_BROKEN``) when it names a key twice, when a string in it decodes to ``verdict``, or when where it ends cannot
-    be found (``_extent``). A brace in prose that starts no object, or a closed one that names no verdict, is prose."""
-    found, decoder, until = [], json.JSONDecoder(object_pairs_hook=_once), 0
-    for start in _OBJECT.finditer(body):
-        at = start.start()
-        if at < until:
-            continue   # inside an object already read
-        try:
-            value, until = decoder.raw_decode(body, at)
-        except (ValueError, RecursionError, MemoryError) as exc:
-            end = _extent(body, at)
-            if isinstance(exc, _RepeatedKey) or end is None or _names_verdict(body[at:end]):
-                found.append(_BROKEN)
-            until = len(body) if end is None else end
+    if any(one[2] is None and looks(one) for one in objects):
+        return None
+    decoder, found = json.JSONDecoder(object_pairs_hook=_once), {}
+    for enclosing in verdicts:
+        outer = next((one for one in enclosing if looks(one)), None)
+        if outer is None:
+            return None   # a verdict in prose, or in braces that are no object: a verdict G6 cannot read
+        if outer[1] in found:
             continue
-        if isinstance(value, dict) and "verdict" in value:
-            found.append(value)
-    return found
-
+        try:
+            value, end = decoder.raw_decode(body, outer[1])
+        except (ValueError, RecursionError, MemoryError):
+            return None
+        if end != outer[2]:
+            return None
+        found[outer[1]] = value
+    return [found[at] for at in sorted(found)]
 
 class _CriticValue(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
