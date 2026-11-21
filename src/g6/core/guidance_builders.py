@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from g6.core.agent_guidance import reply_for_agent, text_for_agent, _ISOLATION_ACTION
-from g6.core.external_data import borrowed_envelope
+from g6.core.external_data import borrowed_envelope, plain_text
 
 ISOLATION_ACTION = _ISOLATION_ACTION
 
@@ -112,7 +112,8 @@ def script_run(*args, **kwargs):
 
 
 def confine_record(plan):
-    return reply_for_agent(plan.record())
+    # A run's isolation record is data its report's exact-type schema reads: filtered, then without the reply role.
+    return plain_text(reply_for_agent(plan.record()))
 
 
 def confine_refused(plan):
@@ -127,9 +128,9 @@ def confine_refusal(plan):
 
 def confine_not_started(record, exc):
     from g6.core import confine
-    return reply_for_agent(confine.not_started(record, exc))
+    return plain_text(reply_for_agent(confine.not_started(record, exc)))
 
 
 def confine_summary(records):
     from g6.core import confine
-    return reply_for_agent(confine.summary(records))
+    return plain_text(reply_for_agent(confine.summary(records)))

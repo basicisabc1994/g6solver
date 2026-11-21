@@ -22,7 +22,7 @@ from g6.core.guidance_builders import blocked_reply, door_envelope
 from g6.core.ledger import digest
 from g6.core.registry import OuterBudgetExceeded, build_typed_input, get_registry, outer_copy
 from g6.core.result import Result
-from g6.core.external_data import caller_echo, component_call, component_failure_reply, exception_text
+from g6.core.external_data import caller_echo, component_call, component_failure_reply, exception_text, plain_text
 
 
 class CompositionError(ValueError):
@@ -131,7 +131,8 @@ class ComposedBlock(AIBlock):
                 raw = deepcopy(params)
                 for key, source in links.items():
                     owner, name = source.split(".", 1)
-                    raw[key] = deepcopy(data[name] if owner == "caller" else values[int(owner)][name])
+                    # a stage's input is data: an earlier stage's marked reply text is plain str here
+                    raw[key] = deepcopy(plain_text(data[name] if owner == "caller" else values[int(owner)][name]))
                 raw["op"] = stage.op
                 context = {"context": raw, "task": raw.get("task", ""), "constraints": {},
                            "job_name": block.name, "domain": block.contract.domain}

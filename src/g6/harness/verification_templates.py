@@ -1486,6 +1486,9 @@ def template_instances(value, requirement_ids) -> list[TemplateInstance]:
     each names a template of ``TEMPLATES`` and a requirement of the review (``requirement_ids``), declares an intent the
     template takes, and holds bindings that are JSON data its bindings model accepts. A request's instance cannot set
     ``provenance``; a ``TemplateInstance`` built by G6's own code keeps its own."""
+    from g6.core.external_data import plain_text
+    # A request's text that crossed G6's MCP ingress carries G6's own reply receipt; an instance holds plain str.
+    value = plain_text(value)
     if not isinstance(value, (list, tuple)):
         raise ValueError("template_instances must be a list of {id, template, requirement_id, intent, bindings}")
     if len(value) > vs.MAX_CHECKS:

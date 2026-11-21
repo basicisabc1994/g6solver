@@ -39,6 +39,7 @@ def register(server: Any, context_type: Any, jobs: Any) -> None:
         """
         from g6._agentic import decode, kernel
         from g6.core.door import SENSITIVE_ENV, allowed_sensitive, is_allowed
+        from g6.core.external_data import plain_text
         from g6.core.guidance_builders import blocked_reply
         from g6.mcp.consent_controls import public_instructions
 
@@ -55,6 +56,8 @@ def register(server: Any, context_type: Any, jobs: Any) -> None:
             return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not decoded: {exc}")
         if not isinstance(params, dict):
             return blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object")
+        # The kernel takes exact str: the client's text crossed G6's MCP ingress with G6's own reply receipt.
+        component, op, part, mode, reason = (plain_text(one) for one in (component, op, part, mode, reason))
         prepared = await asyncio.to_thread(partial(kernel.prepare, component, op, params, part=part or None,
                                                    mode=mode, reason=reason, allow=allow))
         if not isinstance(prepared, kernel.Pending):
