@@ -40,7 +40,7 @@ def test_literal_pytest_identity_cannot_borrow_a_negative_control(tmp_path, monk
     assert read.valid, baseline
     assert sorted(phase.body() for phase in read.phases.values()) == ["failed", "passed"]
     patch = {**baseline, "verdict": "passed", "passed": 2, "failed": 0, "failed_ids": [],
-             "failure_messages": {}, "test_outcomes": {node: {"setup": "passed", "call": "passed", "teardown": "passed"}
+             "failure_messages": {}, "failure_records": {}, "test_outcomes": {node: {"setup": "passed", "call": "passed", "teardown": "passed"}
                                                         for node in baseline["test_outcomes"]}}
     monkeypatch.setattr(review, "_execute_at_base", lambda *a, **kw: baseline)
     monkeypatch.setattr(review, "_execute", lambda *a, **kw: patch)

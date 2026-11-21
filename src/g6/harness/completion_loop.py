@@ -59,6 +59,7 @@ import uuid
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -319,7 +320,38 @@ def asks(said: str) -> bool:
     the row for the maintainers' label to put right, and a person's yes to it is reviewed by the loop their prompt arms."""
     from g6.core.markdown import parse
 
-    return bool(_ASKS.search(parse(said).prose(inline_code=False)))
+    doc = parse(said)
+    html = [token.content for token in doc.tokens if token.type == "html_block"]
+    html += [child.content for token in doc.tokens if token.type == "inline"
+             for child in token.children or () if child.type == "html_inline"]
+    return bool(_ASKS.search(doc.prose(inline_code=False)) or _ASKS.search(_visible("\n".join(html))))
+
+
+class _Visible(HTMLParser):
+    """The text a reader sees in HTML: its data, outside ``script`` and ``style``."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.hidden, self.parts = 0, []
+
+    def handle_starttag(self, tag, attrs):
+        self.hidden += tag in ("script", "style")
+
+    def handle_endtag(self, tag):
+        self.hidden -= tag in ("script", "style") and self.hidden > 0
+
+    def handle_data(self, data):
+        if not self.hidden:
+            self.parts.append(data)
+
+
+def _visible(html: str) -> str:
+    """The visible text of ``html`` (a reply's HTML blocks and inline tags), each piece apart, so a question mark that
+    ends one is still seen as ending a sentence."""
+    reader = _Visible()
+    reader.feed(html)
+    reader.close()
+    return "\n".join(reader.parts)
 
 
 def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
@@ -499,8 +531,13 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
             code = None
             results.update({_PLACE.sub("", node): "unknown" for node in report.collection_errors})
         texts.update({_PLACE.sub("", full(named)): text for named, text in (ran.get("failure_messages") or {}).items()})
-        kinds.update({_PLACE.sub("", full(named)): found[0]["kind"]
-                      for named, found in (ran.get("failure_records") or {}).items() if found})
+        for named, found in (ran.get("failure_records") or {}).items():
+            # the record of the phase that failed first (a valid report holds records on failed phases only)
+            failed = [when for when in ("setup", "call", "teardown")
+                      if report.phases.get(full(named), {}).get(when) == "failed"] + ["collect"]
+            kind = next((record["kind"] for when in failed for record in found if record["when"] == when), None)
+            if kind is not None:
+                kinds[_PLACE.sub("", full(named))] = kind
     return cloud.bind_output(ProbeRun(code, results, texts, "\n".join(tail), boundary, kinds),
                              cloud.boundary_sources(carried=origins))
 

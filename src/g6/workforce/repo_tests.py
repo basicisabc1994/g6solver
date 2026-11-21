@@ -605,6 +605,18 @@ class RunReport:
         return found
 
 
+def _records_on_failures(records: object, phases: Mapping[str, PhaseRecord]) -> bool:
+    """Whether every typed failure record (``failure_records``) stands on a failure: a test's on a phase its outcomes
+    record as failed, a collection error's (``collect``) on a node that ran no phase. A record on a phase that passed
+    (or a phase never recorded) makes the whole report unknown, never a reading of that test (review 1, finding 2)."""
+    if type(records) is not dict:
+        return True   # absent, or a type the field's own check refuses
+    return all(type(record) is dict and (
+        (record.get("when") == "collect" and node not in phases)
+        or (node in phases and phases[node].get(record.get("when")) == "failed"))
+        for node, found in records.items() if type(found) is list for record in found)
+
+
 def read_report(raw: object) -> RunReport:
     """The only raw per-test report reader: one failure makes the whole unknown."""
     if type(raw) is RunReport:
@@ -645,7 +657,8 @@ def read_report(raw: object) -> RunReport:
                   and all(phases[node].get("setup") == "failed" for node in setup if node in phases)
                   and setup <= set(phases)
                   and all(len(ids) == len(set(ids)) for ids in listings.values())
-                  and all(record.valid for record in phases.values()))
+                  and all(record.valid for record in phases.values())
+                  and _records_on_failures(value.get("failure_records"), phases))
     verdict = value.get("verdict") if type(value.get("verdict")) is str else ""
     consistent &= verdict in REPORT_VERDICTS
     # Loading telemetry is one fact, never two independently optional claims.
@@ -2681,6 +2694,17 @@ def _placed(record: dict[str, str], repo: Path, roots: tuple[Path, ...]) -> str:
     return "inside" if _file_here(record["file"], repo) else "outside"
 
 
+def _junit_case(node: str) -> tuple[str, str]:
+    """The testcase pytest's JUnit report writes for node id ``node`` (its ``mangle_test_address``): the file's path
+    dotted, less ``.py``, then the classes, as ``classname``; the last name, its parameters kept whole, as ``name``.
+    Two node ids can share one (``a/b.py::t`` and ``a.b.py::t``): their records are then read together."""
+    path, bracket, params = node.partition("[")
+    names = path.split("::")
+    names[0] = re.sub(r"\.py$", "", names[0].replace("/", "."))
+    names[-1] += bracket + params
+    return ".".join(names[:-1]), names[-1]
+
+
 def _counts(report: Path, repo: Path, roots: tuple[Path, ...],
             records: dict[str, list[dict[str, str]]] | None = None) -> dict[str, int] | None:
     """pytest's own tallies from its JUnit report, or None when it wrote none that can be read. One outcome per test
@@ -2689,9 +2713,11 @@ def _counts(report: Path, repo: Path, roots: tuple[Path, ...],
     its result also has one, with nothing in it: ``run`` takes those off the passes). Also: ``collection``, the
     collection errors, and ``placed``, those whose module or file was read; ``outside``, the failed tests whose every
     failure and error comes from outside the repository. Where those come from is read from the bootstrap's typed
-    failure records (``records``, by node id: ``_placed``) whenever the run's own record holds any; ``_blame`` reads the
-    report's text only for a run whose record holds none (a record made before the bootstrap kept them). The report is
-    read with no document type (so no
+    failure records (``records``: ``_placed``) whenever the run's own record holds any, each counted against the
+    testcase its node id is written as (``_junit_case``), so both sides count in the report's identity space: a
+    testcase is outside only when every record that reaches it is, and one no record reaches is the repository's own
+    (a collection error none reaches is not placed). ``_blame`` reads the report's text only for a run whose record
+    holds none (a record made before the bootstrap kept them). The report is read with no document type (so no
     entity is ever expanded) and within ``JUNIT_BYTES`` and ``JUNIT_ELEMENTS``; past them its tallies are unread."""
     try:
         root = read_xml(report, limit=JUNIT_BYTES, elements=JUNIT_ELEMENTS)
@@ -2701,7 +2727,10 @@ def _counts(report: Path, repo: Path, roots: tuple[Path, ...],
     for case in root.iter("testcase"):
         tests.setdefault((case.get("classname") or "", case.get("name") or ""), []).extend(case)
     total = dict.fromkeys(("tests", "passed", "failures", "errors", "skipped", "collection", "placed", "outside"), 0)
-    for children in tests.values():
+    reached: dict[tuple[str, str], list[dict[str, str]]] = {}
+    for node, found in (records or {}).items():
+        reached.setdefault(_junit_case(node), []).extend(found)
+    for case, children in tests.items():
         failures = [child for child in children if child.tag == "failure"]
         errors = [child for child in children if child.tag == "error"]
         skipped = [child for child in children if child.tag == "skipped"]
@@ -2714,13 +2743,11 @@ def _counts(report: Path, repo: Path, roots: tuple[Path, ...],
         total["failures" if failures else "errors"] += 1
         total["collection"] += collection
         if records:
-            continue
-        blames = {_blame(problem, repo, roots, collection=collection) for problem in failures + errors}
+            blames = ({_placed(record, repo, roots) for record in reached.get(case, ())}
+                      or {"" if collection else "inside"})
+        else:
+            blames = {_blame(problem, repo, roots, collection=collection) for problem in failures + errors}
         total["placed"] += collection and "" not in blames
-        total["outside"] += blames == {"outside"}
-    for found in (records or {}).values():
-        blames = {_placed(record, repo, roots) for record in found}
-        total["placed"] += any(record["when"] == "collect" for record in found) and "" not in blames
         total["outside"] += blames == {"outside"}
     return total
 

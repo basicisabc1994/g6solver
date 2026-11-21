@@ -309,11 +309,16 @@ def without_doctype(svg: bytes) -> bytes:
     from g6.core.xml import parse_xml
 
     try:
-        # Only Graphviz's fixed external declaration is accepted, never fetched.
-        # Serialising the parsed tree drops that declaration structurally.
-        return ET.tostring(parse_xml(svg, svg_public_doctype=True), encoding="utf-8")
+        # Only Graphviz's fixed external declaration is accepted, never fetched (the parser refuses any other).
+        parse_xml(svg, svg_public_doctype=True)
     except ValueError:
         return svg  # the inspector refuses the unmodified unsafe/unreadable XML
+    # The accepted declaration has no internal subset and fixed identifiers, so its first ">" ends it. The rest of the
+    # file is left byte for byte (a re-serialised tree would rename every element with a generated prefix). A file
+    # this cannot cut keeps its declaration, and the inspector refuses it.
+    start = svg.find(b"<!DOCTYPE")
+    end = svg.find(b">", start)
+    return svg if start < 0 or end < 0 else svg[:start] + svg[end + 1:]
 
 
 def drawn(svg: str) -> tuple[list[str], list[str]]:
@@ -350,7 +355,7 @@ def graph_check(svg: str, *, nodes: list[str] | None = None, edges: list[tuple[s
     a multiset, direction kept when ``directed``) when they are given, else at least one node or edge."""
     try:
         found, titles = drawn(svg)
-    except ET.ParseError as exc:
+    except (ET.ParseError, ValueError) as exc:   # drawn reads through core.xml, which raises ValueError
         return Check(name="draws_the_graph", passed=False, code=NO_OUTPUT, detail=f"not XML: {exc}"[:500]), {}
     measured = {"nodes_drawn": len(found), "edges_drawn": len(titles)}
     if nodes is None:
