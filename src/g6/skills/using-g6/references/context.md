@@ -1,5 +1,9 @@
 # The Context Engine: the person's own files
 
+The person's own documents, indexed on their machine from folders under the roots they list in
+`G6_KNOWLEDGE_ROOTS`: `g6_knowledge_add` (they accept a preview in the client's dialog), then `g6_knowledge_search`
+or `g6_knowledge_context`. Passages are cited and untrusted.
+
 Use it when a task depends on something the person wrote down and the repository does not say: a decision, a
 convention, an incident note, a specification. The index is on the person's machine. Nothing is sent to a model by
 indexing.

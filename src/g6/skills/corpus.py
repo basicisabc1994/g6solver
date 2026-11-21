@@ -7,7 +7,7 @@ and compares, so it cannot drift. It holds, as G6's own built-in text only:
 * each MCP tool of ``g6-mcp`` (read from the built server, ``g6.mcp.registrations``), with a call template from its
   input schema, and the reviewed words in ``TOOL_DATA`` below: when to reach for it, what it establishes and what it
   does not, its phases, its cost and its static needs;
-* each route of the using-g6 skill (``g6.skills.routing``), with its section's text;
+* each route of the using-g6 skill (``g6.skills.routing``), with its root entry and directly linked references' text;
 * each runnable op of a built-in component (a package under ``g6``; an entry-point extension never), with a template
   from its typed input and the text of its block's ``help`` and ``BlockContract``. A component with no block has no
   op and so no entry: ``g6_invoke`` cannot run it. Each template is put through the door's own typed input check
@@ -362,12 +362,17 @@ def _routes(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for route_id, route in sorted(manifest.routes.items()):
         section = routing.section(root, route.anchor) or ""
+        links = re.findall(r"\[[^\]]+\]\(([^)]+)\)", section)
+        references = ["skills/using-g6/" + link for link in links if link.startswith("references/")]
+        if not section or len(references) != len(links) or set(references) != set(route.detail):
+            raise ValueError(f"route {route_id}: declared detail must equal its root entry's reference links")
+        detail = [(package_root() / path).read_text(encoding="utf-8") for path in references]
         members = sorted(key.split("/", 1)[1] for key, entry in manifest.entries.items()
                          if entry.route == route_id and key.startswith("mcp:g6/"))
         out.append({
             "id": f"route:{route_id}", "kind": "route",
             "call": {"skill": "using-g6", "section": route.anchor},
-            "text": " ".join(section.split()),
+            "text": " ".join("\n".join([section, *detail]).split()),
             "establishes": "the using-g6 skill's instruction for this point of the work",
             "not_established": "nothing ran; read the section, then call the tool it names",
             "needs": {"sensitive": "", "consent": [], "model": "none", "confined": False, "outside": [], "extras": []},

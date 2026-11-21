@@ -1,5 +1,8 @@
 # Rules: what follows from facts and rules
 
+What follows from facts and rules: `datalog` (sessions keep facts over a fixed program), `prolog` and
+`graph_reasoning`, through `g6_invoke`.
+
 Use this route when an answer depends on what a set of facts and rules gives, and you are about to state it from your
 own reading. Three components hold G6's rule reasoning. Read `g6_describe` for the one you pick before you choose
 fields; each op goes through `g6_invoke`.
