@@ -216,6 +216,27 @@ def caller_echo(value):
     return external_value(value)
 
 
+def plain_text(value, *, _depth=0):
+    """``value`` with G6's own text receipts (external, guidance, mixed) as plain ``str``, at a validator boundary.
+
+    A validator that admits only exact ``str`` admits caller text that crossed G6's ingress; the receipt is a reply
+    role, never part of a stored record. Any other ``str`` subclass is left as it is, for the validator to refuse.
+    Containers are copied (dict, list, tuple); nothing else changes. Below ``_MAX_GUIDANCE_DEPTH`` levels a value is
+    returned as it is, for the validator's own depth limit to refuse.
+    """
+    if isinstance(value, (_ExternalText, _GuidanceText, _MixedText)):
+        return str.__str__(value)
+    if _depth > _MAX_GUIDANCE_DEPTH:
+        return value
+    if type(value) is dict:
+        return {plain_text(key, _depth=_depth + 1): plain_text(child, _depth=_depth + 1) for key, child in value.items()}
+    if type(value) is list:
+        return [plain_text(child, _depth=_depth + 1) for child in value]
+    if type(value) is tuple:
+        return tuple(plain_text(child, _depth=_depth + 1) for child in value)
+    return value
+
+
 def quoted_content(value):
     return external_value(value)
 

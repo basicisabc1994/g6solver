@@ -218,6 +218,9 @@ class Candidate:
             if source != "differential" or not isinstance(probe_sha256, str) or not _HEX64.fullmatch(probe_sha256):
                 raise CandidateRefused("a probe digest names G6's differential runner")
             record["probe_sha256"] = probe_sha256
+        # Caller text that crossed G6's MCP ingress carries G6's own reply receipt; the record holds plain str.
+        from g6.core.external_data import plain_text
+        record = plain_text(record)
         for name in ("requirement_id", "function", "cited", "scope", "rule"):
             if type(record[name]) is not str:
                 raise CandidateRefused(f"a candidate's {name} is text")
