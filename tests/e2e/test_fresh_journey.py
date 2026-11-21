@@ -54,6 +54,7 @@ CEGIS_TASK = ("Fill the float hole in the sketch def f(x): return x * ??f so tha
               "f(1) = 0.5, f(2) = 1.0 and f(4) = 2.0, with counterexample-guided synthesis of the sketch.")
 CEGIS_DATA = FLOAT_PARAMS            # the task's own data: the sketch and its cases
 STEPS = (1, 2, 3, 4, 5, 6, 7, "7b")
+SUM_CHECK = "from calc import add\n\n\ndef test_sum():\n    assert add(2, 3) == 5\n"
 
 
 def _card(reply: Any) -> str:
@@ -220,8 +221,13 @@ class Journey:
             f"at least two competing explanations predicting different results of it (templates: {_calls(chosen)}; "
             f"predictions: {sorted(predicted)}; remedy: {chosen.get('remedy')})")
         tool, arguments = fill(checks[0], self.situation)
+        # the agent, the semantic engine, writes the check from the task: what add(2, 3) must give
+        arguments["requirements"][0]["text"] = "add(2, 3) returns their sum, 5"
+        arguments["proposed_checks"][0]["source"] = SUM_CHECK
         done = await self.agent.finished(await self.agent.call(tool, arguments))
         assert _inner(done).get("assessment", {}).get("outcome") in OUTCOMES, done
+        [read] = _inner(done)["assessment"]["explanations"]
+        assert read["observed"] == "unconfirmed_failure" and read["consistent_with"] == ["patch_wrong_for_case"], read
 
     # 7 ------------------------------------------------------------------------------------------------------------
     async def step_7(self) -> None:

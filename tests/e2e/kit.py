@@ -80,8 +80,18 @@ class RecordedRuns:
                     "test_outcomes": None, "failed_ids": [], "setup_errors": {}, "collected_ids": [],
                     "omitted_ids": []}
 
+        def run_check(change, placed, source, node, *, at_base, timeout_s, roots=(), artefact=None):
+            """A proposed check's run (``verification_search._run_check``), as the agent's check of add(2, 3) == 5
+            would run: it passes at the base commit's code and fails on the patch."""
+            self.calls.append(("check_at_base" if at_base else "check", (node,)))
+            return {**_result(passed=[node]), "source_before": ""} if at_base else {
+                **_result(failed=[node]), "failure_messages": {node: "AssertionError: assert -1 == 5"}}
+
+        from g6.harness import verification_search
+
         monkeypatch.setattr(patch_review, "_execute", execute)
         monkeypatch.setattr(patch_review, "_execute_at_base", execute_at_base)
+        monkeypatch.setattr(verification_search, "_run_check", run_check)
 
 
 class Person:
