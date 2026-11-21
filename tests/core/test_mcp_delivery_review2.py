@@ -91,6 +91,7 @@ def test_flushed_refusal_counts_while_writer_is_busy_with_next_reply(monkeypatch
                 if self.writes == 2:
                     second_started.set()
                     await release_second.wait()
+                return len(data)                # G6's writer counts a line only when stdout says it took it
 
             async def flush(self):
                 if self.writes == 1:

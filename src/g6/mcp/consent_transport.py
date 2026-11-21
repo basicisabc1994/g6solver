@@ -111,17 +111,35 @@ class Witness:
         self._taken.clear()
 
 
-#: The send streams whose writer G6 owns (``g6.mcp.stdio``, ``G6MemoryTransport``), named when the connection starts
-#: (weakly). A send on one of them is never counted on inferred evidence: with its witness gone (the connection is
-#: closing or closed) the send is dropped.
-_OWNED: weakref.WeakSet = weakref.WeakSet()
+#: The connections whose writer G6 owns (``g6.mcp.stdio``, ``G6MemoryTransport``), named when the connection starts,
+#: each with the send stream it was named by (both weakly). A send on any stream of one of them is never counted on
+#: inferred evidence: with its witness gone (the connection is closing or closed) the send is dropped.
+_OWNED: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 #: Each owned stream's live witness, removed when its writer or connection ends (``unwitness``).
 _WITNESSES: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
+def _connection(stream):
+    """The connection ``stream`` sends on: an anyio memory stream's state, which its clones share and wrappers that
+    delegate attributes (``_Stream``) reach; the stream itself otherwise."""
+    return getattr(stream, '_state', stream)
+
+
+def _owned(stream) -> tuple[bool, Witness | None]:
+    """Whether ``stream`` sends on a connection G6 owns, and that connection's live witness (None once it ended)."""
+    try:
+        named = _OWNED.get(_connection(stream))
+    except TypeError:                       # a stream that cannot be named weakly was never named
+        return False, None
+    if named is None:
+        return False, None
+    origin = named()
+    return True, (_WITNESSES.get(origin) if origin is not None else None)
+
+
 def witness(stream) -> Witness:
     """The witness of ``stream``, a send stream whose writer G6 owns, from the connection's start."""
-    _OWNED.add(stream)
+    _OWNED[_connection(stream)] = weakref.ref(stream)
     _WITNESSES[stream] = seen = Witness()
     return seen
 
@@ -325,8 +343,8 @@ class _Stream:
         """Send ``packet``. On a writer G6 owns, its delivery effects wait for its own callback (``Witness``);
         otherwise they run in the same step as the send (``_handed``), so the client cannot read it and call again
         first. Nothing is awaited after the send, so nothing waits on the client while admission holds the ledger."""
-        if self.inner in _OWNED:
-            seen = _WITNESSES.get(self.inner)
+        owned, seen = _owned(self.inner)
+        if owned:
             if seen is None:
                 return                    # the connection is closing: dropped, never counted, never inferred
             key = seen.expect(packet, functools.partial(ticket.delivered, WRITTEN)) if ticket.delivered else None

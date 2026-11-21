@@ -32,13 +32,12 @@ class _Unused:
 
 
 async def _write_line(stdout, line: str) -> None:
-    """Write all of ``line``, continuing a short write; a write that takes nothing ends the connection."""
+    """Write all of ``line``, continuing a short write. A write that takes nothing, or that does not say how much it
+    took (no count: G6's writer cannot know the line was taken), ends the connection."""
     while line:
         taken = await stdout.write(line)
-        if taken is None:
-            return                                     # a file object that returns no count took it all or raised
-        if not isinstance(taken, int) or taken <= 0:
-            raise OSError("stdout accepted none of the line")
+        if type(taken) is not int or taken <= 0:
+            raise OSError("stdout did not say it accepted any of the line")
         line = line[taken:]
 
 

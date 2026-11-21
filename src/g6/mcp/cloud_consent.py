@@ -30,6 +30,15 @@ def public_tool(fn):
     return fn
 
 
+def _in_thread(fn, *args, **kwargs):
+    """A synchronous tool body, in its worker thread. It does not start once its call's connection is ending (the
+    calling scope was cancelled, as when G6's stdio writer failed). Python cannot stop a thread, so a body already
+    running runs on; its caller is abandoned (``abandon_on_cancel``): the connection does not wait for it, and what it
+    returns is never sent, admitted or counted."""
+    anyio.from_thread.check_cancelled()
+    return fn(*args, **kwargs)
+
+
 def _source_function(fn):
     """Capture provenance before FastMCP serialises/copies the returned object."""
     identity = object()
@@ -48,7 +57,7 @@ def _source_function(fn):
             declared = declaration.sources(arguments) if declaration is not None else ()
             with policy.request_sources(declared):
                 value = fn(*args, **kwargs) if inspect.iscoroutinefunction(fn) else await anyio.to_thread.run_sync(
-                    partial(fn, *args, **kwargs))
+                    partial(_in_thread, fn, *args, **kwargs), abandon_on_cancel=True)
                 if inspect.isawaitable(value):
                     value = await value
             if root:
