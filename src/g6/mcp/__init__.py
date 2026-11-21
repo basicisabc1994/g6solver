@@ -145,12 +145,12 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
 
     request_id = uuid.uuid4().hex[:12]
     try:
-        try:
-            params = json.loads(params_json or "{}")
-        except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+        params = json.loads(params_json or "{}")
     except json.JSONDecodeError as exc:
         return reply_for_agent(blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id))
+    except (RecursionError, MemoryError):
+        return reply_for_agent(blocked_reply("[G6_E_INPUT_VALIDATION] params_json: a JSON record exceeds decoder limits",
+                                             request_id=request_id))
     if not isinstance(params, dict):
         return reply_for_agent(blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id))
     allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
@@ -275,12 +275,11 @@ def build_server(surface: Any = None) -> Any:
         from g6.mcp.composition import compose_reply
         from g6.core.guidance_builders import blocked_reply
         try:
-            try:
-                payload = json.loads(composition_json)
-            except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+            payload = json.loads(composition_json)
         except json.JSONDecodeError:
             return blocked_reply("[G6_E_INPUT_VALIDATION] composition_json must be JSON")
+        except (RecursionError, MemoryError):
+            return blocked_reply("[G6_E_INPUT_VALIDATION] composition_json: a JSON record exceeds decoder limits")
         return compose_reply(payload, allow_sensitive=allowed_sensitive())
 
     _metaharness_tools(server, surface, Context)
@@ -446,12 +445,11 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         Does not confirm or execute it. Below 30 held-out cases is exploration only."""
         from g6.core.guidance_builders import blocked_reply
         try:
-            try:
-                return mh.start(json.loads(specification_json))
-            except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+            return mh.start(json.loads(specification_json))
         except json.JSONDecodeError:
             return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json must be JSON")
+        except (RecursionError, MemoryError):
+            return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json: a JSON record exceeds decoder limits")
 
     async def metaharness_confirm(workflow: str, workflow_digest: str, ctx: Any) -> dict:
         """Confirm the frozen task, checks, split and baseline: the person answers in the client's dialog, bound to the
@@ -525,14 +523,15 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         """A candidate profile (``profile_json``: acting fields only), or with none, the declared search space's
         candidates. A candidate changes nothing until it is evaluated, decided and approved by a person."""
         try:
-            try:
-                profile = json.loads(profile_json) if profile_json else None
-            except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+            profile = json.loads(profile_json) if profile_json else None
         except json.JSONDecodeError as exc:
             from g6.metaharness.api import _blocked
 
             return _blocked("G6_E_META_SCHEMA", f"profile_json is not JSON: {exc}")
+        except (RecursionError, MemoryError):
+            from g6.metaharness.api import _blocked
+
+            return _blocked("G6_E_META_SCHEMA", "profile_json: a JSON record exceeds decoder limits")
         return mh.propose(workflow, session=session(ctx), profile=profile, proposer=proposer)
 
     def metaharness_evaluate(workflow: str, proposal_digest: str) -> dict:
