@@ -150,7 +150,7 @@ def test_metadata_entry_reader_census():
         if isinstance(node, ast.FunctionDef):
             calls = [call.func.id for call in ast.walk(node)
                      if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)]
-            if "_metadata_text" in calls:
+            if "_metadata_text" in calls or "_metadata_bytes" in calls:
                 readers.add(node.name)
                 assert "_metadata_entry" in calls, node.name
-    assert readers == {"repository", "_common", "_alternates"}
+    assert readers == {"repository", "_common", "_alternates", "_includes"}

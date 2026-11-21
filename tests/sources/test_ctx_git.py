@@ -19,6 +19,7 @@ from g6.core.outside import find_program
 from g6.core.registry import get_registry
 from g6.mcp import describe_reply, invoke_reply
 from g6.sources.ctx_git import CtxGitBlock, CtxGitInput, config as cfg, ops, runner
+from tests.sources._git_test_utils import git_command
 
 GIT = find_program("git")
 pytestmark = pytest.mark.skipif(GIT is None, reason="git is not on PATH")
@@ -295,8 +296,9 @@ def test_p1_git02_clone_takes_only_https_or_ssh_to_a_declared_public_host(home: 
         assert out["code"] == cfg.REMOTE_REFUSED, url
     assert "not one of the remote hosts" in call(block, "clone", url="https://gitlab.com/x/y",
                                                  dest=str(root / "new"))["reason"]
-    assert "non-public address 10.0.0.7" in call(block, "clone", url="https://internal.example/x/y",
-                                          dest=str(root / "new"))["reason"]
+    # A refusal reason is G6's fixed vocabulary: it never echoes a resolved address.
+    private = call(block, "clone", url="https://internal.example/x/y", dest=str(root / "new"))["reason"]
+    assert "public-address policy" in private and "10.0.0.7" not in private
     assert call(block, "clone", url="https://github.com/x/y", dest=str(home / "out"))["code"] == cfg.OUTSIDE_ROOT
 
 
@@ -400,7 +402,7 @@ def test_every_git_command_runs_with_the_signature_verifiers_off(block: CtxGitBl
         settings = {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"]
                     for i in range(int(env["GIT_CONFIG_COUNT"]))}
         assert {key: settings.get(key) for key in off} == off, argv
-    shown = [argv for argv, _ in seen if argv[3] in ("log", "show")]
+    shown = [argv for argv, _ in seen if git_command(argv)[0] in ("log", "show")]
     assert len(shown) == 3 and all("--no-show-signature" in argv for argv in shown)
 
 
@@ -489,7 +491,8 @@ def test_g4_a_merge_conflict_is_aborted_and_leaves_the_copy_as_it_was(block: Ctx
     git(repo, "commit", "-q", "-am", "ours")
     before = sha(repo)
     out = call(block, "merge", repo=str(repo), branch="other")
-    assert out["code"] == ops.CONFLICT and "a.txt" in out["reason"]
+    # A refusal reason is G6's fixed vocabulary: it never names a file from the repository.
+    assert out["code"] == ops.CONFLICT and "the merge was aborted" in out["reason"] and "a.txt" not in out["reason"]
     assert sha(repo) == before and git(repo, "status", "--porcelain").stdout == ""
 
 
@@ -715,3 +718,82 @@ def test_d6_over_mcp(home: Path, repo: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert invoke_reply("ctx_git", "status", json.dumps({"repo": str(repo)}))["ok"] is False
     allowed = invoke_reply("ctx_git", "status", json.dumps({"repo": str(repo)}), allow_sensitive=frozenset({"ctx_git"}))
     assert allowed["ok"] and allowed["result"]["branch"] == "main"
+
+
+def test_external_ignore_file_cannot_hide_a_repository_file(home: Path, repo: Path, block: CtxGitBlock) -> None:
+    outside = home / "outside.ignore"
+    outside.write_bytes(b"hidden.txt\n")
+    (repo / "hidden.txt").write_bytes(b"ordinary repository content\n")
+    git(repo, "config", "core.excludesFile", outside.as_posix())
+    out = call(block, "status", repo=str(repo))
+    assert out["code"] == ops.READ and "hidden.txt" in out["untracked"]
+
+
+def test_external_attributes_file_cannot_hide_a_text_patch(home: Path, repo: Path, block: CtxGitBlock) -> None:
+    outside = home / "outside.attributes"
+    outside.write_bytes(b"a.txt -diff\n")
+    (repo / "a.txt").write_bytes(b"ordinary text change\n")
+    git(repo, "config", "core.attributesFile", outside.as_posix())
+    out = call(block, "diff", repo=str(repo))
+    assert out["code"] == ops.READ and "+ordinary text change" in out["patch"]
+
+
+def test_diff_ignores_a_missing_external_order_file(home: Path, repo: Path, block: CtxGitBlock) -> None:
+    (repo / "a.txt").write_bytes(b"ordinary text change\n")
+    git(repo, "config", "diff.orderFile", (home / "missing.order").as_posix())
+    out = call(block, "diff", repo=str(repo))
+    assert out["code"] == ops.READ and "+ordinary text change" in out["patch"]
+
+
+def test_blame_ignores_a_configured_mailmap_blob(repo: Path, block: CtxGitBlock) -> None:
+    path = repo / "map-blob.txt"
+    path.write_bytes(b"Name From Configured Blob <person@example.com>\n")
+    blob = git(repo, "hash-object", "-w", path.name).stdout.strip()
+    path.unlink()
+    git(repo, "config", "mailmap.blob", blob)
+    out = call(block, "blame", repo=str(repo), file="a.txt")
+    assert out["code"] == ops.READ and out["lines"][0]["author"] == "Test Person"
+
+
+@pytest.mark.parametrize("ignore_file", [".gitignore", ".git/info/exclude"])
+def test_repository_ignore_rules_still_apply(repo: Path, block: CtxGitBlock, ignore_file: str) -> None:
+    (repo / ignore_file).write_bytes(b"ignored.log\n")
+    if ignore_file == ".gitignore":
+        git(repo, "add", ignore_file)
+        git(repo, "commit", "-q", "-m", "repository ignore rule")
+    (repo / "ignored.log").write_bytes(b"ignored repository scratch\n")
+    (repo / "visible.log").write_bytes(b"ordinary repository content\n")
+    out = call(block, "status", repo=str(repo))
+    assert out["code"] == ops.READ and out["untracked"] == ["visible.log"]
+    (repo / "visible.log").unlink()
+    assert call(block, "status", repo=str(repo))["clean"]
+
+
+@pytest.mark.parametrize("autocrlf", ["true", "false"])
+def test_clean_copy_uses_repository_line_ending_rules(home: Path, autocrlf: str) -> None:
+    copy = home / "root" / "line-endings"
+    copy.mkdir(parents=True)
+    git(copy, "init", "-q", "-b", "main")
+    git(copy, "config", "core.autocrlf", autocrlf)
+    (copy / "a.txt").write_bytes(b"one\r\n")
+    git(copy, "add", "a.txt")
+    git(copy, "commit", "-q", "-m", "first")
+    block = CtxGitBlock(config=configured(home / "root"))
+    out = call(block, "status", repo=str(copy))
+    assert out["code"] == ops.READ and out["clean"], out
+    assert not out["modified"] and not out["untracked"]
+
+
+@pytest.mark.parametrize("op", ["fetch", "pull", "push"])
+def test_planted_network_config_is_refused_before_dirty_check_or_resolver(home: Path, repo: Path, op: str) -> None:
+    git(repo, "remote", "add", "origin", "https://example.invalid/project.git")
+    git(repo, "config", "http.proxy", "http://127.0.0.1:9")
+    (repo / "loose.txt").write_bytes(b"uncommitted content\n")
+
+    def unexpected(*args):
+        raise AssertionError("planted config must be refused before the resolver or gate")
+
+    block = CtxGitBlock(config=configured(home / "root", ("example.invalid",)),
+                        resolver=unexpected, gate=unexpected)
+    out = call(block, op, repo=str(repo), branch="main")
+    assert out["code"] == ops.STEERED, out

@@ -643,7 +643,7 @@ def _prepare_write_parent(parent: Path, base: Path, recorded: dict[Path, tuple[i
         check(folder)
 
 
-def read_text(path: Path, max_bytes: int, *, roots: Roots) -> str:
+def read_bytes(path: Path, max_bytes: int, *, roots: Roots) -> bytes:
     """Read only after the opened handle is inside unchanged captured roots and is a regular, single-link file.
 
     The name check is preliminary. The handle's final path decides containment; neither a path lookup's identity
@@ -694,9 +694,15 @@ def read_text(path: Path, max_bytes: int, *, roots: Roots) -> str:
     except OSError:
         raise CodeRefused(PATH_INVALID, f"cannot read {name}: the file could not be opened or read (access is "
                                         "denied, or another program holds it)") from None
-    return data.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n")
+    return data
+
+
+def read_text(path: Path, max_bytes: int, *, roots: Roots) -> str:
+    """Confined bytes as UTF-8 text with replacement and universal newlines for existing callers."""
+    return read_bytes(path, max_bytes, roots=roots).decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n")
 
 
 __all__ = ["CONFIG_ENV", "CONFIG_FILE", "CONFIG_INVALID", "NO_ROOT", "OUTSIDE_ROOT", "PATH_INVALID", "SKIP_DIRS",
-           "Roots", "Walk", "destination", "existing", "for_folder", "how_to_declare", "load", "parse", "path_info", "read_text", "under",
+           "Roots", "Walk", "destination", "existing", "for_folder", "how_to_declare", "load", "parse", "path_info",
+           "read_bytes", "read_text", "under",
            "walk"]
