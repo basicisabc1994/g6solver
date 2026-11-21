@@ -472,6 +472,7 @@ def with_confirmed(found, standard):
     shown = deepcopy(found)
     if standard is None:
         return shown
+    rejected = set()
     for one in standard.expectations:
         bindings = one.instance.bindings
         for item in shown['standard']:
@@ -483,15 +484,20 @@ def with_confirmed(found, standard):
             if (not _same(proposed.get('args', []), answered.get('args', []))
                     or not _same(proposed.get('kwargs', {}), answered.get('kwargs', {}))):
                 continue
-            # The repository tests mapped to the candidate assert the case as it was proposed (``_tests``): once the
-            # person states another outcome for that call, they check the one rejected, so none of them is its check.
+            # The repository tests mapped to the candidate assert the case as it was proposed (``_tests`` maps a case by
+            # its whole outcome): once the person states another outcome for that call, they check the one rejected,
+            # so none of them is a check of this candidate or of any other.
             if not _same(proposed, answered):
+                rejected.update(item['checks'] if isinstance(item['checks'], list) else ())
                 item['checks'] = 'missing'
             item.update(status='stated', cases=deepcopy(bindings['cases']), text=one.scope, scope=one.scope,
                         confirmed_by=one.answered_by, expectation_id=one.expectation_id)
             # The call it offers runs what the person confirmed, never the alternative they did not choose.
             if _instance(item) and 'cheapest_check' in item:
                 item['cheapest_check']['arguments']['template_instances'] = [_instance(item)]
+    for item in shown['standard']:
+        if isinstance(item['checks'], list) and rejected & set(item['checks']):
+            item['checks'] = [node for node in item['checks'] if node not in rejected] or 'missing'
     return shown
 
 

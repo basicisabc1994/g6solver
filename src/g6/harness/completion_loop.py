@@ -1682,8 +1682,8 @@ def critic_report(said: str, *, marker: str = "") -> dict[str, str]:
         value: _CriticValue
         reason: str = ""
 
-    body = said[said.rfind("[codex]"):].split("\n", 1)[-1] if "[codex]" in said else said
-    text = _outside_code(body)   # every reader of the verdict, the token and the reasons reads this, never code
+    body = _reply_part(said)
+    text = _outside_code(body)   # every reader, deterministic or model, reads this, never code
     floor = _floor_critic_report(text, marker=marker)
     stated, lines = _stated_verdicts(text), [line[1].lower() for line in _VERDICT_LINE.finditer(text)]
     if stated or lines:
@@ -1705,25 +1705,35 @@ def critic_report(said: str, *, marker: str = "") -> dict[str, str]:
         value = (protocols[0].model_dump(exclude={"read"}) if protocols else
                  {**floor, "verdict": word, "test": _reproduction(body)})
         return value if value["verdict"] == "defect" else {**value, "test": ""}
-    if floor["verdict"] == "unread":
+    if floor["verdict"] == "unread" or not text.strip():
         return floor
-    reading = semantic.read(semantic.Question("critic", said, Reply, lambda: floor, "choose"))
+    reading = semantic.read(semantic.Question("critic", text, Reply, lambda: floor, "choose"))
     value = reading.value.model_dump() if isinstance(reading.value, BaseModel) else reading.value
     if value["verdict"] != "defect":
         value = {**value, "test": ""}
     return value
 
 
-#: A fenced code block in any form: three or more backticks or tildes, any info string, closed by a line of the same
-#: character at least as long, or open to the end of the reply.
-_FENCE = re.compile(r"^[ \t]*(?P<fence>`{3,}|~{3,})(?P<info>[^\n]*)\n(?P<body>.*?)(?:^[ \t]*(?P=fence)[`~]*[ \t]*$|\Z)",
-                    re.M | re.S)
+#: A fenced code block in any form: three or more backticks or tildes, any info string, closed only by a line of the
+#: same character at least as long with nothing but spaces after it (CommonMark), or open to the end of the reply.
+_FENCE = re.compile(r"^[ \t]*(?P<fence>(?P<mark>[`~])(?P=mark){2,})(?P<info>[^\n]*)\n(?P<body>.*?)"
+                    r"(?:^[ \t]*(?P=fence)(?P=mark)*[ \t]*$|\Z)", re.M | re.S)
 _VERDICT_LINE = re.compile(r"^[\W_]*verdict[\W_]*[:=][\W_]*(\w+)", re.I | re.M)
 
 
 def _info(fence: re.Match) -> str:
     words = fence["info"].split()
     return words[0].lower() if words else ""
+
+
+def _reply_part(said: str) -> str:
+    """The reply after the last progress label (``[codex]``) that stands outside code: one inside a fixture is the
+    fixture's text, so it cuts nothing."""
+    spans = [fence.span() for fence in _FENCE.finditer(said)]
+    at = said.rfind("[codex]")
+    while at != -1 and any(start <= at < end for start, end in spans):
+        at = said.rfind("[codex]", 0, at)
+    return said if at == -1 else said[at:].split("\n", 1)[-1]
 
 
 def _outside_code(body: str) -> str:
@@ -1749,18 +1759,27 @@ def _once(pairs: list[tuple[str, object]]) -> dict:
     return dict(pairs)
 
 
+#: What stands for an object that cannot be the protocol: it names ``verdict``, so the reply counts as stating one, and
+#: it never validates, so that reply is a failed review.
+_BROKEN = {"verdict": None, "broken": True}
+
+
 def _stated_verdicts(body: str) -> list[dict]:
     """Each JSON object in ``body``, outside any other, that has a ``verdict`` key: wherever it stands (alone, after a
     header or a progress line, mid-line). A test's code is inside its object's string, so it is not read again on its
-    own. An object that names any key twice is kept marked, so it never validates as the protocol."""
-    found, strict, loose, at = [], json.JSONDecoder(object_pairs_hook=_once), json.JSONDecoder(), body.find("{")
+    own. An object that names any key twice, at any depth, or that breaks off after naming ``verdict``, counts as a
+    stated verdict that is not the protocol (``_BROKEN``); a brace in prose that names no verdict is prose."""
+    found, decoder, at = [], json.JSONDecoder(object_pairs_hook=_once), body.find("{")
     while at != -1:
         try:
-            value, end = strict.raw_decode(body, at)
+            value, end = decoder.raw_decode(body, at)
         except _RepeatedKey:
-            value, end = loose.raw_decode(body, at)
-            value = {**value, "repeated key": True} if isinstance(value, dict) else value
-        except (ValueError, RecursionError):
+            found.append(_BROKEN)
+            at = body.find("{", at + 1)
+            continue
+        except (ValueError, RecursionError) as exc:
+            if '"verdict"' in body[at:getattr(exc, "pos", at)]:
+                found.append(_BROKEN)
             at = body.find("{", at + 1)
             continue
         if isinstance(value, dict) and "verdict" in value:

@@ -45,7 +45,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from g6.core import cloud_consent as cloud
 from g6.core.consent_callers import SDKClientWrapper, guard, sdk_send
 
-from g6.core.llm import (AnthropicCaller, EmptyRetry, LLMCaller, LLMError, NoModel, UnusableModel,
+from g6.core.llm import (AnthropicCaller, EmptyRetry, FallbackCaller, LLMCaller, LLMError, NoModel, UnusableModel,
                          complete_structured)
 from g6.core.git_name import shown
 from g6.core.semantic import trusted_stop
@@ -332,6 +332,39 @@ def _state_schema() -> dict:
     return schema
 
 
+class _Halted(Exception):
+    """A trusted stop one caller of a fallback chain raised, carried past the chain: ``FallbackCaller`` tries its next
+    caller after any ``LLMError``, and a provider's stop and the model door's stop are both LLMErrors."""
+
+
+class _Watched:
+    """One caller of a fallback chain, as the proposer's limits see it: a trusted stop it raises is kept on ``limits``
+    (``_Limits.stop``) and leaves the chain as ``_Halted``, so no later caller is asked; anything else is as it was."""
+
+    def __init__(self, caller: LLMCaller, limits: "_Limits") -> None:
+        self._caller, self._limits = caller, limits
+
+    def complete(self, system: str, user: str, **kwargs) -> str:
+        try:
+            return self._caller.complete(system, user, **kwargs)
+        except Exception as exc:
+            if trusted_stop(exc):
+                self._limits.stop = exc
+                raise _Halted(str(exc)) from exc
+            raise
+
+    def __getattr__(self, name: str):
+        return getattr(self._caller, name)
+
+
+def _watch(caller: LLMCaller, limits: "_Limits") -> None:
+    """Watch every caller of each fallback chain in ``caller`` (``_Watched``), at any depth."""
+    if isinstance(caller, FallbackCaller):
+        for one in caller._callers:
+            _watch(one, limits)
+        caller._callers = tuple(_Watched(one, limits) for one in caller._callers)
+
+
 def _backend(caller: LLMCaller) -> LLMCaller:
     """The provider behind G6's ``EmptyRetry`` (``provider_from_env`` wraps every one in it), which the proposer's
     limits meter and cap: the retry would ask again, for more tokens, past both, and its attempts would be neither
@@ -383,6 +416,7 @@ class Proposer:
                         max_wall_clock_s=left)
         backend = guard(_backend(raw))
         self.limits = _Limits(MeteredCaller(backend, budget), backend, settings, self.stage)
+        _watch(backend, self.limits)
         self.context: RepositoryContext | None = None
         self.stopped = ""   # why every later stage is skipped (the cap, the time)
         if not self.ready:
