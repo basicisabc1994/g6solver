@@ -6,7 +6,19 @@ from dataclasses import dataclass
 import re
 
 from markdown_it import MarkdownIt
+from markdown_it.rules_inline import backtick
 from markdown_it.token import Token
+
+
+def _spanned(state, silent: bool) -> bool:
+    """CommonMark's own code span rule, which also keeps where each span it makes starts and ends in its inline text
+    (``meta['span']``), so a reader can find the span in the source (``Document.code_spans``)."""
+    start, made = state.pos, len(state.tokens)
+    if not backtick(state, silent):
+        return False
+    if not silent and len(state.tokens) > made and state.tokens[-1].type == "code_inline":
+        state.tokens[-1].meta = {**(state.tokens[-1].meta or {}), "span": (start, state.pos)}
+    return True
 
 
 @dataclass(frozen=True)
@@ -38,6 +50,7 @@ class Document:
         for line in self.lines:
             self.offsets.append(self.offsets[-1] + len(line))
         reader = MarkdownIt("commonmark")
+        reader.inline.ruler.at("backticks", _spanned)
         self.tokens = reader.parse(text)
         # The parser stops reading a container's content at its nesting limit and drops it silently (a quote 20
         # deep). Every reader of a document that went unread must fail closed on ``truncated``, never on its tokens.
@@ -59,6 +72,35 @@ class Document:
             first, stop = token.map
             closed = token.type != "fence" or stop - first >= token.content.count("\n") + 2
             out.append(CodeBlock(token.info.strip(), token.content, start, end, closed))
+        return out
+
+    @property
+    def code_spans(self) -> list[tuple[int, int]] | None:
+        """Where each inline code span stands in the source (its backticks included), as CommonMark's own parser found
+        it; None when one cannot be placed in the source exactly (a reader must then fail closed)."""
+        out = []
+        for token in self.tokens:
+            if token.type != "inline" or not token.map:
+                continue
+            starts, content = [], token.content
+            for row, part in enumerate(content.split("\n"), token.map[0]):
+                line = self.lines[row].rstrip("\r\n") if row < len(self.lines) else None
+                at = line.rfind(part) if line is not None else -1
+                if at < 0:
+                    return None
+                starts.append(self.offsets[row] + at)
+
+            def placed(at: int) -> int:
+                row = content.count("\n", 0, at)
+                return starts[row] + at - (content.rfind("\n", 0, at) + 1)
+
+            for child in token.children or []:
+                nested = [one for one in child.children or [] if one.type == "code_inline"]
+                if nested or (child.type == "code_inline" and "span" not in (child.meta or {})):
+                    return None   # a span G6 cannot place (one in an image's text)
+                if child.type == "code_inline":
+                    start, end = child.meta["span"]
+                    out.append((placed(start), placed(end)))
         return out
 
     @property

@@ -1683,8 +1683,10 @@ def critic_report(said: str, *, marker: str = "") -> dict[str, str]:
         reason: str = ""
 
     said = said.replace("\r\n", "\n").replace("\r", "\n")
-    # Nested past what CommonMark reads, the reply is unknown: nothing of it is cut, filtered or read.
-    text = None if markdown.parse(said).truncated else _outside_code(body := _reply_part(said))
+    # Nested past what CommonMark reads, or holding code it cannot place, the reply is unknown: nothing of it is cut,
+    # filtered or read.
+    whole = markdown.parse(said)
+    text = None if whole.truncated or whole.code_spans is None else _outside_code(body := _reply_part(said))
     if text is None:
         return {"verdict": "unreadable", "rule": "", "why": "the reply nests deeper than G6 reads", "test": "",
                 "error": ""}
@@ -1733,8 +1735,10 @@ def _language(info: str) -> str:
 
 def _reply_part(said: str) -> str:
     """The reply after the last progress label (``[codex]``) that stands outside code: one inside a fixture is the
-    fixture's text, so it cuts nothing. Code is what CommonMark reads as code (``g6.core.markdown``)."""
-    spans = [(block.start, block.end) for block in markdown.parse(said).code_blocks]
+    fixture's text, so it cuts nothing. Code is what CommonMark reads as code (``g6.core.markdown``): blocks and inline
+    spans."""
+    document = markdown.parse(said)
+    spans = [*((block.start, block.end) for block in document.code_blocks), *(document.code_spans or ())]
     at = said.rfind("[codex]")
     while at != -1 and any(start <= at < end for start, end in spans):
         at = said.rfind("[codex]", 0, at)
@@ -1742,13 +1746,19 @@ def _reply_part(said: str) -> str:
 
 
 def _outside_code(body: str) -> str | None:
-    """The reply without its code, or None when it nests deeper than CommonMark reads. Every code block, fenced in any
-    form or indented, at any depth of quotes and lists, is dropped, except a json one, which is the protocol's own
-    position and keeps its content. A reproduction or a fixture is code, so nothing in it is a verdict, a reason or
-    the quoted token."""
+    """The reply without its code, or None when it nests deeper than CommonMark reads or holds code it cannot place.
+    Every code block, fenced in any form or indented, at any depth of quotes and lists, is dropped, except a json one,
+    which is the protocol's own position and keeps its content; every inline code span is blanked (its lines kept). A
+    reproduction or a fixture is code, so nothing in it is a verdict, a reason or the quoted token."""
     document = markdown.parse(body)
-    if document.truncated:
+    spans = document.code_spans
+    if document.truncated or spans is None:
         return None
+    blanked, at = [], 0
+    for start, end in sorted(spans):
+        blanked += [body[at:start], re.sub(r"[^\n]", " ", body[start:end])]
+        at = end
+    body = "".join([*blanked, body[at:]])
     pieces, at = [], 0
     for block in document.code_blocks:
         if block.start < at:
@@ -1773,11 +1783,13 @@ _TOKEN = re.compile(r'"((?:[^"\\\n]|\\[^\n])*)"?')
 _ESCAPE = re.compile(r'\\(u[0-9a-fA-F]{4}|.)')
 _ESCAPED = {"b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
 _KEY = re.compile(r"\s*:")
-_JSON_OPEN = re.compile(r'\{\s*"')
+#: Where an object starts: a brace and then a string, as JSON writes one.
+_START = re.compile(r'\{\s*"')
 
 
 def _unescaped(inner: str) -> str:
     return _ESCAPE.sub(lambda m: chr(int(m[1][1:], 16)) if len(m[1]) == 5 else _ESCAPED.get(m[1], m[1]), inner)
+
 
 class _RepeatedKey(ValueError):
     """A JSON object names a key twice: which value counts is not the critic's to leave open."""
@@ -1790,58 +1802,70 @@ def _once(pairs: list[tuple[str, object]]) -> dict:
 
 
 def _stated_verdicts(body: str) -> list[dict] | None:
-    """Each JSON object in ``body`` (the reply outside code) that holds a string decoding to ``verdict``, outermost,
-    decoded; None when the reply might state a verdict G6 cannot read. One pass over brackets and strings, escape-aware
-    and without recursion, so no depth and no decoder failure hides a verdict. None when: a JSON-looking object (a brace
-    before a string, or one holding a key) never closes in order; a verdict string stands in no such object, or its
-    outermost one does not decode whole (with no key twice); or any object names a key twice. A brace in prose that
-    starts no object, or a closed object that names no verdict, is prose."""
-    stack, objects, verdicts, i = [], [], [], 0   # open brackets; every brace as [opener, start, end, keys]
+    """Each JSON object in ``body`` (the reply outside all code) that holds a string decoding to ``verdict``,
+    decoded; None when the reply might state a verdict G6 cannot read. Prose is read character by character: a quote
+    in it is looked at, never consumed, so no prose quoting changes how anything after it is read, and a string there
+    decoding to verdict stands in no object. Each brace before a string (``_START``) starts an object, read on its own
+    by ``_object``, escape-aware and without recursion. None when such an object never closes in order, names a key
+    twice, or holds a verdict string and does not decode whole (no key twice); or when a verdict string stands in
+    prose. A brace in prose that starts no object, or an object that names no verdict, is prose."""
+    decoder, found, i = json.JSONDecoder(object_pairs_hook=_once), [], 0
+    while i < len(body):
+        if body[i] == '"':
+            if _unescaped(_TOKEN.match(body, i)[1]).strip().casefold() == "verdict":
+                return None   # a verdict in prose, or in braces that start no object: one G6 cannot read
+        elif body[i] == "{" and _START.match(body, i):
+            read = _object(body, i)
+            if read is None:
+                return None
+            end, verdict = read
+            if verdict:
+                try:
+                    value, stop = decoder.raw_decode(body, i)
+                except (ValueError, RecursionError, MemoryError):
+                    return None
+                if stop != end:
+                    return None
+                found.append(value)
+            i = end
+            continue
+        i += 1
+    return found
+
+
+def _object(body: str, start: int) -> tuple[int, bool] | None:
+    """The end of the object that starts at ``start`` and whether a string in it decodes to ``verdict``, read by its
+    brackets and strings alone (strings to an unescaped quote or the end of their line); None when it never closes in
+    order, an object in it that looks like JSON (a key, or a brace before a string) does not close, or an object in it
+    names a key twice. A closer with no opener of its kind open is skipped; one that meets other openers closes them."""
+    stack, objects, verdict, i = [], [], False, start   # each open bracket as [opener, start, closed, keys]
     while i < len(body):
         char = body[i]
         if char == '"':
             token = _TOKEN.match(body, i)
             text, i = _unescaped(token[1]), token.end()
-            top = stack[-1] if stack else None
-            if top is not None and top[0] == "{" and _KEY.match(body, i):
-                if text in top[3]:
+            if stack[-1][0] == "{" and _KEY.match(body, i):
+                if text in stack[-1][3]:
                     return None   # a key named twice: which value counts is not the critic's to leave open
-                top[3].add(text)
-            if text.strip().casefold() == "verdict":
-                verdicts.append([one for one in stack if one[0] == "{"])
+                stack[-1][3].add(text)
+            verdict = verdict or text.strip().casefold() == "verdict"
             continue
         if char in "{[":
-            stack.append([char, i, None, set()])
+            stack.append([char, i, False, set()])
             if char == "{":
                 objects.append(stack[-1])
         elif char in "}]":
             opener = "{" if char == "}" else "["
             if any(one[0] == opener for one in stack):
                 while stack[-1][0] != opener:
-                    stack.pop()   # an unclosed bracket inside: it stays without an end
-                stack.pop()[2] = i + 1
+                    stack.pop()   # an unclosed bracket inside: it stays unclosed
+                stack.pop()[2] = True
+                if not stack:
+                    if any(not one[2] and (one[3] or _START.match(body, one[1])) for one in objects):
+                        return None
+                    return i + 1, verdict
         i += 1
-
-    def looks(one):
-        return bool(one[3]) or bool(_JSON_OPEN.match(body, one[1]))
-
-    if any(one[2] is None and looks(one) for one in objects):
-        return None
-    decoder, found = json.JSONDecoder(object_pairs_hook=_once), {}
-    for enclosing in verdicts:
-        outer = next((one for one in enclosing if looks(one)), None)
-        if outer is None:
-            return None   # a verdict in prose, or in braces that are no object: a verdict G6 cannot read
-        if outer[1] in found:
-            continue
-        try:
-            value, end = decoder.raw_decode(body, outer[1])
-        except (ValueError, RecursionError, MemoryError):
-            return None
-        if end != outer[2]:
-            return None
-        found[outer[1]] = value
-    return [found[at] for at in sorted(found)]
+    return None
 
 class _CriticValue(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
