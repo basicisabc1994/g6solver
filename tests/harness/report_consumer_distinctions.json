@@ -160,6 +160,7 @@
     "harness/completion_loop.py": {
       "_read": [
         "failure_messages",
+        "failure_records",
         "isolation",
         "os_errors",
         "said",
@@ -769,6 +770,14 @@
       ],
       "type": "[<class 'str'>]",
       "constraint": "exact text names"
+    },
+    "failure_records": {
+      "meaning": "one typed record per failed report, read from the exception object: phase, kind, module, file",
+      "consumers": [
+        "harness/completion_loop.py:_read"
+      ],
+      "type": "{<class 'str'>: [{'when': <class 'str'>, 'kind': <class 'str'>, 'module': <class 'str'>, 'file': <class 'str'>}]}",
+      "constraint": "each record names all four members"
     },
     "probe_observations": {
       "meaning": "bounded producer-owned G6 payload; consumers do not parse captured output",

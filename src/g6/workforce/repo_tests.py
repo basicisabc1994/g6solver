@@ -87,6 +87,7 @@ from g6.core.errors import ISOLATION_UNAVAILABLE
 # A path git names is a ``GitName``, put into text only by ``shown_name`` (re-exported here, where it always was)
 from g6.core.git_name import _ESCAPED, _UNESCAPED, GitName, GitNameAsText, _octal, shown, shown_name, unquoted_name  # noqa: F401
 from g6.core.outside import find_program
+from g6.core.xml import read_xml
 from g6.workforce import receipt_store, verify
 
 DEFAULT_TIMEOUT_S = 300
@@ -364,6 +365,10 @@ REPORT_FIELDS = {
     "omitted_ids": ReportField([str], [], "collected but deselected", "disjoint run, unique", True),
     "not_found_ids": ReportField([str], [], "requested identities pytest did not find", "disjoint collected, unique"),
     "missing_modules": ReportField([str], [], "names from ModuleNotFoundError objects", "exact text names"),
+    "failure_records": ReportField(
+        {str: [{"when": str, "kind": str, "module": str, "file": str}]}, {},
+        "one typed record per failed report, from the exception object", "each record names all four members",
+        predicate=lambda value: all(len(record) == 4 for records in value.values() for record in records)),
     "probe_observations": ReportField((list, str, type(None)), None, "G6 probe payload or its read error",
                                       "bounded exact JSON input/output pairs, or an error or no payload",
                                       predicate=_payload_shape),
@@ -2014,7 +2019,9 @@ _RETURN_HEAD, _RETURN_TAIL = 2048, 6144
 #: exit code 0 is not read as a pass (review I3), and the message of each failure, a collection's included, in full
 #: (``failure_messages``: pytest's summary line is cut to the terminal's width); and each test or file whose failure was
 #: an operating-system error, or was raised from or during one (``os_errors``: read from the exception objects, their
-#: ``__cause__`` and ``__context__``, never from text the code printed; reviewer B's B2). Another turns pytest's "fd"
+#: ``__cause__`` and ``__context__``, never from text the code printed; reviewer B's B2); and for each failed report one
+#: typed record read from the exception object pytest hands it (``failure_records``: the phase, the kind, the module an
+#: import error names, the file a syntax error names or else the innermost frame's file). Another turns pytest's "fd"
 #: capture, its default, into "sys" before
 #: capturing starts: "fd" opens the null device for standard input, which a Windows AppContainer may be refused
 #: (``truth.CAPTURE``); a capture the repository's own options chose otherwise (``-s``) stays. A third, as the
@@ -2098,10 +2105,30 @@ class _Counted:
         self.missing_modules, self.not_found_ids = set(), set()
         self.session = None
         self.collection_stopped = None
+        self.records = {}
     def pytest_sessionstart(self, session):
         self.session = session
+    @staticmethod
+    def record(node, report, error):
+        # pytest wraps a test module's import or syntax error in its own CollectError and prints only that cause
+        shown = error
+        if isinstance(error, getattr(node, "CollectError", ())):
+            shown = error.__cause__ if isinstance(error.__cause__, (ImportError, SyntaxError)) else None
+        module = shown.name if isinstance(shown, ImportError) and type(shown.name) is str else ""
+        if isinstance(shown, SyntaxError):
+            place = shown.filename if type(shown.filename) is str else ""
+        else:
+            frame = getattr(shown, "__traceback__", None)
+            while frame is not None and frame.tb_next is not None:
+                frame = frame.tb_next
+            place = frame.tb_frame.f_code.co_filename if frame is not None else ""
+        return {"when": str(getattr(report, "when", "")),
+                "kind": "AssertionError" if isinstance(error, AssertionError) else type(error).__name__,
+                "module": module, "file": place}
     def pytest_exception_interact(self, node, call, report):
         error, seen = getattr(getattr(call, "excinfo", None), "value", None), set()
+        if error is not None and getattr(report, "failed", False):
+            self.records.setdefault(report.nodeid, []).append(self.record(node, report, error))
         while error is not None and id(error) not in seen:
             seen.add(id(error))
             if isinstance(error, ModuleNotFoundError) and type(error.name) is str:
@@ -2163,7 +2190,8 @@ class _Counted:
                            "rootdir": self.rootdir, "messages": self.messages,
                            "os_errors": sorted(self.os_errors), "missing_modules": sorted(self.missing_modules),
                            "not_found_ids": sorted(self.not_found_ids),
-                           "collection_stopped": self.collection_stopped}, handle)
+                           "collection_stopped": self.collection_stopped,
+                           "failure_records": self.records}, handle)
 class _Capture:
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_load_initial_conftests(self, early_config):
@@ -2566,6 +2594,11 @@ def _opened(repo: Path, python: str, what: str, own: tuple[str, ...] = ()) -> st
     return python
 
 
+#: JUnit-sized limits on pytest's report (``_counts``): far above a large suite's report (150,000 tests write about
+#: 7 MB and 300,000 elements; a failure's text is not cut), so no suite that passed is made impossible to pass, and
+#: still a bound on what one run can make G6 hold.
+JUNIT_BYTES = 1024 * 1024 * 1024
+JUNIT_ELEMENTS = 10_000_000
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 #: The exception a report's text ends on: "E   ModuleNotFoundError: No module named 'x'" (or a message that starts so).
 _RAISED = re.compile(r"^(?:E\s+)?((?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*(?:Error|Exception)): (.*)$", re.MULTILINE)
@@ -2624,16 +2657,45 @@ def _blame(problem: ElementTree.Element, repo: Path, roots: tuple[Path, ...], *,
     return "inside" if _file_here(places[-1].group(1) or places[-1].group(2), repo) else "outside"
 
 
-def _counts(report: Path, repo: Path, roots: tuple[Path, ...]) -> dict[str, int] | None:
+def _failure_records(counted: Path) -> dict[str, list[dict[str, str]]]:
+    """The bootstrap's typed failure records (``_Counted.record``), by node id; {} when its file is missing, cannot be
+    read or does not hold them in their declared type."""
+    try:
+        raw = json.loads(counted.read_text(encoding="utf-8"), object_pairs_hook=_report_object)
+    except (OSError, ValueError, RecursionError, MemoryError):
+        return {}
+    records = raw.get("failure_records") if type(raw) is dict else None
+    return records if REPORT_FIELDS["failure_records"].accepts(records) else {}
+
+
+def _placed(record: dict[str, str], repo: Path, roots: tuple[Path, ...]) -> str:
+    """``_blame``'s answer for one failed report, read from its typed record (``_Counted.record``) in place of the
+    report's text: the module an import error names decides first; a failure in a test that ran is "inside"; a
+    collection error is placed by the file the record names, and is "" when it names none."""
+    if record["module"]:
+        return "inside" if _module_here(record["module"], roots) else "outside"
+    if record["when"] != "collect":
+        return "inside"
+    if not record["file"]:
+        return ""
+    return "inside" if _file_here(record["file"], repo) else "outside"
+
+
+def _counts(report: Path, repo: Path, roots: tuple[Path, ...],
+            records: dict[str, list[dict[str, str]]] | None = None) -> dict[str, int] | None:
     """pytest's own tallies from its JUnit report, or None when it wrote none that can be read. One outcome per test
     (its ``<testcase>`` elements, by class and name: pytest writes a second one for a test that failed and then
     errored in its teardown): a failure, else an error, else a skip, else a pass (review I1; a test interrupted before
     its result also has one, with nothing in it: ``run`` takes those off the passes). Also: ``collection``, the
     collection errors, and ``placed``, those whose module or file was read; ``outside``, the failed tests whose every
-    failure and error comes from outside the repository (``_blame``)."""
+    failure and error comes from outside the repository. Where those come from is read from the bootstrap's typed
+    failure records (``records``, by node id: ``_placed``) whenever the run's own record holds any; ``_blame`` reads the
+    report's text only for a run whose record holds none (a record made before the bootstrap kept them). The report is
+    read with no document type (so no
+    entity is ever expanded) and within ``JUNIT_BYTES`` and ``JUNIT_ELEMENTS``; past them its tallies are unread."""
     try:
-        root = ElementTree.parse(report).getroot()
-    except (OSError, ElementTree.ParseError):
+        root = read_xml(report, limit=JUNIT_BYTES, elements=JUNIT_ELEMENTS)
+    except (OSError, ValueError):
         return None
     tests: dict[tuple[str, str], list[ElementTree.Element]] = {}
     for case in root.iter("testcase"):
@@ -2650,9 +2712,15 @@ def _counts(report: Path, repo: Path, roots: tuple[Path, ...]) -> dict[str, int]
             total["skipped" if skipped else "passed"] += 1
             continue
         total["failures" if failures else "errors"] += 1
-        blames = {_blame(problem, repo, roots, collection=collection) for problem in failures + errors}
         total["collection"] += collection
+        if records:
+            continue
+        blames = {_blame(problem, repo, roots, collection=collection) for problem in failures + errors}
         total["placed"] += collection and "" not in blames
+        total["outside"] += blames == {"outside"}
+    for found in (records or {}).values():
+        blames = {_placed(record, repo, roots) for record in found}
+        total["placed"] += any(record["when"] == "collect" for record in found) and "" not in blames
         total["outside"] += blames == {"outside"}
     return total
 
@@ -2835,6 +2903,7 @@ def _progress(counts: dict[str, int], counted: Path) -> dict:
             "os_errors": found.get("os_errors", []),
             "missing_modules": found.get("missing_modules", []), "not_found_ids": found.get("not_found_ids", []),
             "collection_stopped": found.get("collection_stopped"),
+            "failure_records": found.get("failure_records", {}),
             "passed": max(0, counts.get("passed", 0) - max(0, started - finished))}
 
 
@@ -3097,6 +3166,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "failure_messages": tally.get("failure_messages") or {},
                 "os_errors": list(tally.get("os_errors") or []),
                 "missing_modules": list(tally.get("missing_modules") or []),
+                "failure_records": tally.get("failure_records") or {},
                 "not_found_ids": list(tally.get("not_found_ids") or []),
                 "probe_observations": probe_observations(output),
                 "collection_stopped": tally.get("collection_stopped"),
@@ -3166,7 +3236,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
             left = confined.release()   # the run's container profile, after the run
             if left:
                 isolation = {**isolation, "cleanup": left}
-        output, counts = _output(log), _counts(report, repo, tuple(Path(entry) for entry in entries))
+        output, counts = _output(log), _counts(report, repo, tuple(Path(entry) for entry in entries),
+                                                _failure_records(counted))
         progress = _progress(counts or {}, counted)
         seen[:] = _loaded(own / "loaded.json")
         if counts is not None:

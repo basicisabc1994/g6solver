@@ -322,7 +322,7 @@ RECEIPT = "the run's test receipt, or why it has none: the coding gate reads it"
 NOT_READ = {
     "passed": COUNT, "failed": COUNT, "not_passed": COUNT, "total": COUNT, "deselected": COUNT,
     "degraded": COUNT + " (a summary of the counts)", "completed": COUNT + " (a summary of the counts)",
-    "failure_messages": ANNOTATION, "os_errors": ANNOTATION,
+    "failure_messages": ANNOTATION, "os_errors": ANNOTATION, "failure_records": ANNOTATION,
     "missing_modules": "module names from exception objects, read by dependency guidance",
     "probe_observations": "the producer's bounded G6 payload, read by verification_search",
     "python_sources": "Python names from the copy's pre-run snapshot, read by shared loaded_from ownership",

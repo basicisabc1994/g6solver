@@ -133,6 +133,9 @@ def intended_reading(before, case):
         expected["completion"]["results"]["test_broken.py"] = "unknown"
     if "observation" in expected["verdicts"][NODE]:
         expected["requirement"]["checks"][0]["observation"] = expected["verdicts"][NODE]["observation"]
+    # The completion loop's typed failure kinds (``failure_records``) are read beside the released reading, which has
+    # none; the producer cases raise no exception, so no case records a kind.
+    expected["completion"]["kinds"] = {}
     return expected
 
 

@@ -146,6 +146,7 @@ caller assertions; their lexical support is reported and decides nothing.
 """
 from __future__ import annotations
 
+import ast
 import configparser
 import hashlib
 import platform
@@ -333,8 +334,6 @@ def _ignored_asks(scan: repo_tests.Ignored) -> list[str]:
     return asks
 
 
-#: The launch review's I6: a module a run could not import, and the import statements of the lines the patch adds.
-_ADDED_IMPORT = re.compile(r"^\+[ \t]*(?:from[ \t]+([\w.]+)[ \t]+import\b|import[ \t]+([^\n#;]+))", re.MULTILINE)
 # PENDING copy (the launch review's I6): ask, don't accuse; never "make those tests run here" for this case.
 MISSING_IMPORT_REASON = ("the tests could not import {names}, which the patch imports on a line it adds and which is "
                          "not installed here")
@@ -511,22 +510,36 @@ def _test_data(change: repo_tests.Change) -> list[str]:
 
 
 def _patch_imports_missing(change: repo_tests.Change, runs: list[dict]) -> list[str]:
-    """The modules ``runs`` could not import (names recorded from exception objects) that
-    an import statement on a line the patch adds to a Python file names, itself, a package above it or a module below
-    it (the launch review's I6)."""
+    """The modules ``runs`` could not import (names recorded from exception objects) that an import statement the patch
+    adds or rewrites names, itself, a package above it or a module below it (the launch review's I6). Each changed
+    Python file is parsed as it is now; an ``import`` or absolute ``from ... import`` whose lines meet the lines the
+    change added or rewrote (``repo_tests.changed_lines``, read for test files too) is one the patch adds. Text that only
+    looks like one (in a string) is none, and a file that does not parse is never imported, so names none."""
     missing = {name for ran in runs for report in [repo_tests.read_report(ran)] if report.valid
                for name in report.data.get("missing_modules", ())}
     if not missing:
         return []
+    python = tuple(rel for rel in change.files if rel.endswith(".py"))
+    every = replace(change, sources=python)   # changed_lines reads the change's sources: here every Python file
+    _, after = repo_tests.related_texts(change, python)
     added = set()
-    for names, text in _diff_files(repo_tests.diff_text(change)):
-        if any(name.endswith(".py") for name in names):
-            for found in _ADDED_IMPORT.finditer(text):
-                added.update([found[1]] if found[1] else [part.split()[0] for part in found[2].split(",")
-                                                          if part.split()])
+    for rel, text in after.items():
+        lines = repo_tests.changed_lines(every, rel)
+        if not lines:
+            continue
+        try:
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError, RecursionError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import | ast.ImportFrom) and not lines.isdisjoint(
+                    range(node.lineno, (node.end_lineno or node.lineno) + 1)):
+                if isinstance(node, ast.Import):
+                    added.update(alias.name for alias in node.names)
+                elif not node.level and node.module:
+                    added.add(node.module)
     return sorted(name for name in missing if any(name == mine or mine.startswith(name + ".")
-                                                  or name.startswith(mine + ".") for mine in added
-                                                  if not mine.startswith(".")))
+                                                  or name.startswith(mine + ".") for mine in added))
 
 
 def _names(check: str, files: set[str]) -> bool:

@@ -75,12 +75,15 @@
     ],
     "_patch_imports_missing/branches": [
       "if not missing",
-      "if any((name.endswith('.py') for name in names))",
-      "if found[1]"
+      "if not lines",
+      "except (SyntaxError, ValueError, RecursionError)",
+      "if isinstance(node, ast.Import | ast.ImportFrom) and (not lines.isdisjoint(range(node.lineno, (node.end_lineno or node.lineno) + 1)))",
+      "if isinstance(node, ast.Import)",
+      "if not node.level and node.module"
     ],
     "_patch_imports_missing": [
       "[]",
-      "sorted((name for name in missing if any((name == mine or mine.startswith(name + '.') or name.startswith(mine + '.') for mine in added if not mine.startswith('.')))))"
+      "sorted((name for name in missing if any((name == mine or mine.startswith(name + '.') or name.startswith(mine + '.') for mine in added))))"
     ],
     "_collection_errors": [
       "set(repo_tests.read_report(ran).collection_errors)"

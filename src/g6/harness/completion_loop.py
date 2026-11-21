@@ -58,7 +58,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -246,6 +246,7 @@ class ProbeRun:
     texts: dict[str, str]
     tail: str = ""
     boundary: str = ""     # what confined it, as the run says
+    kinds: dict[str, str] = field(default_factory=dict)   # each failed case's first failure kind (``failure_records``)
 
     @property
     def ran(self) -> int:
@@ -465,7 +466,7 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
     finish, or tested code from outside its copy, leaves the set unusable."""
     code: int | None = 0
     origins = []
-    results, texts, tail, boundary = {}, {}, [], ""
+    results, texts, kinds, tail, boundary = {}, {}, {}, [], ""
     for ran in runs:
         body, refs, _ = cloud.freeze_output(ran)
         origins.extend(refs or (cloud.UNKNOWN,))
@@ -498,7 +499,9 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
             code = None
             results.update({_PLACE.sub("", node): "unknown" for node in report.collection_errors})
         texts.update({_PLACE.sub("", full(named)): text for named, text in (ran.get("failure_messages") or {}).items()})
-    return cloud.bind_output(ProbeRun(code, results, texts, "\n".join(tail), boundary),
+        kinds.update({_PLACE.sub("", full(named)): found[0]["kind"]
+                      for named, found in (ran.get("failure_records") or {}).items() if found})
+    return cloud.bind_output(ProbeRun(code, results, texts, "\n".join(tail), boundary, kinds),
                              cloud.boundary_sources(carried=origins))
 
 
@@ -533,7 +536,11 @@ def _gate(tree: Path, got: ProbeRun) -> list[str]:
     def cases(test: str) -> list[str]:
         return [v for k, v in got.results.items() if k.rsplit("::", 1)[-1].split("[")[0] == test]
 
-    crashed = sum(v == "error" or (v == "failed" and not re.match(r"assert|AssertionError|Failed", got.texts.get(k, "")))
+    # A failed case is an assertion by its typed kind (``failure_records``); a report that carries none (a record made
+    # before the bootstrap kept kinds) is read by its message's start, as before.
+    crashed = sum(v == "error" or (v == "failed" and not (
+        got.kinds[k] in ("AssertionError", "Failed") if k in got.kinds
+        else re.match(r"assert|AssertionError|Failed", got.texts.get(k, ""))))
                   for k, v in got.results.items())
     return scout_gate(tree.read_text(encoding="utf-8", errors="replace") if tree.is_file() else "",
                       exit_code=2 if got.exit is None else got.exit, collected=len(cases("test_cross")), broken=crashed,
