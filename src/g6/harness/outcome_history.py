@@ -91,18 +91,24 @@ def _admitted(row: dict, repository: str) -> bool:
 
 
 def _status(body: dict, node: str) -> tuple[bool, bool]:
+    from g6.harness.verification_search import reading
     from g6.workforce import repo_tests
 
     result = body.get('result', {})
-    if body.get('source_before') != body.get('source_after') or result.get('verdict') not in {'passed', 'failed'}:
+    if body.get('source_before') != body.get('source_after'):
         return False, False
     if body.get('schema') == receipt_store.OBSERVATION_SCHEMA:
-        return _observation_status(result)
-    phases = body.get('test_outcomes', result.get('test_outcomes'))
-    if phases is not None:
-        # Ledger JSON sorts mapping keys. Restore the producer's phase order at
-        # this storage boundary, keeping every extra field for the strict reader.
-        if type(phases) is dict:
+        return _observation_status(result) if result.get('verdict') in {'passed', 'failed'} else (False, False)
+    readings = body.get('readings')
+    if type(readings) is dict:
+        # The live reader's result for this requested id, bound when the run was read (``repo_tests._learning_binding``),
+        # so a qualifier it honours (an operating-system error, a collection that stopped) is never lost here.
+        found = readings.get(node)
+    else:
+        # A receipt bound before readings: the same live reader, over only what the receipt carries. A receipt keeps no
+        # failure text, so the reader cannot say how a failure happened and reads it as an error, never a defect.
+        phases = body.get('test_outcomes', result.get('test_outcomes'))
+        if type(phases) is dict:   # ledger JSON sorts mapping keys: restore the producer's phase order
             phases = {name: ({**{phase: record[phase] for phase in repo_tests.REPORT_PHASES if phase in record},
                              **{key: value for key, value in record.items() if key not in repo_tests.REPORT_PHASES}}
                             if type(record) is dict else record)
@@ -112,9 +118,10 @@ def _status(body: dict, node: str) -> tuple[bool, bool]:
             'said': '', 'output': '', 'rootdir': '', 'setup_errors': {},
             'collected_ids': tests.get('collected', []), 'omitted_ids': tests.get('omitted', []),
             **result, 'test_outcomes': phases})
-        outcome = report.body_result(node)
-        return outcome == 'passed', outcome == 'failed'
-    return False, False
+        found = reading(report.wire(), node)['result']
+    # The receipt's own verdict bounds the reading: a binding never makes a pass or a failure the run did not give.
+    verdict = result.get('verdict')
+    return found == 'passed' and verdict == 'passed', found == 'failed' and verdict in {'failed', 'collection_error'}
 
 
 def _observation_status(result: dict) -> tuple[bool, bool]:

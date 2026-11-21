@@ -65,7 +65,8 @@ def receipt(repo='a' * 64, *, passed=False, source='source'):
 
 
 def phase_receipt(node, *, passed=False):
-    return {'tests': {'requested': [node], 'collected': [node]},
+    # ``readings``: the live reader's result a confined run binds (``repo_tests._learning_binding``).
+    return {'tests': {'requested': [node], 'collected': [node]}, 'readings': {node: 'passed' if passed else 'failed'},
             'test_outcomes': {node: {'setup': 'passed', 'call': 'passed' if passed else 'failed',
                                      'teardown': 'passed'}},
             'result': {'verdict': 'passed' if passed else 'failed', 'total': 1, 'not_passed': 0,
@@ -218,6 +219,37 @@ def test_retained_base_timeout_is_skipped_not_stale(monkeypatch):
     assert done.activities[0]['result'] == 'skipped'
     assert 'time' in done.activities[0]['reason']
     assert calls == [True]
+
+
+@pytest.mark.parametrize('patch_collects', [True, False])
+def test_retained_check_the_base_cannot_collect_still_runs_on_the_patch(monkeypatch, patch_collects):
+    from types import SimpleNamespace
+    from g6.harness import verification_search as vs
+    from tests.harness.efu2_cases import FAILED, report
+    calls = []
+    one = vs.ProposedCheck(id='retained-added', requirement_id='R1', intent='preserve', file='test_added.py',
+                           source='from calc import added\n\ndef test_added():\n    assert added() == 1\n')
+    node = vs._node(one, vs.placement(one))
+
+    def run(*args, at_base, **kwargs):
+        calls.append(at_base)
+        if at_base or not patch_collects:   # the base, or a patch, without the API the check imports
+            return {**report(FAILED), 'verdict': 'collection_error', 'test_outcomes': {}, 'collected_ids': [],
+                    'failed_ids': [], 'completed': False,
+                    'failure_messages': {node.partition('::')[0]: 'ImportError: cannot import name added'}}
+        ran = report(FAILED, completed=False, failure_messages={node: 'AssertionError: added returned 0'})
+        ran.update(test_outcomes={node: ran['test_outcomes'].popitem()[1]}, failed_ids=[node], collected_ids=[node])
+        return ran
+    monkeypatch.setattr(vs, '_run_check', run)
+    monkeypatch.setattr(vs, '_loaded_elsewhere', lambda change, ran: '')
+    done = vs.search(SimpleNamespace(repo=Path.cwd(), base_commit='b' * 40), [one], {one.id: vs.placement(one)},
+                     deadline=vs._clock() + 60, artifact='a' * 64,
+                     origins={one.id: vs.Origin(label='retained', about={'origin': 'retained'})})
+    assert calls == [True, False]
+    activity = done.activities[0]
+    assert [run['on'] for run in activity['runs']] == ['base commit', 'patch']
+    # The live classification of a failure the base cannot collect; collected on neither tree, it no longer applies.
+    assert activity['result'] == ('fails_on_base_too' if patch_collects else 'stale'), activity
 
 
 def test_observation_receipt_cannot_pass_a_stated_requirement():

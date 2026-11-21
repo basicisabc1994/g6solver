@@ -64,6 +64,9 @@ LETS_THROUGH = (ExecutionInterrupted, ContainmentFailure)
 
 SCHEMA = "g6.test_receipt/1"
 OBSERVATION_SCHEMA = 'g6.observation_receipt/1'
+#: What a learning binding may add beside a receipt (``repo_tests._learning_binding``): ``readings`` is the live
+#: reader's result for each requested id; ``test_outcomes`` only a binding written before readings holds.
+LEARNING = ('repository_id', 'check_digests', 'test_outcomes', 'readings')
 KIND = "test-receipt"
 #: Why an evidence item that cites a receipt is, or is not, G6-observed (``check``). Not "verified": that word is a
 #: reliability state, and the door rewrites it wherever it appears in a result.
@@ -147,8 +150,7 @@ def _record(body: dict, *, learning: dict | None = None) -> str:
         except (RecursionError, MemoryError):
             raise LedgerError("a stored JSON record exceeds decoder limits") from None
     if learning is not None:
-        binding = {'receipt': ident, **{key: learning[key] for key in
-                   ('repository_id', 'check_digests', 'test_outcomes') if key in learning}}
+        binding = {'receipt': ident, **{key: learning[key] for key in LEARNING if key in learning}}
         sidecar = state_path('evidence', 'test_learning_bindings.jsonl')
         with _locked(sidecar):
             ledger = ChainLedger(sidecar)
@@ -207,8 +209,7 @@ def lookup_learning(receipt_id: str, *, artifact_digest: str, _observations: boo
                 and e['id'] == digest(e['body']) and e['body'].get('receipt') == receipt_id]
     if len(bindings) != 1:
         return None
-    return {**body, **{key: bindings[0][key] for key in
-                      ('repository_id', 'check_digests', 'test_outcomes') if key in bindings[0]}}
+    return {**body, **{key: bindings[0][key] for key in LEARNING if key in bindings[0]}}
 
 
 def _executable(python: str) -> dict:

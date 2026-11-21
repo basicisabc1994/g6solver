@@ -3235,13 +3235,22 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 started_at=began, finished_at=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                 before=before, after=after, base_commit=head, python=python, requested=ids, found=found,
                 ignored=scan.other)
-            found["receipt"] = receipt_store._record(body, learning={
-                'repository_id': receipt_repository, 'check_digests': check_digests,
-                'test_outcomes': found.get('test_outcomes')})
+            found["receipt"] = receipt_store._record(body, learning=_learning_binding(
+                found, ids, repository=receipt_repository, check_digests=check_digests))
         except (OSError, ValueError) as exc:
             found["receipt_error"] = (f"the test receipt could not be recorded ({type(exc).__name__}); if the store is "
                                       f"unreadable, move it aside ({receipt_store.RECOVERY})")
     return found
+
+
+def _learning_binding(found: dict, ids: list[str], *, repository: str, check_digests: dict[str, str]) -> dict:
+    """What a receipt binds for outcome learning only (``receipt_store._record``'s ``learning``): the repository
+    identity, the check bytes, and each requested id's result as the live reader (``verification_search.reading``)
+    gives it, so learning never reads the run a second way."""
+    from g6.harness.verification_search import reading
+
+    return {'repository_id': repository, 'check_digests': check_digests,
+            'readings': {node: reading(found, node)['result'] for node in ids}}
 
 
 #: Git-ignored files that can change a run (review I2): runner configuration, start-up and path files.

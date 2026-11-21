@@ -90,6 +90,17 @@ def test_learning_boundaries_keep_execution_control_signals(monkeypatch, signal,
     assert caught.value is signal
 
 
+def bound(raw: dict) -> dict:
+    """A receipt body as learning reads it: the receipt's result, and the binding a confined run writes beside it."""
+    from g6.workforce import repo_tests
+
+    return {'source_before': 'd' * 64, 'source_after': 'd' * 64,
+            'tests': {'requested': [NODE], 'collected': raw['collected_ids'], 'omitted': []},
+            'result': {key: value for key, value in raw.items() if key not in {
+                'test_outcomes', 'collected_ids', 'omitted_ids'}},
+            **repo_tests._learning_binding(raw, [NODE], repository='a' * 64, check_digests={})}
+
+
 @pytest.mark.parametrize('corruption', ['extra_phase', 'missing_teardown', 'false_completed', 'wrong_node'])
 def test_history_phase_receipts_use_the_report_reader(corruption):
     raw = report(PASSED, completed=True, degraded=False)
@@ -101,37 +112,24 @@ def test_history_phase_receipts_use_the_report_reader(corruption):
         raw['completed'] = 1
     else:
         raw['collected_ids'] = ['test_other.py::test_other']
-    body = {'source_before': 'd' * 64, 'source_after': 'd' * 64,
-            'tests': {'collected': raw['collected_ids'], 'omitted': []},
-            'test_outcomes': raw['test_outcomes'],
-            'result': {key: value for key, value in raw.items() if key not in {
-                'test_outcomes', 'collected_ids', 'omitted_ids'}}}
-    assert outcome_history._status(body, NODE) == (False, False)
+    assert outcome_history._status(bound(raw), NODE) == (False, False)
 
 
 @pytest.mark.parametrize('passed', [True, False])
 def test_history_accepts_complete_phase_receipts_with_the_producer_completion_flag(passed):
-    raw = report(PASSED if passed else FAILED, completed=passed, degraded=False)
-    body = {'source_before': 'd' * 64, 'source_after': 'd' * 64,
-            'tests': {'collected': [NODE], 'omitted': []}, 'test_outcomes': raw['test_outcomes'],
-            'result': {key: value for key, value in raw.items() if key not in {
-                'test_outcomes', 'collected_ids', 'omitted_ids'}}}
-    assert outcome_history._status(body, NODE) == (passed, not passed)
+    # A failure the live reader believes says how it failed (``verification_search.reading``).
+    raw = report(PASSED if passed else FAILED, completed=passed, degraded=False,
+                 **({} if passed else {'failure_messages': {NODE: 'AssertionError: add returned -1'}}))
+    assert outcome_history._status(bound(raw), NODE) == (passed, not passed)
 
 
 @pytest.mark.parametrize('passed', [True, False])
-@pytest.mark.parametrize('location', ['body', 'result'])
-def test_history_keeps_node_results_after_canonical_receipt_storage(passed, location):
+def test_history_keeps_node_results_after_canonical_receipt_storage(passed):
     from g6.core.ledger import canonical
 
-    raw = report(PASSED if passed else FAILED, completed=passed, degraded=False)
-    body = {'source_before': 'd' * 64, 'source_after': 'd' * 64,
-            'tests': {'collected': [NODE], 'omitted': []},
-            'result': {key: value for key, value in raw.items() if key not in {
-                'test_outcomes', 'collected_ids', 'omitted_ids'}}}
-    target = body if location == 'body' else body['result']
-    target['test_outcomes'] = raw['test_outcomes']
-    stored = json.loads(canonical(body))
+    raw = report(PASSED if passed else FAILED, completed=passed, degraded=False,
+                 **({} if passed else {'failure_messages': {NODE: 'AssertionError: add returned -1'}}))
+    stored = json.loads(canonical(bound(raw)))
     assert outcome_history._status(stored, NODE) == (passed, not passed)
 
 
@@ -153,12 +151,7 @@ def test_stored_receipt_normalization_keeps_bad_evidence_unknown(corruption):
         raw['degraded'] = True
     else:
         raw['completed'] = 1
-    body = {'source_before': 'd' * 64, 'source_after': 'd' * 64,
-            'tests': {'collected': raw['collected_ids'], 'omitted': []},
-            'test_outcomes': raw['test_outcomes'],
-            'result': {key: value for key, value in raw.items() if key not in {
-                'test_outcomes', 'collected_ids', 'omitted_ids'}}}
-    assert outcome_history._status(json.loads(canonical(body)), NODE) == (False, False)
+    assert outcome_history._status(json.loads(canonical(bound(raw))), NODE) == (False, False)
 
 
 def test_history_summary_without_per_node_phases_establishes_no_node_result():
@@ -211,3 +204,93 @@ def test_reply_preserves_all_historical_fields_and_report_text(monkeypatch, reas
     existing = {key: value for key, value in actual.items() if key != 'learned'}
     existing['assessment'] = {key: value for key, value in actual['assessment'].items() if key != 'resolution'}
     assert existing == expected
+
+
+FILE = NODE.partition('::')[0]
+CHECK = 'from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n'
+SAYS = {NODE: 'AssertionError: add returned -1'}
+#: One runner report for each distinction the live reader (``verification_search.reading``) makes: the check it is read
+#: for, the report, and the result that reader gives it.
+SHAPES = {
+    'pass': (NODE, report(PASSED, completed=True), 'passed'),
+    'failure_with_message': (NODE, report(FAILED, completed=False, failure_messages=SAYS), 'failed'),
+    'failure_without_message': (NODE, report(FAILED, completed=False), 'error'),
+    'boundary_refusal': (NODE, report(FAILED, completed=False, failure_messages=SAYS, os_errors=[NODE]), 'error'),
+    'interrupted_collection': (NODE, report(FAILED, completed=False, collection_stopped=True, failure_messages={
+        **SAYS, 'test_other.py': 'ImportError: collection interrupted'}), 'error'),
+    'own_file_uncollected': (NODE, {**report(PASSED), 'verdict': 'collection_error', 'test_outcomes': {},
+                                    'collected_ids': [], 'completed': False,
+                                    'failure_messages': {FILE: 'ImportError: cannot import name add'}}, 'failed'),
+    'collection_error_beside_bodies': (FILE, report(PASSED, verdict='failed', completed=False, failure_messages={
+        FILE + '::TestOther': 'ImportError: cannot import name sub'}), 'error'),
+    'timed_out': (NODE, {**report(PASSED), 'verdict': 'timed_out', 'test_outcomes': {}, 'collected_ids': [],
+                         'completed': False}, 'error'),
+    'changed_files': (NODE, report(PASSED, verdict='changed_tracked_files', changed=['calc.py'], completed=False),
+                      'error'),
+    'no_result_verdict': (NODE, {**report(PASSED), 'verdict': 'no_tests_collected', 'test_outcomes': {},
+                                 'collected_ids': []}, 'error'),
+    'no_test_of_the_check': (FILE + '::test_sub', report(PASSED, completed=True), 'error'),
+    'loading_unknown': (NODE, report(PASSED, completed=True, loaded_complete=False, loaded_outside={}), 'error'),
+    'setup_failed': (NODE, report({'setup': 'failed', 'teardown': 'passed'}, verdict='failed', failed_ids=[],
+                                  setup_errors={NODE: 'fixture missing'}, completed=False,
+                                  failure_messages={NODE: 'fixture missing'}), 'error'),
+    'skipped': (NODE, report({'setup': 'passed', 'call': 'skipped', 'teardown': 'passed'}, completed=True), 'error'),
+    'deselected_beside': (FILE, report(PASSED, completed=True, collected_ids=[NODE, FILE + '::test_sub'],
+                                       omitted_ids=[FILE + '::test_sub']), 'error'),
+    'probe_read_error': (NODE, report(PASSED, completed=True, probe_observations='probe payload unreadable'), 'error'),
+    'unknown_report': (NODE, report(PASSED, completed=False), 'error'),
+}
+STATUS = {'passed': (True, False), 'failed': (False, True), 'error': (False, False)}
+LEARNED = {'passed': 'not_refuted', 'failed': 'defect_detected', 'error': 'check_error'}
+
+
+@pytest.mark.parametrize('shape', sorted(SHAPES))
+def test_learning_reads_every_report_shape_as_the_live_reader_does(tmp_path, monkeypatch, shape):
+    import hashlib
+
+    from g6.harness import verification_search
+    from g6.workforce import repo_tests
+
+    node, ran, expected = SHAPES[shape]
+    live = verification_search.reading(ran, node)
+    assert live['result'] == expected, live   # the shape reaches the distinction it names
+    monkeypatch.setenv('G6_HOME', str(tmp_path))
+    monkeypatch.setattr(receipt_store, '_executable', lambda python: {})
+    monkeypatch.setattr(outcome_history, 'repository_id', lambda root: 'c' * 64)
+    if not repo_tests.read_report(ran).valid:   # an unknown report gets no receipt, so nothing is learned from it
+        with pytest.raises(ValueError):
+            receipt_store._body(started_at='s', finished_at='f', before={}, after={}, base_commit='b' * 40,
+                                python='', requested=[node], found=ran)
+        return
+    body = receipt_store._body(started_at='s', finished_at='f', before={}, after={}, base_commit='b' * 40,
+                               python='', requested=[node], found=ran)
+    # The binding exactly as a confined run writes it, stored as canonical JSON and read back.
+    ident = receipt_store._record(body, learning=repo_tests._learning_binding(
+        ran, [node], repository='c' * 64, check_digests={FILE: hashlib.sha256(CHECK.encode()).hexdigest()}))
+    learned = receipt_store.lookup_learning(ident, artifact_digest=body['source_before'])
+    assert outcome_history._status(learned, node) == STATUS[expected]
+    # A receipt bound before readings (its phases beside it) never reads as a result the live reader does not give.
+    older = {**{key: value for key, value in learned.items() if key != 'readings'}, 'test_outcomes': ran['test_outcomes']}
+    assert outcome_history._status(older, node) in {STATUS[expected], (False, False)}
+    admitted = []
+    monkeypatch.setattr(outcome_history, '_record', lambda root, row: admitted.append(row)
+                        if outcome_history._admitted(row, 'c' * 64) else None)
+    outcome_history.record_stated(SimpleNamespace(repo=Path.cwd(), files=[]), {node: CHECK},
+                                  [{'receipt': ident, 'provenance': 'stated'}], artifact=body['source_before'])
+    assert [row['classification'] for row in admitted] == [LEARNED[expected]]
+
+
+@pytest.mark.parametrize('result', ['passed', 'failed', 'error'])
+def test_learning_reads_every_observation_as_the_live_reader_does(tmp_path, monkeypatch, result):
+    from g6.harness import verification_search
+    from g6.workforce import repo_tests
+
+    ran = {'verdict': repo_tests.OBSERVED_VERDICTS[result], 'said': '', 'seconds': 0.0, 'source_before': 'a' * 64,
+           'isolation': {'backend': 'recorded-review-fixture'},
+           'g6_observation': {'result': result, 'detail': 'observed', 'observations': []}}
+    assert verification_search.reading(ran, NODE)['result'] == result
+    monkeypatch.setenv('G6_HOME', str(tmp_path))
+    monkeypatch.setattr(receipt_store, 'repository_id', lambda root: 'c' * 64)
+    ident = receipt_store._record_observation(Path.cwd(), NODE, ExecutableSource(CHECK, {'kind': 'example'}), ran)
+    learned = receipt_store.lookup_learning(ident, artifact_digest='a' * 64, _observations=True)
+    assert outcome_history._status(learned, NODE) == STATUS[result]

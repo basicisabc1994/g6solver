@@ -10,7 +10,7 @@ READERS = {
     "algorithm_design/autonomous.py": {"_observed"},
     "bundles/agent_change.py": {"run"},
     "harness/completion_loop.py": {"_read"},
-    # Receipt projection restores ledger phase order; body_result decides admission.
+    # An older receipt's projection restores ledger phase order; the live reader decides admission.
     "harness/outcome_history.py": {"_status"},
     # _listing/_failed_ids expose validated identities; _in_repository qualifies
     # local node names with the report's root. _verdicts/_observed decide results;

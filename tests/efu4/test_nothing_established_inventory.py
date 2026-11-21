@@ -330,6 +330,8 @@ CLASSIFIED = {
     ("workforce/repo_tests.py", "_progress"): "the producer: reads its plugin's progress file through the reader",
     ("workforce/repo_tests.py", "_judge"): "the producer: the run's verdict, from the exit code and the tallies",
     ("workforce/repo_tests.py", "_said"): "words: a message table, not a report",
+    ("workforce/repo_tests.py", "_learning_binding"): "outcome learning's binding beside a receipt: the live "
+                                                      "reader's own result for each requested id",
     ("workforce/receipt_store.py", "_body"): "a test receipt",
     ("workforce/receipt_store.py", "counts_as_pass"): "a test receipt",
     ("workforce/bench.py", "_in_place"): "the bench's run in place",
@@ -374,7 +376,8 @@ CLASSIFIED = {
     ("harness/confirmed_checks.py", "read"): "a proposed check's run",
     ("harness/completion_loop.py", "_read"): "a probe set's run",
     ("harness/completion_loop.py", "record_reproductions"): "a proposed check's run",
-    ("harness/outcome_history.py", "_status"): "not a run report: receipt phase data uses the producer reader",
+    ("harness/outcome_history.py", "_status"): "not a run report: a receipt's bound live reading, or the live reader "
+                                               "over what an older receipt carries",
     ("harness/outcome_history.py", "_observation_status"): "not a run report: a stored observation receipt's own result",
     ("harness/completion_loop.py", "_outcome"): "one case's phases: the reader's own rule, a fixture error unknown",
     ("mcp/review_loop.py", "_step"): "words: completion_loop.read_report, the loop's report.md against its digest, "

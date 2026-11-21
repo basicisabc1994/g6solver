@@ -879,15 +879,18 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
             retained_base = read(at_base=True) if origin.label == 'retained' else None
             if retained_base is not None:
                 activity['runs'].append({'on': 'base commit', **_summary(retained_base)})
-                if retained_base.get('collection'):
-                    activity.update(result='stale', reason='retained check no longer imports or applies at the base',
-                                    seconds=retained_base.get('seconds', 0))
-                    continue
                 if deadline - _clock() < MIN_RUN_S:
                     activity.update(result='skipped', reason=OUT_OF_TIME, seconds=retained_base.get('seconds', 0))
                     continue
             on_patch = read(at_base=False)
             activity["runs"].append({"on": "patch", **_summary(on_patch)})
+            if retained_base is not None and retained_base.get('collection') and on_patch.get('collection'):
+                # One the base cannot collect still runs on the patch (a check of an API the change adds); one
+                # neither tree can collect no longer applies.
+                activity.update(result='stale', reason='retained check no longer imports or applies at the base '
+                                'or on the patch', seconds=round(sum(run.get('seconds', 0.0)
+                                                                     for run in activity['runs']), 3))
+                continue
             at_base, skip = None, ""
             if retained_base is not None:
                 at_base = retained_base
