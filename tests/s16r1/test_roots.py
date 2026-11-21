@@ -125,7 +125,11 @@ SOURCE_SITES = {
     'g6.mcp.consent_controls.public_instructions',
     'g6.mcp.consent_transport._Stream.send',
     'g6.mcp.consent_transport._Stream.send.handoff',
-    'g6.mcp.mission.reply',
+    # 0b400900 (rc-030): the one guarded freeze of a reply moved into core (external_data.freeze_output, which detached
+    # calls); mcp.mission.reply now takes its sources through detached and calls no consent builder itself, so it left
+    # the list. Planted case: tests/core/test_repair_external_guidance.py,
+    # test_default_filter_preserves_existing_source_custody (a bound source survives the freeze).
+    'g6.core.external_data.freeze_output',
     # 2026-11-16 (repair 1): g6_confirm_behaviour's read of a saved review carries that review's recorded sources
     # (planted in tests/s16r3/test_review_binding_reaches_confirm.py)
     'g6.mcp.behaviour._carried',

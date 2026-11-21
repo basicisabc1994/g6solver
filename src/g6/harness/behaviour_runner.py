@@ -7,7 +7,7 @@ The observation.v2 frame carries canonical value digests and byte sizes with bou
 observation.v1 frames keep their comparison semantics; neither format authenticates its producer inside the child.
 """
 from __future__ import annotations
-from g6.core.guidance_builders import confine_record, confine_refusal, confine_refused
+from g6.core.guidance_builders import confine_refusal, confine_refused
 
 import ast
 import hashlib
@@ -733,7 +733,9 @@ def run(copy: Path, data: dict, node: str, *, timeout_s: int, deadline: float) -
             pass
         plan = confine.plan(confine.Confinement(read_write=(str(own),),
                             read_only=confine.interpreter_paths(python), network=False), python)
-        isolation = confine_record(plan)
+        # the observation record is G6's data, read back by its exact-type schema (repo_tests.read_observation): a
+        # text marked for the agent is a str subclass that schema refuses, so it is marked where a reply is built
+        isolation = plan.record()
         if confine_refused(plan) or not plan.backend:
             plan.release()
             raise rt.RepoRefused(ISOLATION_UNAVAILABLE, confine_refusal(plan))

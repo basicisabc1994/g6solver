@@ -15,7 +15,8 @@ def receipt_consumers(paths):
             if isinstance(node, ast.Call):
                 name = node.func.attr if isinstance(node.func, ast.Attribute) else (
                     node.func.id if isinstance(node.func, ast.Name) else '')
-                if name in ('freeze_output', 'output_sources', 'output_metadata', 'read_retained', 'write_retained'):
+                if name in ('freeze_output', 'output_sources', 'output_metadata', 'read_retained', 'write_retained',
+                            'detached'):
                     found.setdefault(path.name + ':' + '.'.join(owners), set()).add(name)
             for child in ast.iter_child_nodes(node):
                 visit(child, owners)
@@ -29,10 +30,14 @@ def test_all_receipt_consumers_render_snapshots_and_no_live_receipt_checks_remai
     live = {site: calls for site, calls in found.items() if calls & {'output_sources', 'output_metadata'}}
     assert not live, ('Live receipt checks must be replaced by a checked snapshot', live)
     assert {site for site, calls in found.items() if 'freeze_output' in calls} == {
-        'cloud_consent.py:prompt_state', 'cloud_consent.py:_source_function.invoke',
-        'cloud_consent.py:protect_reply', 'completion_loop.py:_read', 'completion_loop.py:_snapshot_probe',
-        'consent_controls.py:host_controls', 'jobs.py:Jobs._run', 'mission.py:reply',
-        'review_loop.py:step', 'review_reply.py:finish',
+        'cloud_consent.py:prompt_state', 'completion_loop.py:_read', 'completion_loop.py:_snapshot_probe',
+        'jobs.py:Jobs._run',
+        # 0b400900 (rc-030): the one guarded freeze of a reply is core's (external_data.freeze_output, which detached
+        # calls); the MCP consumers below take their checked snapshot through detached, so they are listed there
+        'external_data.py:freeze_output', 'external_data.py:detached'}
+    assert {site for site, calls in found.items() if 'detached' in calls} == {
+        'cloud_consent.py:_source_function.invoke', 'cloud_consent.py:protect_reply',
+        'consent_controls.py:host_controls', 'mission.py:reply', 'review_loop.py:step', 'review_reply.py:finish',
         # the workflow record's note and view (mcp/workflow.py), converted from live receipt checks to a checked
         # snapshot as 54ddcb9 converted consent_controls.host_controls: each freezes the reply once and edits a detached copy
         'workflow.py:_noted', 'workflow.py:attach'}
