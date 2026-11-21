@@ -152,8 +152,9 @@ class _LeftAlone(Exception):
     """Why setup leaves the person's ``AGENTS.md`` as it is."""
 
 
-def _read(target) -> tuple[int, int, bytes] | None:
-    """The file as G6 may write over it: its identity (device and file number) and bytes; ``None`` when there is no
+def _read(target) -> tuple[int, int, bytes, int] | None:
+    """The file as G6 may write over it: its identity (device and file number), bytes and permission bits (the mode
+    the replacement copies, so a mode changed after the copy is a change too); ``None`` when there is no
     file. ``_LeftAlone`` for a file G6 does not change: a link, junction or other reparse point, not a plain file,
     hard-linked to another name, read-only (no write access, no owner write bit, or Windows' read-only attribute),
     unreadable, or not UTF-8 text without NUL. Setup runs this same check at its first read and again before it
@@ -187,7 +188,7 @@ def _read(target) -> tuple[int, int, bytes] | None:
         raise _LeftAlone("it is not UTF-8 text") from None
     if "\x00" in text:
         raise _LeftAlone("it is not UTF-8 text")
-    return status.st_dev, status.st_ino, data
+    return status.st_dev, status.st_ino, data, stat.S_IMODE(status.st_mode)
 
 
 def _agents_update(data: bytes | None, block: str) -> bytes:

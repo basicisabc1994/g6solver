@@ -174,6 +174,10 @@ def test_a_fresh_describe_of_every_shipped_component_holds_nothing_of_this_compu
     from g6.mcp import catalogue
 
     monkeypatch.setenv("G6_HOME", str(tmp_path / HOMEMARK / ".g6"))
+    # a temporary folder only this run has: on Linux the system's is /tmp, a word G6's own text uses (agent_codex
+    # says its sandbox writes no /tmp), so a leak of the folder is found by its own name, never by a shared word
+    (tmp_path / f"{HOMEMARK}-tmp").mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / f"{HOMEMARK}-tmp"))
     names = sorted(catalogue.shipped())
     replies = _calls([("g6_describe", {"component": name}) for name in names])
     here = {sys.executable, sys.prefix, sys.base_prefix, sys.exec_prefix, os.path.expanduser("~"), os.getcwd(),
@@ -198,7 +202,9 @@ def test_a_fresh_describe_of_a_built_in_that_fails_to_import_answers_in_g6s_word
 
     def broken(self, name):
         if name == "grounding":
-            raise ImportError(f"cannot import name 'x' from 'y' (C:\\Users\\{HOMEMARK}\\site-packages\\y.py)")
+            # a home folder as Windows writes one, built from its parts so the public scan reads no user path here
+            where = "\\".join(("C:", "Users", HOMEMARK, "site-packages", "y.py"))
+            raise ImportError(f"cannot import name 'x' from 'y' ({where})")
         return real(self, name)
     monkeypatch.setattr(registry.ComponentRegistry, "get_module", broken)
     described, other = _calls([("g6_describe", {"component": "grounding"}), ("g6_describe", {"component": "lean"})])

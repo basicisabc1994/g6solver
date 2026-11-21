@@ -143,7 +143,8 @@ async def request_grant(ctx: Any, source: str, provider: str, *, description: st
     capture = policy.current_capture()
     scope = policy.source_id(source)
     from g6.mcp.repair import declined
-    previous = declined(ctx.session, scope, provider)
+    session = getattr(ctx, 'session', None)     # no client context: no dialog can open, and no session holds a decision
+    previous = declined(session, scope, provider)
     if previous:
         return {'status': previous, 'code': policy.REQUIRED}
     allowed, revision = await anyio.to_thread.run_sync(policy.preview, scope, provider)
@@ -165,7 +166,7 @@ async def request_grant(ctx: Any, source: str, provider: str, *, description: st
             'What is sent cannot be recalled. You can revoke future sharing at any time with g6_cloud_revoke. '
             'Accept only if you want this sharing; your supplied name is an attribution, not authenticated identity.')
     if consent.status != 'accepted':
-        declined(ctx.session, scope, provider, consent.status)
+        declined(session, scope, provider, consent.status)
         return {'status': consent.status, 'code': policy.REQUIRED}
     status = await anyio.to_thread.run_sync(policy._grant, scope, provider, revision, consent.answer)
     return {'status': status, 'source': scope, 'provider': provider}
