@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from itertools import combinations
 from threading import Lock, RLock
+from typing import NamedTuple
 
 from g6.core.ledger import canonical, digest
 from g6.core.llm import EmptyRetry, FakeLLM, LLMCaller, LLMError
@@ -61,6 +62,13 @@ def _offline(caller) -> bool:
     return isinstance(caller, FakeLLM) or isinstance(caller, EmptyRetry) and _offline(caller._inner)
 
 
+class TrainingView(NamedTuple):
+    concept: Concept
+    observations: list
+    unique: set
+    duplicates: list  # record ids dropped because another training failure already holds their case
+
+
 def _training_view(concept, cases):
     # Check every header/reference BEFORE touching any case's source content.
     concept = Concept.model_validate_json(canonical(concept.model_dump(mode="json")))
@@ -72,8 +80,19 @@ def _training_view(concept, cases):
         if failure.family != concept.family or case.expected not in {"concern", "no_concern"}:
             raise ValueError("case family or expected verdict does not match the concept")
         failures.append(failure)
-    if (not failures or len({f.case_ref for f in failures}) != len(failures)
-            or {f.record_id for f in failures} != set(concept.from_failures)
+    # Every header is checked first. Then one observation per case: an already-present duplicate record of a
+    # case is dropped and reported, keeping the concept's own record first.
+    chosen, duplicates = {}, []
+    for case in sorted(cases, key=lambda c: c.failure.record_id not in concept.from_failures):
+        if case.failure.case_ref in chosen:
+            duplicates.append(case.failure.record_id)
+        else:
+            chosen[case.failure.case_ref] = case
+    supplied = {case.failure.record_id for case in cases}
+    cases = [case for case in cases if chosen.get(case.failure.case_ref) is case]
+    failures = [case.failure for case in cases]
+    if (not failures or not {f.record_id for f in failures} <= set(concept.from_failures)
+            or not set(concept.from_failures) <= supplied
             or not any(c.expected == "concern" for c in cases)):
         raise ValueError("exactly the concept's nonempty training failures are required")
     observations, literals = [], Counter()
@@ -93,7 +112,7 @@ def _training_view(concept, cases):
         literals.update(unique)
         observations.append(Observation(before, after, extract_facts(before, after, split="training"),
                                         case.expected, case.language, case.framework))
-    return concept, observations, {value for value, count in literals.items() if count == 1}
+    return TrainingView(concept, observations, {value for value, count in literals.items() if count == 1}, duplicates)
 
 
 def _scrub(value, literals):
@@ -145,10 +164,14 @@ class Synthesizer:
                                    model_calls=1 + calls, refusals=refusals)
 
         try:
-            concept, observations, unique = _training_view(concept, cases)
+            concept, observations, unique, duplicates = _training_view(concept, cases)
         except ValueError as error:
             refuse("G6_E_SYNTH_TRAINING_ONLY", str(error))
             return result()
+        if duplicates:
+            refuse("G6_E_SYNTH_DUPLICATE_CASE", f"{len(duplicates)} duplicate training record(s) of an already-held "
+                                                "case dropped: " + ", ".join(duplicates))
+            cases = tuple(case for case in cases if case.failure.record_id not in duplicates)
         if meter is None and self.caller is not None and self.policy.max_synthesis_calls:
             meter = MeteredCaller(self.caller, Budget(max_model_calls=self.policy.max_synthesis_calls))
             self._meters[concept.concept_id] = meter

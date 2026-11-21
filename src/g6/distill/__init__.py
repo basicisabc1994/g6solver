@@ -26,6 +26,7 @@ __g6_refusals__ = {
     "G6_E_SYNTH_CALL_LIMIT": "none",
     "G6_E_SYNTH_CASE_LITERAL": "input",
     "G6_E_SYNTH_DEPENDENCY": "input",
+    "G6_E_SYNTH_DUPLICATE_CASE": "none",
     "G6_E_SYNTH_EXECUTION": "none",
     "G6_E_SYNTH_MODEL": "none",
     "G6_E_SYNTH_NO_CALLER": "person",

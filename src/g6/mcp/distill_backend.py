@@ -7,9 +7,9 @@ requests cannot supply those capabilities, independence or admission receipts.
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timezone
 import json
 from pathlib import Path
+import threading
 import time
 
 from g6.core.door import blocked_reply
@@ -20,6 +20,8 @@ from g6.distill.records import CapabilityExtension, Concept, Evidence, FailureRe
 
 #: How long a measured reading of G6's own import graph and protected set stays fresh in this process.
 LOCAL_TTL_S = 3600.
+#: Distill writes in this process go through one writer at a time (Stores requires one serial writer).
+_WRITER = threading.Lock()
 CASE_FIELDS = ('unit_id', 'provenance', 'files', 'target', 'changed_lines', 'before_tests', 'after_tests', 'known_wrong')
 NEEDS_CASE = ('Distillation learns only from independent training failures. Record the failure with '
               'g6_failure_record and a case_json object holding unit_id, provenance, files, target, changed_lines, '
@@ -43,19 +45,38 @@ def _oracle_case(failure):
         return None
 
 
+def _unseen(case):
+    """An explicitly unseen case (the selection cohort, per case_gate.unit_split) never becomes training data."""
+    from g6.distill.held_out.case_gate import unit_split
+    return unit_split(case.unit_id, case.provenance.cohort, 'intake') == 'unseen'
+
+
 def _labelled(failure, case, result):
-    """An independent training record whose label is G6's own executed oracle result, never the caller's word."""
+    """An independent training record whose label is G6's own executed oracle result, never the caller's word.
+
+    Its identity depends only on the source record, the case and the oracle policy: no clock, no run detail."""
     from g6.distill.held_out.oracle import TEST_PATH
-    body = result.model_dump(mode='json')
+    if result.label != 'positive' or result.case_id != case.case_id or _unseen(case):
+        raise ValueError('only a positive oracle label of a seen case becomes training data')
+    label = {'source_record': failure.record_id, 'case_id': case.case_id, 'label': result.label,
+             'policy_sha256': result.policy_sha256}
     return FailureRecord(kind=failure.kind, family=failure.family, source='experiment', observed_by='independent',
         case_ref=case.case_id, split='training',
-        evidence=[Evidence(kind='oracle', digest=digest(body), receipt=f'oracle:{result.label}:{result.reason}')],
+        evidence=[Evidence(kind='oracle', digest=digest(label), receipt=f'oracle:{result.label}')],
         finding_class=failure.finding_class, met_before=[], g6_commit=failure.g6_commit,
-        observed_at=datetime.now(timezone.utc).isoformat(),
+        observed_at=failure.observed_at,
         provenance={'case': {'before': {TEST_PATH: case.before_tests}, 'after': {TEST_PATH: case.after_tests}},
-                    'labelled_from': failure.record_id, 'oracle': body, 'intake': 'oracle_label',
+                    'labelled_from': failure.record_id, 'cohort': case.provenance.cohort,
+                    'oracle_policy_sha256': result.policy_sha256, 'intake': 'oracle_label',
                     'scope': 'client_request', **({'other': failure.provenance['other']}
                                                   if 'other' in failure.provenance else {})})
+
+
+def _derived(family, source_id):
+    """The independent training record already labelled from ``source_id``, if any (read at write time)."""
+    return next((f for f in Stores().for_model(FailureRecord).list()
+                 if f.family == family and f.observed_by == 'independent' and f.split == 'training'
+                 and f.provenance.get('labelled_from') == source_id), None)
 
 
 def _put_once(record):
@@ -163,6 +184,9 @@ class Service:
         ready, pending = {}, []
         for failure in selected:
             if failure.observed_by == 'independent' and failure.split == 'training':
+                if failure.provenance.get('cohort') == 'selection':
+                    return refused('G6_E_SYNTH_TRAINING_ONLY', 'An unseen (selection cohort) case is never training '
+                                                               'data.')
                 ready[failure.record_id] = failure
             elif failure.record_id in derived:
                 ready[derived[failure.record_id].record_id] = derived[failure.record_id]
@@ -185,6 +209,18 @@ class Service:
             from g6.workforce.repo_tests import RepoRefused
             failures, labels = list(ready.values()), []
             for failure, case in pending:
+                if _unseen(case):
+                    labels.append({'record_id': failure.record_id, 'label': 'unseen',
+                                   'reason': 'selection cohort: never training data'})
+                    continue
+                # A start queued beside this one may have labelled the record already: read again before running.
+                with _WRITER:
+                    existing = _derived(family, failure.record_id)
+                if existing is not None:
+                    labels.append({'record_id': failure.record_id, 'label': 'positive', 'reason': 'already_labelled',
+                                   'training_record_id': existing.record_id})
+                    failures.append(existing)
+                    continue
                 workspace = state_path('distill', 'oracle')
                 workspace.mkdir(parents=True, exist_ok=True)
                 try:
@@ -194,11 +230,20 @@ class Service:
                                                 'none is available here; no record was labelled.'), 'labels': labels}
                 row = {'record_id': failure.record_id, 'label': result.label, 'reason': result.reason}
                 if result.label == 'positive':
-                    training = _labelled(failure, case, result)
-                    _put_once(training)
+                    with _WRITER:
+                        training = _derived(family, failure.record_id) or _labelled(failure, case, result)
+                        _put_once(training)
                     row['training_record_id'] = training.record_id
                     failures.append(training)
                 labels.append(row)
+            # One training failure per case: a duplicate already present is reported, never learnt from twice.
+            unique, duplicates = {}, []
+            for failure in failures:
+                if failure.case_ref in unique:
+                    duplicates.append(failure.record_id)
+                else:
+                    unique[failure.case_ref] = failure
+            failures = list(unique.values())
             if not failures:
                 return {**refused('G6_E_SYNTH_TRAINING_ONLY', "G6's oracle labelled no supplied case weakened, "
                                                               'so there is no training failure to learn from.'),
@@ -210,7 +255,7 @@ class Service:
                         and c.status == 'proposed']
             concept = concepts[-1] if concepts else propose_concept(cases, synthesizer=synth)
             if isinstance(concept, dict):
-                return {**concept, 'labels': labels}
+                return {**concept, 'labels': labels, 'duplicates': duplicates}
             _put_once(concept)
             result = synth.synthesise(concept, cases)
             for candidate in result.candidates:
@@ -221,7 +266,7 @@ class Service:
             from g6.distill.library import Library
             decisions = decide_batch(result.candidates, Library(), self.registration) if result.candidates else ()
             return {'concept_id': concept.concept_id, **result.model_dump(mode='json'),
-                    'decisions': [asdict(d) for d in decisions], 'labels': labels}
+                    'decisions': [asdict(d) for d in decisions], 'labels': labels, 'duplicates': duplicates}
         return self.jobs.start(run)
 
     def distill_job(self, job_id, detail='compact'):

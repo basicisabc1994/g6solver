@@ -7,12 +7,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from g6.core import confine, ledger
 from g6.core.ledger import canonical, digest
-from g6.workforce import mutation_check, repo_tests
 from pydantic import Field, model_validator
 
-from . import case_gate, oracle
+from . import oracle
 from .case_gate import CaseRecord, CaseRef, Record, SHA256, SPLIT_RULE, cut, unit_split
 
 
@@ -40,12 +38,12 @@ def strict_json(data: bytes) -> Any:
 
 
 def oracle_digest() -> str:
-    """Pin executable judging dependencies as well as the label function."""
-    modules = (case_gate, oracle, mutation_check, repo_tests, confine, ledger)
+    """Pin executable judging dependencies as well as the label function (judging.ORACLE_PINS, which the merge
+    gate's protected set also reads)."""
+    from g6.distill.judging import ORACLE_PINS
     # Pin the installed implementation even when a study uses a compatibility entry point.
-    files = {m.__name__: Path(m.__file__) for m in modules}
-    files.update({"sealed_gate": Path(__file__).with_name("sealed_gate.py"),
-                  "registration_gate": Path(__file__), "operators": Path(__file__).parents[1] / "operators.py"})
+    package = Path(__file__).resolve().parents[2]
+    files = {name: package / path.removeprefix("src/g6/") for name, path in ORACLE_PINS.items()}
     return digest({name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in files.items()})
 
 
