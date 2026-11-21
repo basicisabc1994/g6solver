@@ -160,11 +160,11 @@ def test_the_writer_seams_g6_counts_on_are_as_relied_on():
     import g6.mcp
 
     assert list(inspect.signature(sdk.stdio_server).parameters) == ["stdin", "stdout"]
-    writer = inspect.getsource(sdk.stdio_server)
-    lines = ["json = session_message.message.model_dump_json(by_alias=True, exclude_none=True)",
-             'await stdout.write(json + "\\n")', "await stdout.flush()"]
-    at = [writer.find(line) for line in lines]
-    assert -1 not in at and at == sorted(at), "the SDK's stdio writer changed: g6.mcp.stdio keys each line by it"
+    reader = inspect.getsource(sdk.stdio_server)
+    lines = ["async for line in stdin", "types.JSONRPCMessage.model_validate_json(line)",
+             "await read_stream_writer.send(session_message)"]
+    at = [reader.find(line) for line in lines]
+    assert -1 not in at and at == sorted(at), "the SDK's stdio reader changed: g6.mcp.stdio reads stdin through it"
     run = inspect.getsource(FastMCP.run_stdio_async)
     for part in ("self._lifespan_manager()", "stdio_server()", "self._mcp_server.run(", "NotificationOptions(",
                  "tools_changed=True"):

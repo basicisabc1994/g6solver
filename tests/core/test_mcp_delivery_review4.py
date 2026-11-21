@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 
 import anyio
+import pytest
 from fastmcp.tools.tool import ToolResult
 from mcp import types
 from mcp.shared.message import SessionMessage
@@ -51,7 +52,11 @@ async def send(outbound, session, request_id, reply, record):
         transport._OUTBOUND.reset(token)
 
 
-def test_short_middle_write_does_not_count_the_wrong_reply(monkeypatch):
+@pytest.mark.parametrize("accepted", ["part of the line", "none of the line"])
+def test_short_middle_write_does_not_count_the_wrong_reply(monkeypatch, accepted):
+    """Three identical lines; the second's first write is short. A write that took part of the line is continued, so
+    each reply counts on its own whole line and the last count is the third's. A write that took none of it ends the
+    connection: the second and third count nothing, and the last count stays the first's."""
     rows = []
     monkeypatch.setattr(repair, "_log", rows.append)
     session = Session()
@@ -61,31 +66,46 @@ def test_short_middle_write_does_not_count_the_wrong_reply(monkeypatch):
         flushed = [asyncio.Event() for _ in arguments]
 
         class Output:
-            lines = []
+            def __init__(self):
+                self.lines, self.writes = [""], 0        # the text of each line, split where it was flushed
 
             async def write(self, data):
-                self.lines.append(data)
-                return 0 if len(self.lines) == 2 else len(data)
+                self.writes += 1
+                if self.writes == 2:
+                    data = data[:len(data) // 2] if accepted == "part of the line" else ""
+                self.lines[-1] += data
+                return len(data)
 
             async def flush(self):
-                flushed[len(self.lines) - 1].set()
+                self.lines.append("")
+                flushed[len(self.lines) - 2].set()
 
         output = Output()
-        async with stdio_server(stdin=EmptyInput(), stdout=output) as (_, outbound):
-            for index, args in enumerate(arguments):
-                reply, record = refused(session, args)
-                await send(outbound, session, 7, reply, record)
-                with anyio.fail_after(5):
+        replies = [refused(session, args) for args in arguments]     # made before any is counted: identical lines
+        with anyio.fail_after(5):
+            async with stdio_server(stdin=EmptyInput(), stdout=output) as (_, outbound):
+                for index, (reply, record) in enumerate(replies):
+                    await send(outbound, session, 7, reply, record)
                     await flushed[index].wait()
-            await outbound.aclose()
-        assert output.lines[1] == output.lines[2]
+                await outbound.aclose()
+            if accepted == "none of the line":
+                reply, record = replies[2]
+                await send(outbound, session, 7, reply, record)    # the connection ended: never written
+        return output
 
-    asyncio.run(run())
+    output = asyncio.run(run())
     state = repair._state(session)[("g6_find", "G6_E_INPUT_VALIDATION")]
-    assert state["digest"] == repair._digest(arguments[2]), (
-        "the third line was written, but the short second write was counted",
-        state,
-    )
+    if accepted == "part of the line":
+        assert output.writes == 4 and output.lines[3] == "", output.lines
+        assert output.lines[0] == output.lines[1] == output.lines[2] and output.lines[0].endswith("\n")
+        assert [r["event"] for r in rows].count("refused") == 3 and {r["evidence"] for r in rows} == {"written"}, rows
+        expected = arguments[2]
+    else:
+        assert output.writes == 2 and output.lines[1] == "", output.lines
+        assert [(r["event"], r["evidence"]) for r in rows] == [("refused", "written")], rows
+        expected = arguments[0]
+    assert state["digest"] == repair._digest(expected), (
+        "a count was given to a reply whose own whole line was not written", state)
 
 
 def test_cancelled_send_does_not_steal_a_later_identical_line(monkeypatch):
@@ -148,39 +168,39 @@ def test_cancelled_send_does_not_steal_a_later_identical_line(monkeypatch):
     )
 
 
-def test_a_failed_flush_discards_its_own_callback_and_no_other():
-    """Two sends with identical text keep a callback each; the first's flush fails, so only the second is counted."""
-    import pytest
-
-    from g6.mcp.stdio import WrittenStdout
-
-    fired, seen = [], transport.Witness()
-    first, second = (SessionMessage(transport.Tokened.model_validate({"jsonrpc": "2.0", "id": 1, "result": {}}))
-                     for _ in range(2))
-    seen.expect(first, lambda: fired.append("first"))
-    seen.expect(second, lambda: fired.append("second"))
+def test_a_failed_flush_discards_its_own_callback_and_no_other(monkeypatch):
+    """Two sends with identical text keep a callback each. The first's flush fails: that ends the connection, so the
+    first is not counted, its failure fires no other send's callback, and the second, sent after, is never written
+    and never counted."""
+    rows = []
+    monkeypatch.setattr(repair, "_log", rows.append)
+    session = Session()
 
     class Output:
-        flushes = 0
+        def __init__(self):
+            self.writes, self.flushes = [], 0
 
         async def write(self, data):
+            self.writes.append(data)
             return len(data)
 
         async def flush(self):
             self.flushes += 1
-            if self.flushes == 1:
-                raise OSError("the pipe closed")
-
-    out = WrittenStdout(Output(), seen)
+            raise OSError("the pipe closed")
 
     async def run():
-        lines = [m.message.model_dump_json(by_alias=True, exclude_none=True) + "\n" for m in (first, second)]
-        assert lines[0] == lines[1]
-        await out.write(lines[0])
-        with pytest.raises(OSError):
-            await out.flush()
-        await out.write(lines[1])
-        await out.flush()
+        output = Output()
+        first, first_record = refused(session, {"query": "claim", "extra": 1})
+        second, second_record = refused(session, {"query": "claim", "extra": 2})
+        assert first == second
+        with anyio.fail_after(5):
+            async with stdio_server(stdin=EmptyInput(), stdout=output) as (_, outbound):
+                await send(outbound, session, 7, first, first_record)
+                await anyio.sleep_forever()               # the failed flush ends the connection
+            await send(outbound, session, 7, second, second_record)
+        return output
 
-    asyncio.run(run())
-    assert fired == ["second"], fired
+    output = asyncio.run(run())
+    assert len(output.writes) == 1 and output.flushes == 1, output.writes
+    assert rows == [], rows
+    assert ("g6_find", "G6_E_INPUT_VALIDATION") not in repair._state(session)

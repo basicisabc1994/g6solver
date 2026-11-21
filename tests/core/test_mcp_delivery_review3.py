@@ -46,31 +46,31 @@ async def send(outbound, session, request_id, reply, record):
 
 
 def test_short_stdout_write_is_not_written_evidence(monkeypatch):
+    """stdout never takes a line's last character: the short write is continued, the rest is refused, and the line
+    never completes. That ends the connection; the reply is neither flushed nor counted."""
     rows = []
     monkeypatch.setattr(repair, "_log", rows.append)
     session = Session()
 
     async def run():
-        flushed = asyncio.Event()
-
         class ShortOutput:
-            accepted = ""
+            accepted, flushes = "", 0
 
             async def write(self, data):
                 self.accepted += data[:-1]
                 return len(data) - 1
 
             async def flush(self):
-                flushed.set()
+                self.flushes += 1
 
         output = ShortOutput()
         reply, record = repair.observed("g6_invoke", {"a": 1}, BAD, session)
-        async with stdio_server(stdin=EmptyInput(), stdout=output) as (_, outbound):
-            await send(outbound, session, 1, reply, record)
-            with anyio.fail_after(5):
-                await flushed.wait()
-            await outbound.aclose()
-        assert output.accepted and not output.accepted.endswith("\n")
+        with anyio.fail_after(5):
+            async with stdio_server(stdin=EmptyInput(), stdout=output) as (_, outbound):
+                await send(outbound, session, 1, reply, record)
+                await anyio.sleep_forever()               # the line that never completes ends the connection
+        assert output.accepted and not output.accepted.endswith("\n") and output.flushes == 0
+        assert outbound not in transport._WITNESSES
 
     asyncio.run(run())
     assert rows == [], f"incomplete line was recorded: {rows}"

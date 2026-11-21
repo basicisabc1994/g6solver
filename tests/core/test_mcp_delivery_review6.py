@@ -4,6 +4,7 @@ import asyncio
 from contextlib import suppress
 
 import anyio
+import pytest
 from fastmcp import Context, FastMCP
 from mcp import types
 
@@ -75,9 +76,11 @@ def test_disconnect_releases_buffered_reply_callback(monkeypatch):
             seen.discard(key)
 
 
-def test_closing_g6s_stdio_server_discards_an_unwritten_replys_callback(monkeypatch):
-    """The stdio connection ends while a refusal's write has not finished: its callback goes, unfired, with the
-    connection's witness, so the write completing after the connection closed counts nothing."""
+@pytest.mark.parametrize("ending", ["the write fails", "the connection is cancelled"])
+def test_closing_g6s_stdio_server_discards_an_unwritten_replys_callback(monkeypatch, ending):
+    """The stdio connection ends while a refusal's write has not finished. G6's writer is part of the connection, so
+    the connection closes only once that write ended; when it ends without the whole line written and flushed (the
+    write fails, or the connection is cancelled), its callback goes, unfired, with the connection's witness."""
     from types import SimpleNamespace
 
     from fastmcp.tools.tool import ToolResult
@@ -102,30 +105,33 @@ def test_closing_g6s_stdio_server_discards_an_unwritten_replys_callback(monkeypa
         class Output:
             async def write(self, data):
                 started.set()
-                await release.wait()                  # the line finishes only after the connection closed
-                return len(data)
+                await release.wait()                  # the line is still being written as the connection closes
+                raise OSError("the pipe closed")
 
             async def flush(self):
-                pass
+                raise AssertionError("write failed before flush")
 
         reply, record = repair.observed("g6_invoke", {"a": 1}, {"ok": False, "error": "[G6_E_DESIGN_BAD_PATH] x"},
                                         session)
         body = transport.call_body(ToolResult(content=reply))
         ticket = transport.Ticket((), "openai:codex", frozenset(), transport.digest(body), delivered=record)
         packet = SessionMessage(types.JSONRPCMessage(types.JSONRPCResponse(jsonrpc="2.0", id=1, result=body)))
-        async with stdio_server(stdin=EmptyInput(), stdout=Output()) as (_, outbound):
-            seen = transport._WITNESSES[outbound]
-            token = transport._OUTBOUND.set(ticket)
-            try:
-                await transport._Stream(outbound, session).send(packet)
-            finally:
-                transport._OUTBOUND.reset(token)
-            with anyio.fail_after(5):
+        with anyio.fail_after(5), anyio.CancelScope() as connection:
+            async with stdio_server(stdin=EmptyInput(), stdout=Output()) as (_, outbound):
+                seen = transport._WITNESSES[outbound]
+                token = transport._OUTBOUND.set(ticket)
+                try:
+                    await transport._Stream(outbound, session).send(packet)
+                finally:
+                    transport._OUTBOUND.reset(token)
                 await started.wait()
-            assert seen._expected and seen._taken         # taken by the writer, not yet written
-            await outbound.aclose()
-            # the SDK waits for its writer as the connection closes; the write ends just after G6 closed the witness
-            asyncio.get_running_loop().call_later(0.2, release.set)
+                assert seen._expected and seen._taken         # taken by the writer, not yet written
+                await outbound.aclose()
+                if ending == "the connection is cancelled":
+                    connection.cancel()
+                else:
+                    # the connection waits for G6's writer as it closes; the write then fails
+                    asyncio.get_running_loop().call_later(0.2, release.set)
         return seen, outbound
 
     seen, outbound = asyncio.run(run())
