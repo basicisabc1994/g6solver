@@ -12,10 +12,11 @@ log level, over this ``stdio_server``. ``tests/core/test_mcp_delivery_review2.py
 """
 from __future__ import annotations
 
+import os
 import sys
 import threading
 from contextlib import asynccontextmanager, suppress
-from io import TextIOWrapper
+from io import TextIOWrapper, UnsupportedOperation
 
 import anyio
 import anyio.lowlevel
@@ -60,16 +61,64 @@ async def _writer(messages, stdout, stream, seen: Witness, connection: anyio.Can
         connection.cancel()
     finally:
         unwitness(stream)
+        connection.cancel()              # writer EOF also ends the parser, even while stdin stays open
 
 
-def _read_lines(readline, lines, token) -> None:
-    """stdin's read loop, in G6's daemon thread: each line handed to ``lines`` on the event loop, then the end of
-    input. Python cannot interrupt a blocked read, so the connection never waits on this thread: once the connection
-    ended, the thread ends at its next line or end of input, and as a daemon it never holds the process open."""
+def _raw_lines(fd, stopped):
+    """Frame raw input with the text reader's LF, CRLF and CR line endings, including an unterminated final line.
+
+    Keep partial UTF-8 bytes until the line is complete. Like the old readline(), there is no line-size cap. Only
+    os.read waits on the client: no Python buffered stream lock can be held during that wait, on Windows or POSIX.
+    """
+    pending = bytearray()
+    scan = 0
+    while not stopped.is_set():
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            if pending:
+                yield bytes(pending)
+            return
+        pending.extend(chunk)
+        start = 0
+        while scan < len(pending):
+            byte = pending[scan]
+            if byte == 13 and scan + 1 == len(pending):
+                break                   # a CR at the chunk boundary may belong to a CRLF
+            scan += 1
+            if byte in (10, 13):
+                if byte == 13 and pending[scan] == 10:
+                    scan += 1
+                yield bytes(pending[start:scan])
+                start = scan
+        if start:
+            del pending[:start]
+            scan -= start
+
+
+def _read_lines(fd, lines, token, stopped) -> None:
+    """Hand each raw line to the SDK parser without ever reading a Python stream. A blocked raw read may outlive
+    the connection, but the daemon holds no buffered reader lock, so normal interpreter shutdown can finish."""
     try:
-        while line := readline():
+        for raw in _raw_lines(fd, stopped):
+            try:
+                line = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                line = raw              # the SDK returns its UTF-8/JSON ValidationError; never replace bad bytes
             anyio.from_thread.run(lines.send, line, token=token)
     except BaseException:  # noqa: BLE001 - a read error, or the connection or its event loop ended: input ends here
+        pass
+    finally:
+        os.close(fd)                    # only this thread closes its raw descriptor, after any blocked read ends
+        with suppress(BaseException):
+            anyio.from_thread.run_sync(lines.close, token=token)
+
+
+def _read_file_lines(readline, lines, token, stopped) -> None:
+    """Keep descriptor-less files on their own readline interface without waiting for a blocked read at teardown."""
+    try:
+        while not stopped.is_set() and (line := readline()):
+            anyio.from_thread.run(lines.send, line, token=token)
+    except BaseException:  # noqa: BLE001 - a read error, or an ended connection or event loop: input ends here
         pass
     finally:
         with suppress(BaseException):
@@ -78,21 +127,45 @@ def _read_lines(readline, lines, token) -> None:
 
 @asynccontextmanager
 async def _lines(stdin):
-    """``stdin`` as the SDK's reader iterates it. A file (the process's stdin by default, or one wrapped by
-    ``anyio.wrap_file``) is read by G6's own daemon thread (``_read_lines``), so a connection that ends stops reading
-    at once, the client's stdin still open. Any other async iterable already reads on the event loop: it is kept."""
+    """Use a raw duplicate for files with descriptors, their own readline otherwise. Keep other async iterables."""
     if stdin is None:
-        source = TextIOWrapper(sys.stdin.buffer, encoding="utf-8", errors="replace")
+        source = sys.stdin
     elif isinstance(stdin, anyio.AsyncFile):
         source = stdin.wrapped
     else:
         yield stdin
         return
+    fd = None
+    fileno = getattr(source, "fileno", None)
+    if callable(fileno):
+        try:
+            fd = fileno()
+        except (UnsupportedOperation, OSError, ValueError):
+            pass
+    if fd is None:
+        sender, receiver = anyio.create_memory_object_stream(0)
+        stopped = threading.Event()
+        threading.Thread(target=_read_file_lines,
+                         args=(source.readline, sender, anyio.lowlevel.current_token(), stopped),
+                         name="g6-stdin-reader", daemon=True).start()
+        try:
+            with receiver:
+                yield receiver
+        finally:
+            stopped.set()
+        return
+    # Windows' CRT also locks a descriptor during os.read. Give the thread its own descriptor so finalization of
+    # the caller's file cannot wait on that CRT lock. No Python file object ever owns this duplicate.
+    fd = os.dup(fd)
     sender, receiver = anyio.create_memory_object_stream(0)
-    threading.Thread(target=_read_lines, args=(source.readline, sender, anyio.lowlevel.current_token()),
+    stopped = threading.Event()
+    threading.Thread(target=_read_lines, args=(fd, sender, anyio.lowlevel.current_token(), stopped),
                      name="g6-stdin-reader", daemon=True).start()
-    with receiver:
-        yield receiver
+    try:
+        with receiver:
+            yield receiver
+    finally:
+        stopped.set()                    # never join a reader blocked on outside input
 
 
 @asynccontextmanager
