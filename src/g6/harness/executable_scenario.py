@@ -133,6 +133,7 @@ class Scenario:
     def _wrapper(self, option: str) -> str:
         """A portable reproduction wrapper; G6 itself executes program, without loading this pytest wrapper."""
         import inspect
+        from g6 import _decoder_limits
         from g6.harness import behaviour_runner as runner
 
         helpers = "\n\n".join(inspect.getsource(one) for one in (
@@ -140,7 +141,10 @@ class Scenario:
             runner._unique, runner._encoded, runner._fingerprint, runner._valid_encoding,
             runner._matches_encoding, runner.read_frame, runner.finish))
         prefix, suffix = _program_parts()
-        return ("import hashlib, json, struct, subprocess, tempfile, sys, os\n"
+        # The portable check runs without G6 installed. Carry the same leaf decoder's source, including its imports,
+        # rather than leaving the copied comparison dependent on a host-only name.
+        return (inspect.getsource(_decoder_limits) + "\n_decode_json = json_value\n"
+                + "import hashlib, json, struct, subprocess, tempfile, sys, os\n"
                 "TEMPLATE = 'example.v1'\nBINDINGS = " + ascii({"scenario": self.record.decode("ascii")})
                 + "\nBINDINGS['option'] = " + ascii(option)
                 + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = " + ascii(prefix)
