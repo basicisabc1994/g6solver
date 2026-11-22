@@ -279,6 +279,46 @@ def test_the_schema_version_is_part_of_the_record() -> None:
 # --- the ledger: references, duplicates, and a chain that notices tampering ------------------------------------------
 
 
+@pytest.mark.parametrize("over,field", [
+    ({"calibration_ref": True}, "calibration_ref"),
+    ({"applies_to_sha256": "missing"}, "applies_to_sha256"),
+    ({"evaluator_lower_bound": True}, "evaluator_lower_bound"),
+    ({"evaluator_lower_bound": float("nan")}, "evaluator_lower_bound"),
+    ({"evaluator_lower_bound": -0.1}, "evaluator_lower_bound"),
+    ({"population": None}, "population"),
+    ({"checked_statement": []}, "checked_statement"),
+])
+def test_premise_fields_are_typed_and_do_not_accept_unknown_as_a_value(over, field):
+    with pytest.raises(ValueError, match=field):
+        ev(**over)
+
+
+def test_premise_fields_survive_round_trip_and_change_record_identity():
+    base = ev()
+    for field, value in (("calibration_ref", "receipt"), ("applies_to_sha256", "c" * 64),
+                         ("population", "tasks"), ("sample_unit", "task"), ("evaluator_lower_bound", 0.0),
+                         ("checked_statement", "lemma L"), ("scope_mapping_ref", "mapping")):
+        record = ev(**{field: value})
+        assert EvidenceRecord.from_dict(record.to_dict()) == record
+        assert record.sha256 != base.sha256
+
+
+def test_a_vacuous_error_bound_remains_a_valid_declaration():
+    assert ev(oracle_error_bound=1.0).oracle_error_bound == 1.0
+
+
+@pytest.mark.parametrize("target", [True, -0.1, 1.1, float("nan")])
+def test_true_correctness_target_is_a_typed_probability(target):
+    from g6.research.echa import ClaimRecord
+
+    body = {"claim_id": "c", "subject": "s", "predicate_id": "p", "scope": "cases", "breadth": "covered_cases",
+            "estimand": "true_correctness", "population": "tasks", "sample_unit": "task", "provenance": "study",
+            "assumptions": ["sampling"], "known_limitations": ["cases"], "versions": {"v": "1"},
+            "evidence_ids": ["e"], "standard_sha256": STD.standard_sha256, "target": target}
+    with pytest.raises(ValueError, match="target"):
+        ClaimRecord(**body)
+
+
 def test_evidence_must_name_a_standard_the_ledger_holds(on) -> None:
     ledger = Ledger()
     with pytest.raises(LedgerError, match="standard"):

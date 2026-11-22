@@ -8,7 +8,9 @@ with no recorded negative control is a structural protection (ruling R-1) and su
 person is a lead, never support, and reviews that share a group are one voice. A partial invariant that passed supports a
 claim about the cases it covered and never a general one. An independent failure refutes the claim on its scope. Evidence
 about another standard, another predicate or a fixture with a recorded incident does not count. A claim about true
-correctness is not identified unless every active oracle's error is bounded, and the bounds of separate oracles add.
+correctness is not identified unless every active oracle has an independent, population-matched calibration receipt,
+and the bounds of separate oracles add. Supplied numbers remain declarations. Positive true correctness also needs
+a sampling-adjusted evaluator lower bound from those receipts, corrected by their errors, strictly above its target.
 Everything else is ``inconclusive``, with the reasons.
 
 G6 0.3 (slice 2) closes the two places where this rule differed from the issuer's, ``g6.evidence.certificate``:
@@ -73,6 +75,32 @@ def _once(items: list[str], item: str) -> None:
         items.append(item)
 
 
+def _premise(ledger: Any, rec: EvidenceRecord, claim: ClaimRecord, ref: str, purpose: str,
+             contaminated: set) -> EvidenceRecord | None:
+    """Resolve independent executable support for an exact record and population, never from explanatory text.
+
+    This uses the research ledger's existing trusted-input/independence boundary. It issues no product status.
+    Both evaluator identities must name bytes; different declared labels cannot establish separate assessors.
+    """
+    try:
+        premise = EvidenceRecord.from_dict(ledger.get("evidence", ref))
+        parts, refused = about(premise)
+        original, original_refused = about(rec)
+        if (refused or original_refused or premise.evidence_id != ref or premise.purpose != purpose
+                or premise.result != "pass" or premise.oracle_category not in EXECUTABLE
+                or not premise.independent or premise.independence_group == rec.independence_group
+                or not original.check_sha or not parts.check_sha or parts.check_sha == original.check_sha
+                or parts.artefact != original.artefact or parts.standard != original.standard
+                or parts.predicates != original.predicates or premise.applies_to_sha256 != rec.sha256
+                or premise.population != claim.population or premise.sample_unit != claim.sample_unit
+                or rec.population != claim.population or rec.sample_unit != claim.sample_unit
+                or premise.fixture_version in contaminated or not _control_holds(ledger, premise, contaminated)):
+            return None
+        return premise
+    except (KeyError, ValueError, TypeError, RecursionError, MemoryError):
+        return None
+
+
 def evaluate_claim(ledger: Any, claim_id: str) -> dict:
     try:
         claim = ClaimRecord.from_dict(ledger.get("claim", claim_id))
@@ -132,28 +160,49 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
     unexplained = [r.evidence_id for r in cited if r.oracle_category in EXECUTABLE and r.result == "fail"
                    and r.evidence_id in structural]
     bounds: dict[tuple[tuple[str, str], str], float] = {}
+    calibrations: dict[str, EvidenceRecord] = {}
     for rec in active:
-        if rec.oracle_error_bound is not None:
+        cal = _premise(ledger, rec, claim, rec.calibration_ref, "calibration", contaminated)
+        if cal is not None and rec.oracle_error_bound is not None and cal.oracle_error_bound == rec.oracle_error_bound:
+            calibrations[rec.evidence_id] = cal
             key = (evaluator_of(rec), rec.independence_group)
             bounds[key] = max(bounds.get(key, 0.0), float(rec.oracle_error_bound))
-    identified = bool(active) and all(r.oracle_error_bound is not None for r in active)
+    identified = bool(active) and all(r.evidence_id in calibrations for r in active)
+    pooled_bound = sum(bounds.values()) if identified else None
+    lowers = [calibrations[r.evidence_id].evaluator_lower_bound for r in passing if r.evidence_id in calibrations]
+    corrected_lower = (max(0.0, min(lowers) - pooled_bound)
+                       if identified and passing and all(v is not None for v in lowers) else None)
+    general = False
+    for rec in passing:
+        mapping = _premise(ledger, rec, claim, rec.scope_mapping_ref, "scope_mapping", contaminated)
+        if (rec.oracle_category == "FORMAL_CHECK" and rec.checked_statement and mapping is not None
+                and mapping.checked_statement == rec.checked_statement and mapping.scope == claim.scope):
+            general = True
 
     if refuting:
         result = "unsupported"
     elif passing:
         result = "supported"
-        if claim.breadth == "general" and not any(r.oracle_category == "FORMAL_CHECK" for r in passing):
+        if claim.breadth == "general" and not general:
             result = "inconclusive"
-            _once(reasons, "partial_evidence_cannot_support_a_general_claim")
+            _once(reasons, "checked_statement_or_scope_mapping_missing")
+            if not any(r.oracle_category == "FORMAL_CHECK" for r in passing):
+                _once(reasons, "partial_evidence_cannot_support_a_general_claim")
         if voices < claim.requires_independent_groups:
             result = "inconclusive"
             _once(reasons, "independence_not_met")
         if unexplained:  # a check that failed and was never shown able to fail is not outweighed by one that passed
             result = "inconclusive"
             _once(reasons, "unexplained_failure")
-        if claim.estimand == "true_correctness" and not all(r.oracle_error_bound is not None for r in passing):
-            result = "inconclusive"
-            _once(reasons, "oracle_error_not_bounded")
+        if claim.estimand == "true_correctness":
+            if not identified:
+                result = "inconclusive"
+                _once(reasons, "oracle_error_not_calibrated")
+                if any(r.oracle_error_bound is None for r in active):
+                    _once(reasons, "oracle_error_not_bounded")
+            if claim.target is None or corrected_lower is None or corrected_lower <= claim.target:
+                result = "inconclusive"
+                _once(reasons, "corrected_lower_bound_does_not_exceed_target")
     else:
         result = "inconclusive"
         _once(reasons, "no_active_evidence")
@@ -167,7 +216,7 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
         for item in (*rec.known_limitations, f"covers only: {about(rec)[0].scope}"):
             _once(limits, item)
     if any(r.oracle_category == "FORMAL_CHECK" for r in passing):
-        _once(limits, "a proof holds relative to its formalisation, which may not capture the intended requirement")
+        _once(limits, "a checked statement holds relative to its formalisation, which may not capture the intended requirement")
     if any(r.oracle_category == "PARTIAL_FALSIFIER" for r in passing):
         _once(limits, "partial evidence: a passing invariant does not establish general correctness")
     if structural:
@@ -176,11 +225,14 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
     roles = {**{r.evidence_id: "active" for r in active}, **{eid: "structural" for eid in structural}}
     return {"claim_id": claim.claim_id, "predicate_id": claim.predicate_id, "scope": claim.scope,
             "subject_bound": subject is not None, "breadth": claim.breadth, "estimand": claim.estimand,
+            "effective_breadth": "general" if claim.breadth == "general" and general else "covered_cases",
             "result": result, "reasons": reasons,
             "limits": limits, "independent_groups": voices, "active_evidence": [r.evidence_id for r in active],
             "refuting_evidence": [r.evidence_id for r in refuting], "structural": structural, "leads": leads,
             "identification": "identified" if identified else "not_identified",
-            "oracle_error_bound": sum(bounds.values()) if identified else None,
+            "oracle_error_bound": pooled_bound,
+            "declared_oracle_error_bounds": {r.evidence_id: r.oracle_error_bound for r in active},
+            "target": claim.target, "corrected_lower_bound": corrected_lower,
             "evidence": [{"evidence_id": r.evidence_id, "category": r.oracle_category, "result": r.result,
                           "role": roles.get(r.evidence_id, "lead" if r.evidence_id in leads else "not_support")}
                          for r in cited]}

@@ -311,6 +311,8 @@ BINDING_READS = {
     ("claims.py", "_control_holds", "about(rec)"): AFTER,
     ("claims.py", "_control_holds", "evaluator_of(control)"): AFTER,
     ("claims.py", "_control_holds", "evaluator_of(rec)"): AFTER,
+    ("claims.py", "_premise", "about(premise)"): REFUSED,
+    ("claims.py", "_premise", "about(rec)"): REFUSED,
     ("claims.py", "evaluate_claim", "about(rec)"): REFUSED + "; its later read, for the limits, is of an active record",
     ("claims.py", "evaluate_claim", "evaluator_of(r)"): AFTER,
     ("claims.py", "evaluate_claim", "evaluator_of(rec)"): AFTER,
@@ -329,6 +331,8 @@ BYTES = "compared by the digest the accessor gives (About, or evaluator_of)"
 #: Every identity comparison in research/echa, with what it compares.
 COMPARISONS = {
     ("claims.py", "_control_holds", "evaluator_of(control) == evaluator_of(rec)"): BYTES,
+    ("claims.py", "_premise", "parts.check_sha == original.check_sha"): BYTES + ": separate premise assessor",
+    ("claims.py", "_premise", "parts.artefact != original.artefact"): BYTES + ": exact premise subject",
     ("claims.py", "evaluate_claim", "bound != subject"): BYTES + ": the record's artefact and the claim's subject",
     ("claims.py", "evaluate_claim", "subject is not None"): "whether the claim names an artefact digest",
     ("claims.py", "evaluate_claim", "{evaluator_of(r) for r in passing if r.independent}"): BYTES + ": distinct ones",

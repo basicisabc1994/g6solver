@@ -13,6 +13,8 @@ never supplied by the person writing it. What must hold, each with a case that c
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from g6.research.echa import (
@@ -27,6 +29,8 @@ from g6.research.echa.adapters import (
     evidence_from_mechanism_record,
     known_unknowns,
 )
+from g6.research.echa.custody import CheckBinding
+from g6.research.echa.records import canonical
 
 FX = "ab" * 32
 STD = StandardRef.from_text("std-collateral", "A change must not alter a function it was not asked to alter.",
@@ -154,7 +158,8 @@ def test_a_formal_check_can_support_a_general_claim_but_only_relative_to_its_for
     led.add_evidence(control("ctl-f", oracle_category="FORMAL_CHECK"))
     led.add_evidence(ev("e2", oracle_category="FORMAL_CHECK", negative_control_ref="ctl-f", scope="lemma L"))
     got = verdict(led, claim_id="c2", evidence_ids=("e2",), breadth="general", scope="lemma L holds")
-    assert got["result"] == "supported"
+    assert got["result"] == "inconclusive"
+    assert got["effective_breadth"] == "covered_cases"
     assert any("formalisation" in item for item in got["limits"])
 
 
@@ -241,8 +246,9 @@ def test_a_claim_about_true_correctness_is_not_identified_without_a_bound_on_the
     assert true["result"] == "inconclusive" and "oracle_error_not_bounded" in true["reasons"]
     led.add_evidence(ev("e2", oracle_error_bound=0.02, scope="bounded oracle on 12 inputs"))
     bounded = verdict(led, claim_id="c3", estimand="true_correctness", evidence_ids=("e2",))
-    assert bounded["identification"] == "identified" and bounded["result"] == "supported"
-    assert bounded["oracle_error_bound"] == pytest.approx(0.02)
+    assert bounded["identification"] == "not_identified" and bounded["result"] == "inconclusive"
+    assert bounded["oracle_error_bound"] is None
+    assert bounded["declared_oracle_error_bounds"] == {"e2": 0.02}
 
 
 def test_one_unbounded_oracle_among_bounded_ones_leaves_the_claim_not_identified(led) -> None:
@@ -254,10 +260,12 @@ def test_one_unbounded_oracle_among_bounded_ones_leaves_the_claim_not_identified
 
 
 def test_the_error_bounds_of_several_oracles_are_added_never_averaged(led) -> None:
-    led.add_evidence(ev("e1", oracle_error_bound=0.02, independence_group="g1"))
-    led.add_evidence(ev("e2", oracle_error_bound=0.03, independence_group="g2", scope="second oracle"))
-    got = verdict(led, evidence_ids=("e1", "e2"), estimand="true_correctness")
+    calibrated(led, bound=0.02)
+    calibrated(led, bound=0.03, eid="e2", code="d")
+    got = verdict(led, evidence_ids=("e1", "e2"), subject="sha256:" + "b" * 64,
+                  estimand="true_correctness", target=0.5)
     assert got["oracle_error_bound"] == pytest.approx(0.05)
+    assert got["corrected_lower_bound"] == pytest.approx(0.85)
 
 
 # --- the adapter: what the existing mechanism records become ----------------------------------------------------------
@@ -321,3 +329,106 @@ def test_the_unchecked_surfaces_and_gaps_of_an_elicitation_record_become_known_u
     rec = {"remaining_unchecked_surfaces": ["edge_case_missed"], "evidence_gaps": ["independent_model_review"]}
     assert known_unknowns(rec) == ("surface not tested: edge_case_missed", "no evidence from: independent_model_review")
     assert known_unknowns({}) == ()
+
+
+# D3: a supplied number and a category label do not discharge premises.
+def test_a_vacuous_declared_bound_does_not_identify_true_correctness(led):
+    led.add_evidence(ev("e1", oracle_error_bound=1.0))
+    got = verdict(led, estimand="true_correctness")
+    assert got["result"] == "inconclusive"
+    assert got["identification"] == "not_identified"
+    assert got["declared_oracle_error_bounds"] == {"e1": 1.0}
+
+
+def _binding(code="a", artifact="b"):
+    return canonical(CheckBinding("request", "task", "p-keep", artifact * 64, STD.standard_sha256,
+                                  FX, code * 64).to_dict())
+
+
+def calibrated(led, *, bound=0.02, lower=0.9, calibration_over=None, check_over=None, eid="e1", code="a"):
+    """A separate controlled assessor's receipt, bound to the exact check record."""
+    check = ev(eid, source_ref=_binding(code), calibration_ref=eid + "-cal", oracle_error_bound=bound,
+               independence_group="oracle-" + code, population="pilot task t1", sample_unit="one task",
+               **(check_over or {}))
+    led.add_evidence(control(eid + "-ctl", source_ref=_binding(code)))
+    check = replace(check, negative_control_ref=eid + "-ctl")
+    led.add_evidence(check)
+    rec = ev(eid + "-cal", purpose="calibration", source_ref=_binding("c"), oracle_version="assessor",
+             independence_group="assessor", negative_control_ref=eid + "-cal-ctl", applies_to_sha256=check.sha256,
+             population="pilot task t1", sample_unit="one task", oracle_error_bound=bound,
+             evaluator_lower_bound=lower)
+    rec = replace(rec, **(calibration_over or {}))
+    led.add_evidence(control(eid + "-cal-ctl", source_ref=rec.source_ref, oracle_version=rec.oracle_version))
+    led.add_evidence(rec)
+    return check
+
+
+@pytest.mark.parametrize("over", [
+    {"source_ref": "log:unbound"},
+    {"population": "foreign population"},
+    {"applies_to_sha256": "f" * 64},
+    {"independence_group": "oracle-a"},
+    {"source_ref": _binding("a")},
+    {"oracle_error_bound": 0.01},
+    {"sample_unit": "different unit"},
+    {"result": "unknown"},
+    {"negative_control_ref": ""},
+])
+def test_unbound_or_foreign_calibration_cannot_identify_a_claim(led, over):
+    calibrated(led, calibration_over=over)
+    got = verdict(led, subject="sha256:" + "b" * 64, estimand="true_correctness", target=0.5)
+    assert got["result"] == "inconclusive"
+    assert got["identification"] == "not_identified"
+
+
+@pytest.mark.parametrize("target,lower,bound,result", [
+    (0.5, 0.9, 0.02, "supported"),
+    (0.5, 0.52, 0.02, "inconclusive"),
+    (0.0, 1.0, 1.0, "inconclusive"),
+    (None, 0.9, 0.02, "inconclusive"),
+    (0.5, None, 0.02, "inconclusive"),
+])
+def test_positive_true_correctness_requires_a_corrected_lower_bound_above_target(led, target, lower, bound, result):
+    calibrated(led, lower=lower, bound=bound)
+    got = verdict(led, subject="sha256:" + "b" * 64, estimand="true_correctness", target=target)
+    assert got["result"] == result
+    if lower is not None:
+        assert got["corrected_lower_bound"] == pytest.approx(max(0, lower - bound))
+
+
+def test_calibrated_scoped_evaluator_outcomes_stay_usable(led):
+    calibrated(led)
+    got = verdict(led, subject="sha256:" + "b" * 64)
+    assert got["result"] == "supported"
+    assert got["identification"] == "identified"
+    assert got["effective_breadth"] == "covered_cases"
+
+
+def test_an_unresolvable_calibration_is_a_declaration(led):
+    led.add_evidence(ev("e1", oracle_error_bound=0.0, calibration_ref="missing"))
+    got = verdict(led, estimand="true_correctness", target=0.0)
+    assert got["result"] == "inconclusive"
+    assert got["oracle_error_bound"] is None
+    assert got["declared_oracle_error_bounds"] == {"e1": 0.0}
+
+
+@pytest.mark.parametrize("mapping_over", [None, {"applies_to_sha256": "f" * 64},
+                                         {"scope": "only the recorded cases"},
+                                         {"checked_statement": "different statement"}, {}])
+def test_general_breadth_needs_the_checked_statement_and_supported_scope_mapping(led, mapping_over):
+    check = calibrated(led, check_over={"oracle_category": "FORMAL_CHECK", "checked_statement": "lemma L",
+                                       "scope_mapping_ref": "scope"})
+    if mapping_over is not None:
+        mapping = ev("scope", purpose="scope_mapping", source_ref=_binding("c"), oracle_version="assessor",
+                     independence_group="assessor", negative_control_ref="e1-cal-ctl", applies_to_sha256=check.sha256,
+                     population="pilot task t1", sample_unit="one task", scope="all inputs", checked_statement="lemma L")
+        led.add_evidence(replace(mapping, **mapping_over))
+    got = verdict(led, subject="sha256:" + "b" * 64, breadth="general", scope="all inputs")
+    assert got["result"] == ("supported" if mapping_over == {} else "inconclusive")
+    assert got["effective_breadth"] == ("general" if mapping_over == {} else "covered_cases")
+
+
+def test_adapter_keeps_a_numeric_bound_as_a_declaration_without_admitting_premises():
+    got = _adapt(_mechanism(oracle_error_bound=0.1, calibration_ref="untrusted"))
+    assert got.oracle_error_bound == 0.1
+    assert got.calibration_ref == ""
