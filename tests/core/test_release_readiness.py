@@ -13,7 +13,8 @@ from g6.cli import doctor
 from g6.core import confine
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE = "git+https://github.com/basicisabc1994/g6solver"
+#: G6 is installed from a copy of its repository, never by name (G6 is not on PyPI).
+CLONE = "git clone https://github.com/basicisabc1994/g6solver"
 
 
 class Missing(importlib.abc.MetaPathFinder):
@@ -38,7 +39,7 @@ def test_missing_dependency_names_blocked_capability_and_command(monkeypatch, mo
     assert check.status == "warn"
     assert module in check.detail and capability in check.detail
     assert "unavailable" in check.detail
-    assert check.fix == f'python -m pip install "g6[{extra}] @ {SOURCE}"'
+    assert check.fix == f'Inside a copy of G6 ({CLONE}): python -m pip install ".[{extra}]"'
     assert check.fix in doctor.render([check])
 
 
@@ -48,8 +49,9 @@ def test_doctor_and_install_page_agree(monkeypatch, platform):
     page = (ROOT / "site/docs/install.md").read_text(encoding="utf-8")
     check = doctor._platform()
     assert check.detail in page
-    for _, (_, _, command) in doctor.EXTRAS.items():
-        assert command in page
+    for extra, (_, _, command) in doctor.EXTRAS.items():
+        assert command == f'python -m pip install ".[{extra}]"' and command in page
+    assert CLONE in page
     # The published Get started page may hold no sign-in or log-in text (web/pages/guard.py, tests/site/test_honesty.py),
     # so the page sends the reader to doctor for the client's own command, and
     # test_unconfigured_model_prints_sign_in_guidance holds that doctor prints both commands.
@@ -84,7 +86,7 @@ def test_selected_anthropic_model_handles_a_blocked_sdk_import(monkeypatch):
     monkeypatch.setattr(sys, "meta_path", [Missing("anthropic"), *sys.meta_path])
     check = doctor._model({"G6_LLM_PROVIDER": "anthropic"}, {})
     assert check.status == "fail" and "SDK is missing" in check.detail
-    assert check.fix == doctor.EXTRAS["anthropic"][2]
+    assert check.fix == f'Inside a copy of G6 ({CLONE}): python -m pip install ".[anthropic]"'
 
 
 def test_windows_boundary_fix_and_documented_template_agree(monkeypatch):

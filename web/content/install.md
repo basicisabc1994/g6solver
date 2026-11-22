@@ -7,14 +7,16 @@
 
 ## Install for a coding agent or Python
 
-Use Python 3.12 or 3.13. Give G6 its own environment with `--copies`: on Linux, G6 cannot yet distinguish its own
-Python from a repository environment linked to the same interpreter, and refuses to review then. Activate it and
-install G6 and its MCP dependencies:
+Use Python 3.12 or 3.13. G6 is not on PyPI: install it from a copy of its repository. Give G6 its own environment
+with `--copies`: on Linux, G6 cannot yet distinguish its own Python from a repository environment linked to the same
+interpreter, and refuses to review then. Activate it and, inside the copy, install G6 and its MCP dependencies:
 
 ```sh
+git clone https://github.com/basicisabc1994/g6solver
+cd g6solver
 python -m venv --copies .venv
 source .venv/bin/activate  # PowerShell: .venv\Scripts\Activate.ps1
-python -m pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"
+python -m pip install ".[mcp]"
 g6 doctor
 g6 setup --client claude --allow patch_review.review  # or --client codex; run this yourself
 ```
@@ -34,13 +36,13 @@ On Windows, doctor's access-grant template is `icacls "<python-folder>" /grant "
 Replace `<python-folder>` with the exact interpreter or environment folder doctor names; run the two commands
 separately. This grants read/execute access to all AppContainers on that folder. G6 does not change access lists for you.
 
-| Missing piece | What it blocks | Command (Linux, Windows and macOS) |
+| Missing piece | What it blocks | Command, inside your copy of G6 (Linux, Windows and macOS) |
 |---|---|---|
-| `fastmcp` / `mcp` | MCP server | `python -m pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"` |
-| `anthropic` | Anthropic API calls; a model used through Claude Code needs no SDK | `python -m pip install "g6[anthropic] @ git+https://github.com/basicisabc1994/g6solver"` |
-| `z3-solver` (module `z3`) | Z3 formal methods | `python -m pip install "g6[formal] @ git+https://github.com/basicisabc1994/g6solver"` |
-| `ortools` | OR-Tools constraint solving and optimisation | `python -m pip install "g6[optim] @ git+https://github.com/basicisabc1994/g6solver"` |
-| `hypothesis` / `numpy` | Abstraction property checks | `python -m pip install "g6[abstraction] @ git+https://github.com/basicisabc1994/g6solver"` |
+| `fastmcp` / `mcp` | MCP server | `python -m pip install ".[mcp]"` |
+| `anthropic` | Anthropic API calls; a model used through Claude Code needs no SDK | `python -m pip install ".[anthropic]"` |
+| `z3-solver` (module `z3`) | Z3 formal methods | `python -m pip install ".[formal]"` |
+| `ortools` | OR-Tools constraint solving and optimisation | `python -m pip install ".[optim]"` |
+| `hypothesis` / `numpy` | Abstraction property checks | `python -m pip install ".[abstraction]"` |
 | A configured model | Model-backed operations | Set up Claude Code or Codex with the command doctor prints, then choose that provider in `g6 setup`. Doctor does not check that the program is set up. |
 
 If the host program is absent, doctor names its install command. A set-up program is needed only for model-backed operations;

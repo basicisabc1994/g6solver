@@ -32,17 +32,24 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any
 
+#: G6 is not on PyPI: a missing extra is installed from a copy of G6's repository, as the install pages say.
+CLONE = "git clone https://github.com/basicisabc1994/g6solver"
 EXTRAS = {
-    "mcp": (("fastmcp", "mcp"), "MCP server", 'python -m pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"'),
+    "mcp": (("fastmcp", "mcp"), "MCP server", 'python -m pip install ".[mcp]"'),
     "anthropic": (("anthropic",), "Anthropic API model calls (Claude Code sign-in needs no SDK)",
-                  'python -m pip install "g6[anthropic] @ git+https://github.com/basicisabc1994/g6solver"'),
-    "formal": (("z3",), "Z3 formal methods (z3-solver)",
-               'python -m pip install "g6[formal] @ git+https://github.com/basicisabc1994/g6solver"'),
-    "optim": (("ortools",), "OR-Tools constraint solving and optimisation",
-              'python -m pip install "g6[optim] @ git+https://github.com/basicisabc1994/g6solver"'),
+                  'python -m pip install ".[anthropic]"'),
+    "formal": (("z3",), "Z3 formal methods (z3-solver)", 'python -m pip install ".[formal]"'),
+    "optim": (("ortools",), "OR-Tools constraint solving and optimisation", 'python -m pip install ".[optim]"'),
     "abstraction": (("hypothesis", "numpy"), "the abstraction component's property checks",
-                    'python -m pip install "g6[abstraction] @ git+https://github.com/basicisabc1994/g6solver"'),
+                    'python -m pip install ".[abstraction]"'),
 }
+
+
+def _in_copy(command: str) -> str:
+    """A command run inside a copy of G6's repository, with the clone that makes one."""
+    return f"Inside a copy of G6 ({CLONE}): {command}"
+
+
 PLATFORM_SUPPORT = ("Linux (bubblewrap) and Windows (AppContainer) review patches; macOS does not review patches "
                     "(no supported OS boundary); everything else works.")
 
@@ -109,7 +116,7 @@ def _extras() -> list[Check]:
         missing = [module for module in modules if not _available(module)]
         out.append(Check(f"extra: {extra}", "warn" if missing else "ok",
                          f"{purpose}" + (f" unavailable; missing {', '.join(missing)}" if missing else "; installed"),
-                         fix if missing else ""))
+                         _in_copy(fix) if missing else ""))
     return out
 
 
@@ -173,7 +180,7 @@ def _model(env: dict[str, str], keys: dict[str, str]) -> Check:
         has = bool(keys.get(key))
         if provider == "anthropic" and not _available("anthropic"):
             return Check("AI model", "fail", "anthropic selected but the SDK is missing",
-                         EXTRAS["anthropic"][2])
+                         _in_copy(EXTRAS["anthropic"][2]))
         unused = (f"; {key} is set in the environment, which G6 does not use"
                   if not has and env.get(key) else "")
         return Check("AI model", "ok" if has else "fail",
