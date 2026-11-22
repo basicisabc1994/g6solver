@@ -536,6 +536,8 @@ def bindings(source: str) -> tuple[str, dict] | None:
                 executable = Scenario(data["scenario"].encode("ascii"))
                 data = {**executable.comparison(data.get("option", fields.get("option"))),
                         "_program": executable.program}
+            if type(source) is ExecutableSource and source.observation != data:
+                return None
             return fields["TEMPLATE"], data
     except (ValueError, TypeError, SyntaxError, RecursionError, KeyError, IndexError):
         pass

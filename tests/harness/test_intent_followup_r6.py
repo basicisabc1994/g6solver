@@ -1,14 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Repair 2 of claude/wire-intent-fu2 (Codex review 2). A: a verdict marker anywhere outside code counts, mid-line
 included; two that disagree, or one G6 cannot read, make the reply unreadable. B: no check's text decides the rejection
-gate. A check G6 compiled is read by the typed data G6 holds; every other runs traced in G6's confined child
-(``sys.monitoring``), the trace is bound to the run by a nonce, and a run whose trace shows the rejected typed call
-giving the rejected outcome, or that G6 could not observe whole, is not counted. C: a caller that keeps state outside
-its ``__dict__`` (slots) is never viewed or guarded, so no model is asked through it. FakeLLM and synthetic repositories
-only; the confined runs start through a stand-in boundary (the trace is under test, not the boundary)."""
+gate. Repair 3 supersedes tracing: only readable compiler custody counts under a rejection; all other checks
+still run, without findings, questions or learning. C: callers with slots are never viewed or guarded.
+FakeLLM and synthetic repositories only; the runner's boundary is a stand-in in these tests."""
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -134,12 +131,7 @@ SOURCES = {
                "def test_add():\n    check(add, 2, 3)\n"),
 }
 OTHER_INPUT = "from calc import add\ndef test_add():\n    assert add(1, 1) == 0\n"
-FORGED = ("import json, os\nfrom pathlib import Path\nfrom calc import add\n"
-          "def test_add():\n    own = Path(os.environ.get('HOME') or os.environ['USERPROFILE']).parent / 'report'\n"
-          "    for name in ('trace.json', 'trace_request.json'):\n"
-          "        try:\n            os.remove(own / name)\n        except OSError:\n            pass\n"
-          "    (own / 'trace.json').write_text(json.dumps({'version': 'call-trace.v1', 'nonce': '0' * 64, "
-          "'problems': [], 'calls': []}))\n    assert add(2, 3) == -1\n")
+
 
 
 def _check(ident, source, test="test_add"):
@@ -151,10 +143,10 @@ def _origin(ident):
     return vs.FREE_FORM
 
 
-def test_free_form_checks_whatever_their_text_run_traced():
+def test_free_form_checks_whatever_their_text_run_without_counting():
     checks = [_check(name, source) for name, source in SOURCES.items()]
-    kept, skipped, traced = cs.screen(GONE, checks, _origin)
-    assert kept == checks and not skipped and traced == set(SOURCES)
+    kept, skipped, uncounted = cs.screen(GONE, checks, _origin)
+    assert kept == checks and not skipped and uncounted == set(SOURCES)
 
 
 def _example(value):
@@ -167,76 +159,28 @@ def test_a_check_g6_compiled_is_read_by_the_data_g6_holds(value, kept):
     data = _example(value)
     text = vt.compile_text(vt.REGISTRY["example.v1"], data)   # model_copy keeps the custody object, as G6's compiler
     held = _check("C1", text, test="").model_copy(update={"source": br.ExecutableSource(text, data)})
-    out, skipped, traced = cs.screen(GONE, [held], _origin)
-    assert (bool(out), traced) == (kept, set())
+    out, skipped, uncounted = cs.screen(GONE, [held], _origin)
+    assert (bool(out), uncounted) == (kept, set())
     assert all(one["reason"] == cs.REJECTED for one in skipped)
 
 
-def test_a_compiled_check_is_read_by_its_template_instance_and_a_spoofed_one_runs_traced():
+def test_a_compiled_check_is_read_by_its_template_instance_and_a_spoofed_one_is_not_counted():
     text = vt.compile_text(vt.REGISTRY["example.v1"], _example(-1))
     compiled, spoof = _check("C1", text, test=""), _check("C2", text, test="")
     [instance] = vt.template_instances([{"id": "C1", "template": "example.v1", "requirement_id": "R1",
                                          "intent": "change", "bindings": {
                                              "function": "calc.add", "cases": [{"args": [2, 3], "returns": -1}]}}],
                                        ["R1"])
-    kept, skipped, traced = cs.screen(GONE, [compiled, spoof], _origin, [(compiled, instance)])
-    assert kept == [spoof] and [one["check"] for one in skipped] == ["C1"] and traced == {"C2"}
+    kept, skipped, uncounted = cs.screen(GONE, [compiled, spoof], _origin, [(compiled, instance)])
+    assert kept == [spoof] and [one["check"] for one in skipped] == ["C1"] and uncounted == {"C2"}
 
-
-def _call(args, outcome, *, cases=None):
-    bound = {"a": {"value": args[0]}, "b": {"value": args[1]}}
-    return {"function": "calc.add", "bound": bound, "outcome": outcome,
-            "cases": cases if cases is not None else [{"bound": {"a": {"value": 2}, "b": {"value": 3}},
-                                                       "positional": ["a", "b"]}]}
-
-
-def _observed(calls, problems=(), gone=GONE):
-    request = cs.trace_request(gone)
-    request.observed = {"problems": list(problems), "calls": calls}
-    return cs.observed(request, gone)
-
-
-@pytest.mark.parametrize("calls, problems, counted", [
-    ([_call([2, 3], {"returned": {"value": -1}})], (), False),
-    ([_call([2, 3], {"returned": {"unreadable": "x.Y", "id": 1}})], (), False),
-    ([_call([2, 3], {"unreadable": "a generator or coroutine"})], (), False),
-    ([_call([2, 3], {"returned": {"value": 5}})], (), True),
-    ([_call([1, 1], {"returned": {"value": -1}})], (), True),
-    ([], ("code under test started a process, whose calls G6 cannot trace",), False),
-    ([_call([2, 3], {"returned": {"value": -1}}, cases=[None])], (), True),
-], ids=["rejected_outcome", "unreadable_value", "generator", "confirmed_outcome", "other_input", "problem",
-        "input_binds_no_call"])
-def test_a_traced_run_counts_only_without_the_rejected_outcome(calls, problems, counted):
-    assert (_observed(calls, problems) == "") is counted
-
-
-def test_raises_and_effects_are_read_from_the_trace():
-    raises = cs.rejections(standard({"A": {"returns": 5}, "B": {"raises": "ValueError"}}))
-    assert _observed([_call([2, 3], {"raised": ["builtins.ValueError", "builtins.Exception"]})], gone=raises)
-    assert not _observed([_call([2, 3], {"returned": {"value": 5}})], gone=raises)
-    effect = cs.rejections(standard({"A": {"returns": 5}, "B": {"effect": {"argument": 0, "equals": [1]}}}))
-    hit = dict(_call([2, 3], {"returned": {"value": None}}), after={"a": {"value": [1]}, "b": {"value": 3}})
-    miss = dict(hit, after={"a": {"value": [2]}, "b": {"value": 3}})
-    assert _observed([hit], gone=effect) and not _observed([miss], gone=effect)
-
-
-def test_a_trace_not_bound_to_the_run_is_not_read(tmp_path):
-    path = tmp_path / "trace.json"
-    path.write_text(json.dumps({"version": "call-trace.v1", "nonce": "0" * 64, "problems": [], "calls": []}))
-    assert rt.read_trace(path, "1" * 64) is None
-    assert rt.read_trace(path, "0" * 64) == {"problems": [], "calls": []}
-    request = cs.trace_request(GONE)
-    assert cs.observed(request, GONE).startswith("G6 could not observe")
-
-
-# --- B, as checks run: the review's nodes reach search traced ---------------------------------------------------------------
 
 class ReachedExecution(Exception):
     pass
 
 
 @pytest.mark.parametrize("case", list(SOURCES))
-def test_the_review_nodes_reach_search_only_traced(monkeypatch, case):
+def test_the_review_nodes_reach_search_without_counting(monkeypatch, case):
     calc = ModuleType("calc")
     calc.add = lambda a, b: a + b
     monkeypatch.setitem(sys.modules, "calc", calc)
@@ -276,10 +220,10 @@ def test_the_review_nodes_reach_search_only_traced(monkeypatch, case):
                         proposed_checks=[{"id": "P1", "requirement_id": "R1", "intent": "change",
                                           "file": "test_calc.py", "source": SOURCES[case], "test": "test_add"}])
     [(checks, kwargs)] = captured
-    assert [one.id for one in checks] == ["P1"] and kwargs["traced"] == {"P1"} and kwargs["rejected"] == GONE
+    assert [one.id for one in checks] == ["P1"] and kwargs["uncounted"] == {"P1"} and kwargs["rejected"] == GONE
 
 
-# --- B, in real runs: G6's confined child traces the calls ----------------------------------------------------------------
+# --- B, in real runs: ordinary execution without finding authority ----------------------------------------------------------------
 
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
            **{key: os.environ[key] for key in ("PATH", "SYSTEMROOT") if key in os.environ}}
@@ -293,7 +237,7 @@ class _Identity:
 
 
 class _StandIn:
-    """A backend that 'confines' a run by starting it as usual: the trace is under test, not the boundary."""
+    """A backend that 'confines' a run by starting it as usual: ordinary execution is under test, not the boundary."""
     name = "fake-boundary"
 
     def ready(self, python, *, probe=True):
@@ -327,7 +271,7 @@ def runs(tmp_path, monkeypatch):
         change = rt.change(repo, "HEAD")
         checks = [_check(name, source) for name, source in sources.items()]
         done = vs.search(change, checks, vs.placements(repo, checks), deadline=time.monotonic() + 600,
-                         artifact="a" * 64, rejected=GONE, traced={one.id for one in checks})
+                         artifact="a" * 64, rejected=GONE, uncounted={one.id for one in checks})
         return {one["check"]: one for one in done.activities}, done
     return search
 
@@ -336,15 +280,14 @@ MODULE_CODE = "from calc import add\nassert add(2, 3) == -1\ndef test_add():\n  
 
 
 def test_the_review_nodes_and_every_route_are_not_counted_in_real_runs(runs):
-    found, done = runs({**SOURCES, "module_code": MODULE_CODE, "other_input": OTHER_INPUT, "forged": FORGED})
-    for name in [*SOURCES, "module_code", "forged"]:
+    found, done = runs({**SOURCES, "module_code": MODULE_CODE, "other_input": OTHER_INPUT})
+    for name in [*SOURCES, "module_code", "other_input"]:
         assert found[name]["result"] == vs.ASSERTS_REJECTED, (name, found[name])
-    assert found["other_input"]["result"] == vs.COUNTEREXAMPLE, found["other_input"]
-    assert [one["check"] for one in done.defects] == ["other_input"]
+    assert not done.defects and not done.outcomes and not done.questions
 
 
-def test_a_function_g6_cannot_instrument_is_not_counted(runs):
+def test_a_free_form_check_of_a_c_function_is_not_counted(runs):
     found, _ = runs({"c_function": "from calc import add\ndef test_add():\n    assert add(2, 3) == -1\n"},
                     base="import operator\nadd = operator.sub\n")
     assert found["c_function"]["result"] == vs.ASSERTS_REJECTED
-    assert "not a Python function" in found["c_function"]["reason"]
+    assert found["c_function"]["reason"] == cs.UNREADABLE

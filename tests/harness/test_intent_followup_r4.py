@@ -146,12 +146,12 @@ HEAD = "import pytest\nfrom calc import add\n"
     ("def test_x():\n    assert add(2, 4) == -1\n", "test_x", False),
 ], ids=["asserted", "called_unread", "chosen", "other_test", "whole_file", "module_code", "class", "local_import",
         "other_call"])
-def test_proposed_checks_are_decided_by_their_traced_runs_never_their_text(body, test, dropped):
+def test_proposed_checks_run_without_counting_never_reading_their_text(body, test, dropped):
     # repair 2 of wire-intent-fu2: ``dropped`` was the text scan's answer; the gate no longer reads a check's text, and
-    # every proposed check runs traced (what it observes decides: tests/harness/test_intent_followup_r6.py)
+    # every proposed check runs without counting under a rejection (repair 3).
     one = _check(HEAD + body, test)
-    kept, skipped, traced = cs.screen(_rejected()["rejected"], [one], lambda ident: vs.FREE_FORM)
-    assert kept == [one] and not skipped and traced == {"P1"}
+    kept, skipped, uncounted = cs.screen(_rejected()["rejected"], [one], lambda ident: vs.FREE_FORM)
+    assert kept == [one] and not skipped and uncounted == {"P1"}
 
 
 def test_a_review_never_runs_a_caller_check_asserting_a_rejected_outcome(tmp_path, monkeypatch):

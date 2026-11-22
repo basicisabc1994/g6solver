@@ -230,7 +230,7 @@ PROPOSED = "proposed"
 PROPOSED_BY = "the caller: a calling agent's proposal, never assumed independent of the patch's author"
 COUNTEREXAMPLE, FAILS_ON_BASE_TOO, NOT_REFUTED = "counterexample", "fails_on_base_too", "not_refuted"
 UNCONFIRMED_FAILURE, BEHAVIOUR_CHANGED, CHECK_ERROR = "unconfirmed_failure", "behaviour_changed", "check_error"
-#: A check whose runs show an outcome the person rejected, or that G6 could not observe whole while one is rejected.
+#: A check not counted while an outcome is rejected because G6 cannot read its typed assertions.
 ASSERTS_REJECTED = "asserts_rejected"
 #: The reason each finding gives, always with stage ``evidence`` (plan rule 4), and what the reason says of it.
 REASONS = {COUNTEREXAMPLE: "unconfirmed_counterexample", UNCONFIRMED_FAILURE: "unconfirmed_failure"}
@@ -505,21 +505,17 @@ def _copy_differs(copy: Path, artefact: dict[str, str], placed: str) -> bool:
 
 
 def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *, at_base: bool,
-               timeout_s: int, roots: tuple[str, ...] = (), artefact: dict[str, str] | None = None,
-               trace: repo_tests.CallTrace | None = None) -> dict:
-    """Ordinary proposed tests retain their executor; confirmed checks and probes use G6's observation runner.
-    ``trace``: the calls the run traces (``repo_tests.CallTrace``); G6's own runner is never traced, so a trace asked of
-    it stays unread."""
+               timeout_s: int, roots: tuple[str, ...] = (), artefact: dict[str, str] | None = None) -> dict:
+    """Ordinary proposed tests retain their executor; confirmed checks and probes use G6's observation runner."""
     from contextlib import nullcontext
     from g6.harness import behaviour_runner
 
     generated = source.observation if type(source) is behaviour_runner.ExecutableSource else None
     owned = generated is not None
     overlay = {} if owned else {placed: source}
-    traced = {} if owned or trace is None else {"trace": trace}
     if at_base and not owned:
         return repo_tests.run_at_base(change, [node], roots=roots, timeout_s=timeout_s, overlay=overlay,
-                                     require_isolation=True, receipt=True, **traced)
+                                     require_isolation=True, receipt=True)
     deadline = time.monotonic() + timeout_s
     refused = {"verdict": "not_run", "said": NOT_THE_ARTEFACT, NOT_THE_ARTEFACT_KEY: True}
     try:
@@ -547,7 +543,7 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
                     ran = repo_tests._run(copy, [node], roots=roots, timeout_s=timeout_s, network=False, copied=True,
                                           python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
                                           deadline=deadline, require_isolation=True, links=report, receipt=True,
-                                          _receipt_repository=change.repo, **traced)
+                                          _receipt_repository=change.repo)
             if expected is not None and ran.get("source_before") and ran["source_before"] != digest(copied):
                 return refused
             if expected is not None and not ran.get('source_before') and ran.get('verdict') in {'passed', 'failed'}:
@@ -846,40 +842,37 @@ def _bound(left: float) -> int:
 def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[str, str], *, deadline: float,
            artifact: str, origins: dict[str, Origin] | None = None, roots: tuple[str, ...] = (),
            select: bool = False, before: dict[str, str] | None = None, rejected: list[dict] | None = None,
-           traced: Collection[str] = ()) -> Search:
+           uncounted: Collection[str] | None = None) -> Search:
     """Run each proposed check on the patch and at the base commit (``_run_check``, with the review's import
     ``roots``), classify it, and say what it found; the stage stops when the review's deadline would be passed.
     ``origins``: the checks G6 compiled from template instances, by id (the others are free-form proposals).
-    ``rejected``: the outcomes the person rejected (``candidate_standard.rejections``); each check whose id is in
-    ``traced`` runs traced, and one whose run to a result shows a rejected outcome, or that G6 could not observe whole
-    (``candidate_standard.observed``), is ``ASSERTS_REJECTED``, with why: no finding, question or outcome of it counts.
+    ``rejected``: the outcomes the person rejected. ``uncounted``: checks without readable compiler custody, fixed
+    at scheduling by ``candidate_standard.screen``. They still run, but give no finding, question or learning.
 
     ``select``: run the checks in the experiment selector's order (``verification_controller.order_checks``) instead
     of the order given. It is off by default, ``search_config`` has no key for it and no review sets it: Gate C (V11)
     must show the selector helps before any caller does."""
     done = Search()
+    if rejected and uncounted is None:
+        from g6.harness import candidate_standard
+
+        checks, skipped, uncounted = candidate_standard.screen(
+            rejected, checks, lambda ident: (origins or {}).get(ident, FREE_FORM))
+        done.activities.extend(skipped)
     # Execution records remain private to this invocation, never filled from tool arguments.
     observed_runs = {}
-    stopped = False
+    exhausted = False
     rooted = {"roots": tuple(roots)} if roots else {}
     if select:
         checks = verification_controller.order_checks(
             checks, patch_only=lambda ident: (origins or {}).get(ident, FREE_FORM).patch_only)
 
     def read(at_base: bool) -> dict:
-        from g6.harness import candidate_standard
-
-        request = candidate_standard.trace_request(rejected) if rejected and one.id in traced else None
         ran = _run_check(change, activity["placed"], one.source, node, at_base=at_base,
                          timeout_s=_bound(deadline - _clock()), **rooted,
-                         **({'artefact': before} if before is not None and origin.template == 'differential.v1' else {}),
-                         **({'trace': request} if request is not None else {}))
+                         **({'artefact': before} if before is not None and origin.template == 'differential.v1' else {}))
         observed_runs[at_base] = ran
         found = _guarded(change, ran, reading(ran, node))
-        if request is not None and found["result"] in ("passed", "failed"):   # a run to a result is read by its trace
-            why = candidate_standard.observed(request, rejected)
-            if why:
-                not_counted.append(why)
         if origin.template == "differential.v1":   # the binding as the run's reading read it from its record
             activity.owned_runs.append(found.get("owned_probe") is True and bool(found.get('execution_artifact')))
             if found.get('execution_artifact'):
@@ -888,15 +881,14 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
             found = {**found, "observations": repo_tests.read_report(ran).wire().get("probe_observations")}
         return found
 
-    not_counted: list[str] = []
     for one in checks:
         observed_runs.clear()
-        not_counted.clear()
+        not_counted = bool(rejected) and one.id in (uncounted or ())
         origin = (origins or {}).get(one.id, FREE_FORM)
         activity = _activity(one, placed[one.id], origin)
         done.activities.append(activity)
-        if stopped or deadline - _clock() < 2 * MIN_RUN_S:
-            stopped = True
+        if exhausted or deadline - _clock() < 2 * MIN_RUN_S:
+            exhausted = True
             activity.update(result="skipped", reason=OUT_OF_TIME)
             continue
         node = activity["node"]
@@ -941,8 +933,10 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
                            "detail": f"observes {len(verdict['differences'])} input(s) differently at the base commit "
                                      "and on the patch, where the instance declares that behaviour must not change"}
             activity["seconds"] = round(sum(run.get("seconds", 0.0) for run in activity["runs"]), 3)
-            if not_counted:   # what its runs observed, never its text: no finding, question or learning of it
-                activity.update(result=ASSERTS_REJECTED, reason=not_counted[0], detail=verdict["detail"])
+            if not_counted:
+                from g6.harness.candidate_standard import UNREADABLE
+
+                activity.update(result=ASSERTS_REJECTED, reason=UNREADABLE, detail=verdict["detail"])
                 continue
             activity.update(verdict)
             _found(done, one, activity, on_patch, at_base, verdict, artifact, change.base_commit, origin)
@@ -956,6 +950,11 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
             if trusted_stop(exc):
                 raise   # a stop is never one check's error
             activity.update(result="error", reason=stopped(exc), stopped=f"the check {one.id}")
+        finally:
+            if not_counted:
+                from g6.harness.candidate_standard import UNREADABLE
+
+                activity.update(result=ASSERTS_REJECTED, reason=UNREADABLE)
     return done
 
 

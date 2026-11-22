@@ -563,7 +563,7 @@ def gate(found, checks, activity, origin):
     """``checks`` without any whose typed data G6 holds asserting an outcome the person rejected for that typed call
     (``found['rejected']``), and a skipped activity for each one dropped: an example.v1 case of the rejected outcome,
     or any differential.v1 call of the rejected typed call (its outcome is the reference's, which G6 cannot read).
-    A check G6 holds no typed data of passes here; where checks run, it runs traced (``screen``)."""
+    A check G6 holds no typed data of passes here; it still runs but is not counted (``screen``)."""
     gone = found.get('rejected') or () if found else ()
     kept, skipped = [], []
     for one in checks:
@@ -579,16 +579,15 @@ def gate(found, checks, activity, origin):
 def _asserts_rejected(one, gone):
     """Whether a check G6 holds the typed data of asserts or calls a rejected outcome: a template instance by its
     bindings, a check G6 compiled to run in its own runner by the data its compiler holds in G6's process
-    (``ExecutableSource``). Never read from a check's text: any other check runs traced, and its runs decide
-    (``observed``)."""
-    from g6.harness.behaviour_runner import ExecutableSource
+    (``ExecutableSource``). A free-form check's text never grants compiler custody."""
+    from g6.harness import behaviour_runner
 
     if not hasattr(one, 'template'):
         source = getattr(one, 'source', None)
-        if type(source) is not ExecutableSource:
+        if type(source) is not behaviour_runner.ExecutableSource:
             return False
-        data = source.observation
-        return _data_rejects('example.v1' if 'cases' in data else 'differential.v1', data, gone)
+        data = behaviour_runner.bindings(source)
+        return data is not None and _data_rejects(*data, gone)
     bindings = one.bindings if isinstance(one.bindings, dict) else {}
     mine = [each['case'] for each in gone if each['function'] == bindings.get('function')]
     if one.template == 'example.v1':
@@ -602,14 +601,14 @@ def _asserts_rejected(one, gone):
 def _data_rejects(template, data, gone):
     """A check G6 compiled to run in its own runner, by the data its compiler holds (``ExecutableSource``): an
     example.v1 case of a rejected outcome, or any differential.v1 call of a rejected typed call. Data whose function G6
-    cannot read is dropped while any outcome is rejected."""
+    cannot read stays scheduled and is not counted by ``screen``."""
     spec = data.get('function') if isinstance(data, dict) else None
     name = (f'{spec[1]}.{spec[2]}' if spec[1] else spec[2]) if (
         isinstance(spec, list) and len(spec) >= 3 and all(isinstance(part, str) for part in spec[:3])) else None
     for wrong in gone:
         short = wrong['function'].rpartition('.')[2]
         if name is None:
-            return True
+            return False
         if name != wrong['function'] and name.rpartition('.')[2] != short:
             continue   # a function of another name (its module may differ from the one asked: the name decides)
         if template == 'differential.v1':
@@ -635,119 +634,51 @@ def _typed(case):
 
 
 def screen(gone, checks, origin, compiled=()):
-    """The one gate where checks are about to run, after every source: ``checks`` kept, the skipped activity of each
-    dropped, and the ids of the kept ones that run traced. A check G6 holds the typed data of (a template instance in
-    ``compiled``, the pairs of a compiled check and the instance G6 compiled it from; or a check whose source is G6's
-    ``ExecutableSource``) is read by that data before it runs (``gate``). Every other check runs traced
-    (``trace_request``), and what its runs observe decides (``observed``): no text a check carries decides, so a
-    ``TEMPLATE`` it writes is only text. ``origin``: a check's origin by its id."""
-    from g6.harness.behaviour_runner import ExecutableSource
+    """Schedule all unreadable checks, but give them no finding or learning authority under a rejection.
+
+    Return kept checks, skipped typed rejections, and ids not counted. Only compiler custody (an exact check paired
+    with its validated instance, or ExecutableSource) permits reading bindings. A free-form TEMPLATE grants nothing.
+    Without a rejected outcome the ordinary contract is unchanged.
+    """
+    from g6.harness import behaviour_runner
 
     held = {id(check): instance for check, instance in compiled}
-    kept, skipped, traced = [], [], set()
+    kept, skipped, uncounted = [], [], set()
     for one in checks:
-        typed = held.get(id(one))
-        if typed is None and type(getattr(one, 'source', None)) is ExecutableSource:
-            typed = one
-        if typed is None:
-            traced.add(one.id)
+        if not gone:
+            kept.append(one)
+            continue
+        instance = held.get(id(one))
+        source = getattr(one, 'source', None)
+        data = behaviour_runner.bindings(source) if (
+            instance is not None or type(source) is behaviour_runner.ExecutableSource) else None
+        if data is None:
+            uncounted.add(one.id)
+            kept.append(one)
+            continue
+        template, bindings = data
+        spec = bindings.get('function')
+        cases = bindings.get('cases' if template == 'example.v1' else 'calls')
+        if (not isinstance(spec, list) or len(spec) < 3 or not all(isinstance(part, str) for part in spec[:3])
+                or not isinstance(cases, list) or not cases
+                or any(not isinstance(case, dict) or template == 'example.v1' and _typed(case) is None
+                       for case in cases)):
+            uncounted.add(one.id)
             kept.append(one)
             continue
         where = origin(one.id)
-        if _asserts_rejected(typed, gone):
-            skipped += gate({'rejected': gone}, [typed], where.activity, where.label)[1]
+        if _data_rejects(template, bindings, gone):
+            skipped.append(dict(activity=where.activity, check=one.id, origin=where.label,
+                                candidate_id=one.requirement_id, requirement=one.requirement_id,
+                                intent=one.intent, result='skipped', reason=REJECTED, model_calls=0, seconds=0.0))
         else:
             kept.append(one)
-    return kept, skipped, traced
+    return kept, skipped, uncounted
 
 
-#: Why a check that ran is not counted while the person rejects an outcome: what G6 observed it do (``observed``).
-OBSERVED = ('G6 observed it call {function} with the input the person answered, giving the outcome they rejected, so '
-            'it is not counted')
-UNOBSERVED = ('G6 could not observe every call it made of a function whose outcome the person rejected ({why}), so it '
-              'is not counted')
+#: Fixed host reason: execution cannot supply typed assertions or compiler provenance.
+UNREADABLE = 'rejection_unreadable'
 
-
-def trace_request(gone):
-    """What a traced run of a check records (``repo_tests.CallTrace``): each rejected function, by its module and name,
-    with the inputs of its rejected outcomes; the outcomes stay in G6's process."""
-    functions = {}
-    for wrong in gone:
-        module, _, short = wrong['function'].rpartition('.')
-        item = functions.setdefault(wrong['function'], {'name': wrong['function'], 'module': module, 'short': short,
-                                                        'cases': []})
-        call = {'args': list(wrong['case']['args']), 'kwargs': dict(wrong['case']['kwargs'])}
-        if call not in item['cases']:
-            item['cases'].append(call)
-    return repo_tests.CallTrace(list(functions.values()), effects=any('effect' in one['case'] for one in gone))
-
-
-def observed(request, gone):
-    """Why a run G6 traced (``request``, its ``observed`` trace read by G6) is not evidence while ``gone`` holds a
-    rejected outcome, or '' when it is: the trace shows a call of a rejected typed call (its bound arguments, the
-    input's bound to the same function's signature) giving the rejected outcome (``_hits``), or a call of it whose
-    outcome G6 cannot read; or there is no trace bound to the run, or the trace says it is not whole."""
-    trace = request.observed
-    if trace is None:
-        return UNOBSERVED.format(why='its run left no trace G6 could read and bind to the run')
-    if trace['problems']:
-        return UNOBSERVED.format(why='; '.join(trace['problems'][:3]))
-    inputs = {one['name']: one['cases'] for one in request.functions}
-    try:
-        for call in trace['calls']:
-            for wrong in gone:
-                if call['function'] != wrong['function']:
-                    continue
-                at = inputs[wrong['function']].index({'args': list(wrong['case']['args']),
-                                                       'kwargs': dict(wrong['case']['kwargs'])})
-                binding = call['cases'][at]
-                if binding is None:
-                    continue   # the input is no call of the code that ran
-                if binding != 'unknown' and not _bound_same(call['bound'], binding['bound']):
-                    continue
-                if _outcome_hits(call, binding, wrong['case']):
-                    return OBSERVED.format(function=wrong['function'])
-    except (KeyError, TypeError, IndexError, AttributeError, ValueError):
-        return UNOBSERVED.format(why='its trace does not read as G6 writes one')
-    return ''
-
-
-def _bound_same(left, right):
-    """Two bindings of the same parameters to the same values: plain JSON by ``_same``, any other value by identity."""
-    def same(one, other):
-        if 'value' in one and 'value' in other:
-            return _same(one['value'], other['value'])
-        return 'unreadable' in one and 'unreadable' in other and one.get('id') == other.get('id')
-    return type(left) is dict and type(right) is dict and left.keys() == right.keys() and all(
-        same(left[name], right[name]) for name in left)
-
-
-def _outcome_hits(call, binding, wrong):
-    """Whether a traced call of the rejected typed call gave the rejected outcome ``wrong``, or an outcome G6 cannot
-    read (an unfinished call, a value that is not plain JSON, an argument it cannot place)."""
-    outcome = call.get('outcome')
-    if not isinstance(outcome, dict) or 'unreadable' in outcome:
-        return True
-    case = {'args': wrong['args'], 'kwargs': wrong['kwargs']}
-    if 'raises' in wrong:
-        raised = outcome.get('raised')
-        short = str(wrong['raises']).rpartition('.')[2]
-        return raised is not None and any(name == wrong['raises'] or name.rpartition('.')[2] == short
-                                          for name in raised)
-    if 'returned' not in outcome:
-        return False   # it raised, and the rejected outcome is a value or an effect
-    if 'returns' in wrong:
-        value = outcome['returned']
-        return 'value' not in value or _hits(dict(case, returns=value['value']), wrong)
-    if 'effect' in wrong:
-        argument = wrong['effect']['argument']
-        positional = binding['positional'] if isinstance(binding, dict) else []
-        name = positional[argument] if 0 <= argument < len(positional) else None
-        after = (call.get('after') or {}).get(name) if name else None
-        if not isinstance(after, dict) or 'value' not in after:
-            return True
-        return _hits(dict(case, effect={'argument': argument, 'equals': after['value']}), wrong)
-    return True
 
 def owns(found, one):
     """Whether a supplied example.v1 check is one of a candidate's own, whatever its id: every one for a candidate the
