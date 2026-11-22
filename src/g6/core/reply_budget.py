@@ -339,6 +339,11 @@ def _measure(value):
     return len(json.dumps(value).encode("utf-8"))
 
 
+def wire_bytes(value):
+    """The bytes ``value`` takes as an MCP reply: its JSON as text content and as structured content."""
+    return _measure({"content": [{"type": "text", "text": json.dumps(value)}], "structuredContent": value})
+
+
 def fit_reply(reply, *, limit=MAX_REPLY_BYTES, measure=None, refuse=True, schema=None):
     """Use only declared typed positions; never discover schemas from data shape.
 

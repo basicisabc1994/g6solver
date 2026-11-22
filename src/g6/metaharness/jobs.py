@@ -2,7 +2,8 @@
 """Bounded process-local jobs. A server restart loses job handles, never implies success.
 
 A job may carry ``compact``: run in the job once its operation returns, with the result and the job's id, it gives the
-reply ``status`` returns by default; ``status(..., detail="full")`` returns the result itself. Should ``compact`` fail,
+reply ``status`` returns by default; ``status(..., detail="full")`` returns the result itself, or the compact reply with
+a ``size_notice`` when the result is over the size budget of an MCP reply (``reply_budget``). Should ``compact`` fail,
 ``status`` returns the result itself."""
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
@@ -15,9 +16,13 @@ from threading import Lock
 from uuid import uuid4
 
 from g6.core.door import blocked_reply
-from g6.core.reply_budget import ENVELOPE, JOB, ReplySchema, declare_reply, declared_schema
+from g6.core.reply_budget import (ENVELOPE, JOB, MAX_REPLY_BYTES, ReplySchema, declare_reply, declared_schema,
+                                  wire_bytes)
 
 DETAILS = ("compact", "full")
+#: Said beside the compact form when the full form asked for is over the reply size budget.
+FULL_OVER_BUDGET = ("The full form is over the reply size limit, so this is the compact form; the whole result is in "
+                    "the file it names, when it could be saved.")
 #: An exact caller-supplied input (``cloud_consent.input_source``).
 _INPUT = re.compile(r"input:[0-9a-f]{64}")
 
@@ -195,9 +200,15 @@ class Jobs:
             cloud.bind_output(reply, (cloud.UNKNOWN,))
             return self._status_reply(ident, reply, detail)
         with self._lock:
-            shown = self._compact.get(ident, result) if detail == "compact" else result
+            compact = self._compact.get(ident)
+        shown = compact or result if detail == "compact" else result
         try:
             reply = shown.read()
+            if detail == "full" and compact not in (None, result) and wire_bytes(reply) > MAX_REPLY_BYTES:
+                # Over the size budget every MCP reply keeps, the full form would be withheld whole; the compact
+                # form, which says where the whole result is, comes in its place.
+                reply = declare_reply({**compact.read(), "size_notice": FULL_OVER_BUDGET}, compact.reply_schema)
+                detail = "compact"
         except (AttributeError, TypeError, ValueError):
             reply = {**blocked_reply(cloud.WITHHELD), "job_id": ident, "status": "failed"}
             cloud.bind_output(reply, (cloud.UNKNOWN,))

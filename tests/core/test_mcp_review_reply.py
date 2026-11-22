@@ -143,7 +143,10 @@ def test_a_huge_review_still_fits_and_keeps_its_report_whole(tmp_path, monkeypat
     assert result["assessment"]["report"] == real["assessment"]["report"]
     assert result["assessment"]["reasons"][0]["code"] == "code_0" and check_envelope(result) == []
     assert result["full_assessment"]["shortened"]                                    # it says it shortened lists
-    assert full["result"] == huge
+    # the full form is over the size budget every MCP reply keeps (g6.core.reply_budget), so it is never withheld
+    # whole: the compact form comes in its place, saying so, and the saved file holds all of it
+    assert full["status"] == "completed" and full["result"] == result and full["size_notice"]
+    assert json.loads(Path(result["full_assessment"]["file"]).read_text(encoding="utf-8")) == huge
 
 
 def test_a_refusal_is_returned_as_it_is(tmp_path, monkeypatch, accepted_cloud_dialog):
