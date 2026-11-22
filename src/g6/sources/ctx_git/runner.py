@@ -63,6 +63,9 @@ MAX_OUTPUT = 8 * 1024 * 1024
 #: Admission queries include G6's own overrides; their bound is independent of a caller's patch cap.
 MAX_ADMISSION_OUTPUT = 8 * 1024 * 1024
 MAX_ERROR = 64 * 1024
+#: Plain text reads consume these settings; NUL-delimited config queries inspect
+#: native bytes without interpreting them, including an invalid setting's bytes.
+_TREE_READ_KEYS = frozenset({"core.autocrlf", "core.eol", "core.safecrlf", "core.symlinks", "core.ignorecase"})
 _AUDIT = ("ctx_git", "audit.jsonl")
 _LOCK = threading.Lock()
 #: git's own words for each failure, first match wins.
@@ -179,6 +182,17 @@ def _runner(where: Path, env: dict[str, str], timeout: float, *,
         found = Done(done.returncode, done.stdout[:limit], done.stderr[:MAX_ERROR], cut)
         if found.code not in ok:
             raise GitRefused(classify(found.said), 'command_failed')
+        if (found.code == 0 and len(args) == 3 and args[:2] == ("config", "--get")
+                and args[2].lower() in _TREE_READ_KEYS):
+            # `config --get` only parses config syntax. `var` loads Git's core
+            # config callback: autocrlf accepts input, safecrlf accepts warn,
+            # and eol keeps its native fallback. No Python value grammar or
+            # shared enum may substitute for those distinct native rules.
+            # This variable reads config without starting a configured program.
+            # GIT_EDITOR is known to every Git version (GIT_DEFAULT_HASH is not:
+            # Git 2.51 for Windows answers it with a usage error) and prints one
+            # value, never the whole configuration.
+            run("var", "GIT_EDITOR")
         return found
     return run
 
@@ -229,6 +243,9 @@ def _prepared(where: Path, gitdir: Path | None, *, network: bool, timeout: float
         except ValueError:
             raise GitRefused(UNSAFE, 'runner_prepared_3') from None
         base = _with(base, initial)
+        # Git validates consumed tree-reading values. Raw config inspection
+        # remains possible without imposing an eager admission grammar, and
+        # Git's own core.eol fallback (for example true) stays admitted.
         if not clone:
             query = _runner(where, base, timeout, settings=initial, output_limit=MAX_ADMISSION_OUTPUT)
             found = query(*DRIVER_QUERY, ok=(0, 1, 128))
