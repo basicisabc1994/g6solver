@@ -31,6 +31,8 @@ def test_list_names_every_skill_it_can_install(capsys) -> None:
     assert main(["skills", "list"]) == 0
     out = capsys.readouterr().out
     assert "using-g6" in out and "g6-coding-agent-gate" in out and "brainstorming" in out
+    assert "langextract-usage" in out
+    assert "langextract, bundled skill" in out
 
 
 def test_install_with_no_names_copies_only_the_using_g6_skill(where) -> None:
@@ -50,14 +52,14 @@ def test_install_a_component_names_its_skill_g6_dash_component(where) -> None:
 def test_install_all_copies_the_guide_and_every_components_skill(where) -> None:
     dest, _ = where
     assert main(["skills", "install", "--all"]) == 0
-    expected = {"using-g6", *(skills.skill_name(c) for c in skills.components_with_skills())}
+    expected = {"using-g6", "langextract-usage", *(skills.skill_name(c) for c in skills.components_with_skills())}
     assert {p.name for p in dest.iterdir()} == expected and "g6-coding-agent-gate" in expected
 
 
 def test_with_superpowers_also_copies_the_vendored_lifecycle_skills(where) -> None:
     dest, _ = where
     assert main(["skills", "install", "--with-superpowers"]) == 0
-    assert {p.name for p in dest.iterdir()} == {"using-g6", *skills.vendored()}
+    assert {p.name for p in dest.iterdir()} == {"using-g6", *skills.vendored("superpowers")}
     assert _same_tree(dest / "brainstorming", skills.vendored()["brainstorming"])
 
 
@@ -67,6 +69,20 @@ def test_the_vendored_copy_is_skipped_when_the_superpowers_plugin_is_installed(w
     assert main(["skills", "install", "--with-superpowers"]) == 0
     assert [p.name for p in dest.iterdir()] == ["using-g6"]
     assert "superpowers plugin is installed" in capsys.readouterr().out
+
+
+def test_install_the_library_guide_copies_its_examples_and_references(where):
+    dest, _ = where
+    assert main(["skills", "install", "langextract-usage"]) == 0
+    assert _same_tree(dest / "langextract-usage", skills.vendored()["langextract-usage"])
+
+
+def test_superpowers_plugin_does_not_suppress_other_bundles(where):
+    dest, home = where
+    (home / ".claude/plugins/cache/official/superpowers/7.0.0").mkdir(parents=True)
+    assert main(["skills", "install", "langextract-usage", "--with-superpowers"]) == 0
+    assert {p.name for p in dest.iterdir()} == {"langextract-usage"}
+    assert _same_tree(dest / "langextract-usage", skills.vendored()["langextract-usage"])
 
 
 def test_user_installs_into_the_home_folder(where) -> None:

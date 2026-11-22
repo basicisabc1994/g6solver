@@ -7,5 +7,6 @@
   },
   "homepage": "https://github.com/basicisabc1994/g6solver",
   "repository": "https://github.com/basicisabc1994/g6solver",
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "skills": ["./skills/using-g6", "./skills/completion-loop", "./vendor/langextract/langextract-usage"]
 }

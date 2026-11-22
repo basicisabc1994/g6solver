@@ -131,6 +131,7 @@ def shared_target(family: str, registry: Any = None) -> Target:
     members = tuple(root / ref.module.split(":", 1)[0].split(".")[2]
                     for ref in (registry or get_registry()).refs.values() if ref.family == family)
     files = tuple(sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts
+                         and not (family == "skills" and p.is_relative_to(root / "vendor"))
                          and not any(p.is_relative_to(m) for m in members)))
     return Target(package, package, root, files, family, "builtin", members)
 

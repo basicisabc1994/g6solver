@@ -14,7 +14,7 @@ OSS = Path(__file__).resolve().parents[2]
 HOLDER = "Copyright (c) 2026 The G6 authors"
 #: A copyright line in a file's comment header.
 COPYRIGHT = re.compile(r"^\s*(?:#|//|/?\*|<!--)\s*(Copyright\b.*?)\s*(?:-->|\*/)?\s*$", re.IGNORECASE)
-THIRD_PARTY = ("src/g6/skills/vendor/", "web/static/graph/app/")
+THIRD_PARTY = ("src/g6/skills/vendor/", "plugins/g6/vendor/", "web/static/graph/app/")
 COMMENT = ("#", "//", "/*", "*", "<!--")
 HEAD_LINES = 5
 

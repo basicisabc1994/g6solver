@@ -22,6 +22,7 @@ def test_setup_registers_explicit_client_with_absolute_interpreter_and_skills(tm
     assert "G6_MCP_SENSITIVE=patch_review.review" in calls[0]
     assert calls[0][-5:] == ["--", sys.executable, "-P", "-c", "from g6.mcp import main; main()"]
     assert (tmp_path / ".codex" / "skills" / "using-g6" / "SKILL.md").is_file()
+    assert (tmp_path / ".codex" / "skills" / "langextract-usage" / "SKILL.md").is_file()
 
 
 def _registering(tmp_path, monkeypatch, returncode=0):

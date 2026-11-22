@@ -44,3 +44,36 @@ def test_the_plugin_skill_is_discoverable_like_its_completion_loop_skill():
     text = (ROOT / "plugins" / "g6" / "skills" / "using-g6" / "SKILL.md").read_text(encoding="utf-8")
     head = text.split("---", 2)[1]
     assert "name: using-g6" in head and "description: " in head
+
+
+def test_full_bundle_sync_preserves_examples_licence_and_provenance(tmp_path):
+    source, shipped = tmp_path / "source", tmp_path / "plugin"
+    for name, data in {"LICENSE": b"licence\n", "VENDORED.md": b"record\n",
+                       "langextract-usage/SKILL.md": b"skill\n",
+                       "langextract-usage/examples/sample.py": b"example\n"}.items():
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    assert "LICENSE is missing" in sync.problems(source, shipped, whole=True)
+    sync.write(source, shipped, whole=True)
+    assert sync.problems(source, shipped, whole=True) == []
+    assert (shipped / "langextract-usage/examples/sample.py").read_bytes() == b"example\n"
+    (shipped / "LICENSE").write_bytes(b"changed\n")
+    assert sync.problems(source, shipped, whole=True) == ["LICENSE differs"]
+
+
+def test_full_bundle_sync_refuses_a_missing_source_before_removing_the_copy(tmp_path):
+    import pytest
+
+    source, shipped = tmp_path / "missing", tmp_path / "plugin"
+    shipped.mkdir()
+    (shipped / "LICENSE").write_bytes(b"kept\n")
+    assert sync.problems(source, shipped, whole=True) == ["source bundle is missing or empty"]
+    with pytest.raises(FileNotFoundError):
+        sync.write(source, shipped, whole=True)
+    assert (shipped / "LICENSE").read_bytes() == b"kept\n"
+
+
+def test_full_bundle_sync_does_not_report_two_absent_bundles_as_equal(tmp_path):
+    assert sync.problems(tmp_path / "missing", tmp_path / "absent", whole=True) == [
+        "source bundle is missing or empty"]

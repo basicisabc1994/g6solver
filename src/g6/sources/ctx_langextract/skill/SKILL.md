@@ -9,6 +9,10 @@ Pulls named fields out of a text and holds every value to the text it came from.
 block) reads the whole text window by window, or your own regular expressions run in bounded child processes; then
 each value is looked up in the text itself.
 
+Through G6, LangExtract-style extraction uses the person's Claude Code or Codex sign-in, or a caller G6 is given,
+with no API key. The bundled `langextract-usage` skill is Google's guide to the `langextract` library itself;
+its provider and API-key instructions describe that library.
+
 ## When to use it
 
 - Pulling fields out of a contract, an invoice, an email or a report, where each value must be traceable to its

@@ -44,6 +44,7 @@ artifact and check scope. Report the warning card and recovery; never turn a ref
 Ask the person when permissions, task meaning or evidence are missing. Local settings assume a trusted host;
 unrestricted same-user shell access defeats that separation.
 Superpowers lifecycle skills are optional companions, not prerequisites for using G6.
+Bundled `langextract-usage` is Google's guide to the `langextract` library; G6's extraction guidance is in `g6-ctx-langextract`.
 
 Loop: in Claude Code with G6's plugin, its Stop hook runs the review-until-clean loop when you finish; elsewhere,
 call `g6_review_until_clean` (`references/lifecycle.md`).

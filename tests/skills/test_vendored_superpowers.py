@@ -19,7 +19,8 @@ RECORD = (VENDOR / "VENDORED.md").read_text(encoding="utf-8")
 
 
 def test_the_lifecycle_skills_are_vendored() -> None:
-    assert set(skills.vendored()) == LIFECYCLE
+    assert set(skills.vendored("superpowers")) == LIFECYCLE
+    assert set(skills.vendored()) == LIFECYCLE | {"langextract-usage"}
 
 
 def test_each_vendored_skill_names_itself() -> None:

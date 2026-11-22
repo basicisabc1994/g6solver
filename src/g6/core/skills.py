@@ -2,8 +2,8 @@
 """Skills: the ``SKILL.md`` an agent loads to use G6 well, shipped as package data (FW-01).
 
 A component's skill is ``<its package>/skill/SKILL.md``, installed for an agent as ``g6-<component>`` (hyphens for
-underscores, as skill names allow). G6's own guide, ``using-g6``, and the vendored superpowers skills
-(``vendor/superpowers/``) live in the ``g6.skills`` package. Each is found from its package's folder, so a skill is
+underscores, as skill names allow). G6's own guide, ``using-g6``, and the vendored skills
+(``vendor/<source>/``) live in the ``g6.skills`` package. Each is found from its package's folder, so a skill is
 read without importing its component, from a wheel or a source checkout.
 
 A skill's ``## Ops`` section lists one op per line, ``- `op`: what it does``, matching the block's own ``ops`` answer;
@@ -88,9 +88,27 @@ def vendor_dir() -> Path:
     return _skills_root() / "vendor" / "superpowers"
 
 
-def vendored() -> dict[str, Path]:
-    """Each vendored superpowers skill's folder, by skill name."""
-    return {d.name: d for d in sorted(vendor_dir().iterdir()) if (d / "SKILL.md").is_file()}
+def vendor_sources() -> dict[str, Path]:
+    """Each bundled source's folder, holding its skills, licence and provenance."""
+    return {d.name: d for d in sorted((_skills_root() / "vendor").iterdir())
+            if d.is_dir() and d.name != "__pycache__"}
+
+
+def vendored(source: str | None = None) -> dict[str, Path]:
+    """Each bundled skill's folder, by name, across all sources or one named source.
+
+    Unknown sources raise ``KeyError``; duplicate skill names raise ``ValueError`` rather than replacing a bundle.
+    """
+    sources = vendor_sources()
+    roots = [sources[source]] if source is not None else sources.values()
+    found: dict[str, Path] = {}
+    for root in roots:
+        for directory in sorted(root.iterdir()):
+            if (directory / "SKILL.md").is_file():
+                if directory.name in found:
+                    raise ValueError(f"duplicate vendored skill: {directory.name}")
+                found[directory.name] = directory
+    return found
 
 
 def front_matter(text: str) -> dict[str, str]:

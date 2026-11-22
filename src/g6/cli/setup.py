@@ -448,7 +448,8 @@ def register_clients(args, clients: list[str], say: Say, ask: Ask = input) -> in
         # setup is the person's install step, so it brings this version's skill: an earlier install's copy left in
         # place keeps its old instructions (the owner's pilot, 2026-10-30)
         earlier = (Path.home() / f".{client}" / "skills" / skills.GUIDE).exists()
-        cli(["skills", "install", "--user", "--client", client, "--force"])
+        bundled = [n for n, folder in skills.vendored().items() if folder.parent != skills.vendor_dir()]
+        cli(["skills", "install", skills.GUIDE, *bundled, "--user", "--client", client, "--force"])
         if earlier:
             say(f"Replaced the earlier copy of the {skills.GUIDE} skill for {client} with this version's.")
         if client == "codex":

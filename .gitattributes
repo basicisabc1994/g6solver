@@ -7,6 +7,7 @@ plugins/g6/skills/** text=auto eol=lf
 
 # Vendored third-party files keep their upstream bytes: git never rewrites their line endings.
 src/g6/skills/vendor/** -text
+plugins/g6/vendor/** -text
 
 # Validation protocols bind the bytes of their own inputs (validation/freeze.py's tree_digest, e.g. the routing fixtures
 # every session reads): every file under validation/ checks out as the index holds it.

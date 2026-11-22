@@ -9,3 +9,9 @@ Third-party material bundled in this distribution is listed below with its licen
 superpowers skills (src/g6/skills/vendor/superpowers): 14 skills from superpowers 7.0.0,
 https://github.com/obra/superpowers, unmodified. MIT License, Copyright (c) 2025 Jesse Vincent; the
 licence text is in src/g6/skills/vendor/superpowers/LICENSE.
+
+LangExtract usage skill (src/g6/skills/vendor/langextract): Google's guide from
+https://github.com/google/langextract, commit 0e441bf77ddc3119dd0aa413322959234dd84ee5,
+unmodified. Apache License, Version 2.0; Copyright 2025 Google LLC. The licence text is in
+src/g6/skills/vendor/langextract/LICENSE. The Claude Code plugin carries the same bundle in
+plugins/g6/vendor/langextract. Upstream has no NOTICE file.

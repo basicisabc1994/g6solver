@@ -76,13 +76,17 @@ def _skills(args: argparse.Namespace) -> int:
         for component, name in components.items():
             print(f"{name:36} the {component} component's own skill")
         for name in vendored:
-            print(f"{name:36} superpowers, for a coding agent's lifecycle (--with-superpowers)")
+            source = vendored[name].parent.name
+            detail = ("superpowers, for a coding agent's lifecycle (--with-superpowers)" if source == "superpowers"
+                      else f"{source}, bundled skill")
+            print(f"{name:36} {detail}")
         return 0
 
     sources = {skills.GUIDE: skills.guide_dir(), **{name: skills.skill_dir(c) for c, name in components.items()},
                **vendored}
     if args.all:
-        wanted = [skills.GUIDE, *components.values()]
+        wanted = [skills.GUIDE, *components.values(),
+                  *(n for n, folder in vendored.items() if folder.parent != skills.vendor_dir())]
     elif args.names:
         unknown = [n for n in args.names if n not in components and n not in sources]
         if unknown:
@@ -95,7 +99,7 @@ def _skills(args: argparse.Namespace) -> int:
         if _superpowers_plugin(Path.home()):
             print("The superpowers plugin is installed, so its skills are not copied a second time.")
         else:
-            wanted += [n for n in vendored if n not in wanted]
+            wanted += [n for n in skills.vendored("superpowers") if n not in wanted]
 
     dest = (Path.home() if args.user else Path.cwd()) / f".{args.client}" / "skills"
     for name in wanted:
@@ -185,7 +189,8 @@ def _parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     sk_sub.add_parser("list", help="list the skills G6 ships")
     si = sk_sub.add_parser("install", help="copy skills into ./.claude/skills (with no names: the using-g6 skill)")
     si.add_argument("names", nargs="*", help="using-g6, a component (e.g. coding_agent_gate) or a skill name")
-    si.add_argument("--all", action="store_true", help="the using-g6 skill and every component's skill")
+    si.add_argument("--all", action="store_true", help="the guide, component skills and other bundles; "
+                    "Superpowers uses --with-superpowers")
     si.add_argument("--with-superpowers", action="store_true",
                     help="also the superpowers skills for a coding agent (skipped if the superpowers plugin is there)")
     si.add_argument("--user", action="store_true", help="into ~/.claude/skills, for every project")
