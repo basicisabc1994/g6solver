@@ -24,6 +24,8 @@ memory cap, no network), so a pattern that backtracks without end is stopped and
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -280,7 +282,7 @@ def run_patterns(text: str, patterns: dict[str, str]) -> tuple[dict[str, FieldRe
         reply: dict[str, Any] = {}
         if done.status == "ok" and "spans.json" in done.outputs:
             try:
-                reply = json.loads(done.outputs["spans.json"].decode("utf-8"))
+                reply = _decode_json(done.outputs["spans.json"].decode("utf-8"))
             except (UnicodeDecodeError, ValueError, RecursionError, MemoryError):
                 reply = {}
         if done.status == "timeout":

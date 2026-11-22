@@ -25,6 +25,8 @@ answers what it did (stored, delivered, acknowledged, with ids), a fact of G6's 
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import re
 import time
@@ -127,8 +129,8 @@ class Mailbox:
         if row is None:
             return None
         try:
-            return {"name": row["name"], "members": json.loads(row["members"]),
-                    "schema": json.loads(row["schema"]) if row["schema"] else None}
+            return {"name": row["name"], "members": _decode_json(row["members"]),
+                    "schema": _decode_json(row["schema"]) if row["schema"] else None}
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
@@ -230,7 +232,7 @@ class Mailbox:
                                    "message_id = ?", (group, member, row["id"])).fetchone()["times"]
                 try:
                     out.append({"id": row["id"], "sender": row["sender"], "sender_is": "declared, not authenticated",
-                                "to": row["recipient"], "body": json.loads(row["body"]), "sent": row["sent"],
+                                "to": row["recipient"], "body": _decode_json(row["body"]), "sent": row["sent"],
                                 "deliveries": times})
                 except (RecursionError, MemoryError):
                     raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
@@ -299,7 +301,7 @@ class Mailbox:
                     (group, row["id"])).fetchall()}
                 try:
                     out.append({"id": row["id"], "sender": row["sender"], "to": row["recipient"],
-                                "body": json.loads(row["body"]), "sent": row["sent"], "delivered_to": times,
+                                "body": _decode_json(row["body"]), "sent": row["sent"], "delivered_to": times,
                                 "acked_by": sorted(m for m, upto in cursors.items() if upto >= row["id"] and m in times)})
                 except (RecursionError, MemoryError):
                     raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None

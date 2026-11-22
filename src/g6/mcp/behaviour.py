@@ -24,7 +24,8 @@ of the tree the question is asked about.
 """
 from __future__ import annotations
 
-import json
+from g6.core.decoder_limits import json_value as _decode_json
+
 import re
 import time
 from typing import Any
@@ -141,7 +142,7 @@ def _review_candidates(task: str, review_job: str, template_instances: Any, *, i
 
     try:
         saved_bytes = state_path("reviews", f"{review_job}.json").read_bytes()
-        saved = json.loads(saved_bytes)
+        saved = _decode_json(saved_bytes)
         _completion = saved["assessment"]["completion"]
     except (OSError, ValueError, KeyError, TypeError, RecursionError, MemoryError) as exc:
         raise bq.CandidateRefused(f"G6 holds no finished review with this job id it can read ({type(exc).__name__})",

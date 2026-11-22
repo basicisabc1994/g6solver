@@ -26,6 +26,22 @@ class UndecodableRecord(ValueError):
     other record stands in for it."""
 
 
+class _HookRefusal(Exception):
+    """A decoder hook's deliberate refusal, retained outside the native decoder's failure translation."""
+
+    def __init__(self, error: ValueError) -> None:
+        self.error = error
+
+
+def _hook(function: Any) -> Any:
+    def call(*args: Any) -> Any:
+        try:
+            return function(*args)
+        except ValueError as exc:
+            raise _HookRefusal(exc) from None
+    return call
+
+
 def _integer(digits: str) -> int:
     limit = sys.get_int_max_str_digits()
     if limit and len(digits.lstrip("-")) > limit:
@@ -33,13 +49,35 @@ def _integer(digits: str) -> int:
     return int(digits)
 
 
-def decode(text: str | bytes | bytearray) -> Any:
+def decode(text: str | bytes | bytearray, *, partial: bool = False, start: int = 0, **options: Any) -> Any:
     """``json.loads(text)``; a record past the decoder's limits raises :class:`UndecodableRecord`, and a malformed one
-    ``json.JSONDecodeError`` as before. Only the decoder's own limits are caught here, never a later ``ValueError``."""
+    ``json.JSONDecodeError`` as before. Only failures inside the decoder are caught here, never a later
+    ``ValueError``. Decoder hooks retain their site's policy. With ``partial``, return ``(value, end)`` from the
+    object beginning at ``start``, preserving the caller's existing raw-decoder semantics."""
     try:
-        return json.loads(text, parse_int=_integer)
-    except (RecursionError, MemoryError):
-        raise UndecodableRecord("a JSON record exceeds decoder limits") from None
+        options = {name: _hook(value) if name in {"parse_float", "parse_constant", "object_hook", "object_pairs_hook"}
+                   and callable(value) else value for name, value in options.items()}
+        if partial:
+            return json.JSONDecoder(parse_int=_integer, **options).raw_decode(text, start)
+        return json.loads(text, parse_int=_integer, **options)
+    except json.JSONDecodeError:
+        raise
+    except _HookRefusal as exc:
+        raise exc.error from None
+    except (ValueError, RecursionError, MemoryError) as exc:
+        raise UndecodableRecord(f"a JSON record cannot be decoded ({type(exc).__name__})") from None
+
+
+def json_value(text: str | bytes | bytearray, **options: Any) -> Any:
+    """Decode through :func:`decode` for a site's ordinary malformed-JSON refusal.
+
+    Use ``decode`` directly where passing over an unreadable record could let another record decide. This adapter
+    retains the existing ``JSONDecodeError`` handlers at sites that refuse or read the input as unknown.
+    """
+    try:
+        return decode(text, **options)
+    except UndecodableRecord:
+        raise json.JSONDecodeError("a JSON record cannot be decoded", "", 0) from None
 
 
 class ListOf(NamedTuple):
@@ -74,4 +112,4 @@ def shaped(record: Any, required: dict[str, Any], optional: dict[str, Any] | Non
             and all(name not in record or _is(record[name], kind) for name, kind in (optional or {}).items()))
 
 
-__all__ = ["ListOf", "UndecodableRecord", "decode", "shaped"]
+__all__ = ["ListOf", "UndecodableRecord", "decode", "json_value", "shaped"]

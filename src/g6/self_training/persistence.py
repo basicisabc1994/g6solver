@@ -19,6 +19,8 @@ A ``scorecard.json`` that cannot be read raises rather than starting empty, sinc
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import os
 import time
@@ -93,7 +95,7 @@ class ScorecardStore:
         self._scores: dict[str, MaturityScore] = {}
         if self._scorecard_path.exists():
             try:
-                data = json.loads(self._scorecard_path.read_text(encoding="utf-8"))
+                data = _decode_json(self._scorecard_path.read_text(encoding="utf-8"))
                 self._scores = {name: MaturityScore.model_validate(s) for name, s in data.get("scores", {}).items()}
             except Exception as exc:  # noqa: BLE001 - re-raised: an unreadable scorecard must not drop its flags
                 raise ValueError(f"cannot read the scorecard at {self._scorecard_path}: {exc}; move it aside to "

@@ -2,6 +2,8 @@
 """Bounded typed state with atomic replacement and a fail-closed cross-process writer lock."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import os
 from contextlib import contextmanager
@@ -79,7 +81,7 @@ class Store:
         if len(content) > self.max_bytes:
             raise Refusal(RESOURCE_LIMIT, "Orchestrator state exceeds 1 MiB; ask the operator to archive records.")
         try:
-            return Snapshot.model_validate(json.loads(content))
+            return Snapshot.model_validate(_decode_json(content))
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
@@ -120,7 +122,7 @@ class Store:
         if len(content) > 65_536:
             raise Refusal(RESOURCE_LIMIT, "Operator roster exceeds 64 KiB.")
         try:
-            return Policy.model_validate(json.loads(content))
+            return Policy.model_validate(_decode_json(content))
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 

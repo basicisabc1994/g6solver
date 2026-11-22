@@ -40,6 +40,8 @@ nothing derives it from a hosted owner.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import dataclasses
 import hashlib
 import json
@@ -595,7 +597,7 @@ class Runtime:
             raise PlanRejected([f"a child of this delegation is delegated by {unit_key!r}, not {p!r}" for p in named])
         kids = [{**c, "parent": unit_key} for c in children]
         try:
-            body = json.loads(plan.to_json())
+            body = _decode_json(plan.to_json())
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         made = [c["key"] for c in kids if c.get("kind") == "do" and isinstance(c.get("key"), str)]
@@ -755,7 +757,7 @@ class Runtime:
                 # never as an artifact a check/consumer may execute. Match the
                 # existing ledger's serialization for non-JSON component replies.
                 try:
-                    rejected = json.loads(json.dumps(content, sort_keys=True, default=str))
+                    rejected = _decode_json(json.dumps(content, sort_keys=True, default=str))
                 except (RecursionError, MemoryError):
                     raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 refused_output = {"run_id": run.run_id, "unit": spec.key, "content": rejected,
@@ -1054,7 +1056,7 @@ class Runtime:
             passed = sorted({v["unit_key"] for v in on_it if v["unit_key"] != spec.key and v["result"] == "pass"})
             if failed and passed:
                 try:
-                    reasons = json.loads(failed[-1]["reasons_json"] or "[]")
+                    reasons = _decode_json(failed[-1]["reasons_json"] or "[]")
                 except (RecursionError, MemoryError):
                     raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 question = (f"Verifiers disagree on {spec.verifies}'s output: {', '.join(passed)} passed it and "
@@ -1110,7 +1112,7 @@ class Runtime:
         if not self._pulled_now(mission_id, producer) and not self._escalate(mission, producer, verdict):
             return
         try:
-            text = focused["text"] if focused else "; ".join(json.loads(verdict["reasons_json"] or "[]"))[:2000]
+            text = focused["text"] if focused else "; ".join(_decode_json(verdict["reasons_json"] or "[]"))[:2000]
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         self._missions.record_event(mission_id, "message", actor=f"worker:{row['instance_id']}",
@@ -1193,7 +1195,7 @@ class Runtime:
         last = runs[-1]
         code = last["failure_code"]
         try:
-            calls = [c for c in json.loads(last["calls_json"] or "[]") if isinstance(c, dict)]
+            calls = [c for c in _decode_json(last["calls_json"] or "[]") if isinstance(c, dict)]
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         step = spec.call or spec.oracle or {}
@@ -1237,7 +1239,7 @@ class Runtime:
                 why, code = "its runner lost the mission's lease (it stopped, died or was taken over)", "abandoned:lease"
             else:
                 try:
-                    spec_json = json.loads(self._ledger.instance(mission_id, row["instance_id"])["spec_json"])
+                    spec_json = _decode_json(self._ledger.instance(mission_id, row["instance_id"])["spec_json"])
                 except (RecursionError, MemoryError):
                     raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 limit = timedelta(seconds=int(spec_json["policy"]["max_runtime_seconds"]))
@@ -1314,7 +1316,7 @@ class Runtime:
         the owner's code in a child process acts too, whatever the worker: the child outlives a killed runner,
         and nothing here can see it stop (Codex V2)."""
         try:
-            spec = json.loads(self._ledger.instance(mission_id, row["instance_id"])["spec_json"])
+            spec = _decode_json(self._ledger.instance(mission_id, row["instance_id"])["spec_json"])
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if any((component, op) in RUNS_CODE for component, op in spec.get("allowed", [])):
@@ -1398,7 +1400,7 @@ class Runtime:
             return Outcome(BLOCKED, reasons=(f"unit {key}'s output was never judged",))
         worst = min((v["state"] for v in judged), key=rank)
         try:
-            reasons = tuple(r for v in judged for r in json.loads(v["reasons_json"] or "[]"))
+            reasons = tuple(r for v in judged for r in _decode_json(v["reasons_json"] or "[]"))
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         judged_outcome = Outcome(worst, degraded=last.degraded, reasons=reasons, source=f"verdicts on {key}")

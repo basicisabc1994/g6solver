@@ -20,6 +20,8 @@ archive planted three fixed strings at every 20th item).
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import dataclasses
 import json
 import math
@@ -93,7 +95,7 @@ def _public(row: Any) -> dict[str, Any]:
     out = dict(row)
     out.pop("decoy")
     try:
-        out["meta"], out["review"] = json.loads(out.pop("meta_json")), json.loads(out.pop("review_json"))
+        out["meta"], out["review"] = _decode_json(out.pop("meta_json")), _decode_json(out.pop("review_json"))
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     return out
@@ -257,7 +259,7 @@ class ActionQueue:
             self._decide(row, "sent", who, "", row["approved_text"], note=str(channel))
             if row["action_type"] == "spend":
                 try:
-                    amount, month = amount_of(json.loads(row["meta_json"]).get("amount")), self._clock().strftime("%Y-%m")
+                    amount, month = amount_of(_decode_json(row["meta_json"]).get("amount")), self._clock().strftime("%Y-%m")
                 except (RecursionError, MemoryError):
                     raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 self.scope._append_ledger(vid, month, "cash", "charge", amount, row["action_id"])
@@ -322,7 +324,7 @@ class ActionQueue:
         if row["status"] != "approved":
             raise QueueError(f"[{APPROVAL_REQUIRED}] this run approval is {row['status']}; a person must approve it")
         try:
-            if json.loads(row["meta_json"]).get("binding") != binding:
+            if _decode_json(row["meta_json"]).get("binding") != binding:
                 raise QueueError(f"[{APPROVAL_MISMATCH}] this approval was given for another run, not this one")
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
@@ -340,7 +342,7 @@ class ActionQueue:
         if row["status"] != "adopted":
             raise QueueError(f"This guard is {row['status']}; a person must adopt it before it can block anything.")
         try:
-            if json.loads(row["meta_json"]).get("sha") != guard.sha():
+            if _decode_json(row["meta_json"]).get("sha") != guard.sha():
                 raise QueueError("This is not the guard that was adopted: its name or code differs.")
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None

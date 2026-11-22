@@ -19,8 +19,9 @@ anything it says that cannot be read leaves the table's answer standing. No mode
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import builtins
-import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -118,7 +119,7 @@ def refine(triage: Triage, *, complete: Callable[[str], str], error_type: str, m
     prompt = (f"Classify this Python error. Reply with JSON {{\"category\": one of {list(CATEGORIES)}, \"posture\": one of"
               f" {list(POSTURES)}}}.\nerror type: {error_type}\nmessage: {message[:500]}")
     try:
-        reply = json.loads(complete(prompt))
+        reply = _decode_json(complete(prompt))
         category, posture = str(reply["category"]).strip().lower(), str(reply["posture"]).strip().lower()
         if category not in CATEGORIES:
             raise ValueError(category)

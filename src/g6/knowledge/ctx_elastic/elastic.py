@@ -21,6 +21,8 @@ document's address on the server as its source and the hash of its ``_source`` a
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
@@ -115,7 +117,7 @@ def _call(method: str, path: str, body: Mapping[str, Any] | None, caller: Caller
     except outside.ServiceError as exc:
         raise _failure(exc) from None
     try:
-        return json.loads(reply.body)
+        return _decode_json(reply.body)
     except (ValueError, UnicodeDecodeError, RecursionError, MemoryError) as exc:
         if isinstance(exc, (RecursionError, MemoryError)):
             exc = ValueError("a JSON record exceeds decoder limits")

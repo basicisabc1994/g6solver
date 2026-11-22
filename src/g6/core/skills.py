@@ -17,6 +17,8 @@ which the tests send through ``g6_invoke``.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import importlib.util
 import json
 import re
@@ -141,7 +143,7 @@ def skill_examples(text: str) -> list[tuple[str, dict]]:
     for op, body in _EXAMPLE.findall(text):
         try:
             try:
-                params = json.loads(body)
+                params = _decode_json(body)
             except (RecursionError, MemoryError):
                 raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         except json.JSONDecodeError as exc:

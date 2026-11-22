@@ -10,6 +10,8 @@ an exception that escapes its reply.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import UndecodableRecord, decode as _decode_json
+
 import json
 import math
 import re
@@ -35,9 +37,6 @@ def _float(text: str) -> float:
     if not math.isfinite(value):
         raise Undecodable("a number is too large to be a finite float")
     return value
-
-
-_DECODER = json.JSONDecoder(parse_constant=_constant, parse_float=_float)
 
 
 def depth(text: str) -> int:
@@ -72,9 +71,11 @@ def _text(text: Any, max_chars: int) -> str:
 
 def _decode(text: str) -> tuple[Any, int]:
     try:
-        return _DECODER.raw_decode(text)
+        return _decode_json(text, partial=True, parse_constant=_constant, parse_float=_float)
     except Undecodable:
         raise
+    except UndecodableRecord as exc:
+        raise Undecodable(str(exc)) from None
     except json.JSONDecodeError as exc:
         raise Undecodable(f"not JSON: {exc}") from None
     except (RecursionError, ValueError, TypeError, MemoryError) as exc:
@@ -88,9 +89,11 @@ def loads(text: Any, *, max_chars: int, max_depth: int = MAX_DEPTH) -> Any:
     if depth(checked) > max_depth:
         raise Undecodable(f"the text nests deeper than {max_depth} levels")
     try:
-        return json.loads(checked, parse_constant=_constant, parse_float=_float)
+        return _decode_json(checked, parse_constant=_constant, parse_float=_float)
     except Undecodable:
         raise
+    except UndecodableRecord as exc:
+        raise Undecodable(str(exc)) from None
     except json.JSONDecodeError as exc:
         raise Undecodable(f"not JSON: {exc}") from None
     except (RecursionError, ValueError, TypeError, MemoryError) as exc:

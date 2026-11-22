@@ -23,6 +23,8 @@ Pure: no I/O but reading ``tiers.json``, no model.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import functools
 import json
 from collections.abc import Callable, Iterable, Mapping
@@ -124,7 +126,7 @@ def load_tiers(path: str | Path | None = None) -> Tiers:
     """``tiers.json``, judged: the eight tiers in order, the four modes in order, each field of the shape it must have.
     Every problem is named at once (``ValueError``)."""
     try:
-        raw = json.loads(Path(path or TIERS_FILE).read_text(encoding="utf-8"))
+        raw = _decode_json(Path(path or TIERS_FILE).read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not isinstance(raw, dict) or set(raw) != _FILE_FIELDS:

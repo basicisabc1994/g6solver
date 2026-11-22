@@ -21,6 +21,8 @@ platforms and inside which envelope, waits for the spike; until then no generati
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import sqlite3
 import struct
@@ -220,7 +222,7 @@ class PersistentColbertIndex(Retrieves):
         scored = []
         for row in rows:
             try:
-                passage = Passage(**json.loads(row["record"]))
+                passage = Passage(**_decode_json(row["record"]))
             except (RecursionError, MemoryError):
                 raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             scored.append((passage, maxsim(tokens, _unpack(row["data"], row["tokens"], self.pin))))

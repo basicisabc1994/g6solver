@@ -27,6 +27,8 @@ times in one zone compare by their wall clocks, which repeat in the hour a clock
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import os
 import sqlite3
@@ -633,7 +635,7 @@ class OwnerScope:
             raise LookupError(NOT_FOUND)
         out = dict(row)
         try:
-            out["caps"] = json.loads(out.pop("caps_json"))
+            out["caps"] = _decode_json(out.pop("caps_json"))
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return out
@@ -665,7 +667,7 @@ class OwnerScope:
                 args.append(value)
         rows = self.conn.execute(sql + " ORDER BY seq", _plain(*args)).fetchall()
         try:
-            return [{**{k: r[k] for k in ("seq", "kind", "ref", "at")}, "detail": json.loads(r["detail_json"])}
+            return [{**{k: r[k] for k in ("seq", "kind", "ref", "at")}, "detail": _decode_json(r["detail_json"])}
                     for r in rows]
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None

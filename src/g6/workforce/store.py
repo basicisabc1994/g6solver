@@ -11,6 +11,8 @@ The default location is ``$G6_HOME/workforce/venture.db`` (``g6.core.storage``).
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import sqlite3
 import uuid
@@ -157,7 +159,7 @@ class VentureStore:
     def _venture(row: sqlite3.Row) -> dict:
         d = dict(row)
         try:
-            d["runway_rule"] = json.loads(d.pop("runway_rule_json") or "{}")
+            d["runway_rule"] = _decode_json(d.pop("runway_rule_json") or "{}")
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return d
@@ -213,7 +215,7 @@ class VentureStore:
         for row in self._conn.execute(sql, args).fetchall():
             d = dict(row)
             try:
-                d["detail"] = json.loads(d.pop("detail_json") or "{}")
+                d["detail"] = _decode_json(d.pop("detail_json") or "{}")
             except (RecursionError, MemoryError):
                 raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             out.append(d)

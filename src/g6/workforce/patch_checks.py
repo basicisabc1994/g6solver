@@ -4,6 +4,8 @@
 """Bounded differential evidence, executed by the bench; no census authority is inherited."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import ast
 import json
 import shutil
@@ -212,7 +214,7 @@ def _observe(repo, module, function, inputs, scratch, timeout: float | None = No
     if not ran or not output.is_file():
         return None, receipt
     try:
-        values = json.loads(output.read_text(encoding="utf-8"))
+        values = _decode_json(output.read_text(encoding="utf-8"))
     except (ValueError, OSError, RecursionError, MemoryError):
         return None, receipt
     return (values if isinstance(values, list) and len(values) == len(inputs) else None), receipt

@@ -28,6 +28,8 @@ checked before anything is written.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import re
@@ -143,7 +145,7 @@ class Store:
                 unreadable.append(f"{row['id']}: edited after it was kept")
                 continue
             try:
-                record = MemoryRecord.model_validate(json.loads(row["body"]))
+                record = MemoryRecord.model_validate(_decode_json(row["body"]))
             except (ValueError, ValidationError, RecursionError, MemoryError):
                 unreadable.append(f"{row['id']}: no longer a record")
                 continue
@@ -183,7 +185,7 @@ class Store:
                         raise StoreError(STORE, f"record {record.id} was edited after it was kept, so it is not "
                                                 "served; forget it by its id and keep it again")
                     try:
-                        return MemoryRecord.model_validate(json.loads(row["body"])), False
+                        return MemoryRecord.model_validate(_decode_json(row["body"])), False
                     except (RecursionError, MemoryError):
                         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 count, total = conn.execute("SELECT COUNT(*), COALESCE(SUM(LENGTH(body)), 0) FROM records").fetchone()

@@ -244,7 +244,9 @@ def _payload(value: Any) -> bool:
 def _parsed(rest: str) -> tuple[Any, str]:
     """The answer that follows ``ANSWERED`` in a text: (its JSON, "") or, cut short in the record, (None, its text)."""
     try:
-        return json.JSONDecoder().raw_decode(rest)[0], ""
+        from g6.core.decoder_limits import json_value
+
+        return json_value(rest, partial=True)[0], ""
     except (ValueError, RecursionError, MemoryError):
         return None, rest
 

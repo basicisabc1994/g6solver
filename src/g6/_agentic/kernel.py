@@ -27,6 +27,8 @@ the deadline worker; late replies are unused. See the agentic override kernel de
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import contextvars
 import hashlib
 import inspect
@@ -299,7 +301,7 @@ def _json_copy(value: Any) -> Any:
     text = _child.canonical(value)
     if len(text) > JSON_CHARS:
         raise ValueError("JSON character limit")
-    return json.loads(text)
+    return _decode_json(text)
 
 
 def _plain_budget(value: Any) -> Budget:
@@ -1378,7 +1380,7 @@ def override(pending: Pending, *, confirmation: Confirmation | None = None) -> d
             return _refused(DIGEST_MISMATCH, "G6 no longer holds this sealed preparation")
         text, sealed_snapshot, expected, owned, pins = (retained.text, retained.snapshot, retained.bound,
                                                        retained.owned, retained.pins)
-        data = json.loads(text)
+        data = _decode_json(text)
         original = data["original"]
         _check_pins(pins)
         public_snapshot = object.__getattribute__(pending, "caller")

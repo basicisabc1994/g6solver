@@ -7,6 +7,8 @@ therefore have one order. Data already handed to transport cannot be recalled.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import contextvars
 import json
 from contextlib import contextmanager
@@ -72,7 +74,7 @@ def prepare(session, request_id, result, sources, supplied=(), job=None, *, meta
     body = call_body(result) if body is None else body
     # Refusal controls and retained-job metadata must not retain live aliases.
     try:
-        controls = json.loads(json.dumps({'job': job, 'metadata': metadata}))
+        controls = _decode_json(json.dumps({'job': job, 'metadata': metadata}))
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     session._g6_tickets[key] = Ticket(tuple(sources), provider(session), frozenset(supplied),

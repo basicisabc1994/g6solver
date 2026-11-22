@@ -2,6 +2,8 @@
 """Client-dialog grants and the last MCP reply boundary for cloud coding clients."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 from copy import deepcopy
 import contextvars
@@ -53,7 +55,7 @@ def _source_function(fn):
                 from g6.core.ledger import digest
                 try:
                     body, refs, metadata = policy.freeze_output(value)
-                    value = json.loads(body)
+                    value = _decode_json(body)
                     # A refused reply gains its repair block (g6.mcp.repair: G6's own words, codes and templates)
                     # on the frozen snapshot, so the sources it carries are exactly the snapshot's.
                     repaired = _repaired(fn.__name__, arguments, value, capture)
@@ -210,7 +212,7 @@ def protect_reply(ctx: Any, result: dict, sources, *, supplied=(), job=None, rec
     try:
         body, known, metadata = policy.freeze_output(result)
         try:
-            result = json.loads(body)
+            result = _decode_json(body)
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         sources = policy.boundary_sources(sources, carried=known or ())
@@ -235,7 +237,7 @@ def _matches_return(returned, result, wire=None):
         return False
     try:
         wire = call_body(result) if wire is None else wire
-        value = json.loads(returned[0])
+        value = _decode_json(returned[0])
         if '_meta' in wire or digest(value) != returned[1]:
             return False
         if call_body(ToolResult(content=value))['content'] != wire['content']:

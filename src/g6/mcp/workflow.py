@@ -17,6 +17,8 @@ repeats what either file holds. No argument confirms a deletion or carries a cor
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import time
 from typing import Any
@@ -63,7 +65,7 @@ def _noted(reply: Any, note: str) -> Any:
     except (TypeError, ValueError):
         return reply
     try:
-        noted = json.loads(body)
+        noted = _decode_json(body)
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     noted["workflow"] = {**(noted.get("workflow") or {}), "note": note}
@@ -85,7 +87,7 @@ def attach(reply: Any, built: Any, where: tuple[str, ...], project: str) -> Any:
         return reply
     body, refs, metadata = cloud.freeze_output(reply)
     try:
-        shown = holder = json.loads(body)
+        shown = holder = _decode_json(body)
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     for key in where[:-1]:

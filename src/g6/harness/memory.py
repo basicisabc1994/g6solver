@@ -6,6 +6,8 @@ key, an output hash, a run id and a time. Nothing here decides anything; the har
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import os
 import sqlite3
@@ -65,14 +67,14 @@ class Memory:
     def run_record(self, run_id: str) -> dict | None:
         row = self._db().execute("SELECT reply_json FROM runs WHERE run_id=?", (run_id,)).fetchone()
         try:
-            return json.loads(row["reply_json"]) if row else None
+            return _decode_json(row["reply_json"]) if row else None
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def runs(self, family: str) -> list[dict]:
         rows = self._db().execute("SELECT reply_json FROM runs WHERE family=? ORDER BY rowid", (family,)).fetchall()
         try:
-            return [json.loads(r["reply_json"]) for r in rows]
+            return [_decode_json(r["reply_json"]) for r in rows]
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
@@ -95,7 +97,7 @@ class Memory:
         row = self._db().execute("SELECT batch_json FROM evaluations WHERE family=? ORDER BY id DESC LIMIT 1",
                                  (family,)).fetchone()
         try:
-            return json.loads(row["batch_json"]) if row else None
+            return _decode_json(row["batch_json"]) if row else None
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 

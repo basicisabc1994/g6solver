@@ -27,6 +27,8 @@ unchecked); it is never written into a document. All of it is untrusted text: th
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import os
 import re
@@ -221,7 +223,7 @@ def parse_registry(text: str) -> tuple[list[Entry], list[str]]:
     """The entries of a ``registry.json`` and, for each one left out, why; :class:`HubError` when it is not a
     registry at all."""
     try:
-        data = json.loads(text)
+        data = _decode_json(text)
     except (ValueError, RecursionError, MemoryError) as exc:
         if isinstance(exc, (RecursionError, MemoryError)):
             exc = ValueError("a JSON record exceeds decoder limits")
@@ -269,7 +271,7 @@ def parse_registry(text: str) -> tuple[list[Entry], list[str]]:
 def registry_stated(text: str) -> dict[str, str]:
     """The version and last-updated date a ``registry.json`` states for itself (``""`` for what it does not)."""
     try:
-        data = json.loads(text)
+        data = _decode_json(text)
     except (ValueError, RecursionError, MemoryError):
         return {"registry_version": "", "registry_updated": ""}
     bundle = data.get("bundle") if isinstance(data, dict) and isinstance(data.get("bundle"), dict) else {}
@@ -314,7 +316,7 @@ def load(name: str) -> dict[str, Any]:
     if not path.is_file():
         raise HubError(NOT_SYNCED, f"no registry named {name!r} is kept: sync it first (a sensitive op)")
     try:
-        kept = json.loads(path.read_text(encoding="utf-8"))
+        kept = _decode_json(path.read_text(encoding="utf-8"))
         if not isinstance(kept, dict) or not isinstance(kept.get("entries"), list):
             raise ValueError("not a kept registry")
         for doc in (kept.get("docs") or {}).values():
@@ -464,7 +466,7 @@ def notes_for(name: str, entry: str) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
     try:
-        found = json.loads(path.read_text(encoding="utf-8"))
+        found = _decode_json(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError, MemoryError):
         raise HubError(HUB_STORE, f"the notes kept for {name!r} cannot be read") from None
     return [n for n in found if isinstance(n, dict) and n.get("entry") == entry]
@@ -508,7 +510,7 @@ def add_note(name: str, entry: str, text: str) -> dict[str, Any]:
         raise HubError(HUB_INPUT, f"a note is 1 to {MAX_NOTE} characters")
     path = _kept_path(name, ".notes")
     try:
-        notes = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
+        notes = _decode_json(path.read_text(encoding="utf-8")) if path.is_file() else []
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if sum(1 for n in notes if n.get("entry") == entry) >= MAX_NOTES:

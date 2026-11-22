@@ -14,6 +14,8 @@ data mistake.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import csv
 import io
 import json
@@ -248,7 +250,7 @@ def read_json(text: str) -> Table:
     if len(text) > MAX_TEXT_CHARS:
         raise MLError(TOO_LARGE, f"the JSON text is {len(text):,} characters; at most {MAX_TEXT_CHARS:,} are read")
     try:
-        data = json.loads(text, object_pairs_hook=_once)
+        data = _decode_json(text, object_pairs_hook=_once)
     except MLError:
         raise
     except (ValueError, RecursionError, MemoryError) as exc:
@@ -360,7 +362,7 @@ def profile(table: Table, key: list[str] | None = None) -> dict[str, Any]:
                 continue
             counts[json.dumps(parts)] += 1
         try:
-            twice = [(json.loads(k), n) for k, n in counts.most_common() if n > 1]
+            twice = [(_decode_json(k), n) for k, n in counts.most_common() if n > 1]
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         keyed = {"columns": key, "rows_with_missing_key": missing_key, "repeated_values": len(twice),

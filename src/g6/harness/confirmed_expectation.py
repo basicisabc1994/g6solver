@@ -45,6 +45,8 @@ longer counts under the new one.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import re
@@ -128,7 +130,7 @@ def _parsed(data: object, fields: Mapping[str, type], what: str) -> dict:
     if type(data) is not bytes:
         raise ValueError(f"a {what} is read from its canonical JSON bytes")
     try:
-        record = json.loads(data)
+        record = _decode_json(data)
         again = _canonical(record)
     except (ValueError, RecursionError, MemoryError):   # not UTF-8, not JSON, or a value JSON cannot hold (NaN)
         raise ValueError(f"a {what} record that is not JSON is unreadable") from None
@@ -171,7 +173,7 @@ class _Field:
         if obj is None:   # no class default: a field the caller gives
             raise AttributeError(self._name)
         try:
-            return self._read(obj) if self._read else json.loads(obj.record)[self._name]
+            return self._read(obj) if self._read else _decode_json(obj.record)[self._name]
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
@@ -277,7 +279,7 @@ class Question(_Record):
         _typed(record, QUESTION_FIELDS, "a question")   # the caller's values: each field's type, JSON data only
         data = _canonical(record)   # written once: from here nothing the caller holds is shared with the record
         try:
-            held = json.loads(data)
+            held = _decode_json(data)
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         _typed(held, QUESTION_FIELDS, "a question")   # and what was written, so a change in between is checked too
@@ -301,20 +303,20 @@ class Question(_Record):
     @property
     def options(self) -> list[str]:
         try:
-            return json.loads(self._record)["options"]
+            return _decode_json(self._record)["options"]
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     @property
     def options_sha256(self) -> str:
         try:
-            return _options_sha256(json.loads(self._record))
+            return _options_sha256(_decode_json(self._record))
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def to_dict(self) -> dict:
         try:
-            return json.loads(self._record)
+            return _decode_json(self._record)
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
@@ -402,7 +404,7 @@ class ConfirmedExpectation(_Record):
     def record(self) -> bytes:
         """The two records, as one canonical JSON object: ``question`` and ``answer``."""
         try:
-            return _canonical({"question": json.loads(self._question), "answer": json.loads(self._answer)})
+            return _canonical({"question": _decode_json(self._question), "answer": _decode_json(self._answer)})
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
@@ -418,21 +420,21 @@ class ConfirmedExpectation(_Record):
     def option(self) -> str:
         """The option the person chose: the label of one of the question's outcomes."""
         try:
-            return json.loads(self._answer)["option"]
+            return _decode_json(self._answer)["option"]
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     @property
     def answered_by(self) -> str:
         try:
-            return json.loads(self._answer)["answered_by"]
+            return _decode_json(self._answer)["answered_by"]
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     @property
     def options_sha256(self) -> str:
         try:
-            return _options_sha256(json.loads(self._question))
+            return _options_sha256(_decode_json(self._question))
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
@@ -440,21 +442,21 @@ class ConfirmedExpectation(_Record):
     def artefact_sha256(self) -> str:
         """The digest of the artefact the question is asked about, read from the question's bytes."""
         try:
-            return json.loads(self._question)["baseline_sha256"]
+            return _decode_json(self._question)["baseline_sha256"]
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     @property
     def requirement_id(self) -> str:
         try:
-            return json.loads(self._question)["requirement_id"]
+            return _decode_json(self._question)["requirement_id"]
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     @property
     def scope(self) -> str:
         try:
-            return json.loads(self._question)["scope"]
+            return _decode_json(self._question)["scope"]
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
@@ -470,7 +472,7 @@ class ConfirmedExpectation(_Record):
     def instance(self) -> TemplateInstance:
         """What the answer means: the example.v1 check compiled from the question's bytes and the chosen option."""
         try:
-            return _compiled(json.loads(self._question), self.question_sha256, self.option)
+            return _compiled(_decode_json(self._question), self.question_sha256, self.option)
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
@@ -482,7 +484,7 @@ class ConfirmedExpectation(_Record):
     def to_dict(self) -> dict:
         """The two records and what G6 derives from them, as JSON data."""
         try:
-            return {"question": json.loads(self._question), "answer": json.loads(self._answer),
+            return {"question": _decode_json(self._question), "answer": _decode_json(self._answer),
                     "question_sha256": self.question_sha256, "answer_sha256": self.answer_sha256,
                     "expectation_id": self.expectation_id, "provenance": PERSON_CONFIRMED,
                     "instance": self.instance.model_dump(), "check_sha256": self.check_sha256}
@@ -520,7 +522,7 @@ def confirm(question: Question, answer: str, *, answered_by: str, text: str = ""
 def _scenario(one: ConfirmedExpectation) -> bytes:
     """What a case asks, without its answer, as canonical JSON: the function and its arguments."""
     try:
-        shown = json.loads(one._question)
+        shown = _decode_json(one._question)
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     return _canonical({"function": shown["function"], "args": shown["args"], "kwargs": shown["kwargs"]})

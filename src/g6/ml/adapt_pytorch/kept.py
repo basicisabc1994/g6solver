@@ -11,6 +11,8 @@ full store refuses another (:func:`room`), and :func:`forget` removes one by its
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import datetime as _dt
 import hashlib
 import json
@@ -80,7 +82,7 @@ def load(model_id: str) -> tuple[bytes, dict[str, Any]]:
     them."""
     meta_path, weights_path = _files(model_id)
     try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta = _decode_json(meta_path.read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     weights = weights_path.read_bytes()
@@ -98,7 +100,7 @@ def listed() -> list[dict[str, Any]]:
     out = []
     for path in folder.glob("*.json"):
         try:
-            meta = json.loads(path.read_text(encoding="utf-8"))
+            meta = _decode_json(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, RecursionError, MemoryError):
             continue
         out.append({k: meta.get(k) for k in ("model_id", "kept_at", "task", "features", "layers", "headline",

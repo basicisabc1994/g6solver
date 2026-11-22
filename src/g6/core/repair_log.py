@@ -10,6 +10,8 @@ yet.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import atexit
 import json
 import os
@@ -171,7 +173,7 @@ def repair_stats(path: Path | None = None) -> dict[str, Any]:
         return out
     for line in lines:
         try:
-            row = json.loads(line.decode("utf-8"))
+            row = _decode_json(line.decode("utf-8"))
             if not isinstance(row, dict) or not isinstance(row.get("code"), str):
                 continue
             stats = out.setdefault(row["code"], {"refused": 0, "resolved": 0, "not": 0, "person": 0})

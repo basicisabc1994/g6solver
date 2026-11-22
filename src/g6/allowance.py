@@ -9,8 +9,9 @@ weekly meter and its accounting contract are deliberately unchanged.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import math
-import json
 import os
 import re
 from dataclasses import asdict, dataclass, replace
@@ -170,7 +171,7 @@ def report(*, now: datetime | None = None, refresh: bool = True,
                 raw = stream.read(65537)
             if len(raw) > 65536:
                 raise ValueError("oversized settings")
-            config = json.loads(raw)
+            config = _decode_json(raw)
         if not isinstance(config, dict):
             raise ValueError("invalid settings")
         settings = Settings(**config.get("policy", {}))

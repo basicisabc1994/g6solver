@@ -9,6 +9,8 @@ Every call returns the library envelope (``completion_state``, ``warning_card``,
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import hashlib
 import re
@@ -166,11 +168,10 @@ def versions_path(workspace: Path) -> Path:
 def recorded_versions(store: ProfileStore, workspace: Path) -> list[dict]:
     """The store's version rows G6 recorded for ``workspace`` as it appended them (``versions_path``), oldest first: the
     last is the head a harness on it runs (``MetaHarness._head``), read here by anything that must name it without one."""
-    import json
 
     try:
         recorded = {(int(number), str(profile)) for number, profile in
-                    json.loads(versions_path(workspace).read_text(encoding="utf-8"))}
+                    _decode_json(versions_path(workspace).read_text(encoding="utf-8"))}
     except (OSError, ValueError, TypeError, RecursionError, MemoryError):
         recorded = set()
     return [row for row in store.versions() if (row["version"], row["profile_digest"]) in recorded]
@@ -300,10 +301,9 @@ class MetaHarness:
 
     def _recorded_confirmation(self, confirmed: Mapping[str, Any]) -> bool:
         """Whether ``confirmed``, the store's latest confirmation, is the one G6 recorded under its state folder."""
-        import json
 
         try:
-            return json.loads(confirmations_path(self.workspace).read_text(encoding="utf-8")) == dict(confirmed)
+            return _decode_json(confirmations_path(self.workspace).read_text(encoding="utf-8")) == dict(confirmed)
         except (OSError, ValueError, RecursionError, MemoryError):
             return False
 

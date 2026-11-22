@@ -18,8 +18,9 @@ read, since then the set cannot be known.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import importlib
-import json
 import types
 from collections.abc import Iterable
 from functools import lru_cache
@@ -53,7 +54,7 @@ def certificate_bound() -> tuple[frozenset[str], tuple[str, ...]]:
     folders: list[str] = []
     for path in sorted(package.rglob("certificate/certificate.json")):
         try:
-            record = json.loads(path.read_text(encoding="utf-8"))
+            record = _decode_json(path.read_text(encoding="utf-8"))
             files.update(record["imported_code"])
             files.update(record["harness_sha256"])
             folders.append(record["component"].replace(".", "/") + "/")

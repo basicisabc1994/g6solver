@@ -15,6 +15,8 @@ the disclosure. Outside an MCP call (Python, the command line) nothing is sent a
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import sys
 from functools import lru_cache
@@ -44,7 +46,7 @@ def dumps(components: dict[str, str]) -> str:
 @lru_cache(maxsize=1)
 def shipped() -> dict[str, str]:
     """The checked-in list of the components G6 ships (read once)."""
-    return dict(json.loads(PATH.read_text(encoding="utf-8"))["components"])
+    return dict(_decode_json(PATH.read_text(encoding="utf-8"))["components"])
 
 
 def built_in(name: str) -> bool:

@@ -12,6 +12,8 @@ documented Claude shape remains unestablished pending a real sanitised capture.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import argparse
 import base64
 import copy
@@ -157,7 +159,7 @@ def observe_payload(payload: bytes | None, profile: str, version: str, *, observ
     data = None
     try:
         if payload is not None and len(payload) <= MAX_INPUT:
-            data = json.loads(payload)
+            data = _decode_json(payload)
     except (ValueError, UnicodeError, RecursionError, MemoryError):
         pass
     try:

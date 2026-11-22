@@ -8,6 +8,8 @@ a broken seed cannot stop a round silently. Extraction is code: a claim's phrase
 assertive shape with no binding (certified, approved, used by N, N%)."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import os
 import re
@@ -385,7 +387,7 @@ def run_isolated(nodeid: str, repo: Path, timeout: float | None = None) -> bool:
         finally:
             _released(confined, LAST_RUN)
         try:
-            report = json.loads(result.read_text(encoding="utf-8"))
+            report = _decode_json(result.read_text(encoding="utf-8"))
         except (OSError, ValueError, RecursionError, MemoryError):
             report = None
     found = recorded(report)
@@ -464,7 +466,7 @@ def run_suite(repo: Path, timeout: float | None = None) -> dict:
             return found
         found["started"] = True
         try:
-            report = json.loads(result.read_text(encoding="utf-8"))
+            report = _decode_json(result.read_text(encoding="utf-8"))
         except (OSError, ValueError, RecursionError, MemoryError):
             found["why"] = f"the test process exited with code {proc.returncode} before reporting"
             return found
@@ -529,7 +531,7 @@ class Truth:
     def load(cls, seed) -> Truth:
         """From a market seed (scripts.sim_market.seeds.Seed: anything with ``.id`` and ``.dir``)."""
         try:
-            data = json.loads((seed.dir / "truth.json").read_text(encoding="utf-8"))
+            data = _decode_json((seed.dir / "truth.json").read_text(encoding="utf-8"))
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return cls(seed.id, seed.dir / "repo", data["claims"])

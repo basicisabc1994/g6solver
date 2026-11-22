@@ -8,6 +8,8 @@ authority to disclose it. Unannotated content remains UNKNOWN.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 from collections.abc import Sequence
 import json
 
@@ -23,7 +25,7 @@ def host_controls(value: dict, controls: dict, *, sources: Sequence[cloud.Source
     """Bind explicitly supplied host controls while retaining the content's origins."""
     body, refs, metadata = cloud.freeze_output(value)
     try:
-        value = json.loads(body)
+        value = _decode_json(body)
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if sources is not None:

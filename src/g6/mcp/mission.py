@@ -19,6 +19,8 @@ Every reply carries the library envelope. A mission's own ``verified`` is held a
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import re
@@ -124,7 +126,7 @@ def reply(found: dict, *, control_id: str | None = None) -> dict:
     """``found`` in the library envelope: the state a closed mission reached, a ``qualified-draft`` while it is open."""
     body, sources, _ = cloud.freeze_output(found)
     try:
-        found = json.loads(body)
+        found = _decode_json(body)
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     said = said_state(found) if found.get("completion_state") else "qualified-draft"

@@ -18,6 +18,8 @@ nothing substituted. Keys and sign-ins stay in the parent: no model is called he
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import importlib
 import inspect
 import json
@@ -85,7 +87,7 @@ def return_type(function: Callable[..., Any]) -> Any:
 
 
 def _json(value: Any) -> Any:
-    return json.loads(canonical(value))
+    return _decode_json(canonical(value))
 
 
 def _component(component: str) -> tuple[Any, str]:
@@ -176,8 +178,8 @@ def serve(request: Mapping[str, Any]) -> dict[str, Any]:
 
 def main() -> int:
     """The confined child's entry: one request on stdin, one JSON line on stdout."""
-    request = json.loads(sys.stdin.read())
     try:
+        request = _decode_json(sys.stdin.read())
         _, package = _component(request["component"])
         if request.get("inside"):
             resolve(request["inside"], package)(request.get("isolation") or {})

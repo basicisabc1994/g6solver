@@ -55,6 +55,8 @@ cut off at its own reservation is blocked and on the record, and in no streak: t
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import contextlib
 import errno
 import hashlib
@@ -697,7 +699,7 @@ def _canonical_stops_on_disk(root: str | Path, expected: bytes | None = None) ->
             if sorted(p.name for p in record.iterdir()) != ["stop.json"]:
                 return None
             held = (record / "stop.json").read_bytes()
-            value = json.loads(held.decode("ascii"))
+            value = _decode_json(held.decode("ascii"))
             if (not isinstance(value, dict) or set(value) != {"id", "at"} or value["id"] != ident
                     or not _on_a_clock(value["at"])):
                 return None
@@ -762,7 +764,7 @@ def canonical_stop_record(root: str | Path, ident: str | None) -> bool | None:
         return None
     try:
         held = (Path(root) / STOP_RECORDS / ident / "stop.json").read_bytes()
-        return json.loads(held.decode("ascii"))["id"] == ident and _canonical_stops_on_disk(root, held) is not None
+        return _decode_json(held.decode("ascii"))["id"] == ident and _canonical_stops_on_disk(root, held) is not None
     except FileNotFoundError:
         return False
     except BaseException:
@@ -1398,7 +1400,7 @@ def beat(root: str | Path, **fields: Any) -> None:
 
 def heartbeat(root: str | Path) -> dict | None:
     try:
-        return json.loads((Path(root) / HEARTBEAT_FILE).read_text(encoding="utf-8"))
+        return _decode_json((Path(root) / HEARTBEAT_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError, MemoryError):
         return None
 

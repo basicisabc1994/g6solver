@@ -6,6 +6,8 @@ cannot replace a checker. The sandbox is a resource bound, not an OS boundary.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import io
 import json
 import re
@@ -223,7 +225,7 @@ report.write_text(json.dumps({**result, "token": _g6_token, "completed": True}),
                 results.append(CheckResult(check.name, False, evidence, "sandbox failed or returned no check report",
                                            check.code))
                 continue
-            data = json.loads(ran.outputs["_g6_check.json"])
+            data = _decode_json(ran.outputs["_g6_check.json"])
             if (not isinstance(data, dict)
                     or set(data) != {"passed", "evidence", "reason", "code", "token", "completed"}
                     or data["token"] != token or data["completed"] is not True

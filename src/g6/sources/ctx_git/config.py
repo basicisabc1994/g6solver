@@ -24,7 +24,8 @@ password in the address, and the host must resolve to public addresses only); ``
 """
 from __future__ import annotations
 
-import json
+from g6.core.decoder_limits import json_value as _decode_json
+
 import os
 import re
 import stat
@@ -81,7 +82,7 @@ def parse(text: str, source: str) -> GitConfig:
     """The configuration in ``text`` (JSON); :class:`GitRefused` (``G6_E_GIT_CONFIG_INVALID``) when it cannot be used.
     The message never repeats a value from it."""
     try:
-        data = json.loads(text)
+        data = _decode_json(text)
     except (ValueError, RecursionError, TypeError, MemoryError):
         raise GitRefused(CONFIG_INVALID, f"{source} is not JSON G6 can read") from None
     if not isinstance(data, Mapping) or set(data) - {"roots", "remote_hosts"}:

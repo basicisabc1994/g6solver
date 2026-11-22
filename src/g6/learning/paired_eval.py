@@ -29,6 +29,8 @@ and each prompt is declared as its source. A plain callable agent makes its own 
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import os
@@ -270,11 +272,11 @@ class _Case:
     def __init__(self, receipt: PairReceipt, evidence: Evidence) -> None:
         self.task = evidence.get(receipt.task_digest).decode("utf-8")
         try:
-            self.meta = json.loads(evidence.get(receipt.information_digest))
+            self.meta = _decode_json(evidence.get(receipt.information_digest))
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         try:
-            oracle = json.loads(evidence.get(receipt.oracle_digest))
+            oracle = _decode_json(evidence.get(receipt.oracle_digest))
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         self.instance = TaskInstance(input=self.task, expected_output=oracle["expected"],
@@ -285,7 +287,7 @@ def _arm_again(receipt: PairReceipt, arm: Arm, case: _Case, store: StrategyStore
     """Build and score one completed arm again from its kept record, and answer the hint block its prompt carried.
     ``ValueError`` (or the store's and the evidence's own errors) when it does not come out as the receipt says."""
     try:
-        kept = json.loads(evidence.get(arm.evidence))
+        kept = _decode_json(evidence.get(arm.evidence))
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     named = {"cohort_id": receipt.cohort_id, "replay_id": receipt.replay_id, "case_id": receipt.case_id,
@@ -492,7 +494,7 @@ class PairedEvaluator:
                 continue
             # both arms are given exactly the bytes whose digest the receipt names, so the pair can be built again
             try:
-                meta = json.loads(canonical(_plain({key: value for key, value in instance.metadata.items()
+                meta = _decode_json(canonical(_plain({key: value for key, value in instance.metadata.items()
                                                     if key not in ORACLE_KEYS})))
             except (RecursionError, MemoryError):
                 raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None

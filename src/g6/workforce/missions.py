@@ -24,6 +24,8 @@ ahead can hand a lease over early but can never make two writers.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import re
@@ -271,7 +273,7 @@ class MissionStore:
                 text = json.dumps(materials, ensure_ascii=False, allow_nan=False)
                 if len(text.encode("utf-8")) > 1_048_576:
                     raise ValueError("too large")
-                created["materials"] = json.loads(text)
+                created["materials"] = _decode_json(text)
             except (ValueError, TypeError, RecursionError, MemoryError) as exc:
                 if isinstance(exc, (RecursionError, MemoryError)):
                     exc = ValueError("a JSON record exceeds decoder limits")
@@ -283,7 +285,7 @@ class MissionStore:
         body =_contract(contract, objective).model_dump_json()
         if request_key:
             try:
-                semantic = {"objective": objective, "contract": json.loads(body),
+                semantic = {"objective": objective, "contract": _decode_json(body),
                             "creation": {k: v for k, v in created.items() if k != "build"}}
             except (RecursionError, MemoryError):
                 raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
@@ -315,7 +317,7 @@ class MissionStore:
             except (RecursionError, MemoryError):
                 raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             try:
-                recorded = json.loads(row[1])
+                recorded = _decode_json(row[1])
             except (RecursionError, MemoryError):
                 raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             if recorded.get("actor") != "code" or recorded.get("request_sha256") != created["request_sha256"]:
@@ -339,7 +341,7 @@ class MissionStore:
         found = []
         for mid, raw in rows:
             try:
-                created = json.loads(raw)
+                created = _decode_json(raw)
             except (RecursionError, MemoryError):
                 raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             if created.get("task_sha256") == task_sha256:
@@ -372,16 +374,16 @@ class MissionStore:
             raise LookupError(NOT_FOUND)
         out = dict(row)
         try:
-            out["contract"] = json.loads(out.pop("contract_json") or "{}")
+            out["contract"] = _decode_json(out.pop("contract_json") or "{}")
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         try:
-            out["outcome"] = json.loads(out.pop("outcome_json") or "{}")
+            out["outcome"] = _decode_json(out.pop("outcome_json") or "{}")
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         raw = out.pop("acceptance_json", "") or ""
         try:
-            out["acceptance"] = json.loads(raw) if raw else None
+            out["acceptance"] = _decode_json(raw) if raw else None
         except (ValueError, RecursionError, MemoryError):
             out["acceptance"] = {"unreadable": raw[:200]}  # read back as the unreadable contract (fail closed)
         return out
@@ -1128,7 +1130,7 @@ class MissionStore:
             if d["kind"] not in EVENT_KINDS:
                 continue
             try:
-                d["detail"] = json.loads(d.pop("detail_json") or "{}")
+                d["detail"] = _decode_json(d.pop("detail_json") or "{}")
             except (RecursionError, MemoryError):
                 raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             out.append(d)

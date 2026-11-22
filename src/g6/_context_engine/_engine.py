@@ -27,6 +27,8 @@ when that list is empty.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import os
 import secrets
@@ -673,7 +675,7 @@ def pack(acc: Access, pack_id: str, *, clock: Clock = _utc) -> tuple[dict[str, A
     if not isinstance(pack_id, str) or not pack_id.startswith("pack-") or not pack_id[5:].isalnum() or not path.is_file():
         raise Refused(PACK_UNKNOWN, "no such saved context in this project")
     try:
-        saved = json.loads(path.read_text(encoding="utf-8"))
+        saved = _decode_json(path.read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
         raise Refused(PACK_UNKNOWN, "the saved context exceeds decoder limits") from None
     at = clock()

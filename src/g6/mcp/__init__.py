@@ -70,6 +70,8 @@ does. G6 re-checks artifacts with its own code; it does not defend against malic
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import asyncio
 import json
 import os
@@ -465,7 +467,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         Stores content by digest; does not edit the evaluator or activate the candidate."""
         from g6.core.door import blocked_reply
         try:
-            files = json.loads(files_json)
+            files = _decode_json(files_json)
             if not isinstance(files, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in files.items()):
                 raise ValueError("files must map filenames to source strings")
             return mh.propose_code(workflow, files, hypothesis=hypothesis, session=session(ctx))

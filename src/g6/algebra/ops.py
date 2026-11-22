@@ -14,6 +14,8 @@ here imports SymPy.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import importlib.util
 import json
 import math
@@ -79,7 +81,7 @@ def run(op: str, params: dict[str, Any], *, time_limit: float = DEFAULT_TIME_LIM
         problem = inputs.read(op, params)
         state["input"] = problem.shown()
         try:
-            payload = json.loads(json.dumps(params))
+            payload = _decode_json(json.dumps(params))
         except (TypeError, ValueError, RecursionError, MemoryError):
             raise Refusal(INPUT_INVALID, "the parameters must be plain text, numbers and lists") from None
         if not sympy_installed():

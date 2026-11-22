@@ -7,6 +7,8 @@ All writers order by the time input was observed, rather than worker completion.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import os
@@ -35,7 +37,7 @@ def _dump(reading: Reading) -> str:
 
 def _load(body: str) -> Reading:
     try:
-        data = json.loads(body)
+        data = _decode_json(body)
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     windows = []
@@ -243,7 +245,7 @@ class Store:
             path.parent.mkdir(parents=True, exist_ok=True)
             if path.exists():
                 try:
-                    saved = datetime.fromisoformat(json.loads(path.read_text(encoding="utf-8"))["read_at"])
+                    saved = datetime.fromisoformat(_decode_json(path.read_text(encoding="utf-8"))["read_at"])
                 except (RecursionError, MemoryError):
                     raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 if saved >= now and not ahead(saved, present):

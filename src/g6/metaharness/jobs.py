@@ -4,6 +4,8 @@
 A job may carry ``compact``: run in the job once its operation returns, with the result and the job's id, it gives the
 reply ``status`` returns by default; ``status(..., detail="full")`` returns the result itself. Should ``compact`` fail,
 ``status`` returns the result itself."""
+from g6.core.decoder_limits import json_value as _decode_json
+
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import dataclass
@@ -42,7 +44,7 @@ class _FrozenResult:
         if cloud.sha256(body) != expected:
             raise ValueError('retained result digest mismatch')
         try:
-            return json.loads(body)
+            return _decode_json(body)
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
@@ -94,7 +96,7 @@ class Jobs:
                         # the producer's mutable result under its old receipt.
                         # A result's process-local custody (a review's task binding) goes with the copy.
                         custody = getattr(result, "custody", None)
-                        copy = json.loads(body)
+                        copy = _decode_json(body)
                         detached = cloud.bind_output(custody(copy) if callable(custody) else copy, refs,
                                                      metadata=metadata.read())
                         shown = compact(detached, ident)

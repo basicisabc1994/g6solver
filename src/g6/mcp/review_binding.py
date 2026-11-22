@@ -2,6 +2,8 @@
 """Versioned custody beside a saved reply; no binding field enters the reply's persisted schema."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import os
@@ -29,7 +31,7 @@ class BoundReply(dict):
                 owned = Activity(held)
                 owned.owned_runs = list(original.owned_runs)
                 try:
-                    owned.execution_artifacts = json.loads(json.dumps(original.execution_artifacts))
+                    owned.execution_artifacts = _decode_json(json.dumps(original.execution_artifacts))
                 except (RecursionError, MemoryError):
                     raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 detached[index] = owned
@@ -58,7 +60,7 @@ def matches(path: Path, identity: str, *, data: bytes | None = None) -> bool:
         side = path.with_suffix(".binding.json")
         if not all(stat.S_ISREG(os.lstat(one).st_mode) for one in (path, side)):
             return False
-        record = json.loads(side.read_bytes())
+        record = _decode_json(side.read_bytes())
         return record == {"version": "review-binding.v1", "task_identity": identity,
                           "reply_sha256": hashlib.sha256(path.read_bytes() if data is None else data).hexdigest()}
     except (OSError, ValueError, TypeError, RecursionError, MemoryError):

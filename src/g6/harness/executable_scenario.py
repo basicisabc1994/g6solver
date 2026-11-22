@@ -6,6 +6,8 @@ only the person's option supplied. Missing legacy records require a new dialog b
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 from dataclasses import dataclass
@@ -24,7 +26,7 @@ UNAVAILABLE = "G6_E_SCENARIO_UNAVAILABLE"
 def _comparison(record: str, option: str) -> dict:
     """The host comparison, derived from the one canonical scenario in a portable check too."""
     try:
-        scenario = json.loads(record)
+        scenario = _decode_json(record)
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if option not in scenario['outcomes']:
@@ -53,7 +55,7 @@ class Scenario:
 
     def __post_init__(self):
         try:
-            value = json.loads(self.record)
+            value = _decode_json(self.record)
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if (set(value) != FIELDS or canonical(value).encode("ascii") != self.record
@@ -99,7 +101,7 @@ class Scenario:
     def presentation(self) -> dict:
         """The executable fields the form displays, read from the same record the child runs."""
         try:
-            value = json.loads(self.record)
+            value = _decode_json(self.record)
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         outcomes = {}
@@ -205,7 +207,7 @@ def test_example():
     def matches(self, question) -> bool:
         """Correspondence without consulting the live repository or resolving an entry point again."""
         try:
-            value = json.loads(self.record)
+            value = _decode_json(self.record)
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if (value["entrypoint"][1:3] != question.function.rsplit(".", 1)
@@ -231,7 +233,7 @@ def test_example():
     def require_binding(self) -> None:
         """Legacy scenarios remain readable reproductions, but cannot supply confirmation custody."""
         try:
-            if json.loads(self.record)['version'] != 'example-scenario.v2':
+            if _decode_json(self.record)['version'] != 'example-scenario.v2':
                 raise ValueError(f'{UNAVAILABLE}: confirm the import roots and resolved repository path in a new dialog')
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
@@ -266,7 +268,7 @@ def load(question) -> Scenario:
         path = state_path("scenarios", question.sha256 + ".json")
         if path.is_symlink():
             raise ValueError("linked record")
-        record = json.loads(path.read_bytes())
+        record = _decode_json(path.read_bytes())
         scenario = Scenario(record["scenario"].encode("ascii"))
         scenario.require_binding()
         expected = {"version": "scenario-binding.v1", "question_sha256": question.sha256,

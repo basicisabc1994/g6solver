@@ -157,7 +157,13 @@ def append(body: Mapping[str, Any]) -> str:
         target = path()
         target.parent.mkdir(parents=True, exist_ok=True)
         _readable(target)
-        return ChainLedger(target).append(KIND, uuid.uuid4().hex, checked)
+        try:
+            return ChainLedger(target).append(KIND, uuid.uuid4().hex, checked)
+        except (RecursionError, MemoryError):
+            # The bound ledger implementation also reads existing records; an unreadable ledger cannot be appended.
+            from g6.core.ledger import LedgerError
+
+            raise LedgerError("the override ledger could not be read") from None
 
 
 __all__ = ["KIND", "Entry", "append", "entry", "path"]

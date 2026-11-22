@@ -62,6 +62,8 @@ candidate. These rank after MCP calls, take at most ``LIBRARY_SLOTS``, and are n
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import copy
 import itertools
 import json
@@ -323,7 +325,7 @@ def _read(outcome: str) -> dict[str, str]:
     seen = dict.fromkeys(("code", "state", "word", "component", "op", "pair"), "")
     text = (outcome or "").strip()
     try:
-        value = json.loads(text) if text.startswith("{") else None
+        value = _decode_json(text) if text.startswith("{") else None
     except (ValueError, RecursionError):
         value = None
     lead = ""
@@ -592,7 +594,7 @@ def _items(considering: Any) -> list[Any]:
     text = considering.strip()
     if text.startswith(("[", "{")):
         try:
-            parsed = json.loads(text)
+            parsed = _decode_json(text)
         except (RecursionError, ValueError, TypeError):
             raise _Refusal("considering starts as JSON but does not decode") from None
         items = parsed if isinstance(parsed, list) else [parsed]
@@ -625,7 +627,7 @@ def _check_op(entry: dict[str, Any], args: Any) -> tuple[bool, list[str]]:
     unknown = sorted(set(args) - set(entry.get("fields", ())))
     if unknown:
         issues.append(f"{component}.{op}'s typed input takes no field {', '.join(unknown)}")
-    missing = sorted(set(json.loads(entry["call"]["arguments"]["params_json"])) - set(args))
+    missing = sorted(set(_decode_json(entry["call"]["arguments"]["params_json"])) - set(args))
     if missing:
         issues.append(f"{component}.{op} needs the field {', '.join(missing)}")
     return not issues, issues
@@ -756,7 +758,7 @@ def _validate(entry: dict[str, Any], call: dict[str, Any]) -> tuple[bool, list[s
         if call == entry["call"]:                   # the template: the door's own check, made when the corpus was built
             return bool(entry["validated"]), list(entry["issues"])
         try:
-            params = json.loads(call["arguments"].get("params_json", "{}"))
+            params = _decode_json(call["arguments"].get("params_json", "{}"))
         except (ValueError, RecursionError, TypeError):
             return False, ["params_json is not JSON"]
         return _check_op(entry, params)
@@ -790,7 +792,7 @@ def invoke_sketch(steps: list[str], data: dict[str, Any] | None = None) -> str:
         if entry is None or entry["sensitive"] or not entry["validated"] or entry["issues"]:
             return ""
         component, op = step.split(".", 1)
-        params = repr(json.loads(entry["call"]["arguments"]["params_json"]))
+        params = repr(_decode_json(entry["call"]["arguments"]["params_json"]))
         lines.append(f'step{index} = g6.invoke("{component}", "{op}", {params})')
     return "\n".join(lines)
 

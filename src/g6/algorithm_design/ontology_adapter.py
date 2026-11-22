@@ -2,6 +2,8 @@
 """Read the user-authored ontology as metadata, not as executable code or a trusted oracle."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,7 +55,7 @@ def read_ontology(path: str | Path) -> dict:
     if p.stat().st_size > 4_000_000:
         raise ValueError("ontology exceeds size budget")
     try:
-        result = json.loads(p.read_text(encoding="utf-8"))
+        result = _decode_json(p.read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not isinstance(result, dict):

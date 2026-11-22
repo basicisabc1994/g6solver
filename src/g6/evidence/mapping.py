@@ -64,6 +64,8 @@ binding that does not read as one (``UnreadableBinding``) are different results,
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import math
 import re
@@ -320,7 +322,7 @@ def strict_json(text: str) -> object:
     """``text`` read as JSON, strictly: a repeated key, NaN, an infinity or a number too large to be finite is a
     ``ValueError``, never the last value given or a number that is not one."""
     try:
-        return json.loads(text, object_pairs_hook=_no_repeat, parse_constant=_no_constant, parse_float=_finite)
+        return _decode_json(text, object_pairs_hook=_no_repeat, parse_constant=_no_constant, parse_float=_finite)
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("it is nested too deeply", "", 0) from None
 

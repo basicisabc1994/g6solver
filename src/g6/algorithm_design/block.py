@@ -11,6 +11,8 @@ a requirement's authority, a device's limits) is kept as their word under ``evid
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import dataclasses
 import json
 from collections.abc import Callable
@@ -138,7 +140,7 @@ def _json(value: Any) -> Any:
             return sorted(item, key=repr)
         raise TypeError(type(item).__name__)
     try:
-        return json.loads(json.dumps(value, default=plain))
+        return _decode_json(json.dumps(value, default=plain))
     except (RecursionError, MemoryError):
         raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 

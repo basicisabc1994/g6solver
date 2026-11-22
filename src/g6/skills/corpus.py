@@ -31,6 +31,8 @@ Apart from those runs, ``help`` and ``ops`` are each block's own description of 
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import ast
 import contextlib
 import copy
@@ -711,7 +713,7 @@ def dumps(data: dict[str, Any]) -> str:
 
 @lru_cache(maxsize=1)
 def _loaded(text: str) -> dict[str, Any]:
-    return json.loads(text)
+    return _decode_json(text)
 
 
 def load() -> dict[str, Any]:

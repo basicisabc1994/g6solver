@@ -31,6 +31,8 @@ the step's reason, so an unconfined step is never reported as confined.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import ast
 import inspect
 import json
@@ -257,7 +259,7 @@ class SandboxSession:
         self.earlier.append(code)
         if FINAL in done.outputs:
             try:
-                return json.loads(done.outputs[FINAL].decode("utf-8")), printed, True
+                return _decode_json(done.outputs[FINAL].decode("utf-8")), printed, True
             except (RecursionError, MemoryError):
                 raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return None, printed, False

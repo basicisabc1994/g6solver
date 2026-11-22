@@ -14,6 +14,8 @@ What this measures is reading, not fixing: a better reader gives a truer "done",
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import re
 from pathlib import Path
@@ -55,7 +57,7 @@ def load_cases(path: str | Path) -> tuple[SuiteCase, ...]:
     cases = []
     for line in Path(path).read_text(encoding="utf-8").splitlines():
         try:
-            row = json.loads(line)
+            row = _decode_json(line)
         except (RecursionError, MemoryError):
             raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if row.get("label") not in (RIGHT, WRONG) or not row.get("bug") or not row.get("input") or not row.get("id"):
