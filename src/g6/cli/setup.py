@@ -419,7 +419,6 @@ def register_clients(args, clients: list[str], say: Say, ask: Ask = input) -> in
                        for item in allowed.split(",")):
         say("--allow requires explicit component or component.operation names; wildcards are not supported.")
         return 2
-    from pathlib import Path
     from g6.core import skills
 
     for client in clients:
@@ -445,13 +444,11 @@ def register_clients(args, clients: list[str], say: Say, ask: Ask = input) -> in
             say(f"{client} refused registration. Inspect its existing g6 entry with '{client} mcp get g6'; to "
                 f"replace it, remove it with '{REMOVE[client]}' and run g6 setup again.")
             return 2
-        # setup is the person's install step, so it brings this version's skill: an earlier install's copy left in
-        # place keeps its old instructions (the owner's pilot, 2026-10-30)
-        earlier = (Path.home() / f".{client}" / "skills" / skills.GUIDE).exists()
+        # Refresh unchanged G6 installs; the shared writer leaves personal and edited skills untouched.
         bundled = [n for n, folder in skills.vendored().items() if folder.parent != skills.vendor_dir()]
-        cli(["skills", "install", skills.GUIDE, *bundled, "--user", "--client", client, "--force"])
-        if earlier:
-            say(f"Replaced the earlier copy of the {skills.GUIDE} skill for {client} with this version's.")
+        if cli(["skills", "install", skills.GUIDE, *bundled, "--user", "--client", client, "--force"]):
+            say("G6_SKILL_INSTALL_FAILED: client registered, but skill installation did not finish.")
+            return 1
         if client == "codex":
             codex_agents(ask, say)
         say(f"Registered G6 for {client} with this installation's Python, started with -P so that the packages in "

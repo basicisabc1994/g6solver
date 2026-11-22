@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """``g6 skills list`` and ``g6 skills install``: copy the using-g6 skill (by default), a component's skill, or the
-vendored superpowers skills into an agent's skills folder, never over a skill already there unless asked."""
+vendored superpowers skills into an agent's skills folder, preserving every personal or edited tree."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,12 @@ def where(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
 
 def _same_tree(a: Path, b: Path) -> bool:
     files = lambda root: {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}  # noqa: E731
-    return files(a) == files(b)
+    actual, expected = files(a), files(b)
+    receipt = json.loads(actual.pop(".g6-installed.json"))
+    assert receipt["owner"] == "g6" and receipt["version"] == 1
+    if b in skills.vendored().values():
+        expected.update({name: (b.parent / name).read_bytes() for name in ("LICENSE", "VENDORED.md")})
+    return actual == expected
 
 
 def test_list_names_every_skill_it_can_install(capsys) -> None:
@@ -91,7 +97,7 @@ def test_user_installs_into_the_home_folder(where) -> None:
     assert (home / ".claude" / "skills" / "using-g6" / "SKILL.md").is_file() and not dest.exists()
 
 
-def test_a_skill_already_there_is_left_alone_unless_forced(where, capsys) -> None:
+def test_a_personal_skill_is_left_alone_even_when_forced(where, capsys) -> None:
     dest, _ = where
     (dest / "using-g6").mkdir(parents=True)
     (dest / "using-g6" / "SKILL.md").write_text("mine", encoding="utf-8")
@@ -99,7 +105,9 @@ def test_a_skill_already_there_is_left_alone_unless_forced(where, capsys) -> Non
     assert (dest / "using-g6" / "SKILL.md").read_text(encoding="utf-8") == "mine"
     assert "left as is" in capsys.readouterr().out
     assert main(["skills", "install", "--force"]) == 0
-    assert _same_tree(dest / "using-g6", skills.guide_dir())
+    assert (dest / "using-g6" / "SKILL.md").read_text(encoding="utf-8") == "mine"
+    assert "G6_SKILL_KEPT_PERSONAL" in capsys.readouterr().out
+    assert not (dest / "using-g6" / ".g6-installed.json").exists()
 
 
 def test_an_unknown_name_is_refused_and_nothing_is_copied(where, capsys) -> None:

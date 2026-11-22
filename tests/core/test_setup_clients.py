@@ -70,14 +70,22 @@ def test_setup_replaces_an_earlier_copy_of_its_own_skill_and_says_so(tmp_path, m
     """The owner's pilot (2026-10-30): setup left Codex's copy of using-g6 from an earlier install in place, so Codex
     followed the old instructions; setup is the person's install step, so it brings this version's skill."""
     _registering(tmp_path, monkeypatch)
+    from g6.core import skills
+
+    source = tmp_path / "old-source"
+    source.mkdir()
+    (source / "SKILL.md").write_text("an earlier G6's skill", encoding="utf-8")
+    with monkeypatch.context() as initial:
+        initial.setattr(skills, "guide_dir", lambda: source)
+        assert main(["skills", "install", "--user", "--client", "codex"]) == 0
     old = tmp_path / ".codex" / "skills" / "using-g6" / "SKILL.md"
-    old.parent.mkdir(parents=True)
-    old.write_text("an earlier G6's skill")
+    assert old.read_text(encoding="utf-8") == "an earlier G6's skill"
+    capsys.readouterr()
     assert main(["setup", "--client", "codex", "--refuse-unconfined", "--allow", "patch_review.review"]) == 0
     assert "# Using G6" in old.read_text(encoding="utf-8")
     out = capsys.readouterr().out
     assert "left as is" not in out
-    assert "Replaced the earlier copy of the using-g6 skill for codex with this version's." in out
+    assert "using-g6: G6_SKILL_UPDATED" in out
 
 
 def test_skills_can_target_codex_without_overwriting(tmp_path, monkeypatch):

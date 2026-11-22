@@ -65,9 +65,8 @@ def _superpowers_plugin(home: Path) -> bool:
 
 
 def _skills(args: argparse.Namespace) -> int:
-    import shutil
-
     from g6.core import skills
+    from g6.skills.install import KEPT, install_files, source_files, with_records
 
     components = {c: skills.skill_name(c) for c in skills.components_with_skills()}
     vendored = skills.vendored()
@@ -102,16 +101,21 @@ def _skills(args: argparse.Namespace) -> int:
             wanted += [n for n in skills.vendored("superpowers") if n not in wanted]
 
     dest = (Path.home() if args.user else Path.cwd()) / f".{args.client}" / "skills"
+    failed = False
     for name in wanted:
         target = dest / name
-        if target.exists() and not args.force:
-            print(f"{name}: already in {dest}, left as is (--force replaces it)")
+        try:
+            files = source_files(sources[name])
+            if name in vendored:
+                files = with_records(files, vendored[name].parent)
+            code = install_files(files, target)
+        except OSError as exc:
+            print(f"{name}: G6_SKILL_INSTALL_FAILED: {exc}", file=sys.stderr)
+            failed = True
             continue
-        if target.exists():
-            shutil.rmtree(target)
-        shutil.copytree(sources[name], target, ignore=shutil.ignore_patterns("__pycache__"))
-        print(f"{name}: installed in {target}")
-    return 0
+        detail = "left as is; personal or edited skill" if code == KEPT else f"installed in {target}"
+        print(f"{name}: {code}: {detail}")
+    return 1 if failed else 0
 
 
 def _doctor_report(args: argparse.Namespace) -> int:
@@ -195,7 +199,7 @@ def _parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
                     help="also the superpowers skills for a coding agent (skipped if the superpowers plugin is there)")
     si.add_argument("--user", action="store_true", help="into ~/.claude/skills, for every project")
     si.add_argument("--client", choices=("claude", "codex"), default="claude", help="client skill directory")
-    si.add_argument("--force", action="store_true", help="replace a skill folder that is already there")
+    si.add_argument("--force", action="store_true", help="refresh an unchanged G6 install; personal skills are always kept")
     return ap.parse_args(argv)
 
 

@@ -24,7 +24,7 @@ def test_the_plugin_ships_the_skill_byte_for_byte():
     assert sync.main(["--check"]) == 0
 
 
-def test_the_check_names_a_drift_and_write_repairs_it(tmp_path):
+def test_the_check_names_a_drift_and_write_updates_only_unchanged_installs(tmp_path, capsys):
     source, shipped = tmp_path / "src", tmp_path / "plugin"
     (source / "references").mkdir(parents=True)
     (source / "SKILL.md").write_bytes(b"---\nname: using-g6\n---\nbody\n")
@@ -33,11 +33,18 @@ def test_the_check_names_a_drift_and_write_repairs_it(tmp_path):
     assert sync.problems(source, shipped) == ["SKILL.md is missing", "references/a.md is missing"]
     sync.write(source, shipped)
     assert sync.problems(source, shipped) == [] and not (shipped / "routing.json").exists()
+    (source / "references" / "a.md").write_bytes(b"new source\n")
+    assert sync.problems(source, shipped) == ["references/a.md differs"]
+    sync.write(source, shipped)
+    assert sync.problems(source, shipped) == []
     (shipped / "references" / "a.md").write_bytes(b"edited\n")
     (shipped / "references" / "stale.md").write_bytes(b"old\n")
     assert sync.problems(source, shipped) == ["references/a.md differs", "references/stale.md is not in the source"]
     sync.write(source, shipped)
-    assert sync.problems(source, shipped) == []
+    assert sync.problems(source, shipped) == ["references/a.md differs", "references/stale.md is not in the source"]
+    assert (shipped / "references" / "a.md").read_bytes() == b"edited\n"
+    assert (shipped / "references" / "stale.md").read_bytes() == b"old\n"
+    assert "G6_SKILL_KEPT_PERSONAL" in capsys.readouterr().out
 
 
 def test_the_plugin_skill_is_discoverable_like_its_completion_loop_skill():
@@ -68,12 +75,13 @@ def test_full_bundle_sync_refuses_a_missing_source_before_removing_the_copy(tmp_
     source, shipped = tmp_path / "missing", tmp_path / "plugin"
     shipped.mkdir()
     (shipped / "LICENSE").write_bytes(b"kept\n")
-    assert sync.problems(source, shipped, whole=True) == ["source bundle is missing or empty"]
-    with pytest.raises(FileNotFoundError):
+    assert sync.problems(source, shipped, whole=True) == [
+        "G6_SKILL_SOURCE_RECORD_MISSING: source bundle is missing or empty"]
+    with pytest.raises(FileNotFoundError, match="G6_SKILL_SOURCE_RECORD_MISSING"):
         sync.write(source, shipped, whole=True)
     assert (shipped / "LICENSE").read_bytes() == b"kept\n"
 
 
 def test_full_bundle_sync_does_not_report_two_absent_bundles_as_equal(tmp_path):
     assert sync.problems(tmp_path / "missing", tmp_path / "absent", whole=True) == [
-        "source bundle is missing or empty"]
+        "G6_SKILL_SOURCE_RECORD_MISSING: source bundle is missing or empty"]

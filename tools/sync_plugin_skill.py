@@ -10,9 +10,10 @@ usage: python tools/sync_plugin_skill.py --check | --write
 """
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
+
+from g6.skills.install import KEPT, MARKER, MISSING, install_files, with_records
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src" / "g6" / "skills" / "using-g6"
@@ -24,14 +25,20 @@ BUNDLE_SHIPPED = ROOT / "plugins/g6/vendor/langextract"
 def _files(folder: Path, *, source: bool, whole: bool = False) -> dict[str, Path]:
     found = ([folder / "SKILL.md", *(folder / "references").rglob("*")]
              if source and not whole else list(folder.rglob("*")))
-    return {p.relative_to(folder).as_posix(): p for p in found if p.is_file() and "__pycache__" not in p.parts}
+    return {p.relative_to(folder).as_posix(): p for p in found if p.is_file() and "__pycache__" not in p.parts
+            and p.relative_to(folder).as_posix() != MARKER}
 
 
 def problems(source: Path = SOURCE, shipped: Path = SHIPPED, *, whole: bool = False) -> list[str]:
     """Each way the shipped copy differs from the source, sorted; ``[]`` when they are equal."""
     want = _files(source, source=True, whole=whole)
     if whole and not want:
-        return ["source bundle is missing or empty"]
+        return [f"{MISSING}: source bundle is missing or empty"]
+    if whole:
+        try:
+            want = with_records(want, source)
+        except OSError as exc:
+            return [str(exc)]
     have = _files(shipped, source=False) if shipped.is_dir() else {}
     out = [f"{name} is missing" for name in want if name not in have]
     out += [f"{name} differs" for name in want if name in have and have[name].read_bytes() != want[name].read_bytes()]
@@ -39,25 +46,30 @@ def problems(source: Path = SOURCE, shipped: Path = SHIPPED, *, whole: bool = Fa
     return sorted(out)
 
 
-def write(source: Path = SOURCE, shipped: Path = SHIPPED, *, whole: bool = False) -> None:
-    """Make the shipped copy equal to the source."""
+def write(source: Path = SOURCE, shipped: Path = SHIPPED, *, whole: bool = False) -> str:
+    """Copy the source, replacing only an unchanged earlier G6 installation."""
     files = _files(source, source=True, whole=whole)
     if whole and not files:
-        raise FileNotFoundError("source bundle is missing or empty")
-    if shipped.is_dir():
-        shutil.rmtree(shipped)
-    for name, path in files.items():
-        target = shipped / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(path.read_bytes())
+        raise FileNotFoundError(f"{MISSING}: source bundle is missing or empty")
+    if whole:
+        files = with_records(files, source)
+    code = install_files(files, shipped)
+    detail = "left as is; personal or edited skill" if code == KEPT else "installed"
+    print(f"{shipped.name}: {code}: {detail}")
+    return code
 
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if args == ["--write"]:
-        write()
-        write(BUNDLE_SOURCE, BUNDLE_SHIPPED, whole=True)
-        return 0
+        failed = False
+        for source, shipped, whole in ((SOURCE, SHIPPED, False), (BUNDLE_SOURCE, BUNDLE_SHIPPED, True)):
+            try:
+                write(source, shipped, whole=whole)
+            except OSError as exc:
+                print(f"G6_SKILL_INSTALL_FAILED: {exc}", file=sys.stderr)
+                failed = True
+        return 1 if failed else 0
     if args != ["--check"]:
         print(__doc__.strip().splitlines()[-1], file=sys.stderr)
         return 2
