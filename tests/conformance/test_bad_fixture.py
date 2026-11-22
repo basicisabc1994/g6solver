@@ -246,7 +246,7 @@ def test_d4_reports_the_block(bad: kit.Target, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(module, "__g6_block__", "BadBlock")
     _says(kit.d4_block(bad), "BadInput does not forbid extra fields", "the help op raised RuntimeError")
     _says(kit.d4_refusals(bad), "count: refusal carries no stable G6_E_ code of its own: [BAD_EXTENSION_ERROR]",
-          "guess: blocked-escalated with no G6_E_ code of its own", "lookup: with no parameters it raised")
+          "guess: blocked-escalated with no G6_E_ code of its own", "lookup: refusal carries no stable G6_E_ code of its own: No module named 'fixture_heavy_dependency'")
 
 
 def test_g5_fails_a_non_sensitive_op_that_reaches_outside(bad: kit.Target) -> None:
@@ -313,15 +313,20 @@ def test_d6_reports_the_skill_and_its_examples(bad: kit.Target) -> None:
     _says(kit.d6_describe(bad), "a skill named 'g6-wrong-name', not 'g6-bad-extension'")
     found = kit.d6_examples(bad)
     _says(found, "op 'tally' has no g6-example", "the count example: reports completion_state 'qualified_draft'",
-          "the guess example: blocked-escalated with no G6_E_ code", "the lookup example raised ModuleNotFoundError")
+          "the guess example: blocked-escalated with no G6_E_ code", "the lookup example: refusal carries no stable G6_E_ code of its own: No module named 'fixture_heavy_dependency'")
     assert "launch" not in "\n".join(p.message for p in found)  # a sensitive op is never run
 
 
 def test_d9_reports_the_traceback_the_uncoded_refusal_and_the_silent_fallback(bad: kit.Target) -> None:
     # silent answers {"fallback": false, ...}: a key, not a message, says nothing about the missing extra
-    _says(kit.d9_extras(bad), "without g6[no_such_extra], lookup raised ModuleNotFoundError",
+    _says(kit.d9_extras(bad), "without g6[no_such_extra], lookup refuses with no G6_E_ code of its own",
           "without g6[no_such_extra], guess refuses with no G6_E_ code of its own",
           "silent reached for fixture_heavy_dependency and answered as if nothing were missing")
+    from g6.mcp import invoke_reply
+    reply = invoke_reply("bad_extension", "lookup", "{}")
+    assert reply["ok"] is False and reply["completion_state"] == "blocked-escalated"
+    assert reply["detail"] == "No module named 'fixture_heavy_dependency'"
+    assert reply["error"] == reply["detail"]
 
 
 def test_d9_reports_the_python_examples_that_fail_or_pass_silently(bad: kit.Target) -> None:
