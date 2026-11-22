@@ -462,7 +462,8 @@ def retained_checks(change, requirement: str):
                                   unconfirmed='a retained proposed check decides no requirement',
                                   template='differential.v1' if check.get('refuted_by_difference') else '',
                                   refuted_by_difference=check.get('refuted_by_difference', False),
-                                  instance=instance, **judged)
+                                  instance=instance, retained_check=checks[-1],
+                                  retained_digest=digest(checks[-1].model_dump()), **judged)
     return checks, origins, skipped
 
 

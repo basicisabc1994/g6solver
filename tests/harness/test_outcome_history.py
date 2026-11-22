@@ -217,7 +217,8 @@ def test_retained_base_timeout_is_skipped_not_stale(monkeypatch):
                            file='test_edge.py', source='def test_edge():\n    assert True\n')
     done = vs.search(SimpleNamespace(repo=Path.cwd(), sources=[]), [one], {one.id: vs.placement(one)},
                      deadline=20, artifact='a' * 64,
-                     origins={one.id: vs.Origin(label='retained', about={'origin': 'retained'})})
+                     origins={one.id: vs.Origin(label='retained', about={'origin': 'retained'},
+                                               retained_check=one, retained_digest=digest(one.model_dump()))})
     assert done.activities[0]['result'] == 'skipped'
     assert 'time' in done.activities[0]['reason']
     assert calls == [True]
@@ -246,7 +247,8 @@ def test_retained_check_the_base_cannot_collect_still_runs_on_the_patch(monkeypa
     monkeypatch.setattr(vs, '_loaded_elsewhere', lambda change, ran: '')
     done = vs.search(SimpleNamespace(repo=Path.cwd(), base_commit='b' * 40), [one], {one.id: vs.placement(one)},
                      deadline=vs._clock() + 60, artifact='a' * 64,
-                     origins={one.id: vs.Origin(label='retained', about={'origin': 'retained'})})
+                     origins={one.id: vs.Origin(label='retained', about={'origin': 'retained'},
+                                               retained_check=one, retained_digest=digest(one.model_dump()))})
     assert calls == [True, False]
     activity = done.activities[0]
     assert [run['on'] for run in activity['runs']] == ['base commit', 'patch']

@@ -384,6 +384,8 @@ def placement(check: ProposedCheck) -> str:
 def placements(root: Path, checks: list[ProposedCheck]) -> dict[str, str]:
     """Each check's place in the copies (``placement``), by id, or a ``ValueError``: a folder on the way is a link or a
     file in the repository, or the folder G6 would make already exists there."""
+    if len({one.id for one in checks}) != len(checks):
+        raise ValueError("proposed and retained check ids must be unique")
     found: dict[str, str] = {}
     for one in checks:
         placed = placement(one)
@@ -827,11 +829,22 @@ class Origin:
     #: The template instance a compiled check came from, in its request form (``{template, requirement_id, intent,
     #: bindings}``): a finding's replay names it, so the replay compiles and judges it as the template does.
     instance: dict | None = None
+    #: Retention binds the record G6 restored, including its source bytes; an id grants no origin.
+    retained_check: ProposedCheck | None = None
+    retained_digest: str = ""
 
 
 FREE_FORM = Origin()
 #: Why a patch-only check has no run at the base commit.
 PATCH_ONLY = "an instance whose intent is change is replayed on the patch only"
+
+
+def _origin(one: ProposedCheck, origins: dict[str, Origin] | None) -> Origin:
+    origin = (origins or {}).get(one.id, FREE_FORM)
+    if origin.label == 'retained' and (one is not origin.retained_check or
+                                      digest(one.model_dump()) != origin.retained_digest):
+        raise ValueError("a retained origin belongs only to its restored check record")
+    return origin
 
 
 def _activity(one: ProposedCheck, placed: str, origin: Origin = FREE_FORM) -> dict:
@@ -846,7 +859,7 @@ def _activity(one: ProposedCheck, placed: str, origin: Origin = FREE_FORM) -> di
 def not_run(checks: list[ProposedCheck], placed: dict[str, str], why: str,
             origins: dict[str, Origin] | None = None) -> Search:
     """The stage, not run: every check listed as skipped, with why."""
-    return Search(activities=[{**_activity(one, placed[one.id], (origins or {}).get(one.id, FREE_FORM)),
+    return Search(activities=[{**_activity(one, placed[one.id], _origin(one, origins)),
                                "result": "skipped", "reason": why} for one in checks])
 
 
@@ -870,6 +883,9 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
     ``select``: run the checks in the experiment selector's order (``verification_controller.order_checks``) instead
     of the order given. It is off by default, ``search_config`` has no key for it and no review sets it: Gate C (V11)
     must show the selector helps before any caller does."""
+    if len({one.id for one in checks}) != len(checks):
+        raise ValueError("proposed and retained check ids must be unique")
+    admitted_origins = {one.id: _origin(one, origins) for one in checks}
     done = Search()
     # Execution records remain private to this invocation, never filled from tool arguments.
     observed_runs = {}
@@ -877,7 +893,7 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
     rooted = {"roots": tuple(roots)} if roots else {}
     if select:
         checks = verification_controller.order_checks(
-            checks, patch_only=lambda ident: (origins or {}).get(ident, FREE_FORM).patch_only)
+            checks, patch_only=lambda ident: admitted_origins[ident].patch_only)
 
     def read(at_base: bool) -> dict:
         ran = _run_check(change, activity["placed"], one.source, node, at_base=at_base,
@@ -895,7 +911,7 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
 
     for one in checks:
         observed_runs.clear()
-        origin = (origins or {}).get(one.id, FREE_FORM)
+        origin = admitted_origins[one.id]
         activity = _activity(one, placed[one.id], origin)
         done.activities.append(activity)
         if stopped or deadline - _clock() < 2 * MIN_RUN_S:
