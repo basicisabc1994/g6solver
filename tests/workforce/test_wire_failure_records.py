@@ -154,14 +154,15 @@ def test_the_crash_class_comes_from_the_kind_not_the_words(monkeypatch):
     monkeypatch.setattr(loop, "scout_gate", lambda text, **kwargs: seen.update(kwargs) or [])
     tree = SimpleNamespace(is_file=lambda: False)
     loop._gate(tree, loop.ProbeRun(1, {"t.py::test_cross": "failed"}, {"t.py::test_cross": "custom helper text"},
-                                   kinds={"t.py::test_cross": "AssertionError"}))
+                                   kinds={"t.py::test_cross": "AssertionError"},
+                                   assertions={"t.py::test_cross": True}))
     assert seen["broken"] == 0
     loop._gate(tree, loop.ProbeRun(1, {"t.py::test_cross": "failed"}, {"t.py::test_cross": "assert-like words"},
                                    kinds={"t.py::test_cross": "ValueError"}))
     assert seen["broken"] == 1
-    # a report with no record for the case is read by its message, as before
+    # A report with no record for the case supplies no assertion evidence, whatever its message says.
     loop._gate(tree, loop.ProbeRun(1, {"t.py::test_cross": "failed"}, {"t.py::test_cross": "assert 1 == 2"}))
-    assert seen["broken"] == 0
+    assert seen["broken"] == 1
 
 
 def test_the_completion_loop_reads_the_kinds_by_the_ids_it_reads_results_by():

@@ -191,7 +191,7 @@ _TREE = re.compile(r"/opt/we/(?:hidden\d*_)?tree\.json")
 _PROBES = re.compile(r"/opt/we/(?:probes|hidden\d*)")
 #: Where ``verification_search`` places a check in its copy: left out of a case's name, as it says nothing of the case.
 _PLACE = re.compile(r"^.*?g6_check_[0-9a-f]{12}/")
-#: The record kinds (``repo_tests._Counted.record``) of a failure that is an assertion: the real types only.
+#: Eligible real failure types (``repo_tests._Counted.record``); assertion evidence also requires test origin.
 _ASSERTION_KINDS = ("AssertionError", "Failed")
 #: A scout's session: what it is asked, where it starts, the one folder it may write to, and its time.
 Host = Callable[[str, Path, Path, float], str]
@@ -250,6 +250,7 @@ class ProbeRun:
     tail: str = ""
     boundary: str = ""     # what confined it, as the run says
     kinds: dict[str, str] = field(default_factory=dict)   # each failed case's first failure kind (``failure_records``)
+    assertions: dict[str, bool] = field(default_factory=dict)   # all failed phases have typed test-origin evidence
 
     @property
     def ran(self) -> int:
@@ -510,7 +511,7 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
     finish, or tested code from outside its copy, leaves the set unusable."""
     code: int | None = 0
     origins = []
-    results, texts, kinds, tail, boundary = {}, {}, {}, [], ""
+    results, texts, kinds, assertions, tail, boundary = {}, {}, {}, {}, [], ""
     for ran in runs:
         body, refs, _ = cloud.freeze_output(ran)
         origins.extend(refs or (cloud.UNKNOWN,))
@@ -538,7 +539,10 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
             tail.append(f"{verdict}: {repo_tests.NO_AUTHORITY[report.withheld[0]]}")
         full, refused = report.full, {report.full(n) for n in ran.get("os_errors", ())}
         for named, phases in report.phases.items():
-            results[_PLACE.sub("", named)] = "unknown" if named in refused else _outcome(phases)
+            key = _PLACE.sub("", named)
+            kinds.pop(key, None)
+            assertions.pop(key, None)
+            results[key] = "unknown" if named in refused else _outcome(phases)
         if report.collection_errors:
             code = None
             results.update({_PLACE.sub("", node): "unknown" for node in report.collection_errors})
@@ -548,12 +552,16 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
             # phase's record is one: a crash in any phase (a teardown's beside a call's assertion) is the case's kind,
             # never hidden by the phase that failed first.
             failed = [when for when in ("setup", "call", "teardown")
-                      if report.phases.get(full(named), {}).get(when) == "failed"] + ["collect"]
+                      if report.phases.get(full(named), {}).get(when) == "failed"]
+            assertions[_PLACE.sub("", full(named))] = bool(failed) and all(
+                any(record["when"] == when and record["kind"] in _ASSERTION_KINDS
+                    and record.get("assertion_from_test") is True for record in found) for when in failed)
+            failed += ["collect"]
             found_kinds = [record["kind"] for when in failed for record in found if record["when"] == when]
             kind = next((k for k in found_kinds if k not in _ASSERTION_KINDS), found_kinds[0] if found_kinds else None)
             if kind is not None:
                 kinds[_PLACE.sub("", full(named))] = kind
-    return cloud.bind_output(ProbeRun(code, results, texts, "\n".join(tail), boundary, kinds),
+    return cloud.bind_output(ProbeRun(code, results, texts, "\n".join(tail), boundary, kinds, assertions),
                              cloud.boundary_sources(carried=origins))
 
 
@@ -588,11 +596,8 @@ def _gate(tree: Path, got: ProbeRun) -> list[str]:
     def cases(test: str) -> list[str]:
         return [v for k, v in got.results.items() if k.rsplit("::", 1)[-1].split("[")[0] == test]
 
-    # A failed case is an assertion by its typed kind (``failure_records``); a report that carries none (a record made
-    # before the bootstrap kept kinds) is read by its message's start, as before.
-    crashed = sum(v == "error" or (v == "failed" and not (
-        got.kinds[k] in _ASSERTION_KINDS if k in got.kinds
-        else re.match(r"assert|AssertionError|Failed", got.texts.get(k, ""))))
+    # Missing records or origin fields establish no assertion, including reports from older bootstraps.
+    crashed = sum(v == "error" or (v == "failed" and not got.assertions.get(k, False))
                   for k, v in got.results.items())
     return scout_gate(tree.read_text(encoding="utf-8", errors="replace") if tree.is_file() else "",
                       exit_code=2 if got.exit is None else got.exit, collected=len(cases("test_cross")), broken=crashed,

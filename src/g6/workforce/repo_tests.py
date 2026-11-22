@@ -366,9 +366,11 @@ REPORT_FIELDS = {
     "not_found_ids": ReportField([str], [], "requested identities pytest did not find", "disjoint collected, unique"),
     "missing_modules": ReportField([str], [], "names from ModuleNotFoundError objects", "exact text names"),
     "failure_records": ReportField(
-        {str: [{"when": str, "kind": str, "module": str, "file": str}]}, {},
-        "one typed record per failed report, from the exception object", "each record names all four members",
-        predicate=lambda value: all(len(record) == 4 for records in value.values() for record in records)),
+        {str: [{"when": str, "kind": str, "module": str, "file": str, "assertion_from_test": bool}]}, {},
+        "one typed record per failed report, from the exception object", "four identity fields and optional test origin",
+        predicate=lambda value: all(set(record) in ({"when", "kind", "module", "file"},
+                                                   {"when", "kind", "module", "file", "assertion_from_test"})
+                                    for records in value.values() for record in records)),
     "probe_observations": ReportField((list, str, type(None)), None, "G6 probe payload or its read error",
                                       "bounded exact JSON input/output pairs, or an error or no payload",
                                       predicate=_payload_shape),
@@ -2129,7 +2131,10 @@ class _Counted:
     def pytest_sessionstart(self, session):
         self.session = session
     @staticmethod
-    def record(node, report, error):
+    def record(node, report, error, _assertion=__import__("builtins").AssertionError,
+               _failed=__import__("pytest").fail.Exception,
+               _fail_code=getattr(__import__("pytest").fail, "__code__",
+                                  getattr(__import__("pytest").fail.__call__, "__code__", None))):
         # Every class question here is asked of the object's real type and its real MRO (``issubclass`` on
         # ``type(...)``), never through ``isinstance``, which an exception's overridable ``__class__`` answers.
         def real(value, classes):
@@ -2150,17 +2155,37 @@ class _Counted:
         # The two assertion kinds go by the real type, never the class's name: pytest's own fail exception is read
         # from the running pytest. Any other class that shares one of their names is named in full, so it never
         # reads as an assertion.
-        import builtins
-        import pytest
-        failed = getattr(getattr(pytest, "fail", None), "Exception", None)
         kind = type(error).__name__
-        if real(error, builtins.AssertionError):
+        if real(error, _assertion):
             kind = "AssertionError"
-        elif real(error, failed):
+        elif real(error, _failed):
             kind = "Failed"
         elif kind in ("AssertionError", "Failed"):
             kind = f"{type(error).__module__}.{type(error).__qualname__}"
-        return {"when": str(getattr(report, "when", "")), "kind": kind, "module": module, "file": place}
+        # Capture the types and pytest.fail's code above when the bootstrap defines the recorder, before tests run.
+        # pytest.fail itself raises inside pytest: its immediate caller, rather than its wrapper, is the origin.
+        origin, frame = None, getattr(error, "__traceback__", None)
+        while frame is not None:
+            if frame.tb_frame.f_code is not _fail_code:
+                origin = frame.tb_frame
+            frame = frame.tb_next
+        from_test = False
+        if kind in ("AssertionError", "Failed") and origin is not None:
+            import os
+            filename = os.path.normcase(os.path.realpath(origin.f_code.co_filename))
+            root = getattr(getattr(node, "config", None), "rootpath", None)
+            test_file = getattr(node, "path", None)
+            module_name = origin.f_globals.get("__name__", "")
+            try:
+                from_test = (type(module_name) is str and
+                             not (module_name == "_pytest" or module_name.startswith("_pytest.")) and
+                             ((test_file is not None and filename == os.path.normcase(os.path.realpath(test_file))) or
+                              (kind == "Failed" and root is not None and os.path.commonpath((filename, os.path.normcase(
+                                  os.path.realpath(root)))) == os.path.normcase(os.path.realpath(root)))))
+            except ValueError:  # paths on different drives have no common root
+                pass
+        return {"when": str(getattr(report, "when", "")), "kind": kind, "module": module, "file": place,
+                "assertion_from_test": from_test}
     def pytest_exception_interact(self, node, call, report):
         error, seen = getattr(getattr(call, "excinfo", None), "value", None), set()
         if error is not None and getattr(report, "failed", False):
