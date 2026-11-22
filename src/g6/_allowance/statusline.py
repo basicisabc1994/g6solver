@@ -12,7 +12,7 @@ documented Claude shape remains unestablished pending a real sanitised capture.
 """
 from __future__ import annotations
 
-from g6.core.decoder_limits import json_value as _decode_json
+from g6._decoder_limits import json_value as _decode_json
 
 import argparse
 import base64

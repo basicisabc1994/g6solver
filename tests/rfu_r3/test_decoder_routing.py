@@ -8,7 +8,7 @@ from tests.s16r3.test_home_json_census import PINNED_CHILD
 
 def test_native_json_decoding_is_confined_to_the_guarded_decoder():
     root = Path(__file__).resolve().parents[2] / 'src/g6'
-    exempt = certificate_inputs() | PINNED_CHILD | {'core/decoder_limits.py'}
+    exempt = certificate_inputs() | PINNED_CHILD | {'_decoder_limits.py'}
     missing = []
     for path in sorted(root.rglob('*.py')):
         rel = path.relative_to(root).as_posix()

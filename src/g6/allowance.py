@@ -9,7 +9,7 @@ weekly meter and its accounting contract are deliberately unchanged.
 """
 from __future__ import annotations
 
-from g6.core.decoder_limits import json_value as _decode_json
+from g6._decoder_limits import json_value as _decode_json
 
 import math
 import os

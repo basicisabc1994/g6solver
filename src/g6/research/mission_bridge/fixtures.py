@@ -12,7 +12,7 @@ shipped census's or an assumption the experiment makes so the graph can be scree
 """
 from __future__ import annotations
 
-from g6.core.decoder_limits import json_value as _decode_json
+from g6._decoder_limits import json_value as _decode_json
 
 import json
 from pathlib import Path

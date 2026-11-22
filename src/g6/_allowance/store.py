@@ -7,7 +7,7 @@ All writers order by the time input was observed, rather than worker completion.
 """
 from __future__ import annotations
 
-from g6.core.decoder_limits import json_value as _decode_json
+from g6._decoder_limits import json_value as _decode_json
 
 import hashlib
 import json
