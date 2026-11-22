@@ -14,6 +14,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from tests.guidance_expectations import LEAN_ACTION, no_setup
 from pydantic import ValidationError
 
 from g6.invariants import check_envelope
@@ -87,7 +88,12 @@ def test_no_lean_is_refused_and_says_how_to_install_it(run, no_lean: Path) -> No
     result = run()
     _blocked(result, LEAN_MISSING)
     action = result.warning_card["suggested_action"]
-    assert "elan" in action and LEAN_ENV in action and "never installs" in action
+    assert action == LEAN_ACTION
+    no_setup(result.model_dump(mode="json"))
+    from g6.lean.envelope import INSTALL_LEAN
+    from g6.lean import __g6_outside__
+    assert "elan" in INSTALL_LEAN and LEAN_ENV in INSTALL_LEAN and "never installs" in INSTALL_LEAN
+    assert any(program.describe()["install"] == INSTALL_LEAN for program in __g6_outside__)
     assert result.evidence[0]["external_program_ran"] is False and str(no_lean) in result.reason
 
 

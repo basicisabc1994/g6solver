@@ -319,5 +319,8 @@ def test_d6_it_is_found_by_its_failure_mode_described_and_its_ops_are_held_over_
     assert "ctx_elastic" in [r["component"] for r in discovery.find(title, limit=5)]
     info = describe_reply("ctx_elastic")
     assert info["ops"] == ["search", "get_doc", "count", "mapping"] and info["skill"]
-    assert info["outside"][0]["name"] == "Elasticsearch" and info["keys"][0]["name"] == "G6_ELASTIC_API_KEY"
+    assert info["outside"][0]["name"] == "Elasticsearch"
+    assert package.__g6_keys__[0].name == "G6_ELASTIC_API_KEY"
+    assert info["keys"][0]["name"] == "G6 left out a setting or command here that only the person may use."
+    assert "G6_ELASTIC_API_KEY" not in json.dumps(info)
     assert sorted(info["sensitive_ops"]) == ["count", "get_doc", "mapping", "search"]

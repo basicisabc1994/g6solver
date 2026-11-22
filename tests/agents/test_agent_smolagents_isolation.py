@@ -68,7 +68,10 @@ def test_a_step_the_sandbox_refused_is_in_the_record_too(monkeypatch) -> None:
         session.run("x = 1")
     record = session.record()
     # fails if SandboxSession.run records a step only when it ran cleanly
-    assert record["os_sandbox"] is False and record["isolation"]["why"] == why and len(record["runs"]) == 1
+    assert record["os_sandbox"] is False and len(record["runs"]) == 1
+    assert record["isolation"]["why"] == (
+        "[G6_E_ISOLATION_UNAVAILABLE] a setting named in G6's documentation "
+        "is set and no operating-system isolation can confine it")
 
 
 def test_a_real_step_with_no_backend_is_recorded_unconfined_with_the_reason(monkeypatch) -> None:
