@@ -909,7 +909,7 @@ ALLOWED = {
     "not None else {}, parent=parent)": "collect_sources: a nested capture's consent Source records, data",
     # e15d9ad (behaviour execution): the execution-artifact.v1 record maps each listed file's name, as git listed it, to
     # its bytes' digest; it is JSON (which writes a GitName as the name it is), hashed and compared, never shown
-    "g6.harness.verification_search: ExecutionSnapshot(sparse, _copy_manifest(change, deadline=deadline))":
+    "g6.harness.verification_search: ExecutionSnapshot(sparse, files)":
         "bind_execution: the record of each file's byte digest by its listed name, a persisted record; " + _NEVER_SHOWN,
     # 5daf0a8 (one report schema): read_report freezes the report's own fields into read-only views and its reading; the
     # values are what the report held, and whatever of them is shown is written where it is shown
