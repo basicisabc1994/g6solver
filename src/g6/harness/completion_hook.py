@@ -141,7 +141,7 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> bool:
     refs = cloud.boundary_sources(carried=(*loop.source_refs(ended),
         cloud.Source.text(cloud.input_source(asked['task']), 'prior-task', asked['task']),
         cloud.Source.text(cloud.input_source(task), 'task', task)))
-    loop._save(run, read, sources=refs)
+    loop._save(run, {**read, loop.SENT: 0}, sources=refs)     # a new run: nothing of it has been sent yet
     cloud.write_retained(session / 'task.json', json.dumps(fresh).encode('utf-8'))
     return True
 

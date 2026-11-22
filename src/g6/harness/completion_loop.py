@@ -70,6 +70,7 @@ from g6.core import host_models, keys
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.core.llm import LLMCaller, LLMError, _start_model_call
+from g6.core.model_calls import counting
 from g6.core import cloud_consent as cloud, consent_callers as consent
 from g6.core.consent_callers import provider_from_env
 from g6.core.storage import state_path
@@ -1116,7 +1117,70 @@ def source_refs(state: dict) -> tuple[cloud.Source, ...]:
     return refs
 
 
+#: The run's request count in its state: every request any step of the run sent, to any provider, added up. Present only
+#: when counted from the run's start; a state saved without it (before it was kept, or by a step that did not finish) is
+#: unknown, never zero, and stays unknown for the rest of the run. Only a total present and zero says "not sent".
+SENT = "requests_sent"
+
+
+class _RunCount:
+    """One step's requests, added to the run's total as the run's state is saved. ``known``: the total as the step
+    began, None when it is unknown."""
+
+    def __init__(self, session: Path, state: dict, known: int | None, step: Callable[[], int]) -> None:
+        self.session, self.known, self.step = session, known, step
+        self.before = json.loads(json.dumps(state)) if known is not None else None
+        self.ahead = False
+
+    def total(self) -> int | None:
+        return None if self.known is None else self.known + self.step()
+
+    def into(self, state: dict) -> None:
+        total = self.total()
+        if total is None:
+            state.pop(SENT, None)
+        else:
+            state[SENT] = total
+
+    def before_sending(self) -> None:
+        """Before any request of this step can go out, the saved state holds the run as it was with its total unknown,
+        so a step cut short after sending leaves the total unknown, never short of what was sent."""
+        if self.before is not None and not self.ahead:
+            self.ahead = True
+            token = _RUN_COUNT.set(None)      # saved as it was, with no total: not this step's
+            try:
+                _save(self.session, {k: v for k, v in self.before.items() if k != SENT})
+            finally:
+                _RUN_COUNT.reset(token)
+
+
+_RUN_COUNT: contextvars.ContextVar[_RunCount | None] = contextvars.ContextVar("g6_run_count", default=None)
+
+
+def _counted_anywhere() -> None:
+    """Observes nothing: with it, ``counting`` counts a request a thread started inside the step sends."""
+
+
+@contextmanager
+def _run_count(session: Path, state: dict, *, fresh: bool):
+    """Count this step's requests into the run's total (``SENT``) whenever its state is saved, and in ``state`` as the
+    step ends. ``fresh``: the state was just made, so the run has sent nothing yet."""
+    held = state.get(SENT)
+    known = 0 if fresh else held if type(held) is int and held >= 0 else None
+    with counting(before_call=_counted_anywhere) as step:     # an observer carries the count into threads started inside
+        run = _RunCount(session, state, known, step)
+        token = _RUN_COUNT.set(run)
+        try:
+            yield run
+        finally:
+            _RUN_COUNT.reset(token)
+            run.into(state)
+
+
 def _save(session: Path, state: dict, *, sources=None) -> None:
+    run = _RUN_COUNT.get()
+    if run is not None:      # within a step: the run's total so far goes with the state
+        run.into(state)
     capture = _SOURCE_STATE.get()
     if sources is None:
         refs = tuple(capture.sources) if capture is not None else (*source_refs(state), cloud.UNKNOWN)
@@ -1389,14 +1453,16 @@ def prepare(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     if scout is None:
         return ""
     shipped, state = harness(), _load(session)
+    fresh = not state
     refs = cloud.boundary_sources((cloud.Source.text(cloud.repository_source(root), 'repository', ''),
                                    cloud.Source.text(cloud.input_source(task), 'task', task)),
                                   carried=(*source_refs(state), *shipped.sources))
     state.setdefault("sets", {})
-    with cloud.collect_sources() as capture, cloud.request_sources(refs):
+    with cloud.collect_sources() as capture, cloud.request_sources(refs), _run_count(session, state, fresh=fresh) as run:
         token = _SOURCE_STATE.set(capture)
         try:
             try:
+                run.before_sending()     # the scouts' requests are the run's too
                 _scouts(repo_tests.change(root, base), task, session, state, shipped, scout, BEFORE)
             except repo_tests.RepoRefused as exc:
                 if exc.code != ISOLATION_UNAVAILABLE:
@@ -1483,6 +1549,12 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
              said: str, answered: bool, agent: str) -> Step:
     """One step, with the session held: the state is read here, so a step sees what the one before it wrote."""
     state = _load(session)
+    with _run_count(session, state, fresh=not state) as run:
+        return _step(state, run, repo, task, base, session, scout, critic, said, answered, agent)
+
+
+def _step(state: dict, run: _RunCount, repo: str | Path, task: str, base: str, session: Path, scout: Host | None,
+          critic: LLMCaller | None, said: str, answered: bool, agent: str) -> Step:
     if state.get("done"):
         if "row_due" in state:
             _write_row(session, state)
@@ -1562,6 +1634,7 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         return digest(repo_tests.snapshot(root))
 
     watch = None
+    run.before_sending()
     try:
         with watching_consent() as watch:
             if not reviewing:
@@ -1576,13 +1649,15 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         code = watch.refused(exc) if watch is not None else ""
         if not code:
             raise
-        sent = watch.counted()
-        state["requests_sent"] = sent     # kept even at zero: a reader says "not sent" only on a count present and zero
-        if not sent:            # "not sent" only when no request at all was counted in the loop's scope
+        sent = run.total()      # the run's, every step of it: this step's own count never stands for the run
+        run.into(state)
+        if sent == 0:           # "not sent" only when the run's total is known and no request at all went out
             state["stop"] = "The review was not sent. " + cloud.WITHHELD
         else:
-            state["stop"] = (f"The review stopped part way: {sent} request(s) went out to the reviewer's provider before "
-                             "sharing was refused for the next. " + cloud.WITHHELD)
+            state["stop"] = ((f"The review stopped part way: {sent} request(s) of this run went out to the reviewer's "
+                              "provider before sharing was refused for the next. " if sent is not None else
+                              "The review stopped: requests of this run may have gone out to the reviewer's provider "
+                              "before sharing was refused for the next (G6 has no count of them). ") + cloud.WITHHELD)
             if code == cloud.STATE_UNAVAILABLE:     # its declared words say nothing was shared, which is not so here
                 code = CONSENT_STATE_AFTER_SEND
         return refused(state["stop"], code, "cloud_consent_missing", untested=True)

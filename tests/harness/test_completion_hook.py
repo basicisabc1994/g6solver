@@ -365,7 +365,8 @@ def test_a_prompt_after_a_loop_ended_records_the_new_task_and_base_and_a_run_of_
     assert run != hook.folder("s1") and run.parent == hook.folder("s1").parent
     state = json.loads((run / "state.json").read_text(encoding="utf-8"))
     assert cloud.UNKNOWN in loop.source_refs(state)  # the synthetic earlier run supplied no origin receipt
-    assert {key: value for key, value in state.items() if key != 'consent_sources'} == {}  # another base
+    # another base; a new run has sent nothing yet
+    assert {key: value for key, value in state.items() if key != 'consent_sources'} == {loop.SENT: 0}
 
 
 def test_a_prompt_that_cannot_get_its_turn_changes_nothing_and_says_so(repo, monkeypatch, capsys):
@@ -385,7 +386,7 @@ def test_a_prompt_on_the_same_base_keeps_what_the_ended_loop_read(repo, monkeypa
     run = hook.current("s1", recorded())
     state = json.loads((run / "state.json").read_text(encoding="utf-8"))
     assert cloud.UNKNOWN in loop.source_refs(state)
-    assert {key: value for key, value in state.items() if key != 'consent_sources'} == {"reviewed": "the digest"}
+    assert {key: value for key, value in state.items() if key != 'consent_sources'} == {"reviewed": "the digest", loop.SENT: 0}
 
 def test_with_nothing_to_say_the_turn_just_ends(repo, monkeypatch, capsys):
     hooked(monkeypatch, capsys, "prompt", prompt(repo))

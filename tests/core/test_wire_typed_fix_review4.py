@@ -19,6 +19,7 @@ UNSENT_ERROR = f"[{cloud.REQUIRED}] Results were withheld"
 def test_stop_hook_does_not_call_a_partly_sent_review_unsent(monkeypatch):
     root, state = Path.cwd(), {}
     monkeypatch.setattr(loop, "_load", lambda *a: state)
+    monkeypatch.setattr(loop, "_save", lambda *a, **kw: None)      # the session here is the working directory
     monkeypatch.setattr(loop.repo_tests, "checked_repo", lambda *a: root)
     monkeypatch.setattr(loop.repo_tests, "change", lambda *a: SimpleNamespace(repo=root, sources=("code.py",)))
     monkeypatch.setattr(loop.repo_tests, "snapshot", lambda *a: {})
