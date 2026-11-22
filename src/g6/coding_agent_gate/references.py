@@ -14,12 +14,8 @@ _LINE = re.compile(r":\d+(?:-\d+)?$")
 
 
 def _test_refs(command: str) -> list[str]:
-    lexer = shlex.shlex(command, posix=False, punctuation_chars=";&|<>()")
-    lexer.whitespace_split = True
-    lexer.commenters = ""
-    words = list(lexer)
-    return [word.strip("\"'") for word in words
-            if not word.startswith("-") and _TEST_FILE.search(word.strip("\"'").split("::", 1)[0])]
+    return [word for words in _segments(command) for word in words
+            if not word.startswith("-") and _TEST_FILE.search(word.split("::", 1)[0])]
 
 
 _PUNCTUATION = frozenset(";&|<>()")
@@ -33,19 +29,35 @@ _VALUE_OPTIONS = frozenset({"-k", "-m", "-p", "-c", "-o", "-n", "-W", "-r", "--t
 
 
 def _segments(command: str) -> list[list[str]]:
-    """The simple commands of a command line, split at shell punctuation; a redirection's file-descriptor number
-    (the ``2`` of ``2>&1``) is not an argument."""
+    """Simple argv shapes, with redirection descriptors and operands removed.
+
+    A pipe starts another program; a redirect changes the current program's IO,
+    never starts a program or names a test. Unsupported IO syntax fails closed.
+    """
     lexer = shlex.shlex(command, posix=False, punctuation_chars=";&|<>()")
     lexer.whitespace_split = True
     lexer.commenters = ""
     segments: list[list[str]] = [[]]
+    operand = False
     for word in lexer:
+        if operand:
+            if word and set(word) <= _PUNCTUATION:
+                raise ValueError("redirection needs an operand")
+            operand = False
+            continue
         if word and set(word) <= _PUNCTUATION:
-            if set(word) & {"<", ">"} and segments[-1] and segments[-1][-1].isdigit():
-                segments[-1].pop()
-            segments.append([])
+            if set(word) & {"<", ">"}:
+                if word not in {"<", ">", ">>", "<&", ">&"}:
+                    raise ValueError("unsupported redirection shape")
+                if segments[-1] and segments[-1][-1].isdigit():
+                    segments[-1].pop()
+                operand = True
+            else:
+                segments.append([])
         else:
             segments[-1].append(word.strip("\"'"))
+    if operand:
+        raise ValueError("redirection needs an operand")
     return [words for words in segments if words]
 
 
@@ -56,14 +68,23 @@ def _pathlike(word: str) -> bool:
 def _classified(command: str) -> tuple[list[str], list[str]]:
     """A test command's path references, and the words G6 cannot classify as program, option or path.
 
-    After ``pytest`` (however launched) every positional word is a path or node id. In any other command, a word
+    After a recognised pytest program/module every positional word is a path or node id. In any other command, a word
     with a test-file suffix or a path separator is a path; the first word is the program; any other positional
     word cannot be classified."""
     paths: list[str] = []
     unknown: list[str] = []
-    for words in _segments(command):
-        runner = next((i for i, word in enumerate(words)
-                       if word.replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe") in _RUNNERS), None)
+    segments = _segments(command)
+    # A bare node id is evidence naming one test, never a program in a pipeline.
+    if len(segments) == 1 and len(segments[0]) == 1:
+        node = segments[0][0]
+        if command.strip().strip("\"'") == node and "::" in node and _pathlike(node.split("::", 1)[0]):
+            return [node], []
+    for words in segments:
+        program = words[0].replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe")
+        runner = 0 if program in _RUNNERS else None
+        if (re.fullmatch(r"python(?:\d+(?:\.\d+)?)?|py", program)
+                and len(words) >= 3 and words[1] == "-m" and words[2] in _RUNNERS):
+            runner = 2
         if runner is not None:
             value = False
             for word in words[runner + 1:]:
@@ -74,6 +95,7 @@ def _classified(command: str) -> tuple[list[str], list[str]]:
                 else:
                     paths.append(word)
             continue
+        unknown.append(words[0])  # an unknown runner cannot establish that all references were checked
         for word in words[0 if _pathlike(words[0]) else 1:]:
             if not word.startswith("-"):
                 (paths if _pathlike(word) else unknown).append(word)
