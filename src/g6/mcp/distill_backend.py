@@ -9,19 +9,16 @@ from __future__ import annotations
 from dataclasses import asdict
 import json
 from pathlib import Path
-import threading
 import time
 
 from g6.core.door import blocked_reply
 from g6.core.ledger import digest
 from g6.core.storage import state_path
-from g6.distill.ledger import Stores
-from g6.distill.records import CapabilityExtension, Concept, Evidence, FailureRecord, VerifierCandidate
+from g6.distill.ledger import Stores, failure_writer
+from g6.distill.records import CapabilityExtension, Concept, Evidence, FailureRecord
 
 #: How long a measured reading of G6's own import graph and protected set stays fresh in this process.
 LOCAL_TTL_S = 3600.
-#: Distill writes in this process go through one writer at a time (Stores requires one serial writer).
-_WRITER = threading.Lock()
 CASE_FIELDS = ('unit_id', 'provenance', 'files', 'target', 'changed_lines', 'before_tests', 'after_tests', 'known_wrong')
 NEEDS_CASE = ('Distillation learns only from independent training failures. Record the failure with '
               'g6_failure_record and a case_json object holding unit_id, provenance, files, target, changed_lines, '
@@ -51,6 +48,33 @@ def _unseen(case):
     return unit_split(case.unit_id, case.provenance.cohort, 'intake') == 'unseen'
 
 
+def _unseen_units(records):
+    """Custody is per unit across all families and history, never just the latest header."""
+    from g6.distill.intake import unit_cohort
+    units = set()
+    for record in records:
+        unit, cohort = unit_cohort(record)
+        if unit and cohort in {'selection', 'held_out', 'unseen'}:
+            units.add(unit)
+    return units
+
+
+def _record_unit(record, records):
+    from g6.distill.intake import unit_cohort
+    indexed = {row.record_id: row for row in records}
+    seen = set()
+    while record.record_id not in seen:
+        seen.add(record.record_id)
+        unit, _ = unit_cohort(record)
+        if unit:
+            return unit
+        source = indexed.get(record.provenance.get('labelled_from'))
+        if source is None:
+            return None
+        record = source
+    return None
+
+
 def _labelled(failure, case, result):
     """An independent training record whose label is G6's own executed oracle result, never the caller's word.
 
@@ -66,7 +90,7 @@ def _labelled(failure, case, result):
         finding_class=failure.finding_class, met_before=[], g6_commit=failure.g6_commit,
         observed_at=failure.observed_at,
         provenance={'case': {'before': {TEST_PATH: case.before_tests}, 'after': {TEST_PATH: case.after_tests}},
-                    'labelled_from': failure.record_id, 'cohort': case.provenance.cohort,
+                    'labelled_from': failure.record_id, 'cohort': case.provenance.cohort, 'unit_id': case.unit_id,
                     'oracle_policy_sha256': result.policy_sha256, 'intake': 'oracle_label',
                     'scope': 'client_request', **({'other': failure.provenance['other']}
                                                   if 'other' in failure.provenance else {})})
@@ -181,23 +205,31 @@ class Service:
             return refused('G6_E_SYNTH_TRAINING_ONLY', 'No failure record of this family matches. ' + NEEDS_CASE)
         derived = {f.provenance.get('labelled_from'): f for f in everything
                    if f.family == family and f.observed_by == 'independent' and f.split == 'training'}
-        ready, pending = {}, []
+        ready, pending, skipped = {}, [], []
         for failure in selected:
             if failure.observed_by == 'independent' and failure.split == 'training':
-                if failure.provenance.get('cohort') == 'selection':
-                    return refused('G6_E_SYNTH_TRAINING_ONLY', 'An unseen (selection cohort) case is never training '
-                                                               'data.')
                 ready[failure.record_id] = failure
             elif failure.record_id in derived:
                 ready[derived[failure.record_id].record_id] = derived[failure.record_id]
             elif (case := _oracle_case(failure)) is not None:
                 pending.append((failure, case))
             else:
-                return refused('G6_E_SYNTH_TRAINING_ONLY', NEEDS_CASE)
-        for failure in ready.values():
+                skipped.append({'record_id': failure.record_id, 'reason': 'no runnable case'})
+        for failure in tuple(ready.values()):
+            from g6.distill.facts import source_mapping
             case = failure.provenance.get('case', {})
-            if not isinstance(case, dict) or not {'before', 'after'} <= case.keys():
-                return refused('G6_E_SYNTH_TRAINING_ONLY', 'Training failures need supplied before/after source maps.')
+            try:
+                if failure.provenance.get('cohort') in {'selection', 'held_out', 'unseen'}:
+                    raise ValueError('held-out or unseen case is never training data')
+                if not isinstance(case, dict) or not {'before', 'after'} <= case.keys():
+                    raise ValueError('no before/after source maps')
+                source_mapping(case['before'])
+                source_mapping(case['after'])
+            except ValueError as exc:
+                skipped.append({'record_id': failure.record_id, 'reason': str(exc)})
+                del ready[failure.record_id]
+        if not ready and not pending:
+            return {**refused('G6_E_SYNTH_TRAINING_ONLY', NEEDS_CASE), 'skipped': skipped}
         if self.synthesizer is None:
             self.synthesizer = Synthesizer()
         synth = self.synthesizer
@@ -209,12 +241,12 @@ class Service:
             from g6.workforce.repo_tests import RepoRefused
             failures, labels = list(ready.values()), []
             for failure, case in pending:
-                if _unseen(case):
+                if _unseen(case) or case.unit_id in _unseen_units(Stores().for_model(FailureRecord).list()):
                     labels.append({'record_id': failure.record_id, 'label': 'unseen',
                                    'reason': 'selection cohort: never training data'})
                     continue
                 # A start queued beside this one may have labelled the record already: read again before running.
-                with _WRITER:
+                with failure_writer():
                     existing = _derived(family, failure.record_id)
                 if existing is not None:
                     labels.append({'record_id': failure.record_id, 'label': 'positive', 'reason': 'already_labelled',
@@ -230,24 +262,40 @@ class Service:
                                                 'none is available here; no record was labelled.'), 'labels': labels}
                 row = {'record_id': failure.record_id, 'label': result.label, 'reason': result.reason}
                 if result.label == 'positive':
-                    with _WRITER:
+                    with failure_writer():
+                        if case.unit_id in _unseen_units(Stores().for_model(FailureRecord).list()):
+                            labels.append({'record_id': failure.record_id, 'label': 'unseen',
+                                           'reason': 'unit held out: never training data'})
+                            continue
                         training = _derived(family, failure.record_id) or _labelled(failure, case, result)
                         _put_once(training)
                     row['training_record_id'] = training.record_id
                     failures.append(training)
                 labels.append(row)
-            # One training failure per case: a duplicate already present is reported, never learnt from twice.
+            # Recheck already-derived rows against all recorded unit custody before use.
+            history = Stores().for_model(FailureRecord).list()
+            unseen = _unseen_units(history)
+            eligible = []
+            for failure in failures:
+                unit = _record_unit(failure, history)
+                if unit in unseen or (failure.provenance.get('labelled_from') and unit is None):
+                    skipped.append({'record_id': failure.record_id, 'reason': 'unit custody unavailable or held out'})
+                else:
+                    eligible.append(failure)
+            failures = eligible
+            # A pair of source maps counts once, whatever identity the caller supplied.
             unique, duplicates = {}, []
             for failure in failures:
-                if failure.case_ref in unique:
+                key = digest([failure.provenance['case']['before'], failure.provenance['case']['after']])
+                if key in unique:
                     duplicates.append(failure.record_id)
                 else:
-                    unique[failure.case_ref] = failure
+                    unique[key] = failure
             failures = list(unique.values())
             if not failures:
                 return {**refused('G6_E_SYNTH_TRAINING_ONLY', "G6's oracle labelled no supplied case weakened, "
                                                               'so there is no training failure to learn from.'),
-                        'labels': labels}
+                        'labels': labels, 'skipped': skipped}
             cases = [SynthesisCase(f, f.provenance['case']['before'], f.provenance['case']['after'])
                      for f in failures]
             concepts = [c for c in Stores().for_model(Concept).list()
@@ -255,9 +303,17 @@ class Service:
                         and c.status == 'proposed']
             concept = concepts[-1] if concepts else propose_concept(cases, synthesizer=synth)
             if isinstance(concept, dict):
-                return {**concept, 'labels': labels, 'duplicates': duplicates}
+                return {**concept, 'labels': labels, 'duplicates': duplicates, 'skipped': skipped}
             _put_once(concept)
             result = synth.synthesise(concept, cases)
+            if result.reuses:
+                from g6.core.ledger import ChainLedger
+                with failure_writer():
+                    journal = ChainLedger(state_path('distill', 'reuse_ledger.jsonl'))
+                    for reuse in result.reuses:
+                        body = reuse.model_dump(mode='json')
+                        if not any(row['id'] == digest(body) for row in journal.entries()):
+                            journal.append('reuse', digest(body), body)
             for candidate in result.candidates:
                 _put_once(candidate.contract)
                 _put_once(candidate)
@@ -266,8 +322,9 @@ class Service:
             from g6.distill.library import Library
             decisions = decide_batch(result.candidates, Library(), self.registration) if result.candidates else ()
             return {'concept_id': concept.concept_id, **result.model_dump(mode='json'),
-                    'decisions': [asdict(d) for d in decisions], 'labels': labels, 'duplicates': duplicates}
-        return self.jobs.start(run)
+                    'decisions': [asdict(d) for d in decisions], 'labels': labels, 'duplicates': duplicates,
+                    'skipped': skipped}
+        return {**self.jobs.start(run), 'skipped': skipped}
 
     def distill_job(self, job_id, detail='compact'):
         if self.jobs is None:
@@ -275,13 +332,13 @@ class Service:
         return self.jobs.status(job_id, detail=detail)
 
     def restore(self, entry_id):
-        from g6.distill.acceptance_gate import decide
+        from g6.distill.acceptance_gate import restore
         from g6.distill.library import Library
         library = Library()
         entry = library.get(entry_id)
         if entry is None:
             raise ValueError('stale library entry')
-        return asdict(decide(Stores().for_model(VerifierCandidate).get(entry.candidate_id), library, self.registration))
+        return asdict(restore(entry_id, library, self.registration))
 
     def extend(self, request, repo=''):
         return self.jobs.start(lambda: self._extend(request, repo)) if self.jobs is not None else self._extend(request, repo)
@@ -328,6 +385,9 @@ class Service:
         return state_path('distill', 'research', digest(folder), 'STOP')
 
     def research_stop(self, folder='', reason=''):
+        if self._runner(folder) is None:
+            return refused('G6_E_RESEARCH_RUNNER_UNKNOWN',
+                f'No runner attached under key {folder!r}. Attached keys: {sorted(self.runners)!r}.')
         path = self._stop_path(folder)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('owner stop\n', encoding='utf-8', newline='\n')
@@ -338,7 +398,7 @@ class Service:
         runner = self._runner(folder)
         level = authority(runner.config if runner is not None else self.config).level
         return {'authority': level, 'host_configured': runner is not None,
-                'status': 'stopped' if self._stop_path(folder).exists() or runner is not None and runner.stopped()
+                'status': 'stopped' if runner is not None and (self._stop_path(folder).exists() or runner.stopped())
                           else 'off' if level == 'off' else 'ready' if runner is not None else 'host_required'}
 
     def research_digest(self, folder=''):

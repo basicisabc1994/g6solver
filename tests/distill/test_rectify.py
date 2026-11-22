@@ -81,7 +81,7 @@ def test_recurrence_reopens_after_restart_and_logs_removing_check_failure(local_
     assert mode.occurrences == 3 and mode.met_before and mode.removing_check is None
     assert mode.recurrences_after_removal == 1
     latest = rect_store.list()[-1]
-    assert latest.outcome == "failed" and not latest.class_removed
+    assert (latest.outcome, latest.class_removed) == ("failed", False)
     assert latest.pinning == result.pinning  # names the check invalidated by the recurrence
     event(intake, "refusal", context("recurrence", round=3))
     assert len(rect_store.list()) == 2
@@ -166,8 +166,11 @@ def test_successive_removals_retain_the_total_recurrence_count(local_home):
     rows.append(event(intake, "refusal", context("recurrence-1", round=3)))
     workflow().submit(rows[-1].record_id, rect(rows))
     assert workflow().mode("boundary_case").recurrences_after_removal == 1
+    assert workflow().mode("boundary_case").removing_check is not None
     rows.append(event(intake, "refusal", context("recurrence-2", round=4)))
     assert workflow().mode("boundary_case").recurrences_after_removal == 2
+    assert workflow().mode("boundary_case").removing_check is None
+    assert Stores().for_model(Rectification).list()[-1].outcome == "failed"
 
 
 def library_check():
@@ -195,8 +198,13 @@ def test_recurrence_demotes_a_library_removing_check(local_home):
     assert result.class_removed
     event(importlib.import_module("g6.distill.intake").FailureIntake(), "refusal", context("again", round=3))
     latest, = Library().list()
-    assert latest.status == "demoted" and latest.authority == "A0"
+    assert latest.status == "held" and latest.authority == "A0"
     assert latest.version == entry.version + 1
+    assert workflow().mode("boundary_case").removing_check is None
+    assert workflow().mode("boundary_case").recurrences_after_removal == 1
+    assert Library().by_status("admitted") == []
+    from g6.distill.acceptance_gate import _active
+    assert _active(Library().list()) == []
 
 
 def test_foreign_class_replay_is_rejected_by_records_store(local_home):

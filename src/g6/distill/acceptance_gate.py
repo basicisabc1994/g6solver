@@ -283,6 +283,8 @@ def _candidate(entry):
 
 
 def _run(candidate, case, entries, stack=frozenset()):
+    if any(entry.candidate_id == candidate.candidate_id and entry.status == "held" for entry in entries):
+        raise ValueError("held method cannot be applied")
     if candidate.candidate_id in stack:
         raise ValueError("cyclic method dependency")
     stack = stack | {candidate.candidate_id}
@@ -382,7 +384,8 @@ def _leaks(candidate, observations):
                     names.add(node.name)
                 elif isinstance(node, ast.Constant) and isinstance(node.value, str) and len(node.value) > 8:
                     names.add(node.value)
-        if any(name and name in body for name in names):
+        if any(len(name) >= 3 and re.search(r'(?<!\w)' + re.escape(name) + r'(?!\w)', body)
+               for name in names):
             return True
     return False
 
@@ -606,7 +609,8 @@ def _snapshot(library, entry_id):
 
 
 def _persist(candidate, answer, evidence, own, frozen, data, library):
-    if any(e.candidate_id == candidate.candidate_id and e.status in {"probation", "admitted"} for e in library.list()):
+    if any(e.candidate_id == candidate.candidate_id and e.status in {"probation", "admitted", "held"}
+           for e in library.list()):
         raise ValueError("candidate already active")
     contracts = Stores().for_model(MethodContract)
     try:
@@ -654,6 +658,46 @@ def decide_batch(candidates, library: Library, registration: str) -> tuple[Accep
     A runner must call this once per tick, rather than adaptively submitting a
     series of singleton batches. Every attempt consumes one registered look.
     """
+    return _decide_batch(candidates, library, registration)
+
+
+def restore(entry_id: str, library: Library, registration: str) -> AcceptanceDecision:
+    """Person-authorized restore path; still requires fresh independent admission."""
+    entry = _snapshot(library, entry_id)
+    return _decide_batch((_candidate(entry),), library, registration, restoring=entry_id)[0]
+
+
+def lift_hold(entry_id: str, library: Library, *, reason: str, person: str) -> AcceptanceDecision:
+    """Release a suspension only after the existing wire dialog accepts it."""
+    from .rectify_gate import Rectifier
+    try:
+        with _writer():
+            if stop.engaged() is not None:
+                raise ValueError("stop engaged")
+            if not person.strip() or is_automated(person) or not reason.strip():
+                raise ValueError("named person and reason required; wire consent dialog authenticates the request")
+            Rectifier().reconcile()
+            entry = _snapshot(library, entry_id)
+            if entry.status != "held":
+                raise ValueError("hold release requires a current held method")
+            history = Stores().for_model(LibraryEntry).list()
+            if not any(row.candidate_id == entry.candidate_id and row.status == "admitted"
+                       and row.certificate_sha256 == entry.certificate_sha256 for row in history):
+                raise ValueError("prior admission unavailable")
+            changed = _change(entry, status="admitted", authority="A2", reason=reason, person=person)
+            return _record(AcceptanceDecision("lift_hold", (reason,), entry.candidate_id, entry_id=changed.entry_id))
+    except (ValueError, KeyError) as error:
+        return AcceptanceDecision("refuse", (str(error) if isinstance(error, ValueError) else "hold evidence unavailable",))
+
+
+def _withdrawn_match(candidate):
+    return any(entry.status == 'withdrawn' and (
+        entry.candidate_id == candidate.candidate_id or entry.concept_id == candidate.concept_id
+        or entry.contract_sha256 == candidate.contract.content_id)
+        for entry in Stores().for_model(LibraryEntry).list())
+
+
+def _decide_batch(candidates, library, registration, *, restoring=''):
     originals = tuple(candidates)
     try:
         if any(type(c) is not VerifierCandidate for c in originals):
@@ -670,11 +714,24 @@ def decide_batch(candidates, library: Library, registration: str) -> tuple[Accep
             _policy()
             if type(library) is not Library:
                 raise ValueError("gate requires persisted library")
+            if restoring:
+                entry = _snapshot(library, restoring)
+                if (len(candidates) != 1 or entry.candidate_id != candidates[0].candidate_id
+                        or entry.status not in {'withdrawn', 'demoted'}):
+                    raise ValueError('restore requires a current withdrawn or demoted entry')
             results, evaluated = {}, {}
             # No evidence-bearing callback, configurable runner or external report.
             for candidate in candidates:
                 reservation = ""
                 try:
+                    if candidate.form == 'reuse':
+                        raise ValueError('reuse is a reuse row, never an admission candidate')
+                    if any(entry.status == "held" and (entry.candidate_id == candidate.candidate_id
+                            or entry.concept_id == candidate.concept_id
+                            or entry.contract_sha256 == candidate.contract.content_id) for entry in library.list()):
+                        raise ValueError('held candidate, concept or contract requires a hold release')
+                    if not restoring and _withdrawn_match(candidate):
+                        raise ValueError('withdrawn candidate, concept or contract requires a person-authorized restore')
                     _look_available(registration)  # A spent split never reaches the oracle again.
                     frozen = _load(registration, candidate, library)
                     if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:

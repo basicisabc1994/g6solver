@@ -19,7 +19,7 @@ Positive = Annotated[Finite, Field(gt=0)]
 Rate = Annotated[Finite, Field(ge=0, le=1)]
 Verdict = Literal["concern", "abstain", "no_concern"]
 Split = Literal["training", "dev", "monitor", "field"]
-Status = Literal["probation", "admitted", "demoted", "withdrawn", "superseded"]
+Status = Literal["probation", "admitted", "held", "demoted", "withdrawn", "superseded"]
 FindingClass = Literal["identity_from_rendering", "one_fact_two_rules", "own_parser_for_foreign_format",
                        "failure_read_as_success", "check_then_act_race", "state_not_durable",
                        "untrusted_input_given_authority", "boundary_case", "guard_covers_less_than_it_guards", "other"]
@@ -322,11 +322,19 @@ class LibraryEntry(Record):
     created_at: str
     changed_at: str
     reason: str
+    held_recurrences: list[Sha256] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def compatible_body(self, handler):
+        body = handler(self)
+        if not body.get("held_recurrences"):
+            body.pop("held_recurrences", None)
+        return body
 
     @model_validator(mode="after")
     def authority_shape(self) -> Self:
         allowed = {"probation": {"A1"}, "admitted": {"A2"}, "demoted": {"A0", "A1"},
-                   "withdrawn": {"A0"}, "superseded": {"A0"}}
+                   "held": {"A0"}, "withdrawn": {"A0"}, "superseded": {"A0"}}
         if self.authority not in allowed[self.status]:
             raise ValueError("authority does not match the recorded status")
         return self

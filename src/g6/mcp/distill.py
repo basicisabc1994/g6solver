@@ -55,8 +55,8 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
         return _call(surface.library, op, entry_id)
 
     async def g6_library_decide(entry_id: str, action: Literal["demote", "withdraw", "restore"], reason: str, ctx: Any) -> dict:
-        """Ask the person in their client dialog to demote or withdraw a current method. Restore needs reacceptance;
-        it cannot grant authority here. Declining, cancelling or a stale entry changes nothing."""
+        """Ask the person to lower, restore or release a held method through their client dialog.
+        Withdrawn/demoted methods need reacceptance. Declining, cancelling or a stale entry changes nothing."""
         from g6.core.door import blocked_reply
         from g6.distill import acceptance_gate as gate
         from g6.distill.library import Library
@@ -75,13 +75,17 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
         if state != "accept" or not isinstance(content, dict) or content.get("confirm") != "change" \
                 or not isinstance(content.get("name"), str) or not content["name"].strip():
             return blocked_reply("[G6_E_DISTILL_DIALOG] No library decision was authorized in the client's dialog.")
-        if action == 'restore':
-            return _call(backend.restore, entry_id)
-        result = getattr(gate, action)(entry_id, Library(), reason=reason, person=content["name"].strip())
-        if result.verdict in {'refuse', 'block'}:
+        if action == 'restore' and entry['status'] == 'held':
+            result = asdict(gate.lift_hold(entry_id, Library(), reason=reason, person=content["name"].strip()))
+        elif action == 'restore':
+            result = _call(backend.restore, entry_id)
+        else:
+            result = asdict(getattr(gate, action)(entry_id, Library(), reason=reason,
+                                                person=content["name"].strip()))
+        if result.get('verdict') in {'refuse', 'block'}:
             return {**blocked_reply("[G6_E_DISTILL_DECISION] The acceptance gate refused the decision."),
-                    'decision': asdict(result)}
-        return asdict(result)
+                    'decision': result}
+        return result
 
     def g6_self_model(section: str = "", detail: str = "compact") -> dict:
         """Read G6's self-model; missing or stale measured observations remain unknown."""
@@ -112,7 +116,8 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
         denied = _call(backend.research_admission, folder)
         if denied:
             return denied
-        state, content, _ = await elicit(ctx, 'Start one bounded research tick? Host authority and all gates still apply.', DECIDE_FORM)
+        state, content, _ = await elicit(ctx, f'Start one bounded research tick for runner key {folder!r}? '
+            'Host authority and all gates still apply.', DECIDE_FORM)
         if state != 'accept' or not isinstance(content, dict) or content.get('confirm') != 'change' \
                 or not isinstance(content.get('name'), str) or not content['name'].strip():
             return blocked_reply('[G6_E_DISTILL_DIALOG] No research start authorized in the client dialog.')

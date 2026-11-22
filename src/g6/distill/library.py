@@ -68,7 +68,7 @@ class Library:
         return next((entry for entry in self.list() if entry.entry_id == entry_id), None)
 
     def by_status(self, status: Status) -> list[LibraryEntry]:
-        if status not in {"probation", "admitted", "demoted", "withdrawn", "superseded"}:
+        if status not in {"probation", "admitted", "held", "demoted", "withdrawn", "superseded"}:
             raise ValueError("unknown library status")
         return [entry for entry in self.list() if entry.status == status]
 

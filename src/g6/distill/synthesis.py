@@ -47,11 +47,18 @@ class Refusal(Model):
     reason: str
 
 
+class Reuse(Model):
+    entry_id: str
+    concept_id: str
+    training_case_ids: list[str]
+
+
 class SynthesisResult(Model):
     candidates: list[VerifierCandidate]
     model_calls: int
     synthesis_calls: int
     refusals: list[Refusal]
+    reuses: list[Reuse] = []
 
 
 class _Limit(BudgetExhausted):
@@ -84,12 +91,13 @@ def _training_view(concept, cases):
     # case is dropped and reported, keeping the concept's own record first.
     chosen, duplicates = {}, []
     for case in sorted(cases, key=lambda c: c.failure.record_id not in concept.from_failures):
-        if case.failure.case_ref in chosen:
+        key = digest([source_mapping(case.before), source_mapping(case.after)])
+        if key in chosen:
             duplicates.append(case.failure.record_id)
         else:
-            chosen[case.failure.case_ref] = case
+            chosen[key] = case
     supplied = {case.failure.record_id for case in cases}
-    cases = [case for case in cases if chosen.get(case.failure.case_ref) is case]
+    cases = list(chosen.values())
     failures = [case.failure for case in cases]
     if (not failures or not {f.record_id for f in failures} <= set(concept.from_failures)
             or not set(concept.from_failures) <= supplied
@@ -158,10 +166,10 @@ class Synthesizer:
         def refuse(code, reason):
             refusals.append(Refusal(code=code, reason=reason))
 
-        def result(candidate=None):
+        def result(candidate=None, *, reuse=None):
             calls = meter.calls if meter else 0
             return SynthesisResult(candidates=[candidate] if candidate else [], synthesis_calls=calls,
-                                   model_calls=1 + calls, refusals=refusals)
+                                   model_calls=1 + calls, refusals=refusals, reuses=[reuse] if reuse else [])
 
         try:
             concept, observations, unique, duplicates = _training_view(concept, cases)
@@ -228,7 +236,7 @@ class Synthesizer:
                 continue
             reusable = candidate("reuse", ident, parents=[ident], contract=method.contract)
             if covers(reusable):
-                return result(reusable)
+                return result(reuse=Reuse(entry_id=ident, concept_id=concept.concept_id, training_case_ids=ids))
             usable.append((ident, method))
 
         # Bounded deterministic search; parents still enforce their individual scope.

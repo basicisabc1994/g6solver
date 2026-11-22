@@ -50,6 +50,16 @@ def class_key(record: FailureRecord) -> str:
     return f"other: {name}"
 
 
+def unit_cohort(record: FailureRecord) -> tuple[str | None, str | None]:
+    """Read unit custody from original case headers or a derived training record."""
+    case = record.provenance.get('case')
+    if isinstance(case, dict) and isinstance(case.get('provenance'), dict):
+        unit, cohort = case.get('unit_id'), case['provenance'].get('cohort')
+    else:
+        unit, cohort = record.provenance.get('unit_id'), record.provenance.get('cohort')
+    return (unit if isinstance(unit, str) else None, cohort if isinstance(cohort, str) else None)
+
+
 def earlier(records: list[FailureRecord], candidate: FailureRecord) -> list[str]:
     """Adapt to the original ledger rather than duplicating its loop/round rule.
 

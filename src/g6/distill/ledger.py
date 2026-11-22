@@ -7,6 +7,9 @@ authenticate an actor who can replace an entire history and its external anchors
 """
 from __future__ import annotations
 
+from contextlib import contextmanager, nullcontext
+import threading
+
 from pydantic import ValidationError
 
 from g6.core.ledger import ChainLedger, LedgerCorrupt, LedgerError, canonical
@@ -14,9 +17,33 @@ from g6.core.storage import state_path
 from .records import (RECORD_KINDS, CapabilityExtension, Concept, FailureMode, FailureRecord, LibraryEntry,
                       MethodContract, Record, Rectification, VerifierCandidate)
 
+_FAILURE_MUTEX = threading.RLock()
+_FAILURE_LOCAL = threading.local()
+
+
+@contextmanager
+def failure_writer(*, reading=False):
+    """One reentrant file lock for every failure writer, including other server processes."""
+    from g6.core.repair_log import _process_lock
+    with _FAILURE_MUTEX:
+        path = state_path('distill', 'failure_records.lock')
+        if getattr(_FAILURE_LOCAL, 'path', None) == path:
+            yield True
+            return
+        if reading and not path.parent.exists():
+            yield False
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with _process_lock(path):
+            _FAILURE_LOCAL.path = path
+            try:
+                yield True
+            finally:
+                _FAILURE_LOCAL.path = None
+
 
 class Stores:
-    """Store factory; construction and all reads are side-effect free."""
+    """Store factory; reads never append records. Failure readers share the writer's lock."""
 
     def for_model(self, model: type[Record], *, expect_head: str | None = None) -> RecordStore:
         for kind, cls in RECORD_KINDS.items():
@@ -29,7 +56,10 @@ class RecordStore:
     def __init__(self, stores: Stores, kind: str, model: type[Record], *, expect_head: str | None = None):
         self.stores, self.kind, self.model = stores, kind, model
         self.path = state_path("distill", f"{kind}.jsonl")
-        self.chain = ChainLedger(self.path, expect_head=expect_head, validate=self._validate)
+        self._expect_head = expect_head
+        with failure_writer(reading=True) if model is FailureRecord else nullcontext(True) as locked:
+            self.chain = ChainLedger(self.path if locked else None,
+                                     expect_head=expect_head, validate=self._validate)
 
     def _validate(self, kind, ident, body, seen):
         try:
@@ -48,6 +78,18 @@ class RecordStore:
         return state_path("distill", "objects", f"{ident}.json")
 
     def _read(self, *, references=True) -> list[Record]:
+        if self.model is FailureRecord:
+            with failure_writer(reading=True) as locked:
+                if not locked:
+                    if self.chain.entries() or self._expect_head:
+                        raise LedgerCorrupt('previously observed failure ledger is missing')
+                    return []
+                if self.chain.path is None:
+                    self.chain = ChainLedger(self.path, expect_head=self._expect_head, validate=self._validate)
+                return self._read_locked(references=references)
+        return self._read_locked(references=references)
+
+    def _read_locked(self, *, references=True) -> list[Record]:
         self.chain.reload()
         records = []
         for row in self.chain.entries():
@@ -147,10 +189,10 @@ class RecordStore:
             if writing:
                 # Legacy unpinned open rows can be read, but no new unpinned
                 # rectification (even an open proposal) can enter the log.
-                from .rectify_gate import Rectifier
+                from .rectify_gate import Rectifier, _key
                 Rectifier(self.stores)._pinning(record, require_current=record.outcome != "failed")
                 failures = self.stores.for_model(FailureRecord)._read(references=False)
-                same = [row for row in failures if class_key(row) == record.failure_mode]
+                same = [row for row in failures if _key(row) == record.failure_mode]
                 met = any(row.met_before or earlier([f for f in failures if f != row], row) for row in same)
                 if met and record.instance_or_class != "class":
                     raise LedgerError("a class met before requires class removal")
@@ -163,6 +205,10 @@ class RecordStore:
                         raise LedgerError("class removal requires replay of every known failure")
 
     def put(self, value: Record) -> str:
+        with failure_writer() if self.model is FailureRecord else nullcontext():
+            return self._put_locked(value)
+
+    def _put_locked(self, value: Record) -> str:
         if type(value) is not self.model:
             raise LedgerError("wrong record model")
         try:

@@ -67,16 +67,15 @@ def test_reuse_precedes_model_and_preserves_contract_and_lineage():
     library = MemoryLibrary(["assert_strength.v1"])
     caller = FakeLLM(default="must not be needed")
     result = Synthesizer(caller=caller).synthesise(concept, [case], library=library)
-    candidate, = result.candidates
+    reuse, = result.reuses
     entry, = library.values
-    assert candidate.form == "reuse"
-    assert candidate.body == entry.entry_id
-    assert candidate.contract == library.candidate(entry).contract
-    assert candidate.lineage == [entry.entry_id]
-    assert candidate.training_case_ids == [case.failure.case_ref]
+    assert result.candidates == []
+    assert reuse.entry_id == entry.entry_id
+    assert reuse.concept_id == concept.concept_id
+    assert reuse.training_case_ids == [case.failure.case_ref]
+    assert library.candidate(entry).contract.content_id == entry.contract_sha256
     assert result.model_calls == 1 and result.synthesis_calls == 0
     assert caller.calls == []
-    assert_proposed(candidate, concept, calls=1)
 
 
 def test_composition_precedes_new_templates_and_models():

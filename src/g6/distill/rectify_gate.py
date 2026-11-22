@@ -9,12 +9,15 @@ these ledgers is required. Reconcile/replay heals interrupted derived-log writes
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import PurePosixPath
 
 from g6.core.ledger import LedgerError
 from .intake import class_key, earlier
 from .ledger import Stores
-from .records import CapabilityExtension, FailureMode, FailureRecord, LibraryEntry, Rectification
+from .records import CapabilityExtension, FailureMode, FailureRecord, LibraryEntry, Rectification, RemovalCheck
+
+HOLD_CODE = "G6_E_DISTILL_RECURRENCE_HELD"
 
 
 def _key(record: FailureRecord) -> str | None:
@@ -111,7 +114,8 @@ class Rectifier:
             active = last_removal is not None and not recurrence
             # Count recurrences since the first removal cumulatively, even after
             # another removal succeeds. Re-closing must not erase this history.
-            total = sum(row.record_id not in removed[0].pinning.replayed for row in rows) if removed else 0
+            total = sum(row.record_id not in removed[0].pinning.replayed
+                        for row in rows) if removed else 0
             states[key] = FailureMode(mode_code=key, first_seen=rows[0].observed_at, occurrences=len(rows),
                 met_before=any(row.met_before or earlier([f for f in failures if f != row], row) for row in rows),
                 removing_check=last_removal.rect_id if active else None, recurrences_after_removal=total)
@@ -124,7 +128,7 @@ class Rectifier:
         store = self.stores.for_model(LibraryEntry)
         pinned = store.get(ref.removeprefix("library:"))
         current = [row for row in store.list() if row.candidate_id == pinned.candidate_id][-1]
-        if current.authority == "A0":
+        if current.authority == "A0" and current.status != "held":
             return
         at = failures[-1].observed_at
         body = current.model_dump(mode="json", exclude={"entry_id"})
@@ -132,6 +136,66 @@ class Rectifier:
         # does not issue a certificate or grant a fresh authority level.
         self._append_once(LibraryEntry(**(body | dict(version=current.version + 1, status="demoted", authority="A0",
             changed_at=at, reason=f"removing check recurred: {rect.rect_id}",
+            decided_by=dict(gate_version="distill.findings.recurrence.v1", person=None)))))
+
+    def _hold(self, rect: Rectification, failures: list[FailureRecord]) -> None:
+        ref = rect.pinning.test_ref
+        if not ref.startswith("library:"):
+            return
+        store = self.stores.for_model(LibraryEntry)
+        pinned = store.get(ref.removeprefix("library:"))
+        history = [row for row in store.list() if row.candidate_id == pinned.candidate_id]
+        current = history[-1]
+        accounted = {ident for row in history for ident in row.held_recurrences}
+        new = [row.record_id for row in failures if row.record_id not in accounted]
+        if not new or current.status not in {"admitted", "held"}:
+            return
+        body = current.model_dump(mode="json", exclude={"entry_id"})
+        self._append_once(LibraryEntry(**(body | dict(version=current.version + 1, status="held", authority="A0",
+            changed_at=failures[-1].observed_at, reason=f"{HOLD_CODE}: removing check recurred: {rect.rect_id}",
+            held_recurrences=sorted(set(current.held_recurrences) | set(new)),
+            decided_by=dict(gate_version="distill.findings.recurrence.v1", person=None)))))
+
+    def release_hold(self, entry_id: str, checks: list[RemovalCheck]) -> LibraryEntry:
+        """Independent gate replay receipts can release a hold, never a demotion.
+
+        As with submit(), the independent gate owns these receipts. They are not
+        accepted from the client reporting route. Every affected class needs a
+        fresh passing replay of all its known failures by the same removing check.
+        The reopened removal stays open until a new rectification is submitted.
+        """
+        self.reconcile()
+        entry = self.stores.for_model(LibraryEntry).get(entry_id)
+        current = [row for row in self.stores.for_model(LibraryEntry).list()
+                   if row.candidate_id == entry.candidate_id][-1]
+        if current != entry or entry.status != "held":
+            raise LedgerError("release requires a current held method")
+        if not any(row.candidate_id == entry.candidate_id and row.status == "admitted"
+                   and row.certificate_sha256 == entry.certificate_sha256
+                   for row in self.stores.for_model(LibraryEntry).list()):
+            raise LedgerError("prior admission unavailable")
+        checks = [RemovalCheck.model_validate_json(check.model_dump_json()) for check in checks]
+        failures = self.stores.for_model(FailureRecord).list()
+        classes = {_key(row) for row in failures if row.record_id in entry.held_recurrences}
+        rects = self.stores.for_model(Rectification).list()
+        for key in classes:
+            removals = [row for row in rects if row.failure_mode == key and row.class_removed
+                        and row.pinning and row.pinning.test_ref.startswith("library:")
+                        and self.stores.for_model(LibraryEntry).get(
+                            row.pinning.test_ref.removeprefix("library:")).candidate_id == entry.candidate_id]
+            known = {row.record_id for row in failures if _key(row) == key}
+            if not removals or not any(check.fixed_passed and set(check.replayed) == known
+                    and check.test_ref == removals[-1].pinning.test_ref
+                    and check.receipt_sha256 not in {row.pinning.receipt_sha256 for row in removals}
+                    for check in checks):
+                raise LedgerError("fresh independent complete passing replay required for every held class")
+        if not classes:
+            raise LedgerError("held recurrence evidence missing")
+        body = entry.model_dump(mode="json", exclude={"entry_id"})
+        return self._append_once(LibraryEntry(**(body | dict(version=entry.version + 1,
+            status="admitted", authority="A2", changed_at=datetime.now(timezone.utc).isoformat(),
+            reason="independent complete replay lifted recurrence hold: " + ", ".join(
+                check.receipt_sha256 for check in checks),
             decided_by=dict(gate_version="distill.findings.recurrence.v1", person=None)))))
 
     def reconcile(self) -> dict:
@@ -149,9 +213,13 @@ class Rectifier:
                 recurrence = [row for row in logs[FailureRecord] if _key(row) == key
                               and row.record_id not in last.pinning.replayed]
                 if recurrence:
-                    # Demote before writing the failed decision; retry is safe if
+                    # Suspend or demote before the failed decision; retry is safe if
                     # either append is interrupted.
-                    self._demote(last, recurrence)
+                    independent = [row for row in recurrence if row.observed_by == "independent"]
+                    if independent:
+                        self._demote(last, independent)
+                    else:
+                        self._hold(last, recurrence)
                     self._append_once(self._replace(last, class_removed=False, outcome="failed"))
             old = [row for row in logs[FailureMode] if row.mode_code == key]
             if not old or old[-1] != state:

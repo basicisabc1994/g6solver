@@ -9,28 +9,33 @@ from pydantic import TypeAdapter
 
 from g6.core.ledger import ChainLedger, digest
 from g6.core.storage import state_path
-from .ledger import Stores
+from .ledger import Stores, failure_writer
 from .library import Library
 from .records import FailureRecord, LibraryEntry, Sha256
 
 
 def library(op: str = "list", entry_id: str = "") -> dict:
+    def public(entry):
+        data = entry.model_dump(mode='json')
+        data['decided_by']['person'] = None
+        data['reason'] = '<private decision>'
+        return data
     if op not in {"list", "describe", "history"}:
         raise ValueError("library op must be list, describe or history")
     if op == "list":
         if entry_id:
             raise ValueError("list takes no entry_id")
-        return {"entries": [e.model_dump(mode="json") for e in Library().list()]}
+        return {"entries": [public(e) for e in Library().list()]}
     TypeAdapter(Sha256).validate_python(entry_id)
     historical = Stores().for_model(LibraryEntry).get(entry_id)
     if op == "history":
-        return {"entries": [e.model_dump(mode="json") for e in Stores().for_model(LibraryEntry).list()
+        return {"entries": [public(e) for e in Stores().for_model(LibraryEntry).list()
                             if e.candidate_id == historical.candidate_id],
                 "unlabelled_fires": [row["body"] for row in ChainLedger(
                     state_path("distill", "field_fires_ledger.jsonl")).entries()
                     if row["kind"] == "field_fire" and row["body"].get("candidate_id") == historical.candidate_id]}
     current = next(e for e in Library().list() if e.candidate_id == historical.candidate_id)
-    return {"entry": current.model_dump(mode="json"), "requested_entry_id": entry_id}
+    return {"entry": public(current), "requested_entry_id": entry_id}
 
 
 def unclassified(kind: str, family: str) -> str:
@@ -51,7 +56,21 @@ def failure_record(kind: str, family: str, case_json: str, note: str) -> dict:
                         observed_at=datetime.now(timezone.utc).isoformat(),
                         provenance={"case": case, "note": note, "intake": "client_request",
                                     "other": unclassified(kind, family)})
-    return {"record_id": Stores().for_model(FailureRecord).put(row), "observed_by": "self"}
+    from .intake import unit_cohort
+    with failure_writer():
+        store = Stores().for_model(FailureRecord)
+        unit, cohort = unit_cohort(row)
+        if unit and cohort and any(unit_cohort(old)[0] == unit and unit_cohort(old)[1] not in {None, cohort}
+                                   for old in store.list()):
+            from g6.core.door import blocked_reply
+            return blocked_reply('[G6_E_SYNTH_COHORT] One unit cannot have conflicting cohorts; '
+                                 'the earlier custody is retained.')
+        from .rectify_gate import Rectifier
+        rectifier = Rectifier()
+        rectifier._logs()
+        ident = store.put(row)
+        rectifier.reconcile()
+        return {"record_id": ident, "observed_by": "self"}
 
 
 def record_reproduction(event: dict) -> None:
@@ -82,11 +101,15 @@ def record_reproduction(event: dict) -> None:
         return
     case_ref = digest(body)
     store = Stores().for_model(FailureRecord)
-    if any(row.case_ref == case_ref and row.source == "k_loop" for row in store.list()):
-        return
     row = FailureRecord(kind="missed_defect", family="test_weakening", source="k_loop", observed_by="self",
                         case_ref=case_ref, split="field", evidence=[], finding_class="other", met_before=[],
                         g6_commit="unknown", observed_at=datetime.now(timezone.utc).isoformat(),
                         provenance={"case": body, "intake": "untrusted_tool_response",
                                     "other": unclassified("missed_defect", "test_weakening")})
-    store.put(row)
+    with failure_writer():
+        from .rectify_gate import Rectifier
+        rectifier = Rectifier()
+        rectifier._logs()
+        if not any(old.case_ref == case_ref and old.source == 'k_loop' for old in store.list()):
+            store.put(row)
+        rectifier.reconcile()

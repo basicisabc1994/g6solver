@@ -50,7 +50,12 @@ def test_failure_to_review_prediction_and_draft_rehearsal(home, monkeypatch):
     assert len(fake.calls) == 1  # concept proposal; seed synthesis needs no call
     assert result['decisions'][0]['verdict'] == 'admit_probation'
     repeated = service.distill_start('test_weakening', failure.record_id)['result']
-    assert repeated['decisions'][0]['verdict'] in {'refuse', 'block'}
+    assert repeated['decisions'] == [] and repeated['candidates'] == []
+    assert repeated['reuses'][0]['entry_id'] == result['decisions'][0]['entry_id']
+    looks = [row for row in ChainLedger(home / 'distill/acceptance_gate.jsonl').entries()
+             if row['kind'] == 'reserve']
+    assert len(looks) == 1
+    assert len(ChainLedger(home / 'distill/reuse_ledger.jsonl').entries()) == 1
     assert len(fake.calls) == 1
     [concept] = Stores().for_model(r.Concept).list()
     candidate = Stores().for_model(r.VerifierCandidate).get(result['candidates'][0]['candidate_id'])

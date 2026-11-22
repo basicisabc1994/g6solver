@@ -199,7 +199,8 @@ def test_template_order_is_data_and_reuse_still_precedes_it():
     result = Synthesizer(policy=policy).synthesise(concept, [case])
     assert result.candidates[0].body.template == 'skip_gate.v1'
     reuse = Synthesizer(policy=policy).synthesise(concept, [case], library=MemoryLibrary(['assert_strength.v1']))
-    assert reuse.candidates[0].form == 'reuse'
+    assert reuse.candidates == []
+    assert len(reuse.reuses) == 1 and reuse.reuses[0].concept_id == concept.concept_id
 
 
 def test_concept_reuse_and_policy_choices_record_per_action_instance():
