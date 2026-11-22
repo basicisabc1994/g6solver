@@ -2,7 +2,7 @@
 """Bounded graph execution with injected callers and kernels, plus structural credit.
 
 Kernels are trusted caller bindings, never dynamically imported from graph data.
-They must honour timeout_s and provide complete non-time resource accounting.
+They must honour timeout_s and provide CPU (including child work) and non-time accounting.
 Late synchronous returns are discarded; this module cannot interrupt arbitrary Python.
 """
 from __future__ import annotations
@@ -63,7 +63,7 @@ class _Attempt:
 
 @contextmanager
 def attempt_meter(what, *, update_id=None):
-    """Retain measured time and noted sends on success, refusal and exception."""
+    """Retain adapter use, local time floors and noted sends on every outcome."""
     meter = _Attempt()
     started_at = datetime.now(timezone.utc).isoformat()
     wall_start, cpu_start = time.monotonic(), time.process_time()
@@ -76,8 +76,15 @@ def attempt_meter(what, *, update_id=None):
         finally:
             measured = meter.cost.model_dump()
             measured["llm_calls"] = sends()
-            measured["wall_s"] = max(0, time.monotonic() - wall_start)
-            measured["cpu_s"] = max(0, time.process_time() - cpu_start)
+            wall_s = max(0, time.monotonic() - wall_start)
+            cpu_s = max(0, time.process_time() - cpu_start)
+            # Elapsed time covers the whole attempt. Parent process time does
+            # not cover child work, so absent adapter CPU must remain unknown.
+            # Both observations may overlap; retain the larger, never add them.
+            measured["wall_s"] = (wall_s if meter.cost.wall_s is None
+                                  else max(wall_s, meter.cost.wall_s))
+            measured["cpu_s"] = (None if meter.cost.cpu_s is None
+                                 else max(cpu_s, meter.cost.cpu_s))
             meter.record = AttemptRecord(what=what, cost=CostVector(**measured), model_sends=sends(),
                                          outcome=meter.outcome, update_id=update_id,
                                          started_at=started_at, ended_at=datetime.now(timezone.utc).isoformat())
@@ -160,7 +167,7 @@ def _llm(p, inputs, *, caller, config, timeout_s):
         with counting(before_call=before_call) as sends:
             reply = caller.complete(config.system, user, max_tokens=config.max_tokens)
         if isinstance(reply, KernelResult):
-            # Only an injected trusted adapter can supply actual non-time use.
+            # Only an injected trusted adapter can supply external resource use.
             result = reply
             if result.terminal in ERRORS:
                 return replace(result, output=None)
