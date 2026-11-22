@@ -136,8 +136,13 @@ def _result(text: str) -> dict[str, Any] | None:
             found = decode(line)
         except (json.JSONDecodeError, UndecodableRecord):
             return None
-        if isinstance(found, dict) and found.get("type") == "result":
-            return found if shaped(found, RESULT_SHAPE, RESULT_FIELDS) else None
+        # A missing or mistyped discriminator cannot establish that this is a non-result event.
+        if not shaped(found, {"type": str}):
+            return None
+        if found["type"] == "result" or "is_error" in found or "result" in found:
+            if not shaped(found, RESULT_SHAPE, RESULT_FIELDS):
+                return None
+            return found if found["type"] == "result" else None
     return None
 
 
