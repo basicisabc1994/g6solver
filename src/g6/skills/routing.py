@@ -225,15 +225,21 @@ def members(registrations: Mapping[str, Sequence[str]], ops: Mapping[str, Sequen
 
 
 def _read(text: str) -> str:
-    """What the naming readers read of a guidance text: its prose, its code blocks, and each inline HTML tag whole. An
-    agent reads the source, not a rendering, so a tag's attributes (``alt``, ``title``, any other) are read as they
-    stand; the prose drops the tags, so they are added here. HTML blocks are not read (``UNREAD`` in ``check``)."""
+    """Read every source character, plus parsed prose and code with markup boundaries separated.
+
+    Raw source retains reference definitions, destinations, titles, tags and fence info. Parsed text also exposes
+    names separated from neighbouring words by inline markup. HTML blocks and truncation still carry ``UNREAD``.
+    """
     from g6.core.markdown import parse
 
     doc = parse(text)
-    tags = [child.content for token in doc.tokens if token.type == "inline"
-            for child in token.children or () if child.type == "html_inline"]
-    return "\n".join([doc.prose(), *(b.content for b in doc.code_blocks), *tags])
+    source = "" if doc.truncated else text
+    # Block HTML remains explicitly unread. Do not also interpret its raw instructions as guidance.
+    for token in reversed(doc.tokens):
+        if token.type == "html_block" and not doc.truncated:
+            start, end = doc.span(token)
+            source = source[:start] + "\n" + source[end:]
+    return "\n".join([source, doc.prose(), *(b.content for b in doc.code_blocks)])
 
 
 def named(texts: Mapping[str, str]) -> dict[str, frozenset[str]]:
@@ -447,7 +453,9 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
         for tool in sorted(exempt_tools):
             if own.get(surface) == tool:
                 continue                      # a server shows each tool's description; a description names its tool
-            if tool in names or tool in forms(detail_text[surface]).bare:
+            found = forms(detail_text[surface])
+            client_exempt = any(t == tool and f"mcp:{s}/{t}" in exempt for s, t in found.client)
+            if tool in names or tool in found.bare or client_exempt:
                 add("EXEMPT_NAMED", surface, f"it names {tool}, which the manifest exempts from agent use")
 
     # Both readers skip HTML blocks and drop what lies past the nesting limit: such a text is not read, so it is a

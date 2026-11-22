@@ -89,8 +89,10 @@ class Document:
     def prose(self, *, inline_code: bool = True) -> str:
         """Visible inline text, with inline code delimited for protocol-name readers; no code blocks/HTML."""
         return "\n".join("".join((f"`{c.content}`" if inline_code else " ") if c.type == "code_inline"
-                                  else "\n" if c.type in ("softbreak", "hardbreak") else c.content
-                                  for c in t.children or [] if c.type != "html_inline")
+                                  else "\n" if c.type in ("softbreak", "hardbreak")
+                                  else f" {c.content} " if c.type == "image"
+                                  else " " if c.type == "html_inline" or c.nesting else c.content
+                                  for c in t.children or [])
                          for t in self.tokens if t.type == "inline")
 
 
