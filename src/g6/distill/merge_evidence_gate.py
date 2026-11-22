@@ -14,9 +14,11 @@ __all__ = ['FROZEN_POLICY', 'FROZEN_POLICY_SHA256', 'protected_set', 'host_merge
 
 
 def protected_set():
-    # Every file a judging or oracle digest pins is protected, from the lists the digests read: they cannot drift.
-    return ProtectedSet.load(judging_patterns=(*merge_judging_patterns(),
-                                               *(path.removeprefix('src/') for path in DIGESTED_PATHS)))
+    from dataclasses import replace
+    from g6.distill.protection_gate import complete_patterns
+    base = ProtectedSet.load(judging_patterns=(*merge_judging_patterns(),
+                             *(path.removeprefix('src/') for path in DIGESTED_PATHS)))
+    return replace(base, patterns=tuple(sorted({*base.patterns, *complete_patterns(base)})))
 
 
 def host_merge_gate(**kwargs):

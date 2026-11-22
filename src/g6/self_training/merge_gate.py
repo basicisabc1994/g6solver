@@ -261,7 +261,9 @@ class MergeGate:
     def __init__(self, *, home, config, host, repository, manifest=None, stop=None,
                  state_head=None, certificate_head=None, policy=None):
         self.config, self.host, self.repository = config, host, repository
-        self.manifest = manifest if manifest is not None else ProtectedSet.load()
+        if manifest is None:
+            raise ValueError('host complete protected_set manifest required')
+        self.manifest = manifest
         self.stop = stop or (lambda: False)
         self.policy = policy
         self.anchored = home is None or (state_head is not None and certificate_head is not None)

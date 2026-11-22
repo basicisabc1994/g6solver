@@ -2,8 +2,8 @@
 """The code library acceptance is judged by: one list per digest, read by every gate that depends on it.
 
 The acceptance gate pins JUDGING_PATHS; registration_gate.oracle_digest pins ORACLE_PINS (digest key to
-file). The merge gate's host bridge protects DIGESTED_PATHS, their union, from an autonomous merge. No
-gate keeps its own copy, so a digest and the protected set cannot drift apart.
+file). The merge gate's host bridge uses their union as roots, then computes import suppliers and
+verdict consumers from source. These pins are digest inputs, never an exhaustive protected list.
 """
 
 JUDGING_PATHS = ("src/g6/distill/acceptance_gate.py", "src/g6/distill/records.py", "src/g6/distill/ledger.py",

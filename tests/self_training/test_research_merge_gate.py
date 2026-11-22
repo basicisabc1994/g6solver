@@ -49,7 +49,8 @@ def fixture(tmp_path=None, **change_fields):
     change = m.Change(pr=7, branch='claude/g6-auto/20261118-example', parent_commit='a' * 40,
         head_commit='b' * 40, merge_commit='c' * 40, tree_sha256=digest('tree'), claim='improvement',
         author_family='claude', author_model='fixture-claude',
-        files=(m.FileChange(path='src/g6/distill/example.py', before='old\n', after='new\n'),), **change_fields)
+        # Exercise an application change outside G6's computed gate closure.
+        files=(m.FileChange(path='examples/application.py', before='old\n', after='new\n'),), **change_fields)
     from g6.distill.merge_evidence_gate import FROZEN_POLICY, FROZEN_POLICY_SHA256, protected_set
     manifest = protected_set()
     evidence = dict(commit=change.merge_commit, change_sha256=change.sha256, measured_at=1000., expires_at=2000.,
