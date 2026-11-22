@@ -493,21 +493,36 @@ def bind_execution(change: repo_tests.Change, sparse: dict[str, str], *, deadlin
     list (one git sees as unchanged) is the manifest's alone. Authority is decided from the capture and from names
     only, never by a second look at the file system (the review of wire-diagnose-fu, 2): a reviewed file in the
     manifest is bound only by its digest, which nothing later excuses; one absent from it is excused only when its
-    name is one the copy always leaves out (``_named_out``: a cache folder, say)."""
-    files = _copy_manifest(change, deadline=deadline)
+    name is one the copy always leaves out (``_named_out``: a cache folder, say). No kind of entry the snapshot records
+    is skipped (the review of wire-diagnose-fu, 3): git's own state (``repo_tests._HEAD``, ``_INDEX``, ``_MARKS``) is
+    bound by the capture's own reading of it; a folder git does not look into (``repo_tests._SUBMODULE``), whose files
+    neither the manifest nor the copy holds, and any other NUL-prefixed kind, is refused."""
+    state: dict[str, str] = {}
+    files = _copy_manifest(change, deadline=deadline, state=state)
 
     def agrees(rel: str, value: str) -> bool:
+        if rel.startswith("\0"):
+            return rel in state and state[rel] == value
         if rel in files:
             return bool(re.fullmatch("[0-9a-f]{64}", value)) and files[rel] == value
         return value == "" or _named_out(rel)
 
-    differs = sorted(rel for rel, value in sparse.items() if not rel.startswith("\0") and not agrees(rel, value))
+    differs = sorted(rel for rel, value in sparse.items() if not agrees(rel, value))
     if differs:
-        raise OSError(NOT_BOUND.format(what="a reviewed file is missing, unreadable or differs: "
-                                            + ", ".join(shown(rel) for rel in differs[:5])))
+        raise OSError(NOT_BOUND.format(what="a reviewed entry is missing, unreadable or differs: "
+                                            + ", ".join(_entry(rel) for rel in differs[:5])))
     if repo_tests._moved(sparse, repo_tests.snapshot(change.repo)):
         raise OSError(NOT_BOUND.format(what="the tree changed while they were read"))
     return ExecutionSnapshot(sparse, files)
+
+def _entry(rel: str) -> str:
+    """A reviewed snapshot's entry as text: git's own state by its name, a folder git does not look into as ``_moved``
+    names it, any other NUL-prefixed kind as such, and a file by the one rule (``shown``)."""
+    if rel.startswith(repo_tests._SUBMODULE):
+        return repo_tests.SAID["submodule_name"].format(path=repo_tests.shown_name(rel[len(repo_tests._SUBMODULE):]))
+    state = {repo_tests._HEAD: "HEAD", repo_tests._INDEX: "the index", repo_tests._MARKS: "git's marks"}
+    return state.get(rel) or ("an entry of a kind the binding does not hold" if rel.startswith("\0") else shown(rel))
+
 
 def _named_out(rel: str) -> bool:
     """Whether the copy leaves ``rel`` out by its name alone (``repo_tests._SKIPPED``: a cache folder, an environment,
@@ -523,13 +538,20 @@ def _left_out(root: Path, rel: str) -> bool:
 
 
 def _copy_manifest(change: repo_tests.Change, *, deadline: float,
-                   artefact: dict[str, str] | None = None) -> dict[str, str]:
+                   artefact: dict[str, str] | None = None, state: dict[str, str] | None = None) -> dict[str, str]:
     if artefact is not None:
         if not isinstance(artefact, ExecutionSnapshot) or artefact.execution["artifact_digest"] != digest(artefact):
             raise OSError("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: no execution-artifact.v1 captured before execution")
         return artefact.execution["files"]
     root, top = change.repo, change.repo.resolve()
     stage = repo_tests._git(root, "ls-files", "--stage", "-z")
+    if state is not None:
+        # git's own state as this one capture reads it, keyed and hashed as ``repo_tests.snapshot`` records it
+        marks = repo_tests._git(root, "ls-files", "-v", "-z")
+        head = repo_tests._git(root, "rev-parse", "--verify", "-q", "HEAD", ok=(0, 1))
+        state.update({repo_tests._HEAD: hashlib.sha256(head).hexdigest(),
+                      repo_tests._INDEX: hashlib.sha256(stage).hexdigest(),
+                      repo_tests._MARKS: hashlib.sha256(marks).hexdigest()})
     if repo_tests._gitlinks(root, stage) or any(one.startswith("120000 ") for one in repo_tests._paths(stage)):
         raise OSError("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: links need a materialised-byte adapter")
     known = repo_tests._paths(repo_tests._git(root, "ls-files", "-co", "--exclude-standard", "-z"))

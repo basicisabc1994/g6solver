@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import re
 
 import pytest
 
@@ -635,7 +636,7 @@ def test_fu1_bind_execution_requires_the_reviewed_snapshots_file_set(monkeypatch
 
     change = repo_tests.Change(Path("."), "HEAD", "a" * 40, "a" * 40, (), {}, {}, (), ())
     sparse = {"\0HEAD": "h" * 64, **reviewed}
-    monkeypatch.setattr(verification_search, "_copy_manifest", lambda *a, **kw: dict(manifest))
+    monkeypatch.setattr(verification_search, "_copy_manifest", _captured(manifest, sparse))
     monkeypatch.setattr(repo_tests, "snapshot", lambda *a: dict(sparse))
     with pytest.raises(OSError, match="G6_E_EXECUTION_ARTIFACT_UNAVAILABLE"):
         verification_search.bind_execution(change, sparse, deadline=1e18)
@@ -650,7 +651,7 @@ def test_fu1_bind_execution_binds_a_manifest_holding_the_reviewed_file_set(monke
     # a file the copy leaves out by its own rule (a cache folder) is required of neither the manifest nor the copy
     sparse = {"\0HEAD": "h" * 64, "calc.py": "a" * 64, "gone.py": "", "__pycache__/helper.py": "e" * 64}
     manifest = {"calc.py": "a" * 64, "clean.py": "c" * 64}        # a clean file the snapshot need not list
-    monkeypatch.setattr(verification_search, "_copy_manifest", lambda *a, **kw: dict(manifest))
+    monkeypatch.setattr(verification_search, "_copy_manifest", _captured(manifest, sparse))
     monkeypatch.setattr(repo_tests, "snapshot", lambda *a: dict(sparse))
     assert verification_search.bind_execution(change, sparse, deadline=1e18).execution["files"] == manifest
 
@@ -668,7 +669,7 @@ def test_fu2_a_link_seen_after_the_capture_never_excuses_a_reviewed_file(monkeyp
 
     change = repo_tests.Change(Path("."), "HEAD", "a" * 40, "a" * 40, (), {}, {}, (), ())
     sparse = {"\0HEAD": "h" * 64, "calc.py": "a" * 64}
-    monkeypatch.setattr(verification_search, "_copy_manifest", lambda *a, **kw: dict(manifest))
+    monkeypatch.setattr(verification_search, "_copy_manifest", _captured(manifest, sparse))
     monkeypatch.setattr(repo_tests, "snapshot", lambda *a: dict(sparse))
     monkeypatch.setattr(repo_tests, "_copy_ignored", lambda folder, names: set(names))   # every name a link, now
     with pytest.raises(OSError, match="G6_E_EXECUTION_ARTIFACT_UNAVAILABLE"):
@@ -685,8 +686,111 @@ def test_fu2_only_a_name_the_copy_always_leaves_out_excuses_an_absent_reviewed_f
 
     change = repo_tests.Change(Path("."), "HEAD", "a" * 40, "a" * 40, (), {}, {}, (), ())
     sparse = {"\0HEAD": "h" * 64, ".venv/lib/x.py": "e" * 64, "pkg/__pycache__/m.py": "f" * 64}
-    monkeypatch.setattr(verification_search, "_copy_manifest", lambda *a, **kw: {})
+    monkeypatch.setattr(verification_search, "_copy_manifest", _captured({}, sparse))
     monkeypatch.setattr(repo_tests, "snapshot", lambda *a: dict(sparse))
     monkeypatch.setattr(repo_tests, "_copy_ignored", touched)
     monkeypatch.setattr(Path, "is_symlink", touched)
     assert verification_search.bind_execution(change, sparse, deadline=1e18).execution["files"] == {}
+
+# --- review 3 of wire-diagnose-fu: every kind of entry the reviewed snapshot holds is bound, or nothing is ----------
+
+def _captured(manifest: dict, sparse: dict):
+    """``_copy_manifest`` as one capture that reads ``manifest`` and git's own state (HEAD, the index, the marks) as the
+    reviewed snapshot ``sparse`` holds it, so a refusal is for the files alone."""
+    from g6.workforce import repo_tests
+
+    def capture(change, *, deadline, state=None, **kwargs):
+        if state is not None:
+            state.update({key: sparse[key] for key in (repo_tests._HEAD, repo_tests._INDEX, repo_tests._MARKS)
+                          if key in sparse})
+        return dict(manifest)
+
+    return capture
+
+
+def test_fu3_a_nested_folder_at_snapshot_and_capture_whose_files_the_manifest_lacks_binds_nothing(repo):
+    """Codex review 3 of wire-diagnose-fu: snapshot() hashes a folder git lists whole (a repository of its own) under
+    a NUL-prefixed key, which the binding skipped. Neither the manifest nor the copy holds that folder's files, so the
+    run is never on the reviewed bytes: nothing is bound. The repository, the snapshot and the manifest are real."""
+    from g6.workforce import repo_tests
+    from tests.harness.test_proposed_checks import _git
+
+    nested = repo / "nested"
+    nested.mkdir()
+    _git(nested, "init", "-q")
+    (nested / "data.txt").write_text("the reviewed nested contents\n")
+    sparse = repo_tests.snapshot(repo)
+    assert re.fullmatch("[0-9a-f]{64}", sparse["\0submodule\0nested/"])
+    change = repo_tests.change(repo)
+    deadline = verification_search._clock() + 60
+    assert not any(rel.startswith("nested") for rel in verification_search._copy_manifest(change, deadline=deadline))
+    with pytest.raises(OSError, match="G6_E_EXECUTION_ARTIFACT_UNAVAILABLE"):
+        verification_search.bind_execution(change, sparse, deadline=deadline)
+
+
+def test_fu3_a_reviewed_tree_the_capture_holds_whole_is_bound(repo):
+    """The control: a real tree with a changed file and no nested folder binds, git's own state included."""
+    from g6.workforce import repo_tests
+    from tests.harness.test_proposed_checks import FIXED
+
+    (repo / "calc.py").write_text(FIXED)
+    sparse = repo_tests.snapshot(repo)
+    assert {repo_tests._HEAD, repo_tests._INDEX, repo_tests._MARKS, "calc.py"} <= set(sparse)
+    bound = verification_search.bind_execution(repo_tests.change(repo), sparse,
+                                               deadline=verification_search._clock() + 60)
+    assert bound.execution["files"]["calc.py"] == sparse["calc.py"]
+
+
+@pytest.mark.parametrize("kind, read", [
+    ("\0HEAD", ("rev-parse", "--verify", "-q", "HEAD")),
+    ("\0index", ("ls-files", "--stage", "-z")),
+    ("\0marks", ("ls-files", "-v", "-z")),
+], ids=["head", "index", "marks"])
+def test_fu3_git_state_other_only_while_the_capture_reads_binds_nothing(repo, monkeypatch, kind, read):
+    """Each other NUL-prefixed kind snapshot() records is git's own state. An editor changes it while the manifest is
+    read and restores it before the binding's closing snapshot: the capture's own reading of it is compared."""
+    from g6.workforce import repo_tests
+    from tests.harness.test_proposed_checks import FIXED
+
+    (repo / "calc.py").write_text(FIXED)
+    sparse = repo_tests.snapshot(repo)
+    change = repo_tests.change(repo)
+    real_git, real_snapshot, racing = repo_tests._git, repo_tests.snapshot, [False]
+    other = {"\0HEAD": b"0" * 40 + b"\n", "\0index": b"100644 " + b"0" * 40 + b" 0\tghost.py\0",
+             "\0marks": b"h ghost.py\0"}[kind]
+
+    def git(root, *args, **kwargs):
+        out = real_git(root, *args, **kwargs)
+        return out + other if racing[0] and args == read else out
+
+    def closing(root, *args):
+        racing[0] = False                      # restored before the binding's closing snapshot
+        return real_snapshot(root, *args)
+
+    monkeypatch.setattr(repo_tests, "_git", git)
+    monkeypatch.setattr(repo_tests, "snapshot", closing)
+    assert verification_search.bind_execution(change, sparse, deadline=verification_search._clock() + 60)
+    racing[0] = True
+    with pytest.raises(OSError, match="G6_E_EXECUTION_ARTIFACT_UNAVAILABLE"):
+        verification_search.bind_execution(change, sparse, deadline=verification_search._clock() + 60)
+
+
+@pytest.mark.parametrize("key, value", [
+    ("\0submodule\0vendor/", "n" * 64),          # a folder git does not look into, hashed
+    ("\0submodule\0vendor/", "not hashed"),      # one the snapshot could not hash (NOT_HASHED, prefixed below)
+    ("\0submodule\0vendor/", ""),                # one with nothing in it
+    ("\0future", "f" * 64),                      # a kind this binding does not know
+], ids=["hashed", "not-hashed", "empty", "unknown-kind"])
+def test_fu3_a_nul_keyed_entry_the_capture_cannot_hold_binds_nothing(monkeypatch, key, value):
+    from pathlib import Path
+
+    from g6.workforce import repo_tests
+
+    if value == "not hashed":
+        value = repo_tests.NOT_HASHED + "the files could not be read"
+    change = repo_tests.Change(Path("."), "HEAD", "a" * 40, "a" * 40, (), {}, {}, (), ())
+    sparse = {"\0HEAD": "h" * 64, "calc.py": "a" * 64, key: value}
+    monkeypatch.setattr(verification_search, "_copy_manifest", _captured({"calc.py": "a" * 64}, sparse))
+    monkeypatch.setattr(repo_tests, "snapshot", lambda *a: dict(sparse))
+    with pytest.raises(OSError, match="G6_E_EXECUTION_ARTIFACT_UNAVAILABLE"):
+        verification_search.bind_execution(change, sparse, deadline=1e18)
