@@ -263,9 +263,13 @@ def read_html(html: str) -> tuple[str, str, tuple[str, ...]]:
     try:
         reader.feed(html)
         reader.close()
-    except (AssertionError, ValueError) as exc:  # the stdlib parser's refusals of malformed markup
+    except (AssertionError, ValueError):  # the stdlib parser's refusals of malformed markup
+        import hashlib
+
         line, column = reader.getpos()
-        stopped = (f"markup the parser could not read, from line {line}, column {column + 1} on ({str(exc)[:200]}); "
+        offset = sum(len(part) + 1 for part in html.split("\n")[:line - 1]) + column
+        digest = hashlib.sha256(html[offset:].encode("utf-8", errors="surrogatepass")).hexdigest()
+        stopped = (f"markup the parser could not read, from line {line}, column {column + 1} on (sha256 {digest}); "
                    "the rest was not read",)
     reader.flush()
     paragraphs = []
