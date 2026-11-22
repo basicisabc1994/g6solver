@@ -227,6 +227,186 @@ def test_a_malformed_object_beside_the_answer_is_still_passed_over():
     assert first_json_object('the set {1, 2}, so {"answer": "3"}') == {'answer': '3'}
 
 
+# --- repair 2: a record that decodes is read only in its expected shape; an integer too long is a decoder limit ------
+
+LONG = '9' * 10000
+
+
+@pytest.mark.parametrize('number', [LONG, '-' + LONG])
+def test_an_integer_too_long_to_convert_is_a_decoder_limit(number):
+    from g6.core.decoder_limits import UndecodableRecord, decode
+
+    with pytest.raises(UndecodableRecord):
+        decode('{"n": ' + number + '}')
+
+
+def test_an_integer_at_the_interpreters_limit_still_decodes():
+    import sys
+
+    from g6.core.decoder_limits import decode
+
+    assert decode('[-' + '9' * sys.get_int_max_str_digits() + ']')[0] < 0
+
+
+def test_the_shape_check_takes_exact_types():
+    from g6.core.decoder_limits import ListOf, shaped
+
+    spec = {'b': bool, 'i': int, 'f': float, 'l': ListOf(str)}
+    assert shaped({'b': False, 'i': 0, 'f': 1, 'l': ['x']}, spec)
+    for wrong in ({'b': 'false'}, {'b': 0}, {'i': True}, {'i': 1.0}, {'f': True}, {'l': ['x', 1]}, {'l': 'x'}):
+        assert not shaped({'b': False, 'i': 0, 'f': 1.0, 'l': [], **wrong}, spec), wrong
+    assert not shaped({'b': False, 'i': 0, 'f': 1.0}, spec)
+    assert shaped({'b': True}, {}, {'b': bool}) and not shaped({'b': None}, {}, {'b': bool})
+    assert not shaped(['b'], {})
+
+
+PASSING = {'component': 'example', 'tier': 5, 'passed_threshold': True, 'rubric_reviewed': True}
+
+
+@pytest.mark.parametrize('latest', [
+    PASSING | {'passed_threshold': 'false', 'rubric_reviewed': 'false'},
+    PASSING | {'passed_threshold': 1, 'rubric_reviewed': 1},
+    {k: v for k, v in PASSING.items() if k != 'rubric_reviewed'},
+    PASSING | {'tier': '5'},
+    PASSING | {'component': None},
+])
+def test_an_audit_line_not_in_its_shape_is_not_known(tmp_path, latest):
+    from g6.self_training.persistence import PromotionRefused
+
+    store = _audit_store(tmp_path, json.dumps(latest))
+    with pytest.raises(PromotionRefused, match='latest audit is not known'):
+        store.promote('example', 6)
+
+
+def test_an_unreadable_record_then_a_misshapen_one_refuses(tmp_path):
+    from g6.self_training.persistence import PromotionRefused
+
+    store = _audit_store(tmp_path, DEEP, json.dumps(
+        {'component': 'example', 'tier': 2, 'passed_threshold': 'false', 'rubric_reviewed': 'false'}))
+    with pytest.raises(PromotionRefused):
+        store.promote('example', 6)
+
+
+@pytest.mark.parametrize('stored', ['', '   ', '["a", 1]', '[null]', LONG])
+def test_a_blank_or_misshapen_source_list_is_not_known(tmp_path, stored):
+    from g6.learning.schema import Theory
+    from g6.learning.theory_store import TheoryStore
+
+    store = TheoryStore(tmp_path / 'theories.db', scope='s')
+    theory = Theory.new('G6_E_X', 'do the thing', source_instances=['i1'])
+    store.add_candidates([theory])
+    store._conn.execute('UPDATE theories SET source_instances=? WHERE theory_id=?', (stored, theory.theory_id))
+    store._conn.commit()
+    with pytest.raises(ValueError):
+        store.get(theory.theory_id)
+    store.close()
+
+
+def test_a_known_empty_source_list_still_reads(tmp_path):
+    from g6.learning.schema import Theory
+    from g6.learning.theory_store import TheoryStore
+
+    store = TheoryStore(tmp_path / 'theories.db', scope='s')
+    theory = store.add_candidates([Theory.new('G6_E_X', 'do the thing')])[0]
+    assert store.get(theory.theory_id).source_instances == []
+    store.close()
+
+
+@pytest.mark.parametrize('final', [
+    {'type': 'result', 'is_error': 'false', 'result': 'x'},
+    {'type': 'result', 'is_error': 0, 'result': 'x'},
+    {'type': 'result', 'result': 'x'},
+    {'type': 'result', 'is_error': False, 'result': 5},
+    {'type': 'result', 'is_error': False, 'result': 'x', 'subtype': None},
+])
+def test_a_result_not_in_its_shape_is_not_known(final):
+    from g6.agents.agent_claude.adapter import _result
+
+    earlier = json.dumps({'type': 'result', 'is_error': False, 'result': 'old success'})
+    assert _result(earlier + '\n' + json.dumps(final)) is None
+
+
+def test_a_result_with_an_integer_too_long_is_not_known():
+    from g6.agents.agent_claude.adapter import _result
+
+    earlier = json.dumps({'type': 'result', 'is_error': False, 'result': 'old success'})
+    assert _result(earlier + '\n{"type":"result","is_error":true,"detail":' + LONG + '}') is None
+
+
+@pytest.mark.parametrize('answer,said', [('"x"', 'x'), ('42', '42'), ('2.5', '2.5'), ('true', ''), ('null', ''),
+                                         ('["x"]', ''), ('{"v": "x"}', '')])
+def test_a_direct_answer_is_read_only_as_text_or_a_number(answer, said):
+    from g6.reasoning.steps import DirectStep
+
+    class Model:
+        def complete(self, *args, **kwargs):
+            return '{"answer": ' + answer + '}'
+
+    assert DirectStep(Model()).solve('q') == said
+
+
+@pytest.mark.parametrize('bad', [
+    {'stage': 'answer', 'latex': 'x'},
+    {'stage': 'answer', 'answer': 5},
+    {'stage': 'answer', 'answer': 'x', 'complete': 'true'},
+    {'stage': 'recheck', 'recheck': 'passed'},
+    {'stage': 'recheck', 'recheck': {'status': 1}},
+    {'stage': 'recheck', 'recheck': {'status': 'passed', 'points': True}},
+    {'stage': 'partial', 'recheck': {'status': 'refuted', 'failures': [1]}},
+    {'stage': 'refusal', 'code': 5},
+])
+def test_a_worker_line_not_in_its_shape_is_refused(monkeypatch, bad):
+    from g6.algebra import runner
+    from g6.algebra.envelope import OUTPUT_UNRECOGNISED, Refusal
+
+    out = '\n'.join(json.dumps(line) for line in (
+        {'stage': 'answer', 'answer': 'x'}, {'stage': 'recheck', 'recheck': {'status': 'passed'}}, bad,
+        {'stage': 'done'}))
+    monkeypatch.setattr(runner, '_execute', lambda *a, **k: runner.Run(0, out, '', ''))
+    with pytest.raises(Refusal) as refused:
+        runner.call_worker({'op': 'x'}, seconds=1, memory_mb=64, cap=1 << 20, record={})
+    assert refused.value.code == OUTPUT_UNRECOGNISED
+
+
+def test_worker_lines_in_their_shape_are_read(monkeypatch):
+    from g6.algebra import runner
+
+    lines = [{'stage': 'start', 'sympy_version': '1', 'mpmath_version': '1'},
+             {'stage': 'answer', 'answer': 'x', 'latex': 'x', 'answers': [], 'complete': None, 'completeness': '',
+              'details': {}},
+             {'stage': 'recheck', 'recheck': {'status': 'passed', 'methods': ['m'], 'failures': [], 'why': '',
+                                              'points': 3, 'tolerance': 1e-9, 'details': {}}},
+             {'stage': 'done'}]
+    out = '\n'.join(json.dumps(line) for line in lines)
+    monkeypatch.setattr(runner, '_execute', lambda *a, **k: runner.Run(0, out, '', ''))
+    assert runner.call_worker({'op': 'x'}, seconds=1, memory_mb=64, cap=1 << 20, record={})[0] == lines
+
+
+def _tool(name):
+    import asyncio
+
+    from g6.mcp import build_server
+
+    fn = asyncio.run(build_server().get_tools())[name].fn
+
+    def call(*args, **kwargs):
+        got = fn(*args, **kwargs)
+        return asyncio.run(got) if asyncio.iscoroutine(got) else got
+    return call
+
+
+def test_an_integer_too_long_is_each_json_tools_input_refusal(tmp_path, monkeypatch):
+    from g6.mcp import invoke_reply
+
+    monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
+    big = '{"n": ' + LONG + '}'
+    replies = [invoke_reply('unused', 'unused', big), _tool('g6_compose')(big), _tool('metaharness_start')(big),
+               _tool('metaharness_propose')('w', None, profile_json=big)]
+    for reply, code in zip(replies, ['G6_E_INPUT_VALIDATION'] * 3 + ['G6_E_META_SCHEMA'], strict=True):
+        assert reply['completion_state'] == 'blocked-escalated', reply
+        assert code in json.dumps(reply), reply
+
+
 # --- the class: a translation inside a handler of the module's own ----------------------------------------------------
 
 LIMITS = {'RecursionError', 'MemoryError'}
@@ -243,10 +423,6 @@ REVIEWED = {
     ('integrations/database/config.py', 'parse'): 'ConfigError',
     ('learning/dataset_builder.py', 'from_jsonl'): 'G6_E_LEARNING_DATASET_INVALID',
     ('llm_router/providers.py', '_json'): 'PROVIDER_ERROR',
-    ('mcp/__init__.py', 'invoke_reply'): 'G6_E_INPUT_VALIDATION blocked reply',
-    ('mcp/__init__.py', 'g6_compose'): 'G6_E_INPUT_VALIDATION blocked reply',
-    ('mcp/__init__.py', 'metaharness_start'): 'G6_E_INPUT_VALIDATION blocked reply',
-    ('mcp/__init__.py', 'metaharness_propose'): 'G6_E_META_SCHEMA blocked reply',
     ('mcp/cloud_consent.py', 'protect_reply'): 'the withheld reply',
     ('skills/routing.py', 'loads'): 'ManifestError',
 }

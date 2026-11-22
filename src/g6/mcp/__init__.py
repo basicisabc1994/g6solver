@@ -79,6 +79,7 @@ from typing import Any
 
 # The server's own setting, the sensitive components or ops (``component.op``) the person allows: the same setting,
 # read the same way, as ``g6 invoke`` and ``g6.invoke`` (``g6.core.door``).
+from g6.core.decoder_limits import UndecodableRecord, decode
 from g6.core.door import SENSITIVE_ENV as SENSITIVE_ENV, allowed_sensitive
 from g6.mcp.consent_controls import public_instructions
 from g6.core.door import is_allowed as _allowed
@@ -136,11 +137,8 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
 
     request_id = uuid.uuid4().hex[:12]
     try:
-        try:
-            params = json.loads(params_json or "{}")
-        except (RecursionError, MemoryError):
-            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
-    except json.JSONDecodeError as exc:
+        params = decode(params_json or "{}")
+    except (json.JSONDecodeError, UndecodableRecord) as exc:
         return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id)
     if not isinstance(params, dict):
         return blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id)
@@ -267,11 +265,8 @@ def build_server(surface: Any = None) -> Any:
         from g6.mcp.composition import compose_reply
         from g6.core.door import blocked_reply
         try:
-            try:
-                payload = json.loads(composition_json)
-            except (RecursionError, MemoryError):
-                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
-        except json.JSONDecodeError:
+            payload = decode(composition_json)
+        except (json.JSONDecodeError, UndecodableRecord):
             return blocked_reply("[G6_E_INPUT_VALIDATION] composition_json must be JSON")
         return compose_reply(payload, allow_sensitive=allowed_sensitive())
 
@@ -436,12 +431,10 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         Does not confirm or execute it. Below 30 held-out cases is exploration only."""
         from g6.core.door import blocked_reply
         try:
-            try:
-                return mh.start(json.loads(specification_json))
-            except (RecursionError, MemoryError):
-                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
-        except json.JSONDecodeError:
+            specification = decode(specification_json)
+        except (json.JSONDecodeError, UndecodableRecord):
             return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json must be JSON")
+        return mh.start(specification)
 
     async def metaharness_confirm(workflow: str, workflow_digest: str, ctx: Any) -> dict:
         """Confirm the frozen task, checks, split and baseline: the person answers in the client's dialog, bound to the
@@ -515,11 +508,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         """A candidate profile (``profile_json``: acting fields only), or with none, the declared search space's
         candidates. A candidate changes nothing until it is evaluated, decided and approved by a person."""
         try:
-            try:
-                profile = json.loads(profile_json) if profile_json else None
-            except (RecursionError, MemoryError):
-                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
-        except json.JSONDecodeError as exc:
+            profile = decode(profile_json) if profile_json else None
+        except (json.JSONDecodeError, UndecodableRecord) as exc:
             from g6.metaharness.api import _blocked
 
             return _blocked("G6_E_META_SCHEMA", f"profile_json is not JSON: {exc}")

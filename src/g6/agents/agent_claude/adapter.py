@@ -71,7 +71,7 @@ from g6.agents._runtime import (
 )
 from g6.agents._runtime.cli import OUTPUT_LOG
 from g6.core import stop as core_stop
-from g6.core.decoder_limits import UndecodableRecord, decode
+from g6.core.decoder_limits import UndecodableRecord, decode, shaped
 from g6.core.model_calls import note_model_call
 from g6.agents._runtime.consent import consent_run, register_program
 from g6.core.outside import OutsideProgram
@@ -117,11 +117,17 @@ _HALF_CHANGED = (" Claude Code had leave to edit the workspace and its run did n
                  "half-changed: look at what changed (git status, git diff) before you go on.")
 
 
+#: The fields of Claude Code's result that decide a run's outcome, with their exact types (``RESULT_FIELDS`` when
+#: present): a result without them is not known.
+RESULT_SHAPE = {"type": str, "is_error": bool}
+RESULT_FIELDS = {"result": str, "subtype": str}
+
+
 def _result(text: str) -> dict[str, Any] | None:
     """The result Claude Code printed last (``--output-format json``): the last line that is a JSON object of type
     ``result``, whatever it printed before it. ``None`` when a line after it that opens an object cannot be read
-    (malformed, cut off, or past the decoder's limits): that line may be the result it printed last, and no earlier one
-    stands in for it."""
+    (malformed, cut off, or past the decoder's limits), or when the last result is not in its shape (``RESULT_SHAPE``):
+    either may be the result it printed last, and no earlier one stands in for it."""
     for line in reversed(text.splitlines()):
         line = line.strip()
         if not line.startswith("{"):
@@ -131,7 +137,7 @@ def _result(text: str) -> dict[str, Any] | None:
         except (json.JSONDecodeError, UndecodableRecord):
             return None
         if isinstance(found, dict) and found.get("type") == "result":
-            return found
+            return found if shaped(found, RESULT_SHAPE, RESULT_FIELDS) else None
     return None
 
 

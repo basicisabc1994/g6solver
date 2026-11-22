@@ -27,7 +27,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from g6.core.adaptation_gate import is_automated
-from g6.core.decoder_limits import decode
+from g6.core.decoder_limits import ListOf, decode, shaped
 from g6.core.storage import open_db
 from g6.learning.paired import CONFIRMED, DISCONFIRMED, credit
 from g6.learning.promotion import PromotionPolicy, promote
@@ -260,14 +260,21 @@ class TheoryStore:
         return theory
 
 
+def _is_sources(value: Any) -> bool:
+    """A theory's source instances in their one shape: a list of instance ids (text)."""
+    return shaped({"sources": value}, {"sources": ListOf(str)})
+
+
 def _row_to_theory(row: sqlite3.Row) -> Theory:
     # a source list G6 cannot read raises: read as empty, it would let the held-out check (learning.promotion) pass on
-    # instances the theory was drawn from
+    # instances the theory was drawn from. Blank or missing is not known either, never an empty list; only a stored
+    # list of ids ("[]" among them) is read.
+    raw = row["source_instances"]
     try:
-        sources = decode(row["source_instances"] or "[]")
+        sources = decode(raw) if isinstance(raw, str) and raw.strip() else None
     except json.JSONDecodeError:
         sources = None
-    if not isinstance(sources, list):
+    if not _is_sources(sources):
         raise ValueError(f"theory {row['theory_id']!r}: its source instances cannot be read, so the instances it was "
                          "drawn from are not known")
     return Theory(theory_id=row["theory_id"], failure_code=row["failure_code"], instruction=row["instruction"],

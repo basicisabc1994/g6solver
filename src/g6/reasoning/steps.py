@@ -6,7 +6,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from g6.core.decoder_limits import decode
+from g6.core.decoder_limits import decode, shaped
 from g6.core.llm import LLMCaller, LLMError
 from g6.reasoning.vote import Candidate, VoteResult, weighted_vote
 
@@ -72,6 +72,9 @@ def first_json_object(text: str) -> dict:
     raise ValueError("no JSON object in response")
 
 
+#: A direct answer in its one shape: text, or a number (an int or a float, never a bool).
+ANSWER_SHAPE = {"answer": (str, int, float)}
+
 SYSTEM = ("Solve the problem. Reply with one JSON object: "
           '{"reasoning": "<brief working>", "answer": "<final answer only>"}')
 
@@ -85,13 +88,15 @@ class DirectStep:
     max_tokens: int = 4096
 
     def solve(self, problem: str) -> str:
-        """The answer text, or ``""`` when the call failed or the reply has no usable answer (an abstention)."""
+        """The answer text, or ``""`` when the call failed or the reply has no usable answer (an abstention): one whose
+        ``answer`` is not text or a number (``ANSWER_SHAPE``) is not read, never rendered from a bool, a list or an
+        object."""
         try:
             reply = self.llm.complete(self.system, problem, max_tokens=self.max_tokens)
-            answer = first_json_object(reply).get("answer", "")
+            found = first_json_object(reply)
         except (LLMError, ValueError):
             return ""
-        return str(answer).strip() if answer is not None else ""
+        return str(found["answer"]).strip() if shaped(found, ANSWER_SHAPE) else ""
 
 
 def self_consistency(llm: LLMCaller, problem: str, n: int, *,

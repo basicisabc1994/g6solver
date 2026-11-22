@@ -38,7 +38,7 @@ from typing import Any
 
 from g6.algebra.envelope import OUTPUT_UNRECOGNISED, RUN_FAILED, Refusal
 from g6.core import component_process, confine
-from g6.core.decoder_limits import UndecodableRecord, decode
+from g6.core.decoder_limits import ListOf, UndecodableRecord, decode, shaped
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.process_tree import ProcessTreeError
 
@@ -105,6 +105,31 @@ def _environment(root: Path, keep: tuple[str, ...]) -> dict[str, str]:
                   "HOME": str(root / "home")}
 
 
+_RECHECK = ({"status": str}, {"methods": ListOf(str), "failures": ListOf(str), "why": str, "points": int,
+                              "tolerance": (float, None), "details": dict})
+#: Each stage the worker writes, with the fields ``ops.read_lines`` takes from it and their exact types (required,
+#: then those read when present). A line of a known stage not in its shape is refused, never read as missing.
+STAGES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
+    "start": ({}, {"sympy_version": str, "mpmath_version": str}),
+    "answer": ({"answer": str}, {"latex": str, "answers": ListOf(dict), "complete": (bool, None), "completeness": str,
+                                 "details": dict}),
+    "partial": ({"recheck": dict}, {}),
+    "recheck": ({"recheck": dict}, {}),
+    "refusal": ({"code": str}, {"reason": str, "refusals": list}),
+    "error": ({}, {"reason": str}),
+    "done": ({}, {}),
+}
+
+
+def _in_shape(line: Any) -> bool:
+    """Whether a worker line is in its stage's shape (``STAGES``; a stage G6 does not know is read by nothing)."""
+    if not shaped(line, {"stage": str}):
+        return False
+    required, optional = STAGES.get(line["stage"], ({}, {}))
+    return shaped(line, required, optional) and (line["stage"] not in ("partial", "recheck")
+                                                 or shaped(line["recheck"], *_RECHECK))
+
+
 def call_worker(request: dict[str, Any], *, seconds: float, memory_mb: int, cap: int,
                 record: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
     """Run G6's SymPy worker on ``request``; its JSON lines, and how it was stopped (``""``, ``"time"``, ``"output"``).
@@ -135,8 +160,8 @@ def call_worker(request: dict[str, Any], *, seconds: float, memory_mb: int, cap:
             raise Refusal(OUTPUT_UNRECOGNISED, "G6's worker wrote a line that is not JSON") from None
         except UndecodableRecord:          # never taken for cut off: the earlier lines would decide in its place
             record["output_tail"] = run.output[-_TAIL:]
-            raise Refusal(OUTPUT_UNRECOGNISED, "G6's worker wrote a line too deep or too large to read") from None
-        if not isinstance(line, dict) or not isinstance(line.get("stage"), str):
+            raise Refusal(OUTPUT_UNRECOGNISED, "G6's worker wrote a line past the decoder's limits") from None
+        if not _in_shape(line):
             record["output_tail"] = run.output[-_TAIL:]
             raise Refusal(OUTPUT_UNRECOGNISED, "G6's worker wrote a line G6 does not read")
         lines.append(line)

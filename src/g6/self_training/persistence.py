@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from g6.core.decoder_limits import UndecodableRecord, decode
+from g6.core.decoder_limits import UndecodableRecord, decode, shaped
 from g6.self_training.schema import (
     PUBLICATION_THRESHOLD,
     TIER_NAMES,
@@ -33,6 +33,10 @@ from g6.self_training.schema import (
     ComponentScorecard,
     MaturityScore,
 )
+
+
+#: The fields of a logged audit that promotion reads, with their exact types: a line without them is not known.
+AUDIT_SHAPE = {"component": str, "tier": int, "passed_threshold": bool, "rubric_reviewed": bool}
 
 
 class PromotionRefused(ValueError):
@@ -68,9 +72,9 @@ def _promotion_refusal(existing: MaturityScore | None, history: list[dict[str, A
         if not history:
             return f"T{tier} needs a passing audit, and there is none on record"
         latest = history[-1]
-        if not latest.get("passed_threshold"):
+        if latest.get("passed_threshold") is not True:
             return f"T{tier} needs the latest audit to have passed, and it did not (tier {latest.get('tier')})"
-        if not latest.get("rubric_reviewed"):
+        if latest.get("rubric_reviewed") is not True:
             return f"T{tier} needs the latest audit to have used a reviewed rubric, and it did not"
     return None
 
@@ -195,8 +199,8 @@ class ScorecardStore:
         return found
 
     def _logged(self) -> list[dict[str, Any] | None]:
-        """Every audit line in order: its entry, or ``None`` for a line G6 cannot read (malformed, not an object, or
-        past the decoder's limits), whose component is not known."""
+        """Every audit line in order: its entry, or ``None`` for a line G6 cannot read (malformed, past the decoder's
+        limits, or not in the shape promotion reads, ``AUDIT_SHAPE``), whose component is not known."""
         if not self._audit_log.exists():
             return []
         out: list[dict[str, Any] | None] = []
@@ -207,7 +211,7 @@ class ScorecardStore:
                 entry = decode(line)
             except (json.JSONDecodeError, UndecodableRecord):
                 entry = None
-            out.append(entry if isinstance(entry, dict) else None)
+            out.append(entry if shaped(entry, AUDIT_SHAPE) else None)
         return out
 
 

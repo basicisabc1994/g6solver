@@ -1,31 +1,77 @@
 # SPDX-License-Identifier: Apache-2.0
-"""A JSON record past the decoder's limits: unreadable, and never passed over for another record.
+"""A JSON record past the decoder's limits, or not in its expected shape: unreadable, never passed over for another.
 
-``json.loads`` raises ``RecursionError`` on a record nested too deeply and ``MemoryError`` on one too large. Most of
-G6's readers turn these into ``json.JSONDecodeError``, so that the module's own refusal of malformed input handles them.
-A reader whose malformed-record handler passes over the record and goes on to another (the result a program printed
-last, the latest audit in a log, the first object in a model's reply, a stored list a gate reads) must not: the record
-it could not read may be the one that decides, and passing over it lets an earlier, older or nested one decide in its
-place. Such a reader decodes through :func:`decode`. Its :class:`UndecodableRecord` is a ``ValueError`` but not a
+``json.loads`` raises ``RecursionError`` on a record nested too deeply, ``MemoryError`` on one too large, and a plain
+``ValueError`` on an integer longer than the interpreter converts (``sys.get_int_max_str_digits``). Most of G6's readers
+turn these into ``json.JSONDecodeError``, so that the module's own refusal of malformed input handles them. A reader
+whose malformed-record handler passes over the record and goes on to another (the result a program printed last, the
+latest audit in a log, the first object in a model's reply, a stored list a gate reads) must not: the record it could
+not read may be the one that decides, and passing over it lets an earlier, older or nested one decide in its place.
+Such a reader decodes through :func:`decode`. Its :class:`UndecodableRecord` is a ``ValueError`` but not a
 ``json.JSONDecodeError``, so the passing-over handler does not catch it, and the reader's caller refuses or abstains.
+
+A record that decodes is not yet readable: :func:`shaped` reads it only when the fields a decision takes are present
+with exactly their types (a bool is ``True`` or ``False``, never ``"false"`` or ``0``; an int or a float is never a
+bool). A record that is not in its shape is as unknown as one that does not decode.
 """
 from __future__ import annotations
 
 import json
-from typing import Any
+import sys
+from typing import Any, NamedTuple
 
 
 class UndecodableRecord(ValueError):
-    """A JSON record past the decoder's limits (nested too deeply, or too large): no other record stands in for it."""
+    """A JSON record past the decoder's limits (nested too deeply, too large, or an integer too long to convert): no
+    other record stands in for it."""
+
+
+def _integer(digits: str) -> int:
+    limit = sys.get_int_max_str_digits()
+    if limit and len(digits.lstrip("-")) > limit:
+        raise UndecodableRecord("a JSON record holds an integer too long to convert")
+    return int(digits)
 
 
 def decode(text: str | bytes | bytearray) -> Any:
     """``json.loads(text)``; a record past the decoder's limits raises :class:`UndecodableRecord`, and a malformed one
-    ``json.JSONDecodeError`` as before."""
+    ``json.JSONDecodeError`` as before. Only the decoder's own limits are caught here, never a later ``ValueError``."""
     try:
-        return json.loads(text)
+        return json.loads(text, parse_int=_integer)
     except (RecursionError, MemoryError):
         raise UndecodableRecord("a JSON record exceeds decoder limits") from None
 
 
-__all__ = ["UndecodableRecord", "decode"]
+class ListOf(NamedTuple):
+    """A list whose every item is of ``item`` (a type or a tuple of types, read as :func:`shaped` reads them)."""
+
+    item: Any
+
+
+def _is(value: Any, kind: Any) -> bool:
+    if isinstance(kind, ListOf):
+        return isinstance(value, list) and all(_is(one, kind.item) for one in value)
+    if isinstance(kind, tuple):
+        return any(_is(value, one) for one in kind)
+    if kind is None or kind is type(None):
+        return value is None
+    if kind is bool:
+        return isinstance(value, bool)
+    if kind is int:
+        return isinstance(value, int) and not isinstance(value, bool)
+    if kind is float:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, kind)
+
+
+def shaped(record: Any, required: dict[str, Any], optional: dict[str, Any] | None = None) -> bool:
+    """Whether ``record`` is a dict holding every ``required`` field, each ``required`` and present ``optional`` field
+    of exactly its type: ``bool`` only ``True`` or ``False``; ``int`` never a bool; ``float`` an int or a float, never a
+    bool; ``None`` only ``None``; a tuple any of its kinds; :class:`ListOf` a list of that kind. Other fields are not
+    read."""
+    return (isinstance(record, dict)
+            and all(name in record and _is(record[name], kind) for name, kind in required.items())
+            and all(name not in record or _is(record[name], kind) for name, kind in (optional or {}).items()))
+
+
+__all__ = ["ListOf", "UndecodableRecord", "decode", "shaped"]
