@@ -6,6 +6,14 @@ from .ledger import Stores
 from .records import Concept, FailureRecord, LibraryEntry, MethodContract, Status, VerifierCandidate
 
 
+def public_entry(entry: LibraryEntry) -> dict:
+    """One outward view; local custody retains the full decision record."""
+    data = entry.model_dump(mode='json')
+    data['decided_by']['person'] = None
+    data['reason'] = '<private decision>'
+    return data
+
+
 class Library:
     def export(self, entry_id: str) -> dict:
         """Repository export: every training ancestor must be G6 public archive.
@@ -50,7 +58,8 @@ class Library:
             concepts[concept.concept_id], contracts[candidate.contract.content_id] = concept, candidate.contract
             visiting.remove(ident)
         visit(entry_id)
-        return {'scope': 'g6_public_archive', **{name: [value.model_dump(mode='json') for value in values.values()]
+        return {'scope': 'g6_public_archive', **{name: [public_entry(value) if isinstance(value, LibraryEntry)
+            else value.model_dump(mode='json') for value in values.values()]
             for name, values in (('entries', entries), ('candidates', candidates), ('concepts', concepts),
                                  ('contracts', contracts))}}
 

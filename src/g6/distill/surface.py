@@ -10,32 +10,27 @@ from pydantic import TypeAdapter
 from g6.core.ledger import ChainLedger, digest
 from g6.core.storage import state_path
 from .ledger import Stores, failure_writer
-from .library import Library
+from .library import Library, public_entry
 from .records import FailureRecord, LibraryEntry, Sha256
 
 
 def library(op: str = "list", entry_id: str = "") -> dict:
-    def public(entry):
-        data = entry.model_dump(mode='json')
-        data['decided_by']['person'] = None
-        data['reason'] = '<private decision>'
-        return data
     if op not in {"list", "describe", "history"}:
         raise ValueError("library op must be list, describe or history")
     if op == "list":
         if entry_id:
             raise ValueError("list takes no entry_id")
-        return {"entries": [public(e) for e in Library().list()]}
+        return {"entries": [public_entry(e) for e in Library().list()]}
     TypeAdapter(Sha256).validate_python(entry_id)
     historical = Stores().for_model(LibraryEntry).get(entry_id)
     if op == "history":
-        return {"entries": [public(e) for e in Stores().for_model(LibraryEntry).list()
+        return {"entries": [public_entry(e) for e in Stores().for_model(LibraryEntry).list()
                             if e.candidate_id == historical.candidate_id],
                 "unlabelled_fires": [row["body"] for row in ChainLedger(
                     state_path("distill", "field_fires_ledger.jsonl")).entries()
                     if row["kind"] == "field_fire" and row["body"].get("candidate_id") == historical.candidate_id]}
     current = next(e for e in Library().list() if e.candidate_id == historical.candidate_id)
-    return {"entry": public(current), "requested_entry_id": entry_id}
+    return {"entry": public_entry(current), "requested_entry_id": entry_id}
 
 
 def unclassified(kind: str, family: str) -> str:
