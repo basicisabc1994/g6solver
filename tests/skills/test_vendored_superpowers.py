@@ -42,7 +42,8 @@ def test_the_record_names_upstream_its_version_and_its_commit() -> None:
 
 def test_every_file_is_upstreams_byte_for_byte() -> None:
     listed = dict(re.findall(r"^\| `([^`]+)` \| `([0-9a-f]{64})` \|$", RECORD, re.MULTILINE))
-    on_disk = {p.relative_to(VENDOR).as_posix() for p in VENDOR.rglob("*") if p.is_file() and p.name != "VENDORED.md"}
+    on_disk = {p.relative_to(VENDOR).as_posix() for p in VENDOR.rglob("*")
+               if p.is_file() and p.relative_to(VENDOR).as_posix() != "VENDORED.md"}
     assert set(listed) == on_disk
     for rel, digest in listed.items():
         assert hashlib.sha256((VENDOR / rel).read_bytes()).hexdigest() == digest, rel

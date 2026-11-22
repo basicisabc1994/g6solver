@@ -33,7 +33,7 @@ def test_every_file_is_upstreams_byte_for_byte():
     listed = dict(re.findall(r"^\| `([^`]+)` \| `([0-9a-f]{64})` \|$", record, re.MULTILINE))
     assert listed == HASHES
     on_disk = {p.relative_to(VENDOR).as_posix() for p in VENDOR.rglob("*")
-               if p.is_file() and p.name != "VENDORED.md"}
+               if p.is_file() and p.relative_to(VENDOR).as_posix() != "VENDORED.md"}
     assert on_disk == set(HASHES)
     for rel, digest in HASHES.items():
         data = (VENDOR / rel).read_bytes()
