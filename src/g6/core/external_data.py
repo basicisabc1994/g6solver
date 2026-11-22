@@ -23,12 +23,21 @@ class ExternalDataLimit(ValueError):
     """The host could not safely copy external text receipts."""
 
 
-def _model_values(item, depth=0, *, explicit=(), positions=(), path=()):
+def _model_values(item, depth=0, *, explicit=(), positions=(), path=(), _memo=None):
     """Serialize models and retain the wire roles declared by runtime identities."""
     from pydantic import BaseModel
 
     if depth > _MAX_GUIDANCE_DEPTH:
         raise ExternalDataLimit("[G6_E_RESOURCE_LIMIT] G6 could not safely read the reply guidance. Tell the person.")
+    if _memo is None:
+        _memo = {}
+    # Keep shared containers shared so the door can still count repeated reads.
+    # Explicit serialization bindings can depend on the full path, so those
+    # conversions must continue to visit each position independently.
+    identity = (id(item), positions)
+    if not explicit and identity in _memo:
+        return _memo[identity][1]
+    source = item
     if isinstance(item, BaseModel):
         from g6.core.serialized_guidance import SerializedGuidance, validate_model_serialization
         model = type(item)
@@ -39,15 +48,21 @@ def _model_values(item, depth=0, *, explicit=(), positions=(), path=()):
             # Route declarations still apply separately, including to plain dicts.
             item = external_value(item, _component=True, _schema=SerializedGuidance(model, runtime_positions))
     if isinstance(item, Mapping):
-        return {key: _model_values(child, depth + 1, explicit=explicit,
-                                  positions=child_guidance_positions(positions, key), path=(*path, key))
-                for key, child in item.items()}
-    if isinstance(item, (list, tuple)):
+        result = {key: _model_values(child, depth + 1, explicit=explicit,
+                                    positions=child_guidance_positions(positions, key), path=(*path, key), _memo=_memo)
+                  for key, child in item.items()}
+    elif isinstance(item, (list, tuple)):
         children = [_model_values(child, depth + 1, explicit=explicit,
-                                  positions=child_guidance_positions(positions, "*"), path=(*path, index))
+                                  positions=child_guidance_positions(positions, "*"), path=(*path, index), _memo=_memo)
                     for index, child in enumerate(item)]
-        return tuple(children) if isinstance(item, tuple) else children
-    return item
+        result = tuple(children) if isinstance(item, tuple) else children
+    else:
+        return item
+    if not explicit:
+        # Model dumps contain temporary dictionaries. Retain their originals so
+        # a later dump cannot reuse an id already held in this conversion.
+        _memo[identity] = (source, result)
+    return result
 
 
 def external_value(value, *, _component=False, _schema=None):
