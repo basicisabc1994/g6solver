@@ -61,13 +61,35 @@ def test_dos_device_alias_is_refused_before_any_probe(monkeypatch, tool):
         assert improve.NOT_A_FOLDER in str(reply)
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows DOS-device names")
-@pytest.mark.parametrize("path", [r"C:\NUL", r"C:\work\nul.txt", r"C:\work\Com1", "C:/work/LPT9.tar.gz",
-                                  r"C:\work\con .", r"C:\work\AUX\repo", r"C:\work\prn.", "C:\\work\\COM\u00b9"])
-def test_the_shared_rule_refuses_a_device_name_in_any_folder(path):
+def _windows_reads(text: str) -> list[str]:
+    """What Windows makes of ``text`` and of each folder on it as Python spells them (its full path), as a test oracle."""
+    forms = [text, *(str(p) for p in (Path(text), *Path(text).parents))]
+    read = []
+    for form in forms:
+        buffer = ctypes.create_unicode_buffer(32768)
+        size = ctypes.windll.kernel32.GetFullPathNameW(form, len(buffer), buffer, None)
+        read.append(buffer.value if 0 < size < len(buffer) else "")
+    return read
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows device paths")
+@pytest.mark.parametrize("path", [r"C:\NUL", r"C:\NUL:", "COM1 :", "C:/NUL", r"C:\work\y\..\NUL", r"C:\work\NUL.",
+                                  r"C:\work\NUL\.", "C:\\work\\NUL\\", r"C:\work\NUL \repo", r"C:\work\NUL\repo",
+                                  r"\\?\C:\work", r"\\.\C:\work", r"\.\??\C:\work", "CONIN$", "C:\\work\x00\\NUL"])
+def test_the_shared_rule_refuses_what_windows_reads_as_a_device(path):
     assert repo_tests.elsewhere(path)
 
 
-@pytest.mark.parametrize("path", [r"C:\work\console", r"C:\work\nullable\repo", r"C:\work\com10", r"C:\work\auxiliary"])
+@pytest.mark.skipif(os.name != "nt", reason="Windows device paths")
+@pytest.mark.parametrize("path", [r"C:\CON:", "nul.txt:", r"C:\work\nul.txt", r"C:\work\Com1", "C:/work/LPT9.tar.gz",
+                                  r"C:\work\con .", r"C:\work\AUX\repo", r"C:\work\prn.", "C:\\work\\COM\u00b9"])
+def test_a_device_like_name_is_refused_unless_windows_reads_every_form_as_a_plain_path(path):
+    # the system decides: a build that reads one of these as a device refuses it; one that reads it as a file lets it by
+    plain = all(full and not full.startswith("\\\\") for full in _windows_reads(path))
+    assert repo_tests.elsewhere(path) or plain, _windows_reads(path)
+
+
+@pytest.mark.parametrize("path", [r"C:\work\console", r"C:\work\nullable\repo", r"C:\work\com10", r"C:\work\auxiliary",
+                                  "", "  ", "repo", r"..\repo"])
 def test_the_shared_rule_lets_ordinary_names_through(path):
     assert repo_tests.elsewhere(path) is None

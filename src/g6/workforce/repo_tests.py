@@ -1064,25 +1064,44 @@ def _index_path(repo: Path, rel: str, linked: dict[Path, bool] | None = None) ->
     return rel
 
 
-#: Windows' reserved DOS device names: in any folder, with any extension or trailing dots or spaces, the system reads
-#: such a name as the device (``C:\\x\\nul.txt`` is ``\\\\.\\NUL``), so asking about it opens the device.
-_DEVICES = frozenset({"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
-                      *(f"{kind}{n}" for kind in ("COM", "LPT") for n in "0123456789\u00b9\u00b2\u00b3")})
-_DEVICE = ("the path names a Windows device (CON, PRN, AUX, NUL, COM1-9, LPT1-9, in any folder and with any "
-           "extension), which G6 never asks about: Windows opens the device for it")
+_DEVICE = ("Windows reads the path, or a folder on it, as a device or a network path (C:\\NUL: is \\\\.\\NUL), which G6 "
+           "never asks about: asking opens it")
+
+
+def _windows_reads_elsewhere(text: str) -> bool:
+    """Whether Windows itself reads ``text`` as a device or a network path: its full path as the system makes it
+    (``GetFullPathNameW``, which reads the words and the current folders only, never the file system) begins
+    ``\\\\.\\``, ``\\\\?\\`` or ``\\??\\``, or is a share (``\\\\host\\share``) the text names (a relative text is
+    read against the folder G6 runs in, which the caller does not choose), or the system names it a DOS device
+    (``RtlIsDosDeviceName_U``, which reads ``C:\\x\\NUL\\.`` as ``NUL``), or the system cannot say."""
+    import ctypes
+
+    buffer = ctypes.create_unicode_buffer(32768)
+    size = ctypes.windll.kernel32.GetFullPathNameW(ctypes.c_wchar_p(text), len(buffer), buffer, None)
+    if not 0 < size < len(buffer):
+        return True
+    full, device = buffer.value, ctypes.windll.ntdll.RtlIsDosDeviceName_U
+    return (full.startswith(("\\\\.\\", "\\\\?\\", "\\??\\")) or full.startswith("\\\\") and bool(Path(text).anchor)
+            or bool(device(ctypes.c_wchar_p(text))) or bool(device(ctypes.c_wchar_p(full))))
 
 
 def elsewhere(text: str) -> str | None:
-    """Why ``text`` names a network share, a device, or (on Windows) a reserved DOS device name in any of its folders,
-    on its words alone, or None: the one rule each entry point that takes a repository or folder applies before any
-    file system call (``storage._elsewhere``, then the device names)."""
+    """Why ``text`` names a network share or a device, on its words alone, or None: the one rule each entry point that
+    takes a repository or folder applies before any file system call. ``storage._elsewhere`` first; then, on Windows,
+    the system's own reading (``_windows_reads_elsewhere``) of the text and of the text and each folder above it as
+    Python spells them (``Path`` drops a trailing ``\\`` or ``\\.``, and resolving asks about each folder up the path)."""
     from g6.core.storage import _elsewhere
 
     if why := _elsewhere(text):
         return why
-    if os.name == "nt" and any(part.rstrip(" .").split(".")[0].rstrip(" ").upper() in _DEVICES
-                               for part in re.split(r"[\\/]", text)):
+    if os.name != "nt" or not text.strip():
+        return None
+    if "\x00" in text:   # the system would read only the words before it
         return _DEVICE
+    given = Path(text)
+    for form in (text, *(str(path) for path in (given, *given.parents))):
+        if why := _elsewhere(form) or (_DEVICE if _windows_reads_elsewhere(form) else None):
+            return why
     return None
 
 

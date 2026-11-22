@@ -572,13 +572,19 @@ def _symbolic(prepared, formal: Formal, *, deadline: float, budget: int, skip: s
                                         "instance's own inputs, which its own check runs"}
             activity.update(result="counterexample", formal=parts(record))
             continue
+        # what a finding's replay names (``resolution``): the instance as compiled, with the input Z3 found
+        found_bindings = {**one.bindings, **({"inputs": data["inputs"]} if one.template == "relation.v1" else
+                                             {"calls": data["calls"]})}
         try:   # the review of VS-4, I2: a value Z3 found is not one the caller declared outside the change's scope,
             # so a difference there is a question (behaviour_changed), never a counterexample
             check, placed, origin = vt.compiled_check(
                 item["root"], one, data, item["notes"], ident=record["id"],
                 label=f"a counterexample Z3 found for an instance of {one.template}, which G6 compiled",
                 unconfirmed="Z3 found it on G6's reading of the source and G6 compiled its re-run from the caller's "
-                            "bindings; a compiled check decides no requirement", refuted_by_difference=False)
+                            "bindings; a compiled check decides no requirement", refuted_by_difference=False,
+                instance=None if one.provenance == "person_confirmed" else {
+                    "template": one.template, "requirement_id": one.requirement_id, "intent": one.intent,
+                    "bindings": found_bindings})
         except vt.Inapplicable as exc:
             record["correspondence"] = {"result": "not_replayable", "reason": str(exc)}
             activity.update(result="counterexample", formal=parts(record))

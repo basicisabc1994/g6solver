@@ -904,7 +904,8 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
             continue
         node = activity["node"]
         try:   # what G6's own reading of the runs raises is this check's error, never the review's (review I2)
-            retained_base = read(at_base=True) if origin.label == 'retained' else None
+            # a retained check is run at the base first, unless its own judging has no base run (patch_only)
+            retained_base = read(at_base=True) if origin.label == 'retained' and not origin.patch_only else None
             if retained_base is not None:
                 activity['runs'].append({'on': 'base commit', **_summary(retained_base)})
                 if deadline - _clock() < MIN_RUN_S:
