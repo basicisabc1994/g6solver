@@ -1328,18 +1328,19 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             previous = origins.get(ident, verification_search.FREE_FORM)
             origins[ident] = replace(previous, activity=origin.activity, proposed_by=origin.proposed_by,
                 label=origin.label, unconfirmed=origin.unconfirmed, about={**previous.about, **origin.about})
+        gone, traced = [], set()
         if confirmed is not None:
             # The one gate where checks are about to run, after every source (the caller's, the candidates', the
-            # proposer's, the retained ones): none asserting an outcome the person rejected runs, whoever made it.
-            from g6.harness import candidate_standard
+            # proposer's, the retained ones): a check G6 compiled is read by the instance it compiled it from, before
+            # it runs; every other runs traced, and what its runs observe decides (``candidate_standard.screen``).
+            from g6.harness import behaviour_runner, candidate_standard
 
-            gone, kept = {"rejected": candidate_standard.rejections(confirmed)}, []
-            for one in checks:
-                origin = origins.get(one.id, verification_search.FREE_FORM)
-                allowed, dropped = candidate_standard.gate(gone, [one], origin.activity, origin.label)
-                kept += allowed
-                rejected_skipped += dropped
-            checks = kept
+            gone = candidate_standard.rejections(confirmed)
+            made = {one.id: one for one in instances}
+            held = [(one, made[one.id]) for one in compiled
+                    if one.id in made and made[one.id].template in behaviour_runner.RUN_TEMPLATES]
+            checks, rejected_skipped, traced = candidate_standard.screen(
+                gone, checks, lambda ident: origins.get(ident, verification_search.FREE_FORM), held)
         if not checks:
             search = None
         elif any(r["stage"] == "integrity" for r in reasons):
@@ -1347,7 +1348,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         else:
             search = _stage(stopped, "the proposed and compiled checks", verification_search.search, change, checks,
                             where, deadline=deadline, artifact=artifact, origins=origins, roots=roots,
-                            **({'before': before} if isinstance(before, verification_search.ExecutionSnapshot) else {}))
+                            **({'before': before} if isinstance(before, verification_search.ExecutionSnapshot) else {}),
+                            **({'rejected': gone, 'traced': traced} if gone else {}))
         for code, detail in (search.reasons if search is not None else ()):
             reason("evidence", code, detail)
         follow_ups = [*follow_ups, *(search.next_actions if search is not None else ())]

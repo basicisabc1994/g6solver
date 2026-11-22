@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Repair 1 of claude/wire-intent-fu2 (Codex review 1). A: the verdict scan reads only text outside all CommonMark
 code, blocks and inline spans, and prose quoting never changes how a later object is read. B: the rejection gate sits
-where checks are about to run, after every source (the proposer included), reads typed bindings wherever a check
-carries them, and drops a check that refers to the rejected function in any form it cannot read as a literal call.
+where checks are about to run, after every source (the proposer included), and reads the typed data G6 holds of a
+check it compiled; since repair 2 every other check runs traced and what it observes decides (r6), never its text.
 C: G6 sends through its own form of a caller (the leaf guarded, views of the wrappers) and never changes the caller it
 is handed; a cycle is refused before anything unwraps it. FakeLLM and synthetic inputs only."""
 from __future__ import annotations
@@ -106,8 +106,11 @@ def _proposed(body, head="from calc import add\n"):
     ("    assert add(2, 3) == -1\n", "from calc import *\n"),
     ("    assert c.add(2, 3) == -1\n", "import calc as c\n"),
 ], ids=["starred", "alias", "variables", "double_starred", "passed_as_value", "star_import", "module_alias"])
-def test_a_call_of_the_rejected_function_g6_cannot_read_fails_closed(body, head):
-    assert not _kept(_proposed(body, head))
+def test_a_call_of_the_rejected_function_in_any_form_runs_traced(body, head):
+    # repair 2: no check's text decides; G6 observes its runs (tests/harness/test_intent_followup_r6.py)
+    check = _proposed(body, head)
+    kept, skipped, traced = cs.screen(cs.rejections(standard()), [check], lambda ident: vs.FREE_FORM)
+    assert kept == [check] and not skipped and traced == {"P1"}
 
 
 @pytest.mark.parametrize("body", ["    assert add(2, 3) == 5\n", "    assert add(1, 1) == 2\n",
@@ -117,8 +120,12 @@ def test_control_readable_calls_of_kept_outcomes_and_other_code_stay(body):
 
 
 def _compiled(template, data, ident="C1"):
+    # repair 2: G6's custody is the data its compiler holds (ExecutableSource), never the text's TEMPLATE
+    from g6.harness.behaviour_runner import ExecutableSource
+
     source = vt.compile_text(vt.REGISTRY[template], data)
-    return vs.ProposedCheck(id=ident, requirement_id="R1", intent="change", file="test_g6_c.py", source=source)
+    check = vs.ProposedCheck(id=ident, requirement_id="R1", intent="change", file="test_g6_c.py", source=source)
+    return check.model_copy(update={"source": ExecutableSource(source, data)})
 
 
 @pytest.mark.parametrize("template, data, kept", [
@@ -194,10 +201,12 @@ def test_model_checks_are_gated_where_checks_run(monkeypatch, mode):
                                                      "    assert add(2, 3) == -1\n"}]})
         return json.dumps({"questions": []} if stage == vp.SCENARIOS else {"instances": []})
 
-    captured = []
+    captured, untraced = [], []
 
     def search(change, checks, where, **kwargs):
+        # repair 2: a free-form check reaches the runs only traced, against the rejected outcomes
         captured.extend(checks)
+        untraced.extend(one.id for one in checks if not kwargs.get("rejected") or one.id not in kwargs["traced"])
         return vs.Search()
 
     from g6.harness import confirmed_checks
@@ -213,7 +222,7 @@ def test_model_checks_are_gated_where_checks_run(monkeypatch, mode):
         pr.review_patch(root, task="Repair addition.", requirements=[{"id": "R1", "text": "Repair addition.",
                                                                        "checks": []}],
                         confirmed=standard(), search={"propose": True, "proposer": mode}, llm=llm)
-    assert llm.calls and not captured, [one.id for one in captured]
+    assert llm.calls and not untraced, untraced   # a compiled check reaching the runs would be untraced
 
 
 # --- C: callers ------------------------------------------------------------------------------------------------------------

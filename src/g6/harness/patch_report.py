@@ -84,7 +84,8 @@ PROPOSED = {"not_refuted": "not refuted", "counterexample": "found a counterexam
             "unconfirmed_failure": "fails on the patch", "fails_on_base_too": "fails at the base commit too",
             "behaviour_changed": "behaves differently from the base commit (a question, not a finding)",
             "check_error": "could not be judged", "refused": "refused", "failed": "failed", "passed": "passed",
-            "vacuous": "vacuous", "not_established": "not established"}
+            "vacuous": "vacuous", "not_established": "not established",
+            "asserts_rejected": "not counted: it observed an outcome the person rejected, or could not be observed whole"}
 #: Reviewer B's B6: the caution a proposed or compiled check's reproduction carries, said on its line too.
 CAUTION = "Read it before you run it, or run it in a container."
 #: What the person does about git-ignored files the tests could load (worked examples, W3b), under that finding.

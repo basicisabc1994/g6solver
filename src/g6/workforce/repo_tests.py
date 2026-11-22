@@ -2005,6 +2005,341 @@ _MODEL_BLOCK = {"G6_LLM_BACKEND_OVERRIDE": "ollama", "OPENROUTER_API_KEY": "sk-o
 _NOWHERE = "http://127.0.0.1:9"
 _PROXIES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
 _RETURN_HEAD, _RETURN_TAIL = 2048, 6144
+
+
+@dataclass
+class CallTrace:
+    """A request that a run trace each call of ``functions`` (``{name, module, short, cases}``: a function's dotted
+    name, its module, its name there, and the inputs ``{args, kwargs}`` whose calls matter), held in G6's process; and
+    ``observed``, which ``_run`` fills with the trace the run wrote, read as data and bound to the run by a nonce
+    (``read_trace``), or leaves None when there is none it can read. ``effects``: also record each argument after the
+    call. The child traces with ``sys.monitoring`` (``_TRACER``); code under test runs in the same process, so a check
+    that searches the interpreter's memory for the nonce, or switches the trace off and on within one test, is outside
+    what the binding rules out (``behaviour_runner.LIMIT``)."""
+    functions: list[dict]
+    effects: bool = False
+    observed: dict | None = None
+
+
+#: The most bytes of a trace G6 reads; a longer one is not read, so the run is one it could not observe.
+TRACE_BYTES = 32 * 1024 * 1024
+#: The call tracer the bootstrap defines when G6 asks for a trace (``CallTrace``): it reads the request (the nonce, the
+#: functions and the inputs) from a file only G6 wrote and deletes it before any test runs, opens the trace file new,
+#: and traces with ``sys.monitoring`` (Python 3.12 and later; an older interpreter records that it could not): each
+#: call of a code object named like a traced function (its name, or the name of the code its module binds it to when
+#: the module's code finishes, through ``__wrapped__``: a lambda, a decorated function), with its bound arguments read
+#: from the frame as it starts, and the value it returns or the exception types it raises; each input of the request
+#: bound to that function's own signature (its code and defaults), so G6 compares them. A value that is not plain JSON
+#: is recorded by its type and identity only. Recorded as problems, so G6 reads the run as one it could not observe: a
+#: process started (an audit hook), a traced name the module binds to something that is not a Python function (a C
+#: function) or to code it did not trace (replaced at run time, read after each test's call and at the end), the trace
+#: switched off or its monitoring tool changed, the call limit reached, a call that never finished.
+_TRACER = r'''
+def _g6_tracer(request, out):
+    import _thread, gc, inspect, types
+    with open(request, encoding="utf-8") as handle:
+        spec = json.load(handle)
+    problems, calls, pending, busy, ident = [], [], {}, set(), _thread.get_ident   # busy: threads in G6's own work
+    def note(why):
+        if why not in problems and len(problems) < 20:
+            problems.append(why)
+    try:
+        os.remove(request)
+    except OSError:
+        note("its request could not be removed before the tests ran")
+    nonce, functions, effects = str(spec["nonce"]), list(spec["functions"]), bool(spec.get("effects"))
+    sink = open(out, "x", encoding="utf-8")
+    spawn = frozenset({"subprocess.Popen", "os.system", "os.exec", "os.posix_spawn", "os.spawn", "os.fork",
+                       "os.forkpty", "os.startfile", "_winapi.CreateProcess", "pty.spawn"})
+    def audited(event, arguments):
+        if event in spawn:
+            note("code under test started a process, whose calls G6 cannot trace")
+    sys.addaudithook(audited)
+    state = {"check": lambda: None}
+    class Traced:
+        @pytest.hookimpl(hookwrapper=True)
+        def pytest_runtest_call(self, item):
+            yield
+            state["check"]()
+        def finish(self):
+            try:
+                state["check"]()
+                if pending:
+                    note("a traced call had not finished when the run ended")
+                sink.write(json.dumps({"version": "call-trace.v1", "nonce": nonce, "problems": problems,
+                                       "calls": calls}, sort_keys=True, allow_nan=False))
+            finally:
+                sink.close()
+    monitoring = getattr(sys, "monitoring", None)
+    if monitoring is None:
+        note("this interpreter has no sys.monitoring, which tracing needs (Python 3.12 or later)")
+        return Traced()
+    events, tool = monitoring.events, None
+    want = events.PY_START | events.PY_RETURN | events.PY_UNWIND
+    for one in (5, 4, 3, 2, 0, 1):
+        try:
+            monitoring.use_tool_id(one, "g6-trace")
+        except ValueError:
+            continue
+        tool = one
+        break
+    if tool is None:
+        note("no sys.monitoring tool was free for the trace")
+        return Traced()
+    DISABLE, frame_of, function_type, method_type = monitoring.DISABLE, sys._getframe, types.FunctionType, types.MethodType
+    set_events, register, restart = monitoring.set_events, monitoring.register_callback, monitoring.restart_events
+    get_tool, get_events, kind_of, identity = monitoring.get_tool, monitoring.get_events, type, id
+    Parameter, Signature, MISSING, LIMIT, SIZE = inspect.Parameter, inspect.Signature, object(), 1000, 1024
+    names, seen, own = {}, {}, set()
+    for index, one in enumerate(functions):
+        names.setdefault(one["short"], set()).add(index)
+    def plain(value, depth=0):
+        if value is None or kind_of(value) in (bool, int, str):
+            return value
+        if kind_of(value) is float and value == value and value not in (float("inf"), float("-inf")):
+            return value
+        if depth < 8 and kind_of(value) in (list, tuple):
+            return [plain(item, depth + 1) for item in value]
+        if depth < 8 and kind_of(value) is dict and all(kind_of(key) is str for key in value):
+            return {key: plain(item, depth + 1) for key, item in dict.items(value)}
+        raise ValueError("not plain JSON")
+    def named(kind):
+        try:
+            text = type.__dict__["__module__"].__get__(kind) + "." + type.__dict__["__qualname__"].__get__(kind)
+            return text if kind_of(text) is str else "?"
+        except Exception:
+            return "?"
+    def encoded(value):
+        try:
+            found = plain(value)
+            if len(json.dumps(found, allow_nan=False)) <= SIZE:
+                return {"value": found}
+        except Exception:
+            pass
+        return {"unreadable": named(kind_of(value)), "id": identity(value)}
+    def signature(function, code):
+        defaults, keywords = function.__defaults__ or (), function.__kwdefaults__ or {}
+        count, flags, made = code.co_argcount, code.co_flags, []
+        first = count - len(defaults)
+        for at, name in enumerate(code.co_varnames[:count]):
+            made.append(Parameter(name, Parameter.POSITIONAL_ONLY if at < code.co_posonlyargcount else
+                                  Parameter.POSITIONAL_OR_KEYWORD,
+                                  default=defaults[at - first] if at >= first else Parameter.empty))
+        rest = count + code.co_kwonlyargcount
+        if flags & 4:
+            made.append(Parameter(code.co_varnames[rest], Parameter.VAR_POSITIONAL))
+        for name in code.co_varnames[count:rest]:
+            made.append(Parameter(name, Parameter.KEYWORD_ONLY, default=keywords.get(name, Parameter.empty)))
+        if flags & 8:
+            made.append(Parameter(code.co_varnames[rest + bool(flags & 4)], Parameter.VAR_KEYWORD))
+        return Signature(made)
+    def binding(shape, case):
+        try:
+            bound = shape.bind(*case["args"], **case.get("kwargs", {}))
+        except TypeError:
+            return None   # the input is no call of this function
+        bound.apply_defaults()
+        positional = []
+        for parameter in shape.parameters.values():
+            if len(positional) >= len(case["args"]):
+                break
+            if parameter.kind in (Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD):
+                positional.append(parameter.name)
+            elif parameter.kind is Parameter.VAR_POSITIONAL:
+                positional += [None] * (len(case["args"]) - len(positional))
+            else:
+                break
+        return {"bound": {name: encoded(bound.arguments[name]) for name in shape.parameters},
+                "positional": positional}
+    def described(code):
+        made = [one for one in gc.get_referrers(code) if kind_of(one) is function_type and one.__code__ is code]
+        shape = None
+        if made and all(one.__defaults__ is made[0].__defaults__ and one.__kwdefaults__ is made[0].__kwdefaults__
+                        for one in made):
+            shape = signature(made[0], code)
+        flags = code.co_flags
+        params = (list(shape.parameters) if shape is not None else list(code.co_varnames[
+            :code.co_argcount + code.co_kwonlyargcount + bool(flags & 4) + bool(flags & 8)]))
+        generator = bool(flags & 0x2A0)
+        return [(index, params, [binding(shape, case) if shape is not None else "unknown"
+                                 for case in functions[index]["cases"]], generator)
+                for index in sorted(names.get(code.co_qualname, ()))]
+    def unwrapped(value):
+        held = set()
+        while identity(value) not in held and len(held) < 64:
+            held.add(identity(value))
+            if kind_of(value) is method_type:
+                value = value.__func__
+                continue
+            inner = (value.__dict__.get("__wrapped__", MISSING) if kind_of(value) is function_type
+                     else getattr(value, "__wrapped__", MISSING))
+            if inner is MISSING:
+                return value if kind_of(value) is function_type else None
+            value = inner
+        return None
+    def resolve(index, value):
+        if value is MISSING:
+            return
+        try:
+            target = unwrapped(value)
+        except Exception:
+            target = None
+        if target is None:
+            note(functions[index]["name"] + " is bound to something that is not a Python function G6 can trace")
+            return
+        found = names.setdefault(target.__code__.co_qualname, set())
+        if index not in found:
+            found.add(index)
+            seen.clear()
+            restart()
+    def start(code, offset):
+        if code in own:
+            return DISABLE
+        me = ident()
+        if me in busy:
+            return None
+        busy.add(me)
+        try:
+            found = seen.get(code)
+            if found is None:
+                if code.co_qualname not in names:
+                    return DISABLE
+                found = seen[code] = described(code)
+            if len(calls) >= LIMIT:
+                note("the trace stopped at its limit of %d calls" % LIMIT)
+                return None
+            frame = frame_of(1)
+            values = frame.f_locals
+            for index, params, cases, generator in found:
+                one = {"function": functions[index]["name"], "cases": cases,
+                       "bound": {name: encoded(values.get(name, MISSING)) for name in params}}
+                calls.append(one)
+                if generator:
+                    one["outcome"] = {"unreadable": "a generator or coroutine"}
+                    continue
+                objects = {name: values[name] for name in params if name in values} if effects else {}
+                pending.setdefault(identity(frame), []).append((one, objects))
+        finally:
+            busy.discard(me)
+        return None
+    def returned(code, offset, value):
+        if code in own:
+            return DISABLE
+        me = ident()
+        if me in busy:
+            return None
+        frame = frame_of(1)
+        entries = pending.pop(identity(frame), None)
+        if entries:
+            busy.add(me)
+            try:
+                for one, objects in entries:
+                    one["outcome"] = {"returned": encoded(value)}
+                    if objects:
+                        one["after"] = {name: encoded(item) for name, item in objects.items()}
+            finally:
+                busy.discard(me)
+            return None
+        if code in seen:
+            return None
+        if code.co_name == "<module>":
+            busy.add(me)
+            try:
+                space = frame.f_globals
+                where = os.path.normcase(code.co_filename).replace("\\", "/")
+                for index, one in enumerate(functions):
+                    stem = "/" + os.path.normcase(one["module"].replace(".", "/"))
+                    if kind_of(space) is dict and (space.get("__name__") == one["module"] or where.endswith(
+                            stem + ".py") or where.endswith(stem + "/__init__.py")):
+                        resolve(index, space.get(one["short"], MISSING))
+            except Exception:
+                note("G6 could not read a module that may bind a traced function")
+            finally:
+                busy.discard(me)
+        return DISABLE
+    def unwound(code, offset, error):
+        me = ident()
+        if me in busy or code in own:
+            return None
+        entries = pending.pop(identity(frame_of(1)), None)
+        if entries:
+            busy.add(me)
+            try:
+                kinds = type.__dict__["__mro__"].__get__(kind_of(error))
+                raised = [named(kind) for kind in kinds]
+                for one, objects in entries:
+                    one["outcome"] = {"raised": raised}
+            finally:
+                busy.discard(me)
+        return None
+    callbacks = ((events.PY_START, start), (events.PY_RETURN, returned), (events.PY_UNWIND, unwound))
+    def check():
+        me = ident()
+        busy.add(me)
+        try:
+            if get_tool(tool) != "g6-trace" or get_events(tool) != want or any(
+                    register(tool, event, callback) is not callback for event, callback in callbacks):
+                note("the trace was switched off or changed while the tests ran")
+            for index, one in enumerate(functions):
+                module = sys.modules.get(one["module"])
+                if module is None:
+                    continue
+                space = object.__getattribute__(module, "__dict__")
+                value = space.get(one["short"], MISSING) if kind_of(space) is dict else MISSING
+                if value is MISSING:
+                    continue
+                target = unwrapped(value)
+                if target is None:
+                    note(one["name"] + " is bound to something that is not a Python function G6 can trace")
+                elif index not in names.get(target.__code__.co_qualname, ()):
+                    note(one["name"] + " was bound to code G6 did not trace while the tests ran")
+        except Exception:
+            note("G6 could not read whether the trace was whole")
+        finally:
+            busy.discard(me)
+    def guarded(function):
+        def call(tool_id, *rest, **options):
+            if tool_id == tool:
+                note("code under test changed the trace's monitoring")
+                raise ValueError("this sys.monitoring tool holds G6's call trace")
+            return function(tool_id, *rest, **options)
+        return call
+    for name in ("set_events", "set_local_events", "register_callback", "free_tool_id", "use_tool_id",
+                 "clear_tool_id"):
+        if hasattr(monitoring, name):
+            setattr(monitoring, name, guarded(getattr(monitoring, name)))
+    own.update(one.__code__ for one in (plain, named, encoded, signature, binding, described, unwrapped, resolve,
+                                         start, returned, unwound, check, note, audited, guarded,
+                                         guarded(None), Traced.finish, Traced.pytest_runtest_call))
+    for event, callback in callbacks:
+        register(tool, event, callback)
+    set_events(tool, want)
+    state["check"] = check
+    return Traced()
+'''
+
+
+def read_trace(path: Path, nonce: str) -> dict | None:
+    """The trace a run wrote (``_TRACER``), read as data: ``{problems, calls}``, or None when it is missing, longer
+    than ``TRACE_BYTES``, not the tracer's shape or not bound to this run (its nonce is not the one G6 wrote)."""
+    import hmac
+
+    try:
+        if path.stat().st_size > TRACE_BYTES:
+            return None
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError, MemoryError):
+        return None
+    if (type(value) is not dict or set(value) != {"version", "nonce", "problems", "calls"}
+            or value["version"] != "call-trace.v1" or type(value["nonce"]) is not str
+            or not hmac.compare_digest(value["nonce"].encode("utf-8", "surrogatepass"), nonce.encode("utf-8"))
+            or type(value["problems"]) is not list
+            or any(type(one) is not str for one in value["problems"]) or type(value["calls"]) is not list
+            or any(type(one) is not dict for one in value["calls"])):
+        return None
+    return {"problems": value["problems"], "calls": value["calls"]}
+
+
 #: The runner's bootstrap (``venture.truth._ISOLATED_BOOT``'s pattern): first the variables of the run's own file are
 #: set (``G6_REPO_ENV``'s, and the folder Hypothesis keeps its database in), which the operating system's boundary
 #: would not pass on and which never appear on a command line; the real pytest is imported after them and before the
@@ -2034,9 +2369,9 @@ with open(sys.argv[6], encoding="utf-8") as _g6_env:
 del _g6_env
 import pytest
 entries, network, target, source, counted = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
-loaded, limit = sys.argv[7], int(sys.argv[8])
-args = sys.argv[9:]
-del sys.argv[1:9]
+loaded, limit, traced, trace_out = sys.argv[7], int(sys.argv[8]), sys.argv[9], sys.argv[10]
+args = sys.argv[11:]
+del sys.argv[1:11]
 sys.path[:0] = [p for p in entries if p]
 if network != "1":
     _connect, _connect_ex = socket.socket.connect, socket.socket.connect_ex
@@ -2213,9 +2548,22 @@ class _Loaded:
                 json.dump({"modules": found, "complete": complete}, handle)
         except Exception:
             pass
-sys.exit(pytest.main(args, plugins=[_Counted(), _Capture(), _Loaded()]))
+@TRACER@
+_trace = None
+if traced:
+    try:
+        _trace = _g6_tracer(traced, trace_out)
+    except Exception:
+        _trace = None   # no trace file: G6 reads the run as one it could not observe
+_code = pytest.main(args, plugins=[_Counted(), _Capture(), _Loaded(), *([_trace] if _trace is not None else [])])
+if _trace is not None:
+    _trace.finish()
+sys.exit(_code)
 '''.replace("NETWORK_OFF", repr(SAID["network_off"]))
-_BOOT = confine.CHILD_PRELUDE + _BOOT
+#: The bootstrap of a run G6 traces (``CallTrace``): the same, with the tracer defined; any other run's command line
+#: does not carry it.
+_BOOT_TRACED = confine.CHILD_PRELUDE + _BOOT.replace("@TRACER@", _TRACER)
+_BOOT = confine.CHILD_PRELUDE + _BOOT.replace("@TRACER@", "")
 
 
 def _untracked(repo: Path) -> list[str]:
@@ -3049,13 +3397,14 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
          mutant: tuple[str, str] | None = None, copied: bool = False, python: str = "",
          scratch_dir: Path | None = None, deadline: float | None = None, receipt: bool = False,
          require_isolation: bool = False, links: dict | None = None, observation: dict | None = None,
-         _receipt_repository: Path | None = None) -> dict:
+         _receipt_repository: Path | None = None, trace: CallTrace | None = None) -> dict:
     """The shared execution path; only old-test replay uses a copy without git metadata. ``require_isolation``: a run
     no backend confines is refused (``G6_E_ISOLATION_UNAVAILABLE``) before it starts, even where the person allowed
     unconfined runs (verification search's proposed checks). ``links``: what the copy (``repository_copy``'s
     ``report``) left out or copied in a link's place, added to the result as it is. ``observation`` selects G6's
     isolated scenario runner before any pytest configuration or repository interpreter is consulted; recorded
-    executors at this seam therefore control confirmed checks and behaviour probes too."""
+    executors at this seam therefore control confirmed checks and behaviour probes too. ``trace``: the calls to trace
+    in the run (``CallTrace``), whose ``observed`` this fills; never for an observation, which G6's runner makes."""
     if observation is not None:
         from g6.harness import behaviour_runner
 
@@ -3152,8 +3501,20 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         # the run's own log file, empty (truth.no_null_device): with none named, pytest's is the null device, which an
         # AppContainer may be refused; one the repository names could not be written into a repository in place
         own_config[:] = _config_args(repo, ids, own)
-        cmd = [python, "-I", "-B", "-X", "utf8", "-c", _BOOT, json.dumps(entries), "1" if network else "0",
-               target, source, str(counted), str(variables), str(own / "loaded.json"), str(LOADED_LIMIT), *ids, "-q",
+        # A trace's request in a file only this user may read, holding the nonce the trace must carry back; the child
+        # deletes it before any test runs, and G6 reads the trace it writes as data (``read_trace``).
+        traced, trace_out, nonce = "", "", ""
+        if trace is not None:
+            import secrets
+
+            nonce, traced, trace_out = secrets.token_hex(32), str(own / "trace_request.json"), str(own / "trace.json")
+            with os.fdopen(os.open(traced, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w",
+                           encoding="utf-8") as sink:
+                json.dump({"nonce": nonce, "functions": trace.functions, "effects": trace.effects}, sink)
+        cmd = [python, "-I", "-B", "-X", "utf8", "-c", _BOOT_TRACED if traced else _BOOT, json.dumps(entries),
+               "1" if network else "0",
+               target, source, str(counted), str(variables), str(own / "loaded.json"), str(LOADED_LIMIT), traced,
+               trace_out, *ids, "-q",
                "-p", "no:cacheprovider",
                f"--junitxml={report}", *own_config, f"--log-file={own / 'pytest.log'}",
                "--log-file-level=100"]
@@ -3193,6 +3554,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         output, counts = _output(log), _counts(report, repo, tuple(Path(entry) for entry in entries))
         progress = _progress(counts or {}, counted)
         seen[:] = _loaded(own / "loaded.json")
+        if trace is not None:
+            trace.observed = read_trace(Path(trace_out), nonce)
         if counts is not None:
             counts = progress
     try:
@@ -4086,7 +4449,7 @@ OLD_TEST_LIMIT = "the limit of {n} old test file(s) was reached"
 
 def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = (), timeout_s: int = DEFAULT_TIMEOUT_S,
                 network: bool = False, overlay: dict[str, str] | None = None, require_isolation: bool = False,
-                receipt: bool = False) -> dict:
+                receipt: bool = False, trace: CallTrace | None = None) -> dict:
     """``tests`` (files, folders or ``file::test`` ids) as they are now, run against the base commit's code: in a copy
     (``repository_copy``, with its caps), every file the change touched is put back as it was at the base commit
     (``_base_revision``) except the files and folders ``tests`` name, which keep their text now. A check that passes
@@ -4106,7 +4469,7 @@ def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = ()
                 return _run(copy, tests, roots=roots, timeout_s=bound, network=network, copied=True,
                             python=interpreter(change.repo), scratch_dir=copy.parent, deadline=deadline,
                             require_isolation=require_isolation, links=report, receipt=receipt,
-                            _receipt_repository=change.repo)
+                            _receipt_repository=change.repo, trace=trace)
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
     except (OSError, RepoRefused, CopyNotRun) as exc:
