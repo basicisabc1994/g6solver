@@ -131,8 +131,16 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
 def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
     """Retain the run's saved origins; never rebind old report content to the current request."""
     from g6.core.cloud_consent import Source, bind_output, repository_source, freeze_output
+    from g6.core.door import blocked_reply
     from g6.harness import completion_loop
+    from g6.workforce import repo_tests
+    try:
+        repo = str(repo_tests.admit_folder(repo))
+    except repo_tests.RepoRefused as exc:
+        return blocked_reply(f"[{exc.code}] {exc}")
     result = _step(repo, task, session, base, reason)
+    if str(result.get('error', '')).startswith('[G6_E_INPUT_VALIDATION]'):
+        return result
     if result.get('action') == completion_loop.WAIT:
         # The running step owns the state. This reply contains only fresh host
         # envelope fields and the fixed busy message; do not load its report.

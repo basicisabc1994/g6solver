@@ -1105,18 +1105,53 @@ def elsewhere(text: str) -> str | None:
     return None
 
 
+def _folder_problem(text: str) -> str | None:
+    """Folder grammar, before a filesystem call can discard a spelling or open a stream."""
+    if why := elsewhere(text):
+        return why
+    if os.name == "nt":
+        drive, tail = os.path.splitdrive(text)
+        if ":" in tail or (drive and not re.fullmatch(r"[A-Za-z]:", drive)):
+            return _DEVICE
+        for part in tail.replace("\\", "/").split("/"):
+            if part and part not in {".", ".."} and (
+                    part.endswith((".", " ")) or PureWindowsPath(part).is_reserved()):
+                return _DEVICE
+    return None
+
+
+def admit_folder(text: str | Path) -> Path:
+    """Expand a folder completely, admit its words, then resolve and admit its destination.
+
+    All request-folder transformations belong here. Expansion and cwd joining read no filesystem;
+    spelling checks run before resolution can open a share or erase a refused component.
+    """
+    try:
+        expanded = os.path.expandvars(os.path.expanduser(os.path.expandvars(str(text))))
+        # Joining keeps components such as NUL/.. intact for admission; abspath would erase them.
+        expanded = os.path.join(os.getcwd(), expanded)
+        if why := _folder_problem(expanded):
+            raise RepoRefused("G6_E_INPUT_VALIDATION", why)
+        root = Path(expanded).resolve()
+        if why := _folder_problem(str(root)):
+            raise RepoRefused("G6_E_INPUT_VALIDATION", why)
+        return root
+    except RepoRefused:
+        raise
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise RepoRefused("G6_E_INPUT_VALIDATION", "the folder path cannot be admitted") from exc
+
+
 def checked_repo(path: str | Path) -> Path:
     """The repository's top folder, or a refusal: a full path, a folder, a git work tree, and its top. A network or
     device path is refused on its words, before anything asks the file system about it (``storage._elsewhere``, the
     rule every path entry point applies first): asking Windows about a share opens it over the network."""
-    if why := elsewhere(str(path)):
-        raise RepoRefused("G6_E_INPUT_VALIDATION", why)
     given = Path(str(path))
     if not given.is_absolute():
         raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["not_absolute"])
-    if not given.is_dir():
+    repo = admit_folder(path)
+    if not repo.is_dir():
         raise RepoRefused("G6_E_GIT_REPO_INVALID", SAID["not_a_folder"])
-    repo = given.resolve()
     try:
         top = _git(repo, "rev-parse", "--show-toplevel").decode("utf-8", "replace").strip()
     except RepoRefused as refused:
@@ -1125,7 +1160,7 @@ def checked_repo(path: str | Path) -> Path:
         if refused.code == "G6_E_GIT_MISSING_BINARY" or isinstance(refused.__cause__, git_env.UnsafeGitConfig):
             raise
         raise RepoRefused("G6_E_GIT_REPO_INVALID", SAID["not_git"]) from refused
-    if Path(top).resolve() != repo:
+    if admit_folder(top) != repo:
         raise RepoRefused("G6_E_GIT_REPO_INVALID", SAID["not_top"].format(top=top))
     return repo
 

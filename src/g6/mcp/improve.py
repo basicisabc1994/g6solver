@@ -100,6 +100,7 @@ from g6.self_maintenance.envelope import (
 )
 from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, utc, windows_from
 from g6.workspace._coordination import Coordination
+from g6.workforce.repo_tests import RepoRefused, admit_folder
 
 #: What ``G6_MCP_SENSITIVE`` lists for starting the runner: ``metaharness.improve``, or ``metaharness``.
 SENSITIVE = ("metaharness", "improve")
@@ -161,26 +162,13 @@ def refused() -> dict | None:
         "The person must allow it themselves. Tell the person and stop."))
 
 
-def _elsewhere_folder(folder: Any) -> dict | None:
-    """A network or device folder, refused on its words before anything asks the file system about it
-    (``storage._elsewhere``, as ``repo_tests.checked_repo``): asking Windows about a share opens it over the network.
-    A stop never asks this: it must reach any runner, wherever its folder is."""
-    from g6.workforce.repo_tests import elsewhere
-
-    why = elsewhere(folder) if isinstance(folder, str) else None
-    return _blocked(NOT_A_FOLDER, f"{why}; nothing was done", "Name a local folder.") if why else None
-
-
 def _root(folder: str, *, stop_request: bool = False) -> Path:
     """The folder named, or the default: beside G6's state folder and not in it, since the server, the completion loop and
     test runs all write there, and nothing but the loop writes here. A loop already in the earlier default stays where it
     is, so that a stop with no folder named still reaches its runner. A stop leaves an unreadable default selection
     unresolved and denied, rather than silently choosing a different folder."""
     if folder.strip():
-        try:
-            return Path(folder).expanduser().resolve()
-        except (OSError, ValueError):
-            return Path(folder)  # malformed locators are refused by _is_a_loop without touching their state
+        return admit_folder(folder)
     home = g6_home()
     default, earlier = home.with_name(f"{home.name}-improve"), home / "improve"
     return earlier if _is_a_loop(earlier, raise_errors=stop_request) and not _is_a_loop(
@@ -382,11 +370,12 @@ def asked(folder: str) -> tuple[Path, str, dict[str, Any]] | dict:
     gives the same binding: a change while it was made makes it again, and settings or a reading that cannot be used then
     refuse as they would before it. Every statement that touches a file runs inside its one handler, and every refusal is
     ``_refusal``'s."""
-    if (away := _elsewhere_folder(folder)) is not None:
-        return away
     root = Path(folder)                     # the folder as given, for a refusal before it is found
     try:
         root = _root(folder)
+    except RepoRefused as exc:
+        return _blocked(NOT_A_FOLDER, f"{exc}; nothing was done", "Name a local folder.")
+    try:
         for _ in range(DIALOG_TRIES):
             reading = admission(root, stop_in_force(root))
             cannot, _ = _cannot_start(root, reading)
@@ -785,9 +774,10 @@ def asked_act(act_name: str, folder: str, generation: int | None = None) -> tupl
     folder is read again before the dialog is shown, and a binding that moved meanwhile asks nothing."""
     from g6.metaharness.runner import moved, person_terms
 
-    if (away := _elsewhere_folder(folder)) is not None:
-        return away
-    root = _root(folder)
+    try:
+        root = _root(folder)
+    except RepoRefused as exc:
+        return _blocked(NOT_A_FOLDER, f"{exc}; nothing was done", "Name a local folder.")
     cannot = _cannot_act(act_name, root, generation)
     if cannot is not None:
         return cannot
@@ -1200,15 +1190,16 @@ def status(folder: str) -> dict:
     else cannot be read or used, however it fails, a field of the records among them, is said beside the stop
     (``_unread_status``), never raised. A pause is what holds the ticks until a person lifts it (``runner.held``): the
     pause on record, or the cycles that hold them when their pause could not be written."""
-    if (away := _elsewhere_folder(folder)) is not None:
-        return away
     root, halted = Path(folder), None      # the folder as given, for a reply before it is found
+    try:
+        root = _root(folder)
+    except RepoRefused as exc:
+        return _blocked(NOT_A_FOLDER, f"{exc}; nothing was done", "Name a local folder.")
     try:
         from g6.metaharness.loop import STATUS_LINE
         from g6.metaharness.runner import held as held_by
         from g6.metaharness.shadow import lineage
 
-        root = _root(folder)
         if not _is_a_loop(root):
             return _not_a_loop(root)
         halted = stop_in_force(root)       # first: the one reading of the stop's files and the records, opened no more
