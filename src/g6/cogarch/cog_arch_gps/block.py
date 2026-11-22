@@ -23,7 +23,7 @@ from g6.cogarch import _reply
 from g6.cogarch.cog_arch_gps import engine
 from g6.core.ai_block import AIBlock
 from g6.core.contract_decorator import block_contract
-from g6.core.llm import CONFIGURE_MODEL, LLMError, extract_json
+from g6.core.llm import LLMError, extract_json
 from g6.core.maturity import component_maturity
 from g6.core.result import Result
 from g6.core.storage import state_path
@@ -62,8 +62,7 @@ _ACTIONS: dict[str, str] = {
              "domain, such as a PDDL planner.",
     CAP: "Raise the cap named, within its ceiling, or give a smaller problem.",
     INPUT: "Correct the request as the reason says.",
-    NO_MODEL: f"To give G6 a model, {CONFIGURE_MODEL}. Or give the block a model caller from Python "
-              "(CogArchGpsBlock(caller=...)), or write the problem yourself and call solve.",
+    NO_MODEL: "Tell the person G6 has no model configured. Setting it up is the person's decision.",
     MODEL_FAILED: "The model call failed, so nothing was encoded. Try again, or with another caller.",
     MALFORMED: "The model did not write a problem in the form asked: nothing was offered. Try again, or write the "
                "problem yourself.",

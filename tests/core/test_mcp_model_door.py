@@ -15,6 +15,7 @@ import pytest
 from g6.core import llm
 from g6.core.registry import ComponentRef, ComponentRegistry, get_registry
 from g6.mcp import invoke_reply
+from tests.guidance_expectations import MODEL_ACTION, no_setup
 
 #: Each component whose block takes a model, and the constructor keyword it takes it by.
 TAKES_A_MODEL = {"adapt_healing": "caller", "adapt_library_synthesizer": "caller", "component_creator": "caller",
@@ -57,9 +58,13 @@ def test_with_no_model_configured_the_refusal_says_how_to_configure_one(none_con
     assert not reply["ok"] and reply["result"]["code"] == "G6_E_GPS_NO_MODEL"   # a block: ok is false, the answer stays
     said = json.dumps(reply["result"])
     assert "none over MCP" not in said
-    assert "G6_LLM_PROVIDER=claude_code" in said and "G6_LLM_PROVIDER=codex" in said and "ollama" in said
-    assert ".g6" in said   # the key file
-    # Restoring the old "there is none over MCP" wording in cog_arch_gps makes this fail.
+    assert reply["completion_state"] == "blocked-escalated"
+    assert reply["result"]["warning_card"]["suggested_action"] == MODEL_ACTION
+    assert reply["result"]["evidence"]
+    no_setup(reply)
+    from g6.cli import doctor
+    person = doctor._model({}, {}).fix
+    assert "G6_LLM_PROVIDER=claude_code" in person and "codex" in person and "ollama" in person
 
 
 def test_a_setting_g6_cannot_use_is_said_when_the_model_is_asked(key_file, monkeypatch: pytest.MonkeyPatch) -> None:
