@@ -35,7 +35,7 @@ def require_model_session(caller):
     """An agent using a tool-less host completion still needs explicit session approval."""
     from g6.core import host_models
     from g6.core.consent_callers import destination
-    from g6.core.llm import model_calls_disabled
+    from g6.agents._model_gate import model_calls_disabled
     if model_calls_disabled():
         raise AgentRefusal('G6_E_LLM_DISABLED', 'model calls are disabled by G6_DISABLE_LLM',
                            detail={'started': False})
@@ -48,7 +48,7 @@ def require_model_session(caller):
 @contextmanager
 def process_admission(provider, prompt, cwd, *, local=False, directories=()):
     from g6.core import host_models
-    from g6.core.llm import model_calls_disabled
+    from g6.agents._model_gate import model_calls_disabled
     if model_calls_disabled():
         raise AgentRefusal('G6_E_LLM_DISABLED', 'model calls are disabled by G6_DISABLE_LLM',
                            detail={'started': False})
@@ -68,7 +68,7 @@ def process_admission(provider, prompt, cwd, *, local=False, directories=()):
                                    'a coding-agent session needs its explicit G6_LLM_PROVIDER in the key file',
                                    detail={'started': False})
             if not local:
-                from g6.core.llm import _check_model_send
+                from g6.agents._model_gate import _check_model_send
                 _check_model_send()
             yield
     except LLMError as exc:
@@ -92,7 +92,7 @@ def consent_run(runner, argv, *, provider, prompt, cwd, stop=None, **kwargs):
     in process, ``G6_STOP``, or the ``STOP`` file); each refusal carries ``detail["started"] = False``. The stop is
     then handed to the runner, so a session under way is ended when it engages. A stand-in whose ``run`` takes no
     ``stop`` is still held to the check before the start."""
-    from g6.core.llm import model_calls_disabled
+    from g6.agents._model_gate import model_calls_disabled
     from g6.agents._runtime import codes
     from g6.agents._runtime.cli import CliAgentRunner, _stopped
     from g6.core import stop as core_stop

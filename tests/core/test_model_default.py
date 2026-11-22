@@ -189,7 +189,8 @@ def test_decline_is_durable_and_stale_dialog_cannot_replace_new_decision(monkeyp
         return Consent('declined')
 
     monkeypatch.setattr(adapter, 'request_consent', decline)
-    assert asyncio.run(adapter.request_grant(object(), source, provider))['status'] == 'declined'
+    ctx = SimpleNamespace(session=object())   # request_grant reads the MCP session (g6.mcp.repair, from the base)
+    assert asyncio.run(adapter.request_grant(ctx, source, provider))['status'] == 'declined'
     allowed, revision = policy.preview(source, provider)
     assert not allowed and revision, 'a person\'s decline must leave a durable negative decision'
     with policy.collect_sources() as capture:

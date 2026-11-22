@@ -1,4 +1,5 @@
 """Send-time opt-out and request lifetime; all provider traffic is synthetic."""
+import sys
 from contextvars import copy_context
 from threading import Event
 
@@ -7,6 +8,10 @@ import pytest
 from g6.core import cloud_consent as cloud, consent_callers, host_models, llm
 from g6.core.consent_declarations import contract
 from tests.host_stand_in import stand_in_hosts
+
+#: The reviewed bodies are `ast.dump` text as Python 3.12 writes it; from 3.13 the dump leaves out empty fields unless
+#: asked to show them (as tests/s16r1/test_source_test_inventory.py asks), so 3.13 asks.
+_DUMP = {'show_empty': True} if sys.version_info >= (3, 13) else {}
 
 
 @pytest.fixture(params=('native', 'watched'))
@@ -261,6 +266,8 @@ def test_every_physical_model_send_reaches_the_one_gate():
         ('csf/rollback.py', 'GitCheckpoint._git'): (1, 'local Git checkpoint operation'),
         ('core/promotion_custody.py', '_call_service'): (1, 'local isolated evaluator service'),
         ('mcp/improve.py', '_spawn'): (1, 'local metaharness Python loop; model calls gated in child'),
+        ('_agentic/_child.py', 'launch'): (1, 'agentic kernel confined Python child: no network, key or sign-in; the '
+                                              'parent asks the model through its gated caller'),
         ('mcp/improve.py', '_run_act'): (1, 'local confirmed action runner; not a model client'),
         ('mcp/mission.py', 'register'): (1, 'local Git setup operation'),
         ('workforce/repo_tests.py', '_bounded'): (1, 'local repository test command'),
@@ -292,7 +299,7 @@ def test_every_physical_model_send_reaches_the_one_gate():
     assert dispositions.keys() == REVIEWED_TRANSPORT_BODIES.keys(), 'unbound reviewed dispositions'
     for key, (count, reason) in dispositions.items():
         assert reason and len(sites[key]) == count, (key, 'changed transport needs reviewed disposition', sites[key])
-        fingerprint = hashlib.sha256(ast.dump(definition(*key)).encode()).hexdigest()
+        fingerprint = hashlib.sha256(ast.dump(definition(*key), **_DUMP).encode()).hexdigest()
         assert fingerprint == REVIEWED_TRANSPORT_BODIES[key], (key, 'changed body needs reviewed disposition')
     # A route is credited only when its body reaches the gate, including shared helpers.
     helpers = {

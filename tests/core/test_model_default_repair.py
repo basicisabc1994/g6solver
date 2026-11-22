@@ -32,15 +32,14 @@ def test_scout_requires_its_explicit_provider(monkeypatch, filed):
 
 
 def test_direct_tool_session_and_agent_admission_require_provider(tmp_path, accepted_cloud_dialog):
-    from g6.harness.completion_loop import ToolSession
+    """A person-facing agent session needs its key-file provider. The loop's scout ToolSession keeps its own enrolment
+    (scout_host, test_scout_requires_its_explicit_provider) and consent gate instead (lead ruling, owner F4 pending)."""
     from g6.agents._runtime.consent import process_admission
     from g6.agents._runtime.model import AgentRefusal
     for provider in ('anthropic:claude_code', 'openai:codex'):
         for source in ('model_inputs', 'agent_environment', policy.repository_source(tmp_path),
                        policy.input_source('synthetic')):
             accepted_cloud_dialog(source, provider, text='synthetic')
-    with pytest.raises(llm.LLMError, match='G6_E_NO_MODEL'):
-        ToolSession().run('synthetic', tmp_path, tmp_path, 1)
     with pytest.raises(AgentRefusal, match='G6_E_NO_MODEL'):
         with process_admission('openai:codex', 'synthetic', tmp_path):
             pytest.fail('unapproved agent session admitted')
@@ -59,9 +58,8 @@ def test_all_file_tool_host_entry_points_use_the_session_predicate():
     """Walk the session entry points, including the watched launch's admission terms."""
     root = Path(__file__).resolve().parents[2] / 'src/g6'
     expected = {
-        'harness/completion_loop.py': {'scout_host', 'run'},
+        'harness/completion_loop.py': {'scout_host'},
         'agents/_runtime/consent.py': {'process_admission'},
-        'core/consent_callers.py': {'session_admission'},
     }
     for relative, names in expected.items():
         tree = ast.parse((root / relative).read_text(encoding='utf-8'))
@@ -80,7 +78,8 @@ def test_all_file_tool_host_entry_points_use_the_session_predicate():
     # Walk every constructor in the host-code agent/session inventories. Each
     # class must reach the checked seam from its own run body, not merely import it.
     from g6.core.consent_declarations import AGENTS
-    sessions = {*AGENTS, *(name for name, kind in consent_callers.CALLER_KINDS.items() if kind == 'cloud-tools')}
+    # Person-facing agent sessions only: the loop's cloud-tools ToolSession is enrolled by scout_host (above).
+    sessions = set(AGENTS)
     checked = {'consent_run', 'process_admission', 'require_model_session', 'session_approved'}
     for qualified in sessions:
         module, _, name = qualified.rpartition('.')

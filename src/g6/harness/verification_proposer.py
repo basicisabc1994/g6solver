@@ -361,7 +361,8 @@ class Proposer:
         if skip:
             self.ready = skip
         elif isinstance(raw, NoModel):
-            self.ready = (f"no model is available for G6 ({raw.reason or 'no installed host or key-file opt-out'}), "
+            self.ready = (f"no model is configured or available for G6 "
+                          f"({raw.reason or 'no installed host or key-file opt-out'}), "
                           "so the proposer asked none; tool-less completions use the calling host by default")
         elif isinstance(raw, UnusableModel) or not callable(getattr(raw, "complete", None)):
             self.ready = f"the configured model cannot be used: {getattr(raw, 'reason', 'it has no complete method')}"

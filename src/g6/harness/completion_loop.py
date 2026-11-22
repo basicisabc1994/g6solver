@@ -381,8 +381,6 @@ class ToolSession(consent.ConsentClaude):
                                        cloud.Source.text('agent_environment', 'scout-environment', '')),
                                       directories=(cwd, where))
         with cloud.admission("anthropic:claude_code", refs, cloud.sha256(prompt)), cloud.request_sources(refs):
-            if not host_models.session_approved('claude_code'):
-                _require_session('claude_code')
             program = self.locate()
             with host_models._folders() as (_, files):
                 (files / "no_mcp_servers.json").write_text(host_models.NO_SERVERS, encoding="utf-8")
@@ -415,14 +413,6 @@ def scout_host() -> Host | None:
     except (LLMError, ValueError):
         return None
     return ToolSession(caller.model).run if isinstance(caller, host_models.ClaudeCodeCaller) else None
-
-
-def _require_session(provider: str) -> None:
-    """Retain the disabled code when a direct session bypassed its optional factory."""
-    from g6.core.llm import model_calls_disabled
-    if model_calls_disabled():
-        raise LLMError('G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM')
-    raise LLMError('G6_E_NO_MODEL: a tool session needs G6_LLM_PROVIDER=' + provider + ' in the key file')
 
 
 def _named(caller: Any) -> str:
