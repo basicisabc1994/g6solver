@@ -11,6 +11,7 @@ import contextlib
 import contextvars
 import functools
 import json
+import threading
 import weakref
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -75,11 +76,24 @@ class Witness:
     message's own write; ``written(message)`` (G6's stdio writer once the whole line was written and flushed, or the
     in-process client once it took it) fires the callback, once; ``discard`` removes one without firing.
     ``untaken_discard`` (a send cancelled or failed on the sender's side) discards only a message the stream never
-    took. ``close`` (the connection ended) discards every callback still held, firing none."""
+    took. ``close`` (the connection ended) discards every callback still held, firing none. ``claim`` (a synchronous
+    tool body about to start) succeeds only while the connection is open."""
 
     def __init__(self) -> None:
         self._expected: dict[int, tuple[SessionMessage, Callable[[], None]]] = {}
         self._taken: set[int] = set()
+        self._gate = threading.Lock()
+        self._open = True
+
+    def claim(self) -> None:
+        """A synchronous tool body on this connection is about to start, in its worker thread. The claim and ``close``
+        take the connection's lock, so a body claims its start either before the connection ends (it runs; once the
+        connection ends it is abandoned, never waited on, sent, admitted or counted) or not at all: none starts after.
+        A call already cancelled does not start either."""
+        with self._gate:
+            if not self._open:
+                raise RuntimeError("the connection ended before this tool started")
+            anyio.from_thread.check_cancelled()
 
     def expect(self, message: SessionMessage, callback: Callable[[], None]) -> int:
         self._expected[id(message)] = (message, callback)      # the message held, so its identity is not reused
@@ -107,6 +121,8 @@ class Witness:
                 pass
 
     def close(self) -> None:
+        with self._gate:
+            self._open = False
         self._expected.clear()
         self._taken.clear()
 
@@ -153,6 +169,30 @@ def unwitness(stream) -> None:
             seen.close()
     except Exception:  # noqa: BLE001 - connection cleanup never replaces the error that ended the connection
         pass
+
+
+#: The witness of the connection G6 owns that a tool call runs on, copied into each request's task and worker thread.
+_CONNECTION: contextvars.ContextVar[Witness | None] = contextvars.ContextVar('g6_mcp_connection', default=None)
+
+
+@contextmanager
+def calls_on(seen: Witness):
+    """Tool calls started inside run on the connection ``seen`` witnesses: a synchronous body claims its start there."""
+    token = _CONNECTION.set(seen)
+    try:
+        yield
+    finally:
+        _CONNECTION.reset(token)
+
+
+def claim_start() -> None:
+    """A synchronous tool body is about to start, in its worker thread: on a connection G6 owns it claims its start
+    (``Witness.claim``); elsewhere a call already cancelled does not start."""
+    seen = _CONNECTION.get()
+    if seen is None:
+        anyio.from_thread.check_cancelled()
+    else:
+        seen.claim()
 
 
 class _Taking:
@@ -206,9 +246,10 @@ def _memory_transport():
                 seen, raised = witness(server_write), None
                 try:
                     async with anyio.create_task_group() as tg, _enter_server_lifespan(server=self.server):
-                        tg.start_soon(lambda: self.server._mcp_server.run(
-                            server_read, server_write, self.server._mcp_server.create_initialization_options(),
-                            raise_exceptions=self.raise_exceptions))
+                        with calls_on(seen):           # the server's task, and so each of its calls, runs on it
+                            tg.start_soon(lambda: self.server._mcp_server.run(
+                                server_read, server_write, self.server._mcp_server.create_initialization_options(),
+                                raise_exceptions=self.raise_exceptions))
                         try:
                             async with ClientSession(read_stream=_Taking(client_read, seen),
                                                      write_stream=client_write, **session_kwargs) as client_session:
@@ -216,6 +257,7 @@ def _memory_transport():
                         except BaseException as exc:  # noqa: BLE001 - raised again once the group closed, as FastMCP
                             raised = exc
                         finally:
+                            unwitness(server_write)    # ended before it is cancelled: no body starts after this
                             tg.cancel_scope.cancel()
                 finally:
                     # the connection ended, on whatever path (an error, a cancellation): a reply it never read is

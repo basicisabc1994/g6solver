@@ -31,11 +31,13 @@ def public_tool(fn):
 
 
 def _in_thread(fn, *args, **kwargs):
-    """A synchronous tool body, in its worker thread. It does not start once its call's connection is ending (the
-    calling scope was cancelled, as when G6's stdio writer failed). Python cannot stop a thread, so a body already
-    running runs on; its caller is abandoned (``abandon_on_cancel``): the connection does not wait for it, and what it
-    returns is never sent, admitted or counted."""
-    anyio.from_thread.check_cancelled()
+    """A synchronous tool body, in its worker thread. It starts only if it claimed its start while its call's
+    connection was open (``g6.mcp.consent_transport.claim_start``, under that connection's lock), and its call was not
+    cancelled. Python cannot stop a thread, so a body already started runs on; its caller is abandoned
+    (``abandon_on_cancel``): the connection does not wait for it, and what it returns is never sent, admitted or
+    counted."""
+    from g6.mcp.consent_transport import claim_start
+    claim_start()
     return fn(*args, **kwargs)
 
 
