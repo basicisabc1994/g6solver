@@ -180,14 +180,15 @@ def _words(text: str) -> str:
     return text
 
 
-def _at_base(assessment: dict) -> dict[str, str]:
+def _at_base(assessment: dict, runs: list[dict] | None = None) -> dict[str, str]:
     """Each stated check's own observation at the base commit, from the review's run there (empty when none ran), read
     by the review's one rule (``patch_review.at_base_observations``; review 4's finding 1): a set-up or teardown error
-    there is no failure of the check, so it never shows the check exercises the change."""
+    there is no failure of the check, so it never shows the check exercises the change. ``runs`` narrows the scope's
+    runs; the assessment itself is always passed whole, so its attribution is never dropped."""
     from g6.harness.patch_review import at_base_observations   # the one rule; patch_review imports this module lazily
 
-    return at_base_observations([run for run in (assessment.get("scope") or {}).get("checks_run") or []
-                                 if _observed(assessment, run)])
+    runs = ((assessment.get("scope") or {}).get("checks_run") or []) if runs is None else runs
+    return at_base_observations([run for run in runs if _observed(assessment, run)])
 
 
 def _observed(assessment: dict, item: dict | None = None) -> bool:
@@ -209,12 +210,28 @@ def _observed(assessment: dict, item: dict | None = None) -> bool:
         one.get("evidence_status", inherited) == "observed_by_g6" for one in leaves)
 
 
+#: Text Markdown and HTML read nothing in: letters, digits, spaces, plain punctuation, an underscore only inside a word.
+_INERT = re.compile(r"(?:[A-Za-z0-9 ,.;:'()/?%-]|(?<=[A-Za-z0-9])_(?=[A-Za-z0-9]))+\Z")
+
+
+def _inert(value: object) -> str:
+    """A value from the report's input, in prose: an exact int or a plain G6 word as it is (the report's historical
+    text), anything else as one inert code span."""
+    if type(value) is int:
+        return str(value)
+    if isinstance(value, str) and value == value.strip() and _INERT.match(value):
+        return value
+    return code(value)
+
+
 def _assertion(item: dict) -> str:
     verdict = item.get("verdict", item.get("result"))
     if verdict in ("failed", "fail", "crashed", "timed_out", "run_inconsistent"):
         return f"the agent reports {code(verdict)}; G6 did not run it"
-    if item.get("passed") is not None or item.get("verdict", item.get("result")) in ("pass", "passed"):
-        return f"the agent reports {item.get('passed', 'an unspecified number')} passed; G6 did not run it"
+    passed = item.get("passed")
+    if passed is not None or verdict in ("pass", "passed"):   # a count is an exact int; anything else is no count
+        count = str(passed) if type(passed) is int else "an unspecified number"
+        return f"the agent reports {count} passed; G6 did not run it"
     return f"the agent reports {code(item.get('verdict', item.get('result', 'a result')))}; G6 did not run it"
 
 
@@ -265,7 +282,7 @@ def _findings(assessment: dict) -> list[list[str]]:
 
     completion = assessment.get("completion") or {}
     defects = completion.get("defects_reproduced") or {}
-    items = [[f"- **Test integrity: {INTEGRITY.get(r['code'], 'the tests cannot be trusted')}** ({r['code']}): "
+    items = [[f"- **Test integrity: {INTEGRITY.get(r['code'], 'the tests cannot be trusted')}** ({_inert(r['code'])}): "
               f"{code(_words(str(r.get('detail', ''))))}", *([IGNORED_TO_DO] if r["code"] in TO_DO else [])]
              for r in assessment.get("reasons", []) if r.get("stage") == "integrity"]
     for found in defects.get("stated_and_repository_checks", []):
@@ -273,7 +290,7 @@ def _findings(assessment: dict) -> list[list[str]]:
         requirements = ", ".join(show(r) + _issuer(assessment, r, " ({})") for r in found.get("requirements", [])
                                  ) or "no stated requirement"
         reproduction = found.get("reproduction") or {}
-        head = (f"- **{FAILED.get(found.get('code'), 'A check failed')}** ({found.get('code')}) for {requirements}: "
+        head = (f"- **{FAILED.get(found.get('code'), 'A check failed')}** ({_inert(found.get('code'))}) for {requirements}: "
                 f"{show(found.get('check', ''))}")
         if reproduction.get("kind") != "static" and not _observed(assessment, found):
             items.append([head, f"  - {_assertion(found)}; stated reproduction: "
@@ -282,7 +299,7 @@ def _findings(assessment: dict) -> list[list[str]]:
         if reproduction.get("kind") == "static":
             imports = reproduction.get("imports") or [{}]
             first = imports[0]
-            how = (f"  - Read from the files, no code runs: {code(first.get('file', ''))} line {first.get('line', '?')} "
+            how = (f"  - Read from the files, no code runs: {code(first.get('file', ''))} line {_inert(first.get('line', '?'))} "
                    f"holds {code(first.get('text', ''))}; the base commit's files have no such import"
                    + (f"; the repository's own linter: {code(reproduction['command'])}" if reproduction.get("command")
                       else ""))
@@ -298,7 +315,7 @@ def _findings(assessment: dict) -> list[list[str]]:
     for found in defects.get("proposed_checks", []):
         reproduction = found.get("reproduction") or {}
         head = (f"- **{UNCONFIRMED.get(found.get('result'), 'A proposed check found a difference, not confirmed')}** "
-                f"({found.get('code')}) for {code(found.get('requirement', ''))}: {code(found.get('check', ''))}")
+                f"({_inert(found.get('code'))}) for {code(found.get('requirement', ''))}: {code(found.get('check', ''))}")
         if not _observed(assessment, found):
             items.append([head, f"  - {_assertion(found)}; stated reproduction: "
                                 f"{_plain(reproduction.get('node', ''))}."])
@@ -363,6 +380,8 @@ def _base_words(outcomes: dict) -> str:
     """What the stated checks' run against the base commit's code shows: one that fails there exercises the change,
     one that passes there too may not, and one that could not run there shows neither."""
     total = len(outcomes)
+    if not total:   # no outcome at the base: nothing failed there, so nothing shows the checks exercise the change
+        return "no stated check has an outcome at the base commit, so G6 cannot say whether they exercise the change"
     fail = sum(verdict in ("failed", "timed_out") for verdict in outcomes.values())
     passing = sum(verdict == "passed" for verdict in outcomes.values())
     unrun = total - fail - passing
@@ -418,7 +437,7 @@ def _steps(assessment: dict) -> list[str]:
         if not _observed(assessment, run):
             shown.append(f"{name}: {_assertion(run)}")
         elif run.get("check") == "stated checks at the base commit" and run.get("outcomes"):
-            shown.append(_base_words(_at_base({**assessment, "scope": {"checks_run": [run]}})))
+            shown.append(_base_words(_at_base(assessment, [run])))
         elif run.get("verdict") == "run_inconsistent":   # the owner's ruling (2026-10-29): said plainly, no accusation
             shown.append(f"{name}: passed by pytest's own count, but the process exited with an error afterwards "
                          f"({code('run_inconsistent')}), so they are not counted as passed")
@@ -547,7 +566,8 @@ def _loop_lines(loop: dict) -> list[str]:
               f"no counterexample found in {ran} probes; that does not show the patch is right" if ran else
               "no probe ran, so the loop says nothing for or against the patch")
     lines = ["## What the completion loop tested",
-             f"- **Stopped:** {loop.get('reason')}, after {loop.get('repairs')} of at most {loop.get('max_repairs')} "
+             f"- **Stopped:** {_inert(loop.get('reason'))}, after {_inert(loop.get('repairs'))} of at most "
+             f"{_inert(loop.get('max_repairs'))} "
              "repairs.", f"- **Result:** {result}."]
     if ran and loop.get("boundary"):   # the review below ran no test of its own, so its isolation says nothing of these
         lines.append(f"- **Boundary:** the probes ran inside {code(loop['boundary'])}, in scratch copies with no network.")
@@ -558,7 +578,7 @@ def _loop_lines(loop: dict) -> list[str]:
     for one in sets:
         kind = "hidden from the agent" if one.get("hidden") else "the agent could read it"
         lines.append(f"- Left out {code(one['label'])} ({kind}): {code(one['left_out'], 200)}" if one.get("left_out") else
-                     f"- Ran {code(one['label'])} ({kind}): {one['ran']} probes.")
+                     f"- Ran {code(one['label'])} ({kind}): {_inert(one['ran'])} probes.")
         lines += [f"  - Refused: {code(why, 200)}" for why in (one.get("refused") or [])[:2]]
     critic = loop.get("critic")
     lines.append("- No reviewer from another model family read the patch." if critic is None else
@@ -623,10 +643,10 @@ def _review_lines(loop: dict) -> list[str]:
         lines.append(f"- **The agent left the code as it was.** Its reason: {code(loop['left'], 300)}.")
     if loop.get("no_clean"):
         error = reviews[-1].get("error") if reviews else ""
-        lines.append(f"- **No clean review:** {loop.get('reason')}" + (f": {code(error, 200)}." if error else "."))
+        lines.append(f"- **No clean review:** {_inert(loop.get('reason'))}" + (f": {code(error, 200)}." if error else "."))
     lines += ["", "## How the loop ran",
-              f"- **Stopped:** {loop.get('reason')}, after {len(reviews)} review{'s' if len(reviews) != 1 else ''} and "
-              f"{loop.get('repairs')} of at most {loop.get('max_repairs')} repairs."]
+              f"- **Stopped:** {_inert(loop.get('reason'))}, after {len(reviews)} review{'s' if len(reviews) != 1 else ''} and "
+              f"{_inert(loop.get('repairs'))} of at most {_inert(loop.get('max_repairs'))} repairs."]
     if reviews:
         lines.append(f"- A reviewer from another model family read the patch {_times(len(reviews))}: "
                      + ", ".join(code(one.get("verdict")) for one in reviews) + ".")

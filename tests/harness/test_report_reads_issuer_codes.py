@@ -147,6 +147,8 @@ PLACES: dict[tuple[str, str], tuple[str, str]] = {
     ("_steps", "str(r.get('stage', '')).startswith"): ("search", "the stage G6 gave one of the review's own reasons"),
     ("_steps", "outcome.replace"): ("search", "the review's own outcome code, its underscores put as spaces"),
     ("_latest", "file in run['results']"): ("membership", MEMBERSHIP),
+    ("_inert", "_INERT.match"): ("search", "the characters of a value from the report's input, to show it as plain "
+                                           "text or one inert code span; nothing is read for meaning"),
 }
 
 

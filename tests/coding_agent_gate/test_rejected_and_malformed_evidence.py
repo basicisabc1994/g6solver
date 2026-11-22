@@ -75,3 +75,33 @@ def test_in_python_an_unresolvable_ref_is_missing_and_an_unresolvable_root_is_re
     assert found.verdict == "revise" and "EVIDENCE_REF_MISSING" in {f.code for f in found.findings}
     with pytest.raises(ValueError, match="repo_root"):
         verify_answer(**TASK, evidence=[Evidence("file", "a.py")], repo_root=bad)
+
+
+def _repo(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_sum.py").write_text("def test_sum():\n    assert 1 + 1 == 2\n", encoding="utf-8")
+    return str(tmp_path)
+
+
+@pytest.mark.parametrize("command", [
+    "pytest tests", "pytest -q tests/", "python -m pytest tests/test_sum.py::test_sum", "pytest -q 2>&1",
+    "pytest -k sum tests", "tests/test_sum.py::test_sum", "pytest -q tests/test_sum.py > out.txt"])
+def test_every_reference_of_a_command_that_resolves_is_checked(tmp_path, command):
+    found = verify_answer(**TASK, evidence=[Evidence("test", command, exit_code=0)], repo_root=_repo(tmp_path))
+    assert "EVIDENCE_REF_MISSING" not in {f.code for f in found.findings}, found.to_dict()["findings"]
+    assert found.to_dict()["references_checked"] is True
+
+
+@pytest.mark.parametrize("command", [
+    "pytest ../outside_tests", "pytest no_such_folder", "pytest tests/no_such.py", "pytest -q \x00",
+    "pytest -q \ud800", "pytest -q tests; rm no_such_file"])
+def test_a_reference_that_does_not_resolve_is_missing(tmp_path, command):
+    found = verify_answer(**TASK, evidence=[Evidence("test", command, exit_code=0)], repo_root=_repo(tmp_path))
+    assert "EVIDENCE_REF_MISSING" in {f.code for f in found.findings}
+
+
+@pytest.mark.parametrize("command", ["npm test", "cargo test sum", "make check", "pytest -q \x00"])
+def test_a_reference_g6_cannot_classify_is_reported_and_scope_is_not_claimed(tmp_path, command):
+    out = verify_answer(**TASK, evidence=[Evidence("test", command, exit_code=0)], repo_root=_repo(tmp_path)).to_dict()
+    assert "EVIDENCE_REF_MISSING" in {f["code"] for f in out["findings"]}
+    assert out["references_checked"] is False and "not every reference" in out["reference_check"]

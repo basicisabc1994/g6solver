@@ -138,6 +138,7 @@ class GateDecision:
     checks_run: tuple[str, ...] = ()
     reviewer: str = "off"
     references_checked: bool = False
+    references_unchecked: tuple[str, ...] = ()
     next_actions: tuple[dict[str, Any], ...] = ()
 
     @property
@@ -182,7 +183,9 @@ class GateDecision:
             "findings": [{"code": f.code, "severity": f.severity, "message": f.message} for f in self.findings],
             "missing_evidence": self.missing_evidence, "evidence_basis": self.evidence_basis,
             "evidence_status": self.evidence_status, "references_checked": self.references_checked,
-            "reference_check": "checked within supplied scope" if self.references_checked else "not checked: no repository root or path list supplied",
+            "reference_check": "checked within supplied scope" if self.references_checked else (
+                f"not every reference was checked: {len(self.references_unchecked)} could not be"
+                if self.references_unchecked else "not checked: no repository root or path list supplied"),
             "next_actions": list(self.next_actions),
             "evidence_counted": [e.to_dict() for e in self.counted],
             "evidence_rejected": [{**e.to_dict(), "reason": why} for e, why in self.rejected],
@@ -337,9 +340,12 @@ def verify_answer(task: str, answer: str, *, evidence: Iterable[Evidence] = (),
     f, path_status = _protected(touched_paths, protected_paths_policy, evidence, author)
     from g6.coding_agent_gate.references import check_references, review_call
 
-    missing_refs = check_references(evidence, repo_root=repo_root, paths=touched_paths)
+    missing_refs, unchecked_refs = check_references(evidence, repo_root=repo_root, paths=touched_paths)
     for ref in missing_refs:
         f.append(_finding("EVIDENCE_REF_MISSING", f"EVIDENCE_REF_MISSING: reference does not resolve within the supplied scope: {ref}"))
+    for ref in unchecked_refs:
+        f.append(_finding("EVIDENCE_REF_MISSING", "EVIDENCE_REF_MISSING: reference G6 could not classify or read as a "
+                          f"path, so it was not checked: {ref!r}"))
     if not str(answer or "").strip():
         f.append(_finding("empty_answer", "No answer text was supplied, so there is nothing to check."))
     if text_hits:
@@ -387,7 +393,8 @@ def verify_answer(task: str, answer: str, *, evidence: Iterable[Evidence] = (),
                                   "acknowledges_unverified": acknowledges_unverified(said), "protected_paths": path_status},
                         checks_run=checks + (("protected_paths",) if touched_paths is not None or protected_paths_policy is not None else ())
                         + (("shortcut_scan(diff)",) if diff else ()),
-                        references_checked=repo_root is not None or touched_paths is not None,
+                        references_checked=(repo_root is not None or touched_paths is not None) and not unchecked_refs,
+                        references_unchecked=tuple(unchecked_refs),
                         next_actions=(review_call(task, task_contract, evidence, repo_root),))
 
 

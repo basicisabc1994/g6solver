@@ -593,8 +593,11 @@
     "_words": [
       "text"
     ],
+    "_at_base/branches": [
+      "if runs is None"
+    ],
     "_at_base": [
-      "at_base_observations([run for run in (assessment.get('scope') or {}).get('checks_run') or [] if _observed(assessment, run)])"
+      "at_base_observations([run for run in runs if _observed(assessment, run)])"
     ],
     "_observed/branches": [
       "if item is not None"
@@ -603,13 +606,23 @@
       "item.get('evidence_status', inherited) == 'observed_by_g6'",
       "inherited == 'observed_by_g6' and all((one.get('evidence_status', inherited) == 'observed_by_g6' for one in leaves))"
     ],
+    "_inert/branches": [
+      "if type(value) is int",
+      "if isinstance(value, str) and value == value.strip() and _INERT.match(value)"
+    ],
+    "_inert": [
+      "str(value)",
+      "value",
+      "code(value)"
+    ],
     "_assertion/branches": [
       "if verdict in ('failed', 'fail', 'crashed', 'timed_out', 'run_inconsistent')",
-      "if item.get('passed') is not None or item.get('verdict', item.get('result')) in ('pass', 'passed')"
+      "if passed is not None or verdict in ('pass', 'passed')",
+      "if type(passed) is int"
     ],
     "_assertion": [
       "f'the agent reports {code(verdict)}; G6 did not run it'",
-      "f\"the agent reports {item.get('passed', 'an unspecified number')} passed; G6 did not run it\"",
+      "f'the agent reports {count} passed; G6 did not run it'",
       "f\"the agent reports {code(item.get('verdict', item.get('result', 'a result')))}; G6 did not run it\""
     ],
     "code/branches": [
@@ -670,6 +683,7 @@
       "lines"
     ],
     "_base_words/branches": [
+      "if not total",
       "if fail == total",
       "if passing == total",
       "if unrun == total",
@@ -683,6 +697,7 @@
       "if unrun"
     ],
     "_base_words": [
+      "'no stated check has an outcome at the base commit, so G6 cannot say whether they exercise the change'",
       "'the stated checks fail at the base commit, so they exercise the change'",
       "'the stated checks pass at the base commit too, so they may not exercise the change'",
       "'the stated checks could not run at the base commit, so G6 cannot say whether they exercise the change'",
