@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Annotated, ClassVar, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_serializer, model_validator
 
 from g6.core.ledger import digest
 
@@ -116,6 +116,11 @@ class Concept(Record):
     worth: Rate
     status: Literal["proposed", "compiled", "rejected", "parked"]
 
+    @field_validator('statement', 'falsifier', mode='before')
+    @classmethod
+    def canonical_text(cls, value):
+        return ' '.join(value.split()) if isinstance(value, str) else value
+
     @model_validator(mode="after")
     def features(self) -> Self:
         if set(self.observable_features) - FACT_NAMES:
@@ -159,6 +164,18 @@ class MethodContract(Record):
     cost_bound: CostBound
     escape_family: str
     withdrawal_conditions: list[str]
+
+    @field_validator('escape_family', mode='before')
+    @classmethod
+    def canonical_text(cls, value):
+        return ' '.join(value.split()) if isinstance(value, str) else value
+
+    @field_validator('assumptions', 'withdrawal_conditions', mode='before')
+    @classmethod
+    def canonical_text_list(cls, values):
+        if isinstance(values, (list, tuple)):
+            return [' '.join(value.split()) if isinstance(value, str) else value for value in values]
+        return values
 
     @model_validator(mode="after")
     def catalogue(self) -> Self:
@@ -283,6 +300,14 @@ class AcceptanceEvidence(Model):
     recall: Interval
     false_rejection: Interval
     cost: Cost
+    n_units: Count | None = None
+
+    @model_serializer(mode='wrap')
+    def compatible_body(self, handler):
+        body = handler(self)
+        if body.get('n_units') is None:
+            body.pop('n_units', None)
+        return body
 
 
 class RegressionCase(Model):

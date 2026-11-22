@@ -105,6 +105,7 @@ class FieldOutcome(Model):
     source: Literal["person", "maintainer", "oracle"]
     label: Literal["confirmed", "refuted", "unlabelled"]
     receipt_sha256: Sha256
+    unit_id: Annotated[str, Field(min_length=1, pattern=r'\S')] | None = None
 
 
 class HealthObservation(Model):
@@ -226,7 +227,7 @@ def _load(registration_id, candidate, library) -> EvaluationSet:
             continue
         raw = strict_json(_plain(custody / "cases" / f"{ref.case_id}.json", custody).read_bytes())
         case = CaseRecord.model_validate(raw)
-        if case.case_id != ref.case_id:
+        if case.case_id != ref.case_id or case.unit_id != ref.unit_id:
             raise ValueError("registered case digest changed")
         result = oracle.label(case, policy=frozen.policy, workspace=workspace)
         target = "acceptance" if ref.split == "acceptance" else "monitor"
@@ -425,7 +426,7 @@ def _counts(observations, verdicts):
         tp += bool(positive) and all(v == "concern" for v in positive) and not false_alarm
         tn += bool(negative) and all(v == "no_concern" for v in negative)
         abstain += any(v == "abstain" for _, v in rows)
-    return dict(n_pos=n_pos, n_neg=n_neg, tp=tp, fp=fp, tn=tn, fn=n_pos - tp, abstain=abstain)
+    return dict(n_units=len(groups), n_pos=n_pos, n_neg=n_neg, tp=tp, fp=fp, tn=tn, fn=n_pos - tp, abstain=abstain)
 
 
 def _negative_rates(observations, verdicts):
@@ -485,6 +486,12 @@ def _assess(candidate, entries, frozen, reuse_index):
         raise ValueError("settled acceptance cases required")
     if set(candidate.training_case_ids) & {o.case.case_id for o in observations}:
         raise ValueError("training cases cannot be held-out acceptance evidence")
+    acceptance_units = {o.case.unit_id for o in observations}
+    monitor_units = {o.case.unit_id for o in frozen.monitor}
+    if any(not isinstance(u, str) or not u.strip() for u in acceptance_units | monitor_units):
+        raise ValueError('acceptance evidence requires a bug unit identity')
+    if acceptance_units & monitor_units:
+        raise ValueError('bug unit overlap between acceptance and dev/monitor evidence')
     if _leaks(candidate, (*observations, *frozen.monitor, *frozen.regression)):
         raise ValueError("candidate leakage guard refused")
     own, costs = _measure(candidate, observations, entries)
@@ -690,11 +697,67 @@ def lift_hold(entry_id: str, library: Library, *, reason: str, person: str) -> A
         return AcceptanceDecision("refuse", (str(error) if isinstance(error, ValueError) else "hold evidence unavailable",))
 
 
+def _execution_contract(candidate):
+    contract = candidate.contract.model_dump(mode='json', exclude={
+        'assumptions', 'escape_family', 'withdrawal_conditions'})
+    for name in ('languages', 'frameworks', 'inputs', 'verdict_kinds'):
+        contract[name] = sorted(set(contract[name]))
+    return contract
+
+
+def _method_identity(candidate, stack=()):
+    """Typed executable identity, independent of proposal/observation metadata.
+
+    AST locations and comments do not run. Template names resolve to the fixed
+    detector's bindings; aliases of the same oracle have the same identity.
+    Parent entry names likewise resolve to their executable content.
+    """
+    if candidate.candidate_id in stack or len(stack) >= 16:
+        raise ValueError('inactive method identity has a cyclic or over-deep dependency')
+    stack = (*stack, candidate.candidate_id)
+    contract = _execution_contract(candidate)
+    if candidate.form == 'predicate':
+        body = {'ast': ast.dump(ast.parse(candidate.body), include_attributes=False)}
+    elif candidate.form == 'template_instance':
+        seed = SEED_TEMPLATES[candidate.body.template]
+        body = {'oracle': 'weakening.detect_test_weakening', 'supported': seed.supported,
+                'reason_fragments': seed.reason_fragments, 'bindings': candidate.body.bindings}
+    else:
+        refs = [candidate.body] if candidate.form == 'reuse' else candidate.body.entries
+        children = []
+        for ref in refs:
+            entry = Stores().for_model(LibraryEntry).get(ref)
+            child = _candidate(entry)
+            child_identity = _method_identity(child, stack)
+            if len(refs) == 1 and contract == _execution_contract(child):
+                return child_identity
+            children.append(child_identity)
+        body = {'children': children}
+        if candidate.form == 'composition':
+            body.update(op=candidate.body.op, k=candidate.body.k)
+    return digest({'form': candidate.form, 'body': body, 'execution_contract': contract})
+
+
+def _inactive_match(candidate, entries, status):
+    identity = None
+    for entry in entries:
+        if entry.status != status:
+            continue
+        if entry.candidate_id == candidate.candidate_id:
+            return True
+        try:
+            if identity is None:
+                identity = _method_identity(candidate)
+            if identity == _method_identity(_candidate(entry)):
+                return True
+        except (AttributeError, KeyError, StopIteration):
+            # Missing historical code never permits an inactive method to return.
+            raise ValueError(f'{status} executable identity unavailable') from None
+    return False
+
+
 def _withdrawn_match(candidate):
-    return any(entry.status == 'withdrawn' and (
-        entry.candidate_id == candidate.candidate_id or entry.concept_id == candidate.concept_id
-        or entry.contract_sha256 == candidate.contract.content_id)
-        for entry in Stores().for_model(LibraryEntry).list())
+    return _inactive_match(candidate, Stores().for_model(LibraryEntry).list(), 'withdrawn')
 
 
 def _decide_batch(candidates, library, registration, *, restoring=''):
@@ -726,12 +789,10 @@ def _decide_batch(candidates, library, registration, *, restoring=''):
                 try:
                     if candidate.form == 'reuse':
                         raise ValueError('reuse is a reuse row, never an admission candidate')
-                    if any(entry.status == "held" and (entry.candidate_id == candidate.candidate_id
-                            or entry.concept_id == candidate.concept_id
-                            or entry.contract_sha256 == candidate.contract.content_id) for entry in library.list()):
-                        raise ValueError('held candidate, concept or contract requires a hold release')
+                    if _inactive_match(candidate, library.list(), 'held'):
+                        raise ValueError('held executable method requires a hold release')
                     if not restoring and _withdrawn_match(candidate):
-                        raise ValueError('withdrawn candidate, concept or contract requires a person-authorized restore')
+                        raise ValueError('withdrawn executable method requires a person-authorized restore')
                     _look_available(registration)  # A spent split never reaches the oracle again.
                     frozen = _load(registration, candidate, library)
                     if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:
@@ -790,16 +851,25 @@ def _field(candidate_id):
 
 def _field_counts(rows, candidate_id):
     counts = {"confirmed": 0, "refuted": 0, "unlabelled": 0}
-    labels = {}
+    labels, units = {}, {}
     for row in rows:
         body = FieldOutcome.model_validate(row["body"])
         if row["kind"] != "field" or body.candidate_id != candidate_id:
             raise ValueError("independent field receipt required; prediction evidence refused")
+        if body.unit_id is None:
+            raise ValueError('field evidence requires a bug unit identity')
+        if units.setdefault(body.fire_id, body.unit_id) != body.unit_id:
+            raise ValueError('field fire cannot change bug unit identity')
         old = labels.get(body.fire_id)
         if old is not None and (old != "unlabelled" or body.label == "unlabelled"):
             raise ValueError("field fire already labelled; duplicate or relabel refused")
         labels[body.fire_id] = body.label
-    for label in labels.values():
+    grouped = {}
+    for fire, label in labels.items():
+        grouped.setdefault(units[fire], []).append(label)
+    for values in grouped.values():
+        # A refutation dominates. Incomplete labels cannot inflate precision.
+        label = 'refuted' if 'refuted' in values else 'unlabelled' if 'unlabelled' in values else 'confirmed'
         counts[label] += 1
     return counts["confirmed"], counts["refuted"], counts["unlabelled"]
 
@@ -811,7 +881,7 @@ def _field_evidence(candidate_id):
 
 
 def _a2_bar(evidence, field):
-    if (evidence.n_pos + evidence.n_neg < 30 or evidence.n_neg < 10
+    if ((evidence.n_units or 0) < 30 or evidence.n_neg < 10
             or _interval(evidence.tp, evidence.tp + evidence.fp).lo95 < .90
             or _interval(evidence.fp, evidence.n_neg).hi95 > .05):
         raise ValueError("A2 held-out precision or false-rejection bar not met")
