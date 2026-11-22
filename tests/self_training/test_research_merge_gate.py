@@ -61,6 +61,8 @@ def fixture(tmp_path=None, **change_fields):
         evaluation=dict(split='held_out', policy_sha256=FROZEN_POLICY_SHA256,
             split_sha256=digest('split'), registration_sha256=digest('registration'), reuse_index=1,
             n=100, wins=20, losses=0, ties=80, p_value=2 ** -20, gate='recommend',
+            units=[dict(unit_id=f'bug-{i}', base_success=i >= 50, candidate_success=i < 20 or i >= 50)
+                   for i in range(100)],
             gate_receipt=digest('frozen-gate'), independent=True, measures={
                 name: dict(before=.5, after=.7 if name == 'success' else .5,
                     before_interval=[.4, .6], after_interval=[.6, .8] if name == 'success' else [.4, .6],

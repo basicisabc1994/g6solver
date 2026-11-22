@@ -184,6 +184,12 @@ class Measure(Data):
         return self
 
 
+class UnitPair(Data):
+    unit_id: Annotated[str, Field(min_length=1, pattern=r'\S')]
+    base_success: StrictBool
+    candidate_success: StrictBool
+
+
 class Evaluation(Data):
     split: Literal['held_out', 'monitor']
     policy_sha256: Sha
@@ -201,6 +207,7 @@ class Evaluation(Data):
     measures: dict[str, Measure]
     receipts: tuple[Sha, ...]
     full_suite: StrictBool
+    units: tuple[UnitPair, ...] = ()
 
 
 class Trust(Data):

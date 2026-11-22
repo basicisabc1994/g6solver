@@ -66,7 +66,7 @@ def test_failure_to_review_prediction_and_draft_rehearsal(home, monkeypatch):
     labels.parent.mkdir(parents=True, exist_ok=True)
     chain = ChainLedger(labels)
     for index in range(30):
-        body = gate.FieldOutcome(candidate_id=candidate.candidate_id, fire_id=f'field-{index}',
+        body = gate.FieldOutcome(candidate_id=candidate.candidate_id, fire_id=f'field-{index}', unit_id=f'bug-{index}',
             source='oracle', label='confirmed', receipt_sha256=digest(('measured', index))).model_dump(mode='json')
         chain.append('field', digest(body), body)
     assert gate.promote(entry.entry_id, Library(), registration).verdict == 'admit'

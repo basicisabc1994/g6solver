@@ -260,6 +260,7 @@ def test_frozen_failure_replay_workflow_measures_utility_under_unchanged_gate():
     failures, sequences = [], []
     for i in range(31):
         failure = FailureRecord(**(bodies()[0][1] | {'record_id': None, 'case_ref': digest(i),
+                                                   'provenance': {'unit_id': f'bug-{i}', 'cohort': 'development'},
                                                    'family': 'baseline-ok' if i % 2 else 'gain'}))
         failures.append(failure)
         sequences.append(m.ReplaySequence(case_id=f'meta-{i}', failure_ids=(failure.record_id,), utility_target=0.))

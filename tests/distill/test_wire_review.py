@@ -17,7 +17,7 @@ import pytest
 def test_authority_caps(authority, status, verdict, expected):
     from g6.harness.library_review_gate import observation
     entry = SimpleNamespace(entry_id="a" * 64, candidate_id="b" * 64, authority=authority, status=status,
-        evidence=SimpleNamespace(precision=SimpleNamespace(lo95=.94), n_pos=100, n_neg=100))
+        evidence=SimpleNamespace(precision=SimpleNamespace(lo95=.94), n_pos=100, n_neg=100, n_units=200))
     found = observation(entry, verdict)
     assert found["outcome"] == expected
     assert found["provenance"] == "library"
@@ -47,7 +47,7 @@ def test_review_reply_preserves_envelope_and_authority(monkeypatch, authority, v
     from g6.harness import patch_review
     entry = SimpleNamespace(entry_id="a" * 64, candidate_id="b" * 64, authority=authority,
         status="admitted" if authority == "A2" else "probation",
-        evidence=SimpleNamespace(precision=SimpleNamespace(lo95=.94), n_pos=100, n_neg=100))
+        evidence=SimpleNamespace(precision=SimpleNamespace(lo95=.94), n_pos=100, n_neg=100, n_units=200))
     monkeypatch.setattr(review, "check", lambda *a, **kw: [review.observation(entry, verdict)])
     reasons, runs = [], []
     review.apply_review({}, {}, reasons, runs)
@@ -122,7 +122,7 @@ def test_library_no_concern_cannot_satisfy_unestablished_requirement(monkeypatch
     from g6.harness import library_review_gate as review
     from g6.harness import patch_review
     entry = SimpleNamespace(entry_id="a" * 64, candidate_id="b" * 64, authority="A2", status="admitted",
-        evidence=SimpleNamespace(precision=SimpleNamespace(lo95=.94), n_pos=100, n_neg=100))
+        evidence=SimpleNamespace(precision=SimpleNamespace(lo95=.94), n_pos=100, n_neg=100, n_units=200))
     monkeypatch.setattr(review, "check", lambda *a, **kw: [review.observation(entry, "no_concern")])
     reasons = [{"stage": "evidence", "code": "requirement_has_no_check", "detail": "R1 has no stated check"}]
     runs = []

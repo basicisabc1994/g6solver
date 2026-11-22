@@ -16,13 +16,26 @@ def check_evaluation(evaluation, claim, p):
         return 'evaluation does not bind the frozen EvidencePolicy'
     if not evaluation.independent or not evaluation.receipts or not evaluation.gate_receipt:
         return 'independent measured gate receipts required'
+    units = evaluation.units
+    if not units or len({row.unit_id for row in units}) != len(units):
+        return 'distinct bound bug unit pairs required'
+    wins = sum(row.candidate_success and not row.base_success for row in units)
+    losses = sum(row.base_success and not row.candidate_success for row in units)
+    if (evaluation.n, evaluation.wins, evaluation.losses, evaluation.ties) != (
+            len(units), wins, losses, len(units) - wins - losses):
+        return 'measured counts differ from bound bug unit pairs'
     if evaluation.n < p.min_cases or evaluation.wins + evaluation.losses + evaluation.ties != evaluation.n:
-        return 'insufficient or inconsistent measured case counts'
+        return 'insufficient or inconsistent measured unit counts'
     if not 1 <= evaluation.reuse_index <= p.max_evaluations:
         return 'held-out split is spent or its reuse index is missing'
     measures = evaluation.measures
     if set(measures) != {'success', 'false_acceptance', 'false_rejection', 'cost'}:
         return 'all before/after measures with intervals are required'
+    before = sum(row.base_success for row in units) / len(units)
+    after = sum(row.candidate_success for row in units) / len(units)
+    if (abs(measures['success'].before - before) > 1e-9
+            or abs(measures['success'].after - after) > 1e-9):
+        return 'success rates differ from bound bug unit pairs'
     if measures['false_acceptance'].delta_upper95 > p.false_accept_margin:
         return 'false acceptance regressed beyond frozen margin'
     if measures['false_rejection'].delta_upper95 > p.false_accept_margin:

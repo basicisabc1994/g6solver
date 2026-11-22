@@ -22,6 +22,7 @@ from g6.metaharness.gate import decide
 from g6.metaharness.schema import EvidencePolicy, Proposal, Suite, SuiteCase, Workflow, _source_sha
 from g6.harness import Check
 from g6.distill.records import FailureRecord
+from g6.distill.intake import unit_cohort
 
 from .records import ReplayMeasurement, ReplaySequence, SynthesisPolicy
 
@@ -75,22 +76,47 @@ class SynthesisReplay:
         self._digest = digest({'replay_code': _source_sha(replay), 'failures': dict(self._failures)})
 
     def workflow(self, *, name, dev, held_out, model, selection=()):
-        seen = set()
-        def cases(sequences):
-            values = []
+        seen, custody, refused = set(), {}, []
+        def cases(sequences, split):
+            groups = {}
             for sequence in sequences:
                 row = ReplaySequence.model_validate_json(sequence.model_dump_json())
+                units = set()
                 for ident in row.failure_ids:
                     failure = FailureRecord.model_validate_json(self._failures[ident])
-                    if failure.case_ref in seen:
+                    if ident in seen:
                         raise ValueError('repeated failure unit or overlap between frozen meta sequences')
-                    seen.add(failure.case_ref)
-                values.append(SuiteCase(row.case_id, canonical({'failure_ids': row.failure_ids,
-                    'replay_sha256': self._digest}), row.utility_target))
-            return tuple(values)
-        suite = Suite(cases(dev), cases(held_out), {'dev': 'independent', 'held_out': 'independent'}, cases(selection))
+                    seen.add(ident)
+                    unit, _ = unit_cohort(failure)
+                    if not unit or not unit.strip():
+                        refused.append(f'{row.case_id}: missing unit identity; refused')
+                    units.add(unit)
+                # A target spanning bugs has no registered allocation per unit.
+                if len(units) != 1 or None in units or any(not u.strip() for u in units):
+                    refused.append(f'{row.case_id}: replay must name exactly one bug unit; refused')
+                    continue
+                unit = next(iter(units))
+                if custody.setdefault(unit, split) != split:
+                    refused.append(f'{row.case_id}: unit overlap between frozen meta splits; refused')
+                    continue
+                ids, targets = groups.setdefault(unit, ([], []))
+                ids.extend(row.failure_ids)
+                targets.append(row.utility_target)
+            return tuple(SuiteCase(unit, canonical({'failure_ids': sorted(ids),
+                'replay_sha256': self._digest}), sum(targets), {'unit_id': unit})
+                for unit, (ids, targets) in sorted(groups.items()))
+        development = cases(dev, 'dev')
+        held = cases(held_out, 'held_out')
+        planning = cases(selection, 'selection')
+        provenance = {'dev': 'independent', 'held_out': 'independent'}
+        if refused:
+            # Retain a reportable workflow, but no held-out execution or statistic.
+            # The unchanged judge blocks its empty held-out suite.
+            provenance['refused'] = canonical(refused)
+            held = ()
+        suite = Suite(development, held, provenance, planning)
         problems = suite.problems()
-        if problems:
+        if problems and not refused:
             raise ValueError('; '.join(why for _, why in problems))
         good = ReplayMeasurement(tp=1, fp=0, evidence_ref='a' * 64, origin='independent_field').model_dump_json()
         check = Check('independently measured library confusion counts and evidence reference', _measurement,
@@ -175,7 +201,11 @@ def evaluate_policy(workflow, base, proposal, factory, *, frozen: FrozenMetaEval
     if set(kwargs) - {'clock'}:
         raise ValueError('only an explicit clock may be supplied; evaluation split and budgets stay frozen')
     frozen.reserve(workflow, reuse_index=reuse_index)
-    return evaluate(workflow, base, proposal.candidate, factory, split='held_out', reuse_index=reuse_index, **kwargs)
+    report = evaluate(workflow, base, proposal.candidate, factory, split='held_out', reuse_index=reuse_index, **kwargs)
+    report.method = 'paired by bug unit; cases pooled within each unit before the unchanged evaluator'
+    if workflow.suite.provenance.get('refused'):
+        report.notes.append(workflow.suite.provenance['refused'])
+    return report
 
 
 def rank_policies(workflow, base, policies, factory, *, frozen: FrozenMetaEvaluation, **kwargs):

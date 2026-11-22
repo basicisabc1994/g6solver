@@ -273,7 +273,7 @@ def test_proposer_import_graph_never_reaches_evaluator_or_threshold_writer():
 
 def test_delayed_field_label_replaces_unlabelled_fire_without_double_counting(sample):
     g, candidate, _, _ = sample
-    body = {"candidate_id": candidate.candidate_id, "fire_id": "fire-1", "source": "person",
+    body = {"candidate_id": candidate.candidate_id, "fire_id": "fire-1", "unit_id": "bug-1", "source": "person",
             "label": "unlabelled", "receipt_sha256": "a" * 64}
     rows = [{"kind": "field", "body": body}, {"kind": "field", "body": body | {"label": "confirmed"}}]
     assert g._field_counts(rows, candidate.candidate_id) == (1, 0, 0)

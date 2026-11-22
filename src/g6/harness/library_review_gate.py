@@ -24,12 +24,13 @@ def observation(entry, verdict: str) -> dict:
         verdict = "abstain"
     defect = verdict == "concern" and entry.authority == "A2" and entry.status == "admitted"
     precision = entry.evidence.precision.lo95
-    count = entry.evidence.n_pos + entry.evidence.n_neg
+    count = entry.evidence.n_units
+    sample = str(count) if count is not None else 'unknown'
     return {"entry_id": entry.entry_id, "candidate_id": entry.candidate_id, "provenance": "library",
             "authority": entry.authority, "status": entry.status, "verdict": verdict,
             "precision": {"lo95": precision}, "held_out_n": count, "passes_requirement": False,
             "outcome": "defect_detected" if defect else "insufficient_evidence" if verdict == "concern" else "not_a_pass",
-            "reason": f"library:{entry.entry_id}, precision >= {precision:g} on {count} held-out; "
+            "reason": f"library:{entry.entry_id}, precision >= {precision:g} on {sample} held-out units; "
                       f"{entry.authority} {verdict}; not a pass"}
 
 
