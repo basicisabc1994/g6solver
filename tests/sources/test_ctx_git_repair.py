@@ -14,7 +14,7 @@ def test_git_json_resource_errors_are_refusals(error, monkeypatch):
     def fail(_):
         raise error("private-system-details")
 
-    monkeypatch.setattr(config.json, "loads", fail)
+    monkeypatch.setattr(config, "_decode_json", fail)
     with pytest.raises(config.GitRefused) as refused:
         config.parse("{}", config.CONFIG_ENV)
     assert refused.value.code == config.CONFIG_INVALID
