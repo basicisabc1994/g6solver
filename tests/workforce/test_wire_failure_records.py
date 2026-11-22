@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -124,6 +125,57 @@ def test_each_failed_report_keeps_its_kind(tmp_path, monkeypatch):
                              "isolation": {"backend": "recorded-review-fixture"}, "passed": 1, "failed": 3,
                              "not_passed": 0, "total": 4})
     assert report.valid
+
+
+def _bootstrap_probe(tmp_path: Path, statement: str):
+    """Run the entire real bootstrap on a tiny repository, without a model or confinement claim."""
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (tmp_path / "test_bootstrap_probe.py").write_text(
+        "import pytest\n\n@pytest.mark.parametrize('i', range(4))\n"
+        "def test_cross(i):\n    if i == 0:\n        " + statement + "\n\n"
+        "@pytest.mark.parametrize('i', range(300))\n"
+        "def test_random(i):\n    assert i >= 0\n", encoding="utf-8")
+    counted, loaded, xml = tmp_path / "counted.json", tmp_path / "loaded.json", tmp_path / "report.xml"
+    env_file = tmp_path / "env.json"
+    env_file.write_text(json.dumps({"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}), encoding="utf-8")
+    child = subprocess.run(
+        [sys.executable, "-X", "utf8", "-c", rt._BOOT, json.dumps([str(tmp_path)]), "0", "", "",
+         str(counted), str(env_file), str(loaded), str(rt.LOADED_LIMIT), "test_bootstrap_probe.py", "-q",
+         "--basetemp", str(tmp_path / "pytest-tmp"), "--junitxml", str(xml)],
+        cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert child.returncode == 1, child.stdout + child.stderr
+    counts = rt._counts(xml, tmp_path, (tmp_path,), rt._failure_records(counted))
+    assert counts is not None
+    assert (counts["passed"], counts["failures"], counts["errors"]) == (303, 1, 0)
+    progress = rt._progress(counts, counted)
+    outside, complete = rt._loaded(loaded)
+    report = {**{key: value for key, value in progress.items() if key in rt.REPORT_FIELDS},
+              "verdict": "failed", "said": "", "output": child.stdout, "failed": 1, "not_passed": 0,
+              "total": 304, "isolation": {"backend": "recorded-bootstrap-test"},
+              "rootdir": rt._root(tmp_path, progress["rootdir"]),
+              "loaded_outside": outside, "loaded_complete": complete}
+    assert rt.read_report(report).valid
+    got = loop._read(SimpleNamespace(repo=tmp_path, sources=()), [report])
+    assert got.usable
+    tree = tmp_path / "tree.json"
+    tree.write_text(json.dumps({"dimensions": {"a": [0, 1], "b": [0, 1]}}), encoding="utf-8")
+    node = next(node for node in got.results if node.endswith("::test_cross[0]"))
+    assert got.results[node] == "failed"
+    return got, node, loop._gate(tree, got)
+
+
+def test_real_bootstrap_assertion_is_accepted_by_the_scout_gate(tmp_path):
+    got, node, problems = _bootstrap_probe(tmp_path, "assert False, 'the defect'")
+    assert got.kinds[node] == "AssertionError"
+    assert got.assertions[node] is True
+    assert problems == []
+
+
+def test_real_bootstrap_crash_is_rejected_by_the_scout_gate(tmp_path):
+    got, node, problems = _bootstrap_probe(tmp_path, "raise ValueError('AssertionError: assert False')")
+    assert got.kinds[node] == "ValueError"
+    assert got.assertions[node] is False
+    assert len(problems) == 1 and "not an assertion" in problems[0]
 
 
 def test_a_crash_named_like_an_assertion_keeps_its_own_kind(tmp_path, monkeypatch):

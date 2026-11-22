@@ -3,6 +3,7 @@
 sessions and its critic by fakes. No model is called and nothing a model wrote runs."""
 from __future__ import annotations
 
+import ast
 import dataclasses
 import json
 import os
@@ -13,7 +14,9 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from functools import cache
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -61,6 +64,20 @@ class Scouts:
         return "done"
 
 
+@cache
+def _assertion_record(placed: str) -> dict:
+    """Let the real bootstrap recorder type the fixture's test-body assertion."""
+    cls = next(node for node in ast.parse(repo_tests._BOOT).body
+               if isinstance(node, ast.ClassDef) and node.name == "_Counted")
+    namespace = {}
+    exec(compile(ast.Module(body=[cls], type_ignores=[]), "<recorder>", "exec"), namespace)
+    node = SimpleNamespace(path=Path(placed), config=SimpleNamespace(rootpath=Path.cwd()))
+    try:
+        exec(compile("raise AssertionError('fixture assertion')", placed, "exec"), {"__name__": "fixture_probe"})
+    except AssertionError as error:
+        return namespace["_Counted"].record(node, SimpleNamespace(when="call"), error)
+
+
 def ran(placed: str, cases: dict[str, str], **more) -> dict:
     """A run of the file at ``placed``, as ``repo_tests`` reports it."""
     failing = [name for name, got in cases.items() if got == "failed"]
@@ -70,6 +87,7 @@ def ran(placed: str, cases: dict[str, str], **more) -> dict:
             "failed_ids": [f"{placed}::{name}" for name in failing], "setup_errors": {},
             "test_outcomes": {f"{placed}::{name}": {"setup": "passed", "call": got, "teardown": "passed"}
                               for name, got in cases.items()},
+            "failure_records": {f"{placed}::{name}": [dict(_assertion_record(placed))] for name in failing},
             "failure_messages": {f"{placed}::{name}": f"assert {name}" for name in failing}, **more}
 
 
@@ -138,6 +156,14 @@ def test_nothing_is_tested_or_spent_when_no_python_changed(world, monkeypatch):
     step = world.advance(scouts)
     assert (step.action, step.text) == (loop.STOP, "")
     assert not scouts.calls and not runs.calls
+
+
+def test_recorded_scout_assertions_pass_the_gate(world):
+    tree = world.repo / "tree.json"
+    tree.write_text(TREE, encoding="utf-8")
+    got = loop._read(SimpleNamespace(repo=world.repo, sources=()), [ran("test_p.py", CASES)])
+    assert got.usable
+    assert loop._gate(tree, got) == []
 
 
 def test_scouts_read_the_base_commit_without_the_fix_or_the_history(world, monkeypatch):
