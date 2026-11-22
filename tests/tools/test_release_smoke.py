@@ -54,8 +54,14 @@ def test_ci_smoke_builds_wheel_and_uses_a_clean_venv_with_both_boundaries():
     assert "python -m build --wheel" in job
     assert "-m venv" in job and ".whl" in job
     assert "tools/ci_bubblewrap.sh" in job
-    assert "icacls" in job
-    assert ":(RX)' /T /C /Q" in job  # existing files need a plain grant as well as folder inheritance
-    assert "--patch-review" in job
+    # Owner ruling F2 (11-22): Windows runners have no AppContainer, so the confined patch review runs on Linux only
+    # and the Windows job runs the handshake and consent journey; the limit is stated in the release notes.
+    assert "icacls" not in job
+    step = job.split("- name: Installed MCP handshake", 1)[1]
+    windows, other = step.split("if ($IsWindows) {", 1)[1].split("} else {", 1)
+    assert "tools/mcp_smoke.py" in windows and "--patch-review" not in windows
+    assert "--patch-review" in other.split("}", 1)[0]
+    notes = (ROOT / "docs/releases/v0.3.0.md").read_text(encoding="utf-8")
+    assert "Windows CI runners" in notes and "AppContainer" in notes
     assert "G6_ALLOW_UNCONFINED" not in job
     assert "PYTHONPATH" in job  # explicitly removed before the installed-wheel journey
