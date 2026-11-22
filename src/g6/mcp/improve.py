@@ -190,6 +190,9 @@ def _is_a_loop(root: Path, *, raise_errors: bool = False) -> bool:
 def _unlooped(root: Path) -> tuple[str, str]:
     """What is said of a folder that is not a loop's: why nothing was done, and what to do."""
     root = utf8_text(str(root))
+    # A locator is shown in full up to 400 characters, as other refusals here bound what they echo: an unusable one
+    # of any length still gets this refusal whole, within the reply's size budget.
+    root = root if len(root) <= 400 else root[:400] + "..."
     return (f"{root} is not a loop's folder: it has no {SETTINGS_FILE} and no records, so nothing was done",
             f"Name the folder, or create {SETTINGS_FILE} there: see the design's section 11.")
 
