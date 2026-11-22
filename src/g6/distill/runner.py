@@ -85,7 +85,7 @@ class Runner:
         return bool(global_stop.engaged() or self.stop() or self.repository.stopped())
 
     def _append(self, kind, body):
-        if self.stopped():
+        if self.stopped() and kind not in {'cycle', 'crash'}:
             return
         self.journal.reload()
         if self.journal.path is not None:
@@ -183,8 +183,8 @@ class Runner:
             if result.change is not None and not self.stopped():
                 grants = authority(self.config)
                 if grants.permits('push') and grants.permits('draft_pr'):
-                    from g6.self_training.merge_gate import ProtectedSet
-                    labels = ('protected-change',) if ProtectedSet.load().hits(result.change.files) else ()
+                    from g6.distill.merge_evidence_gate import protected_set
+                    labels = ('protected-change',) if protected_set().hits(result.change.files) else ()
                     pr = self.repository.propose(result.change, labels=labels)
                     if result.merge_request is not None and self.merge_gate is not None:
                         if result.merge_request.change.sha256 != result.change.sha256:
