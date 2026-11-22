@@ -55,17 +55,25 @@ def test_consent_refusal_is_recorded_without_a_substitute(monkeypatch, entries):
 
 @pytest.mark.parametrize("change", ["code", "defaults", "kwdefaults", "kwdefault_item", "closure"])
 def test_mutated_responder_refuses_before_any_child(monkeypatch, entries, change):
-    started = no_child(monkeypatch)
+    caller_data = change in {"closure", "kwdefault_item"}
+    if caller_data:
+        in_process_child(monkeypatch)
+        started = None
+    else:
+        started = no_child(monkeypatch)
     closed = object()
+    observed = []
 
     def answer(system, user, extra=None, *, option=None):
         assert closed is not None
+        observed.append((closed, option))
         return GRID
 
     pending = prepare(llm.FakeLLM(answer))
     if change == "code":
         def replacement(system, user, extra=None, *, option=None):
             assert closed is not None
+            assert observed == []
             pytest.fail("changed responder ran")
         answer.__code__ = replacement.__code__
     elif change == "defaults":
@@ -77,8 +85,18 @@ def test_mutated_responder_refuses_before_any_child(monkeypatch, entries, change
     else:
         closed = object()
     reply = kernel.override(pending)
-    assert reply["agentic"]["code"] == kernel.DIGEST_MISMATCH
-    assert started == [] and entries == []
+    if caller_data:
+        assert reply["agentic"]["outcome"] == "substituted"
+        assert reply["agentic"]["substituted"] is True
+        assert reply["completion_state"] == "qualified-draft"
+        assert reply["original"] == pending.original
+        assert observed == [(closed, answer.__kwdefaults__["option"])]
+        assert reply["agentic"]["checks"] and reply["agentic"]["isolation"]["backend"] == "test-in-process"
+        assert len(entries) == 1 and entries[0]["person"] == reply["agentic"]["person"]
+        assert kernel.override(pending)["agentic"]["code"] == kernel.DIGEST_MISMATCH
+    else:
+        assert reply["agentic"]["code"] == kernel.DIGEST_MISMATCH
+        assert started == [] and entries == []
 
 
 @pytest.mark.parametrize(("module", "target"), [(hole, "valid_float_grid"), (hole, "float_grid"),
@@ -170,7 +188,16 @@ def test_abandoned_preparation_reachable_from_responder_is_collected():
     gone = weakref.ref(session.pending)
     del session
     gc.collect()
+    assert gone() is not None
+    # The private single-use table retains identities, including cycles, up to its bound.
+    held = []
+    for _ in range(256):
+        held.append(prepare())
+        assert len(kernel._PREPARED) <= 256
+    gc.collect()
     assert gone() is None
+    for pending in held:
+        kernel.declined(pending, "cancelled")
 
 
 def test_oldest_live_preparation_is_evicted_and_refuses(monkeypatch):
