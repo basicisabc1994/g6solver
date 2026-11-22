@@ -101,7 +101,8 @@ def owned(caller: Any) -> Any:
     leaf, guard changes nothing; given a wrapper, it would set the wrapper's inner caller), under a view of each
     wrapper G6 knows that shares the wrapper's own state and holds the guarded form where the wrapper holds its inner
     caller. The caller handed in, and every wrapper of it, is neither changed nor copied. None when a wrapper cannot
-    be viewed so. Only for a caller ``holds_fallback`` clears: no chain and no cycle."""
+    be viewed so, or when the leaf's guarded form would not share all its state (``_one_state``). Only for a caller
+    ``holds_fallback`` clears: no chain and no cycle."""
     path = []
     while slot := wrapper_slot(caller):
         if slot == "_callers" or len(path) >= 64:
@@ -109,6 +110,8 @@ def owned(caller: Any) -> Any:
         path.append((caller, slot))
         caller = getattr(caller, slot)
     sender = guard(caller)
+    if sender is not caller and not _one_state(caller):
+        return None   # the guarded form shares the leaf's __dict__ only: state it keeps in slots would be lost
     for wrapper, slot in reversed(path):
         sender = _view(wrapper, slot, sender)
         if sender is None:
@@ -116,10 +119,29 @@ def owned(caller: Any) -> Any:
     return sender
 
 
+def _one_state(caller: Any) -> bool:
+    """Whether all of ``caller``'s instance state is its ``__dict__``: it has one, and no class it is an instance of
+    declares a slot besides ``__dict__`` and ``__weakref__``. A view sharing that dictionary then shares every bit of
+    state (a stop flag included); a slot would hold a value the view does not see, so such a caller is never viewed."""
+    try:
+        if type(object.__getattribute__(caller, "__dict__")) is not dict:
+            return False
+        for kind in type.__dict__["__mro__"].__get__(type(caller)):
+            slots = type.__dict__["__dict__"].__get__(kind).get("__slots__", ())
+            if any(name not in ("__dict__", "__weakref__") for name in ([slots] if isinstance(slots, str) else slots)):
+                return False
+    except Exception:
+        return False
+    return True
+
+
 def _view(wrapper: Any, slot: str, inner: Any) -> Any:
     """``wrapper`` as G6 sends through it: an object of a subclass of its class made here, sharing its state (one
-    ``__dict__``, so what it counts or records is the wrapper's own), whose ``slot`` reads ``inner``."""
+    ``__dict__``, so what it counts or records is the wrapper's own), whose ``slot`` reads ``inner``. None when the
+    wrapper keeps any state outside that dictionary (``_one_state``)."""
     kind = type(wrapper)
+    if not _one_state(wrapper):
+        return None
     try:
         made = type(kind.__name__, (kind,), {slot: property(lambda self: inner), "__module__": kind.__module__})
         view = object.__new__(made)
