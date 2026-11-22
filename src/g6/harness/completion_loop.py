@@ -332,12 +332,14 @@ def _floor_critic_report(said: str, *, marker: str = "") -> dict[str, str]:
     body = said[said.rfind("[codex]"):].split("\n", 1)[-1] if "[codex]" in said else said
     if marker and not re.search(rf"^READ:\s*{re.escape(marker)}\s*$", body, re.M):
         return {"verdict": "unread", "rule": "", "why": "", "test": "", "error": f"the reply does not quote {marker}"}
-    verdict = re.search(r"^VERDICT:\s*(\w+)", body, re.M)
+    # every verdict marker, mid-line included (``_VERDICT_LINE``): one word G6 reads, or none it can
+    words = {found[1].lower() for found in _VERDICT_LINE.finditer(body)}
+    verdict = words.pop() if len(words) == 1 and words <= set(READ_VERDICTS) else ""
     rule = re.search(r"^RULE:\s*(.*?)(?=^VERDICT:)", body, re.M | re.S)
     why = re.search(r"^WHY:\s*(.*?)(?=^```|\Z)", body, re.M | re.S)
     test = re.search(r"^```python\n(.*?)^```", body, re.M | re.S)
-    said_defect = bool(verdict) and verdict[1].lower() == "defect"
-    return {"verdict": verdict[1].lower() if verdict else "unreadable", "rule": rule[1].strip() if rule else "",
+    said_defect = verdict == "defect"
+    return {"verdict": verdict or "unreadable", "rule": rule[1].strip() if rule else "",
             "why": why[1].strip() if why else "", "test": test[1].strip() if test and said_defect else "", "error": ""}
 
 
@@ -1709,9 +1711,10 @@ def critic_report(said: str, *, marker: str = "") -> dict[str, str]:
         if marker and not (floor["verdict"] != "unread" or any(one.read == marker for one in protocols or ())):
             return floor   # the token is quoted by a READ line or by the protocol's own read field, or not at all
         words = {one.verdict for one in protocols or ()} | set(lines)
-        if protocols is None or len(words) != 1 or marker and any(one.read not in ("", marker) for one in protocols):
+        if (protocols is None or len(words) != 1 or not words <= set(READ_VERDICTS)
+                or marker and any(one.read not in ("", marker) for one in protocols)):
             return {"verdict": "unreadable", "rule": "", "why": "the reply states a verdict that is not the protocol's, "
-                    "or verdicts that differ", "test": "", "error": ""}
+                    "a verdict marker G6 cannot read, or verdicts that differ", "test": "", "error": ""}
         word, = words
         value = (protocols[0].model_dump(exclude={"read"}) if protocols else
                  {**floor, "verdict": word, "test": _reproduction(body)})
@@ -1725,7 +1728,12 @@ def critic_report(said: str, *, marker: str = "") -> dict[str, str]:
     return value
 
 
-_VERDICT_LINE = re.compile(r"^[\W_]*verdict[\W_]*[:=][\W_]*(\w+)", re.I | re.M)
+#: A verdict marker anywhere in the reply's text outside code, mid-line included: the word ``verdict`` (or
+#: ``verdicts``, not inside a longer word), then a separator (``:``, ``=``, a dash or ``>``) after any other non-word
+#: characters, and the word after it (empty when none follows). Only ``none`` or ``defect`` reads; any other word, or
+#: none, is a marker G6 cannot read. Prose that names a verdict with no separator (``the "verdict" key``) is no marker.
+_VERDICT_LINE = re.compile(r"(?<![A-Za-z0-9])verdicts?(?![A-Za-z0-9])[^\w:=\-–—>]*[:=\-–—>][\W_]*(\w*)",
+                           re.I)
 
 
 def _language(info: str) -> str:

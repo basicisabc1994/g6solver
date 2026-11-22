@@ -119,7 +119,8 @@ def test_critic_explicit_failure_verdict_is_final_and_a_failed_review(verdict):
     with semantic.request(llm=fake):
         got = loop.critic_report(f"READ: receipt-7\nVERDICT: {verdict}\nWHY: I could not read the code",
                                  marker="receipt-7")
-    assert got["verdict"] == verdict.lower() and not fake.calls
+    # wire-intent-fu2 repair 2: a verdict word G6 cannot read (not none or defect) makes the reply unreadable
+    assert got["verdict"] == "unreadable" and not fake.calls
     assert loop._round_outcome({**got, "results": {}, "file": "test_review.py"}) == "review_failed"
 
 
