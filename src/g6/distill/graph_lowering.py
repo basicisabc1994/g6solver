@@ -26,7 +26,7 @@ def validated(graph, primitives):
         if effects.index(p.side_effect) > effects.index(g.max_effect):
             raise LoweringRefused("primitive effect exceeds graph allowance")
         if not p.budget.within(n.budget):
-            raise LoweringRefused("primitive bounds exceed node reservation")
+            raise LoweringRefused("primitive bounds exceed node reservation or contain unknown dimensions")
         ps[n.primitive_id] = p
     nodes = {n.node_id: n for n in g.nodes}
     for e in g.edges:

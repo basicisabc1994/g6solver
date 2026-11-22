@@ -15,11 +15,17 @@ def records():
     return importlib.import_module("g6.distill.graph_records")
 
 
+def cost(**changes):
+    """Complete, explicitly observed fixture accounting or declared limits."""
+    r = records()
+    return r.CostVector(**(r.CostVector.zero().model_dump() | changes))
+
+
 def primitive(**changes):
     r = records()
     body = dict(kind="code", impl_ref="fixture.check", impl_version=digest("v1"),
                 input_schema=D, output_schema=D, state_access="none", side_effect="read",
-                pre=[], post=[], assumptions=[], scope=[], budget=r.CostVector(wall_s=5, cpu_s=5),
+                pre=[], post=[], assumptions=[], scope=[], budget=cost(wall_s=5, cpu_s=5),
                 stop=r.StopRule(timeout_s=5, max_iterations=None, abstain_on=[]),
                 determinism="deterministic", contract_sha256=None, entry_id=None, teacher=None)
     return r.Primitive(**(body | changes))
@@ -32,10 +38,10 @@ def graph_for(primitives, *, combinator="vote", k=1, lowering="native", output_t
     edges = []
     if combinator:
         nodes.append(r.Node(node_id="root", primitive_id=None, combinator=combinator, k=k,
-                            budget=r.CostVector()))
+                            budget=cost()))
         edges = [r.Edge(src=n.node_id, src_port="out", dst="root", dst_port=str(i), type_sha256=D)
                  for i, n in enumerate(nodes[:-1])]
-    budget = r.CostVector()
+    budget = cost()
     for p in primitives:
         budget = budget + p.budget
     return r.ProgramGraph(output_type=output_type, nodes=nodes, edges=edges,
@@ -44,7 +50,7 @@ def graph_for(primitives, *, combinator="vote", k=1, lowering="native", output_t
 
 
 def test_schema_roundtrip_extra_fields_and_content_identity():
-    r = records()
+
     p = primitive()
     g = graph_for([p])
     for obj in (p, g):
@@ -56,11 +62,11 @@ def test_schema_roundtrip_extra_fields_and_content_identity():
             type(obj).model_validate(obj.model_dump() | {obj.identity_field: digest("wrong")})
     assert primitive(impl_version=digest("v2")).primitive_id != p.primitive_id
     with pytest.raises(ValidationError):
-        r.CostVector(cpu_s=-1)
+        cost(cpu_s=-1)
     with pytest.raises(ValidationError):
-        r.CostVector(llm_calls=True)
+        cost(llm_calls=True)
     with pytest.raises(ValidationError):
-        r.CostVector(wall_s=float("nan"))
+        cost(wall_s=float("nan"))
 
 
 @pytest.mark.parametrize("fault", ["duplicate", "cycle", "missing", "disconnected", "threshold", "budget"])
@@ -89,7 +95,7 @@ def test_node_requires_one_kind_and_bounded_loops():
                  dict(primitive_id=D, combinator="seq"),
                  dict(primitive_id=None, combinator="loop")]:
         with pytest.raises(ValidationError):
-            r.Node(node_id="x", budget=r.CostVector(), **body)
+            r.Node(node_id="x", budget=cost(), **body)
 
 
 def test_feedback_external_label_requires_receipt():
@@ -107,10 +113,10 @@ def test_execution_rows_refuse_inconsistent_totals_and_duplicate_nodes():
     a, r = api(), records()
     p = primitive()
     rec = run(graph_for([p]), [p], kernels={p.impl_ref: lambda *args, **kw: a.KernelResult(
-        output="concern", cost=r.CostVector(cpu_s=0.5))})
+        output="concern", cost=cost(cpu_s=0.5))})
     body = rec.model_dump(exclude={"run_id"})
     with pytest.raises(ValidationError):
-        r.ExecutionRecord(**(body | {"cost": r.CostVector()}))
+        r.ExecutionRecord(**(body | {"cost": cost(probe_runs=1)}))
     with pytest.raises(ValidationError):
         r.ExecutionRecord(**(body | {"runs": [*body["runs"], body["runs"][0]]}))
 
@@ -120,10 +126,10 @@ def test_attempt_rows_refuse_send_and_execution_cost_mismatches():
     a, r = api(), records()
     p = primitive()
     rec = run(graph_for([p]), [p], kernels={p.impl_ref: lambda *args, **kw: a.KernelResult(
-        output="concern", cost=r.CostVector(cpu_s=0.5))})
+        output="concern", cost=cost(cpu_s=0.5))})
     attempt = rec.attempts[0].model_dump(exclude={"attempt_id"})
     with pytest.raises(ValidationError, match="measured model sends"):
         r.AttemptRecord(**(attempt | {"model_sends": 1}))
-    attempt["cost"] = r.CostVector()
+    attempt["cost"] = cost(probe_runs=1)
     with pytest.raises(ValidationError, match="attempt totals"):
         r.ExecutionRecord(**(rec.model_dump(exclude={"run_id"}) | {"attempts": [attempt]}))

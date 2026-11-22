@@ -16,24 +16,45 @@ Nonnegative = Annotated[Finite, Field(ge=0)]
 
 
 class CostVector(Model):
-    llm_calls: Count = 0
-    llm_tokens_in: Count = 0
-    llm_tokens_out: Count = 0
-    cpu_s: Nonnegative = 0
-    wall_s: Nonnegative = 0
-    solver_calls: Count = 0
-    probe_runs: Count = 0
-    sandbox_runs: Count = 0
+    """An observation or limit; omitted dimensions remain unknown."""
+
+    llm_calls: Count | None = None
+    llm_tokens_in: Count | None = None
+    llm_tokens_out: Count | None = None
+    cpu_s: Nonnegative | None = None
+    wall_s: Nonnegative | None = None
+    solver_calls: Count | None = None
+    probe_runs: Count | None = None
+    sandbox_runs: Count | None = None
 
     @classmethod
     def zero(cls) -> CostVector:
-        return cls()
+        """Identity for sums, or a complete observation of no resource use."""
+        return cls(**dict.fromkeys(cls.model_fields, 0))
+
+    @property
+    def complete(self) -> bool:
+        return all(getattr(self, name) is not None for name in type(self).model_fields)
 
     def __add__(self, other: CostVector) -> CostVector:
-        return CostVector(**{name: getattr(self, name) + getattr(other, name) for name in type(self).model_fields})
+        values = {}
+        for name in type(self).model_fields:
+            left, right = getattr(self, name), getattr(other, name)
+            values[name] = None if left is None or right is None else left + right
+        return CostVector(**values)
+
+    def comparison(self, limit: CostVector) -> Literal["within", "exceeded", "unknown"]:
+        unknown = False
+        for name in type(self).model_fields:
+            usage, cap = getattr(self, name), getattr(limit, name)
+            if usage is None or cap is None:
+                unknown = True
+            elif usage > cap:
+                return "exceeded"
+        return "unknown" if unknown else "within"
 
     def within(self, limit: CostVector) -> bool:
-        return all(getattr(self, name) <= getattr(limit, name) for name in type(self).model_fields)
+        return self.comparison(limit) == "within"
 
 
 class StopRule(Model):
@@ -133,7 +154,7 @@ class ProgramGraph(Record):
         visit(self.root)
         if len(done) != len(nodes):
             raise ValueError("every node must contribute to root")
-        total = CostVector()
+        total = CostVector.zero()
         for n in self.nodes:
             total = total + n.budget
             if n.combinator and not inputs[n.node_id]:
@@ -143,7 +164,7 @@ class ProgramGraph(Record):
             if n.combinator == "guard" and len(inputs[n.node_id]) != 1:
                 raise ValueError("guard requires one child")
         if not total.within(self.budget):
-            raise ValueError("node budgets exceed graph budget")
+            raise ValueError("node budgets exceed graph budget or contain unknown dimensions")
         return self
 
 
@@ -209,13 +230,13 @@ class ExecutionRecord(Record):
     def consistent(self) -> Self:
         if not self.runs or len({r.node_id for r in self.runs}) != len(self.runs):
             raise ValueError("execution needs unique node runs")
-        total = CostVector()
+        total = CostVector.zero()
         for run in self.runs:
             total = total + run.cost
         if total != self.cost:
             raise ValueError("execution cost differs from node run totals")
         if self.attempts:
-            measured = CostVector()
+            measured = CostVector.zero()
             for attempt in self.attempts:
                 measured = measured + attempt.cost
             if measured != self.cost:
@@ -277,6 +298,12 @@ class SavingsEstimate(Model):
     validation: CostVector
     maintenance_per_task: CostVector
     break_even_tasks: Finite | None
+
+    @model_validator(mode="after")
+    def observed_resources(self) -> Self:
+        if not all(cost.complete for cost in (self.delta_cost, self.validation, self.maintenance_per_task)):
+            raise ValueError("savings require complete resource observations")
+        return self
 
 
 class AdmissionDecision(Record):

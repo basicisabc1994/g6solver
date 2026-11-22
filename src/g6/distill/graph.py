@@ -76,8 +76,8 @@ def attempt_meter(what, *, update_id=None):
         finally:
             measured = meter.cost.model_dump()
             measured["llm_calls"] = sends()
-            measured["wall_s"] = max(measured["wall_s"], time.monotonic() - wall_start)
-            measured["cpu_s"] = max(measured["cpu_s"], time.process_time() - cpu_start)
+            measured["wall_s"] = max(0, time.monotonic() - wall_start)
+            measured["cpu_s"] = max(0, time.process_time() - cpu_start)
             meter.record = AttemptRecord(what=what, cost=CostVector(**measured), model_sends=sends(),
                                          outcome=meter.outcome, update_id=update_id,
                                          started_at=started_at, ended_at=datetime.now(timezone.utc).isoformat())
@@ -93,10 +93,11 @@ class ReplayCache:
 
     def get(self, key):
         raw = self._rows.get(key)
-        return NodeRun.model_validate_json(raw) if raw is not None else None
+        row = NodeRun.model_validate_json(raw) if raw is not None else None
+        return row if row is not None and row.cost.complete and row.terminal == "ok" and row.replayable else None
 
     def put(self, key, row):
-        if row.terminal == "ok" and row.replayable:
+        if row.terminal == "ok" and row.replayable and row.cost.complete:
             self._rows[key] = row.model_dump_json()
 
 
@@ -143,9 +144,9 @@ def _llm(p, inputs, *, caller, config, timeout_s):
             p.impl_ref != f"model:{config.model_id}" or p.impl_version != config.content_id):
         raise LoweringRefused("caller and matching model/prompt/sampling binding required")
     user = canonical(inputs)
-    # UTF-8 bytes provide a conservative token charge for text callers.
+    # UTF-8 bytes reserve text input capacity; they are not observed tokens.
     tokens_in = len(config.system.encode("utf-8")) + len(user.encode("utf-8"))
-    if (p.budget.llm_calls < 1 or tokens_in > p.budget.llm_tokens_in
+    if (not p.budget.complete or p.budget.llm_calls < 1 or tokens_in > p.budget.llm_tokens_in
             or config.max_tokens > p.budget.llm_tokens_out):
         raise LoweringRefused("LLM token or call reservation is insufficient")
     started, attempts = time.monotonic(), 0
@@ -158,23 +159,26 @@ def _llm(p, inputs, *, caller, config, timeout_s):
     try:
         with counting(before_call=before_call) as sends:
             reply = caller.complete(config.system, user, max_tokens=config.max_tokens)
+        if isinstance(reply, KernelResult):
+            # Only an injected trusted adapter can supply actual non-time use.
+            result = reply
+            if result.terminal in ERRORS:
+                return replace(result, output=None)
+            reply = result.output
         attempts = sends()
         if attempts != 1:
             raise LoweringRefused("caller must report its send through the call counter")
         output = reply if reply in VERDICTS else json.loads(reply)
-        result = KernelResult(output=output, cost=CostVector(llm_calls=attempts,
-                              llm_tokens_in=tokens_in, llm_tokens_out=len(reply.encode("utf-8"))),
+        result = KernelResult(output=output, terminal=result.terminal, cost=result.cost,
                               trace={"model_id": config.model_id, "reply": reply, "config": config.content_id})
     except (LoweringRefused, ExecutionRefused):
-        result = KernelResult(terminal="refused")
+        result = replace(result, output=None, terminal="refused")
     except TimeoutError:
-        result = KernelResult(terminal="timeout")
-    except LLMError as error:
-        result = KernelResult(terminal="timeout" if "TIMEOUT" in str(error) else "fail")
+        result = replace(result, output=None, terminal="timeout")
+    except LLMError:
+        result = replace(result, output=None, terminal="fail")
     except Exception:
-        result = KernelResult(terminal="fail")
-    if result.terminal != "ok":
-        result = replace(result, cost=CostVector(llm_calls=sends(), llm_tokens_in=tokens_in if sends() else 0))
+        result = replace(result, output=None, terminal="fail")
     return result
 
 
@@ -195,13 +199,15 @@ def execute(graph, x, *, primitives, unit_ref, split, request_id, g6_commit, see
     data = _json_input(x)
     facts = x.facts if isinstance(x, Observation) else data if isinstance(data, dict) else {}
     runs, fingerprints, attempts = {}, {}, []
-    spent = CostVector()
+    spent = CostVector.zero()
     llm_configs, kernels = llm_configs or {}, kernels or {}
     cache = cache if cache is not None else ReplayCache()
     limit = budget if budget is not None else graph.budget
     admission_error = False
     try:
         g, ps = validated(graph, primitives)
+        if not limit.complete:
+            raise LoweringRefused("runtime resource limits contain unknown dimensions")
         if any(p.side_effect != "read" or p.state_access == "local_write" for p in ps.values()):
             raise LoweringRefused("native executor permits read effects only")
         if any(n.combinator in {"branch", "loop", "cegis"} for n in g.nodes):
@@ -245,10 +251,10 @@ def execute(graph, x, *, primitives, unit_ref, split, request_id, g6_commit, see
         if admission_error:
             for child in edges:
                 visit(child.src)
-            return row(n, data, KernelResult(terminal="refused"))
+            return row(n, data, KernelResult(terminal="refused", cost=CostVector.zero()))
         if n.combinator == "guard" and not _matches(n.guard, facts):
             fingerprints[key] = digest([n.model_dump(mode="json"), data])
-            return row(n, data, KernelResult(output="abstain", terminal="abstain"))
+            return row(n, data, KernelResult(output="abstain", terminal="abstain", cost=CostVector.zero()))
         children = []
         for e in edges:
             child = visit(e.src)
@@ -269,18 +275,20 @@ def execute(graph, x, *, primitives, unit_ref, split, request_id, g6_commit, see
         fingerprints[key] = digest([n.model_dump(mode="json"), inp,
                                     [fingerprints.get(c.node_id) for c in children]])
         if failure:
-            return row(n, inp, KernelResult(terminal=failure.terminal))
+            return row(n, inp, KernelResult(terminal=failure.terminal, cost=CostVector.zero()))
         if n.combinator:
             if not (spent + n.budget).within(limit):
-                return row(n, inp, KernelResult(terminal="refused"))
+                return row(n, inp, KernelResult(terminal="refused", cost=CostVector.zero()))
             try:
                 out = _combine(n, [c.output for c in children])
-                return row(n, inp, KernelResult(output=out))
+                return row(n, inp, KernelResult(output=out, cost=CostVector.zero()))
             except Exception:
-                return row(n, inp, KernelResult(terminal="fail"))
+                return row(n, inp, KernelResult(terminal="fail", cost=CostVector.zero()))
         p = ps[n.primitive_id]
         if not _matches(p.pre + p.scope, facts):
-            return row(n, inp, KernelResult(output="abstain", terminal="abstain"))
+            return row(n, inp, KernelResult(output="abstain", terminal="abstain", cost=CostVector.zero()))
+        if not spent.within(limit):
+            return row(n, inp, KernelResult(terminal="refused", cost=CostVector.zero()))
         config = llm_configs.get(p.primitive_id)
         cache_key = digest([p.model_dump(mode="json"), fingerprints[key], seed,
                             config.model_dump(mode="json") if config is not None else None])
@@ -288,9 +296,9 @@ def execute(graph, x, *, primitives, unit_ref, split, request_id, g6_commit, see
         cached = cache.get(cache_key) if reusable else None
         if cached is not None:
             return row(n, inp, KernelResult(output=cached.output, terminal=cached.terminal,
-                       trace={"replay": cache_key}), replayable=True)
+                       cost=CostVector.zero(), trace={"replay": cache_key}), replayable=True)
         if not (spent + n.budget).within(limit):
-            return row(n, inp, KernelResult(terminal="refused"))
+            return row(n, inp, KernelResult(terminal="refused", cost=CostVector.zero()))
         with attempt_meter(n.node_id) as meter:
             try:
                 timeout_s = min(p.stop.timeout_s, n.budget.wall_s, limit.wall_s - spent.wall_s)
@@ -328,11 +336,16 @@ def execute(graph, x, *, primitives, unit_ref, split, request_id, g6_commit, see
                 meter.outcome = "failed"
         cost = meter.record.cost
         spent = spent + cost
-        if not cost.within(p.budget) or not cost.within(n.budget) or not spent.within(limit):
+        comparisons = (cost.comparison(p.budget), cost.comparison(n.budget), spent.comparison(limit))
+        if "exceeded" in comparisons:
             result = replace(result, output=None, terminal="refused")
             meter.outcome = "budget_exhausted"
         elif cost.wall_s > p.stop.timeout_s:
             result = replace(result, output=None, terminal="timeout")
+            meter.outcome = "failed"
+        elif "unknown" in comparisons:
+            if result.terminal not in ERRORS:
+                result = replace(result, output=None, terminal="refused")
             meter.outcome = "failed"
         result = replace(result, cost=cost)
         value = row(n, inp, result, replayable=reusable)
