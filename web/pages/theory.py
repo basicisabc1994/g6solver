@@ -71,4 +71,13 @@ DOCUMENTS: tuple[dict, ...] = (
                 "uncertainty.",
                 "An evaluator the system under test can change is a hard blocker."),
      "basis": "Proposal."},
+    {"file": "G6_Theory_Implementation.md",
+     "title": "Theory implementation",
+     "what": "A static audit of what the code does against the six historical theory documents at commit 458262ad, "
+             "dated 22 November 2026.",
+     "points": ("Records status counts and discrepancies, with source locations for each missing or differing mechanism.",
+                "Keeps evidence on review branches separate from the named commit.",
+                "Distinguishes known code gaps, later directions and claims that source inspection cannot settle.",
+                "The historical documents stay as written. This audit is not a test result."),
+     "basis": "Static source audit at commit 458262ad and named public review branches."},
 )
