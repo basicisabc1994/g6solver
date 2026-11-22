@@ -27,17 +27,16 @@ def test_mcp_op_stdout_is_captured(monkeypatch, capsys, registry_reset, route, f
 
     monkeypatch.setattr(get_registry().get_class("grounding"), "infer", infer)
     if route == "invoke":
+        reply = invoke_reply("grounding", "check_claim")
         if fails:
-            with pytest.raises(ValueError, match="operation failed"):
-                invoke_reply("grounding", "check_claim")
-            reply = None
-        else:
-            reply = invoke_reply("grounding", "check_claim")
+            assert reply["completion_state"] == "blocked-escalated"
+            assert reply["error"] == "operation failed"
+            assert reply["detail"] == "operation failed"
+            assert reply["warning_card"]["code"] == "G6_E_INVOKE_FAILED"
     else:
         reply = compose_reply({"stages": [{"component": "grounding", "op": "check_claim"}],
                                "inputs": {"claim": "x", "sources": {"manual": "x"}}})
-    if reply is not None:
-        assert reply["ok"] is (not fails)
+    assert reply["ok"] is (not fails)
     assert capsys.readouterr().out == ""
     print("AFTER_CALL")
     assert capsys.readouterr().out == "AFTER_CALL\n"
