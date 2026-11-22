@@ -64,7 +64,9 @@ def door_inventory(root=ROOT, extra=()):
         for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
             symbol = qualified(call.func)
             name = symbol.rpartition('.')[2]
-            if name not in ('invoke_checked', 'person_model'):
+            # The guidance adapter has the same leaf name and installs the guard
+            # itself. Audit its raw door call, just like every other raw caller.
+            if symbol not in ('g6.core.door.invoke_checked', 'g6.core.door.person_model'):
                 continue
             owner = call
             while owner in parents and not isinstance(owner, ast.FunctionDef | ast.AsyncFunctionDef):
