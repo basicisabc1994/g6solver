@@ -155,7 +155,7 @@ def test_config_traversal_is_bounded(layout, shape):
     elif shape == "files":
         write(first, '[include]\n' + ''.join(f'path = config{i}\n' for i in range(64)))
     else:
-        write(first, '# counted\n' * 1025)
+        write(first, "#" + "x" * cfg.CONFIG_MAX_BYTES + "\n")
     with pytest.raises(cfg.GitRefused) as caught:
         cfg.repository(str(repo), config)
     assert caught.value.code == cfg.PATH_INVALID
@@ -192,3 +192,9 @@ def test_missing_alternate_and_bom_are_admitted(layout):
     assert cfg.repository(str(repo), config)[0] == repo
 
 
+
+
+def test_comment_lines_below_byte_budget_are_admitted(layout):
+    _, repo, config = layout
+    write(repo / ".git/config", "# counted\n" * 1025)
+    assert cfg.repository(str(repo), config)[0] == repo
