@@ -333,8 +333,8 @@ def _floor_critic_report(said: str, *, marker: str = "") -> dict[str, str]:
     if marker and not re.search(rf"^READ:\s*{re.escape(marker)}\s*$", body, re.M):
         return {"verdict": "unread", "rule": "", "why": "", "test": "", "error": f"the reply does not quote {marker}"}
     # every verdict marker, mid-line included (``_VERDICT_LINE``): one word G6 reads, or none it can
-    words = {found[1].lower() for found in _VERDICT_LINE.finditer(body)}
-    verdict = words.pop() if len(words) == 1 and words <= set(READ_VERDICTS) else ""
+    words = _verdict_words(body)
+    verdict = next(iter(words)) if len(words) == 1 and words <= set(READ_VERDICTS) else ""
     rule = re.search(r"^RULE:\s*(.*?)(?=^VERDICT:)", body, re.M | re.S)
     why = re.search(r"^WHY:\s*(.*?)(?=^```|\Z)", body, re.M | re.S)
     test = re.search(r"^```python\n(.*?)^```", body, re.M | re.S)
@@ -1698,7 +1698,7 @@ def critic_report(said: str, *, marker: str = "") -> dict[str, str]:
                 "that does not close or decode, a key named twice, or verdict outside any object", "test": "",
                 "error": ""}
     floor = _floor_critic_report(text, marker=marker)
-    lines = [line[1].lower() for line in _VERDICT_LINE.finditer(text)]
+    lines = _verdict_words(text)
     if stated or lines:
         # A verdict the critic states is final and never read by a model: on a verdict line in any layout, or as a JSON
         # object in the reply's text or a json fence, never inside a python or other code fence (a test's code). It
@@ -1734,6 +1734,38 @@ def critic_report(said: str, *, marker: str = "") -> dict[str, str]:
 #: none, is a marker G6 cannot read. Prose that names a verdict with no separator (``the "verdict" key``) is no marker.
 _VERDICT_LINE = re.compile(r"(?<![A-Za-z0-9])verdicts?(?![A-Za-z0-9])[^\w:=\-–—>]*[:=\-–—>][\W_]*(\w*)",
                            re.I)
+
+
+def _verdict_words(body: str) -> set[str]:
+    """Read markup around both marker and value; retain any conflicting clean raw reading.
+
+    Strip tag delimiters only for bare HTML tags, never a tag's attributes or content. Removing emphasis must
+    not turn a different readable verdict into agreement. The JSON protocol is separately read without stripping.
+    """
+    tags = r'</?[A-Za-z][A-Za-z0-9]*\s*>'
+    clean = re.sub(tags, lambda match: ' ' * len(match[0]), body)
+    clean = clean.translate(str.maketrans(dict.fromkeys('_*~[]()', ' ')))
+    words = {match[1].lower() for match in _VERDICT_LINE.finditer(clean)}
+    stripped = re.sub(tags, '', body).translate(str.maketrans('', '', '_*~[]()'))
+    words.update(match[1].lower() for match in _VERDICT_LINE.finditer(stripped))
+    words.update(match[1].lower() for match in _VERDICT_LINE.finditer(body)
+                 if match[1].lower() in READ_VERDICTS)
+
+    def adjacent(index: int, step: int) -> str:
+        while 0 <= index < len(body) and body[index].isspace():
+            index += step
+        return body[index] if 0 <= index < len(body) else ''
+
+    for match in re.finditer(r'(?<![A-Za-z])verdicts?(?![A-Za-z])', body, re.I):
+        left, right = adjacent(match.start() - 1, -1), adjacent(match.end(), 1)
+        # JSON string quoting is handled by _stated_verdicts, including prose inside non-verdict fields.
+        marked = any(char and not char.isalpha() and char not in "'\"\\" for char in (left, right))
+        if marked and _VERDICT_LINE.match(clean, match.start()) is None:
+            words.add('')
+    # Underscores inside a value are not a wrapper; stripping them cannot create a clean reading.
+    if any('_' in match[1].strip('_') for match in _VERDICT_LINE.finditer(body)):
+        words.add('')
+    return words
 
 
 def _language(info: str) -> str:
