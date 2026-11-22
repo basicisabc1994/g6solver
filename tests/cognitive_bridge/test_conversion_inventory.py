@@ -10,7 +10,7 @@ field by the kind its annotation declares (a number, an integer, a flag).
 
 This lists from the code every pydantic model and every model validation in the package; every ``str()``,
 ``float()``, ``int()`` and ``bool()`` call, and every other conversion (``bytes()``, ``complex()``, ``.item()``,
-``.tolist()``, ``.decode()``, ``.encode()``, ``json.loads``, ``struct.pack``) on a value derived from a parameter of the
+``.tolist()``, ``.decode()``, ``.encode()``, ``_decode_json``, ``struct.pack``) on a value derived from a parameter of the
 function it is in; every record field that declares a number, an integer or a flag; and every public parameter that
 declares one. Each conversion is the boundary itself, or reads only the bridge's own value, or comes after a rule (or
 an estimator's value made Python's own and handed straight to the boundary); each is named here with which. Then a
@@ -346,6 +346,8 @@ def _converter(call) -> str:
         # the admitted native slot, called on the value (``tolist(value)``, review 2 of PR #8's fourth follow-up,
         # finding 1): the same conversion ``value.tolist()`` was, listed by the same name and argument
         return func.id
+    if isinstance(func, ast.Name) and func.id == "_decode_json":
+        return func.id
     if isinstance(func, ast.Attribute):
         if isinstance(func.value, ast.Name) and (func.value.id, func.attr) in MODULE_FUNCTIONS:
             return f"{func.value.id}.{func.attr}"
@@ -399,22 +401,22 @@ EXPECTED_CONVERSIONS = {
         ("ruled", "a belief the number rule took (an int or a float): an integer belief, 0 or 1, read as its float"),
     ("epistemic.py", "assertions_sha256", "decode", "canonical_json(record_data(a))"):
         ("own", "the ASCII bytes the bridge's own canonical encoder wrote"),
-    ("mixed_methods.py", "MixedMethodExecutor._run", "json.loads", "params"):
+    ("mixed_methods.py", "MixedMethodExecutor._run", "_decode_json", "params"):
         ("own", "the canonical bytes the executor made of a checked step's parameters"),
     ("orchestration.py", "CompiledResearch.completion_state", "bool",
      "compilation_gaps(self.decision, self.executable_plan)"): ("own", "the list of gaps the bridge built"),
-    ("orchestration.py", "CognitiveAssuranceOrchestrator._executed", "json.loads", "record[2]"):
+    ("orchestration.py", "CognitiveAssuranceOrchestrator._executed", "_decode_json", "record[2]"):
         ("own", "the run's canonical bytes this orchestrator stored when it ran it"),
     ("orchestration.py", "CognitiveAssuranceOrchestrator._every_step_ran", "bool", "compiled.executable_plan.steps"):
         ("own", "a plan's tuple of step records, as its record holds it: bool reads whether it is empty"),
     ("quantitative.py", "evaluated_trace_rows", "float", "number(row[name], where=f'history[{index}].{name}')"):
         ("ruled", "a trace's feature or target, read by the number rule: an integer read as its float"),
     ("snapshot.py", "canonical_json", "encode", _DUMPS): ("boundary", "the encoder's own ASCII text, as bytes"),
-    ("snapshot.py", "plain", "json.loads", "canonical_json(value)"):
+    ("snapshot.py", "plain", "_decode_json", "canonical_json(value)"):
         ("boundary", "the boundary's round trip through the bridge's canonical encoder"),
     ("snapshot.py", "_bytes", "bytes", "value"):
         ("boundary", "a field a record declares as bytes: its exact type (bytes, bytearray, memoryview) tested first"),
-    ("snapshot.py", "json_reply", "json.loads", "reply"):
+    ("snapshot.py", "json_reply", "_decode_json", "reply"):
         ("boundary", "a model's reply, tested first to be text, read as JSON with no repeated key, then by plain"),
     ("xai.py", "_native", "tolist", "value"):
         ("estimator", "numpy's array or scalar made Python's own values, handed straight to the boundary "
@@ -441,7 +443,7 @@ EXPECTED_CONVERSIONS.update({
      "canonical_json({'objective': objective[:2500], 'hypotheses': [{'id': h.id, 'statement': h.statement, 'prior': h.prior} for h in hypotheses], 'history': list(history)[-6:], 'allowed_tools': [{'name': t.name, 'cost': t.cost, 'assumed_match_probability': t.assumed_match_probability} for t in tools.values()], 'max_probes': self.max_probes})"): _ENCODED_BYTES,
     ('mixed_methods.py', 'LLMClaimCompiler.draft', 'decode',
      "canonical_json(payload, cap=15000, error='question and context exceed prompt cap')"): _ENCODED_BYTES,
-    ('snapshot.py', 'record_data', 'json.loads',
+    ('snapshot.py', 'record_data', '_decode_json',
      'canonical_json(value)'): _ENCODED_BYTES,
 })
 
@@ -450,6 +452,14 @@ def test_the_conversions_are_listed_from_the_code():
     found = set(conversions())
     assert found == set(EXPECTED_CONVERSIONS), (sorted(found - set(EXPECTED_CONVERSIONS)),
                                                 sorted(set(EXPECTED_CONVERSIONS) - found))
+
+
+def test_a_new_guarded_decode_is_still_an_unclassified_conversion(monkeypatch):
+    planted = ast.parse('def added(raw):\n    return _decode_json(raw)\n')
+    monkeypatch.setitem(globals(), '_modules', lambda: [('added.py', planted)])
+    found = set(conversions())
+    assert found == {('added.py', 'added', '_decode_json', 'raw')}
+    assert found - set(EXPECTED_CONVERSIONS) == found
 
 
 def _ruled(fn, call) -> bool:
@@ -553,7 +563,7 @@ PLANTS: dict[tuple[str, str, str, str], tuple[set[str], dict[str, Any]]] = {
         | {"a payload's trace": lambda v: sklearn_payload([{**HISTORY[0], "cost": v}])}),
     ("snapshot.py", "_bytes", "bytes", "value"):
         ({"bytes"}, {"an artifact's content": lambda v: EvidenceArtifact("e", v, "report", "c", "s", "claim")}),
-    ("snapshot.py", "json_reply", "json.loads", "reply"):
+    ("snapshot.py", "json_reply", "_decode_json", "reply"):
         (set(), {"a model's reply": lambda v: LLMProposer(_Model(v), TOOLS).propose("objective", HYPS, [])}),
     ("xai.py", "_float32", "struct.pack", "number(value, where='a tree input')"): (set(), {
         "a sample's feature": lambda v: ExplicitTree(("x",), TreeNode(value=1), "regression", "t").explain_one([v]),
