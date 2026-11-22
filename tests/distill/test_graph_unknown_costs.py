@@ -111,7 +111,8 @@ def test_failure_retains_unknown_resources_and_measured_work(monkeypatch):
 
     rec = run(graph_for([p]), [p], kernels={p.impl_ref: fail})
     assert rec.cost.probe_runs is None and rec.cost.llm_tokens_out is None
-    assert rec.cost.llm_calls == 1 and rec.cost.wall_s == rec.cost.cpu_s == 0.5
+    # Lead ruling 11-23: CPU no adapter reported stays unknown (local process time misses child CPU).
+    assert rec.cost.llm_calls == 1 and rec.cost.wall_s == 0.5 and rec.cost.cpu_s is None
     assert rec.terminal == "fail" and rec.root_output is None
     assert rec.attempts[0].outcome == "failed"
     assert rec.attempts[0].cost == rec.runs[0].cost == rec.cost
@@ -263,8 +264,11 @@ def test_measured_time_and_calls_override_callback_declarations(monkeypatch):
         return a.KernelResult(output="concern", cost=complete(llm_calls=99, wall_s=99, cpu_s=99))
 
     rec = run(graph_for([p]), [p], kernels={p.impl_ref: kernel})
-    assert rec.cost.wall_s == rec.cost.cpu_s == 0.25 and rec.cost.llm_calls == 0
-    assert rec.terminal == "ok"
+    # Lead ruling 11-23 (graph-unk repair 1 class rule): model sends are counted, never taken from the callback;
+    # a reported CPU overrun (child work the parent cannot see) is never replaced by a lower local reading, so the
+    # attempt is refused. Wall time is at least the measured elapsed time.
+    assert rec.cost.llm_calls == 0 and rec.cost.cpu_s == 99 and rec.cost.wall_s >= 0.25
+    assert rec.terminal != "ok" and rec.completion_state == "blocked-escalated"
 
 
 @pytest.mark.parametrize("resource", ["delta_cost", "validation", "maintenance_per_task"])

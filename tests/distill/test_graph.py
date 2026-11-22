@@ -522,7 +522,9 @@ def test_exception_books_measured_time_and_actual_sends(monkeypatch, sent):
     with counting() as counter:
         rec = run(graph_for([p]), [p], caller=caller, llm_configs={p.primitive_id: config})
     assert rec.terminal == "fail" and rec.root_output is None
-    assert rec.cost.wall_s == rec.cost.cpu_s == 0.25
+    # Lead ruling 11-23 (graph-unk repair 1 class rule): local process time cannot see child CPU, so CPU the
+    # adapter did not report stays unknown; the full elapsed wall time is kept.
+    assert rec.cost.wall_s == 0.25 and rec.cost.cpu_s is None
     assert rec.cost.llm_calls == counter() == int(sent)
     assert rec.attempts[0].cost == rec.cost
     assert rec.attempts[0].outcome == "failed"
@@ -544,7 +546,7 @@ def test_kernel_failure_keeps_send_count_and_time(monkeypatch):
         rec = run(graph_for([p]), [p], kernels={p.impl_ref: kernel})
     assert rec.terminal == "fail"
     assert rec.cost.llm_calls == counter() == 1
-    assert rec.cost.wall_s == rec.cost.cpu_s == 0.5
+    assert rec.cost.wall_s == 0.5 and rec.cost.cpu_s is None  # unreported CPU stays unknown (lead ruling 11-23)
 
 
 def test_attempt_meter_retains_exception_record(monkeypatch):
@@ -563,7 +565,7 @@ def test_attempt_meter_retains_exception_record(monkeypatch):
     row = meter.record
     assert row.what == "fixture" and row.outcome == "failed"
     assert row.model_sends == row.cost.llm_calls == sends() == 1
-    assert row.cost.wall_s == row.cost.cpu_s == 0.25
+    assert row.cost.wall_s == 0.25 and row.cost.cpu_s is None  # unreported CPU stays unknown (lead ruling 11-23)
     assert r.AttemptRecord.model_validate_json(row.model_dump_json()) == row
 
 
