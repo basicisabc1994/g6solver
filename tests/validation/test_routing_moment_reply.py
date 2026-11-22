@@ -56,10 +56,23 @@ def _repo(tmp_path: Path) -> Path:
 
 def test_a_reviews_reply_is_withheld_at_its_poll_while_the_review_calls_own_arguments_are_unshared(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The pilot's finding, held offline with G6's own server: every named source of a review shared, its job poll
-    is still withheld, on one source alone: the review call's own arguments (``input:``), which no grant made before
-    the call can name. Granting that exact input lets the reply come back."""
+    """A submitting session may receive its own exact inputs, until the person explicitly revokes one.
+
+    The poll still carries those inputs, so the person's revoke must withhold its reply.
+    """
     from g6.core import cloud_consent as cloud
+    from fastmcp import Client
+
+    polls = []
+    original = Client.call_tool
+
+    async def traced(client, name, *args, **kwargs):
+        reply = await original(client, name, *args, **kwargs)
+        if name == "metaharness_job":
+            polls.append(reply.data)
+        return reply
+
+    monkeypatch.setattr(Client, "call_tool", traced)
 
     monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("G6_MCP_SENSITIVE", "patch_review.review")
@@ -71,9 +84,12 @@ def test_a_reviews_reply_is_withheld_at_its_poll_while_the_review_calls_own_argu
         _grant(source)
     found = server.probe("g6", str(repo), "claude_code")
     review = cloud.input_source(json.dumps({"repo": str(repo), "task": server.PROBE_TASK}, sort_keys=True))
-    assert found["reply"] == "withheld" and found["provider"] == PROVIDER
-    assert found["review_input"] == review and found["unshared"] == [review]
-    assert {"jobs", "host_configuration", cloud.repository_source(repo)} <= set(found["named"])
+    assert found["reply"] == "returned" and found["provider"] == PROVIDER, {"probe": found, "polls": polls}
+    assert found["review_input"] == review and found["unshared"] == []
+    cloud.revoke(review, PROVIDER)
+    refused = server.probe("g6", str(repo), "claude_code")
+    assert refused["reply"] == "withheld" and refused["unshared"] == [review], {"probe": refused, "polls": polls}
+    assert {"jobs", "host_configuration", cloud.repository_source(repo), review} <= set(refused["named"])
     _grant(review)
     assert server.probe("g6", str(repo), "claude_code")["reply"] == "returned"
 
@@ -153,13 +169,27 @@ def _rows(out: Path) -> dict[str, dict[str, Any]]:
 
 def test_a_session_whose_reviews_reply_would_be_withheld_is_refused_before_it_starts(
         granted: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
-    """With all 28 lines granted, the server as it stands still withholds a review's reply (the call's own
-    arguments): a task that starts with the granted sources is refused; the consent task, whose reply must be
-    withheld, starts."""
+    """A revoke of the review's exact input withholds its poll and prevents the trial from starting.
+
+    A consent task that intentionally withholds its named sources still starts.
+    """
+    from g6.core import cloud_consent as cloud
+
+    original = run.reply_probe
+
+    def revoked(home, workspace, client):
+        if "before_done" in str(home):
+            source = cloud.input_source(json.dumps({"repo": str(workspace), "task": server.PROBE_TASK}, sort_keys=True))
+            with monkeypatch.context() as local:
+                local.setenv("G6_HOME", str(home))
+                cloud.revoke(source, "openai:codex")
+        return original(home, workspace, client)
+
+    monkeypatch.setattr(run, "reply_probe", revoked)
     seen = _fake(monkeypatch)
     out = granted.tmp / "before"
     done = {t.task_id: t for t in run.run(granted.path, out, client="codex", cohort="moment")}
-    assert (done["moment.before_done.1"].state, done["moment.before_done.1"].code) == ("refused", run.REPLY_WITHHELD)
+    assert (done["moment.before_done.1"].state, done["moment.before_done.1"].code) == ("refused", run.REPLY_WITHHELD), _rows(out)
     assert done["moment.after_refusal.3"].state == "completed", _rows(out)["moment.after_refusal.3"]["session"].get("fault")
     assert [granted.by_prompt[p] for p in seen] == ["moment.after_refusal.3"]
     rows = _rows(out)
