@@ -118,12 +118,13 @@ def confine_record(plan):
 
 def confine_refused(plan):
     from g6.core import confine
-    return text_for_agent(confine.refused(plan))
+    said = confine.refused(plan)
+    return text_for_agent(said + " " + ISOLATION_ACTION) if said else ""
 
 
 def confine_refusal(plan):
     from g6.core import confine
-    return text_for_agent(confine.refusal(plan))
+    return text_for_agent(confine.refusal(plan) + " " + ISOLATION_ACTION)
 
 
 def confine_not_started(record, exc):

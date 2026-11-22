@@ -801,9 +801,10 @@ def read_observation(raw: object) -> dict | None:
 class RepoRefused(ValueError):
     """The repository or the request cannot be run; ``code`` is its stable ``G6_E_*`` code."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, isolation: dict[str, object] | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.isolation = dict(isolation or {})
 
 
 #: Before every git command: no index refresh (``--no-optional-locks``); paths are paths, never patterns
@@ -3150,7 +3151,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         if not said and require_isolation and not isolation.get("backend"):
             said = confine_refusal(confined)
         if said:
-            raise RepoRefused(ISOLATION_UNAVAILABLE, said)
+            raise RepoRefused(ISOLATION_UNAVAILABLE, said, isolation=isolation)
         try:
             if deadline is not None:
                 bound = min(bound, _copy_remaining(deadline))
