@@ -326,6 +326,9 @@ BINDING_READS = {
     # slice 2's follow-up (review 4's finding 3): what one of the issuer's receipts is bound to, for the view
     ("custody.py", "receipt_about", "read_binding(canonical(held))"): THROUGH + ": a receipt's provenance binding",
     ("custody.py", "receipt_about", "read_about(binding, artefact=receipt.get('artifact_sha'))"): THROUGH,
+    # Repair 1: trace contamination reads the bound fixture without reconstructing the raw stored record.
+    ("trace.py", "trace_claim", "read_binding(body['source_ref'])"): THROUGH + ": trace metadata; the verdict handles refusal",
+    ("trace.py", "trace_claim", "read_about(read_binding(body['source_ref']))"): THROUGH + ": the bound fixture for the trace",
 }
 BYTES = "compared by the digest the accessor gives (About, or evaluator_of)"
 #: Every identity comparison in research/echa, with what it compares.

@@ -42,6 +42,17 @@ def about(rec: EvidenceRecord) -> tuple[About, tuple[tuple[str, str], ...]]:
     return read_about(binding_of(rec), scope=rec.scope, standard=rec.standard_sha256, predicates=(rec.predicate_id,))
 
 
+def fixture_contaminated(fixture_version: str, bound_fixture: str, contaminated: set[str]) -> bool:
+    """An incident against either named fixture voids the record, including a control or premise.
+
+    Binding validity is checked separately by ``about``; an unreadable binding never admits evidence.
+    Accept the declared fixture and the accessor's ``About.fixture`` so traces can report contamination even for an
+    otherwise invalid record. An empty bound fixture means no readable binding and supplies no fixture identity.
+    """
+    return (fixture_version in contaminated
+            or bool(bound_fixture) and bound_fixture in contaminated)
+
+
 def receipt_about(receipt: dict, provenance: dict | None) -> tuple[About, tuple[tuple[str, str], ...]]:
     """What one of the issuer's receipts (``Certificate.as_dict``'s) is about, through the mapping's one reader
     (``read_about``), as ``about`` reads one of ECHA's records: from the custody binding its provenance entry holds
