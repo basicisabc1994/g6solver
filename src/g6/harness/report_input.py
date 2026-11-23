@@ -209,3 +209,24 @@ class Loop(TypedDict, total=False):
     ending: str
     left: str
     no_clean: bool
+
+
+def observation_records(assessment: Assessment | Loop) -> list[dict]:
+    """The schema's observation positions, shared by the producer and renderer.
+
+    Never walk arbitrary nested payloads: an imports entry, a reproduction, or
+    caller data containing an observation flag cannot attribute its parent.
+    Findings and activities count independently of whether any test ran.
+    """
+    completion = assessment.get("completion") or {}
+    defects = completion.get("defects_reproduced") or {}
+    return [
+        *((assessment.get("scope") or {}).get("checks_run") or []),
+        *(completion.get("demonstrated") or []),
+        *(completion.get("activities") or []),
+        *(defects.get("stated_and_repository_checks") or []),
+        *(defects.get("proposed_checks") or []),
+        *(one.get("check") or {} for one in (assessment.get("confirmed_expectations") or {}).get("expectations") or []),
+        *(assessment.get("reviews") or []),
+        *(assessment.get("sets") or []),
+    ]

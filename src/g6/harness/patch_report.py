@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import re
 
-from g6.harness.report_input import Assessment, Loop
+from g6.harness.report_input import Assessment, Loop, observation_records
 from g6.harness.report_text import G6Text, InertCode, caller_values, join_report as _join_report, text as _text
 
 from g6.core.git_name import shown
@@ -265,17 +265,8 @@ def _observed(assessment: dict, item: dict | None = None) -> bool:
     inherited = (assessment.get("scope") or {}).get("evidence_status", assessment.get("evidence_status"))
     if item is not None:
         return item.get("evidence_status", inherited) == "observed_by_g6"
-    completion = assessment.get("completion") or {}
-    leaves = [
-        *((assessment.get("scope") or {}).get("checks_run") or []),
-        *(completion.get("demonstrated") or []),
-        *(completion.get("activities") or []),
-        *(one.get("check") or {} for one in (assessment.get("confirmed_expectations") or {}).get("expectations") or []),
-        *(assessment.get("reviews") or []),
-        *(assessment.get("sets") or []),
-    ]
     return inherited == "observed_by_g6" and all(
-        one.get("evidence_status", inherited) == "observed_by_g6" for one in leaves
+        one.get("evidence_status", inherited) == "observed_by_g6" for one in observation_records(assessment)
     )
 
 

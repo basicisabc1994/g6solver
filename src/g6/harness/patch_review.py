@@ -1768,8 +1768,7 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                  **{key: value for key, value in run.items() if key != "provenance"}} for run in runs]
     proposals, assumptions = _listed(listed, assumed)
     assessment = {
-        "evidence_status": "observed_by_g6" if runs and all(
-            run["evidence_status"] == "observed_by_g6" for run in runs) else "asserted",
+        "evidence_status": "asserted",
         "outcome": outcome, "summary": summary, "reasons": reasons,
         "requirements": evaluated,
         "requirements_without_adequate_check": [r["id"] for r in evaluated if r["status"] == NOT_ESTABLISHED],
@@ -1786,13 +1785,6 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                                                      artifact=artifact, base_commit=change.base_commit,
                                                      templates=prepared, adequacy=adequacy, stopped=stopped,
                                                      proposals=proposer)}
-    # G6 observed these checks too. Whether they can pass a requirement is the
-    # issuer's separate decision; report attribution does not grant gate evidence.
-    for activity in assessment["completion"].get("activities") or []:
-        if activity.get("activity") in ("proposed check", "template instance"):
-            activity["evidence_status"] = "observed_by_g6"
-    for finding in (assessment["completion"].get("defects_reproduced") or {}).get("proposed_checks") or []:
-        finding["evidence_status"] = "observed_by_g6"
     if issuer_inputs is not None:   # the one authority's statement of each requirement (G6 0.3, slice 2)
         from g6.harness import requirement_evidence
         # the review's own integrity rule: a run it does not believe is no evidence for the issuer either
@@ -1825,6 +1817,15 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
             "evidence": requirement_evidence.confirmed_evidence(
                 standard, enforced, artifact=artifact, base_commit=change.base_commit, environment=confirmed_environment,
                 integrity=[r["code"] for r in reasons if r["stage"] == "integrity"])}
+    # This internal producer records what G6 observed, including static readings,
+    # attempted activities and findings. Attribution follows schema positions, not
+    # the presence of test runs. It grants no gate or evidence-issuer authority.
+    from g6.harness.report_input import observation_records
+
+    observations = observation_records(assessment)
+    for observation in observations:
+        observation["evidence_status"] = "observed_by_g6"
+    assessment["evidence_status"] = "observed_by_g6" if observations else "asserted"
     from g6.harness import patch_report   # A1: the readable report, derived from the fields above; it decides nothing
     assessment["report"] = patch_report.safe_render(assessment)
     card = warning_card(CODE, summary, next_actions[0])
