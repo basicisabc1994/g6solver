@@ -29,6 +29,16 @@ PURPOSES = ("check", "negative_control", "positive_control", "calibration", "sco
 BREADTHS = ("covered_cases", "general")
 ESTIMANDS = ("oracle_scoped", "true_correctness")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+# Unicode 15.1 DerivedCoreProperties.txt: Default_Ignorable_Code_Point,
+# including its reserved ranges. Keep this explicit: unicodedata has no such
+# property, and a format-category filter misses marks and Hangul filler letters.
+# Braille blank and ideographic space are additional non-rendering bases.
+_NON_RENDERING = re.compile(
+    r"[\u00ad\u034f\u061c\u115f-\u1160\u17b4-\u17b5\u180b-\u180f"
+    r"\u200b-\u200f\u202a-\u202e\u2060-\u206f\u2800\u3000\u3164"
+    r"\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3"
+    r"\U0001d173-\U0001d17a\U000e0000-\U000e0fff]"
+)
 
 
 def canonical(obj: Any) -> str:
@@ -44,15 +54,22 @@ def premise_text(value: str) -> str:
 
     Normalize at decision time so stored record bytes and their content hashes stay intact.
     """
-    visible = []
+    comparison = []
     for character in unicodedata.normalize("NFC", value):
         category = unicodedata.category(character)
         if character.isspace() or category in ("Zs", "Zl", "Zp"):
-            visible.append(" ")
+            comparison.append(" ")
         elif category not in ("Cf", "Cc"):
-            visible.append(character)
+            comparison.append(character)
     # Removing a format character can bring a base and combining mark together.
-    return " ".join(unicodedata.normalize("NFC", "".join(visible)).split())
+    normalized = " ".join(unicodedata.normalize("NFC", "".join(comparison)).split())
+    # A cluster supplies visible text only through an L/N/S/P base. For this
+    # existence check, marks and joiners need no segmentation: they cannot supply
+    # that base. Preserve their spelling when a visible base is present.
+    return normalized if any(
+        unicodedata.category(character)[0] in "LNSP" and not _NON_RENDERING.fullmatch(character)
+        for character in normalized
+    ) else ""
 
 
 def text_of(name: str, value: Any, *, required: bool = True) -> str:
