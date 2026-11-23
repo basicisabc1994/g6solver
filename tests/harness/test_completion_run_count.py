@@ -189,7 +189,8 @@ def test_threaded_and_late_sends_reserve_from_current_state(run_store):
                 list(pool.map(lambda _: note_model_call(), range(16)))
             late = threading.Thread(target=lambda: (gate.wait(5), note_model_call()))
             late.start()
-    loop._save(session, {**load(session), 'attempted': 20, 'reviews': [{'patch': 'later'}]}, sources=())
+    with loop._writing(session):
+        loop._save(session, {**load(session), 'attempted': 20, 'reviews': [{'patch': 'later'}]}, sources=())
     gate.set()
     late.join(5)
     assert not late.is_alive()

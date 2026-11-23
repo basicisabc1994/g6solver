@@ -97,9 +97,20 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
     if done.action == loop.WAIT:      # the step that is running owns the state, so nothing of it is read here
         return {**blocked_reply(f"[{done.code}] {done.text}", request_id=request_id), "run_id": folder.name,
                 "action": done.action, "code": done.code}
-    state = loop._load(folder)
+    try:
+        # A late worker can reserve after advance releases its lock. Read the
+        # report and accounting together under that same writer serialization.
+        with loop._state_write(folder):
+            state = loop._load(folder)
+            total = loop.attempted(state)
+            if state.get("done"):
+                done = loop.Step(loop.STOP, code=state.get("code", ""), note=done.note,
+                                 ending=state.get("ending", ""))
+            text = state.get("reply_text", "") if done.action == loop.CONTINUE else loop.read_report(folder, state)
+    except WorkspaceRefused:
+        return {**blocked_reply(f"[{loop.BUSY}] {loop.ALREADY_RUNNING}", request_id=request_id),
+                "run_id": folder.name, "action": loop.WAIT, "code": loop.BUSY}
     evidence = _evidence(state, asked["base"])
-    text = done.text or loop.read_report(folder, state)
     code, ending, why, note = done.code, done.ending, state.get("stop") or text or NOTHING, done.note
     if note == loop.ALREADY_ENDED:     # a repeat ran nothing: its report is of the patch as the session's loop ended
         reviews = state.get("reviews") or []    # a stop with a code keeps it, as it says why the session's loop ended
@@ -116,7 +127,8 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
         result = {"ok": True, **said, **envelope_fields(
             reliability_label="qualified-draft", warning_card=warning_card(CODE, *card), evidence=evidence, request_id=request_id,
             run_id=folder.name, degradation_reason=card[0][:300])}
-    if code and (total := loop.attempted(state)) is not None:
+    if code:
+        # None retains an unknown bound; only a retained zero means unsent.
         result["requests_sent"] = total
     from g6.core.cloud_consent import bind_output
     return bind_output(result, loop.source_refs(state))

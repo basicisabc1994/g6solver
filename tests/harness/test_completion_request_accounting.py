@@ -198,7 +198,8 @@ def test_final_review_ends_through_step_consent_guard(
                 return set(), ""
 
             monkeypatch.setattr(loop, "review_round", review_round)
-    loop._save(session, state, sources=())
+    with loop._writing(session):
+        loop._save(session, state, sources=())
     monkeypatch.setattr(loop, "_scout", lambda change, task, text, where, host, deadline: _left_out(where))
 
     # Fail only the log's open; state/mark publication and all delivery logic stay real.

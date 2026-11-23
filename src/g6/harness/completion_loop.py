@@ -1073,15 +1073,37 @@ class Step:
 CONSENT_STATE_AFTER_SEND = "G6_E_CLOUD_CONSENT_STATE_AFTER_SEND"
 
 
+class _RetainedState(dict):
+    """A read's publication identity, outside the persisted mapping and its JSON shape."""
+
+    def __init__(self, state: dict, version: tuple[str, str] | None) -> None:
+        super().__init__(state)
+        self.version = version
+
+
+def _read_version(session: Path) -> str:
+    try:
+        # G6's own write token, read like state.sha256 beside it; never on the way to the reviewer.
+        token = (session / '.write-version').read_text(encoding='ascii')
+    except (OSError, UnicodeError):
+        return ''
+    return token if re.fullmatch(r'[0-9a-f]{32}', token) else ''
+
+
 def _load(session: Path) -> dict:
+    session = Path(session).resolve()
     path = session / "state.json"
     if not path.is_file():
         return {}
+    version = None
     try:
+        before = _read_version(session)
         expected = (session / 'state.sha256').read_text(encoding='ascii')
         state = json.loads(cloud.read_retained(path, expected))
         if not isinstance(state, dict):
             raise ValueError('retained state is not an object')
+        if before and before == _read_version(session):
+            version = (before, expected)
     except (OSError, TypeError, ValueError, RecursionError, MemoryError):
         # Neither content nor control fields from unbound state are reusable.
         state = {'done': True, 'code': cloud.REQUIRED, 'ending': 'untested', 'stop': cloud.WITHHELD,
@@ -1089,7 +1111,7 @@ def _load(session: Path) -> dict:
     if state.get('code') in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND):
         state['stop'] = _consent_stop(attempted(state))
     cloud.record_sources(source_refs(state))
-    return state
+    return _RetainedState(state, version)
 
 
 def read_report(session: Path, state: dict) -> str:
@@ -1154,6 +1176,7 @@ _WRITER: contextvars.ContextVar[_Writer | None] = contextvars.ContextVar("g6_run
 @contextmanager
 def _writing(session: Path):
     """Hold the step lock for an operation. Child send boundaries share its serialization guard."""
+    session = Path(session).resolve()
     with _held(session):
         owner = _Writer(session)
         token = _WRITER.set(owner)
@@ -1167,6 +1190,7 @@ def _writing(session: Path):
 
 @contextmanager
 def _state_write(session: Path):
+    session = Path(session).resolve()
     owner = _WRITER.get()
     if owner is not None and owner.session == session:
         with owner.guard:
@@ -1182,8 +1206,10 @@ class _RunCount:
     """Reserve a possible send durably at every model boundary, before dispatch."""
 
     def __init__(self, session: Path, state: dict) -> None:
-        self.session, self.state = session, state
+        # The observer may run after a callback or another thread changes cwd.
+        self.session, self.state = Path(session).resolve(), state
         self.guard = threading.RLock()
+        self.active = True
 
     def total(self) -> int | None:
         return attempted(self.state)
@@ -1234,6 +1260,8 @@ def _run_count(session: Path, state: dict, *, fresh: bool):
         try:
             yield run
         finally:
+            with run.guard:
+                run.active = False
             _RUN_COUNT.reset(token)
 
 
@@ -1242,6 +1270,7 @@ _RESERVATION: contextvars.ContextVar[tuple[Path, dict] | None] = contextvars.Con
 
 def _reserve_request(session: Path, state: dict) -> None:
     """Enter the reservation transaction through the unchanged state-save seam."""
+    session = Path(session).resolve()
     token = _RESERVATION.set((session, state))
     try:
         _save(session, state)
@@ -1251,19 +1280,27 @@ def _reserve_request(session: Path, state: dict) -> None:
 
 def _save_reservation(session: Path, state: dict, *, sources=None) -> None:
     """Reserve once from fresh retained state; finish all persistence before dispatch."""
+    operation = _WRITER.get()
     with _state_write(session):
         stored = _load(session)
+        owned = (operation is not None and operation is _WRITER.get()
+                 and operation.session == session and operation.active)
+        run = _RUN_COUNT.get()
+        expired = not owned and (operation is not None or (run is not None and
+                                (run.session != session or not run.active)))
         # With no retained state, the isolated projection already includes this send.
         total = attempted(stored) if stored else attempted(state)
         if stored and total is not None:
             total += 1
-        merged = dict(stored or state)
+        # An expired worker has authority to reserve a send, never to restore the
+        # work in its old snapshot or replace a newer operation's source records.
+        merged = dict(stored or ({} if expired else state))
         for key in (ATTEMPTED, SENT):
             if total is None:
                 merged.pop(key, None)
             else:
                 merged[key] = total
-        _save_locked(session, merged, sources=sources)
+        _save_locked(session, merged, sources=sources, preserve_sources=expired)
         _sync_state(session)
         # Keep the active operation's unfinished reviews and deliberate deletions.
         for key in (ATTEMPTED, SENT):
@@ -1274,6 +1311,7 @@ def _save_reservation(session: Path, state: dict, *, sources=None) -> None:
 
 
 def _save(session: Path, state: dict, *, sources=None) -> None:
+    session = Path(session).resolve()
     reservation = _RESERVATION.get()
     if reservation is not None and reservation[0] == session and reservation[1] is state:
         _save_reservation(session, state, sources=sources)
@@ -1285,44 +1323,56 @@ def _save(session: Path, state: dict, *, sources=None) -> None:
         total, prior = attempted(incoming), attempted(stored)
         total = (max(prior, total) if total is not None else prior) if prior is not None else (
             None if stored else total)
-        # Standalone callers cannot erase reviews using an old snapshot. Step owners
-        # may deliberately revise their own reviews while holding the operation lock.
+        # Check the original lease under the serialization guard. _state_write
+        # acquires a new lease for expired contexts; that cannot revive the old one.
+        owned = (operation is not None and operation is _WRITER.get()
+                 and operation.session == session and operation.active)
+        # A standalone read/modify/write is a new operation only if no publication
+        # has superseded its snapshot. Missing legacy versions grant no authority.
         run = _RUN_COUNT.get()
-        if stored.get('reviews') and (run is None or run.session != session):
-            incoming['reviews'] = [*stored['reviews'], *(r for r in incoming.get('reviews', [])
-                                                      if r not in stored['reviews'])]
-        # The current operation read its state under this same lock. Its snapshot
-        # includes deliberate deletions, such as a delivered row or an obsolete
-        # clean stop. Only a standalone (or expired-context) writer needs to carry
-        # fields from the freshly read state into its possibly stale snapshot.
-        owned = operation is not None and operation is _WRITER.get()
-        merged = incoming if owned else {**stored, **incoming}
+        standalone = operation is None and (run is None or (run.session == session and run.active))
+        version = state.version if isinstance(state, _RetainedState) else None
+        current = (standalone and version is not None and isinstance(stored, _RetainedState)
+                   and version == stored.version)
+        replacing = owned or current or (standalone and not stored)
+        # Stale writes can only raise the send bound. Preserve the whole retained
+        # operation, including intentional deletions, reviews, debt and retry reason.
+        merged = incoming if replacing else dict(stored)
         for key in (ATTEMPTED, SENT):
             if total is None:
                 merged.pop(key, None)
             else:
                 merged[key] = total
-        _save_locked(session, merged, sources=sources)
+        version = _save_locked(session, merged, sources=sources, preserve_sources=not replacing)
         state.clear()
         state.update(merged)
+        if isinstance(state, _RetainedState):
+            state.version = version
 
 
-def _save_locked(session: Path, state: dict, *, sources=None) -> None:
-    capture = _SOURCE_STATE.get()
-    if sources is None:
-        refs = tuple(capture.sources) if capture is not None else (*source_refs(state), cloud.UNKNOWN)
-    else:
-        refs = cloud.boundary_sources(sources, carried=cloud.prompt_sources())
-    state['consent_sources'] = [asdict(source) for source in dict.fromkeys(refs)]
+def _save_locked(session: Path, state: dict, *, sources=None,
+                 preserve_sources: bool = False) -> tuple[str, str]:
+    if not preserve_sources:
+        capture = _SOURCE_STATE.get()
+        if sources is None:
+            refs = tuple(capture.sources) if capture is not None else (*source_refs(state), cloud.UNKNOWN)
+        else:
+            refs = cloud.boundary_sources(sources, carried=cloud.prompt_sources())
+        state['consent_sources'] = [asdict(source) for source in dict.fromkeys(refs)]
     session.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Invalidate older snapshots before publication. A partial token after a
+    # crash grants no authority; the state retains its existing digest check.
+    version = uuid.uuid4().hex
+    (session / '.write-version').write_bytes(version.encode('ascii'))
     body = json.dumps(state).encode('utf-8')
     cloud.write_retained(session / 'state.json', body)
+    return version, cloud.sha256(body)
 
 
 def _sync_state(session: Path) -> None:
-    # Retained publication is atomic; flush both published files before admitting
+    # Retained publication is atomic; flush its files and version before admitting
     # the request. A failed flush propagates through the observer and prevents send.
-    for name in ('state.json', 'state.sha256'):
+    for name in ('state.json', 'state.sha256', '.write-version'):
         with (session / name).open('r+b') as stream:
             os.fsync(stream.fileno())
     if os.name != 'nt':
@@ -1585,7 +1635,7 @@ def prepare(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     did not happen. Nothing is spent on a repository with no Python, or where the review-until-clean loop will run."""
     if not _before_fix() or (critic_host() is not None and not _scouts_chosen()):
         return ""
-    session = Path(session)
+    session = Path(session).resolve()
     root = repo_tests.checked_repo(repo)
     python = any(rel.endswith(".py") for rel in repo_tests._paths(repo_tests._git(root, "ls-files", "-z")))
     if not python or proposer.boundary(root):
@@ -1664,7 +1714,7 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
 
     A step reads its round from the state and then writes that round's files, so two at once would undo each other: a call
     that finds another running does nothing, and says ``WAIT``."""
-    session = Path(session)
+    session = Path(session).resolve()
     session.mkdir(parents=True, exist_ok=True, mode=0o700)
     settle()
     try:
@@ -1676,6 +1726,13 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
 
 def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host | None, critic: LLMCaller | None,
              said: str, answered: bool, agent: str) -> Step:
+    session = Path(session).resolve()
+    # Direct callers need the same live operation lease as the public entry.
+    # Otherwise a reservation supersedes their snapshot before refusal is saved.
+    owner = _WRITER.get()
+    if owner is None or owner.session != session or not owner.active:
+        with _writing(session):
+            return _advance(repo, task, base, session, scout, critic, said, answered, agent)
     with cloud.collect_sources() as capture:
         cloud.record_sources((*source_refs(_load(session)),
             cloud.Source.text(cloud.repository_source(repo), 'repository', str(Path(repo).resolve())),
@@ -1798,12 +1855,14 @@ def _step(state: dict, run: _RunCount, repo: str | Path, task: str, base: str, s
                 _save(session, state)
                 return Step(WAIT, ASKED, WAITING_ON_PERSON)
             if loop.pending and reviewing:
+                state["reply_text"] = loop.pending
                 _save(session, state)
                 return Step(CONTINUE, loop.pending)
             if loop.pending:
                 told, first = shipped.repair.format(text=loop.pending), _told(state, shipped)   # first: no hook could say it before
+                state["reply_text"] = f"{first}\n\n{told}" if first else told
                 _save(session, state)
-                return Step(CONTINUE, f"{first}\n\n{told}" if first else told)
+                return Step(CONTINUE, state["reply_text"])
             reason = loop.why or STOPPED.get(got.status, got.reason)
             if not reviewing:
                 return _finish(session, state, _report(root, task, base, state, reason), patch=_patch_now(root, base))
