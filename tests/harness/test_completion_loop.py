@@ -158,10 +158,10 @@ def test_nothing_is_tested_or_spent_when_no_python_changed(world, monkeypatch):
     assert not scouts.calls and not runs.calls
 
 
-def test_recorded_scout_assertions_pass_the_gate(world):
-    tree = world.repo / "tree.json"
+def test_recorded_scout_assertions_pass_the_gate(tmp_path):
+    tree = tmp_path / "tree.json"
     tree.write_text(TREE, encoding="utf-8")
-    got = loop._read(SimpleNamespace(repo=world.repo, sources=()), [ran("test_p.py", CASES)])
+    got = loop._read(SimpleNamespace(repo=tmp_path, sources=()), [ran("test_p.py", CASES)])
     assert got.usable
     assert loop._gate(tree, got) == []
 
