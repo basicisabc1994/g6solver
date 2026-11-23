@@ -46,7 +46,7 @@ def test_a_yes_writes_the_block_after_showing_it(codex):
     shown = next(i for i, (kind, text) in enumerate(events) if kind == "say" and block in text)
     asked = next(i for i, (kind, text) in enumerate(events) if kind == "ask" and "AGENTS.md" in text)
     assert shown < asked
-    assert instructions.TEXT in block
+    assert instructions.SETUP_TEXT in block
     assert block.startswith(instructions.AGENTS_BEGIN) and block.endswith(instructions.AGENTS_END)
 
 

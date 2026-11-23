@@ -175,6 +175,17 @@ def test_the_tool_descriptions_say_the_reply_is_compact_and_how_to_get_the_full_
     assert "detail" in tools["metaharness_job"].parameters["properties"]
 
 
+
+def test_the_disclosed_descriptions_say_the_reply_is_compact_and_how_to_get_the_full_form(disclosed_tool_guidance):
+    tools = asyncio.run(build_server().get_tools())
+    review = " ".join(disclosed_tool_guidance("g6_review_patch").split())
+    job = " ".join(disclosed_tool_guidance("metaharness_job").split())
+    assert 'detail="full"' in review and 'detail="full"' in job
+    assert "compact" in review and "compactly by default" in job
+    assert "full_assessment" in review and "full_assessment" in job
+    assert "detail" in tools["metaharness_job"].parameters["properties"]
+
+
 @pytest.mark.parametrize('detail', ['compact', 'full'])
 def test_review_reply_without_a_dialog_grant_withholds_the_fixture(tmp_path, monkeypatch, detail):
     from g6.core.cloud_consent import Source, bind_output

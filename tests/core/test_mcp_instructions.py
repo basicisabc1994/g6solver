@@ -17,10 +17,11 @@ from g6.mcp import build_server  # noqa: E402
 
 def test_the_text_is_short_and_names_only_registered_tools() -> None:
     from g6.mcp import registrations
-    from g6.mcp.instructions import LEAD, TEXT
+    from g6.mcp.instructions import TEXT
+    from g6.mcp.families import family_table
 
     assert len(TEXT.split()) <= 150, len(TEXT.split())
-    assert TEXT.startswith(LEAD)
+    assert TEXT.startswith(family_table())
     named = set(re.findall(r"\b(?:g6|metaharness)_[a-z_]+\b", TEXT))
     registered = set(registrations.recorded()["g6"])
     assert {"g6_review_patch", "metaharness_job", "g6_review_until_clean", "g6_premortem", "g6_confirm_behaviour",

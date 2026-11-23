@@ -45,7 +45,8 @@ def test_a_refusal_passed_back_reroutes_over_mcp(tmp_path: Path, monkeypatch: py
     assert len(reply["candidates"]) <= 3
 
 
-def test_its_reply_is_the_selectors_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mcp_compacts_the_selectors_reply_without_changing_rank_or_envelope(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from g6.core import selector
 
     monkeypatch.setenv("G6_HOME", str(tmp_path / "fresh-home"))
@@ -54,7 +55,13 @@ def test_its_reply_is_the_selectors_own(tmp_path: Path, monkeypatch: pytest.Monk
     direct = selector.select(**arguments)
     for reply in (over_mcp, direct):
         reply.pop("request_id"), reply.pop("run_id")
-    assert over_mcp == direct and over_mcp["candidates"]
+    assert len(over_mcp["candidates"]) == len(direct["candidates"]) > 0
+    for actual, expected in zip(over_mcp["candidates"], direct["candidates"], strict=True):
+        assert {key: actual[key] for key in expected} == expected
+        assert actual["families"]
+    assert {k: v for k, v in over_mcp.items() if k != "candidates"} == {
+        k: v for k, v in direct.items() if k != "candidates"}
+
 
 
 @pytest.mark.parametrize("considering", [

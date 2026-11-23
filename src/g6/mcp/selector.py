@@ -32,9 +32,11 @@ def register(server: Any) -> None:
         the configured model and consent checks; every reading and fallback is in mechanisms. Rerank is lexical
         ("colbert" is answered lexically). No proposed call runs; qualified-draft. You choose the checked call."""
         from g6.core.selector import select
+        from g6.mcp.families import compact_selection
 
-        return select(task, phase, last_outcome, considering, limit, rerank, request_id=uuid.uuid4().hex[:12],
-                      run_id="")
+        reply = select(task, phase, last_outcome, considering, limit, rerank,
+                       request_id=uuid.uuid4().hex[:12], run_id="")
+        return compact_selection(reply, considering=bool(considering))
 
     g6_select._g6_declaration = TOOLS["g6_select"]
     server.tool()(g6_select)

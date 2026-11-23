@@ -239,14 +239,29 @@ def build_server(surface: Any = None) -> Any:
         return shown_components()
 
     @server.tool()
-    def g6_find(query: str, limit: int = 5) -> list[dict]:
+    def g6_find(query: str, limit: int = 5) -> list:
         """Rank G6 workflows, tools, skills and runnable ops for a task; an empty list means no G6 tool fits."""
-        return discovery.find(query, limit)
+        from g6.mcp.families import compact_candidates
+        from g6.mcp.catalogue import extension
+        hits = discovery.find(query, limit)
+        extensions = [name for name in shown_components() if extension(name)]
+        if extensions:
+            # Only the existing catalogue gate admits these names and carries their source.
+            hits = [*hits, *discovery.find(query, limit, names=extensions)]
+            hits.sort(key=lambda row: -row["score"])
+        return compact_candidates(hits[:limit])
 
     @server.tool()
     def g6_describe(component: str) -> dict:
         """Maturity, ops and declared dependencies of one component, and, once the person shares host_configuration,
         this computer's facts about it: which of its sensitive ops this server allows, which extras are installed."""
+        from g6.mcp.families import describe
+        try:
+            guidance = describe(component)
+        except Exception as exc:
+            return unloadable(component, exc)
+        if guidance is not None:
+            return guidance
         hidden = unshipped_reply(component)     # a name G6 did not ship, before the person shares component_catalogue
         if hidden is not None:
             return hidden
@@ -282,6 +297,8 @@ def build_server(surface: Any = None) -> Any:
     selector.register(server)            # g6_select: the staged selector over G6's own corpus; reads no repository
     from g6.mcp import workflow
     workflow.register(server, Context)   # after the consent egress above: it stays the last thing to touch a reply
+    from g6.mcp.families import compact_server
+    compact_server(server, "g6")
     return server
 
 
@@ -372,7 +389,12 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         the patch is complete; a check that also passes on the base commit's code is listed in unknowns). Each is
         qualified-draft. A refusal is blocked-escalated with no outcome. Test receipts are kept in a file owned by the
         same user as G6: they stop a caller from claiming that G6 ran a test, not a program running as that user. merge
-        is always requires_separate_approval; nothing is merged. This is sensitive; the person must allow it themselves. Tell the person."""
+        is always requires_separate_approval; nothing is merged. This is sensitive; the person must allow it themselves. Tell the person.
+
+        The review reply keeps completion_state, warning_card, evidence, request_id and run_id. A completed review
+        is qualified-draft with warning_card.code G6_E_PATCH_REVIEW. An invalid intent, proposed_checks,
+        template_instances or search is refused as blocked-escalated with warning_card.code G6_E_INPUT_VALIDATION
+        and no assessment. A mistyped parameter is refused by the tool's input schema; the server keeps answering."""
         from g6.core.door import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):
             return public_instructions(blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it"))

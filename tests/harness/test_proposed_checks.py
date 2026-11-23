@@ -772,6 +772,62 @@ def test_the_mcp_tool_takes_proposed_checks_and_keeps_its_envelope_and_codes(rep
     assert refused["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and "assessment" not in refused
 
 
+def test_the_mcp_tool_takes_proposed_checks_and_keeps_its_envelope_and_codes_after_one_describe(repo, monkeypatch, disclosed_tool_guidance):
+    guidance = disclosed_tool_guidance("g6_review_patch")
+    pytest.importorskip("fastmcp")
+    import asyncio
+
+    from fastmcp import Client
+
+    from g6.mcp import build_server
+
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "patch_review.review")
+    (repo / "calc.py").write_text(PLANTED)
+    Tiers(monkeypatch)
+    Stage(monkeypatch, {MUL_KEPT["source"]: {"patch": "failed", "base": "passed"}})
+    server = build_server()
+
+    def data(reply) -> dict:
+        return reply.data if isinstance(reply.data, dict) else reply.structured_content
+
+    async def finished(client, arguments) -> dict:
+        job = data(await client.call_tool("g6_review_patch", {"repo": str(repo), "task": "Make add sum.",
+                                                              "requirements": R1, **arguments}))
+        for _ in range(400):
+            got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"], "detail": "full"}))
+            if got.get("status") in ("completed", "failed"):
+                assert got["status"] == "completed", got
+                return got["result"]
+            await asyncio.sleep(0.05)
+        raise AssertionError("the review job did not finish")
+
+    async def flow():
+        tool = (await server.get_tools())["g6_review_patch"]
+        async with Client(server) as client:
+            plain = await finished(client, {})
+            searched = await finished(client, {"proposed_checks": [MUL_KEPT]})
+            refused = await finished(client, {"proposed_checks": [check("c1", None, "test_a.py", "x = 1\n")]})
+        return tool, plain, searched, refused
+
+    tool, plain, searched, refused = asyncio.run(flow())
+    assert "proposed_checks" in tool.parameters["properties"] and "proposed_checks" in guidance
+    assert plain["assessment"]["outcome"] == "supported_within_scope"
+    assert searched["assessment"]["outcome"] == "insufficient_evidence"
+    assert "unconfirmed_counterexample" in _codes(searched)
+    for got in (plain, searched):
+        assert got["completion_state"] == "qualified-draft" and got["warning_card"]["code"] == "G6_E_PATCH_REVIEW"
+        assert check_envelope(got) == [] and got["request_id"] and "run_id" in got
+        assert set(got["assessment"]["completion"]) == COMPLETION
+    assert set(searched) == set(plain)
+    assert [set(item) for item in searched["evidence"]] == [set(item) for item in plain["evidence"]]
+    assert refused["completion_state"] == "blocked-escalated"
+    assert refused["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and "assessment" not in refused
+
+    for field in ("completion_state", "warning_card", "evidence", "request_id", "run_id"):
+        assert field in guidance
+    assert "G6_E_PATCH_REVIEW" in guidance and "G6_E_INPUT_VALIDATION" in guidance
+
+
 def test_over_mcp_a_deeply_nested_probe_still_gives_a_readable_reply(repo, monkeypatch):
     """Review 3 (E7): an observation nested 300 levels deep made the job's result impossible to serialise. It is a
     check error now, and a shallow probe's differences reach the reply as JSON text."""
@@ -839,6 +895,27 @@ def test_the_tool_and_module_docs_name_the_proposed_check_reasons_in_plain_words
     for text in (description, proposed, " ".join(verification_search.__doc__.split())):
         assert "64 KB" not in text and "node id " not in text and "node ID" not in text
     assert "64 kilobytes" in description and "node identifier" in description and "64 kilobytes" in proposed
+
+
+def test_the_tool_and_module_docs_name_the_proposed_check_reasons_in_plain_words_after_one_describe(disclosed_tool_guidance):
+    """Review 13: both reasons a proposed check can give are listed with insufficient evidence, and the prose says
+    kilobytes and node identifier."""
+    guidance = disclosed_tool_guidance("g6_review_patch")
+    description = " ".join(guidance.split())
+    insufficient = description.partition("insufficient_evidence (")[2].partition(");")[0]
+    module = " ".join(patch_review.__doc__.split()).partition("``insufficient_evidence``:")[2].partition("4.")[0]
+    for text in (insufficient, module):
+        assert "unconfirmed_counterexample" in text and "unconfirmed_failure" in text, text
+    guide = " ".join((Path(__file__).resolve().parents[2] / "docs" / "AI_FOR_AI_WORKFLOW.md").read_text(
+        encoding="utf-8").split())
+    proposed = guide.partition("`proposed_checks` is optional")[2].partition("Every reply has")[0]
+    for text in (description, proposed, " ".join(verification_search.__doc__.split())):
+        assert "64 KB" not in text and "node id " not in text and "node ID" not in text
+    assert "64 kilobytes" in description and "node identifier" in description and "64 kilobytes" in proposed
+
+    for field in ("completion_state", "warning_card", "evidence", "request_id", "run_id"):
+        assert field in guidance
+    assert "G6_E_PATCH_REVIEW" in guidance and "G6_E_INPUT_VALIDATION" in guidance
 
 
 # --- real confined runs (Linux bubblewrap; run in Docker on Windows) ----------------------------------------------------

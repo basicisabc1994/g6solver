@@ -279,6 +279,47 @@ def test_the_mcp_tool_carries_the_report_and_keeps_its_envelope_and_codes(repo, 
     assert "assessment.report" in " ".join(tool.description.split())
 
 
+def test_the_mcp_tool_carries_the_report_and_keeps_its_envelope_and_codes_after_one_describe(repo, monkeypatch, disclosed_tool_guidance):
+    guidance = disclosed_tool_guidance("g6_review_patch")
+    pytest.importorskip("fastmcp")
+    import asyncio
+
+    from fastmcp import Client
+
+    from g6.mcp import build_server
+
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "patch_review.review")
+    (repo / "calc.py").write_text(GOOD)
+    _runs(monkeypatch)
+    server = build_server()
+
+    def data(reply) -> dict:
+        return reply.data if isinstance(reply.data, dict) else reply.structured_content
+
+    async def flow():
+        tool = (await server.get_tools())["g6_review_patch"]
+        async with Client(server) as client:
+            job = data(await client.call_tool("g6_review_patch", {"repo": str(repo), "task": "t",
+                                                                  "requirements": SUM}))
+            for _ in range(400):
+                got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"]}))
+                if got.get("status") in ("completed", "failed"):
+                    return tool, got
+                await asyncio.sleep(0.05)
+        raise AssertionError("the review job did not finish")
+
+    tool, got = asyncio.run(flow())
+    assert got["status"] == "completed", got
+    reply = got["result"]
+    assert reply["completion_state"] == "qualified-draft" and reply["warning_card"]["code"] == "G6_E_PATCH_REVIEW"
+    assert check_envelope(reply) == [] and reply["assessment"]["report"].startswith("**Supported")
+    assert "assessment.report" in " ".join(guidance.split())
+
+    for field in ("completion_state", "warning_card", "evidence", "request_id", "run_id"):
+        assert field in guidance
+    assert "G6_E_PATCH_REVIEW" in guidance and "G6_E_INPUT_VALIDATION" in guidance
+
+
 def test_the_docs_that_describe_the_reply_name_the_report():
     docs = Path(__file__).resolve().parents[2] / "docs" / "AI_FOR_AI_WORKFLOW.md"
     assert "assessment.report" in docs.read_text(encoding="utf-8")

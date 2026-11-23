@@ -580,6 +580,59 @@ def test_the_mcp_tool_takes_the_proposer_and_keeps_its_envelope_codes_and_label(
     assert refused["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and check_envelope(refused) == []
 
 
+def test_the_mcp_tool_takes_the_proposer_and_keeps_its_envelope_codes_and_label_after_one_describe(tmp_path, monkeypatch, ready, disclosed_tool_guidance):
+    guidance = disclosed_tool_guidance("g6_review_patch")
+    pytest.importorskip("fastmcp")
+    import asyncio
+
+    from fastmcp import Client
+
+    from g6.mcp import build_server
+
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "patch_review.review")
+    root = _repo(tmp_path, CODEC, {"textcodec.py": CODEC_PATCH})
+    Tiers(monkeypatch)
+    Runs(monkeypatch)
+    model = Model({"free_form": {"checks": [FREE_CHECK]}})
+    monkeypatch.setattr(verification_proposer, "default_caller", lambda: model.llm)
+    server = build_server()
+
+    def data(reply) -> dict:
+        return reply.data if isinstance(reply.data, dict) else reply.structured_content
+
+    async def finished(client, arguments) -> dict:
+        job = data(await client.call_tool("g6_review_patch", {"repo": str(root), "task": "Escape newlines.",
+                                                              "requirements": RULES, **arguments}))
+        if "job_id" not in job:
+            return job
+        for _ in range(400):
+            got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"], "detail": "full"}))
+            if got.get("status") in ("completed", "failed"):
+                assert got["status"] == "completed", got
+                return got["result"]
+            await asyncio.sleep(0.05)
+        raise AssertionError("the review job did not finish")
+
+    async def flow():
+        tool = (await server.get_tools())["g6_review_patch"]
+        async with Client(server) as client:
+            searched = await finished(client, {"search": {"propose": True, "proposer": "free_form"}})
+            refused = await finished(client, {"search": {"propose": True, "proposer": "everything"}})
+        return tool, searched, refused
+
+    tool, searched, refused = asyncio.run(flow())
+    assert "propose" in guidance and "free_form" in guidance
+    assert searched["completion_state"] == "qualified-draft" and searched["warning_card"]["code"] == "G6_E_PATCH_REVIEW"
+    assert check_envelope(searched) == [] and model.asked == ["free_form"]
+    assert _requirement(searched, "R2")["status"] == "not_established"
+    assert refused["completion_state"] == "blocked-escalated"
+    assert refused["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and check_envelope(refused) == []
+
+    for field in ("completion_state", "warning_card", "evidence", "request_id", "run_id"):
+        assert field in guidance
+    assert "G6_E_PATCH_REVIEW" in guidance and "G6_E_INPUT_VALIDATION" in guidance
+
+
 # --- confined (Linux bubblewrap) ----------------------------------------------------------------------------------------
 
 def test_confined_a_proposed_check_runs_in_a_copy_and_its_reproduction_needs_no_g6(tmp_path, bwrap_backend):

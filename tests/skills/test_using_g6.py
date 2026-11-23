@@ -11,11 +11,32 @@ from pathlib import Path
 
 from g6.core import discovery, skills
 from g6.core.registry import get_registry
+from g6.skills import routing
 
 GUIDE = skills.guide_dir()
 TEXT = (GUIDE / "SKILL.md").read_text(encoding="utf-8")
 LIFECYCLE = (GUIDE / "references" / "lifecycle.md").read_text(encoding="utf-8")
-BOTH = TEXT + "\n" + LIFECYCLE
+
+
+def _full_route(route_id: str) -> str:
+    route = routing.load().routes[route_id]
+    assert routing.section(TEXT, route.anchor) is not None, route_id
+    begin, end = f"<!-- route:{route_id} -->", f"<!-- /route:{route_id} -->"
+    records = []
+    for path in route.detail:
+        text = (GUIDE.parents[1] / path).read_text(encoding="utf-8")
+        if begin in text:
+            assert text.count(begin) == text.count(end) == 1, route_id
+            records.append(text.split(begin, 1)[1].split(end, 1)[0])
+    assert len(records) == 1, route_id
+    return records[0]
+
+
+ROUTE_TEXTS = {route_id: _full_route(route_id) for route_id in routing.load().routes}
+POLICY = routing.section((GUIDE / "references" / "family-review.md").read_text(encoding="utf-8"), "## Read and ask")
+assert POLICY is not None
+FULL = TEXT + "\n" + "\n".join(ROUTE_TEXTS.values()) + "\n" + POLICY
+BOTH = FULL + "\n" + LIFECYCLE
 #: The ceiling for SKILL.md's body: the cap every skill has (0.3 design, 14.1: the 1,800-word cap holds). The version
 #: tested on agents was about 900 words (TESTING.md, "Limits of this test"); the longer one is not yet measured (the
 #: routing measurement under validation/routing is built and has not been run).
@@ -50,7 +71,7 @@ def test_it_names_itself_and_says_when_to_use_it() -> None:
 
 
 def test_every_g6_invoke_names_a_real_op_and_only_fields_its_input_takes() -> None:
-    calls = re.findall(r'g6_invoke\("(\w+)", "(\w+)"(?:, \{([^}]*)\})?', TEXT)
+    calls = re.findall(r'g6_invoke\("(\w+)", "(\w+)"(?:, \{([^}]*)\})?', FULL)
     assert len(calls) >= 3
     reg = get_registry()
     for component, op, fields in calls:
@@ -96,9 +117,9 @@ def test_every_tool_and_code_it_names_is_real() -> None:
     registered = set(registrations.recorded()["g6"])   # what the server registers, wherever the tool is defined
     named = set(re.findall(r"`(g6_[a-z_]+|metaharness_[a-z_]+)`", BOTH))
     assert named and named <= registered, named - registered
-    assert "Client-mediated consent may occur in the proposing session" in TEXT
-    assert "recorded name is not authenticated" in TEXT
-    assert "host-configured safety/injection evaluator" in TEXT
+    assert "Client-mediated consent may occur in the proposing session" in FULL
+    assert "recorded name is not authenticated" in FULL
+    assert "host-configured safety/injection evaluator" in FULL
     # Actual approval behavior is exercised through MCP in test_phase6_mcp,
     # including proposing-session consent, decline and changed digest rejection.
 
@@ -108,8 +129,8 @@ def test_every_superpowers_skill_it_pairs_a_stage_with_is_vendored() -> None:
     named = set(re.findall(r"`([a-z]+(?:-[a-z]+)+)`", LIFECYCLE)) - {"qualified-draft"}
     named |= {n for n in ("brainstorming",) if f"`{n}`" in LIFECYCLE}
     assert len(named) >= 12 and named <= vendored, named - vendored
-    assert "software engineering work in general" in TEXT and "using-superpowers" in vendored
-    assert "G6 checks the work they produce" in TEXT
+    assert "software engineering work in general" in FULL and "using-superpowers" in vendored
+    assert "G6 checks the work they produce" in FULL
 
 
 def test_it_names_only_templates_review_parameters_and_bindings_that_exist() -> None:
@@ -119,7 +140,7 @@ def test_it_names_only_templates_review_parameters_and_bindings_that_exist() -> 
     from g6.harness import verification_templates as templates
 
     known = set(templates.TEMPLATES) | set(templates.FORMAL_TEMPLATES)
-    named = set(re.findall(r"`([a-z_]+\.v\d+)`", TEXT))
+    named = set(re.findall(r"`([a-z_]+\.v\d+)`", FULL))
     assert known <= named and named <= known, (known - named, named - known)
     # the tools live in more than one module of g6.mcp (the Context Engine's are in g6/mcp/knowledge.py)
     source = "\n".join(p.read_text(encoding="utf-8") for p in sorted(Path(g6.mcp.__file__).parent.glob("*.py")))
@@ -128,7 +149,7 @@ def test_it_names_only_templates_review_parameters_and_bindings_that_exist() -> 
     forms = [definition.bindings for definition in {**templates.TEMPLATES, **templates.FORMAL_TEMPLATES}.values()]
     forms += [templates.AccessBindings, templates.AccessStepsBindings]
     fields = {name for form in forms if hasattr(form, "model_fields") for name in form.model_fields}
-    section = TEXT.split("## Deliver a coding task with G6", 1)[1].split("\n## ", 1)[0]
+    section = _route_section("review")
     words = set(re.findall(r"`([a-z_]+)`", section)) - {"verified"}
     tools = {word for word in words if word.startswith(("g6_", "metaharness_"))}
     assert {"intent", "requirements", "template_instances", "proposed_checks"} <= words
@@ -138,7 +159,7 @@ def test_it_names_only_templates_review_parameters_and_bindings_that_exist() -> 
 def test_a_review_starts_from_its_three_inputs_and_the_optional_ones_wait_for_their_shapes() -> None:
     """The owner's pilot (2026-10-30): both agents' first review calls were refused, Codex's for an intent in the wrong
     shape, Claude Code's for a template instance's bindings; each fixed its call only after the refusal."""
-    section = " ".join(TEXT.split("## Deliver a coding task with G6", 1)[1].split("\n## ", 1)[0].split())
+    section = _route_section("review")
     assert ("Call `g6_review_patch` with the folder, the task and the requirements, then poll `metaharness_job`."
             in section), section
     assert ("Add optional inputs (`intent`, `template_instances`, `proposed_checks`) only in the shapes the tool's "
@@ -147,7 +168,7 @@ def test_a_review_starts_from_its_three_inputs_and_the_optional_ones_wait_for_th
 
 
 def test_after_a_no_in_the_form_the_agent_asks_and_offers_no_other_way() -> None:
-    assert "After a decline or cancel, ask the person; offer no other way to confirm." in " ".join(TEXT.split())
+    assert "After a decline or cancel, ask the person; offer no other way to confirm." in " ".join(FULL.split())
 
 
 def test_it_stays_short() -> None:
@@ -166,7 +187,7 @@ def _route_section(route: str) -> str:
 
     found = routing.section(TEXT, routing.load().routes[route].anchor)
     assert found is not None, route
-    return " ".join(found.split())
+    return " ".join(ROUTE_TEXTS[route].split())
 
 
 def test_one_question_is_the_default_and_three_is_gone() -> None:
@@ -208,7 +229,8 @@ def test_fallback_text_is_not_shared_across_routes() -> None:
 
 
 def _section(heading: str) -> str:
-    return " ".join(TEXT.split(heading, 1)[1].split("\n## ", 1)[0].split())
+    route_id = next(route_id for route_id, route in routing.load().routes.items() if route.anchor == heading)
+    return _route_section(route_id)
 
 
 def test_deliver_names_the_model_proposed_checks_and_the_loop():

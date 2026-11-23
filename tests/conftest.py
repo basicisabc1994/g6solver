@@ -332,3 +332,34 @@ def confined_python(tmp_path_factory):
     if name is None:
         pytest.skip(f"the Windows backend cannot run here, even on a copy of the interpreter: {why}")
     return python
+
+
+@pytest.fixture
+def disclosed_tool_guidance():
+    """Follow the short wire description's documented pointer with one real MCP call."""
+    import re
+
+    Client = pytest.importorskip("fastmcp").Client
+
+    from g6.mcp import build_server
+
+    def read(name, *, description=None):
+        async def run():
+            from mcp.types import Implementation
+
+            async with Client(build_server(), client_info=Implementation(name="codex", version="test")) as client:
+                short = description
+                if short is None:
+                    tools = {tool.name: tool for tool in await client.list_tools()}
+                    short = tools[name].description
+                pointer = re.search(r'Details: g6_describe\("([^"\n]+)"\)\.', short)
+                assert pointer is not None, (name, short)
+                assert pointer.group(1) == name
+                result = await client.call_tool("g6_describe", {"component": pointer.group(1)})
+                reply = result.data if isinstance(result.data, dict) else result.structured_content
+                assert reply["available"] is True and reply["call"]["tool"] == name
+                assert isinstance(reply["guidance"], str) and reply["guidance"]
+                return reply["guidance"]
+        return asyncio.run(run())
+
+    return read

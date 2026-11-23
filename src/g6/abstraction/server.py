@@ -79,7 +79,9 @@ def _tool():
     """``mcp.tool()``, described by the function's cleaned docstring: from Python 3.13 the compiler strips a
     docstring's shared indentation, so the raw docstring would show an agent other text on 3.13 than on 3.12."""
     def register(fn):
-        return mcp.tool(description=inspect.cleandoc(fn.__doc__ or ""))(fn)
+        from g6.core.tool_guidance import register_guidance
+        description = register_guidance("abstraction", fn.__name__, inspect.cleandoc(fn.__doc__ or ""))
+        return mcp.tool(description=description)(fn)
     return register
 
 _domains: dict[str, ConcreteDomain] = {}

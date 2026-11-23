@@ -1,23 +1,29 @@
 # SPDX-License-Identifier: Apache-2.0
-"""G6's one text for the moment of need (plan revision 8, A): when a coding agent should reach for G6, in at most 150
-words, coding first. It reaches the agent three ways: as the MCP server's ``instructions`` (``g6.mcp.build_server``), in
-a delimited block of Codex's ``AGENTS.md`` that ``g6 setup --client codex`` offers the person (``agents_block``), and,
-by its lead, at the end of the prompt hook's hint when a task starts (``g6.core.selector.hint``). It names only tools
-the server registers; the routing check reads it as guidance and holds it to that.
-"""
+"""Family-first MCP instructions, with the existing setup and prompt-hook text kept for frozen client surfaces."""
 from __future__ import annotations
+
+from g6.mcp.families import family_table
 
 #: The first sentence, which also ends the prompt hook's hint.
 LEAD = ("Before you say a Python task is done, have G6 check it; when stuck, unsure which G6 tool fits, or after a "
         "G6 refusal, call g6_select with the task, your phase and the refusal's code.")
 
-TEXT = LEAD + (
+# Setup writes this established client guidance; changing the MCP instructions must not change CLI output.
+SETUP_TEXT = LEAD + (
     " To check: call g6_review_patch with the repository, the task and the requirements, poll metaharness_job, and "
     "show the person its report as it is; or call g6_review_until_clean for the review loop. Before an unclear "
     "change, call g6_premortem, and g6_confirm_behaviour for a behaviour the task leaves open: only the person "
     "answers it. On G6_E_CLOUD_CONSENT_REQUIRED, g6_cloud_grant asks the person in their client's dialog; never "
     "grant for them. A refused sensitive operation is for the person to allow, with g6 setup --allow <name>. G6 "
     "checks and challenges work; it does not do the task. Never call a result verified unless G6 says so."
+)
+
+TEXT = family_table() + (
+    '\nUse g6_describe("family") for members, then g6_describe("tool") for full guidance. '
+    "Unsure? g6_select returns ranked calls. Before done: g6_review_patch or g6_review_until_clean; poll "
+    "metaharness_job; show its report unchanged. Plan: g6_premortem; unclear behaviour: g6_confirm_behaviour; "
+    "only the person answers. G6_E_CLOUD_CONSENT_REQUIRED: g6_cloud_grant asks them; never grant for them. "
+    "Sensitive refusal: the person uses g6 setup --allow <name>. Never call a result verified unless G6 says so."
 )
 
 #: The lines that delimit G6's block in a Codex ``AGENTS.md``: setup replaces what stands between them and nothing else.
@@ -27,7 +33,7 @@ AGENTS_END = "<!-- g6:end -->"
 
 def agents_block() -> str:
     """G6's block for a Codex ``AGENTS.md``: the text under a heading, between the delimiting lines."""
-    return f"{AGENTS_BEGIN}\n## G6\n\n{TEXT}\n{AGENTS_END}"
+    return f"{AGENTS_BEGIN}\n## G6\n\n{SETUP_TEXT}\n{AGENTS_END}"
 
 
-__all__ = ["AGENTS_BEGIN", "AGENTS_END", "LEAD", "TEXT", "agents_block"]
+__all__ = ["AGENTS_BEGIN", "AGENTS_END", "LEAD", "SETUP_TEXT", "TEXT", "agents_block"]

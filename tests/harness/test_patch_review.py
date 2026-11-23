@@ -1319,6 +1319,48 @@ def test_the_mcp_tool_takes_requirements_and_describes_the_four_outcomes(repo, m
     assert [r["id"] for r in got["result"]["assessment"]["requirements"]] == ["R1", "R2"]
 
 
+def test_the_mcp_tool_takes_requirements_and_describes_the_four_outcomes_after_one_describe(repo, monkeypatch, disclosed_tool_guidance):
+    guidance = disclosed_tool_guidance("g6_review_patch")
+    pytest.importorskip("fastmcp")
+    import asyncio
+
+    from fastmcp import Client
+
+    from g6.mcp import build_server
+
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "patch_review.review")
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    server = build_server()
+
+    def data(reply) -> dict:
+        return reply.data if isinstance(reply.data, dict) else reply.structured_content
+
+    async def flow():
+        tool = (await server.get_tools())["g6_review_patch"]
+        async with Client(server) as client:
+            job = data(await client.call_tool("g6_review_patch", {"repo": str(repo), "task": "Repair addition.",
+                                                                  "requirements": SUM}))
+            for _ in range(400):
+                got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"], "detail": "full"}))
+                if got.get("status") in ("completed", "failed"):
+                    return tool, got
+                await asyncio.sleep(0.05)
+        raise AssertionError("the review job did not finish")
+
+    tool, got = asyncio.run(flow())
+    assert "requirements" in tool.parameters["properties"]
+    assert all(outcome in guidance for outcome in OUTCOMES)
+    assert "owned by the same user" in " ".join(guidance.split())   # review 13: what a receipt cannot stop
+    assert got["status"] == "completed", got
+    assert got["result"]["assessment"]["outcome"] == "supported_within_scope"
+    assert [r["id"] for r in got["result"]["assessment"]["requirements"]] == ["R1", "R2"]
+
+    for field in ("completion_state", "warning_card", "evidence", "request_id", "run_id"):
+        assert field in guidance
+    assert "G6_E_PATCH_REVIEW" in guidance and "G6_E_INPUT_VALIDATION" in guidance
+
+
 def test_the_mcp_tool_takes_an_intent_and_refuses_an_invalid_one_with_a_code(repo, monkeypatch):
     """The intent is additive: the reply keeps the same envelope (completion_state, warning_card, evidence,
     request_id, run_id, a G6_E_* code) and is never better than qualified-draft. An object that is not an intent
@@ -1375,6 +1417,69 @@ def test_the_mcp_tool_takes_an_intent_and_refuses_an_invalid_one_with_a_code(rep
     assert "assessment" not in refused and "Traceback" not in str(refused)
     assert mistyped.is_error and "Traceback" not in str(mistyped.content)
     assert after["assessment"]["outcome"] == "supported_within_scope"
+
+
+def test_the_mcp_tool_takes_an_intent_and_refuses_an_invalid_one_with_a_code_after_one_describe(repo, monkeypatch, disclosed_tool_guidance):
+    """The intent is additive: the reply keeps the same envelope (completion_state, warning_card, evidence,
+    request_id, run_id, a G6_E_* code) and is never better than qualified-draft. An object that is not an intent
+    contract is a refusal with G6_E_INPUT_VALIDATION; a value that is not an object is refused by the tool's own
+    schema, as any mistyped parameter is, and the server goes on answering."""
+    guidance = disclosed_tool_guidance("g6_review_patch")
+    pytest.importorskip("fastmcp")
+    import asyncio
+
+    from fastmcp import Client
+
+    from g6.mcp import build_server
+
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "patch_review.review")
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    server = build_server()
+
+    def data(reply) -> dict:
+        return reply.data if isinstance(reply.data, dict) else reply.structured_content
+
+    async def finished(client, arguments) -> dict:
+        job = data(await client.call_tool("g6_review_patch", {"repo": str(repo), "task": "Repair addition.",
+                                                              "requirements": SUM, **arguments}))
+        for _ in range(400):
+            got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"], "detail": "full"}))
+            if got.get("status") in ("completed", "failed"):
+                assert got["status"] == "completed", got
+                return got["result"]
+            await asyncio.sleep(0.05)
+        raise AssertionError("the review job did not finish")
+
+    async def flow():
+        tool = (await server.get_tools())["g6_review_patch"]
+        async with Client(server) as client:
+            plain = await finished(client, {})
+            with_intent = await finished(client, {"intent": INTENT})
+            refused = await finished(client, {"intent": {"goal": "g", "non_goal": ["keep the API"]}})
+            mistyped = await client.call_tool("g6_review_patch", {"repo": str(repo), "task": "Repair addition.",
+                                                                  "intent": "repair addition"}, raise_on_error=False)
+            after = await finished(client, {})
+        return tool, plain, with_intent, refused, mistyped, after
+
+    tool, plain, with_intent, refused, mistyped, after = asyncio.run(flow())
+    assert "intent" in tool.parameters["properties"] and "intent" in guidance
+    assert with_intent["assessment"]["outcome"] == "insufficient_evidence"
+    assert "intent.non_goals.0" in [r["id"] for r in with_intent["assessment"]["requirements"]]
+    for got in (plain, with_intent):
+        assert got["completion_state"] == "qualified-draft" and got["warning_card"]["code"] == "G6_E_PATCH_REVIEW"
+        assert check_envelope(got) == [] and got["request_id"] and "run_id" in got
+    assert set(with_intent) == set(plain)
+    assert [set(item) for item in with_intent["evidence"]] == [set(item) for item in plain["evidence"]]
+    assert refused["completion_state"] == "blocked-escalated" and check_envelope(refused) == []
+    assert refused["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and "non_goal" in refused["warning_card"]["message"]
+    assert "assessment" not in refused and "Traceback" not in str(refused)
+    assert mistyped.is_error and "Traceback" not in str(mistyped.content)
+    assert after["assessment"]["outcome"] == "supported_within_scope"
+
+    for field in ("completion_state", "warning_card", "evidence", "request_id", "run_id"):
+        assert field in guidance
+    assert "G6_E_PATCH_REVIEW" in guidance and "G6_E_INPUT_VALIDATION" in guidance
 
 
 @pytest.mark.parametrize("raised, code", [

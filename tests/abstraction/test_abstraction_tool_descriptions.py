@@ -31,3 +31,10 @@ def test_a_multi_line_description_keeps_its_lines():
     # fails if cleaning joined or dropped lines rather than only the shared indentation
     text = _shown()["advise_pruning"]
     assert "\nGuards (each forces prune=False" in text and "\n  status guard" in text
+
+
+
+def test_a_multi_line_disclosed_description_keeps_its_lines(disclosed_tool_guidance):
+    text = disclosed_tool_guidance("advise_pruning", description=_shown()["advise_pruning"])
+    assert "\nGuards (each forces prune=False" in text and "\n  status guard" in text
+    assert text == inspect.cleandoc(server.advise_pruning.__doc__)
