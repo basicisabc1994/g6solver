@@ -372,12 +372,15 @@ class LibraryEntry(Record):
     changed_at: str
     reason: str
     held_recurrences: list[Sha256] = Field(default_factory=list)
+    inactive_cases: list[RegressionCase] = Field(default_factory=list)
 
     @model_serializer(mode="wrap")
     def compatible_body(self, handler):
         body = handler(self)
         if not body.get("held_recurrences"):
             body.pop("held_recurrences", None)
+        if not body.get("inactive_cases"):
+            body.pop("inactive_cases", None)
         return body
 
     @model_validator(mode="after")

@@ -23,6 +23,7 @@ def public_decision(decision: dict) -> dict:
 def public_entry(entry: LibraryEntry) -> dict:
     """One outward view; local custody retains the full decision record."""
     data = entry.model_dump(mode='json')
+    data.pop('inactive_cases', None)
     data['decided_by']['person'] = None
     data['reason'] = _PRIVATE_DECISION
     return data

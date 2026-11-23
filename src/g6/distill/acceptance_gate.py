@@ -283,6 +283,12 @@ def _candidate(entry):
     return Stores().for_model(VerifierCandidate).get(entry.candidate_id)
 
 
+class _MethodRunUnavailable(ValueError):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(f'{code}: confined method run unavailable')
+
+
 def _run(candidate, case, entries, stack=frozenset()):
     if any(entry.candidate_id == candidate.candidate_id and entry.status == "held" for entry in entries):
         raise ValueError("held method cannot be applied")
@@ -298,11 +304,18 @@ def _run(candidate, case, entries, stack=frozenset()):
         # Admission cannot inherit an owner's permission for unconfined exploratory
         # scripts. This setting only tightens execution and is restored afterwards.
         if os.environ.get("G6_REQUIRE_ISOLATION") != "1":
-            raise ValueError("acceptance predicates require G6_REQUIRE_ISOLATION=1")
+            raise _MethodRunUnavailable('G6_E_ISOLATION_UNAVAILABLE')
         facts = _extract_facts({"tests/test_case.py": case.before_tests}, {"tests/test_case.py": case.after_tests})
         outcomes = run_batch(candidate.body, [facts], timeout_s=contract.cost_bound.wall_s)
         if len(outcomes) != 1 or not outcomes[0].ok:
-            raise ValueError("confined method run unavailable")
+            code = 'G6_E_SYNTH_EXECUTION'
+            if len(outcomes) == 1:
+                found = re.search(r'\bG6_E_[A-Z0-9_]+\b', outcomes[0].reason)
+                if found:
+                    code = found.group()
+                elif outcomes[0].status == 'refused':
+                    code = 'G6_E_SYNTH_SOURCE'
+            raise _MethodRunUnavailable(code)
         value = outcomes[0].value
         if not isinstance(value, dict) or set(value) - {"verdict", "reason"}:
             raise ValueError("invalid method verdict")
@@ -391,18 +404,32 @@ def _leaks(candidate, observations):
     return False
 
 
+class _RegressionDrift(ValueError):
+    def __init__(self, observed):
+        super().__init__('entry regression no longer reproduces')
+        self.observed = observed
+
+
 def _regress(entries, observations, added=None, *, targets=None):
     # Replay every frozen case, including negative and abstain verdicts. Unknown
     # or missing bodies refuse; a new method cannot silently replace a verdict.
     cases = {o.case.case_id: o for o in observations}
     for entry in _active(entries if targets is None else targets):
+        observed = []
         for expected in entry.regression_suite:
             observation = cases.get(expected.case_ref)
             if observation is None or observation.label == "excluded":
                 raise ValueError("regression case unavailable")
             own = _measure(_candidate(entry), (observation,), entries)[0][0]
-            if own != expected.verdict:
-                raise ValueError("entry regression no longer reproduces")
+            observed.append(RegressionCase(case_ref=expected.case_ref, verdict=own))
+            if own != expected.verdict and targets is None:
+                raise _RegressionDrift(observed)
+        if any(own.verdict != expected.verdict for own, expected in zip(observed, entry.regression_suite, strict=True)):
+            # A withdrawal records the entire current suite, so another drifted
+            # case cannot let a wrapper appear to be a different method later.
+            raise _RegressionDrift(observed)
+        for expected in entry.regression_suite:
+            observation = cases[expected.case_ref]
             before = _library_verdicts(entries, (observation,))[0]
             after = _union([before, _measure(added, (observation,), entries)[0][0]]) if added else before
             if after != before:
@@ -706,109 +733,24 @@ def _execution_contract(candidate):
 
 
 class _IdentityAST(ast.NodeTransformer):
-    """Bounded static rewrites for the JSON predicate calling convention.
+    """Drop documentation only; executable syntax stays in the fast identity."""
 
-    This does not execute predicates or claim general Python equivalence. Keep
-    duplicate keys, effectful values and non-identity decorators in the identity.
-    """
-
-    @staticmethod
-    def _pure(node):
-        return isinstance(node, (ast.Constant, ast.Name)) or (
-            isinstance(node, ast.IfExp) and all(_IdentityAST._pure(part)
-                for part in (node.test, node.body, node.orelse)))
-
-    def visit_BinOp(self, node):
-        node = self.generic_visit(node)
-        if not isinstance(node.left, ast.Constant) or not isinstance(node.right, ast.Constant):
-            return node
-        left, right = node.left.value, node.right.value
-        # Do not evaluate arbitrary AST or allocate from unbounded repetition.
-        numeric = type(left) in (int, float, bool) and type(right) in (int, float, bool)
-        try:
-            if isinstance(node.op, ast.Add) and (numeric or type(left) is type(right) is str):
-                value = left + right
-            elif isinstance(node.op, ast.Sub) and numeric:
-                value = left - right
-            elif isinstance(node.op, ast.Mult) and numeric:
-                value = left * right
-            else:
-                return node
-            if ((isinstance(value, str) and len(value) > 8192)
-                    or (type(value) is int and value.bit_length() > 4096)
-                    or (type(value) is float and not math.isfinite(value))):
-                return node
-            return ast.copy_location(ast.Constant(value=value), node)
-        except (ArithmeticError, ValueError):
-            return node
-
-    def visit_UnaryOp(self, node):
-        node = self.generic_visit(node)
-        if not isinstance(node.operand, ast.Constant):
-            return node
-        value = node.operand.value
-        if isinstance(node.op, ast.Not):
-            return ast.copy_location(ast.Constant(value=not value), node)
-        if type(value) in (int, float, bool):
-            if isinstance(node.op, ast.USub):
-                return ast.copy_location(ast.Constant(value=-value), node)
-            if isinstance(node.op, ast.UAdd):
-                return ast.copy_location(ast.Constant(value=+value), node)
-        return node
-
-    def visit_Dict(self, node):
-        node = self.generic_visit(node)
-        keys = [key.value for key in node.keys if isinstance(key, ast.Constant) and type(key.value) is str]
-        if (len(keys) == len(node.keys) and len(set(keys)) == len(keys)
-                and all(self._pure(value) for value in node.values)):
-            pairs = sorted(zip(node.keys, node.values), key=lambda pair: pair[0].value)
-            node.keys = [key for key, _ in pairs]
-            node.values = [value for _, value in pairs]
-        return node
-
-    def visit_FunctionDef(self, node):
+    def _documented(self, node):
         node = self.generic_visit(node)
         if (node.body and isinstance(node.body[0], ast.Expr)
                 and isinstance(node.body[0].value, ast.Constant)
                 and isinstance(node.body[0].value.value, str)):
             node.body.pop(0)
-        if node.name == 'solve':
-            # The predicate runner always supplies its one positional argument.
-            if all(isinstance(value, ast.Constant) for value in node.args.defaults):
-                node.args.defaults = []
-            used = {part.id for statement in node.body for part in ast.walk(statement)
-                    if isinstance(part, ast.Name)}
-            kept = [(arg, value) for arg, value in zip(node.args.kwonlyargs, node.args.kw_defaults)
-                    if arg.arg in used or not isinstance(value, ast.Constant)]
-            node.args.kwonlyargs = [arg for arg, _ in kept]
-            node.args.kw_defaults = [value for _, value in kept]
         return node
+
+    visit_Module = _documented
+    visit_FunctionDef = _documented
+    visit_AsyncFunctionDef = _documented
+    visit_ClassDef = _documented
 
 
 def _predicate_identity(source):
     tree = _IdentityAST().visit(ast.parse(source))
-    # Erase only a top-level, undecorated, single-return identity helper whose
-    # name has no uses other than the decorators removed here.
-    definitions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
-    helpers = {}
-    for node in definitions:
-        args = node.args
-        if (node.name != 'solve' and len(args.args) == 1 and not args.posonlyargs
-                and not args.defaults and not args.kwonlyargs and not args.vararg and not args.kwarg
-                and not node.decorator_list and not node.returns and not args.args[0].annotation
-                and len(node.body) == 1 and isinstance(node.body[0], ast.Return)
-                and isinstance(node.body[0].value, ast.Name)
-                and node.body[0].value.id == args.args[0].arg
-                and sum(other.name == node.name for other in definitions) == 1):
-            uses = [part for part in ast.walk(tree) if isinstance(part, ast.Name) and part.id == node.name]
-            decorators = [part for fn in definitions for part in fn.decorator_list
-                          if isinstance(part, ast.Name) and part.id == node.name]
-            if uses and len(uses) == len(decorators):
-                helpers[node.name] = node
-    for node in definitions:
-        node.decorator_list = [part for part in node.decorator_list
-                               if not (isinstance(part, ast.Name) and part.id in helpers)]
-    tree.body = [node for node in tree.body if node not in helpers.values()]
     return ast.dump(tree, include_attributes=False)
 
 
@@ -848,7 +790,7 @@ def _method_identity(candidate, stack=()):
 def _inactive_match(candidate, entries, status):
     identity = None
     for entry in entries:
-        if entry.status != status:
+        if entry.status != status or entry.family != candidate.contract.family:
             continue
         if entry.candidate_id == candidate.candidate_id:
             return True
@@ -864,7 +806,114 @@ def _inactive_match(candidate, entries, status):
 
 
 def _withdrawn_match(candidate):
-    return _inactive_match(candidate, Stores().for_model(LibraryEntry).list(), 'withdrawn')
+    current = {}
+    for entry in Stores().for_model(LibraryEntry).list():
+        current[entry.candidate_id] = entry
+    return _inactive_match(candidate, list(current.values()), 'withdrawn')
+
+
+def _recorded_case(ident):
+    """Read an already recorded body without registration, oracle or new labels."""
+    from .held_out.case_gate import CaseRecord
+    from .held_out.registration_gate import strict_json
+
+    custody = state_path('distill', 'held_out')
+    archived = custody / 'regression_cases' / f'{ident}.json'
+    path = archived if archived.exists() else custody / 'cases' / f'{ident}.json'
+    case = CaseRecord.model_validate(strict_json(_plain(path, custody).read_bytes()))
+    if case.case_id != ident:
+        raise ValueError('recorded case digest changed')
+    return case
+
+
+def _inactive_record(entry):
+    """The current recorded verdict overrides a pre-withdrawal expectation.
+
+    Older holds retain FailureRecord IDs rather than verdicts. Those explicit
+    case bodies are replayed with the historical method below; no verdict is
+    inferred from a failure kind, client label or the method's source spelling.
+    """
+    from .held_out.case_gate import CaseRecord
+    from .records import FailureRecord
+
+    if (entry.status == 'withdrawn' and entry.reason == 'own regression suite no longer reproduces'
+            and not entry.inactive_cases):
+        raise ValueError('legacy withdrawal counterexample verdict unavailable')
+    expected = {row.case_ref: row.verdict for row in entry.regression_suite}
+    expected.update((row.case_ref, row.verdict) for row in entry.inactive_cases)
+    cases = {ident: _recorded_case(ident) for ident in expected}
+    for ident in entry.held_recurrences:
+        failure = Stores().for_model(FailureRecord).get(ident)
+        if failure.family != entry.family:
+            raise ValueError('recorded failure family changed')
+        if not any(row.case_ref == failure.case_ref for row in entry.inactive_cases):
+            # A recurrence may also name an old regression case whose verdict
+            # has drifted. Its old admission verdict cannot stand for the hold.
+            expected.pop(failure.case_ref, None)
+        if failure.case_ref in cases:
+            continue
+        raw = failure.provenance.get('case')
+        if isinstance(raw, dict) and 'before_tests' in raw:
+            case = CaseRecord.model_validate(raw)
+            if case.case_id != failure.case_ref:
+                raise ValueError('recorded failure case digest changed')
+        else:
+            case = _recorded_case(failure.case_ref)
+        cases[case.case_id] = case
+    if not cases:
+        raise ValueError('inactive recorded cases unavailable')
+    return tuple(Observation(case, 'recorded', 'regression') for case in cases.values()), expected
+
+
+def _inactive_behaviour_match(candidate, entry, entries):
+    failure_code = 'G6_E_DISTILL_RECORDED_CASES'
+    try:
+        observations, expected = _inactive_record(entry)
+        missing = tuple(o for o in observations if o.case.case_id not in expected)
+        if missing:
+            # The entry itself has no application authority. This replay only
+            # establishes legacy comparison verdicts, with ordinary dependency
+            # authority and the confined runner still enforced.
+            historical = _candidate(entry)
+            context = [e for e in entries if e.candidate_id != entry.candidate_id]
+            failure_code = 'G6_E_SYNTH_EXECUTION'
+            old, _ = _measure(historical, missing, context)
+            expected.update((o.case.case_id, v) for o, v in zip(missing, old, strict=True))
+        failure_code = 'G6_E_SYNTH_EXECUTION'
+        actual, _ = _measure(candidate, observations, entries)
+        # Complete every recorded run before deciding that any difference is a
+        # different method. A later crash cannot turn an unknown into a pass.
+        return all(v == expected[o.case.case_id] for o, v in zip(observations, actual, strict=True))
+    except Exception as error:
+        # Refuse unreadable state, confinement failures, crashes and malformed
+        # outputs alike. Only the stable code leaves custody, never case text or
+        # subprocess stderr. BaseException (interrupt/exit) is not swallowed.
+        code = getattr(error, 'code', failure_code)
+        if not isinstance(code, str) or not re.fullmatch(r'G6_E_[A-Z0-9_]+', code):
+            code = 'G6_E_DISTILL_RECORDED_CASES'
+        raise ValueError(f'G6_E_DISTILL_IDENTITY_UNKNOWN: {code}: inactive recorded-case comparison unknown') from None
+
+
+def _check_inactive(candidate, library, *, restoring=''):
+    """Run before every registration load, and before reserving any new look."""
+    entries = library.list()
+    inactive = [e for e in entries if e.family == candidate.contract.family
+                and e.status in {'held', 'withdrawn'}
+                and not (e.entry_id == restoring and e.status == 'withdrawn')]
+    reasons = {'held': 'held executable method requires a hold release',
+               'withdrawn': 'withdrawn executable method requires a person-authorized restore'}
+    # Complete the cheap exact checks before executing any recorded cases.
+    for status in ('held', 'withdrawn'):
+        try:
+            matched = _inactive_match(candidate, inactive, status)
+        except Exception:
+            raise ValueError('G6_E_DISTILL_IDENTITY_UNKNOWN: G6_E_DISTILL_RECORDED_CASES: '
+                             'inactive canonical identity unavailable') from None
+        if matched:
+            raise ValueError(reasons[status])
+    for entry in inactive:
+        if _inactive_behaviour_match(candidate, entry, entries):
+            raise ValueError(reasons[entry.status])
 
 
 def _decide_batch(candidates, library, registration, *, restoring=''):
@@ -896,10 +945,7 @@ def _decide_batch(candidates, library, registration, *, restoring=''):
                 try:
                     if candidate.form == 'reuse':
                         raise ValueError('reuse is a reuse row, never an admission candidate')
-                    if _inactive_match(candidate, library.list(), 'held'):
-                        raise ValueError('held executable method requires a hold release')
-                    if not restoring and _withdrawn_match(candidate):
-                        raise ValueError('withdrawn executable method requires a person-authorized restore')
+                    _check_inactive(candidate, library, restoring=restoring)
                     _look_available(registration)  # A spent split never reaches the oracle again.
                     frozen = _load(registration, candidate, library)
                     if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:
@@ -1042,19 +1088,26 @@ def recheck(entry_id: str, library: Library, registration: str) -> AcceptanceDec
                 raise ValueError("recheck requires an active entry")
             candidate = _candidate(entry)
             reason = _health(candidate)
+            inactive_cases = list(entry.inactive_cases)
             if reason is None:
                 if stop.engaged() is not None:
                     return _record(AcceptanceDecision("block", ("stop engaged",), entry.candidate_id))
+                _check_inactive(candidate, library)
                 frozen = _load(registration, candidate, library)
                 try:
                     _regress(library.list(), (*frozen.acceptance, *frozen.monitor, *frozen.regression), targets=[entry])
                 except ValueError as error:
                     if str(error) != "entry regression no longer reproduces":
                         raise
+                    if isinstance(error, _RegressionDrift):
+                        known = {row.case_ref: row for row in inactive_cases}
+                        known.update((row.case_ref, row) for row in error.observed)
+                        inactive_cases = list(known.values())
                     reason = "own regression suite no longer reproduces"
             if reason is None:
                 return _record(AcceptanceDecision("retain", ("regression and health checks held",), entry.candidate_id))
-            changed = _change(entry, status="withdrawn", authority="A0", reason=reason)
+            changed = _change(entry, status="withdrawn", authority="A0", reason=reason,
+                              inactive_cases=inactive_cases)
             _cascade(changed, library)
             return _record(AcceptanceDecision("withdraw", (reason,), entry.candidate_id, entry_id=changed.entry_id))
     except (ValueError, KeyError, FileNotFoundError) as error:
@@ -1071,7 +1124,9 @@ def ablate(entry_id: str, library: Library, registration: str) -> AcceptanceDeci
             entries = _active(library.list())
             if entry not in entries:
                 raise ValueError("ablation requires an active entry")
-            frozen = _load(registration, _candidate(entry), library)
+            candidate = _candidate(entry)
+            _check_inactive(candidate, library)
+            frozen = _load(registration, candidate, library)
             observations = {o.case.case_id: o for o in (*frozen.acceptance, *frozen.monitor, *frozen.regression)}
             family = [e for e in entries if e.family == entry.family]
             ids = {c.case_ref for e in family for c in e.regression_suite}
@@ -1090,13 +1145,15 @@ def ablate(entry_id: str, library: Library, registration: str) -> AcceptanceDeci
         return AcceptanceDecision("refuse", (str(error) if isinstance(error, ValueError) else "ablation evidence unavailable",))
 
 
-def _change(entry, *, status, authority, reason, person=None, field=None):
+def _change(entry, *, status, authority, reason, person=None, field=None, inactive_cases=None):
     data = entry.model_dump(mode="json", exclude={"entry_id"}) | {
         "version": entry.version + 1, "status": status, "authority": authority,
         "changed_at": datetime.now(timezone.utc).isoformat(), "reason": reason,
         "decided_by": {"gate_version": VERSION, "person": person}}
     if field is not None:
         data["field"] = field.model_dump(mode="json")
+    if inactive_cases is not None:
+        data['inactive_cases'] = [row.model_dump(mode='json') for row in inactive_cases]
     result = LibraryEntry(**data)
     Stores().for_model(LibraryEntry).put(result)
     return result
@@ -1139,6 +1196,7 @@ def promote(entry_id: str, library: Library, registration: str) -> AcceptanceDec
             field = _field_evidence(entry.candidate_id)
             _a2_bar(evidence, field)
             candidate = _candidate(entry)
+            _check_inactive(candidate, library)
             frozen = _load(registration, candidate, library)
             if frozen.split_sha256 != evidence.split_sha256 or evidence.policy_sha256 != _policy_digest():
                 raise ValueError("A2 acceptance evidence changed")
