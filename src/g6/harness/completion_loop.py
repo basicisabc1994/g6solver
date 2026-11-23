@@ -54,6 +54,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
@@ -1085,12 +1086,16 @@ def _load(session: Path) -> dict:
         # Neither content nor control fields from unbound state are reusable.
         state = {'done': True, 'code': cloud.REQUIRED, 'ending': 'untested', 'stop': cloud.WITHHELD,
                  'consent_sources': [asdict(cloud.UNKNOWN)]}
+    if state.get('code') in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND):
+        state['stop'] = _consent_stop(attempted(state))
     cloud.record_sources(source_refs(state))
     return state
 
 
 def read_report(session: Path, state: dict) -> str:
     """Read a completed report only against the digest in its checked state."""
+    if state.get('code') in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND):
+        return _consent_stop(attempted(state))
     path = session / 'report.md'
     if not path.is_file() and not state.get('done'):
         return ''
@@ -1117,70 +1122,192 @@ def source_refs(state: dict) -> tuple[cloud.Source, ...]:
     return refs
 
 
-#: The run's request count in its state: every request any step of the run sent, to any provider, added up. Present only
-#: when counted from the run's start; a state saved without it (before it was kept, or by a step that did not finish) is
-#: unknown, never zero, and stays unknown for the rest of the run. Only a total present and zero says "not sent".
+#: Reply compatibility field; only ATTEMPTED is authoritative in retained state.
 SENT = "requests_sent"
+ATTEMPTED = "attempted"
+
+
+def attempted(state: dict) -> int | None:
+    """The run's upper bound on sends. Older states have no bound, even if they kept a step count."""
+    value = state.get(ATTEMPTED)
+    return value if type(value) is int and value >= 0 else None
+
+
+def _consent_stop(total: int | None) -> str:
+    """Render consent accounting from the bound, never from an earlier report's claim."""
+    if total == 0:
+        return "The review was not sent. " + cloud.WITHHELD
+    return ((f"The review stopped part way: up to {total} request(s) of this run may have gone out to the reviewer's "
+             "provider before sharing was refused for the next. " if total is not None else
+             "The review stopped: requests of this run may have gone out to the reviewer's provider "
+             "before sharing was refused for the next (G6 has no count of them). ") + cloud.WITHHELD)
+
+
+class _Writer:
+    def __init__(self, session: Path) -> None:
+        self.session, self.guard, self.active = session, threading.RLock(), True
+
+
+_WRITER: contextvars.ContextVar[_Writer | None] = contextvars.ContextVar("g6_run_writer", default=None)
+
+
+@contextmanager
+def _writing(session: Path):
+    """Hold the step lock for an operation. Child send boundaries share its serialization guard."""
+    with _held(session):
+        owner = _Writer(session)
+        token = _WRITER.set(owner)
+        try:
+            yield owner
+        finally:
+            with owner.guard:
+                owner.active = False
+            _WRITER.reset(token)
+
+
+@contextmanager
+def _state_write(session: Path):
+    owner = _WRITER.get()
+    if owner is not None and owner.session == session:
+        with owner.guard:
+            if owner.active:
+                yield
+                return
+    # A copied context can outlive its step. It must acquire the OS lock anew.
+    with _writing(session) as owner, owner.guard:
+        yield
 
 
 class _RunCount:
-    """One step's requests, added to the run's total as the run's state is saved. ``known``: the total as the step
-    began, None when it is unknown."""
+    """Reserve a possible send durably at every model boundary, before dispatch."""
 
-    def __init__(self, session: Path, state: dict, known: int | None, step: Callable[[], int]) -> None:
-        self.session, self.known, self.step = session, known, step
-        self.before = json.loads(json.dumps(state)) if known is not None else None
-        self.ahead = False
+    def __init__(self, session: Path, state: dict) -> None:
+        self.session, self.state = session, state
+        self.guard = threading.RLock()
 
     def total(self) -> int | None:
-        return None if self.known is None else self.known + self.step()
+        return attempted(self.state)
 
     def into(self, state: dict) -> None:
         total = self.total()
         if total is None:
+            state.pop(ATTEMPTED, None)
             state.pop(SENT, None)
         else:
+            state[ATTEMPTED] = total
             state[SENT] = total
 
-    def before_sending(self) -> None:
-        """Before any request of this step can go out, the saved state holds the run as it was with its total unknown,
-        so a step cut short after sending leaves the total unknown, never short of what was sent."""
-        if self.before is not None and not self.ahead:
-            self.ahead = True
-            token = _RUN_COUNT.set(None)      # saved as it was, with no total: not this step's
-            try:
-                _save(self.session, {k: v for k, v in self.before.items() if k != SENT})
-            finally:
-                _RUN_COUNT.reset(token)
+    def reserve(self) -> None:
+        with self.guard:
+            pending = dict(self.state)
+            total = self.total()
+            if total is None:
+                pending.pop(ATTEMPTED, None)
+                pending.pop(SENT, None)
+            else:
+                pending[ATTEMPTED] = total + 1
+                pending[SENT] = total + 1
+            # Do not pre-edit a state that the retained reader may also return.
+            # Reservation and the host's note describe the same request.
+            _reserve_request(self.session, pending)
+            # The storage transaction owns the lock, fresh read and durable flush.
+            # Publish its total locally only after the transaction returns.
+            for key in (ATTEMPTED, SENT):
+                if key in pending:
+                    self.state[key] = pending[key]
+                else:
+                    self.state.pop(key, None)
 
 
 _RUN_COUNT: contextvars.ContextVar[_RunCount | None] = contextvars.ContextVar("g6_run_count", default=None)
 
 
-def _counted_anywhere() -> None:
-    """Observes nothing: with it, ``counting`` counts a request a thread started inside the step sends."""
-
-
 @contextmanager
 def _run_count(session: Path, state: dict, *, fresh: bool):
-    """Count this step's requests into the run's total (``SENT``) whenever its state is saved, and in ``state`` as the
-    step ends. ``fresh``: the state was just made, so the run has sent nothing yet."""
-    held = state.get(SENT)
-    known = 0 if fresh else held if type(held) is int and held >= 0 else None
-    with counting(before_call=_counted_anywhere) as step:     # an observer carries the count into threads started inside
-        run = _RunCount(session, state, known, step)
+    """Initialize a fresh run; an existing run without a bound stays unknown."""
+    if fresh:
+        state[ATTEMPTED] = 0
+    run = _RunCount(session, state)
+    run.into(state)
+    with counting(before_call=run.reserve):
         token = _RUN_COUNT.set(run)
         try:
             yield run
         finally:
             _RUN_COUNT.reset(token)
-            run.into(state)
+
+
+_RESERVATION: contextvars.ContextVar[tuple[Path, dict] | None] = contextvars.ContextVar("g6_reservation", default=None)
+
+
+def _reserve_request(session: Path, state: dict) -> None:
+    """Enter the reservation transaction through the unchanged state-save seam."""
+    token = _RESERVATION.set((session, state))
+    try:
+        _save(session, state)
+    finally:
+        _RESERVATION.reset(token)
+
+
+def _save_reservation(session: Path, state: dict, *, sources=None) -> None:
+    """Reserve once from fresh retained state; finish all persistence before dispatch."""
+    with _state_write(session):
+        stored = _load(session)
+        # With no retained state, the isolated projection already includes this send.
+        total = attempted(stored) if stored else attempted(state)
+        if stored and total is not None:
+            total += 1
+        merged = dict(stored or state)
+        for key in (ATTEMPTED, SENT):
+            if total is None:
+                merged.pop(key, None)
+            else:
+                merged[key] = total
+        _save_locked(session, merged, sources=sources)
+        _sync_state(session)
+        # Keep the active operation's unfinished reviews and deliberate deletions.
+        for key in (ATTEMPTED, SENT):
+            if total is None:
+                state.pop(key, None)
+            else:
+                state[key] = total
 
 
 def _save(session: Path, state: dict, *, sources=None) -> None:
-    run = _RUN_COUNT.get()
-    if run is not None:      # within a step: the run's total so far goes with the state
-        run.into(state)
+    reservation = _RESERVATION.get()
+    if reservation is not None and reservation[0] == session and reservation[1] is state:
+        _save_reservation(session, state, sources=sources)
+        return
+    operation = _WRITER.get()
+    with _state_write(session):
+        stored = _load(session)
+        incoming = dict(state)
+        total, prior = attempted(incoming), attempted(stored)
+        total = (max(prior, total) if total is not None else prior) if prior is not None else (
+            None if stored else total)
+        # Standalone callers cannot erase reviews using an old snapshot. Step owners
+        # may deliberately revise their own reviews while holding the operation lock.
+        run = _RUN_COUNT.get()
+        if stored.get('reviews') and (run is None or run.session != session):
+            incoming['reviews'] = [*stored['reviews'], *(r for r in incoming.get('reviews', [])
+                                                      if r not in stored['reviews'])]
+        # The current operation read its state under this same lock. Its snapshot
+        # includes deliberate deletions, such as a delivered row or an obsolete
+        # clean stop. Only a standalone (or expired-context) writer needs to carry
+        # fields from the freshly read state into its possibly stale snapshot.
+        owned = operation is not None and operation is _WRITER.get()
+        merged = incoming if owned else {**stored, **incoming}
+        for key in (ATTEMPTED, SENT):
+            if total is None:
+                merged.pop(key, None)
+            else:
+                merged[key] = total
+        _save_locked(session, merged, sources=sources)
+        state.clear()
+        state.update(merged)
+
+
+def _save_locked(session: Path, state: dict, *, sources=None) -> None:
     capture = _SOURCE_STATE.get()
     if sources is None:
         refs = tuple(capture.sources) if capture is not None else (*source_refs(state), cloud.UNKNOWN)
@@ -1190,6 +1317,20 @@ def _save(session: Path, state: dict, *, sources=None) -> None:
     session.mkdir(parents=True, exist_ok=True, mode=0o700)
     body = json.dumps(state).encode('utf-8')
     cloud.write_retained(session / 'state.json', body)
+
+
+def _sync_state(session: Path) -> None:
+    # Retained publication is atomic; flush both published files before admitting
+    # the request. A failed flush propagates through the observer and prevents send.
+    for name in ('state.json', 'state.sha256'):
+        with (session / name).open('r+b') as stream:
+            os.fsync(stream.fileno())
+    if os.name != 'nt':
+        descriptor = os.open(session, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
 
 def _finish(session: Path, state: dict, report: str, code: str = "", ending: str = "", *, patch: str = "") -> Step:
@@ -1452,17 +1593,21 @@ def prepare(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     scout = scout or scout_host()
     if scout is None:
         return ""
+    with _writing(session):
+        return _prepare_locked(root, task, base, session, scout)
+
+
+def _prepare_locked(root: Path, task: str, base: str, session: Path, scout: Host) -> str:
     shipped, state = harness(), _load(session)
     fresh = not state
     refs = cloud.boundary_sources((cloud.Source.text(cloud.repository_source(root), 'repository', ''),
                                    cloud.Source.text(cloud.input_source(task), 'task', task)),
                                   carried=(*source_refs(state), *shipped.sources))
     state.setdefault("sets", {})
-    with cloud.collect_sources() as capture, cloud.request_sources(refs), _run_count(session, state, fresh=fresh) as run:
+    with cloud.collect_sources() as capture, cloud.request_sources(refs), _run_count(session, state, fresh=fresh):
         token = _SOURCE_STATE.set(capture)
         try:
             try:
-                run.before_sending()     # the scouts' requests are the run's too
                 _scouts(repo_tests.change(root, base), task, session, state, shipped, scout, BEFORE)
             except repo_tests.RepoRefused as exc:
                 if exc.code != ISOLATION_UNAVAILABLE:
@@ -1492,7 +1637,7 @@ def settle() -> None:
     for mark in sorted(owing.iterdir()) if owing.is_dir() else ():
         run = owing.parent / mark.name
         try:
-            with _held(run):
+            with _writing(run):
                 state = _load(run)
                 if "row_due" not in state:
                     mark.unlink(missing_ok=True)
@@ -1523,7 +1668,7 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     session.mkdir(parents=True, exist_ok=True, mode=0o700)
     settle()
     try:
-        with _held(session):
+        with _writing(session):
             return _advance(repo, task, base, session, scout, critic, said, answered, agent)
     except WorkspaceRefused:
         return Step(WAIT, ALREADY_RUNNING, BUSY)
@@ -1575,111 +1720,106 @@ def _step(state: dict, run: _RunCount, repo: str | Path, task: str, base: str, s
         ending = _ending(text, reviews)      # what earlier rounds found stands: the refusal is why the loop stopped
         return _finish(session, state, _reviews_report(state, text, code, ending, ""), code, ending, patch=now)
 
-    if not change.sources:
-        return (_review_end(root, task, base, session, state, WITHDRAWN) if state.get("reviews") else
-                Step(STOP, code=NO_PYTHON, note=NOTHING_CHANGED, ending="untested"))
-    if state.get("reviewed") and "started" not in state and state["reviewed"] == digest(repo_tests.diff_text(change)):
-        return Step(STOP, note=ALREADY_READ)
-    if not task.strip():
-        return refused(NO_TASK, "G6_E_INPUT_VALIDATION", UNASKED)
-    critic = critic or critic_host()
-    reviewing = critic is not None and not _scouts_chosen()
-    why = proposer.boundary(root)
-    if why:
-        cloud.record_sources((cloud.Source.text('host:execution-boundary', 'diagnostic', why),))
-        return refused(NO_BOUNDARY.format(why=why), ISOLATION_UNAVAILABLE, UNCONFINED)
-    if not reviewing:
-        scout = scout or scout_host()
-        if scout is None:
-            path = keys.path()
-            cloud.record_sources((cloud.Source.text('host:configuration', 'configuration-path', str(path)),))
-            return refused((NOT_APPROVED if _scouts_chosen() else NOT_ON).format(path=path), keys.KEY_MISSING, UNAPPROVED)
-    shipped = harness()
-    state.setdefault("started", time.time())
-    state.setdefault("sets", {})
-    rounds, reviews = state.setdefault("rounds", []), state.setdefault("reviews", [])
-    if state.get("stop") == CLEAN and reviews[-1]["patch"] != digest(repo_tests.diff_text(change)):
-        del rounds[-1], reviews[-1], state["stop"]      # a clean stop no report carried speaks only for the patch it read
-    ends = _clock() + STOP_S - REVIEW_S
-
-    def reviewed() -> tuple[set[str], str]:
-        return review_round(change, task, critic, shipped, session, reviews, ends)
-
-    def check() -> tuple[set[str], str]:
-        if critic is not None and "critic" not in state:
-            mark = watch.mark() if watch is not None else 0
-            state["critic"] = run_critic(change, task, critic, shipped.critic, session / "sets" / "critic",
-                                         patch=repo_tests.diff_read(change), system_sources=shipped.sources)
-            told = watch.told_since(mark) if watch is not None and state["critic"].get("error") else None
-            if told is not None:    # the latch after the critic's round, whatever it returned
-                del state["critic"]
-                raise told
-        seen = []
-        state["ran"] = {}
-        for label, one in state["sets"].items():
-            if not one["left_out"]:
-                got, origins = _snapshot_probe(run_set(change, Path(one["where"]) / "probes", at_base=False, deadline=ends))
-                cloud.record_sources(origins)
-                state["ran"][label], state["boundary"] = got.ran, got.boundary or state.get("boundary", "")
-                seen.append((label, got, ProbeRun(**one["at_base"])))
-        if (state.get("critic") or {}).get("test"):
-            got, origins = _snapshot_probe(run_set(change, session / "sets" / "critic", at_base=False, deadline=ends))
-            cloud.record_sources(origins)
-            if got.usable:     # a critic's test that will not run says nothing of the patch
-                state["ran"]["critic"] = got.ran
-                seen.append(("critic", got, None))
-        return with_critic(failures_of(seen), state.get("critic") or {}, shipped.critic_note)
-
-    def tree() -> str:
-        return digest(repo_tests.snapshot(root))
-
     watch = None
-    run.before_sending()
     try:
         with watching_consent() as watch:
+            if not change.sources:
+                return (_review_end(root, task, base, session, state, WITHDRAWN) if state.get("reviews") else
+                        Step(STOP, code=NO_PYTHON, note=NOTHING_CHANGED, ending="untested"))
+            if state.get("reviewed") and "started" not in state and state["reviewed"] == digest(repo_tests.diff_text(change)):
+                return Step(STOP, note=ALREADY_READ)
+            if not task.strip():
+                return refused(NO_TASK, "G6_E_INPUT_VALIDATION", UNASKED)
+            critic = critic or critic_host()
+            reviewing = critic is not None and not _scouts_chosen()
+            why = proposer.boundary(root)
+            if why:
+                cloud.record_sources((cloud.Source.text('host:execution-boundary', 'diagnostic', why),))
+                return refused(NO_BOUNDARY.format(why=why), ISOLATION_UNAVAILABLE, UNCONFINED)
             if not reviewing:
-                _scouts(change, task, session, state, shipped, scout, AT_STOP)
-                if all(one["left_out"] for one in state["sets"].values()):
-                    return _finish(session, state, _report(root, task, base, state, "no probe set could run"),
-                                   patch=_patch_now(root, base))
-            loop = Repairs(rounds, reviewed if reviewing else check, tree, answered, asks(said))
-            got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
-                        max_iterations=MAX_REPAIRS + 1, timeout_s=LOOP_S - (time.time() - state["started"]))
+                scout = scout or scout_host()
+                if scout is None:
+                    path = keys.path()
+                    cloud.record_sources((cloud.Source.text('host:configuration', 'configuration-path', str(path)),))
+                    return refused((NOT_APPROVED if _scouts_chosen() else NOT_ON).format(path=path), keys.KEY_MISSING, UNAPPROVED)
+            shipped = harness()
+            state.setdefault("started", time.time())
+            state.setdefault("sets", {})
+            rounds, reviews = state.setdefault("rounds", []), state.setdefault("reviews", [])
+            if state.get("stop") == CLEAN and reviews[-1]["patch"] != digest(repo_tests.diff_text(change)):
+                del rounds[-1], reviews[-1], state["stop"]      # a clean stop no report carried speaks only for the patch it read
+            ends = _clock() + STOP_S - REVIEW_S
+
+            def reviewed() -> tuple[set[str], str]:
+                return review_round(change, task, critic, shipped, session, reviews, ends)
+
+            def check() -> tuple[set[str], str]:
+                if critic is not None and "critic" not in state:
+                    mark = watch.mark() if watch is not None else 0
+                    state["critic"] = run_critic(change, task, critic, shipped.critic, session / "sets" / "critic",
+                                                 patch=repo_tests.diff_read(change), system_sources=shipped.sources)
+                    told = watch.told_since(mark) if watch is not None and state["critic"].get("error") else None
+                    if told is not None:    # the latch after the critic's round, whatever it returned
+                        del state["critic"]
+                        raise told
+                seen = []
+                state["ran"] = {}
+                for label, one in state["sets"].items():
+                    if not one["left_out"]:
+                        got, origins = _snapshot_probe(run_set(change, Path(one["where"]) / "probes", at_base=False, deadline=ends))
+                        cloud.record_sources(origins)
+                        state["ran"][label], state["boundary"] = got.ran, got.boundary or state.get("boundary", "")
+                        seen.append((label, got, ProbeRun(**one["at_base"])))
+                if (state.get("critic") or {}).get("test"):
+                    got, origins = _snapshot_probe(run_set(change, session / "sets" / "critic", at_base=False, deadline=ends))
+                    cloud.record_sources(origins)
+                    if got.usable:     # a critic's test that will not run says nothing of the patch
+                        state["ran"]["critic"] = got.ran
+                        seen.append(("critic", got, None))
+                return with_critic(failures_of(seen), state.get("critic") or {}, shipped.critic_note)
+
+            def tree() -> str:
+                return digest(repo_tests.snapshot(root))
+
+            try:
+                if not reviewing:
+                    _scouts(change, task, session, state, shipped, scout, AT_STOP)
+                    if all(one["left_out"] for one in state["sets"].values()):
+                        return _finish(session, state, _report(root, task, base, state, "no probe set could run"),
+                                       patch=_patch_now(root, base))
+                loop = Repairs(rounds, reviewed if reviewing else check, tree, answered, asks(said))
+                got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
+                            max_iterations=MAX_REPAIRS + 1, timeout_s=LOOP_S - (time.time() - state["started"]))
+            except repo_tests.RepoRefused as exc:
+                if exc.code != ISOLATION_UNAVAILABLE:
+                    raise
+                return refused(NO_BOUNDARY.format(why=exc), ISOLATION_UNAVAILABLE, UNCONFINED)
+            if loop.waiting:
+                _save(session, state)
+                return Step(WAIT, ASKED, WAITING_ON_PERSON)
+            if loop.pending and reviewing:
+                _save(session, state)
+                return Step(CONTINUE, loop.pending)
+            if loop.pending:
+                told, first = shipped.repair.format(text=loop.pending), _told(state, shipped)   # first: no hook could say it before
+                _save(session, state)
+                return Step(CONTINUE, f"{first}\n\n{told}" if first else told)
+            reason = loop.why or STOPPED.get(got.status, got.reason)
+            if not reviewing:
+                return _finish(session, state, _report(root, task, base, state, reason), patch=_patch_now(root, base))
+            if got.status == "no_counterexample_in_domain":
+                reason = (NO_REVIEW if reviews[-1]["verdict"] not in READ_VERDICTS else UNREPRODUCED if _unreproduced(reviews) else CLEAN)
+            elif got.status == "counterexample_budget_exhausted":
+                reason = RAN_OUT
+            return _review_end(root, task, base, session, state, reason, said)
     except LLMError as exc:
         code = watch.refused(exc) if watch is not None else ""
         if not code:
             raise
         sent = run.total()      # the run's, every step of it: this step's own count never stands for the run
         run.into(state)
-        if sent == 0:           # "not sent" only when the run's total is known and no request at all went out
-            state["stop"] = "The review was not sent. " + cloud.WITHHELD
-        else:
-            state["stop"] = ((f"The review stopped part way: {sent} request(s) of this run went out to the reviewer's "
-                              "provider before sharing was refused for the next. " if sent is not None else
-                              "The review stopped: requests of this run may have gone out to the reviewer's provider "
-                              "before sharing was refused for the next (G6 has no count of them). ") + cloud.WITHHELD)
+        state["stop"] = _consent_stop(sent)
+        if sent != 0:
             if code == cloud.STATE_UNAVAILABLE:     # its declared words say nothing was shared, which is not so here
                 code = CONSENT_STATE_AFTER_SEND
         return refused(state["stop"], code, "cloud_consent_missing", untested=True)
-    except repo_tests.RepoRefused as exc:
-        if exc.code != ISOLATION_UNAVAILABLE:
-            raise
-        return refused(NO_BOUNDARY.format(why=exc), ISOLATION_UNAVAILABLE, UNCONFINED)
-    if loop.waiting:
-        _save(session, state)
-        return Step(WAIT, ASKED, WAITING_ON_PERSON)
-    if loop.pending and reviewing:
-        _save(session, state)
-        return Step(CONTINUE, loop.pending)
-    if loop.pending:
-        told, first = shipped.repair.format(text=loop.pending), _told(state, shipped)   # first: no hook could say it before
-        _save(session, state)
-        return Step(CONTINUE, f"{first}\n\n{told}" if first else told)
-    reason = loop.why or STOPPED.get(got.status, got.reason)
-    if not reviewing:
-        return _finish(session, state, _report(root, task, base, state, reason), patch=_patch_now(root, base))
-    if got.status == "no_counterexample_in_domain":
-        reason = (NO_REVIEW if reviews[-1]["verdict"] not in READ_VERDICTS else UNREPRODUCED if _unreproduced(reviews) else CLEAN)
-    elif got.status == "counterexample_budget_exhausted":
-        reason = RAN_OUT
-    return _review_end(root, task, base, session, state, reason, said)

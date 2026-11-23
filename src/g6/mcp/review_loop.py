@@ -116,8 +116,8 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
         result = {"ok": True, **said, **envelope_fields(
             reliability_label="qualified-draft", warning_card=warning_card(CODE, *card), evidence=evidence, request_id=request_id,
             run_id=folder.name, degradation_reason=card[0][:300])}
-    if code and "requests_sent" in state:     # the count as the loop kept it, zero included; never filled in when absent
-        result["requests_sent"] = state["requests_sent"]
+    if code and (total := loop.attempted(state)) is not None:
+        result["requests_sent"] = total
     from g6.core.cloud_consent import bind_output
     return bind_output(result, loop.source_refs(state))
 

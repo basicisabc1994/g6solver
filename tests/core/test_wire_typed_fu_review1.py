@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Repair 1 of claude/wire-typed-fu: a run keeps one request count across all its steps. A step's own count never
-stands for the run, a state with no count stays unknown, and a step cut short after sending leaves the count unknown,
+stands for the run, a state with no count stays unknown, and a step cut short after sending retains its reservation,
 so "not sent" is said only when no step of the run sent anything."""
 from contextlib import nullcontext
 from pathlib import Path
@@ -23,6 +23,7 @@ def test_resumed_loop_does_not_record_zero_after_an_earlier_send(monkeypatch):
     tree = ["before repair"]
     monkeypatch.setattr(loop, "_load", lambda *a: state)
     monkeypatch.setattr(loop, "_save", lambda *a, **kw: None)
+    monkeypatch.setattr(loop, "_sync_state", lambda *a: None)  # this fixture replaces durable storage
     monkeypatch.setattr(loop.repo_tests, "checked_repo", lambda *a: root)
     monkeypatch.setattr(loop.repo_tests, "change", lambda *a: SimpleNamespace(repo=root, sources=("code.py",)))
     monkeypatch.setattr(loop.repo_tests, "snapshot", lambda *a: {"code.py": tree[0]})
@@ -120,7 +121,7 @@ def test_the_run_total_adds_every_step_and_a_refusal_with_nothing_new_is_not_uns
     assert step().action == loop.CONTINUE and loop._load(session)["requests_sent"] == 3
     stopped, state = step(), loop._load(session)
     assert stopped.code == cloud.REQUIRED and state["requests_sent"] == 3
-    assert "not sent" not in state["stop"].lower() and "3 request(s) of this run went out" in state["stop"]
+    assert "not sent" not in state["stop"].lower() and "up to 3 request(s) of this run may have gone out" in state["stop"]
 
 
 def test_a_run_that_sent_nothing_in_any_step_is_still_not_sent(tmp_path, monkeypatch):
@@ -141,20 +142,20 @@ def test_a_state_saved_with_no_total_stays_unknown(tmp_path, monkeypatch):
     assert obstacle.obstacles(None, reply, ())[0].kind == "refused_run"
 
 
-def test_a_step_cut_short_after_sending_leaves_the_total_unknown(tmp_path, monkeypatch):
+def test_a_step_cut_short_after_sending_keeps_its_reservation(tmp_path, monkeypatch):
     step, session = _steps(tmp_path, monkeypatch, _review([("die", 1), ("refuse", 0)]))
     with pytest.raises(RuntimeError):
         step()
-    assert "requests_sent" not in loop._load(session)        # never the 0 it had before the request went out
+    assert loop._load(session)[loop.ATTEMPTED] == 1
     stopped, state = step(), loop._load(session)
-    assert stopped.code == cloud.REQUIRED and "requests_sent" not in state
+    assert stopped.code == cloud.REQUIRED and state[loop.ATTEMPTED] == 1
     assert "not sent" not in state["stop"].lower()
 
 
 def test_a_new_run_the_hook_starts_begins_with_nothing_sent(tmp_path, monkeypatch):
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
     run = tmp_path / 'run'
-    loop._save(run, {"reviewed": "x", loop.SENT: 0})
+    loop._save(run, {"reviewed": "x", loop.ATTEMPTED: 0})
     with loop._run_count(run, loop._load(run), fresh=False) as counted:
         note_model_call()
         assert counted.total() == 1

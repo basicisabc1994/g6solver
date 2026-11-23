@@ -141,8 +141,11 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> bool:
     refs = cloud.boundary_sources(carried=(*loop.source_refs(ended),
         cloud.Source.text(cloud.input_source(asked['task']), 'prior-task', asked['task']),
         cloud.Source.text(cloud.input_source(task), 'task', task)))
-    loop._save(run, {**read, loop.SENT: 0}, sources=refs)     # a new run: nothing of it has been sent yet
-    cloud.write_retained(session / 'task.json', json.dumps(fresh).encode('utf-8'))
+    with loop._writing(run):
+        # A retry may find this run already used: never reset its count or reviews.
+        retained = loop._load(run)
+        loop._save(run, retained or {**read, loop.ATTEMPTED: 0}, sources=refs)
+        cloud.write_retained(session / 'task.json', json.dumps(fresh).encode('utf-8'))
     return True
 
 
@@ -279,7 +282,7 @@ def on_stop(event: dict) -> dict:
     if step.text and workflow_policy.enabled()[0]:    # after the whole report: the optional view of the task
         from g6.harness.workflow import view
 
-        sent = loop._load(run).get("requests_sent")    # the loop's count survives into the view; absent stays unknown
+        sent = loop.attempted(loop._load(run))
         said = view.appended(asked["repo"], asked["task"], said, provider="anthropic:claude_code", loop={
             "ending": step.ending, "error": f"[{step.code}]" if step.code else "", "run_id": run.name, "report": step.text,
             **({"requests_sent": sent} if sent is not None else {})})

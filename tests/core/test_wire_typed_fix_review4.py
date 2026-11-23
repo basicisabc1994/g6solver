@@ -2,6 +2,7 @@
 """Review 4 of claude/wire-typed-fix: a missing request count is unknown, never zero, wherever a reply or a view is
 rebuilt ("not sent" only on a count present and zero), and a structured input with a key given twice is refused as the
 line grammar refuses an answer given twice."""
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,6 +21,8 @@ def test_stop_hook_does_not_call_a_partly_sent_review_unsent(monkeypatch):
     root, state = Path.cwd(), {}
     monkeypatch.setattr(loop, "_load", lambda *a: state)
     monkeypatch.setattr(loop, "_save", lambda *a, **kw: None)      # the session here is the working directory
+    monkeypatch.setattr(loop, "_sync_state", lambda *a: None)  # this fixture replaces durable storage
+    monkeypatch.setattr(loop, "_held", lambda *a: nullcontext())
     monkeypatch.setattr(loop.repo_tests, "checked_repo", lambda *a: root)
     monkeypatch.setattr(loop.repo_tests, "change", lambda *a: SimpleNamespace(repo=root, sources=("code.py",)))
     monkeypatch.setattr(loop.repo_tests, "snapshot", lambda *a: {})

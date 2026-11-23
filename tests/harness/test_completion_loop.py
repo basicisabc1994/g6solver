@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -3016,6 +3017,67 @@ def test_a_test_that_would_not_run_and_then_passed_is_reported_by_its_latest_run
 def log_held(world):
     """Another writer holding the failures log."""
     return _coordination.Coordination(world.session.parent / ".failures").mutex()
+
+
+@pytest.mark.parametrize("blocked_by", ["held", "unwritable"])
+def test_every_state_rewrite_carries_all_owed_rows_until_delivery(world, monkeypatch, blocked_by):
+    """Every publication keeps undelivered rows and their reason; delivery clears both fields."""
+    from g6.core import cloud_consent as cloud
+
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch)
+    approved(monkeypatch, reviewer("none", "none"))
+    prompted(world, "one")
+    owed, delivered, published = {}, set(), []
+    real_publish, real_write = cloud.write_retained, loop._write_row
+
+    def publish(path, body):
+        real_publish(path, body)
+        if path.name != "state.json":
+            return
+        saved = loop._load(path.parent)
+        if "row_due" in saved and path.parent not in delivered:
+            owed.setdefault(path.parent, (saved["row_due"], saved.get("row")))
+        for run, (due, why) in owed.items():
+            retained = loop._load(run)
+            assert retained.get("row_due") == due, "a state rewrite lost an owed row"
+            if why:
+                assert retained.get("row") == why, "a state rewrite lost the retry reason"
+        for run in delivered:
+            retained = loop._load(run)
+            assert "row_due" not in retained, "a state rewrite restored a delivered row"
+            assert "row" not in retained, "a state rewrite restored a cleared retry reason"
+        published.append(path.parent)
+
+    def write(run, state):
+        real_write(run, state)
+        if "row_due" in state:
+            owed[run] = (state["row_due"], state.get("row"))
+        else:
+            owed.pop(run, None)
+            delivered.add(run)
+
+    monkeypatch.setattr(cloud, "write_retained", publish)
+    monkeypatch.setattr(loop, "_write_row", write)
+    log = world.session.parent / "failures.jsonl"
+    if blocked_by == "unwritable":
+        log.mkdir()
+    with log_held(world) if blocked_by == "held" else nullcontext():
+        for n in range(2):
+            world.edit(FIXED + f"# {n}\n")
+            stopped(world)
+            prompted(world, f"then {n}")
+        assert len(owed) == 2 and all(why for _, why in owed.values())
+        assert not rows(world)
+    if blocked_by == "unwritable":
+        log.rmdir()
+    expected = {run.name for run in owed}
+    world.edit(BASE)  # the next stop delivers all prior runs without another review
+    stopped(world)
+    assert not owed and {run.name for run in delivered} == expected
+    assert {row["session"] for row in rows(world)} == expected
+    assert not list((world.session.parent / "owing").iterdir())
+    assert delivered <= set(published)
 
 
 def owing_past_a_new_prompt(world, monkeypatch, *replies) -> str:

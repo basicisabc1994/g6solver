@@ -146,6 +146,8 @@ def observe_loop(repo: str | os.PathLike, task: str, session: Path, state: Mappi
                  base: str = "") -> str:
     """One step of a completion loop, from its saved state: the run, each review round once, and, when the loop has
     stopped, its end and the moment its report was returned. Replaying the same state adds nothing."""
+    from g6.harness.completion_loop import attempted
+
     if getattr(step, "action", "") == "wait":          # another step owns the state; this one did nothing
         return ""
     run = _Run(repo, task, "loop_session", Path(session).name, at=at, base=base)
@@ -170,8 +172,7 @@ def observe_loop(repo: str | os.PathLike, task: str, session: Path, state: Mappi
         run.write("loop_ended", native, at=at, artifact=last or "",
                   data={"ending": ending or None, "code": code or None, "reviews": len(reviews),
                         # a count of zero is kept: only it lets a reader say "not sent"; a missing one stays absent
-                        "requests_sent": sent if type(sent := state.get("requests_sent")) is int and sent >= 0
-                        else None})
+                        "requests_sent": attempted(state)})
         seconds = run.seconds()
         run.write("report_returned", native, at=at, artifact=last or "", data={"run_seconds": seconds},
                   refs=_report_ref(session), missing=() if seconds is not None else ("run_seconds",))
