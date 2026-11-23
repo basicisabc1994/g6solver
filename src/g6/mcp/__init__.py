@@ -193,12 +193,23 @@ def _quiet() -> None:
         fastmcp.settings.check_for_updates = "off"
 
 
+def _import_error_message(exc: ImportError) -> str:
+    """Name the failing dependency without attributing unrelated imports to MCP."""
+    module = exc.name
+    if module and module.split(".", 1)[0] in {"mcp", "fastmcp"}:
+        return (f"g6-mcp needs the MCP extra (import failed: {module}): "
+                "pip install 'g6[mcp] @ git+https://github.com/basicisabc1994/g6solver'")
+    if module:
+        return f"g6-mcp could not import module '{module}'. See the chained ImportError for its dependency."
+    return "g6-mcp could not import a server dependency. See the chained ImportError for details."
+
+
 def build_server(surface: Any = None) -> Any:
     try:
         _quiet()
         from fastmcp import Context, FastMCP
-    except ImportError as exc:  # pragma: no cover - exercised only without the extra
-        raise SystemExit("g6-mcp needs the MCP extra: pip install 'g6[mcp] @ git+https://github.com/basicisabc1994/g6solver'") from exc
+    except ImportError as exc:
+        raise SystemExit(_import_error_message(exc)) from exc
 
     from g6.core import discovery
     from g6.mcp.instructions import TEXT
@@ -810,4 +821,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
 
 
 def main() -> None:
-    build_server().run()
+    try:
+        build_server().run()
+    except ImportError as exc:
+        raise SystemExit(_import_error_message(exc)) from exc

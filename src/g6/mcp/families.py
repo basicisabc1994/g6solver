@@ -2,7 +2,7 @@
 """MCP-only progressive disclosure, joined to actual registrations and the routing manifest."""
 from __future__ import annotations
 
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -94,32 +94,92 @@ def compact_server(server: Any, server_id: str) -> None:
     """Shorten registered descriptions, preserving the actual schema, callable and complete guidance."""
     from g6.mcp.registrations import _listed
 
+    listed = _listed(server)
+    if "g6_describe" not in dict(listed):
+        raise ValueError("short tool descriptions require g6_describe on the same server")
     details = {}
-    for name, tool in _listed(server):
+    attached = []
+    for name, tool in listed:
         guidance = tool.description or ""
         schema = getattr(tool, "parameters", None) or getattr(tool, "inputSchema", None) or {}
         details[name] = {"guidance": guidance, "schema": deepcopy(schema)}
-        tool.description = short_description(name, guidance)
+        # A tool can be registered on more than one server. Only this server's
+        # copy may advertise its local g6_describe target.
+        compact = copy(tool)
+        compact.description = short_description(name, guidance)
+        attached.append((name, compact))
+    for name, tool in attached:
+        server.remove_tool(name)
+        server.add_tool(tool)
     _DETAILS[server_id] = details
 
 
-def full_guidance(server_id: str, tool: str) -> str:
+def _server_details(server_id: str) -> dict[str, dict[str, Any]]:
+    """Read full guidance from the server that owns it, including unshortened SDK servers."""
     if server_id not in _DETAILS:
         from g6.mcp.registrations import SERVERS, _load
-        _load(SERVERS[server_id])
-    return _DETAILS[server_id][tool]["guidance"]
+        server = _load(SERVERS[server_id])
+        if server_id not in _DETAILS:
+            from g6.mcp.registrations import _listed
+            _DETAILS[server_id] = {
+                name: {"guidance": tool.description or "",
+                       "schema": deepcopy(getattr(tool, "parameters", None) or
+                                          getattr(tool, "inputSchema", None) or {})}
+                for name, tool in _listed(server)}
+    return _DETAILS[server_id]
 
 
-def inventory() -> list[dict[str, Any]]:
-    """Every registered tool, route, vendored skill and runnable op, once, with its call template."""
+def full_guidance(server_id: str, tool: str) -> str:
+    return _server_details(server_id)[tool]["guidance"]
+
+
+def _unavailable(server_id: str) -> dict[str, Any]:
+    """Fixed public recovery, never an import error's text (which may contain host paths)."""
+    from g6.mcp.registrations import EXTRAS
+
+    extra = EXTRAS[server_id]
+    return {"available": False, "reason": "server_unavailable",
+            "note": "G6 could not load or list this member's MCP server on this computer.",
+            "install": f"pip install 'g6[{extra}] @ git+https://github.com/basicisabc1994/g6solver'"}
+
+
+def inventory(family: str | None = None) -> list[dict[str, Any]]:
+    """Registered members, plus declared tools whose own server cannot load; unrelated servers stay unloaded."""
     from g6.mcp import registrations
-    from g6.skills import corpus
+    from g6.skills import corpus, routing
 
     rows = []
-    for server_id, server in registrations._built():
-        for name, tool in registrations._listed(server):
+    declared: dict[str, dict[str, str]] = {}
+    for identity, entry in routing.load().entries.items():
+        if not identity.startswith("mcp:") or not entry.agent_facing:
+            continue
+        member_family = family_for({"id": identity, "kind": "mcp"})
+        if family is None or member_family == family:
+            server_id, name = identity[4:].split("/", 1)
+            declared.setdefault(server_id, {})[name] = member_family
+    for server_id, target in sorted(registrations.SERVERS.items()):
+        members = declared.get(server_id, {})
+        if family is not None and not members:
+            continue
+        try:
+            server = registrations._load(target)
+            listed = dict(registrations._listed(server))
+        except (Exception, SystemExit):
+            # A missing optional server affects its declared members only. Keep
+            # each identity visible, without inventing a schema or importing peers.
+            for name, member_family in members.items():
+                call = {"tool": name, "arguments": {}}
+                if server_id != "g6":
+                    call["server"] = server_id
+                rows.append({"id": f"mcp:{server_id}/{name}", "kind": "tool", "family": member_family,
+                             "summary": "This tool's MCP server is unavailable.", "call": call,
+                             **_unavailable(server_id)})
+            continue
+        for name, tool in listed.items():
             identity = f"mcp:{server_id}/{name}"
-            family = family_for({"id": identity, "kind": "mcp"})
+            member_family = family_for({"id": identity, "kind": "mcp"})
+            if family is not None and member_family != family:
+                continue
             schema = getattr(tool, "parameters", None) or getattr(tool, "inputSchema", None) or {}
             properties = schema.get("properties", {})
             arguments = {key: corpus._placeholder(key, corpus._json_kind(properties.get(key, {})))
@@ -127,14 +187,23 @@ def inventory() -> list[dict[str, Any]]:
             call = {"tool": name, "arguments": arguments}
             if server_id != "g6":
                 call["server"] = server_id
-            rows.append({"id": identity, "kind": "tool", "family": family,
+            rows.append({"id": identity, "kind": "tool", "family": member_family, "available": True,
                          "summary": " ".join(full_guidance(server_id, name).split())[:160], "call": call})
+        for name in members.keys() - listed.keys():
+            call = {"tool": name, "arguments": {}}
+            if server_id != "g6":
+                call["server"] = server_id
+            rows.append({"id": f"mcp:{server_id}/{name}", "kind": "tool", "family": members[name],
+                         "summary": "The declared tool is absent from this server.", "call": call,
+                         "available": False, "reason": "tool_unavailable"})
     entries = corpus.entries()
     routes = corpus._routes([entry for entry in entries if entry["kind"] == "tool"])
     for entry in [*routes, *corpus._skills(), *corpus._bundled_skills(),
                   *(entry for entry in entries if entry["kind"] == "op")]:
-        family = family_for(entry)
-        rows.append({"id": entry["id"], "kind": entry["kind"], "family": family,
+        member_family = family_for(entry)
+        if family is not None and member_family != family:
+            continue
+        rows.append({"id": entry["id"], "kind": entry["kind"], "family": member_family,
                      "summary": " ".join(entry.get("when", entry["text"]).split())[:160],
                      "call": deepcopy(entry["call"])})
     return sorted(rows, key=lambda row: row["id"])
@@ -144,19 +213,24 @@ def describe(name: str) -> dict[str, Any] | None:
     """Public built-in MCP guidance only; unknown names continue through the existing catalogue gate."""
     if name in FAMILIES:
         return {"name": name, "available": True, "purpose": FAMILIES[name].purpose,
-                "members": [row for row in inventory() if row["family"] == name]}
+                "members": inventory(name)}
     from g6.mcp import registrations
     from g6.skills import corpus, routing
 
     manifest = routing.load()
     matches = [(server_id, name) for server_id in registrations.SERVERS
                if f"mcp:{server_id}/{name}" in manifest.entries]
+    if name == "g6_describe" and ("g6", name) in matches:
+        # The standalone pointer target is local to abstraction. Unqualified
+        # discovery here still describes the main server's existing entry point.
+        matches = [("g6", name)]
     if len(matches) > 1:
         raise ValueError(f"ambiguous tool identity: {name}")
     for server_id, tool_name in matches:
-        if server_id not in _DETAILS:
-            registrations._load(registrations.SERVERS[server_id])
-        details = _DETAILS[server_id].get(tool_name)
+        try:
+            details = _server_details(server_id).get(tool_name)
+        except (Exception, SystemExit):
+            return {"name": name, **_unavailable(server_id)}
         if details is None:
             return {"name": name, "available": False, "note": "The declared tool is absent from this server."}
         if "schema" not in details:
