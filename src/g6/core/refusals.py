@@ -342,6 +342,7 @@ OVERLAY: dict[str, dict[str, Any]] = {
     },
 }
 LAYERS: dict[str, tuple[str, ...]] = {
+    "G6_E_AGENTIC_NO_MODEL": ("tool:g6_select", "_agentic", "no_model"),
     "G6_E_AGENT_CHANGE_FLAGGED": ("none", "bundles"),
     "G6_E_BLOCKED": ("none", "bundles core mcp skills",
         "Read the warning card: it says why and what can be done. Tell the person."),
