@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The completion loop: when a coding agent says it has finished, test the work with checks it never saw, send failures
+"""The Stop hook checks each Python change by default with the model-free patch review, after its boundary check.
+With no approved reviewer it only shows the report, records the digest, and ends the turn; the reviewer loop is opt-in.
+
+The completion loop: when a coding agent says it has finished, test the work with checks it never saw, send failures
 back in the same session until the work holds or the stop rule fires, and say what was tested and what remains unknown.
 
 Two loops share this module. Once a critic is approved it is the worked examples' arm K (``reviews_until_clean`` in
 ``validation/worked_examples/run.py``), the review-until-clean loop: another model family reads the finished patch without the
-agent's reasoning, and must state a rule, reasons and a test. If that test fails on the patch, the three go back in the same
+agent's reasoning, and must state a rule, reasons and a test. Only a case that fails at both parent and patch goes back in the same
 session, and a fresh review reads the new patch, up to ``MAX_REPAIRS`` repairs. The agent may reject a finding by leaving the
 code as it was. No scout and no probe: ``advance`` needs the boundary and the critic and nothing else, and a review that fails
 or cannot be read ends the loop with no clean review. Each review's test stays beside the earlier ones (``critic_file``) to
@@ -12,7 +15,7 @@ catch a repair that undoes it, and runs alone, so one that will not run hides no
 defect no test could show ends the loop with no clean review, where K calls it clean. A run that ends leaves a row in
 ``FAILURES`` for the next cycle of the self-improvement loop.
 
-``MODE_LINE`` in the person's key file, or no critic, gives the other loop, described from here on.
+``MODE_LINE`` in the person's key file, or no critic, gives the other loop if scouts are approved, described from here on.
 
 It is the worked examples' arm L9 (``validation/worked_examples/run.py``), moved into the product. Its text is data
 (``HARNESS``, read by ``harness``; a test holds it to ``run.py``'s), and a later trained harness needs no code: a file
@@ -161,11 +164,11 @@ REFUSED = "\n\nThe runner checked your work and refused it:\n- {wrong}\n{did}Put
 NO_BOUNDARY = ("G6's completion loop did not run: no operating-system boundary can confine model-written tests here "
                "({why}), so G6 ran none of them and asked no model. Nothing was tested. g6 doctor says what this computer "
                "needs for a boundary.")
-NOT_APPROVED = ("G6's completion loop did not run: its scouts use your Claude Code sign-in, and nothing in your key file "
-                "approves that. Add the line G6_LLM_PROVIDER=claude_code to {path} to turn it on. Nothing was tested.")
-NOT_ON = ("G6's completion loop did not run: nothing in your key file approves a reviewer. Add the line "
-          f"{CRITIC_LINE}=codex to {{path}} to turn on the review-until-clean loop, on your Codex sign-in. The line "
-          "G6_LLM_PROVIDER=claude_code turns on the scouts' loop instead. Nothing was tested.")
+NOT_APPROVED = ("The reviewer loop did not run: its scouts need approval. Add G6_LLM_PROVIDER=claude_code to {path} "
+                "to turn on the scouts' loop on your Claude Code sign-in.")
+NOT_ON = ("The reviewer loop did not run: no reviewer is approved. Add "
+          f"{CRITIC_LINE}=codex to {{path}} to turn on the review-until-clean loop on your Codex sign-in; "
+          "G6_LLM_PROVIDER=claude_code turns on the scouts' loop instead.")
 NO_TASK = ("G6's completion loop did not run: it could not tell what you asked for, so there was nothing to test the work "
            "against. Nothing was tested.")
 #: The lines a hook shows where a loop did not run and so no report came: one for each reason.
@@ -406,6 +409,8 @@ class ToolSession(consent.ConsentClaude):
 
 def scout_host() -> Host | None:
     """The scouts' session, when the key file's own ``G6_LLM_PROVIDER`` line approves Claude Code; else None."""
+    if (keys.get("G6_LLM_PROVIDER") or "").strip().lower() != "claude_code":
+        return None
     caller = proposer._backend(provider_from_env())
     return ToolSession(caller.model).run if isinstance(caller, host_models.ClaudeCodeCaller) else None
 
@@ -934,6 +939,39 @@ def _unrun(got: ProbeRun) -> str:
     return mask_paths(_seen(text).masked())[-MAX_CASE_CHARS:] or "no case of it ran to a result"
 
 
+def reviewer_cases(now: ProbeRun, base: ProbeRun) -> tuple[set[str], list[dict]]:
+    """The parent rule (study record, 2091): only body failures at parent AND patch are findings.
+    Everything else with a failure or an unavailable observation is a note, never defect feedback.
+    Both runs must be usable; a partial or untrusted run cannot admit a case even if it carries 'failed'."""
+    found, notes = set(), []
+    for case in sorted(now.results.keys() | base.results.keys()):
+        after, before = now.results.get(case), base.results.get(case)
+        if now.usable and base.usable and after == before == "failed":
+            found.add(case)
+            continue
+        if not now.usable:
+            reason = "patch run did not reach a usable result: " + _unrun(now)
+        elif not base.usable:
+            reason = "parent run did not reach a usable result: " + _unrun(base)
+        elif after == "passed" and before in ("passed", "failed"):
+            continue
+        else:
+            reason = f"parent case: {before or 'not run'}; patch case: {after or 'not run'}; both must fail"
+        notes.append({"case": case, "parent": before or "not run", "patch": after or "not run", "reason": reason})
+    if not now.results and not base.results:
+        notes.append({"case": "", "parent": "not run", "patch": "not run",
+                      "reason": "parent: " + _unrun(base) + "; patch: " + _unrun(now)})
+    return found, notes
+
+
+def _reviewer_base(change: repo_tests.Change, where: Path, deadline: float, only: str = "") -> ProbeRun:
+    """An unavailable parent run is a note. This uses the same confined runner and deadline as the patch."""
+    try:
+        return run_set(change, where, at_base=True, deadline=deadline, only=only)
+    except (repo_tests.RepoRefused, OSError) as exc:
+        return ProbeRun(None, {}, {}, f"{type(exc).__name__}: {exc}")
+
+
 def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shipped: Harness, session: Path, reviews: list[dict],
                  deadline: float) -> tuple[set[str], str]:
     """One round of the review-until-clean loop: a fresh review of the patch as it stands, kept in ``reviews``, then every
@@ -951,7 +989,7 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     repair is spent: only where nothing else failed, as otherwise what failed goes back and a fresh review reads the repair.
     A review's ``unrun`` says why its test shows nothing on the latest run, so a later run updates it, or takes it away."""
     n, results, failed, failing, where = len(reviews) + 1, {}, {}, set(), session / "sets" / "critic"
-    diagnostics = {}
+    diagnostics, notes, observations = {}, {}, {}
     read, kept, mine = repo_tests.diff_read(change), session / "rounds" / f"round-{n}.patch", critic_file(n)
     patch = read.text
     kept.parent.mkdir(parents=True, exist_ok=True)
@@ -962,13 +1000,18 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     def run(name: str) -> None:
         got, diagnostics[name] = _snapshot_probe(run_set(change, where, at_base=False, deadline=deadline, only=name))
         cloud.record_sources(diagnostics[name])
-        found = failures_of([("critic", got, None)])[0] if got.usable else set()    # one that will not run says nothing
-        failing.update(found)
-        failed[name] = sorted(case.removeprefix("critic:") for case in found)
+        before, origins = _snapshot_probe(_reviewer_base(change, where, deadline, name))
+        cloud.record_sources(origins)
+        observations[name] = {"patch": asdict(got), "parent": asdict(before)}
+        found, notes[name] = reviewer_cases(got, before)
+        notes[name] = [{**note, "test_path": str(where / name)} for note in notes[name]]
+        failing.update(f"critic:{case}" for case in found)
+        failed[name] = sorted(found)
         owed = {case for one in reviews for case in one["failed"].get(name, ())}
         results[name] = ("failed" if found else "did not run" if not got.usable else
                          patch_report.NOT_PASSED if any(got.results.get(case) != "passed" for case in owed) else
-                         patch_report.NOT_JUDGED if "unknown" in got.results.values() else "passed")
+                         patch_report.NOT_JUDGED if "unknown" in got.results.values() else
+                         "notes only" if any(v in ("failed", "error") for v in got.results.values()) else "passed")
         said["boundary"] = got.boundary or said.get("boundary", "")
         owner = next((one for one in reviews if one["file"] == name), said)
         if results[name] in SHOWED_NOTHING:
@@ -989,11 +1032,14 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
             run(mine)
     if any(code in said.get("error", "") for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)):
         raise LLMError(said["error"])
-    said.update(n=n, patch=digest(patch), file=mine, results=results, failed=failed)
+    said.update(n=n, patch=digest(patch), file=mine, test_path=str(where / mine), results=results, failed=failed,
+                notes=notes, observations=observations)
     reviews.append(said)
     if said["verdict"] not in READ_VERDICTS or not failing:
         return set(), ""
-    return failing, review_note(next(one for one in reversed(reviews) if results.get(one["file"]) == "failed"), shipped)
+    return failing, (review_note(next(one for one in reversed(reviews) if results.get(one["file"]) == "failed"), shipped)
+                     + "\n\nOnly these cases are defects (each fails at parent and patch):\n"
+                     + "\n".join(sorted(failing)))
 
 
 # --- the loop --------------------------------------------------------------------------------------------------------------
@@ -1050,7 +1096,7 @@ class Step:
     """What comes next: ``CONTINUE``, with the text for the agent; ``STOP``, with the report ("" when there is none); or
     ``WAIT``, when this step did nothing, as another of the session was running or the person must answer first. ``code``: the
     stable code of a call that tested nothing or left no clean review, for a surface with G6's envelope. ``note``: with no
-    report, the line a hook shows the person in its place, as a tool's reply has its own words for what did not run.
+    loop report, the message a hook shows the person in its place, including a model-free default review.
     ``ending``: on a stop, how the run ended, one of ``patch_report.ENDINGS``."""
     action: str
     text: str = ""
@@ -1154,7 +1200,7 @@ def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
         "reason": reason, "repairs": sum(one["tree"] is not None for one in rounds), "max_repairs": MAX_REPAIRS,
         "failing": rounds[-1]["failing"] if rounds else [], "critic": state.get("critic"),
         "late_because": state.get("late") or ("no hook ran them before the agent started" if _before_fix() else NOT_ASKED),
-        "boundary": state.get("boundary"),
+        "boundary": state.get("boundary"), "reviewer_notes": state.get("reviewer_notes") or {},
         "sets": [{"label": label, "hidden": label != "scout", "ran": ran.get(label, 0), "left_out": one["left_out"],
                   "refused": one["refused"], "late": one.get("when") != BEFORE} for label, one in state["sets"].items()]},
         review)
@@ -1471,6 +1517,10 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
              said: str, answered: bool, agent: str) -> Step:
     """One step, with the session held: the state is read here, so a step sees what the one before it wrote."""
     state = _load(session)
+    if patch_report.legacy_review_notes(state.get("reviews") or []):
+        reason = state["stop"] = "saved reviewer failures lack parent observations; no checks ran in this call"
+        report = _reviews_report(state, reason, NO_CLEAN_REVIEW, "untested", "")
+        return _finish(session, state, report, NO_CLEAN_REVIEW, "untested", patch=state.get("ended_patch", ""))
     if state.get("done"):
         if "row_due" in state:
             _write_row(session, state)
@@ -1498,18 +1548,29 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         return Step(STOP, note=ALREADY_READ)
     if not task.strip():
         return refused(NO_TASK, "G6_E_INPUT_VALIDATION", UNASKED)
-    critic = critic or critic_host()
-    reviewing = critic is not None and not _scouts_chosen()
     why = proposer.boundary(root)
     if why:
         cloud.record_sources((cloud.Source.text('host:execution-boundary', 'diagnostic', why),))
         return refused(NO_BOUNDARY.format(why=why), ISOLATION_UNAVAILABLE, UNCONFINED)
+    scouts_selected = _scouts_chosen()
+    critic = critic or (None if scouts_selected else critic_host())
+    reviewing = critic is not None and not scouts_selected
     if not reviewing:
         scout = scout or scout_host()
         if scout is None:
             path = keys.path()
             cloud.record_sources((cloud.Source.text('host:configuration', 'configuration-path', str(path)),))
-            return refused((NOT_APPROVED if _scouts_chosen() else NOT_ON).format(path=path), keys.KEY_MISSING, UNAPPROVED)
+            reviewed = digest(repo_tests.diff_text(change))
+            started = _clock()
+            report = _final_review(root, task, base)
+            seconds = _clock() - started
+            report += (f"\n\nThe model-free patch review ran in {seconds:.1f} seconds (limit {REVIEW_S} seconds). "
+                       "No reviewer loop ran; loop ending: untested.\n"
+                       + (NOT_APPROVED if _scouts_chosen() else NOT_ON).format(path=path))
+            state["reviewed"] = reviewed
+            _finish(session, state, report, ending="untested", patch=reviewed)
+            return Step(STOP, note=report, ending="untested")
+        critic = critic or critic_host()
     shipped = harness()
     state.setdefault("started", time.time())
     state.setdefault("sets", {})
@@ -1536,10 +1597,19 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         if (state.get("critic") or {}).get("test"):
             got, origins = _snapshot_probe(run_set(change, session / "sets" / "critic", at_base=False, deadline=ends))
             cloud.record_sources(origins)
-            if got.usable:     # a critic's test that will not run says nothing of the patch
-                state["ran"]["critic"] = got.ran
-                seen.append(("critic", got, None))
-        return with_critic(failures_of(seen), state.get("critic") or {}, shipped.critic_note)
+            before, origins = _snapshot_probe(_reviewer_base(change, session / "sets" / "critic", ends))
+            cloud.record_sources(origins)
+            admitted, notes = reviewer_cases(got, before)
+            state["ran"]["critic"] = got.ran
+            state["reviewer_notes"] = {critic_file(1): [
+                {**note, "test_path": str(session / "sets" / "critic" / critic_file(1))} for note in notes]}
+        else:
+            admitted = set()
+        failing, text = failures_of(seen)
+        failing.update(f"critic:{case}" for case in admitted)
+        if admitted:
+            text += "\n\nOnly these reviewer cases are defects (each fails at parent and patch):\n" + "\n".join(sorted(admitted))
+        return with_critic((failing, text), state.get("critic") or {}, shipped.critic_note)
 
     def tree() -> str:
         return digest(repo_tests.snapshot(root))

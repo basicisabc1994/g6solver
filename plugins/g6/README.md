@@ -3,7 +3,8 @@
 Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.
 
 Coding agents say a task is finished when the code handles the example they were given. This plugin tests that claim. When
-Claude Code finishes a Python task, a reviewer from another model family reads the patch and must show a failure, not just
+Claude Code finishes a Python task, the Stop hook checks the change with a model-free patch review. With the optional
+reviewer loop on, a reviewer from another model family reads the patch and must show a failure, not just
 name one. G6 sends what it shows back to the agent, has the repair read again until a review reproduces nothing or the stop
 rule fires, and then tells you what was found, what was fixed and what stayed open.
 
@@ -31,7 +32,12 @@ remove --scope user g6` to remove the other.
 
 ## Turn it on
 
-The loop spends your Codex sign-in, so it does nothing until you approve that. Add this line to your key file, `~/.g6/.env`:
+The Stop hook checks each Python change by default: it runs tests that touch the changed modules and looks for weakened
+tests, inside the operating-system boundary. Its report says which checks ran, what was skipped and why, and seconds taken.
+With no reviewer approved it only shows the report and ends your turn. It calls no model.
+
+The reviewer loop is the opt-in extra. It spends your Codex sign-in after you approve it. Add this line to your key file,
+`~/.g6/.env`:
 
 ```
 G6_LOOP_CRITIC=codex
@@ -40,19 +46,24 @@ G6_LOOP_CRITIC=codex
 Lines set only in an agent's environment do not count: an agent's environment is not your approval.
 
 With that line, the review-until-clean loop runs. With no such line, and `G6_LLM_PROVIDER=claude_code`, the scouts' loop
-below runs instead. With neither, nothing is tested, and the report says which line to add.
+below runs instead. With neither, the model-free patch review runs and the report says how to turn on the reviewer loop.
+The loop's ending is `untested` because no reviewer loop ran; the report lists the model-free checks separately.
 
 ## What happens
+
+With the reviewer loop enabled:
 
 1. What you ask before G6 first tests the work is the task, and the commit you are on at your first prompt is the base.
    Uncommitted work you had then counts as part of the change.
 2. When the agent finishes and Python files have changed, a reviewer from another model family reads the task, the patch and
    the files it touches, as they were at the base. It sees none of the agent's reasoning. It must state a rule, its reasons
    and a test, and it may find nothing.
-3. G6 runs that test on the patch, inside an operating-system boundary, with no network. A test that will not run goes back
+3. G6 runs each case on the parent and the patch, inside an operating-system boundary, with no network. Only a case that
+   fails on both is a finding. A case that fails only on the patch, or whose parent run is unavailable, is a note with its
+   command and reason, and is never sent back as a defect. A test that will not run on the patch goes back
    to the reviewer once, with the error. If it still will not run, the loop ends with no clean review: a defect was claimed
    and could not be reproduced.
-4. If the test fails, the rule, the reasons and the test go back to the agent in the same session. The agent may reject the
+4. If a case fails at both parent and patch, the rule, the reasons and the test go back to the agent in the same session. The agent may reject the
    finding: the reviewer can be wrong. A fresh review then reads the new patch, at most three repairs and so four reviews.
    Each review's test stays and keeps running, to catch a repair that undoes it. If the agent changes nothing and its reply
    asks anything, by a question mark anywhere in it, that rejects nothing: the turn ends so you can answer, and the loop goes
@@ -76,10 +87,11 @@ tells the agent to ask you. Set `G6_HINTS=off` in Claude Code's environment to t
 
 ## What the report says, and what it does not
 
-The report starts with how the run ended, in one word: `clean`, when a review of this patch reproduced nothing and no
-reviewer's test failed on it; `fixed`, when each test that failed now passes and a fresh review reproduced nothing;
-`contested`, when a test fails and the agent left the code as it was; `open`, when a test that failed has not been shown to
-pass; `untested`, when nothing tested this patch to a result. A tool's reply gives the same word as `ending`.
+The report starts with how the run ended, in one word: `clean`, when no case meets the parent-and-patch failure rule;
+`fixed`, when each admitted case now passes and a fresh review finds no case meeting that rule;
+`contested`, when an admitted case fails and the agent left the code as it was; `open`, when an admitted case has not been
+shown to pass; `untested`, when no reviewer loop reached a result. Any model-free checks are reported separately.
+A tool's reply gives the same word as `ending`.
 
 Then come the reproduced findings: what was found, what was fixed, and what stayed open. A finding is fixed only when
 the case that failed has passed: a skip or a rename fixes nothing. It is open when the repairs ran out with its test still
@@ -98,8 +110,8 @@ changes; it never refreshes a provider. Advice blocks nothing and implies no pro
 Claude Code support is not established until a real sanitised capture is checked. The optional status-line wrapper is
 installed only by the person after [previewing its settings and rollback](../../docs/allowances.md).
 
-This loop is the worked examples' arm K, and it has been measured on seven training bugs only. It has no measurement on a bug
-kept out of training. It also differs from what was measured:
+This loop is the worked examples' arm K. It has been measured on unseen bugs, including bugs from repositories never used
+in training. Uplift over Claude Code alone was not shown. It also differs from what was measured:
 
 - The reviewer here receives a text pack with no tools: the task, the patch, and the files the patch touches as they were at
   the base, up to 120,000 characters. Only those files may be cut: a task and patch too long to send whole get no review, and
