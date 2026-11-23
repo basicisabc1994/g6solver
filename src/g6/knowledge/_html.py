@@ -40,6 +40,7 @@ _VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "
 _HIDDEN_STYLE = re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden", re.IGNORECASE)
 _SPACES = re.compile(r"[ \t\r\n\f\v]+")
 _HEADINGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
+_MARKED_SECTION = re.compile(r"<!\[([a-zA-Z][-_.a-zA-Z0-9]*)")
 
 # The sets of elements the HTML standard's tree builder consults (its "special" category and its scopes). Each open
 # element in a set has its stack index kept in that set's own stack, so "is there a <p> in button scope" is a compare
@@ -105,6 +106,17 @@ class _Reader(HTMLParser):
         self.pre = 0
         self.in_title = False
         self.hidden_elements = self.hidden_chars = self.deep_chars = 0
+
+    def parse_html_declaration(self, i: int) -> int:
+        # Newer HTMLParser versions tolerate bogus marked sections as comments.
+        # Keep the reading's stop boundary from the older parser on every host;
+        # comments and script text still follow the parser's own tokenisation.
+        if self.rawdata.startswith("<![", i):
+            section = _MARKED_SECTION.match(self.rawdata, i)
+            if section is None or section[1].lower() not in {
+                    "temp", "cdata", "ignore", "include", "rcdata", "if", "else", "endif"}:
+                raise ValueError("unread marked section")
+        return super().parse_html_declaration(i)
 
     def flush(self) -> None:
         if self.current:
