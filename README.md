@@ -60,6 +60,15 @@ g6 doctor                                               # read-only: what this c
 g6 setup --client claude --allow patch_review.review    # or --client codex; give --client twice for both
 ```
 
+For grounding, Google's LangExtract is recommended. Opt in from this repository with
+`pip install ".[langextract]"` (separate from `all`). Once installed, advisory reading uses the existing caller,
+including your Claude Code or Codex sign-in, without another dialog for the same provider. Without model reading,
+G6 uses strict text matching, which misses paraphrases: in [V1](docs/validation/results/V1/README.md), it found
+19 of 100 paraphrased claims. Without Google's library, G6 can use its `ctx_langextract` model backend.
+Set `G6_GROUNDING_ENGINE=lexical` in the environment that starts G6 to turn advisory reading off.
+Model reading never changes grounding's `status`; fuzzy alignment is at most flagged. Google's README publishes
+no benchmark results; the V1 figure describes G6's lexical matcher.
+
 G6 gets an environment of its own, made with `--copies`: on Linux, G6 cannot yet tell its own Python from a project
 environment linked to the same one, and refuses to review then.
 

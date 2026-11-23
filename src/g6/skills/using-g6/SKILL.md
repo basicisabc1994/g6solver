@@ -87,6 +87,12 @@ g6_invoke("grounding", "coverage", {"text": "The limit is 42 units.", "sources":
 ```
 
 `sources` maps names to supplied text. These lexical checks do not establish factual truth.
+Google's LangExtract is recommended for grounding: opt in from G6's repository with `pip install ".[langextract]"`.
+It reads through the existing caller, including your Claude Code or Codex sign-in; the same provider needs no extra
+dialog. Without model reading, strict text matching misses paraphrases: G6's V1 lexical matcher found 19 of 100
+(`docs/validation/results/V1/README.md`). Without Google's library, `ctx_langextract` can read instead.
+`G6_GROUNDING_ENGINE=lexical` turns model reading off. Status is unchanged; fuzzy alignment is at most flagged.
+Google's README publishes no benchmark results.
 
 `g6_agentic_run` substitutes parts after limits, computation failure, or success when the caller names a part.
 Remote admission: provider consent; local admission: local model; process callers: allowed in code; refusal: refused by

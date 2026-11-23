@@ -28,6 +28,15 @@ section is content/install.md.{% endcomment %}
 python -m venv --copies .venv
 source .venv/bin/activate          # PowerShell: .venv\Scripts\Activate.ps1
 pip install ".[all]"</code><button type="button" class="btn btn--small copy" data-copy="#cmd-install">Copy</button></div>
+                <p>For grounding, Google's LangExtract is recommended. Opt in from this repository with
+                <code>pip install ".[langextract]"</code>, separately from <code>all</code>. It uses the existing
+                caller, including the Claude Code or Codex you already use; the same provider needs no extra dialog.
+                Without model reading, strict text matching misses paraphrases: G6's
+                <a class="link" href="https://github.com/basicisabc1994/g6solver/blob/main/docs/validation/results/V1/README.md">V1</a>
+                lexical matcher found 19 of 100 paraphrased claims. Without Google's library, G6 can use its
+                <code>ctx_langextract</code> model backend. Set <code>G6_GROUNDING_ENGINE=lexical</code> where G6
+                starts to turn model reading off. The lexical status stays unchanged; fuzzy alignment is at most
+                flagged. Google's README publishes no benchmark results.</p>
                 <p class="small">G6 gets an environment of its own, made with <code>--copies</code>: on Linux, G6
                 cannot yet tell its own Python from a project environment linked to the same one, and refuses to
                 review then.</p>

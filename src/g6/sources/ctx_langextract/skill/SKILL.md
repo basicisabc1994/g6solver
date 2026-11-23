@@ -9,6 +9,17 @@ Pulls named fields out of a text and holds every value to the text it came from.
 block) reads the whole text window by window, or your own regular expressions run in bounded child processes; then
 each value is looked up in the text itself.
 
+Grounding uses this same extraction and `ground()` engine for advisory passages typed as
+`supports`, `contradicts` or `unrelated`. It reruns its lexical check only on grounded passages and reports the
+reading beside its unchanged lexical status. Google's LangExtract is recommended for grounding: opt in from the G6
+repository with `pip install ".[langextract]"`. The adapter passes an explicit G6 provider through the existing caller,
+including your Claude Code or Codex sign-in; the same provider needs no extra dialog. Every library interval is
+re-checked here; fuzzy matches are at most flagged. Without that package, this component's windowed model backend
+can run. With no completed model reading, strict text matching misses paraphrases: G6's V1 lexical matcher found
+19 of 100 paraphrased claims (`docs/validation/results/V1/README.md`). Google's README publishes no benchmark results.
+`G6_GROUNDING_ENGINE=lexical` turns grounding's model reading off. Grounding can also pass caller `patterns` through
+this component's bounded regex backend.
+
 ## When to use it
 
 - Pulling fields out of a contract, an invoice, an email or a report, where each value must be traceable to its

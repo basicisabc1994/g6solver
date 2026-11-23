@@ -10,6 +10,18 @@ import pytest
 from g6.core.llm import FakeLLM
 
 
+@pytest.fixture(autouse=True)
+def builtin_engine(monkeypatch):
+    module = importlib.import_module("g6.grounding.model_reading")
+    monkeypatch.setattr(module, "_load_langextract", lambda: None, raising=False)
+
+
+def reply(stance, quote):
+    fields = dict.fromkeys(("supports", "contradicts", "unrelated"))
+    fields[stance] = quote
+    return json.dumps({"value": fields})
+
+
 def api():
     return importlib.import_module("validation.grounding.model_reading")
 
@@ -31,7 +43,8 @@ def test_calibration_counts_agreement_false_support_and_abstention_by_set():
 
     def respond(system, user):
         payload = json.loads(json.loads(user)["text"])
-        return json.dumps({"value": ["supports", payload["sources"]["source"]]})
+        source = payload["user"].split("<<<TEXT\n", 1)[1].rsplit("\nTEXT>>>", 1)[0]
+        return reply("supports", source)
 
     fake = FakeLLM(respond)
     result = api().evaluate(rows, llm=fake)
@@ -48,7 +61,7 @@ def test_calibration_counts_agreement_false_support_and_abstention_by_set():
 def test_calibration_correct_contradiction_and_failed_model_are_distinct():
     row = {"pair_id": "n", "stratum": "negated", "claim": "Dogs cannot enter",
            "source": "Dogs can enter.", "label": "unsupported"}
-    good = api().evaluate([row], llm=FakeLLM(default='{"value":["contradicts","Dogs can enter."]}'))
+    good = api().evaluate([row], llm=FakeLLM(default=reply("contradicts", "Dogs can enter.")))
     assert good["sets"]["contradiction"]["agreement"] == 1
     for caller in (None, FakeLLM(default="bad json")):
         out = api().evaluate([row], llm=caller)

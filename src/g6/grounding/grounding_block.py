@@ -14,7 +14,7 @@ from g6.core.result import Result
 from g6.core import semantic
 from g6.grounding.claims import check_claim, check_claims
 from g6.grounding.coverage import coverage
-from g6.grounding.model_reading import model_reading
+from g6.grounding.model_reading import _model_enabled, model_reading
 from g6.grounding.retrieval import TextRetriever
 
 #: Refusal codes.
@@ -29,6 +29,13 @@ _BLOCKED_CODES = {
     "partial": "G6_E_GROUNDING_PARTIAL",
 }
 _MAX_SOURCE_CHARS = 2_000_000
+E_LEXICAL_ONLY = "G6_E_GROUNDING_LEXICAL_ONLY"
+_OPT_IN = 'pip install ".[langextract]"'
+_LEXICAL_MESSAGE = (
+    "G6 matched the claims to the sources by strict text matching, which misses paraphrases. "
+    "In G6's V1 validation, lexical matching found 19 of 100 paraphrased claims "
+    "(docs/validation/results/V1/README.md).")
+_RECOMMENDATION = f"Google's LangExtract is recommended; opt in from the G6 repository: {_OPT_IN}"
 
 _OPS: dict[str, str] = {
     "check_claim": "check_claim(claim, sources={name: text}): quoted/supported/partial/conflict/not_found",
@@ -48,7 +55,11 @@ class GroundingInput(BaseModel):
     sources: dict[str, str] = Field(default_factory=dict)
     top_k: int = Field(5, ge=1, le=50)
     judge: Literal["lexical", "model"] = Field(
-        "lexical", description="Optional advisory reading on check_claim/check_claims; lexical status is unchanged")
+        "model", description="Advisory reading on check_claim/check_claims; lexical disables it; status is unchanged")
+    patterns: dict[Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")],
+                   Annotated[str, Field(max_length=2000)]] = Field(
+        default_factory=dict, max_length=30,
+        description="Optional ctx_langextract regex fields beside model passages")
     # coverage only; the caller's claim, recorded: finite numbers, one per source at most
     weights: dict[str, Annotated[float, Field(allow_inf_nan=False)]] = Field(default_factory=dict, max_length=1_000)
 
@@ -68,23 +79,31 @@ class GroundingBlock(AIBlock[GroundingInput, dict, dict]):
         verification_method="lexical_sentence_overlap", bad_at=("omissions", "stale sources", "proving behavioural correctness"),
         guarantees=("reports support against supplied source text only",))
 
-    def __init__(self, name: str = "grounding", state: dict | None = None, *, llm=None) -> None:
+    def __init__(self, name: str = "grounding", state: dict | None = None, *, llm=None,
+                 langextract_module=None) -> None:
         super().__init__(name=name, state=state or {})
         self.llm = llm
+        self.langextract_module = langextract_module
 
     def infer(self, data: GroundingInput) -> Result[dict]:
         # Retrieval also has a semantic reader. The lexical floor must never
         # depend on that model, even inside a request carrying an injected caller.
         with semantic.request(llm=None):
             result = self._lexical_infer(data)
-        if result.is_fail() or data.judge != "model" or data.op not in ("check_claim", "check_claims"):
+        if result.is_fail() or data.op in ("ops", "help"):
             return result
         payload = result.value
-        checks = [payload["check"]] if data.op == "check_claim" else payload["checks"]
-        scope = semantic.use_request() if self.llm is None else semantic.use_request(llm=self.llm)
-        with scope:
-            for check in checks:
-                check["model_reading"] = model_reading(check["claim"], data.sources)
+        readings = []
+        if data.op in ("check_claim", "check_claims") and data.judge == "model" and _model_enabled():
+            checks = [payload["check"]] if data.op == "check_claim" else payload["checks"]
+            scope = semantic.use_request() if self.llm is None else semantic.use_request(llm=self.llm)
+            with scope:
+                for check in checks:
+                    reading = model_reading(check["claim"], data.sources, patterns=data.patterns,
+                                            langextract_module=self.langextract_module)
+                    check["model_reading"] = reading
+                    readings.append(reading)
+        _engine_guidance(payload, readings)
         return result
 
     def _lexical_infer(self, data: GroundingInput) -> Result[dict]:
@@ -100,11 +119,13 @@ class GroundingBlock(AIBlock[GroundingInput, dict, dict]):
         if data.op == "check_claim":
             if not data.claim.strip():
                 return Result.fail(f"[{E_CLAIM_REQUIRED}] check_claim: claim is required")
-            check = check_claim(data.claim, retriever, top_k=data.top_k)
+            # The status judge is always lexical; model selection only controls
+            # the advisory sidecar added after this operation returns.
+            check = check_claim(data.claim, retriever, top_k=data.top_k, judge=None)
             return Result.ok(_coded({"component": self.name, "op": data.op, "completion_state": check.completion_state,
                                      "check": check.to_dict()}, [check]))
         if data.op == "coverage":
-            report = coverage(data.text, retriever, top_k=data.top_k, weights=data.weights)
+            report = coverage(data.text, retriever, top_k=data.top_k, judge=None, weights=data.weights)
             if not report.claims and report.warning_card is not None:   # refused before any check: no draft, or too big
                 return Result.fail(f"[{report.warning_card['code']}] coverage: {report.warning_card['message']}")
             payload = {"component": self.name, "op": data.op, "completion_state": report.completion_state,
@@ -112,13 +133,41 @@ class GroundingBlock(AIBlock[GroundingInput, dict, dict]):
             if report.warning_card is not None:
                 payload["warning_card"] = report.warning_card
             return Result.ok(payload)
-        checks = check_claims(data.text, retriever, top_k=data.top_k)
+        checks = check_claims(data.text, retriever, top_k=data.top_k, judge=None)
         if not checks:
             return Result.fail(f"[{E_NO_CHECKABLE_SENTENCE}] check_claims: text has no checkable sentence")
         states = [c.completion_state for c in checks]
         overall = "blocked-escalated" if "blocked-escalated" in states else "qualified-draft"
         return Result.ok(_coded({"component": self.name, "op": data.op, "completion_state": overall,
                                  "execution_id": checks[0].execution_id, "checks": [c.to_dict() for c in checks]}, checks))
+
+
+def _engine_guidance(payload: dict, readings: list[dict]) -> None:
+    """Compose limitations without replacing a blocking code or interpreting prose."""
+    if not readings or any(r.get("model_ran") is not True or r.get("engine") not in ("langextract", "ctx_langextract")
+                           for r in readings):
+        limitation = warning_card(E_LEXICAL_ONLY, _LEXICAL_MESSAGE, _RECOMMENDATION)
+        # Supply the card's limitation before the shared door fills missing
+        # envelope fields, so direct and MCP consumers receive the same card.
+        limitation["risks"] = [_LEXICAL_MESSAGE]
+        existing = payload.get("warning_card")
+        if existing is None:
+            payload["warning_card"] = limitation
+        else:
+            # One envelope field; keep the actionable grounding code and both cards.
+            # Coverage also retains this card in its lexical report. Compose a
+            # new envelope card without changing that original result record.
+            existing = dict(existing)
+            existing["warnings"] = [*existing.get("warnings", []), limitation]
+            for key in ("message", "why"):
+                existing[key] = existing.get(key, "") + " " + _LEXICAL_MESSAGE
+            for key in ("suggested_action", "next_step"):
+                existing[key] = existing.get(key, "") + " " + _RECOMMENDATION
+            if not existing.get("risks"):
+                existing["risks"] = [existing["message"]]
+            payload["warning_card"] = existing
+    elif any(r.get("engine") == "ctx_langextract" for r in readings):
+        payload["engine_note"] = "Advisory reading used G6's ctx_langextract model backend. " + _RECOMMENDATION
 
 
 def _coded(payload: dict, checks: list) -> dict:

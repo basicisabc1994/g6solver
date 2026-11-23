@@ -46,6 +46,8 @@ def test_a_blocked_check_names_its_code(op: str, params: dict, code: str) -> Non
     assert reply["result"]["warning_card"]["code"] == code and reply["warning_card"]["code"] == code
 
 
-def test_a_supported_check_needs_no_code() -> None:
+def test_a_supported_lexical_check_reports_its_limit_without_blocking(monkeypatch) -> None:
+    monkeypatch.setenv("G6_GROUNDING_ENGINE", "lexical")
     result = _reply("check_claim", {"claim": "Refunds are issued within 14 days of a return", "sources": POLICY})["result"]
-    assert result["completion_state"] == "qualified-draft" and "warning_card" not in result
+    assert result["completion_state"] == "qualified-draft"
+    assert result["warning_card"]["code"] == "G6_E_GROUNDING_LEXICAL_ONLY"
