@@ -50,7 +50,9 @@ def _semantic(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], 
                 return [f"evidence {ident}: {BINDING_UNREADABLE}: {unreadable[0]}"]
             if parts.standard not in standards:
                 found.append(f"evidence {ident}: no standard with this standard_sha256 is in the ledger")
-            if rec.fixture_version != UNSEALED and rec.fixture_version not in vaults:
+            # A readable but disagreeing record is retained for traceability, as for standard/predicate
+            # disagreement. It supplies no accepted subject and cannot borrow any fixture's seal.
+            if not refused and parts.fixture != UNSEALED and parts.fixture not in vaults:
                 found.append(f"evidence {ident}: fixture_version names no sealed vault in the ledger (seal the fixture "
                              f"first, or say {UNSEALED})")
             if rec.negative_control_ref:

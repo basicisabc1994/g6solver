@@ -19,7 +19,11 @@ evaluator as one named by its bytes, so a label never lets one evaluator's contr
 """
 from __future__ import annotations
 
-from g6.evidence.mapping import BINDING_UNREADABLE, About, CheckBinding, UnreadableBinding, read_about, read_binding
+from dataclasses import replace
+
+from g6.evidence.mapping import (
+    BINDING_UNREADABLE, NO_ENVIRONMENT, About, CheckBinding, UnreadableBinding, read_about, read_binding,
+)
 from g6.evidence.mapping import strict_json as _strict_json
 
 from .records import EvidenceRecord, canonical, digest
@@ -38,19 +42,24 @@ def binding_of(rec: EvidenceRecord) -> CheckBinding | UnreadableBinding | None:
 def about(rec: EvidenceRecord) -> tuple[About, tuple[tuple[str, str], ...]]:
     """What ``rec`` is about, and each of its fields that disagrees with its custody binding, as (code, why), through
     the mapping's one reader (``read_about``). With no binding, its own standard and predicate, and no artefact ("");
-    with one that does not read as one, nothing, and ``BINDING_UNREADABLE``."""
-    return read_about(binding_of(rec), scope=rec.scope, standard=rec.standard_sha256, predicates=(rec.predicate_id,))
+    with one that does not read as one, nothing, and ``BINDING_UNREADABLE``. The fixture is also read here: a
+    declaration that disagrees with custody is refused as ``NO_ENVIRONMENT``; without custody it stays declared."""
+    parts, refused = read_about(binding_of(rec), scope=rec.scope, standard=rec.standard_sha256, predicates=(rec.predicate_id,))
+    if parts.fixture:
+        if rec.fixture_version != parts.fixture:
+            refused = (*refused, (NO_ENVIRONMENT, "its fixture is not the one its custody binding names"))
+    elif not refused:
+        # With no binding the fixture remains a declaration, like the standard and predicate.
+        parts = replace(parts, fixture=rec.fixture_version)
+    return parts, refused
 
 
-def fixture_contaminated(fixture_version: str, bound_fixture: str, contaminated: set[str]) -> bool:
-    """An incident against either named fixture voids the record, including a control or premise.
+def fixture_contaminated(fixture: str, contaminated: set[str]) -> bool:
+    """An incident against the custody reader's fixture voids a check, control or premise.
 
-    Binding validity is checked separately by ``about``; an unreadable binding never admits evidence.
-    Accept the declared fixture and the accessor's ``About.fixture`` so traces can report contamination even for an
-    otherwise invalid record. An empty bound fixture means no readable binding and supplies no fixture identity.
+    The caller first checks ``about``'s refusals, including a disagreeing declared fixture.
     """
-    return (fixture_version in contaminated
-            or bool(bound_fixture) and bound_fixture in contaminated)
+    return bool(fixture) and fixture in contaminated
 
 
 def receipt_about(receipt: dict, provenance: dict | None) -> tuple[About, tuple[tuple[str, str], ...]]:

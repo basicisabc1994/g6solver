@@ -76,7 +76,9 @@ def trace_claim(ledger: Any, claim_id: str) -> dict:
                          "result": body["result"], "scope": body["scope"], "source_ref": body["source_ref"],
                          "fixture_version": body["fixture_version"], "known_limitations": body["known_limitations"],
                          "hash_ok": _body_ok(ledger, "evidence", eid), "negative_control": control,
-                         "contaminated": fixture_contaminated(body["fixture_version"], parts.fixture, contaminated)})
+                         # Trace metadata retains incidents against either name, even when custody refuses the record.
+                         "contaminated": (fixture_contaminated(parts.fixture, contaminated)
+                                          or fixture_contaminated(body["fixture_version"], contaminated))})
     cited = set(claim["evidence_ids"])
     try:
         episodes = [{"episode_id": e["id"], "outcome_state": e["body"]["outcome_state"], "head": e["body"]["head"],
