@@ -137,7 +137,8 @@ def test_the_mapping_refuses_to_promote_a_formal_check_with_no_negative_control(
     out = issue_records(facts(), Artifact(A, "agent", 1), [_formal_record()])
     assert out.promoted == () and out.certificate.verified_predicates == ()
     held = issue_records(facts(), Artifact(A, "agent", 1), [_formal_record([control()])])   # positive control
-    assert held.refused == () and held.certificate.verified_predicates == (P,)
+    assert held.refused and held.certificate.verified_predicates == ()
+    assert held.certificate.formal == ()   # a synthetic digest has no checker-run custody
 
 
 def test_echa_s_view_of_the_issuer_shows_the_issuer_s_refusal_of_a_formal_check_with_no_control():
@@ -148,7 +149,7 @@ def test_echa_s_view_of_the_issuer_shows_the_issuer_s_refusal_of_a_formal_check_
     seen = certificate_view(lone.certificate.as_dict(), artifact_sha256=A, ledger=lone.ledger)
     assert seen["predicates"][0]["status"]["support"] is False
     held = issue_records(facts(), Artifact(A, "agent", 1), [_formal_record([control()])])
-    assert certificate_view(held.certificate.as_dict(), artifact_sha256=A)["predicates"][0]["status"]["support"] is True
+    assert certificate_view(held.certificate.as_dict(), artifact_sha256=A)["predicates"][0]["status"]["support"] is False
 
 
 def test_the_patch_review_adapter_never_promotes_a_model_result_or_a_compiled_check():
@@ -210,6 +211,8 @@ def test_the_mapping_refuses_to_promote_a_record_taken_on_other_bytes():
     from g6.evidence.mapping import OTHER_ARTEFACT, PromotionRefused, issue_records, promote
 
     rec = _formal_record([control()], kind="independent_executable", model_sha256="", certificate="")
+    from tests.evidence.observed_fixtures import observe_records
+    rec = observe_records([rec])[0]
     promote(rec, facts=facts(), artifact=Artifact(A, "agent", 1))   # positive control
     with pytest.raises(PromotionRefused) as refused:
         promote(rec, facts=facts(), artifact=Artifact(B, "agent", 1))

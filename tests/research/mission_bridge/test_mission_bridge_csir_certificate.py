@@ -213,12 +213,13 @@ def test_a_check_covering_two_predicates_needs_a_control_for_each():
     assert issue([both], [receipt(both)]).state == "verified"
 
 
-def test_a_formal_check_with_a_certificate_digest_supports_and_appears_on_the_formal_certificate():
+def test_a_formal_digest_without_a_checker_run_cannot_supply_formal_authority():
     a = good_check("chk-a", ["p-a"], kind="formal_checked", certificate="ef" * 32)
     b = good_check("chk-b", ["p-b"])
     cert = issue([a, b], [receipt(a), receipt(b)])
-    assert cert.state == "verified"
-    assert cert.formal == (("p-a", "chk-a", "ef" * 32),)
+    assert cert.state != "verified"
+    assert cert.formal == ()
+    assert not cert.predicates[0].support
 
 
 def test_executable_evidence_is_never_laundered_onto_the_formal_certificate():

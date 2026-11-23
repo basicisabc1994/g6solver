@@ -11,6 +11,7 @@ product module's docstring.
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 from g6.evidence.certificate import (  # noqa: F401 - re-exported for the rig and its tests
@@ -60,6 +61,11 @@ def issue(ir: MissionIR, catalogue: Mapping[str, OpFact], standard: FrozenStanda
     """The certificate for ``artifact`` under ``ir`` and its frozen ``standard``, judged against ``catalogue``;
     ``ledger`` holds the controls and receipts G6 observed (the product issuer resolves support there)."""
     require_research()
+    # Legacy Check has no exact checker request or host execution references.
+    # Keep the formal kind diagnostic until issuance adds that transport: every
+    # result loses authority, and failures/unknowns stay visible as caveats.
+    checks = [replace(check, certificate="", controls=(), positive_seq=None)
+              if check.kind == "formal_checked" else check for check in checks]
     return _issue(facts_of(ir, catalogue, standard), artifact, checks, receipts, decisions=decisions,
                   solvability=solvability.as_dict() if solvability else None, ledger=ledger)
 
