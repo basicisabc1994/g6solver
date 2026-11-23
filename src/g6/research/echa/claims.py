@@ -36,14 +36,31 @@ This rule is research analysis, never a requirement's status: the issuer decides
 """
 from __future__ import annotations
 
+from fractions import Fraction
+import math
 import re
 from typing import Any
 
-from .custody import about, evaluator_of
+from .custody import about, evaluator_of, fixture_contaminated
 from .records import ClaimRecord, EvidenceRecord
 
 EXECUTABLE = ("FORMAL_CHECK", "INDEPENDENT_EXECUTABLE", "PARTIAL_FALSIFIER")
 _SUBJECT = re.compile(r"sha256:([0-9a-f]{64})\Z")
+
+
+def _number_interval(value: float) -> tuple[Fraction, Fraction]:
+    """Enclose both the stored number and its decimal spelling, without arithmetic rounding."""
+    binary, decimal = Fraction(value), Fraction(str(value))
+    return min(binary, decimal), max(binary, decimal)
+
+
+def _round_outward(value: Fraction, *, upper: bool) -> float:
+    """Render an exact bound as a float only toward the conservative side."""
+    rounded = float(value)
+    inward = Fraction(rounded) < value if upper else Fraction(rounded) > value
+    if inward:
+        rounded = math.nextafter(rounded, math.inf if upper else -math.inf)
+    return rounded
 
 
 def subject_artefact(claim: ClaimRecord) -> str | None:
@@ -65,7 +82,8 @@ def _control_holds(ledger: Any, rec: EvidenceRecord, contaminated: set) -> bool:
         return False
     (of_control, control_refused), (of_check, _) = about(control), about(rec)
     return (not control_refused and control.purpose == "negative_control" and control.result == "fail"
-            and of_control.standard == of_check.standard and control.fixture_version not in contaminated
+            and of_control.standard == of_check.standard
+            and not fixture_contaminated(control.fixture_version, of_control.fixture, contaminated)
             and of_control.predicates == of_check.predicates and evaluator_of(control) == evaluator_of(rec)
             and control.oracle_category in EXECUTABLE)
 
@@ -94,7 +112,8 @@ def _premise(ledger: Any, rec: EvidenceRecord, claim: ClaimRecord, ref: str, pur
                 or parts.predicates != original.predicates or premise.applies_to_sha256 != rec.sha256
                 or premise.population != claim.population or premise.sample_unit != claim.sample_unit
                 or rec.population != claim.population or rec.sample_unit != claim.sample_unit
-                or premise.fixture_version in contaminated or not _control_holds(ledger, premise, contaminated)):
+                or fixture_contaminated(premise.fixture_version, parts.fixture, contaminated)
+                or not _control_holds(ledger, premise, contaminated)):
             return None
         return premise
     except (KeyError, ValueError, TypeError, RecursionError, MemoryError):
@@ -131,7 +150,7 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
             _once(reasons, "evidence_for_another_standard")
         elif parts.predicates != (claim.predicate_id,):
             _once(reasons, "evidence_for_another_predicate")
-        elif rec.fixture_version in contaminated:
+        elif fixture_contaminated(rec.fixture_version, parts.fixture, contaminated):
             _once(reasons, "contaminated_fixture")
         else:
             cited.append(rec)
@@ -168,9 +187,13 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
             key = (evaluator_of(rec), rec.independence_group)
             bounds[key] = max(bounds.get(key, 0.0), float(rec.oracle_error_bound))
     identified = bool(active) and all(r.evidence_id in calibrations for r in active)
-    pooled_bound = sum(bounds.values()) if identified else None
+    # Upper errors and lower evaluator outcomes enclose both decimal and binary readings of every declaration.
+    # Keep the sum and subtraction exact; float display must never shrink errors or enlarge corrected outcomes.
+    pooled_exact = sum((_number_interval(v)[1] for v in bounds.values()), Fraction()) if identified else None
+    pooled_bound = _round_outward(pooled_exact, upper=True) if pooled_exact is not None else None
     lowers = [calibrations[r.evidence_id].evaluator_lower_bound for r in passing if r.evidence_id in calibrations]
-    corrected_lower = (max(0.0, min(lowers) - pooled_bound)
+    corrected_lower = (_round_outward(max(Fraction(), min(_number_interval(v)[0] for v in lowers) - pooled_exact),
+                                     upper=False)
                        if identified and passing and all(v is not None for v in lowers) else None)
     general = False
     for rec in passing:
