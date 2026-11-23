@@ -113,6 +113,8 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
         result = {"ok": True, **said, **envelope_fields(
             reliability_label="qualified-draft", warning_card=warning_card(CODE, *card), evidence=evidence, request_id=request_id,
             run_id=folder.name, degradation_reason=card[0][:300])}
+    from g6.harness import patch_report
+    result["reviewer_notes"] = patch_report.reviewer_notes(state)
     from g6.core.cloud_consent import bind_output
     return bind_output(result, loop.source_refs(state))
 
