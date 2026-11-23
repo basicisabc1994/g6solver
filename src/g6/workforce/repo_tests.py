@@ -2131,10 +2131,99 @@ class _Counted:
     def pytest_sessionstart(self, session):
         self.session = session
     @staticmethod
+    def _assertion_helpers():
+        # Snapshot actual helper code before repository tests run. Names and paths supplied by a frame do not
+        # make it a pytest/unittest helper. Keep code objects alive and compare by identity, not code equality.
+        import importlib, sys, types, unittest, pytest
+        modules = [importlib.import_module(pytest.fail.__module__),
+                   importlib.import_module(pytest.raises.__module__), unittest.case, unittest.util]
+        # Some pytest versions re-export raises while its context manager lives in the other assertion module.
+        modules += [sys.modules[name] for name in ("_pytest.raises", "_pytest.python_api") if name in sys.modules]
+        codes, seen = [], set()
+        def code(value):
+            if id(value) not in seen:
+                seen.add(id(value))
+                codes.append(value)
+                for child in value.co_consts:
+                    if type(child) is types.CodeType:
+                        code(child)
+        def visit(value, namespace):
+            if type(value) in (staticmethod, classmethod):
+                visit(value.__func__, namespace)
+            elif type(value) is property:
+                for child in (value.fget, value.fset, value.fdel):
+                    visit(child, namespace)
+            elif type(value) is types.FunctionType and value.__globals__ is namespace:
+                code(value.__code__)
+            elif issubclass(type(value), type) and vars(value).get("__module__") == namespace["__name__"]:
+                if id(value) not in seen:
+                    seen.add(id(value))
+                    for child in vars(value).values():
+                        visit(child, namespace)
+        for module in modules:
+            namespace = vars(module)
+            for value in namespace.values():
+                visit(value, namespace)
+            # A callable wrapper may retain the actual raising function only in its instance dictionary.
+            for entry in (pytest.fail, pytest.raises):
+                for value in getattr(entry, "__dict__", {}).values():
+                    visit(value, namespace)
+        # Older raises context managers delegate message matching to this assertion method outside those modules.
+        code(pytest.ExceptionInfo.match.__code__)
+        return tuple(codes)
+    @staticmethod
+    def _test_origin(node, error, helpers):
+        import os
+        def canonical(path):
+            return os.path.normcase(os.path.realpath(path))
+        def inside(path, top):
+            try:
+                return os.path.commonpath((path, top)) == top
+            except ValueError:  # paths on different drives have no common root
+                return False
+        test_file = getattr(node, "path", None)
+        if test_file is None:
+            return False
+        test_file = canonical(test_file)
+        root = getattr(getattr(node, "config", None), "rootpath", None)
+        root = canonical(root) if root is not None else None
+        test_tree, conftests = None, set()
+        if root is not None and inside(test_file, root):
+            # Only a test-only subtree containing this collected file owns sibling helpers. A root-level test
+            # does not turn the repository into test code. Resolving paths also excludes helpers linked out.
+            relative = os.path.relpath(test_file, root).split(os.sep)
+            for index, part in enumerate(relative[:-1]):
+                if part in ("test", "tests"):
+                    test_tree = os.path.join(root, *relative[:index + 1])
+                    break
+            parent = os.path.dirname(test_file)
+            while inside(parent, root):
+                conftests.add(os.path.join(parent, "conftest.py"))
+                if parent == root:
+                    break
+                parent = os.path.dirname(parent)
+        started = False
+        frame = getattr(error, "__traceback__", None)
+        while frame is not None:
+            actual = frame.tb_frame.f_code
+            filename = canonical(actual.co_filename)
+            installed = bool({"site-packages", "dist-packages"} & set(filename.split(os.sep)))
+            owned = (filename == test_file or filename in conftests or
+                     (test_tree is not None and inside(filename, test_tree) and not installed))
+            if owned:
+                started = True
+            elif started:
+                # No later test callback can erase an implementation frame. Installed assertion helpers may
+                # live in a virtual environment inside the repository; its implementation files may not.
+                if root is not None and inside(filename, root) and not installed:
+                    return False
+                if not any(actual is helper for helper in helpers):
+                    return False
+            frame = frame.tb_next
+        return started
+    @staticmethod
     def record(node, report, error, _assertion=__import__("builtins").AssertionError,
-               _failed=__import__("pytest").fail.Exception,
-               _fail_code=getattr(__import__("pytest").fail, "__code__",
-                                  getattr(__import__("pytest").fail.__call__, "__code__", None))):
+               _failed=__import__("pytest").fail.Exception, _helpers=_assertion_helpers.__func__()):
         # Every class question here is asked of the object's real type and its real MRO (``issubclass`` on
         # ``type(...)``), never through ``isinstance``, which an exception's overridable ``__class__`` answers.
         def real(value, classes):
@@ -2162,28 +2251,9 @@ class _Counted:
             kind = "Failed"
         elif kind in ("AssertionError", "Failed"):
             kind = f"{type(error).__module__}.{type(error).__qualname__}"
-        # Capture the types and pytest.fail's code above when the bootstrap defines the recorder, before tests run.
-        # pytest.fail itself raises inside pytest: its immediate caller, rather than its wrapper, is the origin.
-        origin, frame = None, getattr(error, "__traceback__", None)
-        while frame is not None:
-            if frame.tb_frame.f_code is not _fail_code:
-                origin = frame.tb_frame
-            frame = frame.tb_next
-        from_test = False
-        if kind in ("AssertionError", "Failed") and origin is not None:
-            import os
-            filename = os.path.normcase(os.path.realpath(origin.f_code.co_filename))
-            root = getattr(getattr(node, "config", None), "rootpath", None)
-            test_file = getattr(node, "path", None)
-            module_name = origin.f_globals.get("__name__", "")
-            try:
-                from_test = (type(module_name) is str and
-                             not (module_name == "_pytest" or module_name.startswith("_pytest.")) and
-                             ((test_file is not None and filename == os.path.normcase(os.path.realpath(test_file))) or
-                              (kind == "Failed" and root is not None and os.path.commonpath((filename, os.path.normcase(
-                                  os.path.realpath(root)))) == os.path.normcase(os.path.realpath(root)))))
-            except ValueError:  # paths on different drives have no common root
-                pass
+        # An assertion needs an entirely test-owned path from the test entry to the raise. Capture the real
+        # types and standard helper code at recorder definition, before repository tests can replace them.
+        from_test = kind in ("AssertionError", "Failed") and _Counted._test_origin(node, error, _helpers)
         return {"when": str(getattr(report, "when", "")), "kind": kind, "module": module, "file": place,
                 "assertion_from_test": from_test}
     def pytest_exception_interact(self, node, call, report):
