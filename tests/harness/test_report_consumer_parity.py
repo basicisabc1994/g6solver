@@ -1,7 +1,7 @@
 """Compare released readers with this tree on reports made by the real writers.
 
 The frozen fixture never imports product code. Only corrupt/incomplete reports
-may lose evidence; their explicitly named differences are checked below.
+may lose evidence; named additions to typed evidence are checked exactly below.
 """
 from __future__ import annotations
 
@@ -75,8 +75,8 @@ def differences(before, after):
     return {key: (before[key], after[key]) for key in before if before[key] != after[key]}
 
 
-def intended_reading(before, case):
-    """Exhaustive exceptions: only missing/incomplete evidence becomes unknown.
+def intended_reading(before, case, *, completion_evidence=None):
+    """Exhaustive exceptions: unknown evidence and the named typed addition.
 
     Persisted verdicts/outcomes, counters, annotations and loading decisions are
     never excluded. Each exception below has a named producer case.
@@ -133,23 +133,84 @@ def intended_reading(before, case):
         expected["completion"]["results"]["test_broken.py"] = "unknown"
     if "observation" in expected["verdicts"][NODE]:
         expected["requirement"]["checks"][0]["observation"] = expected["verdicts"][NODE]["observation"]
-    # The completion loop's typed failure kinds (``failure_records``) are read beside the released reading, which has
-    # none; the producer cases raise no exception, so no case records a kind.
-    expected["completion"]["kinds"] = {}
+    # Named schema addition: test_typed_failure_records_have_exact_completion_evidence
+    # supplies exact values from its test/implementation/cleanup frame fixtures,
+    # independently of the reader. All other producers have no exception frames.
+    if case == "typed_failure_records":
+        assert completion_evidence is not None
+        assert set(completion_evidence) == {"kinds", "assertions"}
+        expected["completion"].update(deepcopy(completion_evidence))
+    else:
+        assert completion_evidence is None
+        expected["completion"].update(kinds={}, assertions={})
     return expected
 
 
-def assert_parity(raw, *, case="complete"):
+def assert_parity(raw, *, case="complete", completion_evidence=None):
     if rt.read_report(raw).valid:
         # This preserves every scalar-only consumer, including those outside
         # the harness: values and absence have identical released meanings.
         assert rt.read_report(raw).wire() == raw
     before = reading(old_review, old_search, old_completion, raw)
-    expected = intended_reading(before, case)
+    expected = intended_reading(before, case, completion_evidence=completion_evidence)
     for label, projected in (("direct", raw), ("projected", patch_review._confined(raw))):
         after = reading(patch_review, verification_search, completion_loop, projected)
         delta = differences(expected, after)
         assert delta == {}, (case, label, json.dumps(delta, indent=2))
+
+
+@pytest.mark.parametrize("origin,want_kind,want_assertion", [
+    ("test", "AssertionError", True),
+    ("implementation", "AssertionError", False),
+    ("teardown_crash", "RuntimeError", False),
+])
+def test_typed_failure_records_have_exact_completion_evidence(
+        process, monkeypatch, origin, want_kind, want_assertion):
+    repo, scratch = process
+    # The expected classification comes from these frame paths, independently
+    # of the recorder and the completion reader. A later cleanup crash wins.
+    test_source = ("raise AssertionError('body assertion')" if origin != "implementation" else
+                   "exec(compile(implementation, implementation_file, 'exec'))")
+
+    def bounded(cmd, **kw):
+        own = kw["log"].parent
+        writer = counted_writer(own / "counted.json")
+        item = SimpleNamespace(nodeid=NODE, path=repo / "test_calc.py",
+                               config=SimpleNamespace(rootpath=repo))
+        session = SimpleNamespace(config=item.config, items=[item])
+        writer.pytest_itemcollected(item)
+        writer.pytest_collection_finish(session)
+        for phase in ("setup", "call", "teardown"):
+            failed = phase == "call" or phase == "teardown" and origin == "teardown_crash"
+            report = SimpleNamespace(nodeid=NODE, when=phase, outcome="failed" if failed else "passed",
+                                     failed=failed, longrepr="AssertionError" if phase == "call" else "RuntimeError")
+            writer.pytest_runtest_logreport(report)
+            if failed:
+                source = "raise RuntimeError('cleanup crash')" if phase == "teardown" else test_source
+                try:
+                    exec(compile(source, str(item.path), "exec"), {
+                        "implementation": "raise AssertionError('implementation assertion')",
+                        "implementation_file": str(repo / "calc.py"),
+                    })
+                except (AssertionError, RuntimeError) as error:
+                    writer.pytest_exception_interact(item, SimpleNamespace(excinfo=SimpleNamespace(value=error)), report)
+        writer.pytest_sessionfinish(session)
+        (own / "report.xml").write_text(
+            '<testsuite><testcase classname="test_calc" name="test_add">'
+            '<failure>AssertionError</failure></testcase></testsuite>', encoding="utf-8")
+        (own / "loaded.json").write_text('{"modules": {}, "complete": true}', encoding="utf-8")
+        kw["log"].write_text("", encoding="utf-8")
+        return 1
+
+    monkeypatch.setattr(rt, "_bounded", bounded)
+    raw = rt._run(repo, [NODE], roots=(), timeout_s=10, network=False, copied=True,
+                  python=sys.executable, scratch_dir=scratch)
+    assert rt.read_report(raw).valid, raw
+    evidence = {"kinds": {NODE: want_kind}, "assertions": {NODE: want_assertion}}
+    for projected in (raw, patch_review._confined(raw)):
+        got = asdict(completion_loop._read(CHANGE, [projected]))
+        assert {field: got[field] for field in evidence} == evidence
+    assert_parity(raw, case="typed_failure_records", completion_evidence=evidence)
 
 
 def test_frozen_reader_files_have_no_product_import_and_keep_their_recorded_bytes():
