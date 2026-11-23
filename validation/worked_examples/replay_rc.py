@@ -27,48 +27,61 @@ AGENT_ARMS = {"B", "C", "D", "E", "F", "G", "G1", "H", "H1"}
 NEIGHBOURS = ("black-5634", "starlette-3718", "pydantic-14052", "click-3769")
 OUTCOMES = {"supported_within_scope", "insufficient_evidence", "defect_detected", "test_integrity_compromised"}
 REGISTRATION = Path(__file__).with_name("REPLAY_RC.md")
-PREDICTIONS = (
-    ("Modes 1 and 2 on RC: no integrity alarm on any right patch or on the maintainers' fix, on upstream-fetched repositories",
-     "Any alarm: that class is open; repair before any live run"),
-    ('Mode 1 on RC: no "supported" on a wrong patch except through the S0 hole; after S0, none',
-     'A "supported" on a wrong patch after S0: the rule has another hole'),
-    ("Mode 2 on RC: `defect_detected` on at most 3 of 130 wrong patches and on 0 of 113 right",
-     "More than 2 of 113 right called a defect: R1's default is not safe to ship as it stands"),
-    ("Mode 3: a lead on at least 40% of distinct wrong patches on at least 3 of the 4 neighbouring-case bugs (black-5634, starlette-3718, pydantic-14052, click-3769)",
-     "A lead on fewer than 2 of the 4 bugs: tiers 1 and 2 do not reach what they were designed from; stop"),
-    ("Mode 3: a lead on at most 5 of the 113 right patches (4.4%, upper 95% bound just under 10%)",
-     "More than 10 of 113: the lifted relations misfire; stop"),
-    ("Mode 3: no lead on black-5521; on click-3678 no lead and at least one question candidate",
-     "A lead on most black-5521 patches would be a welcome surprise and is reported as one"),
-    ("Median review time under 120 s for each patch in mode 3",
-     "Over 300 s: the tiers need a tighter exit"),
-)
+
+
+def _normal_path(path: Path) -> Path:
+    text = str(path)
+    if os.name == "nt":
+        if text[:8].casefold() == "\\\\?\\unc\\":
+            text = "\\\\" + text[8:]
+        elif text.startswith("\\\\?\\"):
+            text = text[4:]
+        path = Path(text)
+        parts = [part if part in (".", "..") else part.rstrip(" .") for part in
+                 (path.parts[1:] if path.anchor else path.parts)]
+        path = Path(path.anchor, *parts)
+        return Path(os.path.normcase(str(path)))
+    return path
+
+
+def canonical_path(path: Path) -> Path:
+    """One gate for reads and destinations, before any content access or hashing."""
+    def check(candidate: Path) -> None:
+        for part in re.split(r"[\\/]", str(candidate)):
+            name = part.rstrip(" .").casefold()
+            if name == "sealed" or re.fullmatch(r"final-.*\.json", name):
+                raise ValueError(f"forbidden archive path: {candidate}")
+        for part in (candidate, *candidate.parents):
+            if part.is_symlink() or part.is_junction():
+                raise ValueError(f"archive links are refused: {candidate}")
+
+    path = Path(path)
+    check(path)
+    path = _normal_path(path).absolute()
+    check(path)
+    # Windows realpath expands existing 8.3 aliases, including an existing
+    # ancestor when the final destination has not been created yet.
+    resolved = _normal_path(path.resolve())
+    check(resolved)
+    return resolved
 
 
 class Source:
     """Allowlisted relative reads, with no write API and no recursive discovery."""
 
     def __init__(self, root: Path):
-        self.root = Path(root).absolute()
-        self._check(self.root)
-        self.root = self.root.resolve()
+        self.root = canonical_path(root)
 
     @staticmethod
-    def _check(path: Path) -> None:
-        for part in path.parts:
-            if part.lower() == "sealed" or re.fullmatch(r"final-.*\.json", part, re.I):
-                raise ValueError(f"forbidden archive path: {path}")
-        for part in (path, *path.parents):
-            if part.is_symlink() or part.is_junction():
-                raise ValueError(f"archive links are refused: {path}")
+    def _check(path: Path) -> Path:
+        return canonical_path(path)
 
     def path(self, rel: str | Path) -> Path:
         raw = str(rel).replace("\\", "/")
         if raw.startswith("/") or re.match(r"^[A-Za-z]:", raw) or ".." in raw.split("/"):
             raise ValueError(f"archive path must stay relative: {rel}")
-        path = self.root / raw
-        self._check(path)
-        if not path.resolve().is_relative_to(self.root):
+        path = canonical_path(self.root / raw)
+        if not path.is_relative_to(canonical_path(self.root)):
             raise ValueError(f"archive path escapes source: {rel}")
         return path
 
@@ -108,21 +121,35 @@ def _agent_origin(origin: dict) -> bool:
     return origin["archive_round"] < 3 or origin["arm"] in AGENT_ARMS
 
 
+def _has_error(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(str(key).casefold() in {"error", "errors"} or _has_error(item) for key, item in value.items())
+    return isinstance(value, list) and any(_has_error(item) for item in value)
+
+
 def enumerate_cases(root: Path, tasks: list[we.Task]) -> tuple[list[Case], list[dict]]:
+    """Refuse unsafe index paths with a caller-visible ValueError before candidate reads."""
     root = Source(root).root
     task_ids = {t.id for t in tasks}
     found: dict[tuple[str, str], Case] = {}
     excluded = []
-    for archive_round, part in enumerate(("", "round2", "round3"), 1):
-        source = Source(root / part)
+    sources = [(number, part, Source(root / part))
+               for number, part in enumerate(("", "round2", "round3"), 1)]
+    # Preflight every index destination before reading even the first index.
+    for _, _, source in sources:
+        source.path("runs.jsonl")
+    indices = []
+    for archive_round, part, source in sources:
         rows = source.rows()
-        ended = {r["run"]: r.get("status") for r in rows if r.get("event") == "ended"}
         starts = [r for r in rows if r.get("event") == "started"]
-        # Validate index paths before deciding which kind is in scope.
+        # Validate paths across all rounds before reading or hashing candidates.
         for row in starts:
             source.path(row["run"])
             if row.get("checked_run"):
                 source.path(row["checked_run"])
+        indices.append((archive_round, part, source, rows, starts))
+    for archive_round, part, source, rows, starts in indices:
+        ended = {r["run"]: r for r in rows if r.get("event") == "ended"}
         for row in sorted(starts, key=lambda r: r["run"]):
             bug, rel = row.get("task"), row["run"]
             if row.get("kind") != "run" or bug not in task_ids:
@@ -136,11 +163,19 @@ def enumerate_cases(root: Path, tasks: list[we.Task]) -> tuple[list[Case], list[
                 continue
             labels = set()
             label_sources = []
+            errored = []
             for check in starts:
-                if (check.get("kind") != "check" or check.get("checked_run") != rel
-                        or ended.get(check["run"]) != "finished"):
+                if check.get("kind") != "check" or check.get("checked_run") != rel:
+                    continue
+                if _has_error(check) or _has_error(ended.get(check["run"], {})):
+                    errored.append(f'{part + "/" if part else ""}{check["run"]}/run.json')
+                    continue
+                if ended.get(check["run"], {}).get("status") != "finished":
                     continue
                 record = source.read_json(f'{check["run"]}/run.json')
+                if _has_error(record):
+                    errored.append(f'{part + "/" if part else ""}{check["run"]}/run.json')
+                    continue
                 if record.get("status") != "finished" or record.get("amended"):
                     continue
                 for result in record.get("checks", []):
@@ -148,6 +183,9 @@ def enumerate_cases(root: Path, tasks: list[we.Task]) -> tuple[list[Case], list[
                             and type(result.get("passes")) is bool):
                         labels.add("right" if result["passes"] else "wrong")
                         label_sources.append(f'{part + "/" if part else ""}{check["run"]}/run.json')
+            if errored:
+                excluded.append({"bug": bug, "patch": name, "reason": "errored archived check", "checks": errored})
+                continue
             if len(labels) != 1:
                 excluded.append({"bug": bug, "patch": name,
                                  "reason": "conflicting archived labels" if labels else "no archived label"})
@@ -196,9 +234,7 @@ def enumerate_cases(root: Path, tasks: list[we.Task]) -> tuple[list[Case], list[
 
 
 def output_archive(source: Path, target: Path) -> c.Archive:
-    source, target = Source(source).root, Path(target).absolute()
-    Source._check(target)
-    target = target.resolve()
+    source, target = canonical_path(source), canonical_path(target)
     if target.is_relative_to(source) or source.is_relative_to(target):
         raise ValueError("output root must be disjoint from source archive")
     if target.exists():
@@ -206,13 +242,104 @@ def output_archive(source: Path, target: Path) -> c.Archive:
     return c.Archive(target)
 
 
-def require_registration() -> str:
+@dataclass(frozen=True)
+class Registration:
+    sha256: str
+    predictions: tuple[tuple[str, str], ...]
+    limits: dict[str, int]
+    neighbours: tuple[str, ...]
+    no_lead_bug: str
+    question_bug: str
+
+
+def _parse_registration(content: bytes) -> Registration:
+    """Accept the registered table grammar, extracting every adjustable limit."""
+    content = content.replace(b"\r\n", b"\n")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeError as exc:
+        raise ValueError("unparseable registration: expected UTF-8") from exc
+    rows = [line.strip() for line in text.splitlines() if line.strip().startswith("|")]
+    if len(rows) != 9 or rows[:2] != ["| # | Prediction | Kill criterion |", "|---|---|---|"]:
+        raise ValueError("unparseable registration prediction table")
+    predictions = []
+    for number, row in enumerate(rows[2:], 1):
+        cells = [cell.strip() for cell in row.split("|")]
+        if len(cells) != 5 or cells[0] or cells[-1] or cells[1] != f"P{number}":
+            raise ValueError("unparseable registration prediction rows")
+        predictions.append((cells[2], cells[3]))
+    patterns = (
+        (r"Modes 1 and 2 on RC: no integrity alarm on any right patch or on the maintainers' fix, "
+         r"on upstream-fetched repositories", r"Any alarm: that class is open; repair before any live run"),
+        (r'Mode 1 on RC: no "supported" on a wrong patch except through the S0 hole; after S0, none',
+         r'A "supported" on a wrong patch after S0: the rule has another hole'),
+        (r"Mode 2 on RC: `defect_detected` on at most (?P<hook_wrong>\d+) of (?P<hook_wrong_total>\d+) "
+         r"wrong patches and on (?P<hook_right>\d+) of (?P<hook_right_total>\d+) right",
+         r"More than (?P<hook_kill>\d+) of (?P<hook_kill_total>\d+) right called a defect: "
+         r"R1's default is not safe to ship as it stands"),
+        (r"Mode 3: a lead on at least (?P<percent>\d+)% of distinct wrong patches on at least "
+         r"(?P<reached>\d+) of the (?P<neighbour_total>\d+) neighbouring-case bugs \((?P<neighbours>[^()]+)\)",
+         r"A lead on fewer than (?P<reached_kill>\d+) of the (?P<neighbour_kill_total>\d+) bugs: "
+         r"tiers 1 and 2 do not reach what they were designed from; stop"),
+        (r"Mode 3: a lead on at most (?P<right_leads>\d+) of the (?P<right_leads_total>\d+) right patches "
+         r"\(4\.4%, upper 95% bound just under 10%\)",
+         r"More than (?P<right_leads_kill>\d+) of (?P<right_leads_kill_total>\d+): "
+         r"the lifted relations misfire; stop"),
+        (r"Mode 3: no lead on (?P<no_lead_bug>[a-z]+-\d+); on (?P<question_bug>[a-z]+-\d+) "
+         r"no lead and at least one question candidate",
+         r"A lead on most (?P<surprise_bug>[a-z]+-\d+) patches would be a welcome surprise and is reported as one"),
+        (r"Median review time under (?P<seconds>\d+) s for each patch in mode 3",
+         r"Over (?P<seconds_kill>\d+) s: the tiers need a tighter exit"),
+    )
+    values = {}
+    for number, (pair, grammar) in enumerate(zip(predictions, patterns), 1):
+        for cell, pattern in zip(pair, grammar):
+            match = re.fullmatch(pattern, cell)
+            if not match:
+                raise ValueError(f"unparseable registration P{number}")
+            values.update(match.groupdict())
+    neighbours = tuple(values.pop("neighbours").split(", "))
+    no_lead_bug, question_bug, surprise_bug = (values.pop(key) for key in
+                                              ("no_lead_bug", "question_bug", "surprise_bug"))
+    limits = {key: int(value) for key, value in values.items()}
+    if (not all(re.fullmatch(r"[a-z]+-\d+", bug) for bug in neighbours)
+            or len(set(neighbours)) != len(neighbours)
+            or limits["neighbour_total"] != len(neighbours)
+            or limits["neighbour_kill_total"] != len(neighbours)
+            or not 0 <= limits["percent"] <= 100
+            or not 0 <= limits["reached"] <= len(neighbours)
+            or not 0 <= limits["reached_kill"] <= len(neighbours)
+            or no_lead_bug != surprise_bug):
+        raise ValueError("inconsistent registration limits")
+    return Registration(hashlib.sha256(content).hexdigest(), tuple(predictions), limits, neighbours,
+                        no_lead_bug, question_bug)
+
+
+def load_registration() -> Registration:
+    path = canonical_path(REGISTRATION)
+    root = canonical_path(we.REPO_ROOT)
+    if not path.is_relative_to(root):
+        raise ValueError("registration must stay inside repository")
     rel = REGISTRATION.relative_to(we.REPO_ROOT).as_posix()
-    got = subprocess.run(["git", "-C", str(we.REPO_ROOT), "show", f"HEAD:{rel}"], capture_output=True, timeout=30)
-    current = REGISTRATION.read_bytes().replace(b"\r\n", b"\n")
+    got = subprocess.run(["git", "-C", str(root), "show", f"HEAD:{rel}"], capture_output=True, timeout=30)
+    current = path.read_bytes().replace(b"\r\n", b"\n")
     if got.returncode or got.stdout.replace(b"\r\n", b"\n") != current:
         raise ValueError("commit the unchanged REPLAY_RC.md registration before any replay")
-    return hashlib.sha256(current).hexdigest()
+    return _parse_registration(current)
+
+
+def require_registration() -> str:
+    return load_registration().sha256
+
+
+class _PredictionTable:
+    """Compatibility view; prediction text has no second source in code."""
+
+    def __getitem__(self, index):
+        return load_registration().predictions[index]
+
+
+PREDICTIONS = _PredictionTable()
 
 
 def inspect_images(docker: Any, images: dict[str, str], commit: str) -> dict[str, str]:
@@ -334,21 +461,39 @@ def _signals(assessment: dict) -> tuple[bool, bool]:
     return lead, bool(neighbourhood.get("question_candidates"))
 
 
-def evaluate(records: list[dict], cases: list[Case] | list[dict], *, modes: list[str], s0: str = "before") -> dict:
-    """Pure scoring over saved records. No models, containers, archive reads or inferred labels."""
+def evaluate(records: list[dict], cases: list[Case] | list[dict], *, modes: list[str], s0: str = "before",
+             excluded: list[dict] | None = None, registration: Registration | None = None) -> dict:
+    """Score saved records against the committed registration, without reading source archives."""
+    registration = registration or load_registration()
+    limits = registration.limits
     cases = [case.saved() if isinstance(case, Case) else case for case in cases]
     expected = {(case["bug"], case["digest"], mode): case for case in cases for mode in modes
                 if mode != "agent" or case.get("arguments") is not None}
     by_bug: dict[str, dict] = {}
-    for bug, digest, mode in expected:
-        group = by_bug.setdefault(bug, {}).setdefault(mode, {"expected": 0, "reviewed": 0, "no_review": 0,
+
+    def group_for(bug, mode):
+        return by_bug.setdefault(bug, {}).setdefault(mode, {"expected": 0, "reviewed": 0, "no_review": 0,
             "expected_calls": 0, "completed_calls": 0, "failed_calls": 0,
             "right": 0, "wrong": 0, "right_integrity": 0, "right_defect": 0, "wrong_defect": 0,
-            "wrong_supported": 0, "right_lead": 0, "wrong_lead": 0, "questions": 0, "seconds": []})
+            "wrong_supported": 0, "right_lead": 0, "wrong_lead": 0, "questions": 0, "seconds": [], "excluded": 0})
+
+    for bug, digest, mode in expected:
+        group = group_for(bug, mode)
         group["expected"] += 1
         case = expected[bug, digest, mode]
         group["expected_calls"] += (sum(o.get("arguments") is not None for o in case.get("origins", []))
                                     if mode == "agent" else 1)
+    omissions = list(excluded or []) + [
+        {"bug": case["bug"], "digest": case["digest"], "mode": "agent",
+         "reason": "no matching final-patch review arguments in eligible arm"}
+        for case in cases if case.get("arguments") is None and "agent" in modes]
+    for omission in omissions:
+        for mode in modes:
+            if omission.get("mode", mode) != mode:
+                continue
+            group = group_for(omission["bug"], mode)
+            group["expected"] += 1
+            group["excluded"] += 1
     seen = set()
     collected: dict[tuple, list] = {}
     for record in records:
@@ -385,6 +530,11 @@ def evaluate(records: list[dict], cases: list[Case] | list[dict], *, modes: list
         if len(times) == len(good):
             group["seconds"].append(median(times))
 
+    for values in by_bug.values():
+        for group in values.values():
+            group["missing"] = group["expected"] - group["reviewed"] - group["no_review"]
+            group["median_seconds"] = median(group["seconds"]) if group["seconds"] else None
+
     def groups(mode):
         return {bug: values[mode] for bug, values in by_bug.items() if mode in values}
 
@@ -398,20 +548,25 @@ def evaluate(records: list[dict], cases: list[Case] | list[dict], *, modes: list
     def prediction(number, met, kill, selected, *, ready=True, **details):
         enabled = any(mode in modes for mode in selected)
         done = enabled and ready and all(mode in modes and complete(mode) for mode in selected)
-        return {"prediction": PREDICTIONS[number - 1][0], "kill_criterion": PREDICTIONS[number - 1][1],
-                "status": "disabled" if not enabled else "killed" if kill else
+        missing = sum(count(mode, "missing") + count(mode, "no_review") for mode in selected)
+        excluded_count = sum(count(mode, "excluded") for mode in selected)
+        return {"prediction": registration.predictions[number - 1][0],
+                "kill_criterion": registration.predictions[number - 1][1],
+                "status": "disabled" if not enabled else "incomplete" if excluded_count else "killed" if kill else
                           "incomplete" if not done else "met" if met else "missed",
                 "prediction_met": met if done or met is False else None, "kill": kill if enabled else None,
-                **details}
+                "missing": missing, **details}
 
     p4 = {bug: {"wrong": groups("neighbourhood").get(bug, {}).get("wrong", 0),
-                "leads": groups("neighbourhood").get(bug, {}).get("wrong_lead", 0)} for bug in NEIGHBOURS}
+                "leads": groups("neighbourhood").get(bug, {}).get("wrong_lead", 0)} for bug in registration.neighbours}
     for values in p4.values():
-        values["reached_40_percent"] = values["wrong"] > 0 and values["leads"] * 5 >= values["wrong"] * 2
-    reached = sum(v["reached_40_percent"] for v in p4.values())
-    p4_ready = all(bug in groups("neighbourhood") and p4[bug]["wrong"] for bug in NEIGHBOURS)
-    black = groups("neighbourhood").get("black-5521", {})
-    click = groups("neighbourhood").get("click-3678", {})
+        values["reached_threshold"] = values["wrong"] > 0 and values["leads"] * 100 >= values["wrong"] * limits["percent"]
+        if limits["percent"] == 40:
+            values["reached_40_percent"] = values["reached_threshold"]
+    reached = sum(v["reached_threshold"] for v in p4.values())
+    p4_ready = all(bug in groups("neighbourhood") and p4[bug]["wrong"] for bug in registration.neighbours)
+    black = groups("neighbourhood").get(registration.no_lead_bug, {})
+    click = groups("neighbourhood").get(registration.question_bug, {})
     black_leads = black.get("right_lead", 0) + black.get("wrong_lead", 0)
     click_leads = click.get("right_lead", 0) + click.get("wrong_lead", 0)
     times = [seconds for group in groups("neighbourhood").values() for seconds in group["seconds"]]
@@ -425,25 +580,40 @@ def evaluate(records: list[dict], cases: list[Case] | list[dict], *, modes: list
                          s0 == "after" and wrong_supported > 0, ["agent"],
                          ready=count("agent", "wrong") > 0 and (s0 == "after" or wrong_supported == 0), s0=s0,
                          attribution="S0 attribution required" if s0 == "before" and wrong_supported else None),
-        "P3": prediction(3, count("hook", "wrong_defect") <= 3 and count("hook", "right_defect") == 0,
-                         count("hook", "right_defect") > 2, ["hook"],
+        "P3": prediction(3, count("hook", "wrong_defect") <= limits["hook_wrong"]
+                         and count("hook", "right_defect") == limits["hook_right"],
+                         count("hook", "right_defect") > limits["hook_kill"], ["hook"],
                          ready=count("hook", "wrong") > 0 and count("hook", "right") > 0),
-        "P4": prediction(4, reached >= 3, p4_ready and complete("neighbourhood") and reached < 2,
-                         ["neighbourhood"], ready=bool(p4_ready), by_bug=p4),
-        "P5": prediction(5, count("neighbourhood", "right_lead") <= 5,
-                         count("neighbourhood", "right_lead") > 10, ["neighbourhood"],
+        "P4": prediction(4, reached >= limits["reached"],
+                         p4_ready and complete("neighbourhood") and reached < limits["reached_kill"],
+                         ["neighbourhood"], ready=bool(p4_ready), by_bug=p4, threshold_percent=limits["percent"]),
+        "P5": prediction(5, count("neighbourhood", "right_lead") <= limits["right_leads"],
+                         count("neighbourhood", "right_lead") > limits["right_leads_kill"], ["neighbourhood"],
                          ready=count("neighbourhood", "right") > 0),
         "P6": prediction(6, black_leads == 0 and click_leads == 0 and click.get("questions", 0) >= 1,
                          False, ["neighbourhood"], ready=bool(black and click),
                          welcome_surprise=bool(black.get("reviewed") and black_leads * 2 > black["reviewed"])),
-        "P7": prediction(7, middle is not None and middle < 120, middle is not None and middle > 300,
+        "P7": prediction(7, middle is not None and middle < limits["seconds"],
+                         middle is not None and middle > limits["seconds_kill"],
                          ["neighbourhood"], ready=len(times) == count("neighbourhood", "reviewed"), median_seconds=middle),
     }
-    for values in by_bug.values():
-        for group in values.values():
-            group["missing"] = group["expected"] - group["reviewed"] - group["no_review"]
-            group["median_seconds"] = median(group["seconds"]) if group["seconds"] else None
-    return {"standing": "development", "unit": "bug", "by_bug": by_bug, "predictions": predictions}
+    return {"standing": "development", "unit": "bug", "registration_sha256": registration.sha256,
+            "by_bug": by_bug, "predictions": predictions, "excluded": omissions}
+
+
+def validate_record_pins(records: list[dict], plan: dict, image_ids: dict) -> None:
+    commit = plan.get("registered_commit")
+    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ValueError("plan has no full registered G6 commit")
+    if not isinstance(image_ids, dict):
+        raise ValueError("replay record image ID differs from plan")
+    for record in records:
+        if record.get("g6_commit") != commit:
+            raise ValueError("replay record G6 commit differs from plan")
+        image = image_ids.get(record.get("bug"))
+        if (not isinstance(image, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", image)
+                or record.get("image_id") != image):
+            raise ValueError("replay record image ID differs from plan")
 
 
 def make_plan(cases: list[Case], excluded: list[dict], tasks: list[we.Task], commit: str,
@@ -473,10 +643,14 @@ def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
     options = parser.parse_args(argv)
     try:
         if options.score:
-            Source._check(options.score.absolute())
-            saved = json.loads(options.score.read_text(encoding="utf-8"))
+            saved = json.loads(canonical_path(options.score).read_text(encoding="utf-8"))
+            validate_record_pins(saved["records"], saved["plan"], saved.get("image_ids", {}))
+            registration = load_registration()
+            if saved.get("registration_sha256") != registration.sha256:
+                raise ValueError("saved registration digest differs from committed registration")
             print(json.dumps(evaluate(saved["records"], saved["plan"]["cases"], modes=saved["plan"]["modes"],
-                                      s0=saved["s0"]), indent=2))
+                                      s0=saved["s0"], excluded=saved["plan"].get("excluded", []),
+                                      registration=registration), indent=2))
             return 0
         if options.source is None or not re.fullmatch(r"[0-9a-f]{40}", options.registered_commit or ""):
             raise ValueError("--source and a full --registered-commit are required")
@@ -495,11 +669,11 @@ def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
         if not target:
             raise ValueError("G6_WE_ARCHIVE must name a new output root")
         archive = output_archive(options.source, Path(target))
-        registration = require_registration()
+        registration = load_registration()
         archive.root.mkdir(parents=True, exist_ok=False)
         batch = archive.start("replay-rc-batch", "development", g6_commit=options.registered_commit)
         records = []
-        body = {"plan": plan, "s0": options.s0, "registration_sha256": registration, "records": records}
+        body = {"plan": plan, "s0": options.s0, "registration_sha256": registration.sha256, "records": records}
         try:
             docker = docker if docker is not None else we.Docker()
             pinned = inspect_images(docker, plan["images"], options.registered_commit)
@@ -512,7 +686,9 @@ def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
                     for view in agent_views(case) if mode == "agent" else [case]:
                         records.append(replay_case(view, by_id[case.bug], mode, archive, docker,
                                                    pinned[case.bug], options.registered_commit))
-            body["evaluation"] = evaluate(records, cases, modes=modes, s0=options.s0)
+            validate_record_pins(records, plan, pinned)
+            body["evaluation"] = evaluate(records, cases, modes=modes, s0=options.s0,
+                                           excluded=excluded, registration=registration)
             batch.finish(body, "finished")
         except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
             body["error"] = f"{type(exc).__name__}: {exc}"
