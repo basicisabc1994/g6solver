@@ -42,7 +42,7 @@ import re
 from typing import Any
 
 from .custody import about, evaluator_of, fixture_contaminated
-from .records import ClaimRecord, EvidenceRecord
+from .records import ClaimRecord, EvidenceRecord, premise_text
 
 EXECUTABLE = ("FORMAL_CHECK", "INDEPENDENT_EXECUTABLE", "PARTIAL_FALSIFIER")
 _SUBJECT = re.compile(r"sha256:([0-9a-f]{64})\Z")
@@ -83,7 +83,7 @@ def _control_holds(ledger: Any, rec: EvidenceRecord, contaminated: set) -> bool:
     (of_control, control_refused), (of_check, _) = about(control), about(rec)
     return (not control_refused and control.purpose == "negative_control" and control.result == "fail"
             and of_control.standard == of_check.standard
-            and not fixture_contaminated(control.fixture_version, of_control.fixture, contaminated)
+            and not fixture_contaminated(of_control.fixture, contaminated)
             and of_control.predicates == of_check.predicates and evaluator_of(control) == evaluator_of(rec)
             and control.oracle_category in EXECUTABLE)
 
@@ -110,10 +110,18 @@ def _premise(ledger: Any, rec: EvidenceRecord, claim: ClaimRecord, ref: str, pur
                 or not original.check_sha or not parts.check_sha or parts.check_sha == original.check_sha
                 or parts.artefact != original.artefact or parts.standard != original.standard
                 or parts.predicates != original.predicates or premise.applies_to_sha256 != rec.sha256
-                or premise.population != claim.population or premise.sample_unit != claim.sample_unit
-                or rec.population != claim.population or rec.sample_unit != claim.sample_unit
-                or fixture_contaminated(premise.fixture_version, parts.fixture, contaminated)
+                or not premise_text(premise.population) or not premise_text(premise.sample_unit)
+                or premise_text(premise.population) != premise_text(claim.population)
+                or premise_text(premise.sample_unit) != premise_text(claim.sample_unit)
+                or premise_text(rec.population) != premise_text(claim.population)
+                or premise_text(rec.sample_unit) != premise_text(claim.sample_unit)
+                or fixture_contaminated(parts.fixture, contaminated)
                 or not _control_holds(ledger, premise, contaminated)):
+            return None
+        if purpose == "scope_mapping" and (
+                not premise_text(rec.checked_statement)
+                or premise_text(premise.checked_statement) != premise_text(rec.checked_statement)
+                or premise_text(parts.scope) != premise_text(claim.scope)):
             return None
         return premise
     except (KeyError, ValueError, TypeError, RecursionError, MemoryError):
@@ -150,7 +158,7 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
             _once(reasons, "evidence_for_another_standard")
         elif parts.predicates != (claim.predicate_id,):
             _once(reasons, "evidence_for_another_predicate")
-        elif fixture_contaminated(rec.fixture_version, parts.fixture, contaminated):
+        elif fixture_contaminated(parts.fixture, contaminated):
             _once(reasons, "contaminated_fixture")
         else:
             cited.append(rec)
@@ -198,8 +206,7 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
     general = False
     for rec in passing:
         mapping = _premise(ledger, rec, claim, rec.scope_mapping_ref, "scope_mapping", contaminated)
-        if (rec.oracle_category == "FORMAL_CHECK" and rec.checked_statement and mapping is not None
-                and mapping.checked_statement == rec.checked_statement and mapping.scope == claim.scope):
+        if rec.oracle_category == "FORMAL_CHECK" and mapping is not None:
             general = True
 
     if refuting:
@@ -217,7 +224,7 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
         if unexplained:  # a check that failed and was never shown able to fail is not outweighed by one that passed
             result = "inconclusive"
             _once(reasons, "unexplained_failure")
-        if claim.estimand == "true_correctness":
+        if premise_text(claim.estimand) == "true_correctness":
             if not identified:
                 result = "inconclusive"
                 _once(reasons, "oracle_error_not_calibrated")

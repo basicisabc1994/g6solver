@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from typing import Any
@@ -38,10 +39,18 @@ def digest(obj: Any) -> str:
     return hashlib.sha256(canonical(obj).encode("utf-8")).hexdigest()
 
 
+def premise_text(value: str) -> str:
+    """One comparison form for text premises; an empty result supplies no statement.
+
+    Normalize at decision time so stored record bytes and their content hashes stay intact.
+    """
+    return " ".join(unicodedata.normalize("NFC", value).split())
+
+
 def text_of(name: str, value: Any, *, required: bool = True) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{name} must be text")  # noqa: TRY004 - every refusal is one ValueError to a caller
-    if required and not value.strip():
+    if required and not premise_text(value):
         raise ValueError(f"{name} is required")
     return value
 
@@ -227,7 +236,7 @@ class ClaimRecord:
             text_of(name, getattr(self, name))
         if self.breadth not in BREADTHS:
             raise ValueError(f"breadth must be one of {BREADTHS}")
-        if self.estimand not in ESTIMANDS:
+        if premise_text(text_of("estimand", self.estimand)) not in ESTIMANDS:
             raise ValueError(f"estimand must be one of {ESTIMANDS}")
         probability_of("target", self.target)
         hex64_of("standard_sha256", self.standard_sha256)
