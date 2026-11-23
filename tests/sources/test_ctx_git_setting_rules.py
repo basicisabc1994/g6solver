@@ -40,6 +40,14 @@ SIBLING_ONLY = [("autocrlf", "warn"), ("autocrlf", "lf"),
                 ("ignorecase", "input"), ("ignorecase", "warn"), ("ignorecase", "lf")]
 
 
+def native_probe(repo):
+    # git var reads and checks every core setting before it answers. It exits 1 without a
+    # message when no editor is configured and the terminal is dumb (as on CI runners), so the
+    # probe names an editor; the answer then depends only on the planted setting.
+    return subprocess.run([GIT, "-C", str(repo), "var", "GIT_EDITOR"], capture_output=True,
+                          timeout=30, env={**os.environ, "GIT_EDITOR": ":"})
+
+
 def plant(repo, key, value):
     entry = key if value is None else f"{key} = {value}"
     (repo / ".git/config").write_text(
@@ -49,8 +57,7 @@ def plant(repo, key, value):
 @pytest.mark.parametrize("key,value", ACCEPTED)
 def test_each_setting_accepts_its_native_spellings(repository, key, value):
     plant(repository, key, value)
-    native = subprocess.run([GIT, "-C", str(repository), "var", "GIT_EDITOR"],
-                            capture_output=True, timeout=30)
+    native = native_probe(repository)
     assert native.returncode == 0, native.stderr
     raw = subprocess.run([GIT, "-C", str(repository), "config", "--get", f"core.{key}"],
                          check=True, capture_output=True, timeout=30).stdout
@@ -61,9 +68,9 @@ def test_each_setting_accepts_its_native_spellings(repository, key, value):
 @pytest.mark.parametrize("key,value", SIBLING_ONLY)
 def test_a_setting_refuses_values_valid_only_for_a_sibling(repository, key, value):
     plant(repository, key, value)
-    native = subprocess.run([GIT, "-C", str(repository), "var", "GIT_EDITOR"],
-                            capture_output=True, timeout=30)
-    assert native.returncode != 0
+    native = native_probe(repository)
+    assert native.returncode != 0, native.stdout
+    assert b"bad" in native.stderr.lower() or b"invalid" in native.stderr.lower(), native.stderr
     with runner.session(repository, repository / ".git") as run:
         with pytest.raises(cfg.GitRefused) as caught:
             run("config", "--get", f"core.{key}")
