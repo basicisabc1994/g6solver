@@ -1088,6 +1088,7 @@ def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, dead
                 omitted = change_map.empty()
                 omitted["skipped"].append(change_map.skip("change map inventory", "file limit reached"))
                 return omitted
+        paths.update(p for p in bounded((*base_names, *patch_names)) if p in change_map.PYTEST_CONFIGS)
         inventory = sorted(paths,
                            key=lambda p: (p not in change.files, p not in checks, p))
         entries = repo_tests._listed_at(change.repo, change.base_commit, inventory)
@@ -1109,7 +1110,7 @@ def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, dead
                         skipped.append(change_map.skip(f"change map: {shown_name(rel)}", "file byte limit reached"))
                         unavailable.add(rel)
                         continue
-                    text = _python_source(raw)
+                    text = raw.decode("utf-8-sig") if rel in change_map.PYTEST_CONFIGS else _python_source(raw)
                     if len(text) > change_map.MAX_FILE_CHARS:
                         skipped.append(change_map.skip(f"change map: {shown_name(rel)}", "file text limit reached"))
                         unavailable.add(rel)
@@ -1134,7 +1135,7 @@ def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, dead
                             skipped.append(change_map.skip(f"change map: base {shown_name(rel)}", "file byte limit reached"))
                             unavailable.add(rel)
                             continue
-                        text = _python_source(raw)
+                        text = raw.decode("utf-8-sig") if rel in change_map.PYTEST_CONFIGS else _python_source(raw)
                         if len(text) > change_map.MAX_FILE_CHARS:
                             skipped.append(change_map.skip(f"change map: base {shown_name(rel)}", "file text limit reached"))
                             unavailable.add(rel)
@@ -1163,9 +1164,12 @@ def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, dead
             base.pop(rel, None)
             patch.pop(rel, None)
         proposed = [p.model_dump() if hasattr(p, "model_dump") else p for p in bounded(proposed_checks)]
+        patterns = change_map._collection_patterns(patch, skipped)
+        if unavailable.intersection(change_map.PYTEST_CONFIGS):
+            patterns = {"python_classes": (), "python_functions": ()}
         checkpoint()
         record = change_map.build(change, base, patch, stated_checks=stated_checks,
-                                  proposed_checks=proposed, roots=roots, deadline=end)
+                                  proposed_checks=proposed, roots=roots, deadline=end, collection_patterns=patterns)
         record["skipped"] = [*skipped, *record["skipped"]]
         return record
 
@@ -1187,7 +1191,15 @@ def _python_source(raw: bytes) -> str:
     """Decode parser input using Python's BOM and PEP 263 cookie rules."""
     # Give the detector physical lines even for CR-only Python source files.
     lines = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    encoding, _ = tokenize.detect_encoding(io.BytesIO(lines).readline)
+    # CPython searches the first two physical header lines as bytes. The
+    # tokenizer's public detector instead decodes those lines as UTF-8 first.
+    # Cookies use ASCII characters: project other header bytes to '?' for
+    # detection only, retaining a leading BOM and decoding the original bytes
+    # strictly once the cookie has selected the codec.
+    bom = b"\xef\xbb\xbf" if lines.startswith(b"\xef\xbb\xbf") else b""
+    reader = io.BytesIO(lines[len(bom):]).readline
+    header = bom + b"".join(reader().decode("latin-1").encode("ascii", "replace") for _ in range(2))
+    encoding, _ = tokenize.detect_encoding(io.BytesIO(header).readline)
     return raw.decode(encoding).replace("\r\n", "\n").replace("\r", "\n")
 
 

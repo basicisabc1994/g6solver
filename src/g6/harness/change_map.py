@@ -8,9 +8,13 @@ external packages and arbitrary data flow are outside this map's view.
 from __future__ import annotations
 
 import ast
+import configparser
+import fnmatch
 import hashlib
 import json
+import shlex
 import time
+import tomllib
 from bisect import bisect_left
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -40,6 +44,7 @@ MAX_WORK = 2_000_000
 STATIC_LIMIT = ("Static named calls only: this cannot see dynamic dispatch, reflection, external code, fixture "
                 "injection or arbitrary data flow; a named call may never execute. No execution coverage is claimed.")
 _FUNCTION = (ast.FunctionDef, ast.AsyncFunctionDef)
+PYTEST_CONFIGS = ("pytest.ini", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg")
 
 
 class _Omitted(Exception):
@@ -65,6 +70,7 @@ class _Budget:
     sources: dict = field(default_factory=dict)
     total_chars: int = 0
     failed: dict = field(default_factory=dict)
+    import_names: dict = field(default_factory=dict)
 
 
 _BUDGET: ContextVar[_Budget | None] = ContextVar("change_map_budget", default=None)
@@ -138,6 +144,34 @@ def _module(rel: str, roots: Sequence[str]) -> str:
     if parts[-1:] == ["__init__"]:
         parts.pop()
     return ".".join(shown_name(part) for part in _each(parts))
+
+
+def _module_identities(paths, roots):
+    """Import spellings are aliases; colliding files retain separate namespaces."""
+    groups = {}
+    budget = _BUDGET.get()
+    for rel in _each(sorted(paths)):
+        if not rel.endswith(".py"):
+            continue
+        key = (rel, tuple(roots))
+        if budget is not None and rel in budget.failed and key not in budget.import_names:
+            continue
+        with _file(rel):
+            name = budget.import_names.get(key) if budget is not None else None
+            if name is None:
+                name = _module(rel, roots)
+                if budget is not None:
+                    budget.import_names[key] = name
+            groups.setdefault(name, []).append(rel)
+    # Reserve a namespace root absent from every import spelling. A closing
+    # marker prevents a file identity from equalling another file's symbol.
+    marker = "@file"
+    prefixes = {name.split(".")[0] for name in _each(groups)}
+    while marker in prefixes:
+        _tick()
+        marker += "@"
+    return {rel: name if len(files) == 1 else f"{marker}.{shown_name(rel)}>"
+            for name, files in _each(groups.items()) for rel in _each(files)}
 
 
 def _nodes(node: ast.AST, *, headers: bool = False, lambdas: bool = False):
@@ -245,9 +279,24 @@ class _Binding:
 
 
 class _Index:
-    def __init__(self, texts: Mapping[str, str], roots: Sequence[str], skipped: list[dict], side: str):
+    def __init__(self, texts: Mapping[str, str], roots: Sequence[str], skipped: list[dict], side: str,
+                 identities=None):
         self._reset(skipped)
+        identities = identities if identities is not None else _module_identities(texts, roots)
+        imports = {}
         budget = _BUDGET.get() or _Budget(time.monotonic() + 2.0)
+        for rel in _each(identities):
+            with _file(rel):
+                name = budget.import_names.get((rel, tuple(roots)))
+                if name is None:
+                    name = _module(rel, roots)
+                imports.setdefault(name, []).append(rel)
+        for name, paths in _each(imports.items()):
+            if len(paths) > 1:
+                self.ambiguous.add(name)
+                for rel in _each(paths):
+                    skipped.append(skip(f"change map: {side} {shown_name(rel)}",
+                                        f"ambiguous import name {name}; file analysis uses its own path identity"))
         budget.files.update(rel for rel in _each(texts) if rel.endswith(".py"))
         if len(budget.files) > MAX_FILES:
             raise _Omitted("change map", "static analysis file limit reached")
@@ -274,6 +323,7 @@ class _Index:
             # its bindings in the shared index or discard another file's leads.
             staged = object.__new__(_Index)
             staged._reset([])
+            staged.modules[rel] = identities[rel]
             try:
                 staged._load_file(rel, text, roots)
                 staged._finish_file()
@@ -315,10 +365,12 @@ class _Index:
 
     def _reset(self, skipped):
         self.trees, self.symbols, self.classes, self.modules = {}, {}, {}, {}
+        self.import_names = {}
         self.bindings, self.invalid, self.ambiguous = {}, set(), set()
         self.skipped = skipped
         self.scopes, self.node_scopes, self.symbol_scopes = {}, {}, {}
         self.namespaces, self.resolved, self.call_cache, self.mros = {}, {}, {}, {}
+        self.lineages = {}
         self.sources, self.offsets, self.fingerprints, self.lines = {}, {}, {}, {}
         self.literal_nodes, self.literal_ranges = {}, {}
 
@@ -372,7 +424,9 @@ class _Index:
                     digest.update(self.fingerprints[id(item)] if isinstance(item, ast.AST)
                                   else repr(item).encode("utf-8"))
             self.fingerprints[id(node)] = digest.digest()
-        self.trees[rel], self.modules[rel] = tree, _module(rel, roots)
+        self.trees[rel] = tree
+        self.modules.setdefault(rel, _module(rel, roots))
+        self.import_names[rel] = _module(rel, roots)
         scope = _Scope(self.modules[rel], "module", None, rel)
         self.scopes[scope.binding] = scope
         self.namespaces[scope.binding] = scope
@@ -483,7 +537,7 @@ class _Index:
                 yield target, destination, True, node.value if not isinstance(node, ast.AugAssign) else None
             return
         if isinstance(node, (ast.Import, ast.ImportFrom)):
-            package = self.modules[scope.file]
+            package = self.import_names[scope.file]
             if PurePosixPath(scope.file).name != "__init__.py":
                 package = package.rpartition(".")[0]
             for alias in _each(node.names):
@@ -549,6 +603,8 @@ class _Index:
                 parent = parent.parent
             scope = parent
         # An absent module name may refer to a deleted changed definition.
+        if name == "object":
+            return "builtins.object"
         return f"{self.modules[origin.file]}.{name}"
 
     def _canonical_binding(self, name):
@@ -711,7 +767,9 @@ class _Index:
 
 def _context(change: Change, base: Mapping[str, str], patch: Mapping[str, str], roots: Sequence[str]):
     skipped: list[dict] = []
-    old, new = _Index(base, roots, skipped, "base"), _Index(patch, roots, skipped, "patch")
+    identities = _module_identities(base.keys() | patch.keys(), roots)
+    old = _Index(base, roots, skipped, "base", identities)
+    new = _Index(patch, roots, skipped, "patch", identities)
     added = {}
     for p in _each(change.files):
         with _file(p):
@@ -972,23 +1030,32 @@ def siblings(change: Change, base: Mapping[str, str], patch: Mapping[str, str], 
     return _bounded(analyse, listing=True)
 
 
+_OBJECT = _Symbol("", "builtins", "object", "",
+                  ast.ClassDef(name="object", bases=[], keywords=[], body=[], decorator_list=[]))
+
+
 def _mro(index, cls):
+    # Keep object in C3's constraints, but expose only source-backed ancestors
+    # to consumers. Both caches are immutable; merge lists belong to this call.
+    index.lineages.setdefault("builtins.object", (_OBJECT,))
     pending, active, parents = [(cls, False)], set(), {}
     while pending:
         _tick()
         current, closing = pending.pop()
         with _file(current.file):
-            if current.binding in index.mros:
+            if current.binding in index.lineages:
                 continue
             if closing:
                 bases = parents[current.binding]
                 if len(bases) <= 1:
-                    inherited = index.mros[bases[0].binding] if bases else ()
-                    index.mros[current.binding] = (current, *inherited)
+                    inherited = index.lineages[bases[0].binding] if bases else (_OBJECT,)
+                    order = (current, *inherited)
+                    index.lineages[current.binding] = order
+                    index.mros[current.binding] = tuple(c for c in _each(order) if c is not _OBJECT)
                     active.remove(current.binding)
                     continue
                 # Consumers own their merge lists; cached orders are immutable.
-                sequences = [list(index.mros[base.binding]) for base in _each(bases)] + [list(bases)]
+                sequences = [list(index.lineages[base.binding]) for base in _each(bases)] + [list(bases)]
                 result = [current]
                 while any(sequences):
                     _tick()
@@ -996,12 +1063,13 @@ def _mro(index, cls):
                     candidate = next((s[0] for s in _each(sequences)
                                       if all(s[0] not in other[1:] for other in _each(sequences))), None)
                     if candidate is None:
-                        raise _FileOmitted("ambiguous inconsistent class hierarchy")
+                        raise _FileOmitted("pytest cannot collect class (TypeError: inconsistent MRO hierarchy)")
                     result.append(candidate)
                     for sequence in _each(sequences):
                         if sequence and sequence[0] is candidate:
                             sequence.pop(0)
-                index.mros[current.binding] = tuple(result)
+                index.lineages[current.binding] = tuple(result)
+                index.mros[current.binding] = tuple(c for c in _each(result) if c is not _OBJECT)
                 active.remove(current.binding)
                 continue
             if current.binding in active:
@@ -1009,13 +1077,11 @@ def _mro(index, cls):
             bases = []
             for node in _each(current.node.bases):
                 name = index.resolve(node, current)
-                if name in ("object", f"{current.module}.object"):
-                    continue
                 base = index.classes.get(name)
+                if base is None and name == "builtins.object":
+                    base = _OBJECT
                 if base is None:
-                    index.skipped.append(skip(current.binding, "class selection has an unavailable or ambiguous base"))
-                    index.mros[current.binding] = (current,)
-                    break
+                    raise _FileOmitted("class selection has an unavailable or ambiguous base")
                 bases.append(base)
             else:
                 parents[current.binding] = tuple(bases)
@@ -1025,6 +1091,87 @@ def _mro(index, cls):
     return index.mros[cls.binding]
 
 
+def _matches(name, patterns):
+    return any(name.startswith(pattern) or fnmatch.fnmatchcase(name, pattern) for pattern in _each(patterns))
+
+
+def _collection_patterns(texts, skipped):
+    defaults = {"python_classes": ("Test",), "python_functions": ("test",)}
+    for rel in _each(PYTEST_CONFIGS):
+        if rel not in texts:
+            continue
+        try:
+            text = texts[rel]
+            if len(text) > MAX_FILE_CHARS:
+                raise ValueError("configuration text limit reached")
+            if rel == "pyproject.toml":
+                table = tomllib.loads(text).get("tool", {}).get("pytest", {})
+                settings = table.get("ini_options", table)
+                if not table:
+                    continue
+            else:
+                parser = configparser.ConfigParser(interpolation=None)
+                parser.read_string(text)
+                section = "tool:pytest" if rel == "setup.cfg" else "pytest"
+                if not parser.has_section(section) and rel not in ("pytest.ini", ".pytest.ini"):
+                    continue
+                settings = dict(parser[section]) if parser.has_section(section) else {}
+            result = {}
+            for name, default in _each(defaults.items()):
+                value = settings.get(name, default)
+                if isinstance(value, str):
+                    value = tuple(shlex.split(value))
+                if not isinstance(value, (list, tuple)) or not all(isinstance(p, str) for p in _each(value)):
+                    raise ValueError("invalid collection patterns")
+                result[name] = tuple(value)
+            return result
+        except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, _Omitted, _FileFailed):
+            raise
+        except Exception as exc:
+            skipped.append(skip(f"change map: {shown_name(rel)}",
+                                f"pytest collection configuration unavailable ({type(exc).__name__})"))
+            return {name: () for name in defaults}
+    # A pyproject without pytest settings is pytest's fallback config.
+    return defaults
+
+
+def _class_methods(index, cls):
+    methods, attributes = {}, {}
+    for owner in _each(_mro(index, cls)):
+        with _file(owner.file):
+            scope = index.symbol_scopes[id(owner.node)]
+            for name, entries in _each(scope.names.items()):
+                if name in attributes:
+                    continue
+                attributes[name] = entries
+                symbol = index.symbols.get(f"{owner.binding}.{name}")
+                methods[name] = symbol if len(entries) == 1 and symbol is not None else None
+    entries = attributes.get("__test__", [])
+    disabled = len(entries) == 1 and isinstance(entries[0].value, ast.Constant) and entries[0].value.value is False
+    return methods, not disabled and "__init__" not in attributes and "__new__" not in attributes
+
+
+def _collectible_class(index, cls):
+    current, methods = cls, None
+    while current is not None:
+        _tick()
+        with _file(current.file):
+            if not _matches(current.node.name, index.python_classes):
+                return None
+            current_methods, collectible = _class_methods(index, current)
+            if not collectible:
+                return None
+            if methods is None:
+                methods = current_methods
+            parent = index.symbol_scopes[id(current.node)].parent
+            if parent.kind == "module":
+                return methods
+            if parent.kind != "class":
+                return None
+            current = index.classes.get(parent.binding)
+    return None
+
+
 def _selected(index, rel, selection):
     # Pytest separates collectors with ::, and parameter ids belong to the
     # final item. Remove that suffix before interpreting dots or :: inside it.
@@ -1032,44 +1179,30 @@ def _selected(index, rel, selection):
     result = []
     if not selected:
         result.extend(s for s in _each(index.symbols.values()) if s.file == rel and not s.owner
-                      and "." not in s.symbol and s.node.name.startswith("test_"))
+                      and "." not in s.symbol and _matches(s.node.name, index.python_functions))
     for cls in _each(list(index.classes.values())):
-        if cls is None or cls.file != rel or not cls.node.name.startswith("Test"):
+        if cls is None or cls.file != rel or not _matches(cls.node.name, index.python_classes):
             continue
         class_name, _, method = selected.rpartition(".")
         if not selected or selected == cls.symbol or cls.symbol.startswith(selected + "."):
             method = ""
         elif cls.symbol != class_name:
             continue
-        methods = {}
-        collectible = True
-        hierarchy = _mro(index, cls)
-        for owner in _each(hierarchy):
-            with _file(owner.file):
-                scope = index.symbol_scopes[id(owner.node)]
-                # Non-callable overrides also hide inherited methods.
-                for name, entries in _each(scope.names.items()):
-                    if name in methods:
-                        continue
-                    symbol = index.symbols.get(f"{owner.binding}.{name}")
-                    methods[name] = symbol if len(entries) == 1 and symbol is not None else None
-                    if name == "__test__" and len(entries) == 1:
-                        value = entries[0].value
-                        if isinstance(value, ast.Constant) and value.value is False:
-                            collectible = False
-        if not collectible or "__init__" in methods or "__new__" in methods:
+        methods = _collectible_class(index, cls)
+        if methods is None:
             index.skipped.append(skip(cls.binding, "pytest does not collect this class"))
             continue
-        result.extend(s for name, s in _each(methods.items()) if s is not None and name.startswith("test_")
+        result.extend(s for name, s in _each(methods.items()) if s is not None and _matches(name, index.python_functions)
                       and (not method or method == name))
     if selected and "." not in selected:
         symbol = index.symbols.get(f"{index.modules.get(rel, '')}.{selected}")
-        if symbol and not symbol.owner and "." not in symbol.symbol and symbol.node.name.startswith("test_"):
+        if symbol and not symbol.owner and "." not in symbol.symbol and _matches(symbol.node.name, index.python_functions):
             result.append(symbol)
     return result
 
 
-def _exercised(targets: Sequence[dict], checks: Mapping[str, str], roots: Sequence[str], inventory=None):
+def _exercised(targets: Sequence[dict], checks: Mapping[str, str], roots: Sequence[str], inventory=None,
+               collection_patterns=None):
     result = {t["binding"]: [] for t in _each(targets)}
     skipped = []
     texts = dict(inventory or {})
@@ -1078,6 +1211,8 @@ def _exercised(targets: Sequence[dict], checks: Mapping[str, str], roots: Sequen
     if not checks:
         return result, skipped
     index = _Index(texts, roots, skipped, "check")
+    patterns = collection_patterns if collection_patterns is not None else _collection_patterns(texts, skipped)
+    index.python_classes, index.python_functions = patterns["python_classes"], patterns["python_functions"]
     # Constructors are data here: resolving C().method never constructs C.
     for target in _each(targets):
         if target.get("owner"):
@@ -1103,7 +1238,7 @@ def exercised(targets: Sequence[dict], checks: Mapping[str, str], *, roots: Sequ
 
 
 def _build(change: Change, base: Mapping[str, str], patch: Mapping[str, str], *, stated_checks: Sequence[str] = (),
-          proposed_checks: Sequence[Mapping[str, str]] = (), roots: Sequence[str] = ()) -> dict:
+          proposed_checks: Sequence[Mapping[str, str]] = (), roots: Sequence[str] = (), collection_patterns=None) -> dict:
     """One advisory neighbourhood; an ordinary body edit alone creates no target."""
     record = empty()
     if len(stated_checks) + len(proposed_checks) > MAX_CHECKS:
@@ -1128,7 +1263,7 @@ def _build(change: Change, base: Mapping[str, str], patch: Mapping[str, str], *,
     for proposed in _each(proposed_checks):
         node = proposed["file"] + ("::" + proposed["test"] if proposed.get("test") else "")
         checks[node] = proposed["source"]
-    called, check_skips = _exercised(neighbours, checks, roots, patch)
+    called, check_skips = _exercised(neighbours, checks, roots, patch, collection_patterns)
     skipped.extend(check_skips)
     for sibling in _each(neighbours):
         sibling.update(exercised=bool(called[sibling["binding"]]), checks=called[sibling["binding"]])
@@ -1222,7 +1357,9 @@ def json_record(record, *, deadline=None):
 
 
 def build(change: Change, base: Mapping[str, str], patch: Mapping[str, str], *, stated_checks: Sequence[str] = (),
-          proposed_checks: Sequence[Mapping[str, str]] = (), roots: Sequence[str] = (), deadline=None) -> dict:
+          proposed_checks: Sequence[Mapping[str, str]] = (), roots: Sequence[str] = (), deadline=None,
+          collection_patterns=None) -> dict:
     """Keep file-local skips; omit the advisory on whole-run limits or failures."""
     return _bounded(lambda: _build(change, base, patch, stated_checks=stated_checks,
-                                  proposed_checks=proposed_checks, roots=roots), deadline)
+                                  proposed_checks=proposed_checks, roots=roots,
+                                  collection_patterns=collection_patterns), deadline)
