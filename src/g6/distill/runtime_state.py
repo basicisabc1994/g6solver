@@ -38,6 +38,8 @@ def require_current(entries):
 class RunMemo:
     entries: list | None = None
     values: dict = field(default_factory=dict)
+    measurements: dict = field(default_factory=dict)
+    measuring: bool = False
     checked: set = field(default_factory=set)
     walked: set = field(default_factory=set)
     repeat: int = 0

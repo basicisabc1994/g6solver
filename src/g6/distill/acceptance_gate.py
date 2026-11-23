@@ -45,7 +45,7 @@ from .library import Library
 from .records import (AcceptanceEvidence, Cost, DecidedBy, FieldEvidence,
                       Interval, LibraryEntry, MethodContract, Model, RegressionCase, Sha256,
                       TemplateInstance, VerifierCandidate)
-from .runtime_state import require_current, run_memo, run_scope, sample, status_snapshot
+from .runtime_state import StatusChanged, require_current, run_memo, run_scope, sample, status_snapshot
 
 ROOT = Path(__file__).resolve().parents[3]
 POLICY_PATH = ROOT / "validation/distill/held_out/policy.json"
@@ -390,6 +390,10 @@ def _execute(candidate, case, entries, stack=frozenset()):
         raise ValueError("cyclic method dependency")
     stack = stack | {candidate.candidate_id}
     memo = run_memo()
+    if memo.measuring:
+        # Cost evidence measures the whole method, including each dependency.
+        # A warm verdict cache must not make a composition appear cheaper.
+        return _execute_uncached(candidate, case, entries, stack)
     key = ('acceptance', _method_identity(candidate), digest([case.before_tests, case.after_tests]),
            tuple(e.entry_id for e in _active(entries)), memo.repeat)
     if key not in memo.values:
@@ -463,23 +467,55 @@ def _execute_uncached(candidate, case, entries, stack):
 
 @run_scope()
 def _measure(candidate, observations, entries, *, identity_replay=False):
-    verdicts, costs, over = [], [], 0
+    if type(candidate) is not VerifierCandidate:
+        raise ValueError('typed candidate required')
+    candidate = VerifierCandidate.model_validate_json(canonical(candidate.model_dump(mode='json')))
+    verdicts, costs, seen = [], [], set()
+    memo = run_memo()
+    snapshot = memo.snapshot()
     for observation in observations:
-        repeats = []
-        for index in range(3):
-            if stop.engaged() is not None:
-                raise ValueError("stop engaged during evaluation")
-            start = time.monotonic()
-            run = _execute if identity_replay else _run
-            with sample(index):
-                repeats.append(run(candidate, observation.case, entries))
-            cost = max(0, time.monotonic() - start)
-            costs.append(cost)
-            over += cost > candidate.contract.cost_bound.wall_s
+        # Case identity includes the bug unit, not just its test bodies. Raw
+        # application observations without an ID still have a bounded body key.
+        case = observation.case
+        key = (candidate.candidate_id, getattr(case, 'case_id', None),
+               digest([case.before_tests, case.after_tests]),
+               tuple(e.entry_id for e in entries), identity_replay)
+        require_current(snapshot)
+        if stop.engaged() is not None:
+            raise ValueError("stop engaged during evaluation")
+        if key not in memo.measurements:
+            repeats, measured = [], []
+            previous = memo.measuring
+            memo.measuring = True
+            try:
+                for index in range(3):
+                    if stop.engaged() is not None:
+                        raise ValueError("stop engaged during evaluation")
+                    start = time.monotonic()
+                    run = _execute if identity_replay else _run
+                    with sample(index):
+                        repeats.append(run(candidate, case, entries))
+                    measured.append(max(0, time.monotonic() - start))
+            finally:
+                memo.measuring = previous
+            if len(set(repeats)) != 1:
+                raise ValueError("flaky verdict across three runs")
+            memo.measurements[key] = (tuple(repeats), tuple(measured))
+        repeats, measured = memo.measurements[key]
+        # Reusing a verdict creates no new sample. Its original real executions
+        # remain the evidence for this method and case, counted once per set.
+        if len(measured) != 3:
+            raise ValueError('three real executions required for timing evidence')
+        if key not in seen:
+            costs.extend(measured)
+            seen.add(key)
         if len(set(repeats)) != 1:
             raise ValueError("flaky verdict across three runs")
         verdicts.append(repeats[0])
-    if costs and over / len(costs) > .1:
+    require_current(snapshot)
+    if len(costs) < 3:
+        raise ValueError('three real executions required for timing evidence')
+    if sum(cost > candidate.contract.cost_bound.wall_s for cost in costs) / len(costs) > .1:
         raise ValueError("cost bound exceeded on more than 10% of runs")
     return verdicts, costs
 
@@ -715,7 +751,8 @@ def _look_available(registration):
 
 
 @failure_writer()
-def _spend(registration, candidate):
+def _spend(registration, candidate, *, snapshot):
+    require_current(snapshot)
     journal, index = _look_available(registration)
     reservation = _append(journal, "reserve", {"registration": registration, "candidate_id": candidate.candidate_id,
                                               "reuse_index": index})
@@ -723,12 +760,25 @@ def _spend(registration, candidate):
 
 
 @failure_writer()
-def _record(answer, reservation=""):
+def _record(answer, reservation="", *, snapshot=None):
+    if snapshot is not None:
+        expected = snapshot
+        if answer.verdict == 'admit_probation' and answer.entry_id:
+            # The admission itself changed the view. Only that exact new entry
+            # is permitted; other completed status changes still refuse.
+            entry = Stores().for_model(LibraryEntry).get(answer.entry_id)
+            expected = [e for e in snapshot if e.candidate_id != entry.candidate_id] + [entry]
+        try:
+            require_current(expected)
+        except StatusChanged as error:
+            answer = replace(answer, verdict='refuse', reasons=(str(error),), entry_id='', report_sha256='')
     _append(_journal(), "decision", asdict(answer) | {"reservation": reservation, "gate_version": VERSION})
     return answer
 
 
-def _save_report(data):
+@failure_writer()
+def _save_report(data, *, snapshot):
+    require_current(snapshot)
     ident = digest(data)
     path = state_path("distill", "acceptance_gate_reports", f"{ident}.json")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -782,7 +832,7 @@ def _persist(candidate, answer, evidence, own, frozen, data, library, *, snapsho
             with path.open("x", encoding="utf-8", newline="\n") as stream:
                 stream.write(text)
     now = datetime.now(timezone.utc).isoformat()
-    certificate = {"gate": VERSION, "candidate": candidate.candidate_id, "report": _save_report(data),
+    certificate = {"gate": VERSION, "candidate": candidate.candidate_id, "report": _save_report(data, snapshot=snapshot),
                    "authority": "A1", "scope": "checked on the registered held-out cases; not proof"}
     entry = LibraryEntry(candidate_id=candidate.candidate_id, contract_sha256=candidate.contract.content_id,
         concept_id=candidate.concept_id, family=candidate.contract.family,
@@ -790,7 +840,8 @@ def _persist(candidate, answer, evidence, own, frozen, data, library, *, snapsho
         status="probation", authority="A1", evidence=evidence,
         regression_suite=[RegressionCase(case_ref=o.case.case_id, verdict=v) for o, v in zip(frozen.acceptance, own)],
         field=FieldEvidence(fired=0, confirmed=0, refuted=0, unlabelled=0, precision=None),
-        decided_by=DecidedBy(gate_version=VERSION, person=None), certificate_sha256=_save_report(certificate),
+        decided_by=DecidedBy(gate_version=VERSION, person=None),
+        certificate_sha256=_save_report(certificate, snapshot=snapshot),
         created_at=now, changed_at=now, reason="; ".join(answer.reasons))
     with failure_writer():
         require_current(snapshot)
@@ -1078,9 +1129,7 @@ def _decide_batch(candidates, library, registration, *, restoring=''):
                     require_current(snapshot)
                     if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:
                         raise ValueError("candidate differs from persisted proposal")
-                    with failure_writer():
-                        require_current(snapshot)
-                        index, reservation = _spend(registration, candidate)
+                    index, reservation = _spend(registration, candidate, snapshot=snapshot)
                     answer, evidence, own, data = _assess(candidate, snapshot, frozen, index)
                     require_current(snapshot)
                     evaluated[candidate.candidate_id] = (answer, evidence, own, frozen, data)
@@ -1092,7 +1141,11 @@ def _decide_batch(candidates, library, registration, *, restoring=''):
                 results[candidate.candidate_id] = (answer, reservation)
                 # Close the reservation before spending the next look. A later
                 # activation is a separate append-only decision row.
-                _record(replace(answer, verdict="evaluated") if answer.verdict == "admit_probation" else answer, reservation)
+                recorded = _record(replace(answer, verdict="evaluated") if answer.verdict == "admit_probation" else answer,
+                                   reservation, snapshot=snapshot if answer.verdict == 'admit_probation' else None)
+                if answer.verdict == 'admit_probation' and recorded.verdict != 'evaluated':
+                    evaluated.pop(candidate.candidate_id, None)
+                    results[candidate.candidate_id] = (recorded, reservation)
             accepted = _bh(((v[0].p_value, ident) for ident, v in evaluated.items()), len(candidates))
             for candidate in sorted(candidates, key=lambda c: c.candidate_id):
                 ident = candidate.candidate_id
@@ -1110,9 +1163,9 @@ def _decide_batch(candidates, library, registration, *, restoring=''):
                         raise ValueError("batch bar not met after library changed")
                     answer = _persist(candidate, answer, evidence, own, frozen, data, library, snapshot=snapshot)
                 except ValueError as error:
-                    answer = replace(answer, verdict="refuse", reasons=(str(error),))
+                    answer = replace(answer, verdict="refuse", reasons=(str(error),), entry_id='', report_sha256='')
+                answer = _record(answer, snapshot=snapshot if answer.verdict == 'admit_probation' else None)
                 results[ident] = (answer, "")
-                _record(answer)
             with failure_writer(reading=True):
                 current = {entry.candidate_id: entry for entry in library.list()}
                 for ident, (answer, reservation) in results.items():
@@ -1123,7 +1176,7 @@ def _decide_batch(candidates, library, registration, *, restoring=''):
                         status = entry.status if entry and entry.status in {'held', 'withdrawn'} else None
                         code = (f'G6_E_DISTILL_METHOD_{status.upper()}_DURING_RUN' if status else
                                 'G6_E_DISTILL_STATUS_CHANGED_DURING_RUN')
-                        answer = replace(answer, verdict='refuse', reasons=(code,))
+                        answer = replace(answer, verdict='refuse', reasons=(code,), entry_id='', report_sha256='')
                         results[ident] = (answer, reservation)
                         _record(answer)
                 return tuple(results[c.candidate_id][0] for c in candidates)

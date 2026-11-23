@@ -35,7 +35,7 @@ def observation(entry, verdict: str) -> dict:
                       f"{entry.authority} {verdict}; not a pass"}
 
 
-def record_fire(found: dict, before: dict, after: dict) -> None:
+def record_fire(found: dict, before: dict, after: dict, snapshot) -> None:
     """Unlabelled host observations, outside independent evaluator custody.
 
     These rows can inform a later investigation; they cannot satisfy the gate's
@@ -48,7 +48,8 @@ def record_fire(found: dict, before: dict, after: dict) -> None:
             "authority": found["authority"], "label": "unlabelled", "source": "review"}
     ident = digest(body)
     path = state_path("distill", "field_fires_ledger.jsonl")
-    with _FIRE_MUTEX:
+    with _FIRE_MUTEX, failure_writer():
+        require_current(snapshot)
         path.parent.mkdir(parents=True, exist_ok=True)
         lock = path.with_suffix(".lock")
         try:
@@ -131,8 +132,11 @@ def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", 
             found["seconds"] = time.monotonic() - began
             if verdict == "concern":
                 try:
-                    record_fire(found, before, after)
+                    record_fire(found, before, after, entries)
                     found["field_recorded"] = True
+                except StatusChanged as error:
+                    found.update(authority='A0', verdict='abstain', outcome='insufficient_evidence',
+                                 code=error.code, reason=str(error), field_recorded=False)
                 except (LedgerError, OSError):
                     found["field_recorded"] = False
                     found["field_note"] = "The unlabelled field fire could not be retained; no field evidence was added."
