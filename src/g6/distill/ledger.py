@@ -23,7 +23,11 @@ _FAILURE_LOCAL = threading.local()
 
 @contextmanager
 def failure_writer(*, reading=False):
-    """One reentrant file lock for every failure writer, including other server processes."""
+    """Shared transaction for failure intake, library status and method execution.
+
+    Reentrant within a thread; the same file lock excludes other server processes.
+    Admission and runtime readers hold it through the load or execution boundary.
+    """
     from g6.core.repair_log import _process_lock
     with _FAILURE_MUTEX:
         path = state_path('distill', 'failure_records.lock')
@@ -205,7 +209,7 @@ class RecordStore:
                         raise LedgerError("class removal requires replay of every known failure")
 
     def put(self, value: Record) -> str:
-        with failure_writer() if self.model is FailureRecord else nullcontext():
+        with failure_writer() if self.model in {FailureRecord, LibraryEntry, Rectification} else nullcontext():
             return self._put_locked(value)
 
     def _put_locked(self, value: Record) -> str:

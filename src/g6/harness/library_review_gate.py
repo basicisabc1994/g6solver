@@ -12,7 +12,7 @@ import time
 
 from g6.core.ledger import ChainLedger, LedgerError, digest
 from g6.core.storage import state_path
-from g6.distill.ledger import Stores
+from g6.distill.ledger import Stores, failure_writer
 from g6.distill.library import Library
 from g6.distill.records import LibraryEntry, VerifierCandidate
 
@@ -63,8 +63,9 @@ def record_fire(found: dict, before: dict, after: dict) -> None:
             lock.unlink()
 
 
+@failure_writer()
 def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", tests=()) -> list[dict]:
-    from g6.distill.acceptance_gate import _run
+    from g6.distill.acceptance_gate import _InactiveMethod, _run
     from g6.workforce.repo_tests import is_test_related
 
     entries = Library().list()
@@ -90,6 +91,10 @@ def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", 
             case = SimpleNamespace(before_tests=before.get(path, ""), after_tests=after.get(path, ""))
             try:
                 verdicts.append(_run(candidate, case, entries))
+            except _InactiveMethod:
+                # An inactive alias has no application observation or authority.
+                verdicts.clear()
+                break
             except (ValueError, KeyError, LedgerError):
                 verdicts.append("abstain")
         if verdicts:

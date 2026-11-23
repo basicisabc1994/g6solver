@@ -239,6 +239,11 @@ def test_only_nonexecuting_syntax_is_canonical():
     assert gate._method_identity(candidate()) == gate._method_identity(candidate(other))
 
 
+def test_comments_blank_lines_and_formatting_alone_are_canonical():
+    other = "# comment\n\ndef solve( facts ):\n    return { 'verdict': 'concern', 'reason': 'same' }\n\n"
+    assert gate._method_identity(candidate()) == gate._method_identity(candidate(other))
+
+
 def test_inactive_case_field_preserves_old_record_addresses():
     old = bodies()[4][1]
     entry = r.LibraryEntry(**old)

@@ -318,9 +318,17 @@ class Service:
                 _put_once(candidate.contract)
                 _put_once(candidate)
             # Admission is a distinct host operation; never invent a registration.
-            from g6.distill.acceptance_gate import decide_batch
+            from g6.distill.acceptance_gate import AcceptanceDecision, decide_batch
             from g6.distill.library import Library
             decisions = decide_batch(result.candidates, Library(), self.registration) if result.candidates else ()
+            if not result.candidates and not result.reuses:
+                # Runtime refusal produces no proposal or admission look. Keep
+                # its explicit blocked outcome visible to the requesting dialog.
+                inactive = {'G6_E_DISTILL_METHOD_HELD', 'G6_E_DISTILL_METHOD_WITHDRAWN',
+                            'G6_E_DISTILL_IDENTITY_UNKNOWN'}
+                reasons = tuple(dict.fromkeys(refusal.code for refusal in result.refusals if refusal.code in inactive))
+                if reasons:
+                    decisions = (AcceptanceDecision('block', reasons),)
             return {'concept_id': concept.concept_id, **result.model_dump(mode='json'),
                     'decisions': [asdict(d) for d in decisions], 'labels': labels, 'duplicates': duplicates,
                     'skipped': skipped}

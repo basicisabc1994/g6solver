@@ -14,7 +14,7 @@ from pathlib import PurePosixPath
 
 from g6.core.ledger import LedgerError
 from .intake import class_key, earlier
-from .ledger import Stores
+from .ledger import Stores, failure_writer
 from .records import CapabilityExtension, FailureMode, FailureRecord, LibraryEntry, Rectification, RemovalCheck
 
 HOLD_CODE = "G6_E_DISTILL_RECURRENCE_HELD"
@@ -67,6 +67,7 @@ class Rectifier:
                     or path.parts[0] != "tests" or path.suffix != ".py"):
                 raise LedgerError("pinning test must name a repository test or an admitted g6_self library check")
 
+    @failure_writer()
     def submit(self, failure_id: str, rect: Rectification) -> Rectification:
         """Refuse instance repairs of known classes; incomplete replays remain open.
 
@@ -156,6 +157,7 @@ class Rectifier:
             held_recurrences=sorted(set(current.held_recurrences) | set(new)),
             decided_by=dict(gate_version="distill.findings.recurrence.v1", person=None)))))
 
+    @failure_writer()
     def release_hold(self, entry_id: str, checks: list[RemovalCheck]) -> LibraryEntry:
         """Independent gate replay receipts can release a hold, never a demotion.
 
@@ -198,6 +200,7 @@ class Rectifier:
                 check.receipt_sha256 for check in checks),
             decided_by=dict(gate_version="distill.findings.recurrence.v1", person=None)))))
 
+    @failure_writer()
     def reconcile(self) -> dict:
         """Append derived snapshots; never rewrite a prior decision or consume an event twice.
 

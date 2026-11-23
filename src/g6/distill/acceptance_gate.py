@@ -18,6 +18,7 @@ import statistics
 import time
 import threading
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -39,7 +40,7 @@ from g6.safety_engine import weakening
 from .detectors import SEED_TEMPLATES
 from .facts import _extract_facts
 from .judging import JUDGING_PATHS
-from .ledger import Stores
+from .ledger import Stores, failure_writer
 from .library import Library
 from .records import (AcceptanceEvidence, Cost, DecidedBy, FieldEvidence,
                       Interval, LibraryEntry, MethodContract, Model, RegressionCase, Sha256,
@@ -49,12 +50,15 @@ ROOT = Path(__file__).resolve().parents[3]
 POLICY_PATH = ROOT / "validation/distill/held_out/policy.json"
 VERSION = "distill-acceptance-v1"
 _MUTEX = threading.RLock()
+_RESTORING = ContextVar('distill_restoring', default='')
 
 
 @contextmanager
 def _writer():
     """Single evaluator writer across threads/processes; stale locks block."""
-    with _MUTEX:
+    # Always acquire the shared status transaction first, including callers
+    # already inside failure intake. The evaluator lock retains crash recovery.
+    with failure_writer(), _MUTEX:
         path = state_path("distill", "acceptance_gate.lock")
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -189,6 +193,7 @@ def _chronology(anchor, registration, candidate):
         raise ValueError("concept commit does not bind this concept")
 
 
+@failure_writer()
 def _load(registration_id, candidate, library) -> EvaluationSet:
     from g6.distill.held_out import oracle, sealed_gate
     from g6.distill.held_out.case_gate import CaseRecord
@@ -198,6 +203,7 @@ def _load(registration_id, candidate, library) -> EvaluationSet:
     anchor = settings["registrations"].get(registration_id)
     if not anchor:
         raise ValueError("missing owner registration anchor")
+    _check_inactive(candidate, library, restoring=_RESTORING.get())
     path = _plain(ROOT / anchor["path"], ROOT / "validation/distill")
     frozen = read_registration(path, expected_digest=registration_id)
     _chronology(anchor, frozen, candidate)
@@ -289,9 +295,25 @@ class _MethodRunUnavailable(ValueError):
         super().__init__(f'{code}: confined method run unavailable')
 
 
+class _InactiveMethod(ValueError):
+    def __init__(self, code, reason):
+        self.code = code
+        super().__init__(f'{code}: {reason}')
+
+
+@failure_writer()
 def _run(candidate, case, entries, stack=frozenset()):
-    if any(entry.candidate_id == candidate.candidate_id and entry.status == "held" for entry in entries):
-        raise ValueError("held method cannot be applied")
+    # Caller snapshots (including restored/imported rows) cannot retain authority
+    # after a status change. Keep the transaction through actual execution.
+    _check_inactive(candidate, Library(), restoring=_RESTORING.get())
+    return _execute(candidate, case, entries, stack)
+
+
+def _execute(candidate, case, entries, stack=frozenset()):
+    """Execute after a runtime guard, or solely for recorded identity comparison.
+
+    Dependency execution still enters _run and checks current persisted status.
+    """
     if candidate.candidate_id in stack:
         raise ValueError("cyclic method dependency")
     stack = stack | {candidate.candidate_id}
@@ -358,7 +380,7 @@ def _run(candidate, case, entries, stack=frozenset()):
     return verdict
 
 
-def _measure(candidate, observations, entries):
+def _measure(candidate, observations, entries, *, identity_replay=False):
     verdicts, costs, over = [], [], 0
     for observation in observations:
         repeats = []
@@ -366,7 +388,8 @@ def _measure(candidate, observations, entries):
             if stop.engaged() is not None:
                 raise ValueError("stop engaged during evaluation")
             start = time.monotonic()
-            repeats.append(_run(candidate, observation.case, entries))
+            run = _execute if identity_replay else _run
+            repeats.append(run(candidate, observation.case, entries))
             cost = max(0, time.monotonic() - start)
             costs.append(cost)
             over += cost > candidate.contract.cost_bound.wall_s
@@ -732,26 +755,10 @@ def _execution_contract(candidate):
     return contract
 
 
-class _IdentityAST(ast.NodeTransformer):
-    """Drop documentation only; executable syntax stays in the fast identity."""
-
-    def _documented(self, node):
-        node = self.generic_visit(node)
-        if (node.body and isinstance(node.body[0], ast.Expr)
-                and isinstance(node.body[0].value, ast.Constant)
-                and isinstance(node.body[0].value.value, str)):
-            node.body.pop(0)
-        return node
-
-    visit_Module = _documented
-    visit_FunctionDef = _documented
-    visit_AsyncFunctionDef = _documented
-    visit_ClassDef = _documented
-
-
 def _predicate_identity(source):
-    tree = _IdentityAST().visit(ast.parse(source))
-    return ast.dump(tree, include_attributes=False)
+    # Docstrings, annotations and defaults can become runtime values. Retain
+    # all syntax; only comments and source locations are absent from this AST.
+    return ast.dump(ast.parse(source), include_attributes=False)
 
 
 def _method_identity(candidate, stack=()):
@@ -877,10 +884,10 @@ def _inactive_behaviour_match(candidate, entry, entries):
             historical = _candidate(entry)
             context = [e for e in entries if e.candidate_id != entry.candidate_id]
             failure_code = 'G6_E_SYNTH_EXECUTION'
-            old, _ = _measure(historical, missing, context)
+            old, _ = _measure(historical, missing, context, identity_replay=True)
             expected.update((o.case.case_id, v) for o, v in zip(missing, old, strict=True))
         failure_code = 'G6_E_SYNTH_EXECUTION'
-        actual, _ = _measure(candidate, observations, entries)
+        actual, _ = _measure(candidate, observations, entries, identity_replay=True)
         # Complete every recorded run before deciding that any difference is a
         # different method. A later crash cannot turn an unknown into a pass.
         return all(v == expected[o.case.case_id] for o, v in zip(observations, actual, strict=True))
@@ -891,9 +898,11 @@ def _inactive_behaviour_match(candidate, entry, entries):
         code = getattr(error, 'code', failure_code)
         if not isinstance(code, str) or not re.fullmatch(r'G6_E_[A-Z0-9_]+', code):
             code = 'G6_E_DISTILL_RECORDED_CASES'
-        raise ValueError(f'G6_E_DISTILL_IDENTITY_UNKNOWN: {code}: inactive recorded-case comparison unknown') from None
+        raise _InactiveMethod('G6_E_DISTILL_IDENTITY_UNKNOWN',
+                              f'{code}: inactive recorded-case comparison unknown') from None
 
 
+@failure_writer()
 def _check_inactive(candidate, library, *, restoring=''):
     """Run before every registration load, and before reserving any new look."""
     entries = library.list()
@@ -907,13 +916,23 @@ def _check_inactive(candidate, library, *, restoring=''):
         try:
             matched = _inactive_match(candidate, inactive, status)
         except Exception:
-            raise ValueError('G6_E_DISTILL_IDENTITY_UNKNOWN: G6_E_DISTILL_RECORDED_CASES: '
-                             'inactive canonical identity unavailable') from None
+            raise _InactiveMethod('G6_E_DISTILL_IDENTITY_UNKNOWN',
+                                  'G6_E_DISTILL_RECORDED_CASES: inactive canonical identity unavailable') from None
         if matched:
-            raise ValueError(reasons[status])
+            raise _InactiveMethod(f'G6_E_DISTILL_METHOD_{status.upper()}', reasons[status])
     for entry in inactive:
         if _inactive_behaviour_match(candidate, entry, entries):
-            raise ValueError(reasons[entry.status])
+            raise _InactiveMethod(f'G6_E_DISTILL_METHOD_{entry.status.upper()}', reasons[entry.status])
+
+
+@contextmanager
+def _restoring(entry_id):
+    """Scope the existing restore exemption to this admission, including its runs."""
+    token = _RESTORING.set(entry_id)
+    try:
+        yield
+    finally:
+        _RESTORING.reset(token)
 
 
 def _decide_batch(candidates, library, registration, *, restoring=''):
@@ -927,7 +946,7 @@ def _decide_batch(candidates, library, registration, *, restoring=''):
     if not candidates or len({c.candidate_id for c in candidates}) != len(candidates):
         raise ValueError("nonempty batch of distinct candidates required")
     try:
-        with _writer():
+        with _writer(), _restoring(restoring):
             if stop.engaged() is not None:
                 return tuple(_record(AcceptanceDecision("block", ("stop engaged",), c.candidate_id)) for c in candidates)
             _policy()
@@ -947,6 +966,7 @@ def _decide_batch(candidates, library, registration, *, restoring=''):
                         raise ValueError('reuse is a reuse row, never an admission candidate')
                     _check_inactive(candidate, library, restoring=restoring)
                     _look_available(registration)  # A spent split never reaches the oracle again.
+                    _check_inactive(candidate, library, restoring=restoring)
                     frozen = _load(registration, candidate, library)
                     if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:
                         raise ValueError("candidate differs from persisted proposal")
