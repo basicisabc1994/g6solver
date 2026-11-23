@@ -100,9 +100,9 @@ def _raw_lines(fd, stopped, prefix=b""):
 class _InputDescriptor:
     """A duplicate has one closing owner, even if start raises after the OS has already launched the thread."""
 
-    def __init__(self, fd):
+    def __init__(self):
         self.lock = threading.Lock()
-        self.fd = os.dup(fd)
+        self.fd = None
 
     def take(self):
         with self.lock:
@@ -181,14 +181,18 @@ async def _lines(stdin):
     cached = cache_reader(source)         # reject opaque buffering before acquiring or consuming anything
     # Windows' CRT also locks a descriptor during os.read. Give the thread its own descriptor so finalization of
     # the caller's file cannot wait on that CRT lock. No Python file object ever owns this duplicate.
-    descriptor = _InputDescriptor(fd)
+    descriptor = _InputDescriptor()
     sender = receiver = stopped = None
+    # One try covers startup through yield; a nested try can put its line event outside the outer handler.
     try:
+        descriptor.fd = os.dup(fd)
         sender, receiver = anyio.create_memory_object_stream(0)
         stopped = threading.Event()
         threading.Thread(target=_read_lines,
                          args=(descriptor, sender, anyio.lowlevel.current_token(), stopped, cached),
                          name="g6-stdin-reader", daemon=True).start()
+        with receiver:
+            yield receiver
     except BaseException:
         descriptor.close()              # reclaim only an unclaimed duplicate; never close a live reader's fd
         if stopped is not None:
@@ -198,11 +202,9 @@ async def _lines(stdin):
         if receiver is not None:
             receiver.close()
         raise
-    try:
-        with receiver:
-            yield receiver
     finally:
-        stopped.set()                    # never join a reader blocked on outside input
+        if stopped is not None:
+            stopped.set()                # never join a reader blocked on outside input
 
 
 @asynccontextmanager
