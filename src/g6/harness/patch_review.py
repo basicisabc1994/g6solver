@@ -148,11 +148,13 @@ from __future__ import annotations
 
 import configparser
 import hashlib
+import io
 import os
 import platform
 import re
 import stat
 import time
+import tokenize
 import uuid
 from collections.abc import Collection, Sequence
 from dataclasses import replace
@@ -1107,7 +1109,7 @@ def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, dead
                         skipped.append(change_map.skip(f"change map: {shown_name(rel)}", "file byte limit reached"))
                         unavailable.add(rel)
                         continue
-                    text = repo_tests._text(raw)
+                    text = _python_source(raw)
                     if len(text) > change_map.MAX_FILE_CHARS:
                         skipped.append(change_map.skip(f"change map: {shown_name(rel)}", "file text limit reached"))
                         unavailable.add(rel)
@@ -1132,7 +1134,7 @@ def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, dead
                             skipped.append(change_map.skip(f"change map: base {shown_name(rel)}", "file byte limit reached"))
                             unavailable.add(rel)
                             continue
-                        text = repo_tests._text(raw)
+                        text = _python_source(raw)
                         if len(text) > change_map.MAX_FILE_CHARS:
                             skipped.append(change_map.skip(f"change map: base {shown_name(rel)}", "file text limit reached"))
                             unavailable.add(rel)
@@ -1179,6 +1181,14 @@ def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, dead
         record = change_map.empty()
         record["skipped"] = [*skipped, change_map.skip("change map", "the time budget is spent")]
     return record
+
+
+def _python_source(raw: bytes) -> str:
+    """Decode parser input using Python's BOM and PEP 263 cookie rules."""
+    # Give the detector physical lines even for CR-only Python source files.
+    lines = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    encoding, _ = tokenize.detect_encoding(io.BytesIO(lines).readline)
+    return raw.decode(encoding).replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _change_map_text(root: Path, path: Path, limit: int) -> bytes | None:

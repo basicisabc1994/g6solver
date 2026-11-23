@@ -12,6 +12,7 @@ import hashlib
 import json
 import time
 from bisect import bisect_left
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
@@ -50,6 +51,12 @@ class _FileOmitted(Exception):
     """A file-local analysis failure; never a whole-run budget signal."""
 
 
+class _FileFailed(Exception):
+    def __init__(self, rel, reason, check=None):
+        self.rel, self.reason = rel, reason
+        self.check = check if check is not None else f"change map: {shown_name(rel)}"
+
+
 @dataclass
 class _Budget:
     deadline: float
@@ -57,9 +64,22 @@ class _Budget:
     files: set = field(default_factory=set)
     sources: dict = field(default_factory=dict)
     total_chars: int = 0
+    failed: dict = field(default_factory=dict)
 
 
 _BUDGET: ContextVar[_Budget | None] = ContextVar("change_map_budget", default=None)
+
+
+@contextmanager
+def _file(rel):
+    """Attribute every local stage failure before rolling back its whole file."""
+    try:
+        yield
+    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, _Omitted, _FileFailed):
+        raise
+    except Exception as exc:
+        reason = exc.args[0] if isinstance(exc, _FileOmitted) else f"source analysis unavailable ({type(exc).__name__})"
+        raise _FileFailed(rel, reason) from None
 
 
 def _tick():
@@ -98,12 +118,13 @@ def skip(check: str, reason: str) -> dict:
 
 
 def _name(node: ast.AST) -> str:
-    _tick()
+    parts = []
+    while isinstance(node, ast.Attribute):
+        _tick()
+        parts.append(node.attr)
+        node = node.value
     if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        prefix = _name(node.value)
-        return f"{prefix}.{node.attr}" if prefix else ""
+        return ".".join([node.id, *reversed(parts)])
     return ""
 
 
@@ -233,8 +254,13 @@ class _Index:
         for rel in _each(sorted(texts)):
             if not rel.endswith(".py"):
                 continue
+            if rel in budget.failed:
+                self.invalid.add(rel)
+                continue
             text = texts[rel]
             if len(text) > MAX_FILE_CHARS:
+                if _BUDGET.get() is not None:
+                    raise _FileFailed(rel, "static analysis text limit reached", f"change map: {side} {shown_name(rel)}")
                 self.invalid.add(rel)
                 skipped.append(skip(f"change map: {side} {shown_name(rel)}", "static analysis text limit reached"))
                 continue
@@ -250,11 +276,14 @@ class _Index:
             staged._reset([])
             try:
                 staged._load_file(rel, text, roots)
-            except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, _Omitted):
+                staged._finish_file()
+            except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, _Omitted, _FileFailed):
                 raise
             except Exception as exc:
-                self.invalid.add(rel)
                 reason = exc.args[0] if isinstance(exc, _FileOmitted) else f"source analysis unavailable ({type(exc).__name__})"
+                if _BUDGET.get() is not None:
+                    raise _FileFailed(rel, reason, f"change map: {side} {shown_name(rel)}") from None
+                self.invalid.add(rel)
                 skipped.append(skip(f"change map: {side} {shown_name(rel)}", reason))
                 continue
             for name, values in _each(vars(staged).items()):
@@ -262,6 +291,11 @@ class _Index:
                     skipped.extend(values)
                 else:
                     getattr(self, name).update(values)
+        # Only indexed namespace prefixes can bind attributes. Long chains of
+        # unknown external attributes must not repeatedly scan every suffix.
+        self.prefix_depth = max((len(name.split(".")) + 1 for name in _each(self.namespaces)), default=1)
+
+    def _finish_file(self):
         # All enclosing locals exist before resolving global/nonlocal writes.
         for scope in _each(list(self.scopes.values())):
             for name in _each(scope.globals | scope.nonlocals):
@@ -305,11 +339,11 @@ class _Index:
                     raise _FileOmitted("symbol limit reached")
         self.sources[rel] = text.encode("utf-8")
         offsets, pos = [0], 0
-        self.lines[rel] = self.sources[rel].split(b"\n")
+        self.lines[rel] = tuple(self.sources[rel].split(b"\n"))
         for line in _each(self.lines[rel]):
             pos += len(line) + 1
             offsets.append(pos)
-        self.offsets[rel] = offsets
+        self.offsets[rel] = tuple(offsets)
         signed = {id(n.operand) for n in _each(nodes) if isinstance(n, ast.UnaryOp)
                   and isinstance(n.op, (ast.USub, ast.UAdd)) and isinstance(n.operand, ast.Constant)}
         literals, pending, starts = [], [(tree, False)], {}
@@ -326,7 +360,7 @@ class _Index:
                 literals.append(node)
             pending.append((node, True))
             pending.extend((child, False) for child in _each(reversed(list(_each(ast.iter_child_nodes(node))))))
-        self.literal_nodes[rel] = literals
+        self.literal_nodes[rel] = tuple(literals)
         # Hash every AST node once, bottom up. Nested functions do not trigger
         # repeated dumps of their entire enclosing bodies.
         for node in _each(reversed(nodes)):
@@ -353,19 +387,33 @@ class _Index:
         _tick()
         scope.names.setdefault(name, []).append(_Binding(node, scope, value, kind))
 
-    def _target(self, node, scope, value=None):
+    def _target_step(self, node, scope, value=None):
         self.node_scopes[id(node)] = scope
         if isinstance(node, ast.Name):
             self._bind(scope, node.id, node, value)
         elif isinstance(node, (ast.Tuple, ast.List)):
             for child in _each(node.elts):
-                self._target(child, scope)
+                yield child, scope, True, None
         elif isinstance(node, ast.Starred):
-            self._target(node.value, scope)
+            yield node.value, scope, True, None
         else:
-            self._scan(node, scope)
+            yield node, scope, False, None
 
     def _scan(self, node, scope):
+        # Suspend each scope walk on an explicit iterator stack. AST depth does
+        # not consume Python frames; binding order remains source order.
+        pending = [iter(self._scan_step(node, scope))]
+        while pending:
+            _tick()
+            task = next(pending[-1], None)
+            if task is None:
+                pending.pop()
+                continue
+            child, destination, target, value = task
+            pending.append(iter(self._target_step(child, destination, value) if target
+                                else self._scan_step(child, destination)))
+
+    def _scan_step(self, node, scope):
         _tick()
         self.node_scopes[id(node)] = scope
         if isinstance(node, (*_FUNCTION, ast.ClassDef, ast.Lambda)):
@@ -396,27 +444,27 @@ class _Index:
                     self._bind(child, arg.arg, arg)
                 for default in _each([*args.defaults, *args.kw_defaults]):
                     if default is not None:
-                        self._scan(default, scope)
+                        yield default, scope, False, None
             for field_name, value in _each(ast.iter_fields(node)):
                 if field_name in ("body", "args"):
                     continue
                 for item in _each(value if isinstance(value, list) else [value]):
                     if isinstance(item, ast.AST):
-                        self._scan(item, scope)
+                        yield item, scope, False, None
             for item in _each([node.body] if is_lambda else node.body):
-                self._scan(item, child)
+                yield item, child, False, None
             return
         if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
             child = _Scope(f"{scope.binding}.<comprehension:{node.lineno}:{node.col_offset}>",
                            "comprehension", scope, scope.file)
             self.scopes[child.binding] = child
             for i, generator in _each(enumerate(node.generators)):
-                self._scan(generator.iter, scope if i == 0 else child)
-                self._target(generator.target, child)
+                yield generator.iter, scope if i == 0 else child, False, None
+                yield generator.target, child, True, None
                 for condition in _each(generator.ifs):
-                    self._scan(condition, child)
+                    yield condition, child, False, None
             for name in _each(("key", "value") if isinstance(node, ast.DictComp) else ("elt",)):
-                self._scan(getattr(node, name), child)
+                yield getattr(node, name), child, False, None
             return
         if isinstance(node, (ast.Global, ast.Nonlocal)):
             if scope.kind == "module" and isinstance(node, ast.Global):
@@ -424,14 +472,15 @@ class _Index:
             (scope.globals if isinstance(node, ast.Global) else scope.nonlocals).update(node.names)
             return
         if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
-            self._scan(node.value, scope) if node.value is not None else None
+            if node.value is not None:
+                yield node.value, scope, False, None
             destination = scope
             if isinstance(node, ast.NamedExpr):
                 while destination.kind == "comprehension":
                     _tick()
                     destination = destination.parent
             for target in _each(node.targets if isinstance(node, ast.Assign) else [node.target]):
-                self._target(target, destination, node.value if not isinstance(node, ast.AugAssign) else None)
+                yield target, destination, True, node.value if not isinstance(node, ast.AugAssign) else None
             return
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             package = self.modules[scope.file]
@@ -460,7 +509,7 @@ class _Index:
             self._bind(scope, node.id, node)
             return
         for child in _each(ast.iter_child_nodes(node)):
-            self._scan(child, scope)
+            yield child, scope, False, None
 
     def _declared(self, scope, name):
         parent = scope.parent
@@ -476,7 +525,7 @@ class _Index:
             parent = parent.parent
         return None
 
-    def _lookup(self, scope, name, node, seen):
+    def _lookup(self, scope, name, node):
         origin = scope
         while scope is not None:
             _tick()
@@ -493,7 +542,7 @@ class _Index:
             if entries:
                 if len(entries) != 1:
                     return ""
-                return self._value(entries[0], seen)
+                return entries[0]
             parent = scope.parent
             while parent is not None and parent.kind == "class":
                 _tick()
@@ -502,63 +551,102 @@ class _Index:
         # An absent module name may refer to a deleted changed definition.
         return f"{self.modules[origin.file]}.{name}"
 
-    def _value(self, entry, seen):
-        key = id(entry)
-        if key in seen or len(seen) >= 64:
-            self.skipped.append(skip("change map import closure", "cyclic or over-limit alias chain could not be resolved"))
-            return ""
-        seen = seen | {key}
-        if (isinstance(entry.node, ast.arg) and entry.scope.receiver == entry.node.arg and
-                entry.scope.parent is not None and entry.scope.parent.kind == "class"):
-            return entry.scope.parent.binding
-        if isinstance(entry.value, str):
-            return self.canonical(entry.value, seen)
-        if isinstance(entry.value, ast.AST):
-            return self._resolve(entry.value, entry.scope, seen, constructor=True)
-        return ""
-
-    def canonical(self, name, seen=None):
-        seen = seen or set()
+    def _canonical_binding(self, name):
+        """Return a binding and its remaining attributes without evaluating it."""
         parts = name.split(".")
-        if any(".".join(parts[:end]) in self.ambiguous for end in _each(range(1, len(parts) + 1))):
-            return ""
-        for end in _each(range(len(parts), 0, -1)):
+        depth = min(len(parts), self.prefix_depth)
+        if any(".".join(parts[:end]) in self.ambiguous for end in _each(range(1, depth + 1))):
+            return "", ()
+        for end in _each(range(depth, 0, -1)):
             prefix = ".".join(parts[:end])
             module, _, leaf = prefix.rpartition(".")
             scope = self.namespaces.get(module)
             if scope is None:
                 continue
-            entries = scope.names.get(leaf, [])
-            if len(entries) > 1:
-                return ""
-            if entries and entries[0].kind != "definition":
-                if (scope.kind == "class" and entries[0].kind == "local" and
-                        not isinstance(entries[0].value, (ast.Name, ast.Attribute))):
-                    # Class constants and enum members retain their symbolic
-                    # attribute names; their runtime values are never evaluated.
-                    return name
-                value = self._value(entries[0], seen)
-                return ".".join([value, *parts[end:]]) if value else ""
-        return name
+            with _file(scope.file):
+                entries = scope.names.get(leaf, [])
+                if len(entries) > 1:
+                    return "", ()
+                if entries and entries[0].kind != "definition":
+                    if (scope.kind == "class" and entries[0].kind == "local" and
+                            not isinstance(entries[0].value, (ast.Name, ast.Attribute))):
+                        # Class constants and enum members retain their symbolic
+                        # attribute names; runtime values are never evaluated.
+                        return name, ()
+                    return entries[0], tuple(parts[end:])
+        return name, ()
+
+    def canonical(self, name, seen=None):
+        return self._evaluate(("canonical", name, frozenset(seen or ())))
 
     def _resolve(self, node, scope, seen, constructor=False):
-        key = (id(node), constructor)
-        if key not in self.resolved:
-            self.resolved[key] = self._resolve_uncached(node, scope, seen, constructor)
-        return self.resolved[key]
+        return self._evaluate(("resolve", node, scope, frozenset(seen), constructor))
 
-    def _resolve_uncached(self, node, scope, seen, constructor=False):
-        _tick()
-        scope = self.node_scopes.get(id(node), scope)
-        if isinstance(node, ast.Call):
-            value = self._resolve(node.func, scope, seen)
-            return value if not constructor or value in self.classes else ""
-        if isinstance(node, ast.Attribute):
-            value = self._resolve(node.value, scope, seen, constructor=True)
-            return self.canonical(f"{value}.{node.attr}", seen) if value else ""
-        if isinstance(node, ast.Name):
-            return self._lookup(scope, node.id, node, seen)
-        return ""
+    def _evaluate(self, task):
+        """Resolve attributes, calls and alias chains without input-depth frames."""
+        pending, value = [task], ""
+        while pending:
+            _tick()
+            operation, *args = pending.pop()
+            if operation == "cache":
+                self.resolved[args[0]] = value
+            elif operation == "call":
+                if args[0] and value not in self.classes:
+                    value = ""
+            elif operation == "attribute":
+                attr, seen = args
+                if value:
+                    pending.append(("canonical", f"{value}.{attr}", seen))
+            elif operation == "suffix":
+                value = ".".join([value, *args[0]]) if value else ""
+            elif operation == "canonical":
+                name, seen = args
+                entry, suffix = self._canonical_binding(name)
+                if isinstance(entry, _Binding):
+                    pending.extend((("suffix", suffix), ("binding", entry, seen)))
+                else:
+                    value = entry
+            elif operation == "binding":
+                entry, seen = args
+                with _file(entry.scope.file):
+                    key = id(entry)
+                    if key in seen or len(seen) >= 64:
+                        self.skipped.append(skip("change map import closure",
+                                                 "cyclic or over-limit alias chain could not be resolved"))
+                        value = ""
+                    elif (isinstance(entry.node, ast.arg) and entry.scope.receiver == entry.node.arg and
+                          entry.scope.parent is not None and entry.scope.parent.kind == "class"):
+                        value = entry.scope.parent.binding
+                    elif isinstance(entry.value, str):
+                        pending.append(("canonical", entry.value, seen | {key}))
+                    elif isinstance(entry.value, ast.AST):
+                        pending.append(("resolve", entry.value, entry.scope, seen | {key}, True))
+                    else:
+                        value = ""
+            else:
+                node, scope, seen, constructor = args
+                with _file(scope.file):
+                    # Cycle context is part of the key, so one alias chain
+                    # cannot poison a later independent resolution.
+                    key = (id(node), constructor, seen)
+                    if key in self.resolved:
+                        value = self.resolved[key]
+                        continue
+                    scope = self.node_scopes.get(id(node), scope)
+                    pending.append(("cache", key))
+                    if isinstance(node, ast.Call):
+                        pending.extend((("call", constructor), ("resolve", node.func, scope, seen, False)))
+                    elif isinstance(node, ast.Attribute):
+                        pending.extend((("attribute", node.attr, seen), ("resolve", node.value, scope, seen, True)))
+                    elif isinstance(node, ast.Name):
+                        entry = self._lookup(scope, node.id, node)
+                        if isinstance(entry, _Binding):
+                            pending.append(("binding", entry, seen))
+                        else:
+                            value = entry
+                    else:
+                        value = ""
+        return value
 
     def resolve(self, node, symbol, locals_=None):
         scope = self.symbol_scopes.get(id(symbol.node)) or self.scopes[self.modules[symbol.file]]
@@ -569,11 +657,11 @@ class _Index:
 
     def calls(self, symbol):
         if not self.canonical(symbol.binding):
-            return set()
+            return frozenset()
         if id(symbol.node) not in self.call_cache:
-            self.call_cache[id(symbol.node)] = {
+            self.call_cache[id(symbol.node)] = frozenset({
                 self.resolve(n.func, symbol) for n in _each(_nodes(symbol.node, lambdas=True))
-                if isinstance(n, ast.Call)} - {""}
+                if isinstance(n, ast.Call)} - {""})
         return self.call_cache[id(symbol.node)]
 
     def body(self, node):
@@ -585,7 +673,11 @@ class _Index:
         end = offsets[node.end_lineno - 1] + node.end_col_offset
         if limit is not None:
             end = min(end, start + limit)
-        return self.sources[rel][start:end].decode("utf-8", "replace")
+            # A display-only byte cap can split a multibyte character. Back up
+            # to its boundary, then decode strictly, as for full literal slices.
+            while end > start and end < len(self.sources[rel]) and self.sources[rel][end] & 0xC0 == 0x80:
+                end -= 1
+        return self.sources[rel][start:end].decode("utf-8")
 
     def branch(self, rel, node, branch, kind):
         # The keyword can be the only added line. Locate its own source range,
@@ -620,17 +712,21 @@ class _Index:
 def _context(change: Change, base: Mapping[str, str], patch: Mapping[str, str], roots: Sequence[str]):
     skipped: list[dict] = []
     old, new = _Index(base, roots, skipped, "base"), _Index(patch, roots, skipped, "patch")
-    added = {p: _added(base.get(p, ""), patch.get(p, "")) for p in _each(change.files)
-             if p.endswith(".py") and not _is_test(p) and p not in old.invalid | new.invalid
-             and len(base.get(p, "")) <= MAX_FILE_CHARS and len(patch.get(p, "")) <= MAX_FILE_CHARS}
+    added = {}
+    for p in _each(change.files):
+        with _file(p):
+            if (p.endswith(".py") and not _is_test(p) and p not in old.invalid | new.invalid
+                    and len(base.get(p, "")) <= MAX_FILE_CHARS and len(patch.get(p, "")) <= MAX_FILE_CHARS):
+                added[p] = _added(base.get(p, ""), patch.get(p, ""))
     changed = []
     for key in _each(sorted(old.symbols.keys() | new.symbols.keys())):
         symbol = new.symbols.get(key) or old.symbols[key]
-        if symbol.file not in change.files or _is_test(symbol.file) or symbol.file in old.invalid | new.invalid:
-            continue
-        left, right = old.symbols.get(key), new.symbols.get(key)
-        if left is None or right is None or old.body(left.node) != new.body(right.node):
-            changed.append({**symbol.record(), "change": "added" if left is None else "deleted" if right is None else "changed"})
+        with _file(symbol.file):
+            if symbol.file not in change.files or _is_test(symbol.file) or symbol.file in old.invalid | new.invalid:
+                continue
+            left, right = old.symbols.get(key), new.symbols.get(key)
+            if left is None or right is None or old.body(left.node) != new.body(right.node):
+                changed.append({**symbol.record(), "change": "added" if left is None else "deleted" if right is None else "changed"})
     return old, new, added, changed, skipped
 
 
@@ -686,21 +782,22 @@ def _points(new: _Index, added: dict[str, list[int]], changed: list[dict]) -> li
     scopes = [*new.symbols.values(), *new.classes.values(),
               *(_Symbol(rel, new.modules[rel], "", "", tree) for rel, tree in _each(new.trees.items()))]
     for symbol in _each(scopes):
-        lines = added.get(symbol.file, [])
-        if not lines:
-            continue
-        for node, kind in _each(_decisions(symbol.node, new, symbol.file)):
-            if _touches(node, lines):
-                points.append({"file": symbol.file, "symbol": symbol.symbol, "binding": symbol.binding,
-                               "kind": "decision_point", "decision": kind,
-                               "line": node.lineno, "column": node.col_offset,
-                               "expression": new.source(symbol.file, node, 500), "literals": new.literals(symbol.file, node)})
-                if len(points) > MAX_TARGETS:
-                    return points
-        if (isinstance(symbol.node, _FUNCTION) and symbol.owner and symbol.node.name.startswith("visit_") and
-                any(c["binding"] == symbol.binding and c["change"] == "added" for c in _each(changed))):
-            points.append({**symbol.record(), "kind": "decision_point", "decision": "handler", "literals": [],
-                           "expression": symbol.node.name})
+        with _file(symbol.file):
+            lines = added.get(symbol.file, [])
+            if not lines:
+                continue
+            for node, kind in _each(_decisions(symbol.node, new, symbol.file)):
+                if _touches(node, lines):
+                    points.append({"file": symbol.file, "symbol": symbol.symbol, "binding": symbol.binding,
+                                   "kind": "decision_point", "decision": kind,
+                                   "line": node.lineno, "column": node.col_offset,
+                                   "expression": new.source(symbol.file, node, 500), "literals": new.literals(symbol.file, node)})
+                    if len(points) > MAX_TARGETS:
+                        return points
+            if (isinstance(symbol.node, _FUNCTION) and symbol.owner and symbol.node.name.startswith("visit_") and
+                    any(c["binding"] == symbol.binding and c["change"] == "added" for c in _each(changed))):
+                points.append({**symbol.record(), "kind": "decision_point", "decision": "handler", "literals": [],
+                               "expression": symbol.node.name})
     unique = {(p["file"], p["symbol"], p["line"], p["decision"], p["expression"]): p for p in _each(points)}
     return [unique[k] for k in _each(sorted(unique))]
 
@@ -744,69 +841,78 @@ def _siblings(old: _Index, new: _Index, added: dict[str, list[int]], changed: li
             if rank < entry["rank"]:
                 entry.update(rank=rank, reason=reason, **detail)
 
-    calls = {key: new.calls(s) for key, s in _each(new.symbols.items())}
+    calls = {}
+    for key, symbol in _each(new.symbols.items()):
+        with _file(symbol.file):
+            calls[key] = new.calls(symbol)
     writes_by_key, reads_by_key, helpers_by_key = {}, {}, {}
     for key, symbol in _each(new.symbols.items()):
-        writes, reads, helpers = set(), set(), set()
-        for node in _nodes(symbol.node):
-            if (isinstance(node, ast.Attribute) and symbol.owner and
-                    new.resolve(node.value, symbol) == f"{symbol.module}.{symbol.owner}"):
-                if isinstance(node.ctx, ast.Store):
-                    writes.add(node.attr)
-                elif isinstance(node.ctx, ast.Load) and _touches(node, added.get(symbol.file, [])):
-                    reads.add(node.attr)
-            if isinstance(node, ast.Call) and _touches(node, added.get(symbol.file, [])):
-                helper = new.resolve(node.func, symbol)
-                if helper:
-                    helpers.add(helper)
-        writes_by_key[key], reads_by_key[key], helpers_by_key[key] = writes, reads, helpers
+        with _file(symbol.file):
+            writes, reads, helpers = set(), set(), set()
+            for node in _nodes(symbol.node):
+                if (isinstance(node, ast.Attribute) and symbol.owner and
+                        new.resolve(node.value, symbol) == f"{symbol.module}.{symbol.owner}"):
+                    if isinstance(node.ctx, ast.Store):
+                        writes.add(node.attr)
+                    elif isinstance(node.ctx, ast.Load) and _touches(node, added.get(symbol.file, [])):
+                        reads.add(node.attr)
+                if isinstance(node, ast.Call) and _touches(node, added.get(symbol.file, [])):
+                    helper = new.resolve(node.func, symbol)
+                    if helper:
+                        helpers.add(helper)
+            writes_by_key[key], reads_by_key[key], helpers_by_key[key] = writes, reads, helpers
     for key, symbol in _each(new.symbols.items()):
-        if _public(symbol):
-            for changed_key in _each(sorted(calls[key] & changed_keys)):
-                offer(symbol, 10, "calls a changed symbol", changed_key)
+        with _file(symbol.file):
+            if _public(symbol):
+                for changed_key in _each(sorted(calls[key] & changed_keys)):
+                    offer(symbol, 10, "calls a changed symbol", changed_key)
     for changed_record in _each(changed):
-        key = changed_record["binding"]
-        symbol = new.symbols.get(key)
-        if symbol is None or not symbol.owner:
-            continue
-        reads, helpers = reads_by_key[key], helpers_by_key[key]
-        for sibling in _each(new.symbols.values()):
-            if sibling.file != symbol.file or sibling.owner != symbol.owner or not _public(sibling):
+        with _file(changed_record["file"]):
+            key = changed_record["binding"]
+            symbol = new.symbols.get(key)
+            if symbol is None or not symbol.owner:
                 continue
-            shared = sorted(reads & writes_by_key[sibling.binding])
-            if shared:
-                offer(sibling, 20, "writes the state this patch reads", key, attributes=shared)
-            elif calls[sibling.binding] & helpers:
-                offer(sibling, 20, "calls the same helper as the changed method", key,
-                      helpers=sorted(calls[sibling.binding] & helpers))
-            if changed_record["change"] == "added" and symbol.node.name.startswith("visit_") and sibling.node.name.startswith("visit_"):
-                offer(sibling, 30, "is a family handler this patch did not add", key)
+            reads, helpers = reads_by_key[key], helpers_by_key[key]
+            for sibling in _each(new.symbols.values()):
+                if sibling.file != symbol.file or sibling.owner != symbol.owner or not _public(sibling):
+                    continue
+                shared = sorted(reads & writes_by_key[sibling.binding])
+                if shared:
+                    offer(sibling, 20, "writes the state this patch reads", key, attributes=shared)
+                elif calls[sibling.binding] & helpers:
+                    offer(sibling, 20, "calls the same helper as the changed method", key,
+                          helpers=sorted(calls[sibling.binding] & helpers))
+                if changed_record["change"] == "added" and symbol.node.name.startswith("visit_") and sibling.node.name.startswith("visit_"):
+                    offer(sibling, 30, "is a family handler this patch did not add", key)
     for binding in _each(sorted(new.bindings)):
-        canonical = new.canonical(binding)
-        if canonical in changed_keys and binding != canonical and not binding.split(".")[-1].startswith("_"):
-            module, _, name = binding.rpartition(".")
-            rel = next((p for p, m in _each(new.modules.items()) if m == module), "")
-            offer(_Symbol(rel, module, name, "", ast.Name(lineno=1)), 40,
-                  "is another name bound to the changed function", canonical)
+        with _file(new.bindings[binding].scope.file):
+            canonical = new.canonical(binding)
+            if canonical in changed_keys and binding != canonical and not binding.split(".")[-1].startswith("_"):
+                module, _, name = binding.rpartition(".")
+                rel = next((p for p, m in _each(new.modules.items()) if m == module), "")
+                offer(_Symbol(rel, module, name, "", ast.Name(lineno=1)), 40,
+                      "is another name bound to the changed function", canonical)
     # Overrides can keep a distinct implementation behind the same public entry point.
     for child in _each(new.classes.values()):
-        ancestors, pending = set(), [(child, base) for base in _each(child.node.bases)]
-        while pending:
-            _tick()
-            scope, node = pending.pop()
-            base = new.resolve(node, scope)
-            if base in ancestors:
-                continue
-            ancestors.add(base)
-            if base in new.classes:
-                parent_class = new.classes[base]
-                pending.extend((parent_class, node) for node in _each(parent_class.node.bases))
-        for record in _each(changed):
-            parent = new.symbols.get(record["binding"]) or old.symbols.get(record["binding"])
-            if parent and parent.owner and f"{parent.module}.{parent.owner}" in ancestors:
-                override = new.symbols.get(f"{child.binding}.{parent.node.name}")
-                if override and _public(override):
-                    offer(override, 40, "overrides the changed method in a subclass", parent.binding)
+        with _file(child.file):
+            ancestors, pending = set(), [(child, base) for base in _each(child.node.bases)]
+            while pending:
+                _tick()
+                scope, node = pending.pop()
+                with _file(scope.file):
+                    base = new.resolve(node, scope)
+                if base in ancestors:
+                    continue
+                ancestors.add(base)
+                if base in new.classes:
+                    parent_class = new.classes[base]
+                    pending.extend((parent_class, node) for node in _each(parent_class.node.bases))
+            for record in _each(changed):
+                parent = new.symbols.get(record["binding"]) or old.symbols.get(record["binding"])
+                if parent and parent.owner and f"{parent.module}.{parent.owner}" in ancestors:
+                    override = new.symbols.get(f"{child.binding}.{parent.node.name}")
+                    if override and _public(override):
+                        offer(override, 40, "overrides the changed method in a subclass", parent.binding)
     _token_siblings(old, new, points, offer)
     return sorted(found.values(), key=lambda s: (s["rank"], s["file"], s["symbol"]))
 
@@ -818,32 +924,34 @@ def _token_siblings(old: _Index, new: _Index, points: list[dict], offer) -> None
                    if p["decision"] in ("comparison", "membership")}
     for index in _each((old, new)):
         for cls in _each(index.classes.values()):
-            enumeration = any(index.resolve(base, cls).split(".")[-1] in
-                              ("Enum", "IntEnum", "StrEnum", "Flag", "IntFlag") for base in _each(cls.node.bases))
-            for node in _each(cls.node.body):
-                if isinstance(node, (ast.Assign, ast.AnnAssign)):
-                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                    for target in _each(targets):
-                        if isinstance(target, ast.Name) and (target.id.isupper() or
-                                enumeration and not target.id.startswith("_")):
-                            item = _Symbol(cls.file, cls.module, f"{cls.symbol}.{target.id}", cls.symbol, node)
-                            members.setdefault(cls.binding, {})[target.id] = item
+            with _file(cls.file):
+                enumeration = any(index.resolve(base, cls).split(".")[-1] in
+                                  ("Enum", "IntEnum", "StrEnum", "Flag", "IntFlag") for base in _each(cls.node.bases))
+                for node in _each(cls.node.body):
+                    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                        for target in _each(targets):
+                            if isinstance(target, ast.Name) and (target.id.isupper() or
+                                    enumeration and not target.id.startswith("_")):
+                                item = _Symbol(cls.file, cls.module, f"{cls.symbol}.{target.id}", cls.symbol, node)
+                                members.setdefault(cls.binding, {})[target.id] = item
         for rel, tree in _each(index.trees.items()):
-            scope = _Symbol(rel, index.modules[rel], "", "", tree)
-            pending = [(tree, "")]
-            while pending:
-                _tick()
-                node, source = pending.pop()
-                if index is new and isinstance(node, ast.Compare):
-                    source = comparisons.get((rel, node.lineno, node.col_offset), source)
-                if isinstance(node, ast.Attribute):
-                    name = index.resolve(node, scope)
-                    family, _, leaf = name.rpartition(".")
-                    if name and node.attr.isupper():
-                        members.setdefault(family, {}).setdefault(leaf, _Symbol(rel, "", name, "", node))
-                    if index is new and source and name:
-                        selected_attributes.append((family, leaf, source))
-                pending.extend((child, source) for child in _each(ast.iter_child_nodes(node)))
+            with _file(rel):
+                scope = _Symbol(rel, index.modules[rel], "", "", tree)
+                pending = [(tree, "")]
+                while pending:
+                    _tick()
+                    node, source = pending.pop()
+                    if index is new and isinstance(node, ast.Compare):
+                        source = comparisons.get((rel, node.lineno, node.col_offset), source)
+                    if isinstance(node, ast.Attribute):
+                        name = index.resolve(node, scope)
+                        family, _, leaf = name.rpartition(".")
+                        if name and node.attr.isupper():
+                            members.setdefault(family, {}).setdefault(leaf, _Symbol(rel, "", name, "", node))
+                        if index is new and source and name:
+                            selected_attributes.append((family, leaf, source))
+                    pending.extend((child, source) for child in _each(ast.iter_child_nodes(node)))
     selected, sources = {}, {}
     for family, leaf, source in _each(selected_attributes):
         if leaf in members.get(family, {}):
@@ -851,8 +959,9 @@ def _token_siblings(old: _Index, new: _Index, points: list[dict], offer) -> None
             sources[family] = source
     for family, added_members in _each(selected.items()):
         for name, symbol in _each(members.get(family, {}).items()):
-            if name not in added_members:
-                offer(symbol, 30, "is a token or enumeration family member this patch did not add", sources[family])
+            with _file(symbol.file):
+                if name not in added_members:
+                    offer(symbol, 30, "is a token or enumeration family member this patch did not add", sources[family])
 
 
 def siblings(change: Change, base: Mapping[str, str], patch: Mapping[str, str], *, roots: Sequence[str] = ()) -> list[dict]:
@@ -863,70 +972,91 @@ def siblings(change: Change, base: Mapping[str, str], patch: Mapping[str, str], 
     return _bounded(analyse, listing=True)
 
 
-def _mro(index, cls, active=None):
-    if cls.binding in index.mros:
-        return index.mros[cls.binding]
-    active = active or set()
-    if cls.binding in active:
-        raise _FileOmitted("ambiguous cyclic class hierarchy")
-    bases = []
-    for node in _each(cls.node.bases):
-        name = index.resolve(node, cls)
-        if name in ("object", f"{cls.module}.object"):
-            continue
-        base = index.classes.get(name)
-        if base is None:
-            index.skipped.append(skip(cls.binding, "class selection has an unavailable or ambiguous base"))
-            return [cls]
-        bases.append(base)
-    sequences = [_mro(index, base, active | {cls.binding}) for base in _each(bases)] + [bases[:]]
-    result = [cls]
-    while any(sequences):
+def _mro(index, cls):
+    pending, active, parents = [(cls, False)], set(), {}
+    while pending:
         _tick()
-        sequences = [s for s in _each(sequences) if s]
-        candidate = next((s[0] for s in _each(sequences)
-                          if all(s[0] not in other[1:] for other in _each(sequences))), None)
-        if candidate is None:
-            raise _FileOmitted("ambiguous inconsistent class hierarchy")
-        result.append(candidate)
-        for sequence in _each(sequences):
-            if sequence and sequence[0] is candidate:
-                sequence.pop(0)
-    index.mros[cls.binding] = result
-    return result
+        current, closing = pending.pop()
+        with _file(current.file):
+            if current.binding in index.mros:
+                continue
+            if closing:
+                bases = parents[current.binding]
+                if len(bases) <= 1:
+                    inherited = index.mros[bases[0].binding] if bases else ()
+                    index.mros[current.binding] = (current, *inherited)
+                    active.remove(current.binding)
+                    continue
+                # Consumers own their merge lists; cached orders are immutable.
+                sequences = [list(index.mros[base.binding]) for base in _each(bases)] + [list(bases)]
+                result = [current]
+                while any(sequences):
+                    _tick()
+                    sequences = [s for s in _each(sequences) if s]
+                    candidate = next((s[0] for s in _each(sequences)
+                                      if all(s[0] not in other[1:] for other in _each(sequences))), None)
+                    if candidate is None:
+                        raise _FileOmitted("ambiguous inconsistent class hierarchy")
+                    result.append(candidate)
+                    for sequence in _each(sequences):
+                        if sequence and sequence[0] is candidate:
+                            sequence.pop(0)
+                index.mros[current.binding] = tuple(result)
+                active.remove(current.binding)
+                continue
+            if current.binding in active:
+                raise _FileOmitted("ambiguous cyclic class hierarchy")
+            bases = []
+            for node in _each(current.node.bases):
+                name = index.resolve(node, current)
+                if name in ("object", f"{current.module}.object"):
+                    continue
+                base = index.classes.get(name)
+                if base is None:
+                    index.skipped.append(skip(current.binding, "class selection has an unavailable or ambiguous base"))
+                    index.mros[current.binding] = (current,)
+                    break
+                bases.append(base)
+            else:
+                parents[current.binding] = tuple(bases)
+                active.add(current.binding)
+                pending.append((current, True))
+                pending.extend((base, False) for base in reversed(bases))
+    return index.mros[cls.binding]
 
 
 def _selected(index, rel, selection):
-    selected = selection.split("[")[0].replace("::", ".")
+    # Pytest separates collectors with ::, and parameter ids belong to the
+    # final item. Remove that suffix before interpreting dots or :: inside it.
+    selected = selection.split("[", 1)[0].replace("::", ".")
     result = []
     if not selected:
         result.extend(s for s in _each(index.symbols.values()) if s.file == rel and not s.owner
                       and "." not in s.symbol and s.node.name.startswith("test_"))
-    class_name, _, method = selected.partition(".")
     for cls in _each(list(index.classes.values())):
         if cls is None or cls.file != rel or not cls.node.name.startswith("Test"):
             continue
-        if selected and cls.symbol != class_name:
+        class_name, _, method = selected.rpartition(".")
+        if not selected or selected == cls.symbol or cls.symbol.startswith(selected + "."):
+            method = ""
+        elif cls.symbol != class_name:
             continue
         methods = {}
         collectible = True
-        try:
-            hierarchy = _mro(index, cls)
-        except _FileOmitted as exc:
-            index.skipped.append(skip(cls.binding, exc.args[0]))
-            continue
+        hierarchy = _mro(index, cls)
         for owner in _each(hierarchy):
-            scope = index.symbol_scopes[id(owner.node)]
-            # Non-callable overrides also hide inherited methods.
-            for name, entries in _each(scope.names.items()):
-                if name in methods:
-                    continue
-                symbol = index.symbols.get(f"{owner.binding}.{name}")
-                methods[name] = symbol if len(entries) == 1 and symbol is not None else None
-                if name == "__test__" and len(entries) == 1:
-                    value = entries[0].value
-                    if isinstance(value, ast.Constant) and value.value is False:
-                        collectible = False
+            with _file(owner.file):
+                scope = index.symbol_scopes[id(owner.node)]
+                # Non-callable overrides also hide inherited methods.
+                for name, entries in _each(scope.names.items()):
+                    if name in methods:
+                        continue
+                    symbol = index.symbols.get(f"{owner.binding}.{name}")
+                    methods[name] = symbol if len(entries) == 1 and symbol is not None else None
+                    if name == "__test__" and len(entries) == 1:
+                        value = entries[0].value
+                        if isinstance(value, ast.Constant) and value.value is False:
+                            collectible = False
         if not collectible or "__init__" in methods or "__new__" in methods:
             index.skipped.append(skip(cls.binding, "pytest does not collect this class"))
             continue
@@ -955,10 +1085,14 @@ def _exercised(targets: Sequence[dict], checks: Mapping[str, str], roots: Sequen
             index.classes.setdefault(owner, None)
     for check in _each(sorted(checks)):
         rel, _, selection = check.partition("::")
-        for symbol in _each(_selected(index, rel, selection)):
-            for binding in _each(index.calls(symbol)):
-                if binding in result and check not in result[binding]:
-                    result[binding].append(check)
+        if rel in index.invalid:
+            continue
+        with _file(rel):
+            for symbol in _each(_selected(index, rel, selection)):
+                with _file(symbol.file):
+                    for binding in _each(index.calls(symbol)):
+                        if binding in result and check not in result[binding]:
+                            result[binding].append(check)
     return result, skipped
 
 
@@ -1031,7 +1165,19 @@ def _bounded(call, deadline=None, *, listing=False):
                                    time.monotonic() + 2.0)))
     try:
         _tick()
-        result = _plain(call())
+        budget = _BUDGET.get()
+        while True:
+            _tick()
+            try:
+                result = call()
+                if isinstance(result, dict) and "skipped" in result:
+                    result["skipped"] = [*budget.failed.values(), *result["skipped"]]
+                result = _plain(result)
+                break
+            except _FileFailed as exc:
+                if exc.rel in budget.failed:
+                    raise _Omitted("change map", "file isolation could not finish") from None
+                budget.failed[exc.rel] = skip(exc.check, exc.reason)
         targets = result.get("targets", []) if isinstance(result, dict) else result if isinstance(result, list) else []
         literal_chars = 0
         for target in _each(targets):
