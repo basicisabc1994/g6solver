@@ -74,14 +74,24 @@ mcp = FastMCP(
         "the search over abstractions itself."),
 )
 
+_GUIDANCE: dict[str, str] = {}
+
 
 def _tool():
     """``mcp.tool()``, described by the function's cleaned docstring: from Python 3.13 the compiler strips a
     docstring's shared indentation, so the raw docstring would show an agent other text on 3.13 than on 3.12."""
     def register(fn):
+        # The describe tool registers its own pointer atomically; every other
+        # pointer requires that target to have registered first on this server.
+        if fn.__name__ != "g6_describe" and mcp._tool_manager.get_tool("g6_describe") is None:
+            raise ValueError("short tool descriptions require g6_describe on the same server")
         from g6.core.tool_guidance import register_guidance
-        description = register_guidance("abstraction", fn.__name__, inspect.cleandoc(fn.__doc__ or ""))
-        return mcp.tool(description=description)(fn)
+
+        guidance = inspect.cleandoc(fn.__doc__ or "")
+        description = register_guidance("abstraction", fn.__name__, guidance)
+        registered = mcp.tool(description=description)(fn)
+        _GUIDANCE[fn.__name__] = guidance
+        return registered
     return register
 
 _domains: dict[str, ConcreteDomain] = {}
@@ -177,6 +187,22 @@ def _err(exc: Exception) -> str:
 
 
 # ---------------------------------------------------------------------- #
+@_tool()
+def g6_describe(component: str) -> str:
+    """Read the full original guidance of a tool registered on this abstraction server.
+
+    Only this server's tool names are accepted; other tools, families and
+    components are refused with code tool_not_registered. This reads guidance
+    only, grants no permission and performs no file operation.
+    """
+    if component not in _GUIDANCE or mcp._tool_manager.get_tool(component) is None:
+        return _j({"name": component, "available": False, "code": "tool_not_registered",
+                   "error": "component must name a tool registered on this abstraction server",
+                   "completion_state": "blocked-escalated"})
+    return _j({"name": component, "available": True, "guidance": _GUIDANCE[component],
+               "call": {"server": "abstraction", "tool": component}})
+
+
 @_tool()
 def load_dataset(path: str, objective: str, maximise: bool = True,
                  name: str = "domain", fmt: str = "auto") -> str:

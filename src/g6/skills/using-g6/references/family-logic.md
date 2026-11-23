@@ -27,6 +27,7 @@ The list is guidance, never admission to a sensitive operation or consent to sha
 - `mcp__abstraction__diagnose`: read its full guidance with g6_describe("diagnose").
 - `mcp__abstraction__evaluate_abstraction`: read its full guidance with g6_describe("evaluate_abstraction").
 - `mcp__abstraction__find_counterexamples`: read its full guidance with g6_describe("find_counterexamples").
+- `mcp__abstraction__g6_describe`: read full guidance for this server's own tools; other names are refused.
 - `mcp__abstraction__leaderboard`: read its full guidance with g6_describe("leaderboard").
 - `mcp__abstraction__lift_abstraction`: read its full guidance with g6_describe("lift_abstraction").
 - `mcp__abstraction__list_combinators`: read its full guidance with g6_describe("list_combinators").

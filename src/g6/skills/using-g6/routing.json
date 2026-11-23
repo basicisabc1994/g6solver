@@ -22,6 +22,7 @@
     "mcp:abstraction/diagnose": {"agent_facing": true, "route": "abstraction", "since": "0.1.0"},
     "mcp:abstraction/evaluate_abstraction": {"agent_facing": true, "route": "abstraction", "since": "0.1.0"},
     "mcp:abstraction/find_counterexamples": {"agent_facing": true, "route": "abstraction", "since": "0.1.0"},
+    "mcp:abstraction/g6_describe": {"agent_facing": true, "route": "abstraction", "since": "0.3.0"},
     "mcp:abstraction/leaderboard": {"agent_facing": true, "route": "abstraction", "since": "0.1.0"},
     "mcp:abstraction/lift_abstraction": {"agent_facing": true, "route": "abstraction", "since": "0.1.0"},
     "mcp:abstraction/list_combinators": {"agent_facing": true, "route": "abstraction", "since": "0.1.0"},
