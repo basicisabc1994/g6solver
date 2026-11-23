@@ -114,18 +114,20 @@ def compact_server(server: Any, server_id: str) -> None:
     _DETAILS[server_id] = details
 
 
-def _server_details(server_id: str) -> dict[str, dict[str, Any]]:
+def _server_details(server_id: str, *, listed: list[tuple[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
     """Read full guidance from the server that owns it, including unshortened SDK servers."""
     if server_id not in _DETAILS:
-        from g6.mcp.registrations import SERVERS, _load
-        server = _load(SERVERS[server_id])
+        if listed is None:
+            from g6.mcp.registrations import SERVERS, _listed, _load
+            server = _load(SERVERS[server_id])
+            if server_id not in _DETAILS:
+                listed = _listed(server)
         if server_id not in _DETAILS:
-            from g6.mcp.registrations import _listed
             _DETAILS[server_id] = {
                 name: {"guidance": tool.description or "",
                        "schema": deepcopy(getattr(tool, "parameters", None) or
                                           getattr(tool, "inputSchema", None) or {})}
-                for name, tool in _listed(server)}
+                for name, tool in listed}
     return _DETAILS[server_id]
 
 
@@ -146,6 +148,7 @@ def _unavailable(server_id: str) -> dict[str, Any]:
 def inventory(family: str | None = None) -> list[dict[str, Any]]:
     """Registered members, plus declared tools whose own server cannot load; unrelated servers stay unloaded."""
     from g6.mcp import registrations
+    from g6.mcp.dependencies import optional_dependency_missing
     from g6.skills import corpus, routing
 
     rows = []
@@ -164,7 +167,10 @@ def inventory(family: str | None = None) -> list[dict[str, Any]]:
         try:
             server = registrations._load(target)
             listed = dict(registrations._listed(server))
-        except (Exception, SystemExit):
+            details = _server_details(server_id, listed=list(listed.items()))
+        except (Exception, SystemExit) as exc:
+            if not optional_dependency_missing(server_id, exc):
+                raise
             # A missing optional server affects its declared members only. Keep
             # each identity visible, without inventing a schema or importing peers.
             for name, member_family in members.items():
@@ -188,7 +194,7 @@ def inventory(family: str | None = None) -> list[dict[str, Any]]:
             if server_id != "g6":
                 call["server"] = server_id
             rows.append({"id": identity, "kind": "tool", "family": member_family, "available": True,
-                         "summary": " ".join(full_guidance(server_id, name).split())[:160], "call": call})
+                         "summary": " ".join(details[name]["guidance"].split())[:160], "call": call})
         for name in members.keys() - listed.keys():
             call = {"tool": name, "arguments": {}}
             if server_id != "g6":
@@ -215,6 +221,7 @@ def describe(name: str) -> dict[str, Any] | None:
         return {"name": name, "available": True, "purpose": FAMILIES[name].purpose,
                 "members": inventory(name)}
     from g6.mcp import registrations
+    from g6.mcp.dependencies import optional_dependency_missing
     from g6.skills import corpus, routing
 
     manifest = routing.load()
@@ -229,13 +236,15 @@ def describe(name: str) -> dict[str, Any] | None:
     for server_id, tool_name in matches:
         try:
             details = _server_details(server_id).get(tool_name)
-        except (Exception, SystemExit):
+            if details is not None and "schema" not in details:
+                server = registrations._load(registrations.SERVERS[server_id])
+                details = {**details, "schema": registrations._tools(server)[tool_name]}
+        except (Exception, SystemExit) as exc:
+            if not optional_dependency_missing(server_id, exc):
+                raise
             return {"name": name, **_unavailable(server_id)}
         if details is None:
             return {"name": name, "available": False, "note": "The declared tool is absent from this server."}
-        if "schema" not in details:
-            server = registrations._load(registrations.SERVERS[server_id])
-            details = {**details, "schema": registrations._tools(server)[tool_name]}
         schema = details["schema"]
         arguments = {key: corpus._placeholder(key, corpus._json_kind(schema.get("properties", {}).get(key, {})))
                      for key in schema.get("required", [])}
