@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from functools import wraps
+from inspect import iscoroutinefunction
 from typing import Any, Literal
 
 from g6.distill import surface
@@ -13,18 +15,43 @@ DECIDE_FORM = {"type": "object", "properties": {
     "required": ["confirm", "name"]}
 
 
-def _call(fn, *args) -> dict:
+_INPUT_ERRORS = (ValueError, KeyError, OSError, RecursionError)
+
+
+def _refusal(exc):
     from g6.core.door import blocked_reply
+    code = getattr(exc, 'code', '')
+    if isinstance(code, str) and code.startswith('G6_E_'):
+        return blocked_reply(f'[{code}] Backend refused the operation; no authority was granted.')
+    return blocked_reply("[G6_E_DISTILL_INPUT] Invalid input, missing entry or unreadable distillation record. "
+                         "No authority was granted.")
+
+
+def _call(fn, *args, **kwargs) -> dict:
     from g6.core.ledger import LedgerError
     try:
-        return fn(*args)
-    except (ValueError, KeyError, LedgerError, RecursionError) as exc:
+        return fn(*args, **kwargs)
+    except (*_INPUT_ERRORS, LedgerError) as exc:
         # RecursionError: a decoder's depth limit on deeply nested input is an input refusal like any other.
-        code = getattr(exc, 'code', '')
-        if isinstance(code, str) and code.startswith('G6_E_'):
-            return blocked_reply(f'[{code}] Backend refused the operation; no authority was granted.')
-        return blocked_reply("[G6_E_DISTILL_INPUT] Invalid input, missing entry or unreadable distillation record. "
-                             "No authority was granted.")
+        return _refusal(exc)
+
+
+def _envelope(fn):
+    """Cover the complete handler, including preflight and post-dialog stores."""
+    from g6.core.ledger import LedgerError
+    if iscoroutinefunction(fn):
+        @wraps(fn)
+        async def asynchronous(*args, **kwargs):
+            try:
+                return await fn(*args, **kwargs)
+            except (*_INPUT_ERRORS, LedgerError) as exc:
+                return _refusal(exc)
+        return asynchronous
+
+    @wraps(fn)
+    def synchronous(*args, **kwargs):
+        return _call(fn, *args, **kwargs)
+    return synchronous
 
 
 def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None:
@@ -152,4 +179,4 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
         # Before owner issuance the existing wrapper treats a missing declaration as unknown.
         if fn.__name__ in TOOLS:
             fn._g6_declaration = TOOLS[fn.__name__]
-        server.tool()(fn)
+        server.tool()(_envelope(fn))
