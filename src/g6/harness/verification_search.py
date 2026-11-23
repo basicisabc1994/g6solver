@@ -853,11 +853,12 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
     of the order given. It is off by default, ``search_config`` has no key for it and no review sets it: Gate C (V11)
     must show the selector helps before any caller does."""
     done = Search()
-    if rejected and uncounted is None:
+    if rejected:
         from g6.harness import candidate_standard
 
-        checks, skipped, uncounted = candidate_standard.screen(
+        checks, skipped, unreadable = candidate_standard.screen(
             rejected, checks, lambda ident: (origins or {}).get(ident, FREE_FORM))
+        uncounted = set(uncounted or ()) | unreadable
         done.activities.extend(skipped)
     # Execution records remain private to this invocation, never filled from tool arguments.
     observed_runs = {}

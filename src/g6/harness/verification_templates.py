@@ -769,6 +769,8 @@ def _located(target: Target) -> list[str]:
 
 
 def _example(tree: Tree, b: ExampleBindings, side: str) -> Applied:
+    from g6.harness.definition_identity import ResolvedData
+
     target = resolve(tree, b.function, side)
     notes = _checked(b.function, target, [(case.args, case.kwargs, f"case {index}")
                                           for index, case in enumerate(b.cases)])
@@ -783,7 +785,7 @@ def _example(tree: Tree, b: ExampleBindings, side: str) -> Applied:
             entry.update(expect="returns", value=case.returns)
         cases.append(entry)
     roots = {'import_roots': [*(root.rstrip('/') or '.' for root in tree.roots), '.', 'src']} if tree.roots else {}
-    return Applied({"function": _located(target), "cases": cases, **roots}, notes)
+    return Applied(ResolvedData({"function": _located(target), "cases": cases, **roots}, tree), notes)
 
 
 def _relation(tree: Tree, b: RelationBindings, side: str) -> Applied:
@@ -810,11 +812,13 @@ def _access(tree: Tree, b: AccessBindings, side: str) -> Applied:
 
 
 def _differential(tree: Tree, b: DifferentialBindings, side: str) -> Applied:
+    from g6.harness.definition_identity import ResolvedData
+
     target = resolve(tree, b.function, side)
     notes = _checked(b.function, target, [(call.args, call.kwargs, f"call {index}")
                                           for index, call in enumerate(b.calls)])
-    return Applied({"function": target.spec(), "mode": b.mode,
-                    "calls": [{"args": call.args, "kwargs": call.kwargs} for call in b.calls]}, notes)
+    return Applied(ResolvedData({"function": target.spec(), "mode": b.mode,
+                    "calls": [{"args": call.args, "kwargs": call.kwargs} for call in b.calls]}, tree), notes)
 
 
 def _replayable(node, sorts: dict[str, str], name: str, used: set[str], depth: int = 1):
@@ -1289,7 +1293,13 @@ def compile_text(definition: TemplateDefinition, data: dict) -> str:
     literal = ascii(data)
     if ast.literal_eval(literal) != data:
         raise ValueError("the bindings do not read back as the same literal")
-    return definition.text.replace(SLOT, literal)
+    source = definition.text.replace(SLOT, literal)
+    from g6.harness.behaviour_runner import ExecutableSource, RUN_TEMPLATES
+    from g6.harness.definition_identity import ResolvedData
+
+    if definition.id in RUN_TEMPLATES and type(data) is ResolvedData:
+        return ExecutableSource(source, data, definitions=data.definitions)
+    return source
 
 
 # --- the registry ---------------------------------------------------------------------------------------------------------

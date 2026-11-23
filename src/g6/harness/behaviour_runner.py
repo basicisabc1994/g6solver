@@ -41,9 +41,10 @@ class ExecutableSource(str):
     historical confirmed label can be prepended without losing custody already held by this compiler object.
     """
 
-    def __new__(cls, source: str, observation: dict):
+    def __new__(cls, source: str, observation: dict, *, definitions=None):
         made = super().__new__(cls, source)
         made._observation = json.dumps(observation, sort_keys=True, ensure_ascii=True, allow_nan=False)
+        made.definitions = definitions
         return made
 
     @property
@@ -52,7 +53,7 @@ class ExecutableSource(str):
 
     def __radd__(self, prefix):
         text = prefix + str(self)
-        return ExecutableSource(text, self.observation) if prefix == CONFIRMED else text
+        return ExecutableSource(text, self.observation, definitions=self.definitions) if prefix == CONFIRMED else text
 
 
 def expanded(source: str) -> str:

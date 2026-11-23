@@ -560,10 +560,8 @@ REJECTED = 'it asserts an outcome the person rejected for that call'
 
 
 def gate(found, checks, activity, origin):
-    """``checks`` without any whose typed data G6 holds asserting an outcome the person rejected for that typed call
-    (``found['rejected']``), and a skipped activity for each one dropped: an example.v1 case of the rejected outcome,
-    or any differential.v1 call of the rejected typed call (its outcome is the reference's, which G6 cannot read).
-    A check G6 holds no typed data of passes here; it still runs but is not counted (``screen``)."""
+    """Drop only compiler-held resolved rejections. Uncompiled bindings have no definition
+    custody and continue to the final scheduling screen, which fails closed on uncertainty."""
     gone = found.get('rejected') or () if found else ()
     kept, skipped = [], []
     for one in checks:
@@ -577,47 +575,52 @@ def gate(found, checks, activity, origin):
 
 
 def _asserts_rejected(one, gone):
-    """Whether a check G6 holds the typed data of asserts or calls a rejected outcome: a template instance by its
-    bindings, a check G6 compiled to run in its own runner by the data its compiler holds in G6's process
-    (``ExecutableSource``). A free-form check's text never grants compiler custody."""
+    """Only the resolved identity of a compiler-held source can decide a rejection."""
     from g6.harness import behaviour_runner
 
-    if not hasattr(one, 'template'):
-        source = getattr(one, 'source', None)
-        if type(source) is not behaviour_runner.ExecutableSource:
-            return False
-        data = behaviour_runner.bindings(source)
-        return data is not None and _data_rejects(*data, gone)
-    bindings = one.bindings if isinstance(one.bindings, dict) else {}
-    mine = [each['case'] for each in gone if each['function'] == bindings.get('function')]
-    if one.template == 'example.v1':
-        return any(_hits(case, wrong) for case in bindings.get('cases') or () for wrong in mine)
-    if one.template == 'differential.v1':
-        return any(isinstance(call, dict) and _called(call, wrong)
-                   for call in bindings.get('calls') or () for wrong in mine)
-    return False
+    source = getattr(one, 'source', None)
+    if type(source) is not behaviour_runner.ExecutableSource:
+        return False
+    data = behaviour_runner.bindings(source)
+    return data is not None and _resolved_rejection(*data, gone, source) is True
 
 
-def _data_rejects(template, data, gone):
+def _resolved_rejection(template, bindings, gone, source):
+    try:
+        return _data_rejects(template, bindings, gone, getattr(source, 'definitions', None))
+    except (ValueError, SyntaxError, OSError, RecursionError, MemoryError, vt.Inapplicable,
+            repo_tests.RepoRefused) as exc:
+        from g6.core.semantic import trusted_stop
+
+        if trusted_stop(exc):
+            raise
+        return None
+
+
+def _data_rejects(template, data, gone, definitions=None):
     """A check G6 compiled to run in its own runner, by the data its compiler holds (``ExecutableSource``): an
     example.v1 case of a rejected outcome, or any differential.v1 call of a rejected typed call. Data whose function G6
     cannot read stays scheduled and is not counted by ``screen``."""
     spec = data.get('function') if isinstance(data, dict) else None
-    name = (f'{spec[1]}.{spec[2]}' if spec[1] else spec[2]) if (
-        isinstance(spec, list) and len(spec) >= 3 and all(isinstance(part, str) for part in spec[:3])) else None
+    from g6.harness.definition_identity import Definitions
+
+    if type(definitions) is not Definitions:
+        return None
+    unreadable = False
     for wrong in gone:
-        short = wrong['function'].rpartition('.')[2]
-        if name is None:
-            return False
-        if name != wrong['function'] and name.rpartition('.')[2] != short:
-            continue   # a function of another name (its module may differ from the one asked: the name decides)
+        same = definitions.same(spec, wrong['function'])
+        if same is None:
+            unreadable = True
+            continue
+        if not same:
+            continue
         if template == 'differential.v1':
             if any(not isinstance(call, dict) or _called(call, wrong['case']) for call in data.get('calls') or ()):
                 return True
         elif any(not isinstance(case, dict) or _called(case, wrong['case']) and (
                 _typed(case) is None or _hits(_typed(case), wrong['case'])) for case in data.get('cases') or ()):
             return True
-    return False
+    return None if unreadable else False
 
 
 def _typed(case):
@@ -667,7 +670,11 @@ def screen(gone, checks, origin, compiled=()):
             kept.append(one)
             continue
         where = origin(one.id)
-        if _data_rejects(template, bindings, gone):
+        rejects = _resolved_rejection(template, bindings, gone, source)
+        if rejects is None:
+            uncounted.add(one.id)
+            kept.append(one)
+        elif rejects:
             skipped.append(dict(activity=where.activity, check=one.id, origin=where.label,
                                 candidate_id=one.requirement_id, requirement=one.requirement_id,
                                 intent=one.intent, result='skipped', reason=REJECTED, model_calls=0, seconds=0.0))

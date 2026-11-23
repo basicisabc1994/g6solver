@@ -1108,8 +1108,17 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     runs: list[dict] = []
     skipped: list[dict] = []
     defects: list[dict] = []   # each stated or derived check that failed, for the completion report's reproductions
+    from g6.harness import candidate_standard
+
+    gone = candidate_standard.rejections(confirmed)
 
     def reason(stage: str, code: str, detail: str, node: str = "", ran: dict | None = None) -> None:
+        if gone and node and stage != "integrity":
+            # Repository Python has no compiler-held typed assertions. Its run stays
+            # visible, but neither provenance nor a replay restores rejected authority.
+            reasons.append({"stage": "evidence", "code": candidate_standard.UNREADABLE,
+                            "detail": f"{node}: repository assertions are unreadable under a rejected outcome"})
+            return
         reasons.append({"stage": stage, "code": code, "detail": detail})
         if node:   # ``ran``: the run it failed in, from which its reproduction is derived
             defects.append({"code": code, "node": node, "detail": detail, "ran": ran or {}})
@@ -1328,7 +1337,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             previous = origins.get(ident, verification_search.FREE_FORM)
             origins[ident] = replace(previous, activity=origin.activity, proposed_by=origin.proposed_by,
                 label=origin.label, unconfirmed=origin.unconfirmed, about={**previous.about, **origin.about})
-        gone, uncounted = [], set()
+        uncounted = set()
         if confirmed is not None:
             # The one gate where checks are about to run, after every source (the caller's, the candidates', the
             # proposer's, the retained ones): a check G6 compiled is read by the instance it compiled it from, before
@@ -1415,6 +1424,16 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     # G6 0.3: after the run at the base commit (each check's control), the checks it killed run again on the patch, so
     # the issuer has a receipt its control came before; last, so it takes no time from anything that decides a field
     again = _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, roots)
+    if gone:
+        reason("evidence", candidate_standard.UNREADABLE,
+               "repository checks keep their raw execution results but supply no defect, support or learning "
+               "authority while an outcome is rejected; their assertions have no readable compiler custody")
+        verdicts = {check: {"verdict": candidate_standard.UNREADABLE,
+                            "detail": "repository assertions have no readable compiler custody under rejection"}
+                    for check in verdicts}
+        # Keep every raw run above for inspection. The issuer's requirement inputs
+        # are withheld too, rather than treating an uncounted test as passing evidence.
+        observed, again, history_sources = [], {}, {}
     normative = [found for found in structural if found["normative"]]
     evaluated = [_requirement(req, verdicts, norm, [_structural_check(found) for found in normative
                                                     if found["requirement"] == req.id and found["verdict"] == FAILED],
