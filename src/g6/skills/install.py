@@ -2,12 +2,14 @@
 """One ownership rule and recoverable transaction for every skill writer."""
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
-import shutil
 import stat
-import tempfile
+import time
+import uuid
+import warnings
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
@@ -21,6 +23,8 @@ RECORDS = ("LICENSE", "VENDORED.md")
 MISSING = "G6_SKILL_SOURCE_RECORD_MISSING"
 DUPLICATE = "G6_SKILL_DUPLICATE_DESTINATION"
 RECOVERY = "G6_SKILL_RECOVERY_REQUIRED"
+CLEANUP = "G6_SKILL_CLEANUP_PENDING"
+QUARANTINED = "G6_SKILL_BACKUP_QUARANTINED"
 
 
 def unique_destinations(names) -> None:
@@ -174,10 +178,17 @@ def _lock(path: Path):
         stream.seek(0)
         if os.name == "nt":
             import msvcrt
-            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            while True:
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                        raise
+                    time.sleep(0.05)
         else:
             import fcntl
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
         try:
             yield
         finally:
@@ -188,20 +199,122 @@ def _lock(path: Path):
                 fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
-def _discard(staging: Path, before: dict | None) -> None:
-    backup = staging / "old"
-    if os.path.lexists(backup):
-        # Do not delete an earlier tree that a person changed through an open handle during the swap.
-        if not _matches(backup, before):
-            raise OSError(f"{RECOVERY}: retained changed earlier tree at {backup}")
-        shutil.rmtree(backup)
-    shutil.rmtree(staging)
-    _sync_dir(staging.parent)
+def _remove_tree(path: Path) -> None:
+    """Remove one inventory-checked leaf; never recurse through an unchecked tree."""
+    if not _plain_ancestors(path):
+        raise OSError(f"{RECOVERY}: linked garbage entry")
+    if path.is_dir():
+        path.rmdir()
+    else:
+        path.unlink()
 
 
-def _recover(target: Path, pending: Path, state: Path, destination: str, skill_id: str) -> None:
+def _stage_entry(staging: Path, pending: Path, journal: dict, name: str, data: bytes | None) -> None:
+    # The intent binds every possible interrupted write prefix to G6-held bytes.
+    # Other entries must still match the complete last recorded inventory.
+    journal["intent"] = {"name": name, "data": data.hex() if data is not None else None}
+    _save(pending, journal)
+    path = staging / name
+    if data is None:
+        path.mkdir()
+    else:
+        _write_bytes(path, data)
+    journal["work"][name] = hashlib.sha256(data).hexdigest() if data is not None else None
+    del journal["intent"]
+    _save(pending, journal)
+
+
+def _staging_inventory(staging: Path, journal: dict) -> dict:
+    """Select only an inventory described by the held write or tree records."""
+    expected = dict(journal.get("work", {}))
+    intent = journal.get("intent")
+    if intent:
+        path = staging / intent["name"]
+        if os.path.lexists(path):
+            if not _plain_ancestors(path):
+                raise OSError(f"{RECOVERY}: linked staged entry")
+            data = intent["data"]
+            if data is None:
+                if not path.is_dir():
+                    raise OSError(f"{RECOVERY}: changed staged directory")
+                expected[intent["name"]] = None
+            else:
+                actual = path.read_bytes()
+                if not bytes.fromhex(data).startswith(actual):
+                    raise OSError(f"{RECOVERY}: changed interrupted write")
+                expected[intent["name"]] = hashlib.sha256(actual).hexdigest()
+    if journal.get("staged") or "work" not in journal:
+        expected = {}
+        if os.path.lexists(staging / "new"):
+            expected["new"] = None
+            expected.update({f"new/{name}": digest for name, digest in journal["after"]["tree"].items()})
+    if os.path.lexists(staging / "old"):
+        before = journal.get("before")
+        if before is None:
+            raise OSError(f"{RECOVERY}: unrecorded earlier tree")
+        expected["old"] = None
+        expected.update({f"old/{name}": digest for name, digest in before["tree"].items()})
+    return expected
+
+
+def _cleanup(staging: Path, pending: Path, journal: dict) -> list[str]:
+    try:
+        expected = journal.get("garbage")
+        if expected is None:
+            try:
+                expected = _staging_inventory(staging, journal)
+            except OSError as exc:
+                raise OSError(f"{RECOVERY}: cannot check staged inventory: {exc}") from exc
+        if not os.path.lexists(staging) and expected:
+            raise OSError(f"{RECOVERY}: recorded staging tree is missing")
+        while os.path.lexists(staging):
+            if not _plain_ancestors(staging):
+                raise OSError(f"{RECOVERY}: linked staging folder")
+            try:
+                actual = _tree(staging)
+            except OSError as exc:
+                raise OSError(f"{RECOVERY}: cannot check garbage inventory: {exc}") from exc
+            removing = journal.get("removing")
+            remainder = dict(expected)
+            if removing in remainder:
+                del remainder[removing]
+            if actual != expected and not (removing and actual == remainder):
+                raise OSError(f"{RECOVERY}: retained changed transaction tree at {staging}")
+            expected = actual
+            if expected:
+                name = sorted(expected, key=lambda entry: (entry.count("/"), entry), reverse=True)[0]
+                leaf = staging / name
+            else:
+                name, leaf = ".", staging
+            journal["garbage"], journal["removing"] = expected, name
+            _save(pending, journal)
+            # Recheck after publishing the intent; a callback or another process
+            # may have edited a different entry while the journal was flushed.
+            if not _matches(staging, {"tree": expected}):
+                raise OSError(f"{RECOVERY}: garbage changed before removal")
+            _remove_tree(leaf)
+            _sync_dir(leaf.parent)
+            expected = dict(expected)
+            if name != ".":
+                del expected[name]
+        _sync_dir(staging.parent)
+        _save(pending, None)
+    except OSError as exc:
+        if RECOVERY in str(exc):
+            raise
+        journal["cleanup_error"] = str(exc)
+        try:
+            _save(pending, journal)
+        except OSError:
+            # The existing decision journal is sufficient to retry cleanup.
+            pass
+        return [f"{CLEANUP}: {exc}"]
+    return []
+
+
+def _recover(target: Path, pending: Path, state: Path, destination: str, skill_id: str) -> list[str]:
     if not os.path.lexists(pending):
-        return
+        return []
     journal = _load(pending)
     if journal is None:
         raise OSError(f"{RECOVERY}: unreadable transaction")
@@ -214,30 +327,80 @@ def _recover(target: Path, pending: Path, state: Path, destination: str, skill_i
     staging = target.parent / name
     if not _plain_ancestors(staging):
         raise OSError(f"{RECOVERY}: linked transaction folder")
-    backup = staging / "old"
-    if not os.path.lexists(target) and os.path.lexists(backup):
-        if not _plain_ancestors(backup) or not backup.is_dir():
-            raise OSError(f"{RECOVERY}: invalid earlier tree")
-        backup.rename(target)
-        _sync_dir(target.parent)
+    backup, incoming = staging / "old", staging / "new"
+    phase = journal.get("phase")
+    if phase is None:
+        # Preserve the former recovery contract for journals without a phase:
+        # a complete renamed replacement was already considered published.
+        phase = "published" if _matches(target, after) else "prepared"
+        journal["phase"] = phase
+        _save(pending, journal)
+    if phase not in ("prepared", "published", "rolled_back"):
+        raise OSError(f"{RECOVERY}: invalid transaction phase")
+    notices = []
+    personal_return = journal.get("personal_return")
+    if personal_return:
+        # A live, content-identical swap can return the just-moved personal
+        # directory to its original name. This record authorizes only that
+        # return, never deletion or later replacement of the personal tree.
+        if _matches(backup, personal_return):
+            if os.path.lexists(target):
+                if not _matches(target, after) or os.path.lexists(incoming):
+                    raise OSError(f"{RECOVERY}: personal return destination changed")
+                os.replace(target, incoming)
+            if not _matches(backup, personal_return):
+                raise OSError(f"{RECOVERY}: personal return tree changed")
+            backup.rename(target)
+            _sync_dir(target.parent)
+            _sync_dir(staging)
+        if not _matches(target, personal_return) or os.path.lexists(backup):
+            raise OSError(f"{RECOVERY}: personal return inventory changed")
+        journal["phase"] = "rolled_back"
+        _save(pending, journal)
         _save(state, before)
-    elif _matches(target, after):
-        _save(state, after)
-    elif _matches(target, before):
-        _save(state, before)
-    elif os.path.lexists(backup):
-        raise OSError(f"{RECOVERY}: destination changed; retained both trees")
-    elif os.path.lexists(target):
-        # A change before the first rename is personal, never grounds for replacement.
-        _save(state, before)
-    else:
-        _save(state, before)
-    if staging.exists():
-        _discard(staging, before)
-    _save(pending, None)
+        return _cleanup(staging, pending, journal)
+    if os.path.lexists(target) and not (_matches(target, after) or _matches(target, before)):
+        # Keep a live edit at its destination. Only the separately inventoried
+        # G6 staging entries may be cleaned; changed backup/staging still refuse.
+        journal["phase"] = "published" if phase == "published" else "rolled_back"
+        _save(pending, journal)
+        _save(state, after if phase == "published" else before)
+        return _cleanup(staging, pending, journal)
+    # An interrupted garbage deletion has its own durable, shrinking inventory.
+    if "garbage" in journal:
+        selected = after if phase == "published" else before
+        if _load(state) != selected:
+            _save(state, selected)
+        return _cleanup(staging, pending, journal)
+    if phase == "prepared":
+        if os.path.lexists(backup) and not _matches(backup, before):
+            raise OSError(f"{RECOVERY}: retained changed earlier tree at {backup}")
+        if os.path.lexists(backup):
+            if os.path.lexists(target):
+                if not _matches(target, after) or os.path.lexists(incoming):
+                    raise OSError(f"{RECOVERY}: destination changed; retained both trees")
+                target.rename(incoming)
+            if not _matches(backup, before):
+                raise OSError(f"{RECOVERY}: earlier tree changed during restoration")
+            backup.rename(target)
+            _sync_dir(target.parent)
+            _sync_dir(staging)
+        elif before is None and _matches(target, after):
+            target.rename(incoming)
+            _sync_dir(target.parent)
+            _sync_dir(staging)
+        elif before is not None and not _matches(target, before):
+            raise OSError(f"{RECOVERY}: recorded earlier tree is missing")
+        journal["phase"] = "rolled_back"
+        _save(pending, journal)
+    # Never restore old after the durable publish decision, even if old is now partial.
+    selected = after if journal["phase"] == "published" else before
+    if _load(state) != selected:
+        _save(state, selected)
+    return notices + _cleanup(staging, pending, journal)
 
 
-def recover_installs(target: Path, *, children: bool = False) -> None:
+def recover_installs(target: Path, *, children: bool = False) -> list[str]:
     """Recover pending destinations before a writer discovers or validates any source.
 
     Identity comes from the G6-held journal so a removed or renamed source cannot
@@ -247,28 +410,41 @@ def recover_installs(target: Path, *, children: bool = False) -> None:
     if not _plain_ancestors(root):
         raise OSError(f"{RECOVERY}: linked state folder")
     if not root.exists():
-        return
+        return []
     scope = os.path.normcase(str(target.absolute().resolve()))
-    for pending in sorted(root.glob("*.pending")):
-        journal = _load(pending)
-        after = journal.get("after") if journal else None
-        if (not isinstance(after, dict) or not isinstance(after.get("destination"), str)
-                or not isinstance(after.get("skill_id"), str)):
-            raise OSError(f"{RECOVERY}: unreadable transaction destination")
-        destination, skill_id = after["destination"], after["skill_id"]
-        folder = Path(destination)
-        if (not folder.is_absolute() or os.path.normcase(str(folder.resolve())) != destination):
-            raise OSError(f"{RECOVERY}: invalid transaction destination")
-        if (os.path.normcase(str(folder.parent)) if children else destination) != scope:
-            continue
-        if not _plain_ancestors(folder) or root.resolve().is_relative_to(folder.resolve()):
-            raise OSError(f"{RECOVERY}: invalid transaction path")
-        key = hashlib.sha256(destination.encode("utf-8")).hexdigest()
-        if pending.name != f"{key}.pending":
-            raise OSError(f"{RECOVERY}: transaction key does not match destination")
-        identity = hashlib.sha256((destination + "\0" + skill_id).encode("utf-8")).hexdigest()
+    notices = []
+    # Enumerate while holding the same lock used to read and retire each journal.
+    # Names alone provide the lock identity, so no journal bytes are read unlocked.
+    keys = sorted(p.stem for p in root.glob("*.pending"))
+    for key in keys:
+        if len(key) != 64 or any(c not in "0123456789abcdef" for c in key):
+            raise OSError(f"{RECOVERY}: invalid transaction key")
         with _lock(root / f"{key}.lock"):
-            _recover(folder, pending, root / f"{identity}.json", destination, skill_id)
+            pending = root / f"{key}.pending"
+            if pending not in root.glob("*.pending"):
+                continue
+            journal = _load(pending)
+            if journal is None and not os.path.lexists(pending):
+                continue
+            after = journal.get("after") if journal else None
+            if (not isinstance(after, dict) or not isinstance(after.get("destination"), str)
+                    or not isinstance(after.get("skill_id"), str)):
+                raise OSError(f"{RECOVERY}: unreadable transaction destination")
+            destination, skill_id = after["destination"], after["skill_id"]
+            folder = Path(destination)
+            if (not folder.is_absolute() or os.path.normcase(str(folder.resolve())) != destination):
+                raise OSError(f"{RECOVERY}: invalid transaction destination")
+            if (os.path.normcase(str(folder.parent)) if children else destination) != scope:
+                continue
+            if not _plain_ancestors(folder) or root.resolve().is_relative_to(folder.resolve()):
+                raise OSError(f"{RECOVERY}: invalid transaction path")
+            if key != hashlib.sha256(destination.encode("utf-8")).hexdigest():
+                raise OSError(f"{RECOVERY}: transaction key does not match destination")
+            identity = hashlib.sha256((destination + "\0" + skill_id).encode("utf-8")).hexdigest()
+            notices.extend(_recover(folder, pending, root / f"{identity}.json", destination, skill_id))
+    for notice in notices:
+        warnings.warn(notice, RuntimeWarning, stacklevel=2)
+    return notices
 
 
 def install_files(files: dict[str, Path], target: Path, *, skill_id: str | None = None) -> str:
@@ -277,7 +453,7 @@ def install_files(files: dict[str, Path], target: Path, *, skill_id: str | None 
     A destination receipt is provenance, never authority. Ordinary directory renames need a brief name gap;
     caught failures roll back and a durable journal lets the next invocation recover after process death.
     """
-    recover_installs(target)
+    notices = recover_installs(target)
     target = target.absolute()
     if not _plain_ancestors(target):
         return KEPT
@@ -294,12 +470,16 @@ def install_files(files: dict[str, Path], target: Path, *, skill_id: str | None 
         return KEPT
     root.mkdir(parents=True, exist_ok=True)
     with _lock(root / f"{key}.lock"):
-        _recover(target, pending, state, destination, skill_id)
+        notices.extend(_recover(target, pending, state, destination, skill_id))
         before = _record(_load(state), destination, skill_id)
         present = os.path.lexists(target)
         if not _plain_ancestors(target) or (present and not _matches(target, before)):
             return KEPT
-        return _install(files, target, state, pending, before, destination, skill_id, present)
+        if pending.exists():
+            # A retained cleanup journal must not be overwritten by another install.
+            return ": ".join([UPDATED if present else INSTALLED, *notices])
+        reply = _install(files, target, state, pending, before, destination, skill_id, present)
+        return ": ".join([reply, *notices])
 
 
 def _install(files, target, state, pending, before, canonical_destination, skill_id, present):
@@ -314,67 +494,67 @@ def _install(files, target, state, pending, before, canonical_destination, skill
             raise OSError("G6_SKILL_SOURCE_INVALID: invalid payload path")
         if not _plain_ancestors(files[name]) or not stat.S_ISREG(files[name].stat().st_mode):
             raise OSError("G6_SKILL_SOURCE_INVALID: non-regular source item")
+    # Compute and bind the complete replacement before any staging mutation.
+    payload = {name: source.read_bytes() for name, source in files.items()}
+    tree = {name: hashlib.sha256(data).hexdigest() for name, data in payload.items()}
+    for name in payload:
+        for folder in PurePosixPath(name).parents:
+            if folder != PurePosixPath("."):
+                tree[folder.as_posix()] = None
+    payload[MARKER] = (json.dumps({"owner": "g6", "version": 1, "tree": tree}, sort_keys=True) + "\n").encode()
+    tree[MARKER] = hashlib.sha256(payload[MARKER]).hexdigest()
+    after = {"version": 1, "destination": canonical_destination, "skill_id": skill_id, "tree": tree}
     target.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=".g6-install-", dir=target.parent))
+    staging = target.parent / f".g6-install-{uuid.uuid4().hex}"
     incoming, backup = staging / "new", staging / "old"
-    after = None
-    committed = False
-    rollback_complete = True
+    journal = {"before": before, "after": after, "staging": staging.name,
+               "phase": "prepared", "work": {}}
+    _save(pending, journal)
     try:
-        incoming.mkdir()
-        for name, source in files.items():
-            destination = incoming / name
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            _write_bytes(destination, source.read_bytes())
-        _write_bytes(incoming / MARKER, _receipt(incoming))
+        staging.mkdir()
+        _stage_entry(staging, pending, journal, "new", None)
+        for name, data in payload.items():
+            for folder in reversed(PurePosixPath("new", name).parents):
+                if folder != PurePosixPath(".") and folder.as_posix() not in journal["work"]:
+                    _stage_entry(staging, pending, journal, folder.as_posix(), None)
+            _stage_entry(staging, pending, journal, f"new/{name}", data)
         for folder in sorted((p for p in incoming.rglob("*") if p.is_dir()), reverse=True):
             _sync_dir(folder)
         _sync_dir(incoming)
         _sync_dir(staging)
         _sync_dir(target.parent)
-        after = {"version": 1, "destination": canonical_destination, "skill_id": skill_id, "tree": _tree(incoming)}
-        _save(pending, {"before": before, "after": after, "staging": staging.name})
+        if not _matches(incoming, after):
+            raise OSError("G6_SKILL_SOURCE_INVALID: staged bytes changed")
+        journal["staged"] = True
+        _save(pending, journal)
         if present:
             if not _matches(target, before):
+                _recover(target, pending, state, canonical_destination, skill_id)
                 return KEPT
             target.rename(backup)
             incoming.rename(target)
         elif not _plain_ancestors(target) or os.path.lexists(target):
+            _recover(target, pending, state, canonical_destination, skill_id)
             return KEPT
         else:
             incoming.rename(target)
         _sync_dir(target.parent)
         _sync_dir(staging)
-        if present and before["tree"] == after["tree"] and not _matches(backup, before):
-            # No distinct new content would be lost: restore the person's edited
-            # earlier tree. Distinct versions are both retained by _discard below.
-            target.rename(incoming)
-            backup.rename(target)
-            _sync_dir(target.parent)
-            _sync_dir(staging)
-            return KEPT
+        if present and not _matches(backup, before):
+            if before["tree"] == after["tree"] and _plain_ancestors(backup):
+                # Return an edit to the very directory this live no-op swap
+                # moved. Never turn these personal hashes into install authority.
+                journal["personal_return"] = {"tree": _tree(backup)}
+                _save(pending, journal)
+                _recover(target, pending, state, canonical_destination, skill_id)
+                return KEPT
+            raise OSError(f"{RECOVERY}: retained changed earlier tree at {backup}")
         _save(state, after)
-        committed = True
+        journal["phase"] = "published"
+        _save(pending, journal)
     except BaseException:
-        # An interrupt can arrive AFTER a successful rename or state-file publication.
-        rollback_complete = False
-        if os.path.lexists(backup):
-            if _matches(target, after) and not os.path.lexists(incoming):
-                target.rename(incoming)
-                backup.rename(target)
-                _sync_dir(target.parent)
-            elif not os.path.lexists(target):
-                backup.rename(target)
-                _sync_dir(target.parent)
-        elif not present and _matches(target, after):
-            target.rename(incoming)
-        if not os.path.lexists(backup):
-            _save(state, before)
-            rollback_complete = True
+        # Read the durable phase: a raised write may already have replaced its file.
+        _recover(target, pending, state, canonical_destination, skill_id)
         raise
-    finally:
-        # Retain both names and the journal if rollback could not complete.
-        if committed or (rollback_complete and not os.path.lexists(backup)):
-            _discard(staging, before)
-            _save(pending, None)
-    return UPDATED if present else INSTALLED
+    notices = _cleanup(staging, pending, journal)
+    return ": ".join([UPDATED if present else INSTALLED, *notices])
