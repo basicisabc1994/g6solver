@@ -54,12 +54,16 @@ def test_exception_instance_keeps_message_based_review_gate():
     )
 
 
-def test_sent_fallback_consent_refusal_returns_stable_loop_code(monkeypatch):
+def test_sent_fallback_consent_refusal_returns_stable_loop_code(tmp_path, monkeypatch):
     from g6.core.llm import FallbackCaller, LLMError
     from g6.core.model_calls import note_model_call
     from g6.harness import completion_loop as loop
 
-    root, state = Path.cwd(), {}
+    scratch = tmp_path / "scratch-cwd"
+    scratch.mkdir()
+    monkeypatch.chdir(scratch)
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    root, state = tmp_path / "run", {}
 
     def first(*args, **kwargs):
         note_model_call()
@@ -97,6 +101,7 @@ def test_sent_fallback_consent_refusal_returns_stable_loop_code(monkeypatch):
     assert step.ending == "untested"
     assert state["requests_sent"] == 1
     assert "not sent" not in step.text.lower()
+    assert list(scratch.iterdir()) == []
 
 
 # --- recognising a consent refusal never depends on the count; the count decides only the wording -------------------
