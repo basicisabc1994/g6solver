@@ -23,6 +23,8 @@ classifiers = [
 dependencies = ["pydantic>=2.6", "returns>=0.22"]
 
 [project.optional-dependencies]
+# Optional passage extraction; explicit G6 provider only. Heavy, excluded from all.
+langextract = ["langextract==1.7.2"]
 # Optional local NLI (Apache-2.0 sentence-transformers; same closure as embeddings).
 # No default weights or download; torch's existing platform-specific licence waiver applies.
 nli = ["sentence-transformers>=5.0,<6"]
