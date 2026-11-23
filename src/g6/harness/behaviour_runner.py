@@ -186,14 +186,77 @@ class CheckSetupError(TypeError):
     """A generated check could not prepare a call; the operation has not run."""
 
     def __init__(self, reason):
+        if type(reason) is not str:
+            reason = "exception_description: unavailable"
         super().__init__(reason if reason.startswith("G6_E_") else "G6_E_CHECK_SETUP: " + reason)
+
+
+def raised_during_setup(exc):
+    """Identify preparation by G6's actual frame, without reading repository exception attributes.
+
+    Method wrappers prepare immediately before invocation. Their operation handlers surround both phases, so
+    let a preparation failure through there. Follow only this generated program's frames, stopping before the
+    repository operation. That also excludes older tracebacks retained on a reused exception. Neither repository
+    functions named setup_call nor an operation's own calls into G6 can claim the outer preparation boundary.
+    """
+    trace = BaseException.__dict__['__traceback__'].__get__(exc)
+    while trace is not None and trace.tb_frame.f_globals is setup_call.__globals__:
+        if trace.tb_frame.f_code is setup_call.__code__:
+            return True
+        trace = trace.tb_next
+    return False
+
+
+def exception_name(kind):
+    """Read type metadata without instance or metaclass lookup or display hooks."""
+    own = type.__dict__
+    module = own['__module__'].__get__(kind)
+    name = own['__qualname__'].__get__(kind)
+    module = module if type(module) is str else '<unavailable>'
+    name = name if type(name) is str else '<unavailable>'
+    return name if module == 'builtins' else module + '.' + name
+
+
+def exception_matches(exc, kind):
+    """Exception ancestry matching without an instance's __class__ override."""
+    return any(base is kind for base in type.__dict__['__mro__'].__get__(type(exc)))
+
+
+def exception_message(exc, fallback):
+    """A stored, single exact string needs no display or attribute hook."""
+    args = BaseException.__dict__['args'].__get__(exc)
+    return args[0] if len(args) == 1 and type(args[0]) is str else fallback
+
+
+def exception_detail(exc, fallback):
+    """Keep stable G6 codes from raw storage, never by executing an exception's hooks.
+
+    A G6 type (or its subclass) may carry its code in the instance dictionary or class namespace. Plain
+    exceptions retain a leading G6_E_ message from their built-in args slot. Only exact strings are read;
+    properties, overridden attribute access, formatting and string conversion are never needed.
+    """
+    own = type.__dict__
+    ancestry = own['__mro__'].__get__(type(exc))
+    namespaces = [own['__dict__'].__get__(kind) for kind in ancestry]
+    g6_type = any(type(module := own['__module__'].__get__(kind)) is str and module.startswith('g6.')
+                  for kind in ancestry)
+    if g6_type:
+        storage = BaseException.__dict__['__dict__'].__get__(exc)
+        for items in (dict.items(storage), *(namespace.items() for namespace in namespaces)):
+            # Even a hostile dictionary key must not participate in lookup or equality.
+            for key, value in items:
+                if type(key) is str and key == 'code' and type(value) is str and value.startswith('G6_E_'):
+                    return value + ': ' + fallback
+    args = BaseException.__dict__['args'].__get__(exc)
+    if args and type(args[0]) is str and args[0].startswith('G6_E_'):
+        return args[0]
+    return fallback
 
 
 def setup_call(phase, function, *args, **kwargs):
     """Keep preparation exceptions out of the operation's outcome handlers."""
     LETS_THROUGH = (CheckSetupError, concurrent.futures.CancelledError)
-    # The portable child has no G6 dependency. In the host (including in-process reproductions), retain the
-    # actual control types from the already-loaded host module without importing a repository homonym.
+    # Portable children have no G6 dependency; only consult the already-loaded host module.
     controls = sys.modules.get("g6.core.component_process")
     if controls is not None:
         LETS_THROUGH += (controls.ExecutionInterrupted, controls.ContainmentFailure)
@@ -202,8 +265,7 @@ def setup_call(phase, function, *args, **kwargs):
     except LETS_THROUGH:
         raise
     except Exception as exc:
-        reason = str(exc)
-        raise CheckSetupError(reason if reason.startswith("G6_E_") else phase) from exc
+        raise CheckSetupError(exception_detail(exc, phase)) from exc
 
 
 def runtime_method(state, cls, method_name):
@@ -263,15 +325,16 @@ def _import_roots(spec, roots=None):
 
 # Loaded before any repository module. There is no site initialisation, PYTHONPATH, pytest, plugin or ini reader.
 BOOTSTRAP = (inspect.getsource(observable_exception) + '\n' + inspect.getsource(_fingerprint) + '\n'
+             + inspect.getsource(raised_during_setup) + '\n' + inspect.getsource(exception_name) + '\n'
+             + inspect.getsource(exception_matches) + '\n' + inspect.getsource(exception_detail) + '\n'
+             + inspect.getsource(exception_message) + '\n'
              + inspect.getsource(_exception_observation) + '\n' + inspect.getsource(CheckSetupError) + '\n'
              + inspect.getsource(setup_call) + '\n' + inspect.getsource(runtime_method) + '\n'
              + inspect.getsource(bind_method) + '\n'
              + inspect.getsource(_import_roots)) + r'''
 import builtins, collections.abc, concurrent.futures, copy, hashlib, importlib, importlib.machinery, json, os, re, struct, sys
 def _name(kind):
-    module = getattr(kind, "__module__", None) or ""
-    name = getattr(kind, "__qualname__", None) or getattr(kind, "__name__", None) or "?"
-    return name if module == "builtins" else module + "." + name
+    return setup_call("exception_description", exception_name, kind)
 
 def _shown(value, limit=200):
     try:
@@ -422,7 +485,7 @@ def setup_failed(exc):
     # Differential probes retain their existing unavailable-observation contract on bootstrap failure.
     if data["probe"]:
         raise exc
-    payload = dumps({"version": "check_setup.v1", "detail": str(exc)},
+    payload = dumps({"version": "check_setup.v1", "detail": exception_detail(exc, "setup")},
                     sort_keys=True, allow_nan=False).encode("utf-8")
     if len(payload) > 1048576:
         raise RuntimeError("setup error too large")
@@ -442,6 +505,8 @@ for call in data["calls"]:
     except CheckSetupError as exc:
         setup_failed(exc)
     except BaseException as exc:
+        if raised_during_setup(exc):
+            raise
         alive.append(exc)
         errors = resolved()
         outcomes.append(_exception_observation(exc, errors, data['probe']))
@@ -667,7 +732,9 @@ def example_text(slot: str) -> str:
     host-owned result channel, never from collection, plugins or the wrapper's pytest status.
     """
     helpers = "\n\n".join(inspect.getsource(one) for one in (
-        CheckSetupError, setup_call, _unique, _encoded, _fingerprint, _valid_encoding, _matches_encoding, read_frame, finish,
+        CheckSetupError, raised_during_setup, exception_name, exception_matches, exception_detail, exception_message,
+        setup_call,
+        _unique, _encoded, _fingerprint, _valid_encoding, _matches_encoding, read_frame, finish,
         _import_roots, located, request))
     return ("import concurrent.futures, hashlib, json, struct, subprocess, tempfile, sys, os\nfrom pathlib import Path\n"
             "TEMPLATE = 'example.v1'\nBINDINGS = " + slot

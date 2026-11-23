@@ -135,6 +135,8 @@ class Scenario:
 
         helpers = "\n\n".join(inspect.getsource(one) for one in (
             runner.CheckSetupError,
+            runner.raised_during_setup, runner.exception_name, runner.exception_matches, runner.exception_detail,
+            runner.exception_message,
             runner.setup_call,
             _comparison,
             runner._unique, runner._encoded, runner._fingerprint, runner._valid_encoding,

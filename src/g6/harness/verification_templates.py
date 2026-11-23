@@ -93,7 +93,10 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationErr
 from g6.core import component_process
 from g6.core.git_name import shown
 from g6.harness import verification_search as vs
-from g6.harness.behaviour_runner import CheckSetupError, bind_method, example_text, runtime_method, setup_call
+from g6.harness.behaviour_runner import (
+    CheckSetupError, bind_method, example_text, runtime_method, setup_call,
+    raised_during_setup, exception_name, exception_matches, exception_detail, exception_message,
+)
 from g6.workforce import repo_tests
 
 REQUIREMENT_SATISFACTION = "requirement_satisfaction"
@@ -705,7 +708,7 @@ def resolve(tree: Tree, dotted: str, side: str) -> Target:
     try:   # a RecursionError or a MemoryError, Python's parser out of depth, is G6's own error (review I3), not here
         found, star = _top_level(ast.parse(tree.text(rel, side)), attribute)
     except (SyntaxError, ValueError, OSError, repo_tests.RepoRefused) as exc:
-        raise Inapplicable(f"{dotted}: {rel} could not be read or parsed {WHERE[side]} ({type(exc).__name__})") from exc
+        raise Inapplicable(f"{dotted}: {rel} could not be read or parsed {WHERE[side]} ({exception_name(type(exc))})") from exc
     if found is None:
         raise Inapplicable(f"{dotted}: no top-level name {attribute} in {rel} {WHERE[side]}"
                            + ("; it could come only from a star import, which G6 does not follow" if star else ""))
@@ -1028,7 +1031,8 @@ def test_relation():
                 left, right = _call(function, _call(other, value)), _call(function, value)
             holds = _same(left, right)
         except BaseException as exc:
-            if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
+            if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
+                    or raised_during_setup(exc)):
                 raise
             failures.append("input %d raised %s" % (index, _name(type(exc))))
             raised.append(_raised(exc))
@@ -1044,7 +1048,8 @@ def test_relation():
                 ordered = low > high if BINDINGS["strict"] else low >= high
             ordered = bool(ordered)
         except BaseException as exc:
-            if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
+            if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
+                    or raised_during_setup(exc)):
                 raise
             failures.append("inputs %d and %d: comparing their results raised %s" % (first, second,
                                                                                     _name(type(exc))))
@@ -1069,9 +1074,10 @@ def test_access_rule():
             result = operation(*copy.deepcopy(case["args"]), **copy.deepcopy(case["kwargs"]))
             refused = error is None and not result
         except BaseException as exc:
-            if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
+            if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
+                    or raised_during_setup(exc)):
                 raise
-            if error is None or not isinstance(exc, error):
+            if error is None or not exception_matches(exc, error):
                 failures.append(asked + " raised " + _name(type(exc)))
                 raised.append(_raised(exc))
                 continue
@@ -1142,13 +1148,15 @@ def _outcome(call):
     try:
         function = _load(BINDINGS["function"])
     except BaseException as exc:
-        if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
+        if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
+                or raised_during_setup(exc)):
             raise
         return {"unresolved": _name(type(exc))}
     try:
         result = function(*copy.deepcopy(call["args"]), **copy.deepcopy(call["kwargs"]))
     except BaseException as exc:
-        if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
+        if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
+                or raised_during_setup(exc)):
             raise
         return {"raised": _name(type(exc))}
     if BINDINGS["mode"] == "exceptions":
@@ -1156,7 +1164,8 @@ def _outcome(call):
     try:
         return {"returned": _bounded(_plain(result))}
     except BaseException as exc:
-        if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
+        if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
+                or raised_during_setup(exc)):
             raise
         return {"unreadable": _name(type(exc))}
 
@@ -1239,7 +1248,8 @@ def _read(state, read):
     try:
         result = _call(read, state)
     except BaseException as exc:
-        if isinstance(exc, (KeyboardInterrupt, CheckSetupError)) or error is None or not isinstance(exc, error):
+        if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
+                or raised_during_setup(exc) or error is None or not exception_matches(exc, error)):
             raise
         return False
     return True if error is not None else bool(result)
@@ -1255,7 +1265,8 @@ def _replay(trace):
         try:
             _call(BINDINGS["actions"][str(value)], state)
         except BaseException as exc:
-            if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
+            if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
+                    or raised_during_setup(exc)):
                 raise
             return {"outcome": "operation_failed", "why": "step %d (action %d) raised %s" % (
                 step + 1, value, _name(type(exc)))}
@@ -1264,7 +1275,8 @@ def _replay(trace):
         try:
             got = _read(state, read)
         except BaseException as exc:
-            if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
+            if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
+                    or raised_during_setup(exc)):
                 raise
             return {"outcome": "operation_failed", "why": "reading " + name + " raised " + _name(type(exc))}
         if type(got) not in (bool, int) or (type(got) is bool) != (BINDINGS["sorts"][name] == "Bool"):
@@ -1274,7 +1286,7 @@ def _replay(trace):
     try:
         broken = [name for name, term in BINDINGS["invariants"].items() if not _value(term, values)]
     except BaseException as exc:
-        if isinstance(exc, KeyboardInterrupt):
+        if exception_matches(exc, KeyboardInterrupt) or raised_during_setup(exc):
             raise
         return _not_replayable("evaluating the invariants on the values read", exc)
     observed = {name: values[name] for name in BINDINGS["observe"]}
@@ -1317,7 +1329,10 @@ import sys
 import pytest
 """
 
-_LEGACY_COMMON = ("\n" + inspect.getsource(CheckSetupError) + "\n" + inspect.getsource(setup_call)
+_LEGACY_COMMON = ("\n" + inspect.getsource(CheckSetupError) + "\n" + inspect.getsource(raised_during_setup)
+                  + "\n" + inspect.getsource(exception_name) + "\n" + inspect.getsource(exception_matches)
+                  + "\n" + inspect.getsource(exception_detail) + "\n" + inspect.getsource(setup_call)
+                  + "\n" + inspect.getsource(exception_message)
                   + "\n" + inspect.getsource(runtime_method) + "\n" + inspect.getsource(bind_method)) + """
 
 def _load(spec):
@@ -1349,9 +1364,7 @@ def _error(spec):
 
 
 def _name(kind):
-    module = getattr(kind, "__module__", None) or ""
-    name = getattr(kind, "__qualname__", None) or getattr(kind, "__name__", None) or "?"
-    return name if module == "builtins" else module + "." + name
+    return setup_call("exception_description", exception_name, kind)
 
 
 def _shown(value, limit=200):
@@ -1364,10 +1377,8 @@ def _shown(value, limit=200):
 
 def _raised(exc):
     # an exception, its type at the start of a line, so a refusal by the run's boundary reads as one
-    try:
-        said = str(exc)
-    except Exception:
-        said = ""
+    message = setup_call("exception_description", exception_message, exc, "<unavailable>")
+    said = setup_call("exception_description", exception_detail, exc, message)
     return _name(type(exc)) + ": " + _shown(said)
 
 
@@ -1810,12 +1821,12 @@ def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInsta
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
             raise   # an operator stop or unconfirmed process cleanup must reach the enclosing door
         except (Inapplicable, ValueError, OSError, SyntaxError, repo_tests.RepoRefused) as exc:
-            why = str(exc) if isinstance(exc, Inapplicable) else (
-                f"G6 could not read what it names ({type(exc).__name__})")
+            why = exception_message(exc, "template unavailable") if exception_matches(exc, Inapplicable) else (
+                f"G6 could not read what it names ({exception_name(type(exc))})")
             _not_applied(found, one, definition, {**_listing(one), "result": "refused",
                                                   "reason": f"{why} {FALLBACK}"})
         except Exception as exc:   # RecursionError, MemoryError, any other: an activity's error (the VS-3 review, I2)
-            _not_applied(found, one, definition, {**_listing(one), "result": "error", "reason": vs.stopped(exc),
+            _not_applied(found, one, definition, {**_listing(one), "result": "error", "reason": exception_name(type(exc)),
                                                   "stopped": f"template instance {one.id}"})
     return found
 
