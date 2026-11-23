@@ -5,6 +5,8 @@ from __future__ import annotations
 import ntpath
 import re
 import shlex
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 from g6.coding_agent_gate.evidence import Evidence
@@ -14,18 +16,36 @@ _LINE = re.compile(r":\d+(?:-\d+)?$")
 
 
 def _test_refs(command: str) -> list[str]:
-    return [word for words in _segments(command) for word in words
-            if not word.startswith("-") and _TEST_FILE.search(word.split("::", 1)[0])]
+    paths, _ = _classified(command)
+    return [word for word in paths if _TEST_FILE.search(word.split("::", 1)[0])]
 
 
 _PUNCTUATION = frozenset(";&|<>()")
 #: The test runner whose positional arguments are all paths or node ids.
 _RUNNERS = frozenset({"pytest", "py.test"})
-#: pytest options whose value is the next word, never a test path.
-_VALUE_OPTIONS = frozenset({"-k", "-m", "-p", "-c", "-o", "-n", "-W", "-r", "--tb", "--maxfail", "--rootdir",
-                            "--basetemp", "--junitxml", "--junit-xml", "--deselect", "--ignore", "--ignore-glob",
-                            "--confcutdir", "--log-level", "--durations", "--timeout", "--cov", "--cov-report",
-                            "--import-mode", "--capture", "--color", "--override-ini"})
+
+
+def _shell_words(command: str):
+    """POSIX shlex tokens with their original spans, retaining quoting and adjacency.
+
+    shlex reads one character ahead at a punctuation boundary. Its character
+    pushback belongs to the next token, not the current span. A consumed whitespace
+    delimiter likewise is not part of a word. No second shell grammar decodes words.
+    """
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    while True:
+        start = lexer.instream.tell() - len(lexer._pushback_chars)
+        word = lexer.get_token()
+        if word is None:
+            return
+        while start < len(command) and command[start] in lexer.whitespace:
+            start += 1
+        end = lexer.instream.tell() - len(lexer._pushback_chars)
+        if lexer.state == " " and end > start and command[end - 1] in lexer.whitespace:
+            end -= 1
+        yield word, command[start:end], start, end
 
 
 def _segments(command: str) -> list[list[str]]:
@@ -34,28 +54,30 @@ def _segments(command: str) -> list[list[str]]:
     A pipe starts another program; a redirect changes the current program's IO,
     never starts a program or names a test. Unsupported IO syntax fails closed.
     """
-    lexer = shlex.shlex(command, posix=False, punctuation_chars=";&|<>()")
-    lexer.whitespace_split = True
-    lexer.commenters = ""
     segments: list[list[str]] = [[]]
     operand = False
-    for word in lexer:
+    previous = None
+    for word, raw, start, end in _shell_words(command):
+        operator = raw == word and word and set(word) <= _PUNCTUATION
         if operand:
-            if word and set(word) <= _PUNCTUATION:
+            if operator or not word:
                 raise ValueError("redirection needs an operand")
             operand = False
             continue
-        if word and set(word) <= _PUNCTUATION:
-            if set(word) & {"<", ">"}:
-                if word not in {"<", ">", ">>", "<&", ">&"}:
-                    raise ValueError("unsupported redirection shape")
-                if segments[-1] and segments[-1][-1].isdigit():
+        if operator:
+            if word in {"<", ">", ">>", "<&", ">&", "&>"}:
+                if (word != "&>" and previous is not None and previous[1] == start
+                        and previous[0].isascii() and previous[0].isdigit()):
                     segments[-1].pop()
                 operand = True
-            else:
+            elif word in {";", "&&", "||", "|"}:
                 segments.append([])
+            else:
+                raise ValueError("unsupported shell operator")
+            previous = None
         else:
-            segments[-1].append(word.strip("\"'"))
+            segments[-1].append(word)
+            previous = (raw, end)
     if operand:
         raise ValueError("redirection needs an operand")
     return [words for words in segments if words]
@@ -65,7 +87,39 @@ def _pathlike(word: str) -> bool:
     return bool(_TEST_FILE.search(word.split("::", 1)[0])) or "/" in word or "\\" in word or word.startswith(".")
 
 
+def _pytest_selectors(words: list[str]) -> list[str]:
+    """Use pytest's built-in option registrations, without initialization or collection.
+
+    get_config registers only pytest's built-ins. Calling the parser directly skips
+    preparse: no conftest, entry-point plugins, PYTEST_ADDOPTS or PYTEST_PLUGINS.
+    In particular, -p is parsed as data, never used to import a named plugin.
+    Unknown plugin options and incompatible/missing pytest parsers fail closed.
+    """
+    from _pytest.config import get_config
+
+    before, after = (words[:words.index("--")], words[words.index("--") + 1:]) if "--" in words else (words, [])
+    config = get_config(args=[])
+    try:
+        return list(config._parser.parse(before).file_or_dir) + after
+    finally:
+        config._ensure_unconfigure()
+
+
 def _classified(command: str) -> tuple[list[str], list[str]]:
+    """Contain every command-reading failure and parser diagnostic at one boundary.
+
+    An unreadable command contributes no partial selectors, only its unchecked
+    reference. The gate's existing unchecked-reference finding requires revision;
+    independent policy and shortcut findings still keep their own severity.
+    """
+    with StringIO() as output, redirect_stdout(output), redirect_stderr(output):
+        try:
+            return _classify(command)
+        except (Exception, SystemExit):
+            return [], [command]
+
+
+def _classify(command: str) -> tuple[list[str], list[str]]:
     """A test command's path references, and the words G6 cannot classify as program, option or path.
 
     After a recognised pytest program/module every positional word is a path or node id. In any other command, a word
@@ -86,14 +140,7 @@ def _classified(command: str) -> tuple[list[str], list[str]]:
                 and len(words) >= 3 and words[1] == "-m" and words[2] in _RUNNERS):
             runner = 2
         if runner is not None:
-            value = False
-            for word in words[runner + 1:]:
-                if value:
-                    value = False
-                elif word.startswith("-"):
-                    value = word in _VALUE_OPTIONS
-                else:
-                    paths.append(word)
+            paths.extend(_pytest_selectors(words[runner + 1:]))
             continue
         unknown.append(words[0])  # an unknown runner cannot establish that all references were checked
         for word in words[0 if _pathlike(words[0]) else 1:]:
@@ -104,10 +151,7 @@ def _classified(command: str) -> tuple[list[str], list[str]]:
 
 def named_tests(command: str) -> list[str]:
     """File/node arguments, not an interpretation or execution of the shell command."""
-    try:
-        return _test_refs(command)
-    except ValueError:
-        return []
+    return _test_refs(command)
 
 
 def usable_path(text: str) -> bool:
@@ -149,11 +193,7 @@ def check_references(evidence, *, repo_root: str | None, paths) -> tuple[list[st
         if not usable_path(item.ref):
             unchecked.append(item.ref)  # no path holds a NUL or an unpaired surrogate
             continue
-        try:
-            refs, unknown = ([item.ref], []) if item.kind == "file" else _classified(item.ref)
-        except ValueError:
-            unchecked.append(item.ref)  # an unparseable command cannot establish that its references resolve
-            continue
+        refs, unknown = ([item.ref], []) if item.kind == "file" else _classified(item.ref)
         unchecked += unknown
         for ref in refs:
             rel = _relative(ref.split("::", 1)[0])
