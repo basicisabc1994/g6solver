@@ -168,7 +168,7 @@ from g6.core.block_contract import BlockContract
 from g6.core.compose import Stage, compose
 from g6.core.guidance_builders import blocked_reply
 from g6.core.errors import ISOLATION_UNAVAILABLE
-from g6.core.git_name import shown
+from g6.core.git_name import shown, shown_name
 from g6.core.ledger import digest
 from g6.core.guidance_builders import envelope_fields, warning_card
 from g6.core.result import Result
@@ -1061,73 +1061,123 @@ def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, dead
         return record
     skipped = []
 
+    def checkpoint():
+        if time.monotonic() >= end:
+            raise TimeoutError("change map time budget is spent")
+        component_process.checkpoint()
+
+    def bounded(items):
+        for item in items:
+            checkpoint()
+            yield item
+
     def read():
+        checkpoint()
         base_names = repo_tests._paths(repo_tests._git(
             change.repo, "ls-tree", "-r", "-z", "--name-only", change.base_commit))
         patch_names = repo_tests._paths(repo_tests._git(
             change.repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z"))
-        checks = {node.partition("::")[0] for node in stated_checks}
-        inventory = sorted({p for p in (*base_names, *patch_names, *change.files) if p.endswith(".py")},
+        checks = {node.partition("::")[0] for node in bounded(stated_checks)}
+        paths = set()
+        for p in bounded((*base_names, *patch_names, *change.files)):
+            if p.endswith(".py"):
+                paths.add(p)
+            if len(paths) > change_map.MAX_FILES:
+                omitted = change_map.empty()
+                omitted["skipped"].append(change_map.skip("change map inventory", "file limit reached"))
+                return omitted
+        inventory = sorted(paths,
                            key=lambda p: (p not in change.files, p not in checks, p))
-        if len(inventory) > change_map.MAX_FILES:
-            skipped.append(change_map.skip("change map inventory", "file limit reached; import closure is partial"))
-        inventory = inventory[:change_map.MAX_FILES]
         entries = repo_tests._listed_at(change.repo, change.base_commit, inventory)
         base, patch, unavailable = {}, {}, set()
-        total = 0
-        for rel in inventory:
-            component_process.checkpoint()
-            if time.monotonic() >= end:
-                skipped.append(change_map.skip("change map inventory", "the time budget is spent; import closure is partial"))
-                break
-            # Validate index names and use the repository's disk-name rule. Never open a link,
-            # junction, pipe, device, or a file whose held path is outside the repository.
-            repo_tests._index_path(change.repo, rel)
-            path = repo_tests._disk(change.repo, rel)
-            if path is None or rel in change.outside_links or repo_tests._linked(path):
+        versions, total = {}, 0
+        for rel in bounded(inventory):
+            try:
+                # Validate the name before opening anything; disk and git names
+                # continue through the repository's existing crossing rules.
+                repo_tests._index_path(change.repo, rel)
+                path = repo_tests._disk(change.repo, rel)
+                if path is None or rel in change.outside_links or repo_tests._linked(path):
+                    raise ValueError("source path is unavailable or linked")
+                if path.is_file():
+                    raw = _change_map_text(change.repo, path, change_map.MAX_FILE_BYTES)
+                    if raw is None:
+                        raise ValueError("not a regular file inside the repository")
+                    if len(raw) > change_map.MAX_FILE_BYTES:
+                        skipped.append(change_map.skip(f"change map: {shown_name(rel)}", "file byte limit reached"))
+                        unavailable.add(rel)
+                        continue
+                    text = repo_tests._text(raw)
+                    if len(text) > change_map.MAX_FILE_CHARS:
+                        skipped.append(change_map.skip(f"change map: {shown_name(rel)}", "file text limit reached"))
+                        unavailable.add(rel)
+                        continue
+                    patch[rel] = text
+                elif path.exists():
+                    raise ValueError("not a regular source file")
+                entry = entries.get(rel)
+                if entry and entry[0] in ("100644", "100755") and entry[1] == "blob":
+                    # The byte cap guards I/O before decoding; source character
+                    # counts apply independently to the resulting parser text.
+                    if int(entry[3]) > change_map.MAX_FILE_BYTES:
+                        skipped.append(change_map.skip(f"change map: base {shown_name(rel)}", "file byte limit reached"))
+                        unavailable.add(rel)
+                        continue
+                    if rel not in change.files and rel in patch:
+                        base[rel] = patch[rel]
+                    else:
+                        checkpoint()
+                        raw = repo_tests.blob_bytes(change.repo, entry[2])
+                        if len(raw) > change_map.MAX_FILE_BYTES:
+                            skipped.append(change_map.skip(f"change map: base {shown_name(rel)}", "file byte limit reached"))
+                            unavailable.add(rel)
+                            continue
+                        text = repo_tests._text(raw)
+                        if len(text) > change_map.MAX_FILE_CHARS:
+                            skipped.append(change_map.skip(f"change map: base {shown_name(rel)}", "file text limit reached"))
+                            unavailable.add(rel)
+                            continue
+                        base[rel] = text
+                elif entry:
+                    raise ValueError("not a regular source blob")
+            except (*LETS_THROUGH, TimeoutError):
+                raise
+            except Exception as exc:
                 unavailable.add(rel)
-                skipped.append(change_map.skip(f"change map: {shown(rel)}", "source path is unavailable or linked"))
-            elif path.is_file():
-                raw = _change_map_text(change.repo, path, change_map.MAX_FILE_CHARS)
-                if raw is None:
-                    unavailable.add(rel)
-                    skipped.append(change_map.skip(f"change map: {shown(rel)}", "not a regular file inside the repository"))
-                elif len(raw) > change_map.MAX_FILE_CHARS:
-                    unavailable.add(rel)
-                    skipped.append(change_map.skip(f"change map: {shown(rel)}", "file text limit reached"))
-                else:
-                    total += len(raw)
-                    patch[rel] = repo_tests._text(raw)
-            entry = entries.get(rel)
-            if entry and entry[0] in ("100644", "100755") and entry[1] == "blob":
-                if int(entry[3]) > change_map.MAX_FILE_CHARS:
-                    unavailable.add(rel)
-                    skipped.append(change_map.skip(f"change map: base {shown(rel)}", "file text limit reached"))
-                elif rel not in change.files and rel in patch:
-                    # Change already identifies every content change, including hidden index flags.
-                    base[rel] = patch[rel]
-                elif time.monotonic() < end:
-                    raw = repo_tests.blob_bytes(change.repo, entry[2])
-                    total += len(raw)
-                    base[rel] = repo_tests._text(raw)
-                else:
-                    unavailable.add(rel)
-            elif entry:
-                unavailable.add(rel)
-                skipped.append(change_map.skip(f"change map: base {shown(rel)}", "not a regular source blob"))
+                skipped.append(change_map.skip(f"change map: {shown_name(rel)}",
+                                               f"source unavailable ({type(exc).__name__})"))
+                continue
+            for texts in bounded((base, patch)):
+                if rel in texts:
+                    seen = versions.setdefault(rel, set())
+                    if texts[rel] not in seen:
+                        seen.add(texts[rel])
+                        total += len(texts[rel])
             if total > change_map.MAX_TOTAL_CHARS:
-                skipped.append(change_map.skip("change map inventory", "total text limit reached; import closure is partial"))
-                break
-        return ({p: text for p, text in base.items() if p not in unavailable},
-                {p: text for p, text in patch.items() if p not in unavailable})
-
-    texts = repo_tests.within(max(0.001, end - time.monotonic()), read)
-    if texts is None or time.monotonic() >= deadline:
-        record["skipped"] = [*skipped, change_map.skip("change map", "the time budget is spent")]
+                omitted = change_map.empty()
+                omitted["skipped"] = [*skipped, change_map.skip("change map inventory", "total text limit reached")]
+                return omitted
+        for rel in bounded(unavailable):
+            base.pop(rel, None)
+            patch.pop(rel, None)
+        proposed = [p.model_dump() if hasattr(p, "model_dump") else p for p in bounded(proposed_checks)]
+        checkpoint()
+        record = change_map.build(change, base, patch, stated_checks=stated_checks,
+                                  proposed_checks=proposed, roots=roots, deadline=end)
+        record["skipped"] = [*skipped, *record["skipped"]]
         return record
-    proposed = [p.model_dump() if hasattr(p, "model_dump") else p for p in proposed_checks]
-    record = change_map.build(change, *texts, stated_checks=stated_checks, proposed_checks=proposed, roots=roots)
-    record["skipped"] = [*skipped, *record["skipped"]]
+
+    try:
+        record = repo_tests.within(max(0.001, end - time.monotonic()), read)
+    except LETS_THROUGH:
+        raise
+    except Exception as exc:
+        record = change_map.empty()
+        reason = "the time budget is spent" if isinstance(exc, TimeoutError) else f"static analysis stopped ({type(exc).__name__})"
+        record["skipped"].append(change_map.skip("change map", reason))
+    if record is None or time.monotonic() >= end:
+        record = change_map.empty()
+        record["skipped"] = [*skipped, change_map.skip("change map", "the time budget is spent")]
     return record
 
 
@@ -1492,7 +1542,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     # and never feed the reasons, requirements or gate. Preserve operator/allowance interrupts.
     from g6.harness import change_map
     try:
-        neighbourhood = _change_neighbourhood(change, ids, proposed, roots, deadline=deadline)
+        analysis_deadline = min(deadline, time.monotonic() + 2.0)
+        neighbourhood = _change_neighbourhood(change, ids, proposed, roots, deadline=analysis_deadline)
+        neighbourhood = change_map.json_record(neighbourhood, deadline=analysis_deadline)
     except LETS_THROUGH:
         raise
     except Exception as exc:

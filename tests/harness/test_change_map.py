@@ -76,7 +76,7 @@ def test_startswith_keeps_separator_literal_and_multiline_location():
     before = {"paths.py": "def matches(x, prefix):\n    return x == prefix\n"}
     after = {"paths.py": 'def matches(x, prefix):\n    return x.startswith(\n        prefix + "/"\n    )\n'}
     points = change_map.decision_points(change(before, after), before, after)
-    assert any(p["decision"] == "startswith" and p["literals"] == ["/"] and p["line"] == 2 for p in points)
+    assert any(p["decision"] == "startswith" and p["literals"] == ['"/"'] and p["line"] == 2 for p in points)
 
 
 def test_alias_reexport_import_closure_callers_and_subclass():
@@ -132,9 +132,10 @@ def test_other():
     assert any("static" in s["reason"].lower() and "dynamic" in s["reason"].lower() for s in record["skipped"])
 
 
-def test_no_decision_or_sibling_has_empty_targets():
+def test_changed_return_is_a_decision_without_siblings():
     record = mapped({"a.py": "def f():\n    return 1\n"}, {"a.py": "def f():\n    return 2\n"})
-    assert record["targets"] == []
+    assert not any(p["kind"] == "sibling" for p in record["targets"])
+    assert any(p.get("decision") == "return" and p["literals"] == ["2"] for p in record["targets"])
 
 
 def test_formatting_does_not_change_symbol_body():
@@ -154,7 +155,7 @@ def test_comparisons_truthiness_membership_and_literals_only_in_added_lines():
     after = {"a.py": "def f(x):\n    if x and isinstance(x, str):\n        return x in ('a', 'b')\n    return x == 10\n"}
     points = change_map.decision_points(change(before, after), before, after)
     assert {p["decision"] for p in points} >= {"truthiness", "isinstance", "membership"}
-    assert not any(10 in p["literals"] for p in points)
+    assert not any("10" in p["literals"] for p in points)
 
 
 def test_token_family_lists_other_observed_and_declared_members():
@@ -169,27 +170,31 @@ def test_module_and_class_level_decisions_and_signed_numbers():
     before = {"a.py": "x = 0\nclass C:\n    flag = True\n"}
     after = {"a.py": 'x = 0\nif x.startswith("/"):\n    x = 1\nclass C:\n    flag = -2 < x\n'}
     points = change_map.decision_points(change(before, after), before, after)
-    assert any(p["decision"] == "startswith" and "/" in p["literals"] for p in points)
-    assert any(p["symbol"] == "C" and -2 in p["literals"] for p in points)
+    assert any(p["decision"] == "startswith" and '"/"' in p["literals"] for p in points)
+    assert any(p["symbol"] == "C" and "-2" in p["literals"] for p in points)
 
 
 def test_added_lambda_and_default_expressions_keep_decisions():
     before = {"a.py": "def f(x=0):\n    return x\n"}
     after = {"a.py": "def f(x=(1 < 2)):\n    return lambda y: y > 3\n"}
     points = change_map.decision_points(change(before, after), before, after)
-    assert {tuple(p["literals"]) for p in points if p["decision"] == "comparison"} == {(1, 2), (3,)}
+    assert {tuple(p["literals"]) for p in points if p["decision"] == "comparison"} == {("1", "2"), ("3",)}
 
 
 def test_parameter_shadowing_does_not_invent_a_caller():
     before = {"a.py": "def f():\n    return 1\ndef caller(f):\n    return f()\n"}
     after = {"a.py": before["a.py"].replace("return 1", "return 2")}
-    assert mapped(before, after)["targets"] == []
+    record = mapped(before, after)
+    assert not any(p["kind"] == "sibling" for p in record["targets"])
+    assert any(p.get("decision") == "return" and p["literals"] == ["2"] for p in record["targets"])
 
 
 def test_rebinding_an_import_does_not_invent_a_caller():
     before = {"a.py": "def f():\n    return 1\n", "b.py": "from a import f\nf = 0\ndef caller():\n    return f()\n"}
     after = {**before, "a.py": "def f():\n    return 2\n"}
-    assert mapped(before, after)["targets"] == []
+    record = mapped(before, after)
+    assert not any(p["kind"] == "sibling" for p in record["targets"])
+    assert any(p.get("decision") == "return" and p["literals"] == ["2"] for p in record["targets"])
 
 
 def test_invalid_proposed_check_has_a_named_skip():
