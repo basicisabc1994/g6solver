@@ -71,7 +71,7 @@ from g6.agents._runtime import (
 )
 from g6.agents._runtime.cli import OUTPUT_LOG
 from g6.core import stop as core_stop
-from g6.core.decoder_limits import UndecodableRecord, decode, shaped
+from g6.core.decoder_limits import decode, is_undecodable_record, shaped
 from g6.core.model_calls import note_model_call
 from g6.agents._runtime.consent import consent_run, register_program
 from g6.core.outside import OutsideProgram
@@ -134,7 +134,9 @@ def _result(text: str) -> dict[str, Any] | None:
             continue
         try:
             found = decode(line)
-        except (json.JSONDecodeError, UndecodableRecord):
+        except ValueError as exc:
+            if not (is_undecodable_record(exc) or isinstance(exc, json.JSONDecodeError)):
+                raise
             return None
         # A missing or mistyped discriminator cannot establish that this is a non-result event.
         if not shaped(found, {"type": str}):

@@ -2,13 +2,17 @@
 import ast
 from pathlib import Path
 
+from tests.rfu_r3.test_decoder_copies import COPIES, _sync
 from tests.s16r3.certificate_inputs import certificate_inputs
 from tests.s16r3.test_home_json_census import PINNED_CHILD
 
 
 def test_native_json_decoding_is_confined_to_the_guarded_decoder():
     root = Path(__file__).resolve().parents[2] / 'src/g6'
-    exempt = certificate_inputs() | PINNED_CHILD | {'_decoder_limits.py'}
+    registered = set(_sync().COPIES)
+    assert registered == COPIES
+    exempt = certificate_inputs() | PINNED_CHILD | {'_decoder_limits.py'} | {
+        name.removeprefix('src/g6/') for name in registered}
     missing = []
     for path in sorted(root.rglob('*.py')):
         rel = path.relative_to(root).as_posix()

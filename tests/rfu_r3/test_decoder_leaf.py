@@ -1,20 +1,21 @@
 """Pure consumers share the decoder implementation without loading another component."""
 import ast
-import inspect
 import sys
+
+from tests.rfu_r3.test_decoder_copies import COPIES, HEADER, ROOT, SOURCE, _sync
 
 
 def test_decoder_is_one_standard_library_leaf():
-    from g6 import _decoder_limits as leaf
-    from g6.core import decoder_limits as compatibility
-
-    for name in leaf.__all__:
-        assert getattr(compatibility, name) is getattr(leaf, name), name
-    for node in ast.walk(ast.parse(inspect.getsource(leaf))):
-        names = ([a.name for a in node.names] if isinstance(node, ast.Import)
-                 else [node.module or ''] if isinstance(node, ast.ImportFrom) else [])
-        assert not isinstance(node, ast.ImportFrom) or node.level == 0
-        assert all(n.split('.')[0] in sys.stdlib_module_names or n == '__future__' for n in names), names
+    assert set(_sync().COPIES) == COPIES
+    source = (ROOT / SOURCE).read_bytes()
+    for name in sorted(COPIES | {SOURCE}):
+        body = (ROOT / name).read_bytes()
+        assert body == (source if name == SOURCE else HEADER + source), name
+        for node in ast.walk(ast.parse(body)):
+            names = ([a.name for a in node.names] if isinstance(node, ast.Import)
+                     else [node.module or ''] if isinstance(node, ast.ImportFrom) else [])
+            assert not isinstance(node, ast.ImportFrom) or node.level == 0
+            assert all(n.split('.')[0] in sys.stdlib_module_names or n == '__future__' for n in names), names
 
 
 def test_purity_exception_does_not_admit_a_decoder_sibling(tmp_path):

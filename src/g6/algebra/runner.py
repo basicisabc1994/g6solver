@@ -38,7 +38,7 @@ from typing import Any
 
 from g6.algebra.envelope import OUTPUT_UNRECOGNISED, RUN_FAILED, Refusal
 from g6.core import component_process, confine
-from g6.core.decoder_limits import ListOf, UndecodableRecord, decode, shaped
+from g6.core.decoder_limits import ListOf, decode, is_undecodable_record, shaped
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.process_tree import ProcessTreeError
 
@@ -158,7 +158,9 @@ def call_worker(request: dict[str, Any], *, seconds: float, memory_mb: int, cap:
                 break                       # the last line, cut off when the run was stopped
             record["output_tail"] = run.output[-_TAIL:]
             raise Refusal(OUTPUT_UNRECOGNISED, "G6's worker wrote a line that is not JSON") from None
-        except UndecodableRecord:          # never taken for cut off: the earlier lines would decide in its place
+        except ValueError as exc:          # never taken for cut off: the earlier lines would decide in its place
+            if not is_undecodable_record(exc):
+                raise
             record["output_tail"] = run.output[-_TAIL:]
             raise Refusal(OUTPUT_UNRECOGNISED, "G6's worker wrote a line past the decoder's limits") from None
         if not _in_shape(line):

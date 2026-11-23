@@ -19,7 +19,7 @@ A ``scorecard.json`` that cannot be read raises rather than starting empty, sinc
 """
 from __future__ import annotations
 
-from g6._decoder_limits import json_value as _decode_json
+from g6.self_training._decoder_limits import json_value as _decode_json
 
 import json
 import os
@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from g6._decoder_limits import UndecodableRecord, decode, shaped
+from g6.self_training._decoder_limits import decode, is_undecodable_record, shaped
 from g6.self_training.schema import (
     PUBLICATION_THRESHOLD,
     TIER_NAMES,
@@ -211,7 +211,9 @@ class ScorecardStore:
                 continue
             try:
                 entry = decode(line)
-            except (json.JSONDecodeError, UndecodableRecord):
+            except ValueError as exc:
+                if not (is_undecodable_record(exc) or isinstance(exc, json.JSONDecodeError)):
+                    raise
                 entry = None
             out.append(entry if shaped(entry, AUDIT_SHAPE) else None)
         return out

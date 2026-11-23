@@ -10,7 +10,7 @@ an exception that escapes its reply.
 """
 from __future__ import annotations
 
-from g6.core.decoder_limits import UndecodableRecord, decode as _decode_json
+from g6.core.decoder_limits import decode as _decode_json, is_undecodable_record
 
 import json
 import math
@@ -74,11 +74,11 @@ def _decode(text: str) -> tuple[Any, int]:
         return _decode_json(text, partial=True, parse_constant=_constant, parse_float=_float)
     except Undecodable:
         raise
-    except UndecodableRecord as exc:
-        raise Undecodable(str(exc)) from None
     except json.JSONDecodeError as exc:
         raise Undecodable(f"not JSON: {exc}") from None
     except (RecursionError, ValueError, TypeError, MemoryError) as exc:
+        if is_undecodable_record(exc):
+            raise Undecodable(str(exc)) from None
         raise Undecodable(f"not decoded: {type(exc).__name__}") from None
 
 
@@ -92,11 +92,11 @@ def loads(text: Any, *, max_chars: int, max_depth: int = MAX_DEPTH) -> Any:
         return _decode_json(checked, parse_constant=_constant, parse_float=_float)
     except Undecodable:
         raise
-    except UndecodableRecord as exc:
-        raise Undecodable(str(exc)) from None
     except json.JSONDecodeError as exc:
         raise Undecodable(f"not JSON: {exc}") from None
     except (RecursionError, ValueError, TypeError, MemoryError) as exc:
+        if is_undecodable_record(exc):
+            raise Undecodable(str(exc)) from None
         raise Undecodable(f"not decoded: {type(exc).__name__}") from None
 
 

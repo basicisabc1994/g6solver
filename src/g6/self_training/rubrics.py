@@ -7,7 +7,7 @@ measurement (audit 008, ST-010). The caller invokes the component itself and pas
 """
 from __future__ import annotations
 
-from g6._decoder_limits import json_value as _decode_json
+from g6.self_training._decoder_limits import json_value as _decode_json
 
 import time
 from pathlib import Path

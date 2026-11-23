@@ -21,9 +21,39 @@ import sys
 from typing import Any, NamedTuple
 
 
-class UndecodableRecord(ValueError):
+def _is_refusal_type(kind: type) -> bool:
+    return (issubclass(kind, ValueError)
+            and getattr(kind, "__g6_decoder_refusal__", None) == "g6.decoder.refusal.v1")
+
+
+def is_undecodable_record(error: BaseException) -> bool:
+    """Recognize the fixed refusal declaration on a decoder copy's exception type.
+
+    Copies cannot import each other across purity boundaries. Handlers catch
+    ``ValueError`` and re-raise unless this predicate (or their existing malformed
+    JSON policy) applies. An attribute on an exception instance is insufficient.
+    """
+    return _is_refusal_type(type(error))
+
+
+class _RefusalType(type):
+    """Keep isinstance/issubclass clients consistent with the handler predicate.
+
+    Python's except matching bypasses these hooks; it must use the predicate.
+    """
+
+    def __instancecheck__(cls, instance: Any) -> bool:
+        return super().__instancecheck__(instance) or (cls is UndecodableRecord and is_undecodable_record(instance))
+
+    def __subclasscheck__(cls, subclass: type) -> bool:
+        return super().__subclasscheck__(subclass) or (cls is UndecodableRecord and _is_refusal_type(subclass))
+
+
+class UndecodableRecord(ValueError, metaclass=_RefusalType):
     """A JSON record past the decoder's limits (nested too deeply, too large, or an integer too long to convert): no
     other record stands in for it."""
+
+    __g6_decoder_refusal__ = "g6.decoder.refusal.v1"
 
 
 class _HookRefusal(Exception):
@@ -76,7 +106,9 @@ def json_value(text: str | bytes | bytearray, **options: Any) -> Any:
     """
     try:
         return decode(text, **options)
-    except UndecodableRecord:
+    except ValueError as exc:
+        if not is_undecodable_record(exc):
+            raise
         raise json.JSONDecodeError("a JSON record cannot be decoded", "", 0) from None
 
 
@@ -85,9 +117,12 @@ class ListOf(NamedTuple):
 
     item: Any
 
+    __g6_decoder_list_of__ = "g6.decoder.list-of.v1"
+
 
 def _is(value: Any, kind: Any) -> bool:
-    if isinstance(kind, ListOf):
+    if (isinstance(kind, tuple) and len(kind) == 1
+            and getattr(type(kind), "__g6_decoder_list_of__", None) == "g6.decoder.list-of.v1"):
         return isinstance(value, list) and all(_is(one, kind.item) for one in value)
     if isinstance(kind, tuple):
         return any(_is(value, one) for one in kind)
@@ -112,4 +147,4 @@ def shaped(record: Any, required: dict[str, Any], optional: dict[str, Any] | Non
             and all(name not in record or _is(record[name], kind) for name, kind in (optional or {}).items()))
 
 
-__all__ = ["ListOf", "UndecodableRecord", "decode", "json_value", "shaped"]
+__all__ = ["ListOf", "UndecodableRecord", "decode", "is_undecodable_record", "json_value", "shaped"]
