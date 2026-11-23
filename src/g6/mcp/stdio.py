@@ -22,6 +22,7 @@ import anyio
 import anyio.lowlevel
 from mcp.shared.message import SessionMessage
 
+from g6.mcp._stdin_cache import cache_reader
 from g6.mcp.consent_transport import Witness, calls_on, unwitness, witness
 
 
@@ -64,7 +65,7 @@ async def _writer(messages, stdout, stream, seen: Witness, connection: anyio.Can
         connection.cancel()              # writer EOF also ends the parser, even while stdin stays open
 
 
-def _raw_lines(fd, stopped):
+def _raw_lines(fd, stopped, prefix=b""):
     """Frame raw input with the text reader's LF, CRLF and CR line endings, including an unterminated final line.
 
     Keep partial UTF-8 bytes until the line is complete. Like the old readline(), there is no line-size cap. Only
@@ -73,7 +74,8 @@ def _raw_lines(fd, stopped):
     pending = bytearray()
     scan = 0
     while not stopped.is_set():
-        chunk = os.read(fd, 65536)
+        chunk = prefix or os.read(fd, 65536)
+        prefix = b""
         if not chunk:
             if pending:
                 yield bytes(pending)
@@ -95,11 +97,32 @@ def _raw_lines(fd, stopped):
             scan -= start
 
 
-def _read_lines(fd, lines, token, stopped) -> None:
-    """Hand each raw line to the SDK parser without ever reading a Python stream. A blocked raw read may outlive
-    the connection, but the daemon holds no buffered reader lock, so normal interpreter shutdown can finish."""
+class _InputDescriptor:
+    """A duplicate has one closing owner, even if start raises after the OS has already launched the thread."""
+
+    def __init__(self, fd):
+        self.lock = threading.Lock()
+        self.fd = os.dup(fd)
+
+    def take(self):
+        with self.lock:
+            fd, self.fd = self.fd, None
+            return fd
+
+    def close(self):
+        fd = self.take()
+        if fd is not None:
+            os.close(fd)
+
+
+def _read_lines(descriptor, lines, token, stopped, cached) -> None:
+    """Transfer existing caches, then hand raw lines to the SDK parser. A blocked raw read may outlive the
+    connection, but the daemon holds no buffered reader lock during that wait, so interpreter shutdown can finish."""
+    fd = descriptor.take()
     try:
-        for raw in _raw_lines(fd, stopped):
+        if fd is None:
+            return                      # startup already reclaimed the duplicate before this thread ran
+        for raw in _raw_lines(fd, stopped, cached()):
             try:
                 line = raw.decode("utf-8")
             except UnicodeDecodeError:
@@ -108,7 +131,8 @@ def _read_lines(fd, lines, token, stopped) -> None:
     except BaseException:  # noqa: BLE001 - a read error, or the connection or its event loop ended: input ends here
         pass
     finally:
-        os.close(fd)                    # only this thread closes its raw descriptor, after any blocked read ends
+        if fd is not None:
+            os.close(fd)                # only its claiming thread closes it, after any blocked read ends
         with suppress(BaseException):
             anyio.from_thread.run_sync(lines.close, token=token)
 
@@ -127,7 +151,7 @@ def _read_file_lines(readline, lines, token, stopped) -> None:
 
 @asynccontextmanager
 async def _lines(stdin):
-    """Use a raw duplicate for files with descriptors, their own readline otherwise. Keep other async iterables."""
+    """Transfer file caches before raw reads; use readline without descriptors. Keep other async iterables."""
     if stdin is None:
         source = sys.stdin
     elif isinstance(stdin, anyio.AsyncFile):
@@ -154,13 +178,26 @@ async def _lines(stdin):
         finally:
             stopped.set()
         return
+    cached = cache_reader(source)         # reject opaque buffering before acquiring or consuming anything
     # Windows' CRT also locks a descriptor during os.read. Give the thread its own descriptor so finalization of
     # the caller's file cannot wait on that CRT lock. No Python file object ever owns this duplicate.
-    fd = os.dup(fd)
-    sender, receiver = anyio.create_memory_object_stream(0)
-    stopped = threading.Event()
-    threading.Thread(target=_read_lines, args=(fd, sender, anyio.lowlevel.current_token(), stopped),
-                     name="g6-stdin-reader", daemon=True).start()
+    descriptor = _InputDescriptor(fd)
+    sender = receiver = stopped = None
+    try:
+        sender, receiver = anyio.create_memory_object_stream(0)
+        stopped = threading.Event()
+        threading.Thread(target=_read_lines,
+                         args=(descriptor, sender, anyio.lowlevel.current_token(), stopped, cached),
+                         name="g6-stdin-reader", daemon=True).start()
+    except BaseException:
+        descriptor.close()              # reclaim only an unclaimed duplicate; never close a live reader's fd
+        if stopped is not None:
+            stopped.set()
+        if sender is not None:
+            sender.close()
+        if receiver is not None:
+            receiver.close()
+        raise
     try:
         with receiver:
             yield receiver
