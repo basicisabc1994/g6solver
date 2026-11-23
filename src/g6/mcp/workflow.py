@@ -199,25 +199,25 @@ def _reply(project: str, item: str, result: dict, summary: str, next_step: str) 
 
 
 def _project(repo: str) -> str | None:
-    """The project for ``repo``; None when it is not a full path to a folder. A network or device path is None on its
-    words, before anything asks the file system about it (``storage._elsewhere``, as ``repo_tests.checked_repo``)."""
+    """The project for a full folder path, admitted before any filesystem probe."""
     from pathlib import Path
 
-    from g6.workforce.repo_tests import elsewhere
+    from g6.workforce.repo_tests import RepoRefused, admit_folder
 
-    if not isinstance(repo, str) or elsewhere(repo):
+    if not isinstance(repo, str) or not Path(repo).is_absolute():
         return None
     try:
-        return project_id(repo) if isinstance(repo, str) and Path(repo).is_absolute() and Path(repo).is_dir() else None
-    except (ValueError, OSError):
+        root = admit_folder(repo)
+        return project_id(str(root)) if root.is_dir() else None
+    except (RepoRefused, ValueError, OSError):
         return None
 
 
 def _refused(why: str) -> dict:
-    from g6.core.door import blocked_reply
+    from g6.mcp.consent_controls import blocked_reply
     from g6.mcp.consent_controls import public_instructions
 
-    return public_instructions(blocked_reply(f"[G6_E_INPUT_VALIDATION] {why}"))
+    return public_instructions(blocked_reply(f"[G6_E_INPUT_VALIDATION] {why}", public=True))
 
 
 def _unreadable(project: str, exc: RecordUnreadable) -> dict:
@@ -324,10 +324,10 @@ async def decide(repo: str, task: str, intervention_id: str, ctx: Any) -> dict:
     if project is None or not isinstance(task, str) or not task.strip():
         return _refused("repo must be the full path of the repository's folder, and task the task's text")
     if view.level() != "suggestions":
-        from g6.core.door import blocked_reply
+        from g6.mcp.consent_controls import blocked_reply
         from g6.mcp.consent_controls import public_instructions
 
-        return public_instructions(blocked_reply(NOT_ADMITTED))
+        return public_instructions(blocked_reply(NOT_ADMITTED, public=True))
     try:
         task_id = adapters.identities(repo, task)[1]
         record = ProjectRecord(project)

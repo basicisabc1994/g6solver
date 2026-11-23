@@ -1,13 +1,15 @@
 """Folder admission belongs after expansion and before filesystem access."""
 import ast
+import asyncio
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from g6.harness import completion_hook
-from g6.mcp import improve, review_loop
+from g6.mcp import behaviour, improve, knowledge, learning_history, mission, review_loop, workflow
 from g6.workforce import repo_tests
 
 
@@ -50,12 +52,23 @@ def test_mcp_request_folder_transform_census():
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows folder grammar")
-@pytest.mark.parametrize("operation", ["start", "enrol", "resume", "demote", "status", "review"])
+@pytest.mark.parametrize("operation", [
+    "start", "enrol", "resume", "demote", "status", "review", "stop",
+    "workflow-export", "workflow-correct", "workflow-delete", "workflow-decide", "workflow-feedback",
+    "behaviour", "mission-premortem", "mission-execution", "mission-submit", "history",
+])
 @pytest.mark.parametrize("expanded", [False, True], ids=["literal", "environment"])
 @pytest.mark.parametrize("raw", REFUSED)
 def test_entries_refuse_final_folder_before_filesystem(monkeypatch, operation, expanded, raw):
     # Load the act module before instrumenting filesystem entry points.
     from g6.metaharness import runner  # noqa: F401
+    from g6.harness.workflow import feedback, suggest  # noqa: F401
+    from g6.self_maintenance.envelope import _STOP_PENDING
+
+    pending = dict(_STOP_PENDING)
+    monkeypatch.setattr(mission.api, "bind", lambda: SimpleNamespace(runtime=SimpleNamespace(
+        confirmation_pending=lambda ident: False, awaiting=lambda ident: [SimpleNamespace(key="patch")])) )
+    monkeypatch.setattr(mission.coding, "frozen", lambda *args: {"baseline_revision": "HEAD"})
 
     monkeypatch.setenv("G6_TEST_FOLDER", raw)
     given = "%G6_TEST_FOLDER%" if expanded else raw
@@ -66,7 +79,8 @@ def test_entries_refuse_final_folder_before_filesystem(monkeypatch, operation, e
         raise AssertionError("filesystem reached before admission")
 
     with monkeypatch.context() as guard:
-        for name in ("resolve", "is_file", "is_dir", "stat", "mkdir"):
+        for name in ("resolve", "is_file", "is_dir", "exists", "stat", "lstat", "open", "mkdir",
+                     "read_text", "read_bytes", "write_text", "write_bytes", "iterdir"):
             guard.setattr(type(Path()), name, probe)
         guard.setattr(completion_hook, "folder", probe)
         if operation == "review":
@@ -76,8 +90,35 @@ def test_entries_refuse_final_folder_before_filesystem(monkeypatch, operation, e
             reply, code = improve.asked(given), improve.NOT_A_FOLDER
         elif operation == "status":
             reply, code = improve.status(given), improve.NOT_A_FOLDER
+        elif operation == "stop":
+            # A stop reserves its process-local denial first, then admits the folder.
+            reply, code = improve.stop(given), improve.STOP_FAILED
+        elif operation.startswith("workflow-"):
+            action = operation.removeprefix("workflow-")
+            reply = {"export": lambda: workflow.export(given), "correct": lambda: workflow.correct(given),
+                     "delete": lambda: asyncio.run(workflow.delete(given, None)),
+                     "decide": lambda: asyncio.run(workflow.decide(given, "task", "fixture", None)),
+                     "feedback": lambda: asyncio.run(workflow.feedback(given, "task", None))}[action]()
+            code = "G6_E_INPUT_VALIDATION"
+        elif operation == "behaviour":
+            reply, code = asyncio.run(behaviour.confirm(None, given, "task")), "G6_E_INPUT_VALIDATION"
+        elif operation == "mission-premortem":
+            reply, code = mission.premortem(given, "task"), "G6_E_INPUT_VALIDATION"
+        elif operation == "mission-execution":
+            with pytest.raises(repo_tests.RepoRefused):
+                mission.register(None, given)
+            reply, code = {"completion_state": "blocked-escalated", "code": "G6_E_INPUT_VALIDATION"}, "G6_E_INPUT_VALIDATION"
+        elif operation == "mission-submit":
+            reply, code = mission.submit("fixture", given), "G6_E_INPUT_VALIDATION"
+        elif operation == "history":
+            with pytest.raises(repo_tests.RepoRefused):
+                learning_history._read(given)
+            reply, code = {"completion_state": "blocked-escalated", "code": "G6_E_INPUT_VALIDATION"}, "G6_E_INPUT_VALIDATION"
         else:
             reply, code = improve.asked_act(operation, given), improve.NOT_A_FOLDER
+    for token in list(_STOP_PENDING):
+        if token not in pending:
+            _STOP_PENDING.pop(token)
     assert touched == [], touched
     assert reply["completion_state"] == "blocked-escalated"
     assert code in str(reply)
@@ -89,16 +130,55 @@ def test_resolved_form_is_checked_again(monkeypatch, tmp_path):
         repo_tests.admit_folder(str(tmp_path))
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows folder grammar")
+@pytest.mark.parametrize("suffix", [".", " ", "::$INDEX_ALLOCATION"])
+def test_knowledge_add_existing_admission_precedes_filesystem(monkeypatch, suffix):
+    from g6._context_engine._scope import Binding
+
+    functions = {}
+
+    class Server:
+        def tool(self):
+            def keep(fn):
+                functions[fn.__name__] = fn
+                return fn
+            return keep
+
+    knowledge.register(Server(), object)
+    root = Path.cwd()
+    # Host setup is independent of the request path; use an in-memory host binding.
+    monkeypatch.setattr(knowledge, "host_binding", lambda: Binding("fixture", "0" * 64, (root,), root))
+    touched = []
+
+    def probe(path, *args, **kwargs):
+        touched.append(str(path))
+        raise AssertionError("knowledge path reached filesystem before admission")
+
+    with monkeypatch.context() as guard:
+        for name in ("resolve", "stat", "lstat", "is_dir", "exists", "open"):
+            guard.setattr(type(Path()), name, probe)
+        reply = asyncio.run(functions["g6_knowledge_add"](str(root / "folder") + suffix, None))
+    assert touched == [], touched
+    assert reply["completion_state"] == "blocked-escalated"
+
+
 def test_expansion_and_relative_folder_are_admitted(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("G6_TEST_FOLDER", "ordinary")
     assert repo_tests.admit_folder("%G6_TEST_FOLDER%" if os.name == "nt" else "$G6_TEST_FOLDER") == tmp_path / "ordinary"
 
 
-def test_refusal_is_returned_without_provenance(monkeypatch):
+def test_input_refusal_has_no_repository_origin(monkeypatch):
+    from g6.core import cloud_consent as cloud
+
     refused = {"ok": False, "error": "[G6_E_INPUT_VALIDATION] refused", "request_id": "fixture"}
     monkeypatch.setattr(review_loop, "_step", lambda *args: refused)
-    assert review_loop.step(str(Path.cwd()), "Keep behavior", "fixture") is refused
+    with cloud.collect_sources():
+        reply = review_loop.step(str(Path.cwd()), "Keep behavior", "fixture")
+        assert reply == refused
+        _, refs, metadata = cloud.freeze_output(reply)
+        assert refs == ()
+        assert metadata["error_code"] == "G6_E_INPUT_VALIDATION"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows folder grammar")
