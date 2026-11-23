@@ -8,7 +8,9 @@ be bypassed merely because it exposes a descriptor.
 """
 from __future__ import annotations
 
+import _io
 import codecs
+import gc
 import io
 from contextlib import contextmanager
 
@@ -28,7 +30,7 @@ def _method(obj, name, replacement):
 
 
 def _binary_cache(buffer):
-    if type(buffer) is io.FileIO:
+    if type(buffer) is not io.BufferedReader:
         return b""
     chunks = []
     while chunk := buffer.read1(65536):
@@ -37,49 +39,35 @@ def _binary_cache(buffer):
 
 
 def _pending_cr(source):
-    """Recover a newline decoder's pending CR even if its UTF-8 decoder also holds an incomplete character.
+    """Move the real decoder's pending newline without trying to complete potentially invalid UTF-8.
 
-    A failed decode leaves the decoder's earlier state intact. Supply only the missing continuation bytes to let
-    the newline decoder emit that CR; the synthetic completed character is discarded, never handed to the parser.
-    The incomplete original bytes are already included in the failed decode's input.
+    CPython's text wrapper visits its decoder for GC. Use the decoder's state API, not native memory offsets:
+    the failed decode's error already owns every original byte, including the incremental byte buffer. Clear
+    that buffer and finalize just the newline state. The raw line framer now owns both states.
     """
-    buffer = source.buffer
-    method = "read1" if hasattr(buffer, "read1") else "read"
-    with _method(buffer, method, lambda size: b""):
-        try:
-            char = source.read(1)
-        except UnicodeDecodeError as exc:
-            partial = exc.object
-            lead = partial[0]
-            length = 2 if lead < 0xE0 else 3 if lead < 0xF0 else 4
-            suffix = bytearray()
-            if len(partial) == 1:
-                suffix.append(0xA0 if lead == 0xE0 else 0x90 if lead == 0xF0 else 0x80)
-            suffix.extend(b"\x80" * (length - len(partial) - len(suffix)))
-
-            def complete(size):
-                nonlocal suffix
-                chunk, suffix = bytes(suffix), bytearray()
-                return chunk
-
-            with _method(buffer, method, complete):
-                char = source.read(1)
-                while source.read(1):
-                    pass                # consume the synthetic completion even if a pending CR was returned first
-    return b"\r" if char in ("\r", "\n") else b""
+    for decoder in gc.get_referents(source):
+        if isinstance(decoder, (io.IncrementalNewlineDecoder, codecs.IncrementalDecoder)):
+            _, flags = decoder.getstate()
+            decoder.setstate((b"", flags))
+            newline = decoder.decode(b"", final=True)
+            return b"\r" if newline else b""
+    raise ValueError("[G6_E_STDIN_HANDOFF] stdin has no accessible UTF-8 decoder")
 
 
 def cache_reader(source):
-    """Validate the whole stack before taking a duplicate; return its finite, reader-thread cache transfer."""
+    """Validate before duplication; return the finite cache transfer and optional native-console raw reader."""
     text = type(source) is io.TextIOWrapper
     buffer = source.buffer if text else source
     if text and (codecs.lookup(source.encoding).name != "utf-8"
                  or source.errors not in ("strict", "surrogateescape", "surrogatepass")):
         raise ValueError("stdin handoff requires lossless UTF-8 text input")
-    if type(buffer) is io.FileIO:
+    console_type = getattr(_io, "_WindowsConsoleIO", None)
+    if type(buffer) is io.FileIO or (console_type is not None and type(buffer) is console_type):
         raw = buffer
         method = "read"
-    elif type(buffer) is io.BufferedReader and type(buffer.raw) is io.FileIO:
+    elif type(buffer) is io.BufferedReader and (
+        type(buffer.raw) is io.FileIO or (console_type is not None and type(buffer.raw) is console_type)
+    ):
         raw = buffer.raw
         method = "readinto"
     else:
@@ -117,4 +105,4 @@ def cache_reader(source):
                     char = "\r"         # EOF flushed a pending CR: the next raw byte may still be its LF
                 pending.extend(char.encode("utf-8", errors=source.errors))
 
-    return drain
+    return drain, raw if type(raw) is console_type else None

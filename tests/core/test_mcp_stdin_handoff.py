@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Buffered and raw stdin handoffs must give the SDK the same remaining requests."""
+import codecs
 import io
 import os
 
@@ -188,7 +189,7 @@ def test_unsupported_descriptor_stacks_fail_before_reading_or_duplicating(monkey
         source.buffer.read1 = Opaque().readline
         original = source.buffer.read1
 
-    def duplicate(fd):
+    def duplicate(fd, target, **kwargs):
         pytest.fail("unsupported stdin acquired a duplicate")
 
     async def run():
@@ -199,7 +200,7 @@ def test_unsupported_descriptor_stacks_fail_before_reading_or_duplicating(monkey
     try:
         os.write(write_fd, b"still owned by caller\n")
         with monkeypatch.context() as patch:
-            patch.setattr(stdio.os, "dup", duplicate)
+            patch.setattr(stdio.os, "dup2", duplicate)
             anyio.run(run)
         if shape == "custom_method":
             assert source.buffer.read1 is original
@@ -228,3 +229,58 @@ def test_descriptorless_file_handoff_keeps_its_existing_position():
         assert not source.closed
     finally:
         source.close()
+
+
+# Each malformed line must end in one parser error; IDs 71 and 72 must survive every handoff split.
+BAD_UTF8 = (b"\xff", b"\x80", b"\xc0\xaf", b"\xe0\x80\xaf", b"\xf0\x80\x80\xaf",
+            b"\xed\xa0\x80", b"\xf4\x90\x80\x80", b"\xc3", b"\xe2\x82", b"\xf0\x9f\x98")
+BAD_SPLITS = [(bad, split) for bad in BAD_UTF8 for split in range(len(bad) + 1)]
+
+
+def _can_hold_prefix(prefix):
+    try:
+        codecs.getincrementaldecoder("utf-8")().decode(prefix, final=False)
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize("bad,split", BAD_SPLITS)
+@pytest.mark.parametrize("pending_cr", [False, True])
+@pytest.mark.parametrize("prefetch", [False, True], ids=["kernel_tail", "buffered_tail"])
+@pytest.mark.parametrize("errors", ["strict", "surrogateescape", "surrogatepass"])
+def test_malformed_utf8_at_every_handoff_split_keeps_message_order(bad, split, pending_cr, prefetch, errors):
+    read_fd, write_fd = os.pipe()
+    source = os.fdopen(read_fd, "r", encoding="utf-8", errors=errors)
+    try:
+        # Strict decoders cannot pre-read an already invalid prefix. For those splits warm the byte cache;
+        # all other splits exercise decoded text and the decoder's actual incomplete/invalid byte state.
+        text_prefix = _can_hold_prefix(bad[:split]) or errors == "surrogateescape"
+        preamble = b"launcher\n" + (b"\r" if pending_cr else b"")
+        os.write(write_fd, preamble + (bad[:split] if text_prefix else b""))
+        assert source.readline() == "launcher\n"
+        if not text_prefix and split:
+            os.write(write_fd, bad[:split])
+            source.buffer.peek(1)
+        os.write(write_fd, bad[split:] + b'\r\n{"jsonrpc":"2.0","id":71,"method":"ping"}\r'
+                 b'{"jsonrpc":"2.0","id":72,"method":"ping"}\n')
+        os.close(write_fd)
+        write_fd = None
+        if prefetch:
+            source.buffer.peek(1)
+
+        async def run():
+            with anyio.fail_after(5):
+                async with stdio.stdio_server(stdin=anyio.wrap_file(source), stdout=Output()) as streams:
+                    incoming, outgoing = streams
+                    got = [item.message.root.id if isinstance(item, SessionMessage) else type(item).__name__
+                           async for item in incoming]
+                    await outgoing.aclose()
+            return got
+
+        assert anyio.run(run) == (["ValidationError"] if pending_cr else []) + ["ValidationError", 71, 72]
+        assert source.read() == "", "handoff left decoder bytes or synthetic content behind"
+    finally:
+        source.close()
+        if write_fd is not None:
+            os.close(write_fd)

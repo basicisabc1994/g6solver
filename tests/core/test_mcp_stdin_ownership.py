@@ -9,6 +9,17 @@ import pytest
 from g6.mcp import stdio
 
 
+def _observe_owner_close(real_close, duplicates, closed, finished=None):
+    def close(owner, *, reader=False):
+        fd = owner.file.fileno() if owner.file is not None and owner.claimed == reader else None
+        real_close(owner, reader=reader)
+        if fd in duplicates:
+            closed.append(fd)
+            if finished is not None:
+                finished.set()
+    return close
+
+
 @pytest.mark.parametrize("entry", ["default", "wrapped"])
 @pytest.mark.parametrize("failure", ["streams", "event", "token", "thread", "start"])
 @pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt])
@@ -16,19 +27,15 @@ def test_every_reader_setup_failure_releases_its_duplicate(monkeypatch, entry, f
     read_fd, write_fd = os.pipe()
     source = os.fdopen(read_fd, "r", encoding="utf-8")
     duplicates = []
-    real_dup = os.dup
+    real_dup2 = os.dup2
     real_close = os.close
     closed = []
 
-    def duplicate(fd):
-        copied = real_dup(fd)
-        duplicates.append(copied)
-        return copied
+    def duplicate(fd, target, **kwargs):
+        duplicates.append(target)
+        return real_dup2(fd, target, **kwargs)
 
-    def close(fd):
-        if fd in duplicates:
-            closed.append(fd)
-        real_close(fd)
+    close = _observe_owner_close(stdio._InputDescriptor.close, duplicates, closed)
 
     def fail(*args, **kwargs):
         raise error_type("reader setup failed")
@@ -36,8 +43,8 @@ def test_every_reader_setup_failure_releases_its_duplicate(monkeypatch, entry, f
     async def run():
         # Patch only inside the running loop, not asyncio's own thread/event setup.
         with monkeypatch.context() as patch:
-            patch.setattr(stdio.os, "dup", duplicate)
-            patch.setattr(stdio.os, "close", close)
+            patch.setattr(stdio.os, "dup2", duplicate)
+            patch.setattr(stdio._InputDescriptor, "close", close)
             patch.setattr(stdio.sys, "stdin", source)
             owner, name = {
                 "streams": (stdio.anyio, "create_memory_object_stream"),
@@ -73,22 +80,18 @@ def test_started_reader_closes_duplicate_once_after_input_failure(monkeypatch):
     source = os.fdopen(read_fd, "r", encoding="utf-8")
     duplicates = []
     closed = []
-    real_dup, real_read, real_close = os.dup, os.read, os.close
+    real_dup2, real_read, real_close = os.dup2, os.read, os.close
 
-    def duplicate(fd):
-        copied = real_dup(fd)
-        duplicates.append(copied)
-        return copied
+    def duplicate(fd, target, **kwargs):
+        duplicates.append(target)
+        return real_dup2(fd, target, **kwargs)
 
     def read(fd, size):
         if fd in duplicates:
             raise OSError("client input failed")
         return real_read(fd, size)
 
-    def close(fd):
-        if fd in duplicates:
-            closed.append(fd)
-        real_close(fd)
+    close = _observe_owner_close(stdio._InputDescriptor.close, duplicates, closed)
 
     async def run():
         with anyio.fail_after(2):
@@ -99,9 +102,9 @@ def test_started_reader_closes_duplicate_once_after_input_failure(monkeypatch):
 
     try:
         with monkeypatch.context() as patch:
-            patch.setattr(stdio.os, "dup", duplicate)
+            patch.setattr(stdio.os, "dup2", duplicate)
             patch.setattr(stdio.os, "read", read)
-            patch.setattr(stdio.os, "close", close)
+            patch.setattr(stdio._InputDescriptor, "close", close)
             anyio.run(run)
     finally:
         source.close()
@@ -114,13 +117,12 @@ def test_start_error_after_launch_never_closes_a_claimed_descriptor(monkeypatch)
     duplicates = []
     closed = []
     reading, release, finished = threading.Event(), threading.Event(), threading.Event()
-    real_dup, real_read, real_close = os.dup, os.read, os.close
+    real_dup2, real_read, real_close = os.dup2, os.read, os.close
     real_start = threading.Thread.start
 
-    def duplicate(fd):
-        copied = real_dup(fd)
-        duplicates.append(copied)
-        return copied
+    def duplicate(fd, target, **kwargs):
+        duplicates.append(target)
+        return real_dup2(fd, target, **kwargs)
 
     def read(fd, size):
         if fd not in duplicates:
@@ -130,13 +132,7 @@ def test_start_error_after_launch_never_closes_a_claimed_descriptor(monkeypatch)
         os.fstat(fd)                     # startup must not have closed this while the worker owned it
         return b""
 
-    def close(fd):
-        if fd in duplicates:
-            closed.append(fd)
-            real_close(fd)
-            finished.set()
-        else:
-            real_close(fd)
+    close = _observe_owner_close(stdio._InputDescriptor.close, duplicates, closed, finished)
 
     def start(thread):
         real_start(thread)
@@ -157,9 +153,9 @@ def test_start_error_after_launch_never_closes_a_claimed_descriptor(monkeypatch)
 
     try:
         with monkeypatch.context() as patch:
-            patch.setattr(stdio.os, "dup", duplicate)
+            patch.setattr(stdio.os, "dup2", duplicate)
             patch.setattr(stdio.os, "read", read)
-            patch.setattr(stdio.os, "close", close)
+            patch.setattr(stdio._InputDescriptor, "close", close)
             patch.setattr(stdio.threading.Thread, "start", start)
             anyio.run(run)
     finally:
@@ -174,11 +170,11 @@ def test_startup_reclaims_duplicate_before_a_delayed_reader_can_claim_it(monkeyp
     waiting, release, finished = threading.Event(), threading.Event(), threading.Event()
     duplicates = []
     real_dup, real_start, real_reader = os.dup, threading.Thread.start, stdio._read_lines
+    real_dup2 = os.dup2
 
-    def duplicate(fd):
-        copied = real_dup(fd)
-        duplicates.append(copied)
-        return copied
+    def duplicate(fd, target, **kwargs):
+        duplicates.append(target)
+        return real_dup2(fd, target, **kwargs)
 
     def delayed(*args):
         waiting.set()
@@ -212,7 +208,7 @@ def test_startup_reclaims_duplicate_before_a_delayed_reader_can_claim_it(monkeyp
 
     try:
         with monkeypatch.context() as patch:
-            patch.setattr(stdio.os, "dup", duplicate)
+            patch.setattr(stdio.os, "dup2", duplicate)
             patch.setattr(stdio, "_read_lines", delayed)
             patch.setattr(stdio.threading.Thread, "start", start)
             anyio.run(run)

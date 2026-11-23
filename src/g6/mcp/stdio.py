@@ -65,16 +65,19 @@ async def _writer(messages, stdout, stream, seen: Witness, connection: anyio.Can
         connection.cancel()              # writer EOF also ends the parser, even while stdin stays open
 
 
-def _raw_lines(fd, stopped, prefix=b""):
+def _raw_lines(fd, stopped, prefix=b"", read=None):
     """Frame raw input with the text reader's LF, CRLF and CR line endings, including an unterminated final line.
 
     Keep partial UTF-8 bytes until the line is complete. Like the old readline(), there is no line-size cap. Only
-    os.read waits on the client: no Python buffered stream lock can be held during that wait, on Windows or POSIX.
+    an unbuffered read waits on the client: no Python buffered stream lock is held on Windows or POSIX.
     """
     pending = bytearray()
     scan = 0
+    if read is None:
+        def read(size):
+            return os.read(fd, size)
     while not stopped.is_set():
-        chunk = prefix or os.read(fd, 65536)
+        chunk = prefix or read(65536)
         prefix = b""
         if not chunk:
             if pending:
@@ -98,31 +101,43 @@ def _raw_lines(fd, stopped, prefix=b""):
 
 
 class _InputDescriptor:
-    """A duplicate has one closing owner, even if start raises after the OS has already launched the thread."""
+    """Reserve an owning file before dup2: replacement never returns an unowned descriptor integer."""
 
     def __init__(self):
         self.lock = threading.Lock()
-        self.fd = None
+        self.file = None
+        self.claimed = False
+
+    def duplicate(self, fd):
+        # Setup has not published this owner to a reader yet. Its outer handler covers every return/opcode.
+        self.file = open(os.devnull, "rb", buffering=0)
+        os.dup2(fd, self.file.fileno(), inheritable=False)
 
     def take(self):
         with self.lock:
-            fd, self.fd = self.fd, None
-            return fd
+            if self.file is None or self.claimed:
+                return None
+            self.claimed = True
+            return self.file.fileno()
 
-    def close(self):
-        fd = self.take()
-        if fd is not None:
-            os.close(fd)
+    def close(self, *, reader=False):
+        with self.lock:
+            if self.file is not None and self.claimed == reader:
+                self.file.close()
+                self.file = None
 
 
-def _read_lines(descriptor, lines, token, stopped, cached) -> None:
+def _read_lines(descriptor, lines, token, stopped, cached, console=None) -> None:
     """Transfer existing caches, then hand raw lines to the SDK parser. A blocked raw read may outlive the
     connection, but the daemon holds no buffered reader lock during that wait, so interpreter shutdown can finish."""
-    fd = descriptor.take()
+    fd = None
     try:
+        fd = descriptor.take()
         if fd is None:
             return                      # startup already reclaimed the duplicate before this thread ran
-        for raw in _raw_lines(fd, stopped, cached()):
+        # Keep the console's unbuffered ReadConsoleW adapter, including its own partial UTF-8 byte cache.
+        # It waits without a Python buffered lock or CRT read lock. CRT os.read would use a console code page.
+        for raw in _raw_lines(fd, stopped, cached(), read=console.read if console is not None else None):
             try:
                 line = raw.decode("utf-8")
             except UnicodeDecodeError:
@@ -131,8 +146,7 @@ def _read_lines(descriptor, lines, token, stopped, cached) -> None:
     except BaseException:  # noqa: BLE001 - a read error, or the connection or its event loop ended: input ends here
         pass
     finally:
-        if fd is not None:
-            os.close(fd)                # only its claiming thread closes it, after any blocked read ends
+        descriptor.close(reader=True)  # only its claiming thread closes it, after any blocked read ends
         with suppress(BaseException):
             anyio.from_thread.run_sync(lines.close, token=token)
 
@@ -178,18 +192,18 @@ async def _lines(stdin):
         finally:
             stopped.set()
         return
-    cached = cache_reader(source)         # reject opaque buffering before acquiring or consuming anything
+    cached, console = cache_reader(source)  # reject opaque buffering before acquiring or consuming anything
     # Windows' CRT also locks a descriptor during os.read. Give the thread its own descriptor so finalization of
-    # the caller's file cannot wait on that CRT lock. No Python file object ever owns this duplicate.
+    # the caller's file cannot wait on that CRT lock. An unbuffered file owns the duplicate throughout setup.
     descriptor = _InputDescriptor()
     sender = receiver = stopped = None
     # One try covers startup through yield; a nested try can put its line event outside the outer handler.
     try:
-        descriptor.fd = os.dup(fd)
+        descriptor.duplicate(fd)
         sender, receiver = anyio.create_memory_object_stream(0)
         stopped = threading.Event()
         threading.Thread(target=_read_lines,
-                         args=(descriptor, sender, anyio.lowlevel.current_token(), stopped, cached),
+                         args=(descriptor, sender, anyio.lowlevel.current_token(), stopped, cached, console),
                          name="g6-stdin-reader", daemon=True).start()
         with receiver:
             yield receiver
