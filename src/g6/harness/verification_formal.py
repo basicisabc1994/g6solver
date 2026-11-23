@@ -403,6 +403,8 @@ def _function(tree, dotted: str, side: str) -> tuple[str, str, list[str]]:
     except vt.Inapplicable as exc:
         raise _Outside(str(exc)) from None
     node = target.node
+    if target.kind == "method":
+        raise _Outside(f"{dotted} is an instance method: symbolic search reads top-level functions only")
     if not isinstance(node, ast.FunctionDef):
         raise _Outside(f"{dotted} is not one plain def {vt.WHERE[side]}")
     return ast.unparse(node), node.name, [arg.arg for arg in node.args.args]

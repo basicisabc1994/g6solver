@@ -181,9 +181,33 @@ def probe_sha256() -> str:
     return hashlib.sha256(BOOTSTRAP.encode("utf-8")).hexdigest()
 
 
+def bind_method(module, spec, load):
+    """Fixed child code: construct once, then bind only an own ordinary function on the exact requested class."""
+    class_name, method_name = spec[2].split(".")
+    cls = vars(module).get(class_name)
+    if type(cls) is not type:
+        raise TypeError("method owner is not an ordinary class")
+    method = vars(cls).get(method_name)
+    if type(method) is not type(lambda: None):
+        raise TypeError("method is no longer an own ordinary function")
+    if spec[0] == "state_method":
+        def operation(state, *args, **kwargs):
+            if type(state) is not cls:
+                raise TypeError("state is not the named class")
+            return method(state, *args, **kwargs)
+        return operation
+    constructor = spec[4]
+    setup = load(constructor["call"])
+    args, kwargs = json.loads(json.dumps([constructor["args"], constructor["kwargs"]]))
+    state = setup(*args, **kwargs)
+    if type(state) is not cls:
+        raise TypeError("constructor did not return the named class")
+    return type(method).__get__(method, state, cls)
+
+
 def _import_roots(spec, roots=None):
     """Use held scenario roots, then an ordinary example's resolved ordered roots."""
-    if len(spec) == 5:
+    if len(spec) == 5 and spec[0] == 'module':
         return spec[4]['import_roots']
     if roots is not None:
         if (type(roots) is not list or not roots or any(type(one) is not str or one != '.' and (
@@ -192,7 +216,7 @@ def _import_roots(spec, roots=None):
             raise ValueError('G6_E_OBSERVATION_UNAVAILABLE: invalid resolved import roots')
         return roots
     roots = ['.', 'src']
-    if len(spec) == 4 and spec[0] == 'module':
+    if len(spec) >= 4 and spec[0] in ('module', 'method'):
         path = spec[3]
         if (not isinstance(path, str) or ':' in path or '\\' in path
                 or any(part in ('', '.', '..') for part in path.split('/'))):
@@ -206,7 +230,8 @@ def _import_roots(spec, roots=None):
 
 # Loaded before any repository module. There is no site initialisation, PYTHONPATH, pytest, plugin or ini reader.
 BOOTSTRAP = (inspect.getsource(observable_exception) + '\n' + inspect.getsource(_fingerprint) + '\n'
-             + inspect.getsource(_exception_observation) + '\n' + inspect.getsource(_import_roots)) + r'''
+             + inspect.getsource(_exception_observation) + '\n' + inspect.getsource(bind_method) + '\n'
+             + inspect.getsource(_import_roots)) + r'''
 import builtins, collections.abc, copy, hashlib, importlib, importlib.machinery, json, os, re, struct, sys
 def _name(kind):
     module = getattr(kind, "__module__", None) or ""
@@ -291,7 +316,7 @@ def load(spec):
     if len(spec) not in (4, 5):
         raise RuntimeError("entry point has no resolved repository file")
     wanted = os.path.realpath(os.path.join(root, *spec[3].split("/")))
-    if len(spec) == 5:
+    if len(spec) == 5 and kind == "module":
         stem = module.replace(".", "/")
         choices = [os.path.join(root, prefix, stem + suffix)
                    for prefix in _import_roots(spec) for suffix in ("/__init__.py", ".py")]
@@ -302,7 +327,7 @@ def load(spec):
     where = os.path.realpath(getattr(found, "__file__", ""))
     if os.path.normcase(where) != os.path.normcase(wanted):
         raise RuntimeError("G6_E_OBSERVATION_UNAVAILABLE: entry point resolved outside its copied file")
-    return getattr(found, attribute)
+    return bind_method(found, spec, load) if kind in ("method", "state_method") else getattr(found, attribute)
 # Evict the resolved module and its parents, including any same-named standard-library cache entry. The encoder,
 # writer and import machinery above are already held by the bootstrap.
 module = data["function"][1]
@@ -546,6 +571,8 @@ def located(copy: Path, data: dict) -> dict:
     roots = _import_roots(data['function'], data.get('import_roots'))
     specs = [data["function"], *data.get("errors", []),
              *(case["error"] for case in data.get("cases", []) if "error" in case)]
+    if data['function'][0] == 'method':
+        specs.append(data['function'][4]['call'])
     for spec in specs:
         if spec[0] == "builtin":
             continue

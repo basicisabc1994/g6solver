@@ -39,7 +39,8 @@ the five of this version:
 
 An instance is data, never code: ``{id, template, requirement_id, intent, bindings}`` (``template_instances``). A name
 in the bindings is a dotted name of the letters A to Z (either case), digits and ``_``, a module path and then a
-top-level attribute (``package.module.function``); an exception is a built-in exception's name or such a dotted name;
+top-level attribute (``package.module.function``) or ordinary method (``package.module.Class.method``);
+an exception is a built-in exception's name or a top-level dotted name;
 there is no keyword and no double-underscore name in either. A literal is JSON
 data (no tuple, set, bytes, number that is not finite, or key that is not text), at most ``MAX_DEPTH`` levels deep and
 ``MAX_BINDINGS_CHARS`` characters as JSON. Anything else is refused, and so is the whole review, before anything runs.
@@ -49,6 +50,14 @@ star import is not followed), on the working tree for an instance whose intent i
 for one that keeps behaviour (``preserve``, and every ``differential.v1``); a function's parameters must take each
 call's arguments, read from its definition. One that does not apply is refused for that instance and listed in
 ``assessment.completion.activities`` with the reason; it never errors the review.
+
+The four direct callable families also accept ``constructor: {call?, args?, kwargs?}`` for their primary method.
+Omitting ``call`` selects that class's own constructor; an explicit name selects that class or an undecorated,
+synchronous top-level factory in its module. Setup arguments are JSON and must bind to the AST signature.
+Properties, descriptors, decorated methods (including staticmethod/classmethod), class aliases and deeper nested
+classes are refused. Preservation methods and constructors are checked on both sides. Construction happens once
+per execution, independently at base and patch. Formal replay methods use the explicit state constructor and share
+that state through each trace; symbolic function search does not translate methods.
 
 The compiler writes each check from the template's fixed text alone: the text holds one slot, ``BINDINGS = ...``,
 where G6 writes the resolved bindings as one literal (Python's ``ascii``, so the text is ASCII), and nothing the caller
@@ -84,7 +93,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationErr
 from g6.core import component_process
 from g6.core.git_name import shown
 from g6.harness import verification_search as vs
-from g6.harness.behaviour_runner import example_text
+from g6.harness.behaviour_runner import bind_method, example_text
 from g6.workforce import repo_tests
 
 REQUIREMENT_SATISFACTION = "requirement_satisfaction"
@@ -205,6 +214,11 @@ class Call(_Strict):
         return _keyword_names(value)
 
 
+class MethodConstructor(Call):
+    """JSON setup for a bound method; omitted ``call`` selects its class, otherwise its class or a same-module factory."""
+    call: Name | None = None
+
+
 def _keyword_names(value: dict) -> dict:
     if any(not key.isascii() or not key.isidentifier() or keyword.iskeyword(key) for key in value):
         raise ValueError("each key of kwargs must be a parameter's name: the letters A to Z (either case), digits "
@@ -237,12 +251,14 @@ class ExampleCase(Call):
 
 class ExampleBindings(_Strict):
     function: Name
+    constructor: MethodConstructor | None = None
     cases: list[ExampleCase] = Field(min_length=1, max_length=MAX_INPUTS)
 
 
 class RelationBindings(_Strict):
     relation: Literal["round_trip", "idempotence", "invariance", "monotonicity"]
     function: Name
+    constructor: MethodConstructor | None = None
     inverse: Name | None = None
     transformation: Name | None = None
     order: Literal["increasing", "decreasing"] | None = None
@@ -282,6 +298,7 @@ class AccessCase(Call):
 
 class AccessBindings(_Strict):
     operation: Name
+    constructor: MethodConstructor | None = None
     refusal: Literal["exception", "falsy_return"]
     exception: ErrorName | None = None
     cases: list[AccessCase] = Field(min_length=1, max_length=MAX_INPUTS)
@@ -299,6 +316,7 @@ class AccessBindings(_Strict):
 
 class DifferentialBindings(_Strict):
     function: Name
+    constructor: MethodConstructor | None = None
     mode: Literal["outputs", "exceptions"]
     calls: list[Call] = Field(min_length=1, max_length=MAX_INPUTS)
 
@@ -352,7 +370,7 @@ _INTEGER = re.compile(r"-?[0-9]{1,9}")
 
 
 class CallSpec(Call):
-    """A call of a top-level callable the tree defines (``call``), with JSON arguments."""
+    """A callable the tree defines (``call``), with JSON arguments; replay operations may name a state method."""
     call: Name
 
 
@@ -580,15 +598,22 @@ class Tree:
 
 @dataclass(frozen=True)
 class Target:
-    """A name a binding resolved to: a built-in (``kind`` "builtin") or a top-level name of a module file."""
+    """A built-in, top-level name, or own ordinary method resolved from a module file."""
     module: str
     attribute: str
     file: str = ""
     node: ast.AST | None = None
     kind: str = "module"
+    constructor: dict | None = None
 
-    def spec(self) -> list[str]:
-        """The name as the compiled check reads it from its literal: ``[kind, module, attribute]``."""
+    def spec(self) -> list:
+        """Literal loader data; methods also carry their resolved file and, when bound, JSON setup."""
+        if self.kind == "method":
+            if self.constructor is None:
+                raise Inapplicable(f"{self.module}.{self.attribute}: an instance method needs a JSON constructor")
+            return [self.kind, self.module, self.attribute, self.file, self.constructor]
+        if self.kind == "state_method":
+            return [self.kind, self.module, self.attribute, self.file]
         return [self.kind, self.module, self.attribute]
 
 
@@ -655,14 +680,28 @@ def _top_level(module: ast.Module, name: str) -> tuple[ast.AST | None, bool]:
 
 
 def resolve(tree: Tree, dotted: str, side: str) -> Target:
-    """The top-level name ``dotted`` names (``module.attribute``) on ``side``, read from the module's file; an
+    """A top-level name or one class level of ordinary instance method on ``side``, read from files only; an
     ``Inapplicable`` that says why when there is none."""
+    try:
+        _dotted(dotted, attribute=True)
+    except ValueError as exc:
+        raise Inapplicable(f"{dotted!r}: {exc}") from None
     parts = dotted.split(".")
     module, attribute = ".".join(parts[:-1]), parts[-1]
     rel = _module_file(tree, parts[:-1], side)
+    member = ""
     if not rel:
-        raise Inapplicable(f"{dotted}: no module {module} {WHERE[side]} (G6 looks for it in the import roots, the top "
-                           "folder and src, as the runs' import path has them)")
+        # Prefer a real module over a class spelling; never follow imports or assignment aliases to find a class.
+        for end in range(len(parts) - 2, 0, -1):
+            rel = _module_file(tree, parts[:end], side)
+            if rel:
+                if len(parts) - end != 2:
+                    raise Inapplicable(f"{dotted}: nested classes deeper than one level are unsupported {WHERE[side]}")
+                module, attribute, member = ".".join(parts[:end]), parts[end], parts[end + 1]
+                break
+        if not rel:
+            raise Inapplicable(f"{dotted}: no module {module} {WHERE[side]} (G6 looks for it in the import roots, the top "
+                               "folder and src, as the runs' import path has them)")
     try:   # a RecursionError or a MemoryError, Python's parser out of depth, is G6's own error (review I3), not here
         found, star = _top_level(ast.parse(tree.text(rel, side)), attribute)
     except (SyntaxError, ValueError, OSError, repo_tests.RepoRefused) as exc:
@@ -670,6 +709,26 @@ def resolve(tree: Tree, dotted: str, side: str) -> Target:
     if found is None:
         raise Inapplicable(f"{dotted}: no top-level name {attribute} in {rel} {WHERE[side]}"
                            + ("; it could come only from a star import, which G6 does not follow" if star else ""))
+    if member:
+        if not isinstance(found, ast.ClassDef):
+            raise Inapplicable(f"{dotted}: no module {module}.{attribute}; {attribute} is not a class defined in its "
+                               f"own module body {WHERE[side]} (imports and assignment aliases are not followed)")
+        if found.decorator_list or found.keywords:
+            raise Inapplicable(f"{dotted}: a decorated class or metaclass is unsupported {WHERE[side]}")
+        method, star = _top_level(ast.Module(body=found.body, type_ignores=[]), member)
+        if method is None:
+            raise Inapplicable(f"{dotted}: no method {member} in the class body {WHERE[side]}"
+                               + ("; star imports are not followed" if star else ""))
+        if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            raise Inapplicable(f"{dotted}: a descriptor or assignment alias is not an ordinary method {WHERE[side]}")
+        if method.decorator_list:
+            decorators = [ast.unparse(node) for node in method.decorator_list]
+            why = next((name for name in ("property", "staticmethod", "classmethod") if name in decorators),
+                       "decorated method or descriptor")
+            raise Inapplicable(f"{dotted}: {why} is unsupported {WHERE[side]}")
+        if not method.args.posonlyargs and not method.args.args:
+            raise Inapplicable(f"{dotted}: an ordinary instance method needs a positional receiver {WHERE[side]}")
+        return Target(module, attribute + "." + member, rel, method, "method")
     return Target(module, attribute, rel, found)
 
 
@@ -677,6 +736,8 @@ def _error_target(tree: Tree, name: str, side: str) -> Target:
     if "." not in name:
         return Target("", name, kind="builtin")
     target = resolve(tree, name, side)
+    if target.kind == "method":
+        raise Inapplicable(f"{name} is an instance method {WHERE[side]}, not an exception type")
     if isinstance(target.node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         raise Inapplicable(f"{name} is a function {WHERE[side]}, not an exception type")
     return target
@@ -717,7 +778,7 @@ def _signature(dotted: str, target: Target) -> tuple[inspect.Signature | None, s
         if isinstance(node, ast.FunctionDef):
             if node.decorator_list:
                 return None, "a decorated function"
-            return _parameters(node, skip_first=False), ""
+            return _parameters(node, skip_first=target.kind == "method"), ""
         if isinstance(node, ast.ClassDef):
             init = next((item for item in node.body if isinstance(item, ast.FunctionDef) and item.name == "__init__"),
                         None)
@@ -765,8 +826,46 @@ def _located(target: Target) -> list[str]:
     return [*target.spec(), target.file] if target.kind == "module" else target.spec()
 
 
+def _call_target(tree: Tree, dotted: str, side: str, constructor: MethodConstructor | None = None) -> Target:
+    """Bind an ordinary method to explicitly stated JSON setup; never infer setup for another callable."""
+    target = resolve(tree, dotted, side)
+    if target.kind != "method":
+        if constructor is not None:
+            raise Inapplicable(f"{dotted}: constructor is only used for an instance method")
+        return target
+    if constructor is None:
+        raise Inapplicable(f"{dotted}: an instance method needs a JSON constructor")
+    class_name = target.attribute.split(".")[0]
+    own = target.module + "." + class_name
+    called = constructor.call or own
+    if called.rpartition(".")[0] != target.module:
+        raise Inapplicable(f"{dotted}: constructor must name its own class or a top-level factory in the same module")
+    setup = resolve(tree, called, side)
+    node = setup.node
+    if called == own:
+        assert isinstance(node, ast.ClassDef)
+        # A custom __new__, an inherited constructor, or a decorated initializer cannot be checked from this body.
+        init, _ = _top_level(ast.Module(body=node.body, type_ignores=[]), "__init__")
+        new, _ = _top_level(ast.Module(body=node.body, type_ignores=[]), "__new__")
+        if new is not None or (init is None and node.bases):
+            raise Inapplicable(f"{dotted}: constructor needs an own readable __init__ and no custom __new__ {WHERE[side]}")
+        if init is None:
+            signature = inspect.Signature()
+        elif not isinstance(init, ast.FunctionDef) or init.decorator_list or not (init.args.posonlyargs or init.args.args):
+            raise Inapplicable(f"{dotted}: constructor __init__ is not an ordinary synchronous method {WHERE[side]}")
+        else:
+            signature = _parameters(init, skip_first=True)
+    else:
+        if setup.kind != "module" or not isinstance(node, ast.FunctionDef) or node.decorator_list:
+            raise Inapplicable(f"{dotted}: constructor must name an ordinary synchronous top-level factory {WHERE[side]}")
+        signature = _parameters(node, skip_first=False)
+    _arguments(called, signature, constructor.args, constructor.kwargs, "the JSON constructor")
+    return dataclasses.replace(target, constructor={"call": _located(setup), "args": constructor.args,
+                                                     "kwargs": constructor.kwargs})
+
+
 def _example(tree: Tree, b: ExampleBindings, side: str) -> Applied:
-    target = resolve(tree, b.function, side)
+    target = _call_target(tree, b.function, side, b.constructor)
     notes = _checked(b.function, target, [(case.args, case.kwargs, f"case {index}")
                                           for index, case in enumerate(b.cases)])
     cases = []
@@ -784,20 +883,20 @@ def _example(tree: Tree, b: ExampleBindings, side: str) -> Applied:
 
 
 def _relation(tree: Tree, b: RelationBindings, side: str) -> Applied:
-    target = resolve(tree, b.function, side)
+    target = _call_target(tree, b.function, side, b.constructor)
     one_argument = [([None], {}, "one input")]
     notes = _checked(b.function, target, one_argument)
     other = b.inverse or b.transformation
     found = None
     if other:
-        found = resolve(tree, other, side)
+        found = _call_target(tree, other, side)
         notes += _checked(other, found, one_argument)
     return Applied({"relation": b.relation, "function": target.spec(), "other": found.spec() if found else None,
                     "order": b.order or "increasing", "strict": bool(b.strict), "inputs": b.inputs}, notes)
 
 
 def _access(tree: Tree, b: AccessBindings, side: str) -> Applied:
-    target = resolve(tree, b.operation, side)
+    target = _call_target(tree, b.operation, side, b.constructor)
     notes = _checked(b.operation, target, [(case.args, case.kwargs, f"case {index}")
                                            for index, case in enumerate(b.cases)])
     error = _error_target(tree, b.exception, side).spec() if b.exception else None
@@ -807,10 +906,11 @@ def _access(tree: Tree, b: AccessBindings, side: str) -> Applied:
 
 
 def _differential(tree: Tree, b: DifferentialBindings, side: str) -> Applied:
-    target = resolve(tree, b.function, side)
+    target = _call_target(tree, b.function, side, b.constructor)
     notes = _checked(b.function, target, [(call.args, call.kwargs, f"call {index}")
                                           for index, call in enumerate(b.calls)])
-    return Applied({"function": target.spec(), "mode": b.mode,
+    roots = {"import_roots": [*tree.roots, ".", "src"]} if target.kind == "method" and tree.roots else {}
+    return Applied({"function": target.spec(), "mode": b.mode, **roots,
                     "calls": [{"args": call.args, "kwargs": call.kwargs} for call in b.calls]}, notes)
 
 
@@ -872,18 +972,30 @@ def _state_invariant(tree: Tree, b: StateInvariantBindings, side: str) -> Applie
         read |= used
     constructor = resolve(tree, b.constructor.call, side)
     notes = _checked(b.constructor.call, constructor, [(b.constructor.args, b.constructor.kwargs, "the constructor")])
+
+    def state_call(call, which):
+        target = resolve(tree, call.call, side)
+        if target.kind == "method":
+            # Validate JSON setup against this method's class/factory, but bind to the replay's existing state.
+            target = _call_target(tree, call.call, side, MethodConstructor.model_validate(b.constructor.model_dump()))
+            checked = _checked(call.call, target, [(call.args, call.kwargs, which)])
+            return dataclasses.replace(target, kind="state_method", constructor=None), checked
+        return target, _checked(call.call, target, [([None, *call.args], call.kwargs, which)])
+
     actions = {}
     for key, call in b.actions.items():
-        target = resolve(tree, call.call, side)
-        notes += _checked(call.call, target, [([None, *call.args], call.kwargs, f"action {key}")])
+        target, checked = state_call(call, f"action {key}")
+        notes += checked
         actions[str(int(key))] = {"call": target.spec(), "args": call.args, "kwargs": call.kwargs}
     observe = {}
     for name, call in b.observe.items():
-        target = resolve(tree, call.call, side)
-        notes += _checked(call.call, target, [([None, *call.args], call.kwargs, f"the read of {name}")])
+        target, checked = state_call(call, f"the read of {name}")
+        notes += checked
         observe[name] = {"call": target.spec(), "args": call.args, "kwargs": call.kwargs, "refusal": call.refusal,
                          "error": _error_target(tree, call.exception, side).spec() if call.exception else None}
-    return Applied({"constructor": {"call": constructor.spec(), "args": b.constructor.args,
+    has_methods = any(entry["call"][0] == "state_method" for entry in [*actions.values(), *observe.values()])
+    return Applied({"constructor": {"call": _located(constructor) if has_methods else constructor.spec(),
+                                    "args": b.constructor.args,
                                     "kwargs": b.constructor.kwargs},
                     "actions": actions, "observe": observe,
                     "sorts": {name: model.variables[name] for name in sorted(read | set(b.observe))},
@@ -1198,19 +1310,26 @@ import copy
 import hashlib
 import importlib
 import json
+import os
 import re
 
 import pytest
 """
 
-_LEGACY_COMMON = """
+_LEGACY_COMMON = "\n" + inspect.getsource(bind_method) + """
 
 def _load(spec):
     # spec is [kind, module, attribute]: ["builtin", "", "ValueError"], or ["module", "package.module", "name"]
-    kind, module, attribute = spec
+    kind, module, attribute = spec[:3]
     if kind == "builtin":
         return getattr(builtins, attribute)
-    return getattr(importlib.import_module(module), attribute)
+    found = importlib.import_module(module)
+    if len(spec) >= 4:
+        wanted = os.path.realpath(os.path.join(os.getcwd(), *spec[3].split("/")))
+        where = os.path.realpath(getattr(found, "__file__", ""))
+        if os.path.normcase(where) != os.path.normcase(wanted):
+            raise RuntimeError("entry point resolved outside its copied file")
+    return bind_method(found, spec, _load) if kind in ("method", "state_method") else getattr(found, attribute)
 
 
 def _error(spec):
@@ -1313,8 +1432,8 @@ class TemplateDefinition:
         return hashlib.sha256(self.text.encode("utf-8")).hexdigest()
 
 
-_CALLED = ("the names resolve to the code the runs import: a module in an import root, the top folder or src, and a top-level name "
-           "defined in it")
+_CALLED = ("the names resolve to the code the runs import: a module in an import root, the top folder or src, and a "
+           "top-level name or own ordinary instance method defined in it")
 TEMPLATES: dict[str, TemplateDefinition] = {definition.id: definition for definition in (
     TemplateDefinition(
         "example.v1", REQUIREMENT_SATISFACTION, "a stated input gives a stated result, error type or effect",
@@ -1655,11 +1774,19 @@ def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInsta
                 bindings = through.bindings.model_validate(
                     access_model(AccessStepsBindings.model_validate(one.bindings)) if multi_step(one) else
                     one.bindings)
+                applied = through.applies(tree, bindings, _side(one))
+                if _side(one) == BASE and any(entry["call"][0] == "state_method" for field in ("actions", "observe")
+                                             for entry in applied.data[field].values()):
+                    through.applies(tree, bindings, PATCH)
                 found.formal.append({"instance": one, "bindings": bindings, "root": root, "through": through,
-                                     "applied": through.applies(tree, bindings, _side(one))})
+                                     "applied": applied})
             elif definition.text:
                 bindings = definition.bindings.model_validate(one.bindings)
                 applied = definition.applies(tree, bindings, _side(one))
+                primary = applied.data.get("function", applied.data.get("operation"))
+                if isinstance(primary, list) and primary[0] == "method" and _side(one) == BASE:
+                    # Unlike an unbound top-level call, binding also needs an ordinary member and JSON setup on patch.
+                    definition.applies(tree, bindings, PATCH)
                 check, placed, origin = compiled_check(root, one, applied.data, applied.notes)
                 found.checks.append(check)
                 found.placed[one.id] = placed
