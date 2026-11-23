@@ -56,7 +56,8 @@ from typing import Any
 from uuid import uuid4
 
 import g6
-from g6.core.door import allowed_sensitive, blocked_reply, is_allowed
+from g6.core.door import allowed_sensitive, is_allowed
+from g6.mcp.consent_controls import blocked_reply
 from g6.core.ledger import LedgerError, digest as digest_of
 from g6.core.storage import g6_home
 from g6.core.reliability_envelope import envelope_fields, warning_card
@@ -159,7 +160,7 @@ def refused() -> dict | None:
         return None
     return public_instructions(blocked_reply(
         f"[G6_E_SENSITIVE_COMPONENT_DENIED] {WHO} starts a process that runs on its own. "
-        "The person must allow it themselves. Tell the person and stop."))
+        "The person must allow it themselves. Tell the person and stop.", public=True))
 
 
 def _root(folder: str, *, stop_request: bool = False) -> Path:
@@ -375,6 +376,8 @@ def asked(folder: str) -> tuple[Path, str, dict[str, Any]] | dict:
         root = _root(folder)
     except RepoRefused as exc:
         return _blocked(NOT_A_FOLDER, f"{exc}; nothing was done", "Name a local folder.")
+    except (RuntimeError, KeyError, OSError) as exc:
+        return _failed(root, exc)
     try:
         for _ in range(DIALOG_TRIES):
             reading = admission(root, stop_in_force(root))
@@ -778,6 +781,8 @@ def asked_act(act_name: str, folder: str, generation: int | None = None) -> tupl
         root = _root(folder)
     except RepoRefused as exc:
         return _blocked(NOT_A_FOLDER, f"{exc}; nothing was done", "Name a local folder.")
+    except (RuntimeError, KeyError, OSError) as exc:
+        return _failed(Path(folder), exc)
     cannot = _cannot_act(act_name, root, generation)
     if cannot is not None:
         return cannot
@@ -1119,9 +1124,11 @@ def stop(folder: str, reason: str = "") -> dict:
     (``_looped``). A folder that cannot be found, or anything else that escapes the stop's own receipt, says so
     (``STOP_FAILED``), with the denial still in force."""
     root, running = folder, None            # the folder as given, for a reply before it is found
+    admitted = False
     try:
         denial = _begin_stop(folder)
         root = _root(folder, stop_request=True)
+        admitted = True
         _STOP_PENDING[denial] = root
         if not _looped(root):
             return _not_a_loop(root)
@@ -1165,7 +1172,7 @@ def stop(folder: str, reason: str = "") -> dict:
         return reply
     except Exception as exc:  # noqa: BLE001 - a stop that could not be written says so, whatever stopped it
         return _blocked(STOP_FAILED, f"the stop could not be written: {type(exc).__name__}: {exc}"[:400],
-                        running=_running(root)[0] if running is None else running, folder=utf8_text(str(root)),
+                        running=_running(root)[0] if admitted and running is None else running, folder=utf8_text(str(root)),
                         recorded=None)
 
 
@@ -1195,6 +1202,8 @@ def status(folder: str) -> dict:
         root = _root(folder)
     except RepoRefused as exc:
         return _blocked(NOT_A_FOLDER, f"{exc}; nothing was done", "Name a local folder.")
+    except (RuntimeError, KeyError, OSError) as exc:
+        return _unread_status(root, halted, exc)
     try:
         from g6.metaharness.loop import STATUS_LINE
         from g6.metaharness.runner import held as held_by
