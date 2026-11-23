@@ -93,7 +93,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationErr
 from g6.core import component_process
 from g6.core.git_name import shown
 from g6.harness import verification_search as vs
-from g6.harness.behaviour_runner import bind_method, example_text
+from g6.harness.behaviour_runner import CheckSetupError, bind_method, example_text, runtime_method, setup_call
 from g6.workforce import repo_tests
 
 REQUIREMENT_SATISFACTION = "requirement_satisfaction"
@@ -1028,7 +1028,7 @@ def test_relation():
                 left, right = _call(function, _call(other, value)), _call(function, value)
             holds = _same(left, right)
         except BaseException as exc:
-            if isinstance(exc, KeyboardInterrupt):
+            if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
                 raise
             failures.append("input %d raised %s" % (index, _name(type(exc))))
             raised.append(_raised(exc))
@@ -1044,7 +1044,7 @@ def test_relation():
                 ordered = low > high if BINDINGS["strict"] else low >= high
             ordered = bool(ordered)
         except BaseException as exc:
-            if isinstance(exc, KeyboardInterrupt):
+            if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
                 raise
             failures.append("inputs %d and %d: comparing their results raised %s" % (first, second,
                                                                                     _name(type(exc))))
@@ -1069,7 +1069,7 @@ def test_access_rule():
             result = operation(*copy.deepcopy(case["args"]), **copy.deepcopy(case["kwargs"]))
             refused = error is None and not result
         except BaseException as exc:
-            if isinstance(exc, KeyboardInterrupt):
+            if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
                 raise
             if error is None or not isinstance(exc, error):
                 failures.append(asked + " raised " + _name(type(exc)))
@@ -1142,13 +1142,13 @@ def _outcome(call):
     try:
         function = _load(BINDINGS["function"])
     except BaseException as exc:
-        if isinstance(exc, KeyboardInterrupt):
+        if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
             raise
         return {"unresolved": _name(type(exc))}
     try:
         result = function(*copy.deepcopy(call["args"]), **copy.deepcopy(call["kwargs"]))
     except BaseException as exc:
-        if isinstance(exc, KeyboardInterrupt):
+        if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
             raise
         return {"raised": _name(type(exc))}
     if BINDINGS["mode"] == "exceptions":
@@ -1156,7 +1156,7 @@ def _outcome(call):
     try:
         return {"returned": _bounded(_plain(result))}
     except BaseException as exc:
-        if isinstance(exc, KeyboardInterrupt):
+        if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
             raise
         return {"unreadable": _name(type(exc))}
 
@@ -1239,7 +1239,7 @@ def _read(state, read):
     try:
         result = _call(read, state)
     except BaseException as exc:
-        if isinstance(exc, KeyboardInterrupt) or error is None or not isinstance(exc, error):
+        if isinstance(exc, (KeyboardInterrupt, CheckSetupError)) or error is None or not isinstance(exc, error):
             raise
         return False
     return True if error is not None else bool(result)
@@ -1250,27 +1250,23 @@ def _not_replayable(why, exc=None):
 
 
 def _replay(trace):
-    try:
-        state = _call(BINDINGS["constructor"])
-    except BaseException as exc:
-        if isinstance(exc, KeyboardInterrupt):
-            raise
-        return _not_replayable("the constructor", exc)
+    state = setup_call("constructor", _call, BINDINGS["constructor"])
     for step, value in enumerate(trace["actions"]):
         try:
             _call(BINDINGS["actions"][str(value)], state)
         except BaseException as exc:
-            if isinstance(exc, KeyboardInterrupt):
+            if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
                 raise
-            return _not_replayable("step %d (action %d)" % (step + 1, value), exc)
+            return {"outcome": "operation_failed", "why": "step %d (action %d) raised %s" % (
+                step + 1, value, _name(type(exc)))}
     values = dict(trace["ghost"])
     for name, read in BINDINGS["observe"].items():
         try:
             got = _read(state, read)
         except BaseException as exc:
-            if isinstance(exc, KeyboardInterrupt):
+            if isinstance(exc, (KeyboardInterrupt, CheckSetupError)):
                 raise
-            return _not_replayable("reading " + name, exc)
+            return {"outcome": "operation_failed", "why": "reading " + name + " raised " + _name(type(exc))}
         if type(got) not in (bool, int) or (type(got) is bool) != (BINDINGS["sorts"][name] == "Bool"):
             return _not_replayable("reading %s gave a %s, not a %s" % (name, _name(type(got))[:60],
                                                                          BINDINGS["sorts"][name]))
@@ -1297,6 +1293,9 @@ def test_replay(capsys):
     broken = [str(index) for index, outcome in enumerate(outcomes) if outcome["outcome"] == "broken"]
     if broken:
         pytest.fail("trace(s) " + ", ".join(broken) + " break the invariant on the real state", pytrace=False)
+    failed = [str(index) for index, outcome in enumerate(outcomes) if outcome["outcome"] == "operation_failed"]
+    if failed:
+        pytest.fail("operation failed in trace(s) " + ", ".join(failed), pytrace=False)
 """
 
 
@@ -1306,19 +1305,26 @@ _LEGACY_HEADER = """\
 # repository: it imports the repository's code by the names BINDINGS holds.
 import builtins
 import collections.abc
+import concurrent.futures
 import copy
 import hashlib
 import importlib
 import json
 import os
 import re
+import sys
 
 import pytest
 """
 
-_LEGACY_COMMON = "\n" + inspect.getsource(bind_method) + """
+_LEGACY_COMMON = ("\n" + inspect.getsource(CheckSetupError) + "\n" + inspect.getsource(setup_call)
+                  + "\n" + inspect.getsource(runtime_method) + "\n" + inspect.getsource(bind_method)) + """
 
 def _load(spec):
+    return setup_call("import_or_binding", _load_target, spec)
+
+
+def _load_target(spec):
     # spec is [kind, module, attribute]: ["builtin", "", "ValueError"], or ["module", "package.module", "name"]
     kind, module, attribute = spec[:3]
     if kind == "builtin":
@@ -1329,13 +1335,16 @@ def _load(spec):
         where = os.path.realpath(getattr(found, "__file__", ""))
         if os.path.normcase(where) != os.path.normcase(wanted):
             raise RuntimeError("entry point resolved outside its copied file")
-    return bind_method(found, spec, _load) if kind in ("method", "state_method") else getattr(found, attribute)
+    target = bind_method(found, spec, _load) if kind in ("method", "state_method") else getattr(found, attribute)
+    if not callable(target):
+        raise CheckSetupError("binding: target is not callable")
+    return target
 
 
 def _error(spec):
     found = _load(spec)
     if not (isinstance(found, type) and issubclass(found, BaseException)):
-        raise TypeError(spec[2] + " is not an exception type")
+        raise CheckSetupError("exception_type: the named attribute is not an exception type")
     return found
 
 

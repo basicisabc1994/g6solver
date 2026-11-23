@@ -134,18 +134,20 @@ class Scenario:
         from g6.harness import behaviour_runner as runner
 
         helpers = "\n\n".join(inspect.getsource(one) for one in (
+            runner.CheckSetupError,
+            runner.setup_call,
             _comparison,
             runner._unique, runner._encoded, runner._fingerprint, runner._valid_encoding,
             runner._matches_encoding, runner.read_frame, runner.finish))
         prefix, suffix = _program_parts()
-        return ("import hashlib, json, struct, subprocess, tempfile, sys, os\n"
+        return ("import concurrent.futures, hashlib, json, struct, subprocess, tempfile, sys, os\n"
                 "TEMPLATE = 'example.v1'\nBINDINGS = " + ascii({"scenario": self.record.decode("ascii")})
                 + "\nBINDINGS['option'] = " + ascii(option)
                 + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = " + ascii(prefix)
                 + " + ascii(BINDINGS['scenario']) + " + ascii(suffix)
                 + "\n" + helpers + '''
 def _check_example():
-    data = _comparison(BINDINGS['scenario'], BINDINGS['option'])
+    data = setup_call('scenario_binding', _comparison, BINDINGS['scenario'], BINDINGS['option'])
     with tempfile.TemporaryDirectory() as own:
         channel = os.path.join(own, 'result.bin')
         boot = os.path.join(own, 'bootstrap.py')
@@ -158,6 +160,8 @@ def _check_example():
         with open(channel, 'rb') as handle:
             raw = handle.read(MAX_FRAME + len(MAGIC) + 5)
     reading = finish(ran.returncode, raw, data)
+    if reading['result'] == 'error':
+        raise CheckSetupError(reading['detail'])
     if reading['result'] != 'passed':
         raise AssertionError(reading['detail'])
 

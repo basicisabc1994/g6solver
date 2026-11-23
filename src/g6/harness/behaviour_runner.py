@@ -10,6 +10,7 @@ from __future__ import annotations
 from g6.core.guidance_builders import confine_refusal, confine_refused
 
 import ast
+import concurrent.futures
 import hashlib
 import inspect
 import json
@@ -181,28 +182,60 @@ def probe_sha256() -> str:
     return hashlib.sha256(BOOTSTRAP.encode("utf-8")).hexdigest()
 
 
+class CheckSetupError(TypeError):
+    """A generated check could not prepare a call; the operation has not run."""
+
+    def __init__(self, reason):
+        super().__init__(reason if reason.startswith("G6_E_") else "G6_E_CHECK_SETUP: " + reason)
+
+
+def setup_call(phase, function, *args, **kwargs):
+    """Keep preparation exceptions out of the operation's outcome handlers."""
+    LETS_THROUGH = (CheckSetupError, concurrent.futures.CancelledError)
+    # The portable child has no G6 dependency. In the host (including in-process reproductions), retain the
+    # actual control types from the already-loaded host module without importing a repository homonym.
+    controls = sys.modules.get("g6.core.component_process")
+    if controls is not None:
+        LETS_THROUGH += (controls.ExecutionInterrupted, controls.ContainmentFailure)
+    try:
+        return function(*args, **kwargs)
+    except LETS_THROUGH:
+        raise
+    except Exception as exc:
+        reason = str(exc)
+        raise CheckSetupError(reason if reason.startswith("G6_E_") else phase) from exc
+
+
+def runtime_method(state, cls, method_name):
+    """Ordinary instance lookup, after construction and immediately before each invocation."""
+    if type(state) is not cls:
+        raise CheckSetupError("constructor_type: constructor did not return the named class")
+    method = setup_call("method_lookup", getattr, state, method_name)
+    if not callable(method):
+        raise CheckSetupError("method_lookup: the instance attribute is not callable")
+    return method
+
+
 def bind_method(module, spec, load):
-    """Fixed child code: construct once, then bind only an own ordinary function on the exact requested class."""
+    """Fixed child code: construct once and look up the current instance method on every call."""
     class_name, method_name = spec[2].split(".")
     cls = vars(module).get(class_name)
     if type(cls) is not type:
-        raise TypeError("method owner is not an ordinary class")
-    method = vars(cls).get(method_name)
-    if type(method) is not type(lambda: None):
-        raise TypeError("method is no longer an own ordinary function")
+        raise CheckSetupError("owner: method owner is not an ordinary class")
     if spec[0] == "state_method":
         def operation(state, *args, **kwargs):
-            if type(state) is not cls:
-                raise TypeError("state is not the named class")
-            return method(state, *args, **kwargs)
+            return runtime_method(state, cls, method_name)(*args, **kwargs)
         return operation
     constructor = spec[4]
     setup = load(constructor["call"])
     args, kwargs = json.loads(json.dumps([constructor["args"], constructor["kwargs"]]))
-    state = setup(*args, **kwargs)
+    state = setup_call("constructor", setup, *args, **kwargs)
     if type(state) is not cls:
-        raise TypeError("constructor did not return the named class")
-    return type(method).__get__(method, state, cls)
+        raise CheckSetupError("constructor_type: constructor did not return the named class")
+
+    def operation(*args, **kwargs):
+        return runtime_method(state, cls, method_name)(*args, **kwargs)
+    return operation
 
 
 def _import_roots(spec, roots=None):
@@ -230,9 +263,11 @@ def _import_roots(spec, roots=None):
 
 # Loaded before any repository module. There is no site initialisation, PYTHONPATH, pytest, plugin or ini reader.
 BOOTSTRAP = (inspect.getsource(observable_exception) + '\n' + inspect.getsource(_fingerprint) + '\n'
-             + inspect.getsource(_exception_observation) + '\n' + inspect.getsource(bind_method) + '\n'
+             + inspect.getsource(_exception_observation) + '\n' + inspect.getsource(CheckSetupError) + '\n'
+             + inspect.getsource(setup_call) + '\n' + inspect.getsource(runtime_method) + '\n'
+             + inspect.getsource(bind_method) + '\n'
              + inspect.getsource(_import_roots)) + r'''
-import builtins, collections.abc, copy, hashlib, importlib, importlib.machinery, json, os, re, struct, sys
+import builtins, collections.abc, concurrent.futures, copy, hashlib, importlib, importlib.machinery, json, os, re, struct, sys
 def _name(kind):
     module = getattr(kind, "__module__", None) or ""
     name = getattr(kind, "__qualname__", None) or getattr(kind, "__name__", None) or "?"
@@ -310,6 +345,9 @@ def encode(value):
     except (TypeError, ValueError, RecursionError):
         return None
 def load(spec):
+    return setup_call("import_or_binding", load_target, spec)
+
+def load_target(spec):
     kind, module, attribute = spec[:3]
     if kind == "builtin":
         return getattr(builtins, attribute)
@@ -327,7 +365,10 @@ def load(spec):
     where = os.path.realpath(getattr(found, "__file__", ""))
     if os.path.normcase(where) != os.path.normcase(wanted):
         raise RuntimeError("G6_E_OBSERVATION_UNAVAILABLE: entry point resolved outside its copied file")
-    return bind_method(found, spec, load) if kind in ("method", "state_method") else getattr(found, attribute)
+    target = bind_method(found, spec, load) if kind in ("method", "state_method") else getattr(found, attribute)
+    if not callable(target):
+        raise CheckSetupError("binding: target is not callable")
+    return target
 # Evict the resolved module and its parents, including any same-named standard-library cache entry. The encoder,
 # writer and import machinery above are already held by the bootstrap.
 module = data["function"][1]
@@ -375,12 +416,31 @@ def resolved():
         alive.append(error)
         found[key] = None if error is None else identity(error)
     return found
-function = load(data["function"])
+
+def setup_failed(exc):
+    # Examples and executable scenarios carry preparation refusals separately from completed observations.
+    # Differential probes retain their existing unavailable-observation contract on bootstrap failure.
+    if data["probe"]:
+        raise exc
+    payload = dumps({"version": "check_setup.v1", "detail": str(exc)},
+                    sort_keys=True, allow_nan=False).encode("utf-8")
+    if len(payload) > 1048576:
+        raise RuntimeError("setup error too large")
+    write(b"G6R1\n" + pack(">I", len(payload)) + payload)
+    sink.close()
+    raise SystemExit(0)
+
+try:
+    function = load(data["function"])
+except CheckSetupError as exc:
+    setup_failed(exc)
 errors, outcomes, alive = {}, [], []
 for call in data["calls"]:
     args, kwargs = copy.deepcopy(call["args"]), copy.deepcopy(call.get("kwargs", {}))
     try:
         result = function(*args, **kwargs)
+    except CheckSetupError as exc:
+        setup_failed(exc)
     except BaseException as exc:
         alive.append(exc)
         errors = resolved()
@@ -425,6 +485,9 @@ def read_frame(raw: bytes) -> dict | None:
             return None
         value = json.loads(raw[len(MAGIC) + 4:], object_pairs_hook=_unique,
                            parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite")))
+        if isinstance(value, dict) and value.get("version") == "check_setup.v1":
+            return value if (set(value) == {"version", "detail"} and isinstance(value["detail"], str)
+                             and value["detail"].startswith("G6_E_")) else None
         if (not isinstance(value, dict) or set(value) != {"version", "outcomes", "errors"}
                 or value["version"] not in {"observation.v1", "observation.v2"}
                 or not isinstance(value["outcomes"], list)
@@ -494,6 +557,8 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
     """G6 compares the observation here, in its own process; child exit status supplies no support or failure."""
     observed = read_frame(raw) if code == 0 else None
     calls = data.get("cases", data.get("calls", []))
+    if observed is not None and observed["version"] == "check_setup.v1":
+        return {"result": "error", "detail": observed["detail"]}
     if observed is None or len(observed["outcomes"]) != len(calls) or not calls:
         return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: no single completed observation"}
     expected_errors = {_encoded(spec) for spec in data.get("errors", [
@@ -602,9 +667,9 @@ def example_text(slot: str) -> str:
     host-owned result channel, never from collection, plugins or the wrapper's pytest status.
     """
     helpers = "\n\n".join(inspect.getsource(one) for one in (
-        _unique, _encoded, _fingerprint, _valid_encoding, _matches_encoding, read_frame, finish,
+        CheckSetupError, setup_call, _unique, _encoded, _fingerprint, _valid_encoding, _matches_encoding, read_frame, finish,
         _import_roots, located, request))
-    return ("import hashlib, json, struct, subprocess, tempfile, sys, os\nfrom pathlib import Path\n"
+    return ("import concurrent.futures, hashlib, json, struct, subprocess, tempfile, sys, os\nfrom pathlib import Path\n"
             "TEMPLATE = 'example.v1'\nBINDINGS = " + slot
             + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = "
             + ascii(confine.CHILD_PRELUDE + BOOTSTRAP) + "\n" + helpers + '''
@@ -622,6 +687,8 @@ def _check_example():
         with open(channel, 'rb') as handle:
             raw = handle.read(MAX_FRAME + len(MAGIC) + 5)
     reading = finish(ran.returncode, raw, data)
+    if reading['result'] == 'error':
+        raise CheckSetupError(reading['detail'])
     if reading['result'] != 'passed':
         raise AssertionError(reading['detail'])
 

@@ -624,6 +624,8 @@ def reading(ran: dict, node: str) -> dict:
         if not how:   # the repository's options hid it (--tb=no -rN, say): a refused access cannot be ruled out
             return error("it failed, and nothing it recorded says how, so G6 cannot tell a failure of the code from "
                          "an access the boundary refused")
+        if re.match(r"(?:[\w.]+\.)?CheckSetupError: G6_E_[A-Z0-9_]+:", how):
+            return error(how)
         if _refused_access(ran, node):
             return error("it failed on an operating-system error, which is how a boundary refuses an access (a file "
                          f"outside its copy, the network, a name lookup), or on such a refusal: {how}")

@@ -21,10 +21,13 @@ states (provenance ``stated``; a model a proposer builds is VS-5's):
    the code, so it is not replayed. The test runs confined like any compiled check (VS-2's executor, VS-3's import
    roots, ``G6_REPO_PYTHON``, ``G6_REPO_ENV`` and the loaded-elsewhere guard): on the patch, and at the base commit for
    an instance whose intent is ``preserve``.
+   Import, construction and method lookup failures are check errors. An invoked action or read raising is a failed
+   replay (``operation_failed``), recorded separately from an evaluated invariant violation.
 4. **The three-part report** (plan rule 9), in the instance's activity and, for a finding, in its defect:
    ``specification`` (the template, the provenance of the bindings and of the model, and ``check_contract``'s result),
    ``model`` (the operation, verdict, depth or k, the traces, where the model came from) and ``correspondence``:
-   ``reproduced`` (a trace breaks the invariants on the real code), ``not_reproduced`` with reason ``model_only`` (every
+   ``reproduced`` (a trace breaks the invariants or an invoked operation raises), ``not_reproduced`` with reason
+   ``model_only`` (every
    trace replayed keeps them: the abstraction was too broad, so nobody is accused), ``not_replayable`` (with the
    reason), ``not_replayed`` (the model checker found no trace: about the model only) or ``not_searched``.
 
@@ -217,13 +220,13 @@ def _outcomes(found: dict, count: int) -> dict[int, dict] | str:
         return observed if isinstance(observed, str) else "the replay recorded no observation of its traces"
     outcomes = {item["input"]: item["output"] for item in observed}
     if set(outcomes) != set(range(count)) or not all(isinstance(o, dict) and o.get("outcome") in (
-            "broken", "holds", "not_replayable") for o in outcomes.values()):
+            "broken", "holds", "not_replayable", "operation_failed") for o in outcomes.values()):
         return "the replay's observations do not account for each trace once"
     return outcomes
 
 
 def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dict:
-    """A replay's result from its readings: the traces it says broke the invariants on the real code."""
+    """A replay's result from real operation failures and evaluated invariant violations."""
     def error(where: str, why: str, **correspondence) -> dict:
         return {"result": vs.CHECK_ERROR, "detail": f"{where}: {why}",
                 "correspondence": {"result": "not_replayable", "reason": why[:300], **correspondence}}
@@ -233,7 +236,8 @@ def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dic
     patch = _outcomes(on_patch, count)
     if isinstance(patch, str):
         return error("on the patch", patch)
-    broken = sorted(i for i, o in patch.items() if o["outcome"] == "broken")
+    broken = sorted(i for i, o in patch.items() if o["outcome"] in ("broken", "operation_failed"))
+    failed = sorted(i for i, o in patch.items() if o["outcome"] == "operation_failed")
     held = sorted(i for i, o in patch.items() if o["outcome"] == "holds")
     unplayable = {str(i): str(o.get("why", ""))[:200] for i, o in patch.items() if o["outcome"] == "not_replayable"}
     if (on_patch["result"] == "failed") != bool(broken):
@@ -247,10 +251,13 @@ def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dic
                 "correspondence": {"result": "not_reproduced", "reason": "model_only", "detail": MODEL_ONLY,
                                    "traces_held": held, "traces_not_replayable": unplayable}}
     shown = ", ".join(map(str, broken))
+    # Raising during an invoked action/read is a failed replay, with no claim that its invariant was evaluated.
+    failure = "fail during an operation or break the invariants" if failed else "break the invariants"
     if intent == "change":
-        return {"result": vs.COUNTEREXAMPLE, "detail": f"trace(s) {shown} the model checker found break the "
-                                                       "invariants on the patch's real code",
-                "shape": "a trace the model checker found breaks the invariants on the patch's real code",
+        return {"result": vs.COUNTEREXAMPLE, "detail": f"trace(s) {shown} the model checker found {failure} "
+                                                       "on the patch's real code",
+                "shape": "a trace the model checker found fails on the patch's real code" if failed else
+                         "a trace the model checker found breaks the invariants on the patch's real code",
                 "correspondence": {"result": "reproduced", "traces_reproduced": broken, "on": "the patch"}}
     if at_base is None or at_base["result"] == "error":
         why = at_base["detail"] if at_base else "it did not run"
@@ -260,26 +267,27 @@ def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dic
     base = _outcomes(at_base, count)
     if isinstance(base, str):
         return error("at the base commit", base)
-    also = [i for i in broken if base[i]["outcome"] == "broken"]
+    also = [i for i in broken if base[i]["outcome"] in ("broken", "operation_failed")]
     # the review of VS-4, I1: only a trace the base commit replays and keeps is new; one it cannot replay is not kept
     new = [i for i in broken if base[i]["outcome"] == "holds"]
     unknown = {str(i): str(base[i].get("why", ""))[:200] for i in broken if base[i]["outcome"] == "not_replayable"}
     if not new and unknown:
         return {"result": vs.CHECK_ERROR,
-                "detail": f"trace(s) {', '.join(unknown)} break the invariants on the patch's real code, and whether "
+                "detail": f"trace(s) {', '.join(unknown)} {failure} on the patch's real code, and whether "
                           "the base commit's keeps them is not established at the base commit: it could not replay "
                           "them",
                 "correspondence": {"result": "reproduced", "traces_reproduced": broken, "on": "the patch",
                                    "at_base": "not established at the base commit",
                                    "traces_not_replayable_at_base": unknown, "at_base_too": also}}
     if not new:
-        return {"result": vs.FAILS_ON_BASE_TOO, "detail": f"trace(s) {shown} break the invariants on the real code at "
+        return {"result": vs.FAILS_ON_BASE_TOO, "detail": f"trace(s) {shown} {failure} on the real code at "
                                                           "the base commit too",
                 "correspondence": {"result": "reproduced", "traces_reproduced": broken, "at_base_too": also}}
     return {"result": vs.COUNTEREXAMPLE,
-            "detail": f"trace(s) {', '.join(map(str, new))} the model checker found break the invariants on the "
+            "detail": f"trace(s) {', '.join(map(str, new))} the model checker found {failure} on the "
                       "patch's real code and keep them at the base commit's",
-            "shape": "a trace the model checker found breaks the invariants on the patch's real code, and keeps them "
+            "shape": "a trace the model checker found fails on the patch's real code, and succeeds at base" if failed
+                     else "a trace the model checker found breaks the invariants on the patch's real code, and keeps them "
                      "at the base commit's",
             "correspondence": {"result": "reproduced", "traces_reproduced": new, "traces_also_at_base": also,
                                **({"traces_not_replayable_at_base": unknown} if unknown else {})}}
