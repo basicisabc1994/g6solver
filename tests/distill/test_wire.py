@@ -33,7 +33,7 @@ def test_all_twelve_tools_attach_issued_declarations():
     for name, fn in server.tools.items():
         assert fn._g6_declaration.classes == CLASSES[name]
         assert set(inspect.signature(fn).parameters) - {"ctx"} == set(ARGUMENTS[name])
-    hunk = Path(".build/issuance.patch").read_text(encoding="utf-8")
+    hunk = (Path(__file__).parent / "fixtures/issuance.patch").read_text(encoding="utf-8")
     for name, classes in CLASSES.items():
         assert f"+    {name!r}: contract({', '.join(repr(c) for c in classes)})," in hunk
         assert f"+    {name!r}: {ARGUMENTS[name]!r}," in hunk
