@@ -172,15 +172,30 @@ def test_a_hard_linked_agents_md_is_left_alone(codex, tmp_path):
     assert os.path.samefile(dotfile, codex)
 
 
+def _refuse_agents_operation(codex, operation):
+    """Inject only AGENTS.md I/O failures, leaving installer state I/O real."""
+    import os
+
+    real = getattr(os, operation)
+
+    def refuse(*args, **kwargs):
+        paths = args[:2] if operation == "replace" else args[:1]
+        for value in paths:
+            path = Path(value)
+            if path == codex or (path.parent == codex.parent and path.name.startswith(".g6-agents-")):
+                raise PermissionError("the file is open elsewhere")
+        return real(*args, **kwargs)
+
+    return refuse
+
+
 def test_a_failed_write_leaves_the_file_and_no_temporary_file(codex, monkeypatch):
     import os
 
     codex.parent.mkdir(parents=True)
     codex.write_bytes(b"# Mine\n")
 
-    def refuse(*args, **kwargs):
-        raise PermissionError("the file is open elsewhere")
-    monkeypatch.setattr(os, "replace", refuse)
+    monkeypatch.setattr(os, "replace", _refuse_agents_operation(codex, "replace"))
     events = []
     assert _setup("y", events) == 0
     _left_alone(codex, events, b"# Mine\n")
@@ -357,10 +372,8 @@ def test_a_temporary_file_that_cannot_be_removed_is_named_and_setup_ends_normall
     codex.parent.mkdir(parents=True)
     codex.write_bytes(b"# Mine\n")
 
-    def refuse(*args, **kwargs):
-        raise PermissionError("the file is open elsewhere")
     for name in ("replace", "unlink", "remove"):     # Path.unlink calls os.unlink
-        monkeypatch.setattr(os, name, refuse)
+        monkeypatch.setattr(os, name, _refuse_agents_operation(codex, name))
     events = []
     assert _setup("y", events) == 0
     assert codex.read_bytes() == b"# Mine\n"
@@ -379,11 +392,16 @@ def test_a_read_only_temporary_file_is_removed(codex, monkeypatch):
 
     codex.parent.mkdir(parents=True)
     codex.write_bytes(b"# Mine\n")
-    monkeypatch.setattr(shutil, "copymode", lambda src, dst, **kw: os.chmod(dst, stat.S_IREAD))
+    copymode = shutil.copymode
 
-    def refuse(*args, **kwargs):
-        raise PermissionError("the file is open elsewhere")
-    monkeypatch.setattr(os, "replace", refuse)
+    def read_only_agents_temp(src, dst, **kwargs):
+        path = Path(dst)
+        if path.parent == codex.parent and path.name.startswith(".g6-agents-"):
+            return os.chmod(dst, stat.S_IREAD)
+        return copymode(src, dst, **kwargs)
+
+    monkeypatch.setattr(shutil, "copymode", read_only_agents_temp)
+    monkeypatch.setattr(os, "replace", _refuse_agents_operation(codex, "replace"))
     events = []
     try:
         assert _setup("y", events) == 0
