@@ -44,13 +44,25 @@ def premise_text(value: str) -> str:
 
     Normalize at decision time so stored record bytes and their content hashes stay intact.
     """
-    return " ".join(unicodedata.normalize("NFC", value).split())
+    visible = []
+    for character in unicodedata.normalize("NFC", value):
+        category = unicodedata.category(character)
+        if character.isspace() or category in ("Zs", "Zl", "Zp"):
+            visible.append(" ")
+        elif category not in ("Cf", "Cc"):
+            visible.append(character)
+    # Removing a format character can bring a base and combining mark together.
+    return " ".join(unicodedata.normalize("NFC", "".join(visible)).split())
 
 
 def text_of(name: str, value: Any, *, required: bool = True) -> str:
+    """Validate stored text shape; semantic premise admission uses ``premise_text``.
+
+    Retain invisible input as recorded data so a refused receipt remains traceable.
+    """
     if not isinstance(value, str):
         raise ValueError(f"{name} must be text")  # noqa: TRY004 - every refusal is one ValueError to a caller
-    if required and not premise_text(value):
+    if required and not value.strip():
         raise ValueError(f"{name} is required")
     return value
 
