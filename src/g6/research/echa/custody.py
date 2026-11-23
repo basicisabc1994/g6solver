@@ -26,10 +26,22 @@ from g6.evidence.mapping import (
 )
 from g6.evidence.mapping import strict_json as _strict_json
 
-from .records import EvidenceRecord, canonical, digest
+from .records import UNSEALED, EvidenceRecord, canonical, digest
 
 MAX_ARTIFACT_BYTES = 256 * 1024
 MAX_RECEIPT_BYTES = 4096
+
+
+class AboutReading(tuple[About, tuple[tuple[str, str], ...]]):
+    """The existing (parts, refusals) pair, with ECHA's fixture-declaration decision."""
+
+    declares_fixture_digest: bool
+
+    def __new__(cls, parts: About, refused: tuple[tuple[str, str], ...], *,
+                declares_fixture_digest: bool) -> AboutReading:
+        reading = super().__new__(cls, (parts, refused))
+        reading.declares_fixture_digest = declares_fixture_digest
+        return reading
 
 
 def binding_of(rec: EvidenceRecord) -> CheckBinding | UnreadableBinding | None:
@@ -39,19 +51,22 @@ def binding_of(rec: EvidenceRecord) -> CheckBinding | UnreadableBinding | None:
     return read_binding(rec.source_ref)
 
 
-def about(rec: EvidenceRecord) -> tuple[About, tuple[tuple[str, str], ...]]:
+def about(rec: EvidenceRecord) -> AboutReading:
     """What ``rec`` is about, and each of its fields that disagrees with its custody binding, as (code, why), through
     the mapping's one reader (``read_about``). With no binding, its own standard and predicate, and no artefact ("");
-    with one that does not read as one, nothing, and ``BINDING_UNREADABLE``. The fixture is also read here: a
-    declaration that disagrees with custody is refused as ``NO_ENVIRONMENT``; without custody it stays declared."""
+    with one that does not read as one, nothing, and ``BINDING_UNREADABLE``. A repeated fixture digest that disagrees
+    with custody is refused as ``NO_ENVIRONMENT``. ``UNSEALED`` is no digest declaration: it cannot override or
+    disagree with the binding's identity. Without custody the fixture stays declared.
+    The reading's ``declares_fixture_digest`` states whether the record declares a digest, without adding a refusal."""
     parts, refused = read_about(binding_of(rec), scope=rec.scope, standard=rec.standard_sha256, predicates=(rec.predicate_id,))
+    declares_fixture_digest = rec.fixture_version != UNSEALED
     if parts.fixture:
-        if rec.fixture_version != parts.fixture:
+        if declares_fixture_digest and rec.fixture_version != parts.fixture:
             refused = (*refused, (NO_ENVIRONMENT, "its fixture is not the one its custody binding names"))
     elif not refused:
         # With no binding the fixture remains a declaration, like the standard and predicate.
         parts = replace(parts, fixture=rec.fixture_version)
-    return parts, refused
+    return AboutReading(parts, refused, declares_fixture_digest=declares_fixture_digest)
 
 
 def fixture_contaminated(fixture: str, contaminated: set[str]) -> bool:

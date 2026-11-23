@@ -44,7 +44,8 @@ def _semantic(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], 
             StandardRef.from_dict(body)
         elif kind == "evidence":
             rec = EvidenceRecord.from_dict(body)
-            parts, refused = about(rec)   # what it is about, read through its custody binding when it has one
+            reading = about(rec)   # what it is about, read through its custody binding when it has one
+            parts, refused = reading
             unreadable = [why for code, why in refused if code == BINDING_UNREADABLE]
             if unreadable:   # what it is about cannot be read, so nothing it names can be checked: never as unbound
                 return [f"evidence {ident}: {BINDING_UNREADABLE}: {unreadable[0]}"]
@@ -52,7 +53,10 @@ def _semantic(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], 
                 found.append(f"evidence {ident}: no standard with this standard_sha256 is in the ledger")
             # A readable but disagreeing record is retained for traceability, as for standard/predicate
             # disagreement. It supplies no accepted subject and cannot borrow any fixture's seal.
-            if not refused and parts.fixture != UNSEALED and parts.fixture not in vaults:
+            # A nonindependent adapter marked unsealed asserts no seal. Keep its custody identity for
+            # contamination, but require a seal only for independence or a declared fixture digest.
+            if (not refused and (rec.independent or reading.declares_fixture_digest)
+                    and parts.fixture not in vaults):
                 found.append(f"evidence {ident}: fixture_version names no sealed vault in the ledger (seal the fixture "
                              f"first, or say {UNSEALED})")
             if rec.negative_control_ref:
