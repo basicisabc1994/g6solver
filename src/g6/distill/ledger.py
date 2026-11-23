@@ -63,7 +63,7 @@ class RecordStore:
 
     def _validate(self, kind, ident, body, seen):
         try:
-            record = self.model.model_validate_json(canonical(body))
+            record = self.model.model_validate_json(canonical(body), context={'distill_stored_record': True})
             if kind != self.kind or record.content_id != ident:
                 return ["record kind or digest identity mismatch"]
         except (ValueError, TypeError) as error:
@@ -96,7 +96,7 @@ class RecordStore:
             path = self._object(row["id"])
             try:
                 raw = path.read_text(encoding="utf-8")
-                value = self.model.model_validate_json(raw)
+                value = self.model.model_validate_json(raw, context={'distill_stored_record': True})
                 # Canonical comparison also detects unknown/duplicate keys in object JSON.
                 if raw != canonical(row["body"]) + "\n" or value.content_id != row["id"]:
                     raise ValueError("object differs from its ledger body")
@@ -214,7 +214,7 @@ class RecordStore:
         try:
             # A fresh parse defeats model_construct, model_copy(update=...), and mutable nested lists.
             body = value.model_dump(mode="json", warnings="error")
-            record = self.model.model_validate_json(canonical(body))
+            record = self.model.model_validate_json(canonical(body), context={'distill_stored_record': True})
         except (ValueError, TypeError, ValidationError) as error:
             raise LedgerError(f"invalid record: {error}") from error
         self._read()

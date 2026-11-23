@@ -10,7 +10,7 @@ from typing import Annotated, ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_serializer, model_validator
 
-from g6.core.ledger import digest
+from g6.core.ledger import canonical, digest
 
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Count = Annotated[int, Field(ge=0, strict=True)]
@@ -26,6 +26,11 @@ FindingClass = Literal["identity_from_rendering", "one_fact_two_rules", "own_par
 FACT_NAMES = frozenset({"assertions", "compared_literals", "markers", "mocks", "try_blocks", "parametrize_counts",
                         "calls", "diff_hunks", "probe_outcomes"})
 PROBE_NAMES = frozenset({"discriminates_at_base.v1", "kill_set.v1"})
+
+
+def _stored_text(info) -> bool:
+    """Only text canonicalizers consume the stored-body validation context."""
+    return isinstance(info.context, dict) and info.context.get('distill_stored_record') is True
 
 
 class Model(BaseModel):
@@ -118,7 +123,11 @@ class Concept(Record):
 
     @field_validator('statement', 'falsifier', mode='before')
     @classmethod
-    def canonical_text(cls, value):
+    def canonical_text(cls, value, info):
+        # concept_id precedes these fields, so an explicit identity protects
+        # exactly the supplied text until identify checks its original digest.
+        if _stored_text(info) or info.data.get('concept_id') is not None:
+            return value
         return ' '.join(value.split()) if isinstance(value, str) else value
 
     @model_validator(mode="after")
@@ -167,13 +176,13 @@ class MethodContract(Record):
 
     @field_validator('escape_family', mode='before')
     @classmethod
-    def canonical_text(cls, value):
-        return ' '.join(value.split()) if isinstance(value, str) else value
+    def canonical_text(cls, value, info):
+        return ' '.join(value.split()) if isinstance(value, str) and not _stored_text(info) else value
 
     @field_validator('assumptions', 'withdrawal_conditions', mode='before')
     @classmethod
-    def canonical_text_list(cls, values):
-        if isinstance(values, (list, tuple)):
+    def canonical_text_list(cls, values, info):
+        if isinstance(values, (list, tuple)) and not _stored_text(info):
             return [' '.join(value.split()) if isinstance(value, str) else value for value in values]
         return values
 
@@ -230,6 +239,21 @@ class VerifierCandidate(Record):
     training_case_ids: list[Sha256]
     authority: Literal["proposed"] = "proposed"
     model_calls: Annotated[int, Field(ge=0, le=4, strict=True)] = 0
+
+    @field_validator('contract', mode='before')
+    @classmethod
+    def stored_contract(cls, value, info):
+        # Explicit candidate identities also bind the nested historical text.
+        # Parse just this field in its original mode, with the text context;
+        # never wrap Record validation or change nested strict type semantics.
+        if isinstance(value, dict):
+            context = info.context
+            if info.data.get('candidate_id') is not None:
+                context = {**(context if isinstance(context, dict) else {}), 'distill_stored_record': True}
+            if info.mode == 'json':
+                return MethodContract.model_validate_json(canonical(value), context=context)
+            return MethodContract.model_validate(value, context=context)
+        return value
 
     @model_serializer(mode="wrap")
     def provenance(self, handler):
