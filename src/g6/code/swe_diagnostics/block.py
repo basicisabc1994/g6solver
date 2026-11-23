@@ -176,13 +176,18 @@ def patch_check(d: SweDiagnosticsInput, roots: _roots.Roots) -> dict[str, Any]:
              "tests_added": sorted(set(change.after) - set(change.before)),
              "tests_removed": sorted(set(change.before) - set(change.after) - set(change.renamed)),
              "tests_moved": dict(change.renamed), "runner_files": list(change.runner_files),
-             "does_not_parse": broken, "tests_to_run": derived, "more_tests": more}
+             "does_not_parse": broken, "tests_to_run": derived, "more_tests": more,
+             "selection_reasons": getattr(derived, "reasons", {}),
+             "tests_not_reached": list(getattr(derived, "unreached", ())),
+             "selection_notes": repo_tests.selection_notes(derived)}
     said = f"{len(change.files)} file(s) changed since {d.base}"
     if broken:
         said += f"; {len(broken)} changed Python file(s) do not parse, first {shown(broken[0]['file'])}"
     if change.runner_files:
         said += f"; the change touches the test runner's own files ({', '.join(shown(rel) for rel in change.runner_files[:3])})"
     said += f"; {len(derived)} test file(s) the change touches. Nothing was run."
+    if more:
+        said += "; not reached: " + "; ".join(repo_tests.selection_notes(derived)[1:])
     return answer(COMPONENT, "patch_check", CHANGE_READ, said, action=_ACTIONS[CHANGE_READ],
                   severity="red" if broken or change.runner_files else "amber",
                   evidence=[{"kind": "git_change", "by": "g6.workforce.repo_tests.change and derive_tests",

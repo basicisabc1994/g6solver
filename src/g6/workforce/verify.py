@@ -25,6 +25,7 @@ import re
 import subprocess
 import tarfile
 import tempfile
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -98,26 +99,109 @@ def _is_test_file(rel: str) -> bool:
 
 
 def run_set(workdir: Path, changed: list[str], candidates: list[str] | None = None, *,
-            read_file: Callable[[Path], str] | None = None) -> list[str]:
-    """Changed test files, plus every test file anywhere in the workdir that names a changed
-    module's stem (a seed repo keeps its tests at the root; a product repo under tests/).
-    ``candidates``: the files to look in, relative to the workdir, instead of walking it (a large
-    repository lists them from git; plan 2026-10-05-verify-task-real-repos). A changed ``__init__``, ``conftest``
-    or ``setup`` names no test by its stem: a test file that mentions the word is not a test of it. A candidate found is
-    returned as it was given (a name git listed stays that name, ``g6.core.git_name.GitName``), never respelled."""
+            read_file: Callable[[Path], str] | None = None, roots: tuple[str, ...] = ()) -> list[str]:
+    """Changed tests, then shortest static import reach, then stem matches; ties by path.
+
+    Names given by git keep their identity. Dynamic imports, plugins and importlib are unseen.
+    """
+    return list(test_selection(workdir, changed, candidates, read_file=read_file, roots=roots))
+
+
+def test_selection(workdir: Path, changed: list[str], candidates: list[str] | None = None, *,
+                   read_file: Callable[[Path], str] | None = None,
+                   roots: tuple[str, ...] = ()) -> dict[str, list[dict]]:
+    """All selection reasons, with shortest file-to-file import distances, in execution order.
+
+    Parse only repository Python files; never import repository code. Package initialisers are
+    dependencies too. Ambiguous module names conservatively reach every repository candidate.
+    """
+    from g6.workforce.repo_tests import _import_names
+
     reader = read_file or (lambda path: path.read_text(encoding="utf-8", errors="replace"))
-    tests = {rel for rel in changed if _is_test_file(rel)}
+    known = set(candidates if candidates is not None else
+                (p.relative_to(workdir).as_posix() for p in Path(workdir).rglob("*.py")
+                 if "__pycache__" not in p.parts))
+    files = sorted(rel for rel in known | set(changed) if rel.endswith(".py") or _is_test_file(rel))
+    # src and top are the runner's defaults. A regular package may live under lib or
+    # another repository folder; include the folder above each outermost package.
+    package_roots = set(roots) | {".", "src"}
+    for rel in files:
+        if PurePosixPath(rel).name == "__init__.py":
+            folder = PurePosixPath(rel).parent
+            while f"{folder.parent}/__init__.py" in known:
+                folder = folder.parent
+            package_roots.add(folder.parent.as_posix())
+        if _is_test_file(rel):
+            folder = PurePosixPath(rel).parent
+            while f"{folder}/__init__.py" in known:
+                folder = folder.parent
+            package_roots.add(folder.as_posix())
+    names = {rel: _import_names(rel, sorted(package_roots)) for rel in files}
+    modules: dict[str, set[str]] = {}
+    for rel, aliases in names.items():
+        for alias in aliases:
+            modules.setdefault(alias, set()).add(rel)
+    reverse: dict[str, set[str]] = {}
+    texts = {}
+    top = Path(workdir).resolve()
+    for rel in files:
+        path = Path(workdir) / rel
+        if not path.is_file() or not path.resolve().is_relative_to(top):
+            continue
+        text = reader(path)
+        texts[rel] = text
+        try:
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError, RecursionError):
+            continue   # name matches still apply; execution reports collection failures
+        imports = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                bases = {node.module or ""}
+                if node.level:
+                    bases = set()
+                    for alias in names[rel]:
+                        package = alias.split(".") if path.name == "__init__.py" else alias.split(".")[:-1]
+                        if node.level <= len(package):
+                            prefix = package[:len(package) - node.level + 1]
+                            bases.add(".".join([*prefix, *([node.module] if node.module else [])]))
+                for base in bases:
+                    imports.add(base)
+                    imports.update(f"{base}.{alias.name}" for alias in node.names if alias.name != "*")
+        for name in imports:
+            parts = name.split(".")
+            for end in range(1, len(parts) + 1):
+                for dependency in modules.get(".".join(parts[:end]), ()):
+                    if end == len(parts) or PurePosixPath(dependency).name == "__init__.py":
+                        reverse.setdefault(dependency, set()).add(rel)
+    distance = dict.fromkeys((rel for rel in changed if rel.endswith(".py")), 0)
+    queue = deque(distance)
+    while queue:
+        target = queue.popleft()
+        for caller in sorted(reverse.get(target, ())):
+            if caller not in distance:
+                distance[caller] = distance[target] + 1
+                queue.append(caller)
     stems = {Path(rel).stem for rel in changed
              if rel.endswith(".py") and not _is_test_file(rel) and Path(rel).stem not in ("__init__", "conftest", "setup")}
-    if stems:
-        pattern = re.compile(r"\b(" + "|".join(re.escape(s) for s in sorted(stems)) + r")\b")
-        files = (sorted((Path(workdir) / rel, rel) for rel in candidates if _is_test_file(rel)) if candidates is not None
-                 else sorted((p, p.relative_to(workdir).as_posix()) for p in Path(workdir).rglob("test_*.py")
-                             if "__pycache__" not in p.parts))
-        for tf, rel in files:
-            if tf.is_file() and pattern.search(reader(tf)):
-                tests.add(rel)
-    return sorted(tests)
+    pattern = re.compile(r"\b(" + "|".join(re.escape(s) for s in sorted(stems)) + r")\b") if stems else None
+    selected = {}
+    for rel, text in texts.items():
+        if not _is_test_file(rel):
+            continue
+        reasons = []
+        if rel in changed:
+            reasons.append({"rule": "changed"})
+        if distance.get(rel, 0) > 0:
+            reasons.append({"rule": "imports", "distance": distance[rel]})
+        if pattern and pattern.search(text):
+            reasons.append({"rule": "names"})
+        if reasons:
+            selected[rel] = reasons
+    return dict(sorted(selected.items(), key=lambda item: (
+        0 if item[0] in changed else 1 if item[0] in distance else 2, distance.get(item[0], 0), item[0])))
 
 
 # --- coding-agent sensors (spec section 7 rows 1, 3, 6): code over the diff, never an opinion ----

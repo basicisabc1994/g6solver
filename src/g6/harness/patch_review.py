@@ -1201,28 +1201,48 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
 
     # Tier 2: the tests that touch the changed modules, only when tier 1 found no integrity problem and no defect.
     second: dict = {}
+    selected_runs: dict[str, dict] = {}
     # G6 0.3: each run after the first that collects a stated check on the patch, in the order it ran, with each such
     # check's verdict there; every one reaches the issuer (assessment.requirement_evidence), a failure included
     observed: list[dict] = []
+    selected, _more = repo_tests.derive_tests(change, roots=roots)
+    unknowns.extend(repo_tests.selection_notes(selected))
+    for rel in getattr(selected, "unreached", ()):
+        skipped.append({"tier": 2, "check": shown(rel), "reason": f"safety ceiling {repo_tests.MAX_DERIVED} files"})
+    # Run each selected file separately even if tier 1 named it: a batch inventory cannot
+    # attribute a module load to an individual test file.
+    derived = list(selected)
     if any(r["stage"] in ("integrity", "tier_1") for r in reasons):
         found = "an integrity problem" if any(r["stage"] == "integrity" for r in reasons) else "a defect"
         skipped.append({"tier": 2, "check": "tests that touch the changed modules", "reason": f"tier 1 found {found}"})
+        skipped.extend({"tier": 2, "check": shown(rel), "reason": f"tier 1 found {found}"} for rel in derived)
     elif _left(deadline) < 1:
-        skipped.append({"tier": 2, "check": "tests that touch the changed modules", "reason": "the time budget is spent"})
+        skipped.extend({"tier": 2, "check": shown(rel), "reason": "time budget"} for rel in derived)
     else:
-        derived, more = repo_tests.derive_tests(change)
-        derived = [rel for rel in derived if rel not in present]
-        if more:
-            unknowns.append(f"{more} more test file(s) touch the changed modules and were not run (the limit is "
-                            f"{repo_tests.MAX_DERIVED})")
         if not derived:
             skipped.append({"tier": 2, "check": "tests that touch the changed modules",
-                            "reason": "no other test file names a changed module"})
-        else:
-            second = _confined(_execute(root, derived, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
-            runs.append(_record(2, "tests that touch the changed modules", derived, second, provenance=DERIVED))
+                            "reason": "no other test file touches a changed module"})
+        pending = repo_tests.TestSelection({rel: getattr(selected, "reasons", {}).get(rel, [{"rule": "names"}])
+                                           for rel in derived}, len(derived))
+        for rel, second in repo_tests.run_selection(change, pending, deadline=deadline,
+                execute=lambda ids, timeout_s: _confined(_execute(root, ids, timeout_s=timeout_s, **_rooted(roots)))):
+            selected_runs[rel] = second
+            if second.get("verdict") == "not_run":
+                skipped.append({"tier": 2, "check": shown(rel), "reason": second.get("said") or "not run"})
+                continue
+            record = _record(2, "tests that touch the changed modules", [rel], second, provenance=DERIVED)
+            loaded = repo_tests.changed_loaded(repo_tests.changed_modules(change), second)
+            record.update(selection=pending.reasons[rel], tested_change=repo_tests.tests_change(change, second),
+                          changed_loaded=loaded,
+                          selection_detail=f"{shown(rel)} ({repo_tests.selection_rule(pending, rel)})")
+            runs.append(record)
+            if second.get("verdict") not in repo_tests.RAN:
+                skipped.append({"tier": 2, "check": shown(rel), "reason": "time budget" if second.get("verdict") ==
+                                "timed_out" else second.get("said") or second.get("verdict")})
             seen = {"run": ["derived"], "verdicts": _observed(stated_ids, second)}   # a stated check it collected
             observed.append(seen)
+            if loaded == []:
+                seen["verdicts"] = dict.fromkeys(seen["verdicts"], NOT_LOADED)
             if second["verdict"] in UNTRUSTED:
                 reason("integrity", "run_not_trusted", _untrusted(2, second))
             elif second["verdict"] == repo_tests.RUN_INCONSISTENT:
@@ -1233,17 +1253,25 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                     run="the run of the tests that touch the changed modules", said=second.get("said") or ""))
             elif unusable(2, second):   # its failures, and its passes, are of code the patch did not change
                 seen["verdicts"] = dict.fromkeys(seen["verdicts"], NOT_LOADED)
+            elif loaded == []:
+                continue   # no passing or failing test in this file exercised the change
             elif second["verdict"] in (repo_tests.FAILED, "collection_error"):
-                _on_base(root, change, derived, second, deadline, runs, unknowns, reason, roots, stated=stated_ids,
+                _on_base(root, change, [rel], second, deadline, runs, unknowns, reason, roots, stated=stated_ids,
                          observed=observed)
             elif second["verdict"] not in repo_tests.RAN:   # the launch review's I4: nothing compared, no support
                 said = (f"the tests that touch the changed modules did not run to a result ({second['verdict']}): "
                         f"{second.get('said', '')}")
                 unknowns.append(said)
                 reason("evidence", NOT_COMPARED, said)
+    audit = repo_tests.selection_audit(change, selected_runs)
+    unknowns.extend(audit)
+    for detail in audit:
+        if "loading unknown; not counted" not in detail:
+            reason("evidence", "selection_not_tested", detail)
     # the launch review's I6: a module the patch imports that is not installed here is asked about, never put on the
     # environment
-    missing = _patch_imports_missing(change, [ran for ran in (first, second) if ran.get("verdict") == "collection_error"])
+    missing = _patch_imports_missing(change, [ran for ran in (first, *selected_runs.values())
+                                            if ran.get("verdict") == "collection_error"])
     if missing:
         reason("evidence", "patch_imports_missing_module", MISSING_IMPORT_REASON.format(names=", ".join(missing)))
     asks = [*(MISSING_IMPORT_ASK.format(name=name) for name in missing), *asks]
@@ -1341,7 +1369,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     for rel, why in repo_tests.submodules_not_hashed(final or {}).items():
         if rel not in repo_tests.submodules_not_hashed(before):
             reason("evidence", "submodule_not_hashed", SUBMODULE_NOT_HASHED.format(path=shown(rel), why=why))
-    in_place = [(tier, ran) for tier, ran in ((1, first), (2, second)) if ran]
+    in_place = ([(1, first)] if first else []) + [(2, ran) for ran in selected_runs.values()
+                                                               if ran.get("verdict") != "not_run"]
     for tier, ran in in_place:   # review I4: changed and changed back around a run, the snapshots above still match
         if ran.get("source_before") and ran["source_before"] != artifact:
             reason("integrity", "repository_changed_during_review", f"the tier {tier} run began on a working tree "
@@ -1387,7 +1416,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     self_checked = ", ".join(self_checked)
     if self_checked:
         reason("evidence", SELF_CHECKED, SELF_CHECKED_DETAIL.format(ids=self_checked))
-    return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
+    environment_run = first or next((out for out in selected_runs.values() if out.get("verdict") != "not_run"), second)
+    return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, environment_run, gate, merge_reasons,
                   artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects,
                   first_action=(MISSING_IMPORT_ASK.format(name=missing[0]) if missing else
                                 SELF_CHECKED_ASK.format(ids=self_checked) if self_checked else ""),
@@ -1804,6 +1834,16 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                 integrity=[r["code"] for r in reasons if r["stage"] == "integrity"])}
     from g6.harness import patch_report   # A1: the readable report, derived from the fields above; it decides nothing
     assessment["report"] = patch_report.safe_render(assessment)
+    # Keep the complete named selection ledger outside the renderer's compact overview.
+    # It must not collapse omissions to a count or omit a file after the third run.
+    ledger = [run["selection_detail"] for run in runs if run.get("selection_detail")]
+    ledger += [f"{item['check']}: not run ({item['reason']})" for item in skipped
+               if item.get("tier") == 2 and item.get("check") != "tests that touch the changed modules"]
+    ledger += [text for text in unknowns if "selected files did not load" in text or "loading unknown; not counted" in text]
+    if ledger:
+        assessment["report"] += ("\n\nSelected tests (static imports; dynamic imports, plugins and importlib are not seen; "
+                                 f"safety ceiling {repo_tests.MAX_DERIVED} files to bound process overhead):\n") + "\n".join(
+            f"- {patch_report.code(str(text), None)}" for text in ledger)
     card = warning_card(CODE, summary, next_actions[0])
     return {**envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
                               request_id=uuid.uuid4().hex[:12], degradation_reason=summary[:300]),

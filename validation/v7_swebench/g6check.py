@@ -30,6 +30,7 @@ import contextlib
 import json
 import shutil
 import sys
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
@@ -100,12 +101,20 @@ def check(repo: str | Path, *, python: str | None = None, run_tests: Callable[..
         findings.append({"check": "parse", "said": f"{shown(item['file'])} does not parse (line {item['line']}: "
                                                    f"{item['message']})"})
     derived, more = repo_tests.derive_tests(change)
-    replies["workforce.repo_tests.derive_tests"] = {"tests": derived, "more": more}
+    replies["workforce.repo_tests.derive_tests"] = {"tests": derived, "more": more,
+        "selection_reasons": getattr(derived, "reasons", {}),
+        "not_reached": list(getattr(derived, "unreached", ())), "notes": repo_tests.selection_notes(derived)}
     if derived:
         runner = run_tests or repo_tests.run
         with _venv_link(root, python):
             try:
-                result = runner(root, list(derived), timeout_s=timeout_s)
+                selected_runs = dict(repo_tests.run_selection(change, derived, deadline=time.monotonic() + timeout_s,
+                                    execute=lambda ids, timeout_s: runner(root, ids, timeout_s=timeout_s)))
+                result = next((run for run in selected_runs.values() if run.get("verdict") == repo_tests.FAILED),
+                              next(iter(selected_runs.values())))
+                replies["selected_runs"] = _plain(selected_runs)
+                replies["selection_audit"] = repo_tests.selection_audit(change, selected_runs)
+                replies["tested_change"] = [rel for rel, run in selected_runs.items() if repo_tests.tests_change(change, run)]
             except repo_tests.RepoRefused as exc:
                 result = {"verdict": "refused", "code": exc.code, "said": str(exc)}
         replies["workforce.repo_tests.run"] = _plain(result)

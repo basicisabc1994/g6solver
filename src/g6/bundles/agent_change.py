@@ -120,28 +120,44 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
                                 "check. Leave the agent's change uncommitted, or give the base it started from.",
                                 code="G6_E_NO_CHANGE")
         named = _listed(inputs.get("tests", ""))
-        tests, more = (named, 0) if named else rt.derive_tests(change)
+        tests, _more = (named, 0) if named else rt.derive_tests(change)
         if not tests:
             return BundleResult("blocked-escalated", "No test touches this change (none was changed, and none names a "
-                                "changed module). Name the tests to run.", code="G6_E_NO_TESTS")
+                                "changed module or imports it). Name the tests to run.", code="G6_E_NO_TESTS")
         diff = rt.diff_text(change)
-        found = rt.run(repo, tests)
+        selected_runs = dict(rt.run_selection(change, tests, deadline=time.monotonic() + rt.DEFAULT_TIMEOUT_S,
+                            execute=lambda ids, timeout_s: rt.run(repo, ids, timeout_s=timeout_s)))
     except rt.RepoRefused as exc:
         return BundleResult("blocked-escalated", str(exc), code=exc.code)
 
-    report = rt.read_report(found)
-    found = {"verdict": report.verdict, "said": report.said, "total": 0, "passed": 0, "failed": 0,
-             "not_passed": 0, "failed_ids": [], "changed": [], **report.wire()}
+    reports = {rel: rt.read_report(out) for rel, out in selected_runs.items()}
+    established = {rel: rt.established(report, repo=repo).of() for rel, report in reports.items()}
+    qualifying = [rel for rel, out in selected_runs.items() if rt.tests_change(change, out) and established[rel] in rt.RAN]
+    failed_runs = [rel for rel in qualifying if established[rel] == rt.FAILED]
+    whole = rt.FAILED if failed_runs else rt.PASSED if qualifying and len(qualifying) == len(tests) else "unknown"
+    found = {"verdict": rt.FAILED if failed_runs else whole,
+             "said": "; ".join(rt.selection_audit(change, selected_runs)),
+             "total": sum(reports[rel].data.get("total", 0) for rel in qualifying),
+             "passed": sum(reports[rel].data.get("passed", 0) for rel in qualifying),
+             "failed": sum(reports[rel].data.get("failed", 0) for rel in failed_runs),
+             "not_passed": sum(report.data.get("not_passed", 0) for report in reports.values()),
+             "failed_ids": [node for rel in failed_runs for node in reports[rel].data.get("failed_ids", ())],
+             "changed": [path for report in reports.values() for path in report.data.get("changed", ())],
+             "seconds": sum(out.get("seconds", 0) for out in selected_runs.values())}
     rows: list[dict[str, str]] = []
-    boundary = (found.get("isolation") or {}).get("backend")
+    boundary = next(((out.get("isolation") or {}).get("backend") for out in selected_runs.values()), None)
     notes = [(f"G6 ran your repository's tests on this computer inside an operating-system boundary ({boundary})."
               if boundary else "G6 ran your repository's tests on this computer with your permissions, as you allowed: "
               "no operating-system boundary could confine them here.")
              + " Network connections were refused inside the tests.",
              "The best label is qualified-draft: the tests are yours or the agent's, not independent of the change, "
              "and passing tests do not establish that the task is done."]
+    notes += rt.selection_notes(tests)
+    notes += [f"{shown(rel)} ({rt.selection_rule(tests, rel)}): {out.get('verdict')}" for rel, out in selected_runs.items()
+              if out.get("verdict") != "not_run"]
+    notes += rt.selection_audit(change, selected_runs)
     # the one statement of what the run shows, of the tree's own code
-    verdict, whole = report.verdict, rt.established(report, repo=repo).of()
+    verdict = found["verdict"]
     ran = whole in rt.RAN
     if whole == rt.PASSED and found["total"]:
         detail = f"{found['passed']} passed" + (f", {found['not_passed']} skipped (a skip is not a pass)"
@@ -154,10 +170,6 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
         said = found["said"] or "no test ran to a result (every test was skipped, or none was collected)"
         rows.append(_row("Your tests on the change", "not run", said + (
             ": " + ", ".join(found["changed"][:_SHOWN]) if found["changed"] else ""), "blocked-escalated"))
-    if more:
-        notes.append(f"{more} more test file(s) touch this change and were not run (the limit is {rt.MAX_DERIVED}); "
-                     "name them to run them.")
-
     if change.before:
         try:
             old = rt.run_before(change)
@@ -176,7 +188,7 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
         else:
             detail = f"{len(old) - len(skipped)} original test file(s) still pass"
             if skipped:
-                detail += "; not run: " + "; ".join(f"{shown(rel)} ({why})" for rel, why in list(skipped.items())[:_SHOWN])
+                detail += "; not run: " + "; ".join(f"{shown(rel)} ({why})" for rel, why in skipped.items())
             rows.append(_row("Original tests on the new code", "passed" if len(skipped) < len(old) else "not run",
                              detail, "qualified-draft"))
         before = {change.renamed.get(rel, rel): text for rel, text in change.before.items()}

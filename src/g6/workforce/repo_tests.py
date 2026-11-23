@@ -13,7 +13,7 @@ hides from its diff whose text differs from the base's (``_held``; one so marked
 listed apart, ``Change.unseen``, never read as unchanged); each changed test file's text at the base and now, both read
 with the same line endings, and the test files moved since the base; the changed source files and the changed lines in
 each (``changed_lines``); and the tests the change touches (``derive_tests``: its changed test files, then every test
-file that names a changed module, ``verify.run_set``'s rule, at most ``MAX_DERIVED``). Git is asked with the owner's
+file whose static imports reach a changed module, then stem matches, with a named safety ceiling). Git is asked with the owner's
 diff settings that would change the answer turned off, and paths read literally.
 
 How it runs (``run``), and what that does and does not protect:
@@ -92,10 +92,10 @@ from g6.workforce import receipt_store, verify
 
 DEFAULT_TIMEOUT_S = 300
 MAX_TIMEOUT_S = 1800
-#: The most test files "the tests the change touches" may be; more are counted and said, never run silently.
-MAX_DERIVED = 25
-#: The most modules a run lists as loaded from outside the tree it tested (``shadowed``), and the most bytes of that
-#: list G6 reads; past either, the list is incomplete and says so.
+#: A memory/process safety ceiling, not the review's execution budget. Every excess path is retained and reported.
+MAX_DERIVED = 10_000
+#: The most modules in each inside/outside loading inventory, and the most bytes of their combined record G6 reads;
+#: past either, loading is incomplete and says so (``shadowed``, ``changed_loaded``).
 LOADED_LIMIT = 10_000
 LOADED_BYTES = 16 * 1024 * 1024
 #: The changed-lines mutation check: at most this many changed source files, within this many seconds in all.
@@ -401,7 +401,7 @@ for _name in ("changed", "os_errors", "import_path", "env_set_by_g6", "ignored_l
     REPORT_FIELDS[_name] = ReportField([str], [], "execution identity listing", "text members; os_errors annotate recorded failures")
 REPORT_FIELDS["changed"] = ReportField([str], [], "files that changed under the run",
                                        "text members; named only beside the verdict that says files changed")
-for _name in ("failure_messages", "messages", "repo_env", "loaded_outside", "submodules_not_hashed", "links_left_out",
+for _name in ("failure_messages", "messages", "repo_env", "loaded_outside", "loaded_inside", "submodules_not_hashed", "links_left_out",
               "links_materialised", "generated_copied", "generated_left_out", "ignored_inputs"):
     REPORT_FIELDS[_name] = ReportField({str: str}, {}, "execution annotation by identity", "text keys and values")
 REPORT_FIELDS["isolation"] = ReportField(_ISOLATION, {"backend": "recorded"}, "execution boundary",
@@ -1371,18 +1371,106 @@ def changed_lines(change: Change, rel: str) -> set[int]:
     return found
 
 
+class TestSelection(list[str]):
+    """A list-compatible selection; the second derive_tests result remains an integer for old callers.
+
+    All reasons and every file beyond the safety ceiling stay attached to the list.
+    """
+
+    def __init__(self, reasons: dict[str, list[dict]], limit: int):
+        ordered = list(reasons)
+        super().__init__(ordered[:max(0, limit)])
+        self.reasons = reasons
+        self.unreached = ordered[max(0, limit):]
+        self.limit = max(0, limit)
+
+
 def derive_tests(change: Change, limit: int = MAX_DERIVED, *,
-                 read_file: Callable[[Path], str] | None = None) -> tuple[list[str], int]:
-    """The tests the change touches: its changed test files first, then every test file that names a changed module
-    (``verify.run_set``'s rule over the files git knows: tracked, and untracked but not ignored), each present now, at
-    most ``limit``; and how many more there were."""
+                 read_file: Callable[[Path], str] | None = None,
+                 roots: tuple[str, ...] = ()) -> tuple[list[str], int]:
+    """Changed tests, import closure by distance, then stem matches, each present and git-visible.
+
+    ``limit`` is a high safety ceiling; time, not file count, budgets execution. The list
+    carries ``reasons`` and ``unreached`` names while the legacy (list, int) return is kept.
+    """
     known = (_paths(_git(change.repo, "ls-files", "-z"))
              + _paths(_git(change.repo, "ls-files", "--others", "--exclude-standard", "-z")))
-    options = {"read_file": read_file} if read_file is not None else {}
-    found = [rel for rel in verify.run_set(change.repo, list(change.files), candidates=known, **options)
-             if (path := _disk(change.repo, rel)) is not None and path.is_file()]
-    ordered = [rel for rel in found if rel in change.files] + [rel for rel in found if rel not in change.files]
-    return ordered[:limit], max(0, len(ordered) - limit)
+    safe = {rel: path for rel in sorted(set(known) | set(change.files)) if (rel.endswith(".py") or is_test_file(rel))
+            and (path := _disk(change.repo, rel)) is not None and path.is_file()
+            and not links_outside(change.repo, rel)}
+    # The resolver sees only contained paths, including when an injected reader enforces stricter roots.
+    readable = {change.repo / rel: path for rel, path in safe.items()}
+    reader = read_file or (lambda path: path.read_text(encoding="utf-8", errors="replace"))
+    reasons = verify.test_selection(change.repo, list(change.files), candidates=list(safe), roots=roots,
+                                    read_file=lambda path: reader(readable[path]) if path in readable else "")
+    selected = TestSelection({rel: why for rel, why in reasons.items() if rel in safe}, limit)
+    return selected, len(selected.unreached)
+
+
+def selection_notes(tests: list[str]) -> list[str]:
+    """Every ceiling omission by name; also declare the static resolver's blind spots."""
+    return ["Selection uses static Python imports and stem matches; dynamic imports, plugins and importlib are "
+            f"not seen. Safety ceiling: {getattr(tests, 'limit', MAX_DERIVED)} files, to bound process overhead.",
+            *(f"{shown(rel)}: not run (safety ceiling {tests.limit} files; bounds execution overhead)"
+                          for rel in getattr(tests, "unreached", ()))]
+
+
+def selection_rule(tests: list[str], rel: str) -> str:
+    """Compact readable reasons for one file, including import path length."""
+    return ", ".join(item["rule"] + (f" distance {item['distance']}" if item["rule"] == "imports" else "")
+                     for item in getattr(tests, "reasons", {}).get(rel, [{"rule": "named"}]))
+
+
+def changed_loaded(sources: tuple[str, ...] | list[str], ran: dict) -> list[str] | None:
+    """Changed source paths loaded inside this run, or None without complete inside telemetry.
+
+    A session-end module inventory observes imports, not line coverage or child processes.
+    """
+    report = read_report(ran)
+    inside = report.data.get("loaded_inside")
+    if not report.valid or report.data.get("loaded_complete") is not True or not isinstance(inside, Mapping):
+        return None
+    loaded = {os.path.normcase(path) for path in inside.values() if isinstance(path, str)}
+    return sorted(rel for rel in sources if os.path.normcase(_in(rel)) in loaded)
+
+
+def changed_modules(change: Change) -> tuple[str, ...]:
+    """Audit production changes when present; test-only changes audit the edited tests.
+
+    Loading an edited test itself must not hide its failure to import changed production code.
+    """
+    return change.sources or tuple(change.after)
+
+
+def tests_change(change: Change, ran: dict) -> bool:
+    """Whether authoritative test execution observed a changed module."""
+    sources = changed_modules(change)
+    return bool(changed_loaded(sources, ran)) and established(ran, sources=sources).of() in RAN
+
+
+def run_selection(change: Change, tests: list[str], *, deadline: float, execute: Callable) -> Iterable[tuple[str, dict]]:
+    """Run one file at a time in selection order, sharing the caller's existing deadline.
+
+    Individual processes let loading evidence belong to one selected file. Every unrun
+    file yields a named diagnostic, even after the budget expires.
+    """
+    for rel in tests:
+        remaining = deadline - time.monotonic()
+        ran = (_not_run_report("time budget") if remaining < 1 else
+               execute([rel], timeout_s=max(1, min(MAX_TIMEOUT_S, int(remaining)))))
+        yield rel, ran
+
+
+def selection_audit(change: Change, runs: Mapping[str, dict]) -> list[str]:
+    """Named omissions and no-load results; none of these files counts as testing the change."""
+    reports = {rel: read_report(value) for rel, value in runs.items()}
+    loaded = {rel: changed_loaded(changed_modules(change), value) for rel, value in runs.items()}
+    missing = [rel for rel, report in reports.items() if report.verdict in RAN and loaded[rel] == []]
+    unknown = [rel for rel, report in reports.items() if report.verdict in RAN and loaded[rel] is None]
+    return ([f"{len(missing)} selected files did not load the changed code: " + ", ".join(shown(rel) for rel in missing)]
+            if missing else []) + [f"{shown(rel)}: changed-code loading unknown; not counted" for rel in unknown] + [
+                f"{shown(rel)}: not run ({'time budget' if report.verdict == 'timed_out' else report.said or report.verdict})"
+                for rel, report in reports.items() if report.verdict not in RAN]
 
 
 #: The most of one untracked file ``diff_text`` reads.
@@ -2020,9 +2108,9 @@ _RETURN_HEAD, _RETURN_TAIL = 2048, 6144
 #: capture, its default, into "sys" before
 #: capturing starts: "fd" opens the null device for standard input, which a Windows AppContainer may be refused
 #: (``truth.CAPTURE``); a capture the repository's own options chose otherwise (``-s``) stays. A third, as the
-#: session ends, writes each module the pytest process has loaded from outside the tree under test (the working
-#: folder; an environment inside it, below ``site-packages`` or ``dist-packages``, is outside) and outside the standard
-#: library, name to file, at most ``LOADED_LIMIT`` of them (``shadowed``): read from each module's own dictionary,
+#: session ends, writes the modules loaded inside the tree as repository-relative paths, and outside the tree under
+#: test (the working folder; an environment inside it, below ``site-packages`` or ``dist-packages``, is outside) and
+#: outside the standard library, name to file, at most ``LOADED_LIMIT`` in each inventory: read from each module's dictionary,
 #: never through its attributes (a lazily loaded module would load), and any error makes the list incomplete, never the
 #: run fail. Modules of a subprocess or a forked child are not seen. Written for Python 3.8 and later.
 _BOOT = r'''
@@ -2174,7 +2262,7 @@ class _Capture:
         yield
 class _Loaded:
     def pytest_sessionfinish(self, session):
-        found, complete = {}, True
+        found, inside, complete = {}, {}, True
         try:
             import sysconfig
             def real(path):
@@ -2197,7 +2285,13 @@ class _Loaded:
                     if not isinstance(path, str) or not path:
                         continue
                     here = real(path)
-                    if within(here, tree) or within(here, std):
+                    if within(here, tree):
+                        if len(inside) >= limit:
+                            complete = False
+                            break
+                        inside[name] = os.path.relpath(here, tree).replace(os.sep, "/")
+                        continue
+                    if within(here, std):
                         continue
                     if len(found) >= limit:
                         complete = False
@@ -2209,7 +2303,7 @@ class _Loaded:
             complete = False
         try:
             with open(loaded, "w", encoding="utf-8") as handle:
-                json.dump({"modules": found, "complete": complete}, handle)
+                json.dump({"modules": found, "inside": inside, "complete": complete}, handle)
         except Exception:
             pass
 sys.exit(pytest.main(args, plugins=[_Counted(), _Capture(), _Loaded()]))
@@ -2852,6 +2946,20 @@ def _loaded(path: Path) -> tuple[dict[str, str], bool]:
         return {}, False
 
 
+def _loaded_inside(path: Path) -> dict[str, str] | None:
+    """The same bounded inventory's repository-relative paths, absent on older runners."""
+    try:
+        if path.stat().st_size > LOADED_BYTES:
+            return None
+        found = json.loads(path.read_text(encoding="utf-8"))
+        inside = found.get("inside")
+        if found.get("complete") is True and _report_type(inside, {str: str}):
+            return inside
+    except (OSError, ValueError, TypeError, AttributeError, RecursionError, MemoryError):
+        pass
+    return None
+
+
 def shadowed(sources: tuple[str, ...] | list[str], ran: dict) -> dict[str, dict[str, str]] | None:
     """The source files (``sources``: a change's, or every Python file of the tree) whose module ``ran`` loaded from
     outside the tree it tested under the same name, an installed copy in place of the tree's own file: each path to the
@@ -3070,6 +3178,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
     person = {name: value for name, value in _repo_env().items() if not _runner_name(name)}
     set_by_g6 = [] if HYPOTHESIS_STORAGE in person else [HYPOTHESIS_STORAGE]
     seen: list = [{}, False]   # the modules the run loaded from outside the tree, and whether that list is whole
+    inside_loaded: list = [None]
     whose = ("setting" if python == _chosen_python() else
              "repository" if any(Path(python).is_relative_to(repo / folder) for folder in (".venv", "venv")) else "g6")
     untracked = [] if copied else _untracked(repo)
@@ -3106,7 +3215,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "import_path": [Path(entry).relative_to(repo).as_posix() for entry in entries],
                 "own_config": bool(own_config),
                 "repo_env": _digests(person), "env_set_by_g6": list(set_by_g6),
-                "loaded_outside": dict(seen[0]), "loaded_complete": seen[1], **(links or {})}
+                "loaded_outside": dict(seen[0]), "loaded_complete": seen[1],
+                **({"loaded_inside": inside_loaded[0]} if inside_loaded[0] is not None else {}), **(links or {})}
 
     # Two folders: the tests' HOME and temp folders, and one they are not pointed at, for the report, the count of
     # tests collected, the output, the mutant's source and an empty config.
@@ -3171,6 +3281,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         output, counts = _output(log), _counts(report, repo, tuple(Path(entry) for entry in entries))
         progress = _progress(counts or {}, counted)
         seen[:] = _loaded(own / "loaded.json")
+        inside_loaded[0] = _loaded_inside(own / "loaded.json")
         if counts is not None:
             counts = progress
     try:
@@ -4052,7 +4163,7 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
 
 
 # COPY: reason for old tests omitted by the replay's file cap (A1 amendment B).
-OLD_TEST_LIMIT = "the limit of {n} old test file(s) was reached"
+OLD_TEST_LIMIT = "the safety ceiling of {n} old test files was reached (bounds execution overhead)"
 
 
 def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = (), timeout_s: int = DEFAULT_TIMEOUT_S,
