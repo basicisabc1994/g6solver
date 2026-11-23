@@ -148,8 +148,10 @@ from __future__ import annotations
 
 import configparser
 import hashlib
+import os
 import platform
 import re
+import stat
 import time
 import uuid
 from collections.abc import Collection, Sequence
@@ -1042,6 +1044,105 @@ def _stage(stopped: list[dict], what: str, run, *args, **kwargs):
         return None
 
 
+def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, deadline: float) -> dict:
+    """Read a bounded Python inventory through hardened git/held-file paths, then analyse text only.
+
+    This is the last search activity, after the decided fields and closing snapshots. It cannot
+    consume another check's time or turn an analysis error into an evidence-stage reason.
+    """
+    from g6.harness import change_map
+
+    record = change_map.empty()
+    end = min(deadline, time.monotonic() + 2.0)
+    if end <= time.monotonic():
+        record["skipped"].append(change_map.skip("change map", "the time budget is spent"))
+        return record
+    if not any(p.endswith(".py") for p in change.files):
+        return record
+    skipped = []
+
+    def read():
+        base_names = repo_tests._paths(repo_tests._git(
+            change.repo, "ls-tree", "-r", "-z", "--name-only", change.base_commit))
+        patch_names = repo_tests._paths(repo_tests._git(
+            change.repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z"))
+        checks = {node.partition("::")[0] for node in stated_checks}
+        inventory = sorted({p for p in (*base_names, *patch_names, *change.files) if p.endswith(".py")},
+                           key=lambda p: (p not in change.files, p not in checks, p))
+        if len(inventory) > change_map.MAX_FILES:
+            skipped.append(change_map.skip("change map inventory", "file limit reached; import closure is partial"))
+        inventory = inventory[:change_map.MAX_FILES]
+        entries = repo_tests._listed_at(change.repo, change.base_commit, inventory)
+        base, patch, unavailable = {}, {}, set()
+        total = 0
+        for rel in inventory:
+            component_process.checkpoint()
+            if time.monotonic() >= end:
+                skipped.append(change_map.skip("change map inventory", "the time budget is spent; import closure is partial"))
+                break
+            # Validate index names and use the repository's disk-name rule. Never open a link,
+            # junction, pipe, device, or a file whose held path is outside the repository.
+            repo_tests._index_path(change.repo, rel)
+            path = repo_tests._disk(change.repo, rel)
+            if path is None or rel in change.outside_links or repo_tests._linked(path):
+                unavailable.add(rel)
+                skipped.append(change_map.skip(f"change map: {shown(rel)}", "source path is unavailable or linked"))
+            elif path.is_file():
+                raw = _change_map_text(change.repo, path, change_map.MAX_FILE_CHARS)
+                if raw is None:
+                    unavailable.add(rel)
+                    skipped.append(change_map.skip(f"change map: {shown(rel)}", "not a regular file inside the repository"))
+                elif len(raw) > change_map.MAX_FILE_CHARS:
+                    unavailable.add(rel)
+                    skipped.append(change_map.skip(f"change map: {shown(rel)}", "file text limit reached"))
+                else:
+                    total += len(raw)
+                    patch[rel] = repo_tests._text(raw)
+            entry = entries.get(rel)
+            if entry and entry[0] in ("100644", "100755") and entry[1] == "blob":
+                if int(entry[3]) > change_map.MAX_FILE_CHARS:
+                    unavailable.add(rel)
+                    skipped.append(change_map.skip(f"change map: base {shown(rel)}", "file text limit reached"))
+                elif rel not in change.files and rel in patch:
+                    # Change already identifies every content change, including hidden index flags.
+                    base[rel] = patch[rel]
+                elif time.monotonic() < end:
+                    raw = repo_tests.blob_bytes(change.repo, entry[2])
+                    total += len(raw)
+                    base[rel] = repo_tests._text(raw)
+                else:
+                    unavailable.add(rel)
+            elif entry:
+                unavailable.add(rel)
+                skipped.append(change_map.skip(f"change map: base {shown(rel)}", "not a regular source blob"))
+            if total > change_map.MAX_TOTAL_CHARS:
+                skipped.append(change_map.skip("change map inventory", "total text limit reached; import closure is partial"))
+                break
+        return ({p: text for p, text in base.items() if p not in unavailable},
+                {p: text for p, text in patch.items() if p not in unavailable})
+
+    texts = repo_tests.within(max(0.001, end - time.monotonic()), read)
+    if texts is None or time.monotonic() >= deadline:
+        record["skipped"] = [*skipped, change_map.skip("change map", "the time budget is spent")]
+        return record
+    proposed = [p.model_dump() if hasattr(p, "model_dump") else p for p in proposed_checks]
+    record = change_map.build(change, *texts, stated_checks=stated_checks, proposed_checks=proposed, roots=roots)
+    record["skipped"] = [*skipped, *record["skipped"]]
+    return record
+
+
+def _change_map_text(root: Path, path: Path, limit: int) -> bytes | None:
+    """A capped read; containment is checked on the held file, as in repo_tests._read_inside."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode) or not repo_tests._within(root.resolve(), repo_tests._where(fd)):
+            return None
+        with os.fdopen(os.dup(fd), "rb") as handle:
+            return handle.read(limit + 1)
+    finally:
+        os.close(fd)
+
+
 def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, *, deadline, limit,
             started, listed=(), assumed=(), unmapped=(), proposed=(), placed=None, instances=(),
             config=None, roots=(), llm=None, confirmed=None) -> dict:
@@ -1387,6 +1488,18 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     self_checked = ", ".join(self_checked)
     if self_checked:
         reason("evidence", SELF_CHECKED, SELF_CHECKED_DETAIL.format(ids=self_checked))
+    # Advisory search, deliberately after every decided field. Its skips bypass stopped_unknowns
+    # and never feed the reasons, requirements or gate. Preserve operator/allowance interrupts.
+    from g6.harness import change_map
+    try:
+        neighbourhood = _change_neighbourhood(change, ids, proposed, roots, deadline=deadline)
+    except LETS_THROUGH:
+        raise
+    except Exception as exc:
+        neighbourhood = change_map.empty()
+        neighbourhood["skipped"].append(change_map.skip("change map", f"static analysis stopped ({type(exc).__name__})"))
+    skipped.extend({**entry, "check": _one_line(entry["check"]), "reason": _one_line(entry["reason"])}
+                   for entry in neighbourhood["skipped"])
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
                   artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects,
                   first_action=(MISSING_IMPORT_ASK.format(name=missing[0]) if missing else
@@ -1394,7 +1507,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                   prepared=prepared, adequacy=adequacy, config=config,
                   counts={"template_instances": len(instances), "proposed_checks": len(proposed),
                           "model_calls": proposals.calls if proposals else 0}, roots=roots,
-                  stopped=stopped, proposer=proposals,
+                  stopped=stopped, proposer=proposals, neighbourhood=neighbourhood,
                   issuer_inputs={"check_sha": check_sha, "written": lambda check: written.get(check, True),
                                  "again": again, "observed": observed},
                   confirmed=(confirmed, enforced) if confirmed is not None else None)
@@ -1709,7 +1822,7 @@ def _one_line(text: object) -> str:
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
            sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=(), prepared=None,
            adequacy=None, config=None, counts=None, roots=(), stopped=(), proposer=None, first_action="",
-           issuer_inputs=None, confirmed=None) -> dict:
+           issuer_inputs=None, confirmed=None, neighbourhood=None) -> dict:
     """The reply. ``first_action``: the next action that stands first for an insufficient-evidence outcome in place of
     the general one (the launch review's I6: a module the patch imports that is not installed here).
     ``issuer_inputs``: each stated check's SHA-256 and whether the patch wrote it, every other run that observed a
@@ -1771,6 +1884,8 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                                                      artifact=artifact, base_commit=change.base_commit,
                                                      templates=prepared, adequacy=adequacy, stopped=stopped,
                                                      proposals=proposer)}
+    if neighbourhood is not None:
+        assessment["completion"]["neighbourhood"] = neighbourhood
     if issuer_inputs is not None:   # the one authority's statement of each requirement (G6 0.3, slice 2)
         from g6.harness import requirement_evidence
         # the review's own integrity rule: a run it does not believe is no evidence for the issuer either
