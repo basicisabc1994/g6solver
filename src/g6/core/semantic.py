@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import queue
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -96,33 +97,57 @@ def holds_fallback(caller: Any) -> bool:
 NOT_OWNED = "G6 cannot send through this caller without changing it"
 
 
-def owned(caller: Any) -> Any:
-    """The form G6 sends through ``caller`` by: its leaf in the guarded form ``consent_callers.guard`` makes (given a
-    leaf, guard changes nothing; given a wrapper, it would set the wrapper's inner caller), under a view of each
-    wrapper G6 knows that shares the wrapper's own state and holds the guarded form where the wrapper holds its inner
-    caller. The caller handed in, and every wrapper of it, is neither changed nor copied. None when a wrapper cannot
-    be viewed so, or when the leaf's guarded form would not share all its state (``_one_state``). Only for a caller
-    ``holds_fallback`` clears: no chain and no cycle."""
-    path = []
-    while slot := wrapper_slot(caller):
-        if slot == "_callers" or len(path) >= 64:
+def owned(caller: Any, _seen=frozenset()) -> Any:
+    """An owned send path without wrapper views, mutation or reset state.
+
+    Exact known wrappers are reused only when their existing inner path is safe.
+    The base and timing wrappers have no accounting state and can be constructed
+    around a guarded sender. Inheriting a wrapper contract grants no ownership.
+    """
+    from g6.core import consent_callers as cc
+    from g6.core.llm import TimingLLMCaller
+
+    if id(caller) in _seen or len(_seen) >= 64:
+        return None
+    seen = _seen | {id(caller)}
+    if (getattr(type(caller), '__getattribute__', None) is not object.__getattribute__
+            or hasattr(type(caller), '__getattr__') or 'complete' in getattr(caller, '__dict__', {})):
+        return None
+    slot = wrapper_slot(caller)
+    if slot:
+        known = any(type(caller) is getattr(sys.modules.get(module), name, None)
+                    for qualified, kind in cc.CALLER_KINDS.items() if kind.startswith('wrapper:')
+                    for module, _, name in (qualified.rpartition('.'),))
+        if not known or slot == '_callers':
             return None
-        path.append((caller, slot))
-        caller = getattr(caller, slot)
-    sender = guard(caller)
-    if sender is not caller and not _one_state(caller):
-        return None   # the guarded form shares the leaf's __dict__ only: state it keeps in slots would be lost
-    for wrapper, slot in reversed(path):
-        sender = _view(wrapper, slot, sender)
+        inner = getattr(caller, slot, None)
+        sender = owned(inner, seen)
         if sender is None:
             return None
+        if sender is inner:
+            return caller
+        if type(caller) is cc.CallerWrapper:
+            return cc.CallerWrapper(sender)
+        if type(caller) is TimingLLMCaller:
+            return TimingLLMCaller(sender, caller._on_latency)
+        return None  # replacing a meter, limits or trace wrapper would lose its state
+    if isinstance(caller, cc._Consent):
+        if type(caller).complete is not cc._Consent.complete:
+            return None
+        backend = caller if caller._guards is None else caller._guards
+        return caller if cc.backend_supported(backend) and not holds_fallback(caller) else None
+    if caller_kind(caller) == 'unknown' and not watched_host(caller):
+        return None
+    sender = guard(caller)
+    if type(sender) is cc._Unknown or sender is not caller and not _one_state(caller):
+        return None
     return sender
 
 
 def _one_state(caller: Any) -> bool:
     """Whether all of ``caller``'s instance state is its ``__dict__``: it has one, and no class it is an instance of
-    declares a slot besides ``__dict__`` and ``__weakref__``. A view sharing that dictionary then shares every bit of
-    state (a stop flag included); a slot would hold a value the view does not see, so such a caller is never viewed."""
+    declares a slot besides ``__dict__`` and ``__weakref__``. A guarded leaf sharing that dictionary then shares its
+    state (a stop flag included); state held in slots would be lost, so such a leaf is refused."""
     try:
         if type(object.__getattribute__(caller, "__dict__")) is not dict:
             return False
@@ -134,21 +159,6 @@ def _one_state(caller: Any) -> bool:
         return False
     return True
 
-
-def _view(wrapper: Any, slot: str, inner: Any) -> Any:
-    """``wrapper`` as G6 sends through it: an object of a subclass of its class made here, sharing its state (one
-    ``__dict__``, so what it counts or records is the wrapper's own), whose ``slot`` reads ``inner``. None when the
-    wrapper keeps any state outside that dictionary (``_one_state``)."""
-    kind = type(wrapper)
-    if not _one_state(wrapper):
-        return None
-    try:
-        made = type(kind.__name__, (kind,), {slot: property(lambda self: inner), "__module__": kind.__module__})
-        view = object.__new__(made)
-        view.__dict__ = wrapper.__dict__
-    except (TypeError, AttributeError, ValueError):
-        return None
-    return view
 
 @dataclass(frozen=True)
 class Kind:
