@@ -27,7 +27,7 @@ def test_it_holds_every_tool_of_g6_mcp_every_route_and_every_runnable_built_in_o
     assert {f"route:{route}" for route in routing.load().routes} <= ids
     ops = {f"op:{component}.{op}" for component, listed in registrations.component_ops().items() for op in listed}
     assert ops and ops <= ids
-    assert len(ids) == len(data["entries"]) == len(tools) + len(routing.load().routes) + len(ops) + len(vendored())
+    assert len(ids) == len(data["entries"]) == len(tools) + len(routing.load().routes) + len(ops) + len(vendored()) + len(corpus._bundled_skills())
     # the separate abstraction server is registered by the person alone, not by g6-mcp: none of its tools is here
     assert not any(entry["call"].get("server") == "abstraction" for entry in data["entries"])
     assert set(corpus.SERVERS_NOT_SELECTED) == set(registrations.SERVERS) - {"g6"}

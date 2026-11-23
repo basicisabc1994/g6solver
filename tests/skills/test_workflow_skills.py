@@ -7,7 +7,8 @@ from g6.skills import corpus
 
 
 def test_each_vendored_skill_has_one_source_derived_entry():
-    entries = [e for e in corpus.entries() if e["kind"] == "skill"]
+    entries = [e for e in corpus.entries() if e["kind"] == "skill"
+               and e["call"]["skill"].startswith("skills/vendor/superpowers/")]
     assert len(entries) == len(skills.vendored()) == 14
     assert {e["id"] for e in entries} == {f"skill:{n}" for n in skills.vendored()}
     for entry in entries:

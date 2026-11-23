@@ -341,6 +341,7 @@ def _for_agent(text: str) -> str:
 def _tools() -> list[dict[str, Any]]:
     from g6.core.consent_declarations import TOOLS
     from g6.mcp import registrations
+    from g6.mcp.families import full_guidance
 
     built = dict(registrations._built({"g6": registrations.SERVERS["g6"]}))["g6"]
     listed = dict(registrations._listed(built))
@@ -360,7 +361,7 @@ def _tools() -> list[dict[str, Any]]:
             "when": data["when"],
             "call": {"tool": name, "arguments": arguments},
             "text": " ".join(filter(None, [data["when"] + ".", _for_agent(
-                _first_sentence(getattr(tool, "description", "") or ""))])),
+                _first_sentence(full_guidance("g6", name)))])),
             "establishes": data["establishes"], "not_established": data["not_established"],
             "needs": {"sensitive": data["sensitive"], "consent": [c for c in declared if c != "g6_operational"],
                       "model": data["model"], "confined": data["confined"], "outside": data["outside"],
@@ -381,6 +382,24 @@ def _routes(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for route_id, route in sorted(manifest.routes.items()):
         section = routing.section(root, route.anchor) or ""
+        if not section:
+            raise ValueError(f"route {route_id} has no entry section")
+        # The index keeps full routing guidance; only the skill's entry page is shortened.
+        # One family reference owns each route's original text, under an explicit identity.
+        begin, end = f"<!-- route:{route_id} -->", f"<!-- /route:{route_id} -->"
+        full = []
+        for path in route.detail:
+            text = (package_root() / path).read_text(encoding="utf-8")
+            if begin in text:
+                if text.count(begin) != 1 or text.count(end) != 1:
+                    raise ValueError(f"route {route_id} has ambiguous detail")
+                body, closing, _ = text.partition(begin)[2].partition(end)
+                if not closing or not body.strip():
+                    raise ValueError(f"route {route_id} has incomplete detail")
+                full.append(body.strip())
+        if len(full) != 1:
+            raise ValueError(f"route {route_id} needs exactly one full detail record")
+        section = full[0]
         members = sorted(key.split("/", 1)[1] for key, entry in manifest.entries.items()
                          if entry.route == route_id and key.startswith("mcp:g6/"))
         out.append({
@@ -442,6 +461,29 @@ def _skills() -> list[dict[str, Any]]:
                     "needs": {"sensitive": "", "consent": [], "model": "none", "confined": False,
                               "outside": [], "extras": []}})
     return out
+
+
+def _bundled_skills() -> list[dict[str, Any]]:
+    """Usage instructions shipped with components, independent of the workflow vendor."""
+    from g6.mcp.registrations import package_root
+    from g6.core.skills import front_matter
+
+    path = "sources/ctx_langextract/skill/SKILL.md"
+    source = package_root() / path
+    if not source.is_file():
+        return []
+    text = source.read_text(encoding="utf-8")
+    front = front_matter(text)
+    body = text.split("\n---", 1)[1].lstrip("-\n")
+    first = re.split(r"(?m)^## ", body, maxsplit=2)
+    section = first[0] + ("## " + first[1] if len(first) > 1 else "")
+    return [{"id": f"skill:{front['name']}", "kind": "skill",
+             "when": front["description"], "text": front["description"] + "\n" + section.strip(),
+             "call": {"instruction": "Load this skill and follow its workflow", "skill": path},
+             "establishes": "a way of working", "not_established": "no evidence, G6 check or reliability change",
+             "phases": ["plan", "implement", "verify"], "cost": "low", "hypotheses": [],
+             "needs": {"sensitive": "", "consent": [], "model": "none", "confined": False,
+                       "outside": [], "extras": []}}]
 
 
 def _help_lines(registry: Any, name: str) -> list[str]:
@@ -728,7 +770,7 @@ def build() -> dict[str, Any]:
     tools = _tools()
     with _scratch_home():
         components, ops = _components_and_ops()
-    entries = sorted([*tools, *_routes(tools), *_skills(), *ops], key=lambda e: e["id"])
+    entries = sorted([*tools, *_routes(tools), *_skills(), *_bundled_skills(), *ops], key=lambda e: e["id"])
     for entry in entries:
         entry["text"] = " ".join(entry["text"].split())
     return {"format": FORMAT, "release": routing.load().release, "phases": list(PHASES), "costs": list(COSTS),

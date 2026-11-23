@@ -144,7 +144,7 @@ INTENTS: dict[str, tuple[re.Pattern[str], dict[str, dict[str, float]]]] = {
 OUTWARD_WORDS = frozenset({"push", "send", "publish", "pay", "delete", "deploy", "drop", "remove", "write"})
 #: Tools a remedy may name before they are registered (built on another branch): such a remedy is marked
 #: ``available: false`` until the corpus holds the tool, and is never offered as a call.
-PENDING_TOOLS = {"g6_agentic_run": "the override kernel's tool (plan revision 8, phase D), built on its own branch"}
+PENDING_TOOLS: dict[str, str] = {}
 UNKNOWN_UNTIL_OBSERVED = (
     "whether this server has the sensitive op allowed: only a G6_E_SENSITIVE_COMPONENT_DENIED refusal says it is not",
     "whether a sharing grant exists for a source: only a withheld reply (G6_E_CLOUD_CONSENT_REQUIRED) says it does not",
@@ -727,9 +727,11 @@ def _fill_say(candidate: dict[str, Any]) -> str:
 def _validate(entry: dict[str, Any], call: dict[str, Any]) -> tuple[bool, list[str]]:
     if entry["kind"] == "skill":
         from g6.core.skills import vendored
+        from g6.skills.corpus import _bundled_skills
 
         name = entry["id"].split(":", 1)[1]
-        found = name in vendored() and call == entry["call"]
+        bundled = any(row["id"] == entry["id"] and row["call"] == call for row in _bundled_skills())
+        found = (name in vendored() or bundled) and call == entry["call"]
         return found, [] if found else ["load the shipped skill instruction as given"]
     if entry["kind"] == "tool":
         issues = _check_tool(entry, call.get("arguments", {}))
