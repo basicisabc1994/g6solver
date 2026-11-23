@@ -110,8 +110,18 @@ class _InputDescriptor:
 
     def duplicate(self, fd):
         # Setup has not published this owner to a reader yet. Its outer handler covers every return/opcode.
-        self.file = open(os.devnull, "rb", buffering=0)
-        os.dup2(fd, self.file.fileno(), inheritable=False)
+        try:
+            os.fstat(fd)                 # validate the borrowed source before an allocation can reuse its number
+            self.file = open(os.devnull, "rb", buffering=0)
+            if self.file.fileno() == fd:
+                # The external owner closed stdin after validation; this slot now owns only the placeholder.
+                self.close()
+                raise OSError("stdin closed during descriptor handoff")
+            os.dup2(fd, self.file.fileno(), inheritable=False)
+            if os.get_inheritable(self.file.fileno()) is not False:
+                raise OSError("stdin duplicate inheritance state is unknown or inheritable")
+        except (OSError, ValueError, TypeError, OverflowError, NotImplementedError) as exc:
+            raise OSError("[G6_E_STDIN_HANDOFF] stdin descriptor handoff refused") from exc
 
     def take(self):
         with self.lock:
@@ -173,13 +183,19 @@ async def _lines(stdin):
     else:
         yield stdin
         return
+    if getattr(source, "closed", False):
+        raise OSError("[G6_E_STDIN_HANDOFF] stdin descriptor handoff refused")
     fd = None
     fileno = getattr(source, "fileno", None)
     if callable(fileno):
         try:
             fd = fileno()
-        except (UnsupportedOperation, OSError, ValueError):
+            if fd is None:
+                raise ValueError("stdin fileno returned no descriptor")
+        except UnsupportedOperation:
             pass
+        except (OSError, ValueError, TypeError, OverflowError, NotImplementedError) as exc:
+            raise OSError("[G6_E_STDIN_HANDOFF] stdin descriptor handoff refused") from exc
     if fd is None:
         sender, receiver = anyio.create_memory_object_stream(0)
         stopped = threading.Event()

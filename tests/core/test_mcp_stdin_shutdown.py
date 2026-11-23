@@ -144,6 +144,17 @@ class TestStdinShapes:
 
             async def run():
                 with anyio.fail_after(2):
+                    if shape in ("closed", "oserror"):
+                        refused = False
+                        try:
+                            async with stdio_server(stdin=anyio.wrap_file(source), stdout=BrokenOutput()):
+                                raise AssertionError("invalid stdin yielded a stream")
+                        except* OSError as errors:
+                            assert all("[G6_E_STDIN_HANDOFF]" in str(exc) for exc in errors.exceptions), errors
+                            refused = True
+                        assert refused, "invalid stdin was accepted"
+                        print("STDIN_REFUSED", file=sys.stderr, flush=True)
+                        return
                     async with stdio_server(stdin=anyio.wrap_file(source), stdout=BrokenOutput()) as streams:
                         incoming, outgoing = streams
                         if shape != "closed":
@@ -182,7 +193,7 @@ class TestStdinShapes:
             process.stdout.close()
             diagnostic = process.stderr.read().decode("utf-8", errors="replace")
             process.stderr.close()
-        assert "WRITER_FAILED" in diagnostic, diagnostic
+        assert ("STDIN_REFUSED" if shape in ("closed", "oserror") else "WRITER_FAILED") in diagnostic, diagnostic
         assert "CONNECTION_ENDED" in diagnostic, diagnostic
         assert exited and process.returncode == 0, diagnostic
 

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Interrupt every setup line after duplication; the caller and reader retain their own fds."""
+import builtins
 import os
 import sys
 import threading
@@ -75,7 +76,8 @@ def test_interrupt_after_duplicate_does_not_leak(monkeypatch):
         real_close(write_fd)
 
 
-def _setup_probe(target=None, error_kind="keyboard", *, opcodes=False, completed_lines=False):
+def _setup_probe(target=None, error_kind="keyboard", *, opcodes=False, completed_lines=False,
+                 validation_lines=False):
     """Inventory setup events, optionally starting at native dup2 completion, with the claim delayed."""
     read_fd, write_fd = os.pipe()
     source = os.fdopen(read_fd, "r", encoding="utf-8")
@@ -89,6 +91,8 @@ def _setup_probe(target=None, error_kind="keyboard", *, opcodes=False, completed
     original_trace = sys.gettrace()
     owner = None
     acquisition_completed = False
+    validation_started = False
+    placeholders = []
     codes = {stdio._lines.__wrapped__.__code__, stdio._InputDescriptor.__init__.__code__}
     acquire_code = getattr(stdio._InputDescriptor, "duplicate", stdio._InputDescriptor.__init__).__code__
     codes.add(acquire_code)
@@ -106,6 +110,11 @@ def _setup_probe(target=None, error_kind="keyboard", *, opcodes=False, completed
     codes.add(duplicate.__code__)
     acquisition_codes = {acquire_code, duplicate.__code__}
 
+    def opened(*args, **kwargs):
+        slot = builtins.open(*args, **kwargs)
+        placeholders.append(slot)
+        return slot
+
     def delayed_reader(*args):
         if not release.wait(5):
             return
@@ -120,7 +129,9 @@ def _setup_probe(target=None, error_kind="keyboard", *, opcodes=False, completed
         injected = False
 
         def trace(frame, event, arg):
-            nonlocal injected, owner, acquisition_completed
+            nonlocal injected, owner, acquisition_completed, validation_started
+            if validation_lines and frame.f_code is stdio._lines.__wrapped__.__code__ and event == "call":
+                validation_started = True
             if completed_lines:
                 if frame.f_code is acquire_code and event == "call":
                     owner = frame.f_locals["self"]
@@ -129,7 +140,8 @@ def _setup_probe(target=None, error_kind="keyboard", *, opcodes=False, completed
                     acquisition_completed = True
             if frame.f_code in codes:
                 frame.f_trace_opcodes = opcodes and frame.f_code in acquisition_codes
-            active = acquisition_completed if completed_lines else bool(duplicates)
+            active = validation_started if validation_lines else (
+                acquisition_completed if completed_lines else bool(duplicates))
             if frame.f_code in codes and active and (
                 event == "line"
                 or (opcodes and frame.f_code in acquisition_codes and event in ("opcode", "return"))
@@ -154,6 +166,8 @@ def _setup_probe(target=None, error_kind="keyboard", *, opcodes=False, completed
             patch.setattr(stdio._InputDescriptor, "close", close)
             patch.setattr(stdio, "_read_lines", delayed_reader)
             patch.setattr(stdio.threading.Thread, "start", start)
+            if validation_lines:
+                patch.setattr(stdio, "open", opened, raising=False)
 
             async def enter():
                 sys.settrace(trace)
@@ -161,7 +175,7 @@ def _setup_probe(target=None, error_kind="keyboard", *, opcodes=False, completed
                     async with stdio._lines(anyio.wrap_file(source)):
                         # The inventory ends at the yield: do not inventory teardown.
                         sys.settrace(original_trace)
-                        if completed_lines and target is not None:
+                        if (completed_lines or validation_lines) and target is not None:
                             pytest.fail("interrupted startup yielded a stream")
                 finally:
                     sys.settrace(original_trace)
@@ -176,8 +190,11 @@ def _setup_probe(target=None, error_kind="keyboard", *, opcodes=False, completed
                     # Check before releasing the reader, so a later claim cannot hide a setup leak.
                     os.fstat(read_fd)
                     assert closed == duplicates, f"setup event {target} left an unclaimed duplicate open"
-                    with pytest.raises(OSError):
-                        os.fstat(duplicates[0])
+                    if validation_lines:
+                        assert all(slot.closed for slot in placeholders), "validation left a placeholder open"
+                    if duplicates:
+                        with pytest.raises(OSError):
+                            os.fstat(duplicates[0])
             finally:
                 release.set()
                 with anyio.fail_after(5):
@@ -186,10 +203,16 @@ def _setup_probe(target=None, error_kind="keyboard", *, opcodes=False, completed
                 for thread in threads:
                     thread.join()
 
-        assert len(duplicates) == 1
+        if validation_lines and target is not None:
+            assert len(duplicates) <= 1
+        else:
+            assert len(duplicates) == 1
         assert closed == duplicates, f"setup event {target} left an unclaimed duplicate or closed it twice"
-        with pytest.raises(OSError):
-            os.fstat(duplicates[0])
+        if validation_lines:
+            assert all(slot.closed for slot in placeholders), "validation left a placeholder open"
+        if duplicates:
+            with pytest.raises(OSError):
+                os.fstat(duplicates[0])
         os.fstat(read_fd)
 
     try:
@@ -203,6 +226,8 @@ def _setup_probe(target=None, error_kind="keyboard", *, opcodes=False, completed
         for fd in duplicates:
             if fd not in closed:
                 real_close(fd)
+        for slot in placeholders:
+            slot.close()
         source.close()
 
 
@@ -246,6 +271,17 @@ def test_every_native_duplication_line_and_helper_return_is_owned(error_kind):
                for name, event, _, _ in points), "setup did not resume after acquisition"
     for point in points:
         _setup_probe(point, error_kind, completed_lines=True)
+
+
+@pytest.mark.parametrize("error_kind", ["keyboard", "cancelled"])
+def test_every_validation_and_placeholder_line_releases_unclaimed_descriptor(error_kind):
+    # Start at _lines entry, before fileno validation, owner construction or placeholder allocation.
+    points = _setup_probe(validation_lines=True)
+    assert points, "no validation/setup lines were inventoried"
+    assert points[0][0] == "_lines", "validation inventory started after stream entry"
+    assert any(name == "duplicate" for name, _, _, _ in points), "descriptor validation was not reached"
+    for point in points:
+        _setup_probe(point, error_kind, validation_lines=True)
 
 
 @pytest.mark.parametrize("exit_kind", ["normal", "cancelled"])
