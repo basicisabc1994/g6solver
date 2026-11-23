@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -52,11 +53,14 @@ def test_forbidden_alias_is_refused_before_io(tmp_path, monkeypatch, alias):
 
 
 def test_resolved_forbidden_component_is_refused(tmp_path, monkeypatch):
-    original = Path.resolve
     alias = tmp_path / "safe" / "checker"
     resolved = tmp_path / "sealed" / "checker"
-    monkeypatch.setattr(Path, "resolve", lambda path, *a, **k:
-                        resolved if path == alias else original(path, *a, **k))
+
+    @contextmanager
+    def opened(path, **kwargs):
+        yield rc._Opened(resolved if path == alias else path, None, None)
+
+    monkeypatch.setattr(rc, "_open_handle", opened)
     with pytest.raises(ValueError, match="forbidden"):
         rc.Source(tmp_path).path("safe/checker")
 
@@ -77,9 +81,11 @@ def test_extended_paths_are_disjoint_both_ways(tmp_path, direction, extended):
 @pytest.mark.parametrize("extended", ["source", "output"])
 def test_unc_prefix_cannot_bypass_disjointness(monkeypatch, extended):
     # All filesystem probes are fakes; no share is contacted.
-    monkeypatch.setattr(Path, "resolve", lambda path, *a, **k: path)
-    monkeypatch.setattr(Path, "is_symlink", lambda path: False)
-    monkeypatch.setattr(Path, "is_junction", lambda path: False)
+    @contextmanager
+    def opened(path, **kwargs):
+        yield rc._Opened(rc._absolute_path(path), None, None)
+
+    monkeypatch.setattr(rc, "_open_handle", opened)
     monkeypatch.setattr(Path, "exists", lambda path: False)
     source = Path(r"\\synthetic-host\synthetic-share\archive")
     output = source / "output"
@@ -250,7 +256,7 @@ def test_any_check_error_is_named_exclusion(tmp_path, where, error, key):
         (check if where == "record" else result)[key] = error
     check_path.write_text(json.dumps(check), encoding="utf-8")
     rows = [{"event": "started", "kind": "run", "task": "black-5634", "run": "run/black-5634/001"},
-            {"event": "started", "kind": "check", "run": "check/black-5634/001",
+            {"event": "started", "kind": "check", "task": "black-5634", "run": "check/black-5634/001",
              "checked_run": "run/black-5634/001"},
             {"event": "ended", "run": "check/black-5634/001", "status": "finished"}]
     (source / "runs.jsonl").write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")

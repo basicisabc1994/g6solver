@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import stat
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,16 +24,27 @@ def memory(monkeypatch):
     monkeypatch.setattr(Path, "is_junction", lambda path: False)
     monkeypatch.setattr(Path, "is_file", lambda path: path in files)
 
-    def read(path):
+    def read(source, rel):
+        path = source.path(rel)
+        if path not in files:
+            raise FileNotFoundError(str(path))
         reads.append(path)
         assert path in files, f"unexpected read: {path}"
         assert path.name == "runs.jsonl", f"candidate read before full path preflight: {path}"
         return files[path]
 
+    @contextmanager
+    def opened(path, **kwargs):
+        # The in-memory handle's final name models alias expansion. Real handle
+        # races and reparse metadata are covered by the disk-backed class tests.
+        path = rc._absolute_path(path.resolve())
+        yield rc._Opened(path, None, stat.S_IFREG if path in files else None)
+
     def no_io(*args, **kwargs):
         pytest.fail("refused input reached an open, listing, hash or process")
 
-    monkeypatch.setattr(Path, "read_bytes", read)
+    monkeypatch.setattr(rc, "_open_handle", opened)
+    monkeypatch.setattr(rc.Source, "read_bytes", read)
     monkeypatch.setattr(Path, "open", no_io)
     monkeypatch.setattr(Path, "read_text", no_io)
     monkeypatch.setattr(Path, "iterdir", no_io)

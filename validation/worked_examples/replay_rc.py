@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from statistics import median
@@ -27,6 +30,9 @@ AGENT_ARMS = {"B", "C", "D", "E", "F", "G", "G1", "H", "H1"}
 NEIGHBOURS = ("black-5634", "starlette-3718", "pydantic-14052", "click-3769")
 OUTCOMES = {"supported_within_scope", "insufficient_evidence", "defect_detected", "test_integrity_compromised"}
 REGISTRATION = Path(__file__).with_name("REPLAY_RC.md")
+# Archive.start kinds emitted by run.py; only run/check supply replay content.
+INDEX_KINDS = ("run", "check", "build", "dryrun", "validate", "amend", "recheck",
+               "selfcheck", "g6replay", "replay", "modelcheck", "freecheck")
 
 
 def _normal_path(path: Path) -> Path:
@@ -37,33 +43,180 @@ def _normal_path(path: Path) -> Path:
         elif text.startswith("\\\\?\\"):
             text = text[4:]
         path = Path(text)
-        parts = [part if part in (".", "..") else part.rstrip(" .") for part in
-                 (path.parts[1:] if path.anchor else path.parts)]
-        path = Path(path.anchor, *parts)
         return Path(os.path.normcase(str(path)))
     return path
 
 
-def canonical_path(path: Path) -> Path:
-    """One gate for reads and destinations, before any content access or hashing."""
-    def check(candidate: Path) -> None:
-        for part in re.split(r"[\\/]", str(candidate)):
-            name = part.rstrip(" .").casefold()
-            if name == "sealed" or re.fullmatch(r"final-.*\.json", name):
-                raise ValueError(f"forbidden archive path: {candidate}")
-        for part in (candidate, *candidate.parents):
-            if part.is_symlink() or part.is_junction():
-                raise ValueError(f"archive links are refused: {candidate}")
+def _check_names(path: Path) -> None:
+    # The drive colon belongs to the anchor. No component may name a stream.
+    parts = path.parts[1:] if path.anchor else path.parts
+    if os.name == "nt" and path.anchor.startswith("\\\\"):
+        parts = (*path.anchor.strip("\\").split("\\"), *parts)
+    for component in parts:
+        for part in re.split(r"[\\/]", component):
+            name = part.split(":", 1)[0].rstrip(" .").casefold()
+            if (name == "sealed" or re.fullmatch(r"final-.*\.json", name)
+                    or ":" in part or part.endswith((".", " ")) or "\x00" in part):
+                raise ValueError(f"forbidden archive path: {path}")
 
-    path = Path(path)
-    check(path)
-    path = _normal_path(path).absolute()
-    check(path)
-    # Windows realpath expands existing 8.3 aliases, including an existing
-    # ancestor when the final destination has not been created yet.
-    resolved = _normal_path(path.resolve())
-    check(resolved)
-    return resolved
+
+def _absolute_path(path: Path) -> Path:
+    path = _normal_path(Path(path))
+    _check_names(path)
+    if ".." in path.parts or (os.name == "nt" and (
+            path.drive and not re.fullmatch(r"[a-zA-Z]:|\\\\[^\\]+\\[^\\]+", path.drive))):
+        raise ValueError(f"forbidden archive path: {path}")
+    path = path.absolute()
+    _check_names(path)
+    return path
+
+
+@dataclass
+class _Opened:
+    path: Path
+    fd: int | None
+    mode: int | None
+
+
+class _WindowsAPI:
+    """Only handle queries; no pathname metadata probes after a component open."""
+
+    def __init__(self):
+        import ctypes
+        from ctypes import wintypes as w
+
+        self.ctypes = ctypes
+        self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        signatures = {
+            "CreateFileW": ([w.LPCWSTR, w.DWORD, w.DWORD, w.LPVOID, w.DWORD, w.DWORD, w.HANDLE], w.HANDLE),
+            "GetFileInformationByHandleEx": ([w.HANDLE, ctypes.c_int, w.LPVOID, w.DWORD], w.BOOL),
+            "GetFinalPathNameByHandleW": ([w.HANDLE, w.LPWSTR, w.DWORD, w.DWORD], w.DWORD),
+            "GetFileType": ([w.HANDLE], w.DWORD),
+            "CloseHandle": ([w.HANDLE], w.BOOL),
+        }
+        for name, (args, result) in signatures.items():
+            function = getattr(self.kernel, name)
+            function.argtypes, function.restype = args, result
+
+    def open(self, path: Path, readable: bool) -> int:
+        # Exclude both WRITE and DELETE sharing. Every ancestor stays pinned,
+        # preventing rename and reparse mutation until the content handle closes.
+        access = 0x80000000 if readable else 0x80  # GENERIC_READ / FILE_READ_ATTRIBUTES
+        handle = self.kernel.CreateFileW(str(path), access, 1, None, 3, 0x02200000, None)
+        if handle == self.ctypes.c_void_p(-1).value:
+            code = self.ctypes.get_last_error()
+            if code in (2, 3):
+                raise FileNotFoundError(code, "archive component is absent", str(path))
+            raise self.ctypes.WinError(code)
+        return handle
+
+    def describe(self, handle: int, path: Path) -> tuple[Path, int]:
+        # FILE_ATTRIBUTE_TAG_INFO is two DWORDs, independent of pointer size.
+        info = (self.ctypes.c_ulong * 2)()
+        if not self.kernel.GetFileInformationByHandleEx(handle, 9, info, self.ctypes.sizeof(info)):
+            raise self.ctypes.WinError(self.ctypes.get_last_error())
+        if info[0] & 0x400:  # FILE_ATTRIBUTE_REPARSE_POINT, all tags refused
+            raise ValueError(f"archive links are refused: {path}")
+        if self.kernel.GetFileType(handle) != 1:  # FILE_TYPE_DISK
+            raise ValueError(f"forbidden archive path: {path}")
+        size = 32768
+        buffer = self.ctypes.create_unicode_buffer(size)
+        count = self.kernel.GetFinalPathNameByHandleW(handle, buffer, size, 0)
+        if not count or count >= size:
+            raise ValueError(f"cannot identify archive handle: {path}")
+        actual = _absolute_path(Path(buffer.value))
+        return actual, stat.S_IFDIR if info[0] & 0x10 else stat.S_IFREG
+
+
+@contextmanager
+def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False, readable: bool = False):
+    """Walk top down without following links; keep every handle through the read.
+
+    Windows pins the entire chain against rename/reparse writes and checks the
+    final name of each handle. POSIX opens each child relative to its retained
+    parent fd with O_NOFOLLOW. Content is consumed only from the final fd.
+    """
+    path = _absolute_path(path)
+    if root is not None and not path.is_relative_to(root):
+        raise ValueError(f"archive path escapes source: {path}")
+    handles = []
+    content_fd = None
+    windows = _WindowsAPI() if os.name == "nt" else None
+    current, actual = Path(path.anchor), Path(path.anchor)
+    components = [None, *path.parts[1:]]
+    try:
+        for index, component in enumerate(components):
+            if component is not None:
+                current = actual / component
+            last = index == len(components) - 1
+            try:
+                if windows:
+                    handle = windows.open(current, readable and last)
+                    handles.append(handle)
+                    previous = actual
+                    actual, mode = windows.describe(handle, current)
+                    if component is not None and actual.parent != previous:
+                        raise ValueError(f"archive path escapes source: {path}")
+                    if root is not None and index >= len(root.parts) - 1 and not actual.is_relative_to(root):
+                        raise ValueError(f"archive path escapes source: {path}")
+                else:
+                    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+                    if not last or not readable:
+                        flags |= os.O_DIRECTORY if not last else 0
+                    handle = os.open(component if component is not None else path.anchor,
+                                     flags, dir_fd=handles[-1] if handles else None)
+                    handles.append(handle)
+                    mode = os.fstat(handle).st_mode
+                    actual = current
+            except FileNotFoundError:
+                if not missing:
+                    raise
+                # No metadata request is made below the first absent component.
+                yield _Opened(current.joinpath(*path.parts[index + 1:]), None, None)
+                return
+            except OSError as exc:
+                if not windows and exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                    raise ValueError(f"archive links are refused: {path}") from exc
+                raise
+            if not last and not stat.S_ISDIR(mode):
+                raise ValueError(f"forbidden archive path: {path}")
+        if readable:
+            if not stat.S_ISREG(mode):
+                raise ValueError(f"forbidden archive path: {path}")
+            if windows:
+                import msvcrt
+                content_fd = msvcrt.open_osfhandle(handles[-1], os.O_RDONLY | os.O_BINARY)
+                handles.pop()  # fd now owns this Windows handle
+            else:
+                content_fd = handles[-1]
+        yield _Opened(actual, content_fd, mode)
+    finally:
+        if windows and content_fd is not None:
+            os.close(content_fd)
+        for handle in reversed(handles):
+            windows.kernel.CloseHandle(handle) if windows else os.close(handle)
+
+
+def canonical_path(path: Path) -> Path:
+    """Validate destinations with the same top-down walk, permitting absent tails."""
+    with _open_handle(path, missing=True) as opened:
+        return _absolute_path(opened.path)
+
+
+class _HandlePath(type(Path())):
+    """Use Path.read_bytes dispatch with a retained-handle binary stream."""
+
+    source_root: Path
+
+    @contextmanager
+    def open(self, mode="r", buffering=-1, encoding=None, errors=None, newline=None):
+        if mode != "rb" or any(value is not None for value in (encoding, errors, newline)):
+            raise ValueError("archive content supports only binary reads")
+        with _open_handle(self, root=self.source_root, readable=True) as opened:
+            # The walker owns the descriptor and retains all ancestors until
+            # Path.read_bytes finishes consuming and closing this stream.
+            with os.fdopen(opened.fd, "rb", buffering=buffering, closefd=False) as stream:
+                yield stream
 
 
 class Source:
@@ -86,16 +239,25 @@ class Source:
         return path
 
     def read_bytes(self, rel: str | Path) -> bytes:
-        return self.path(rel).read_bytes()
+        # Preserve the Path byte-reader interface. Its default implementation
+        # dispatches to this instance's open(), which never reopens a pathname.
+        path = _HandlePath(self.path(rel))
+        path.source_root = self.root
+        return path.read_bytes()
+
+    def is_file(self, rel: str | Path) -> bool:
+        with _open_handle(self.path(rel), root=self.root, missing=True) as opened:
+            return opened.mode is not None and stat.S_ISREG(opened.mode)
 
     def read_json(self, rel: str | Path) -> Any:
         return json.loads(self.read_bytes(rel).decode("utf-8"))
 
     def rows(self) -> list[dict]:
-        index = self.path("runs.jsonl")
-        if not index.is_file():
+        try:
+            content = self.read_bytes("runs.jsonl")
+        except FileNotFoundError:
             return []
-        return [json.loads(line) for line in self.read_bytes("runs.jsonl").decode("utf-8").splitlines() if line.strip()]
+        return [json.loads(line) for line in content.decode("utf-8").splitlines() if line.strip()]
 
 
 @dataclass
@@ -127,6 +289,27 @@ def _has_error(value: Any) -> bool:
     return isinstance(value, list) and any(_has_error(item) for item in value)
 
 
+def _index_paths(source: Source, row: dict) -> None:
+    """Accept direct harness folders, including kinds used only as metadata."""
+    for key in ("run", "checked_run"):
+        if key not in row:
+            if key == "run" and row.get("event") == "started":
+                raise ValueError("invalid run path: absent")
+            continue
+        rel = row[key]
+        if not isinstance(rel, str):
+            raise ValueError(f"invalid {key} path: {rel}")
+        # Name refusals keep their existing message, ahead of structural refusal.
+        _check_names(Path(rel.replace("\\", "/")))
+        kind = "run" if key == "checked_run" else row.get("kind")
+        if kind is not None and kind not in INDEX_KINDS:
+            raise ValueError(f"invalid {key} path: {rel}")
+        prefix = kind if kind is not None else "(?:" + "|".join(INDEX_KINDS) + ")"
+        if not re.fullmatch(rf"{prefix}/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+", rel):
+            raise ValueError(f"invalid {key} path: {rel}")
+        source.path(rel)
+
+
 def enumerate_cases(root: Path, tasks: list[we.Task]) -> tuple[list[Case], list[dict]]:
     """Refuse unsafe index paths with a caller-visible ValueError before candidate reads."""
     root = Source(root).root
@@ -143,10 +326,8 @@ def enumerate_cases(root: Path, tasks: list[we.Task]) -> tuple[list[Case], list[
         rows = source.rows()
         starts = [r for r in rows if r.get("event") == "started"]
         # Validate paths across all rounds before reading or hashing candidates.
-        for row in starts:
-            source.path(row["run"])
-            if row.get("checked_run"):
-                source.path(row["checked_run"])
+        for row in rows:
+            _index_paths(source, row)
         indices.append((archive_round, part, source, rows, starts))
     for archive_round, part, source, rows, starts in indices:
         ended = {r["run"]: r for r in rows if r.get("event") == "ended"}
@@ -158,14 +339,20 @@ def enumerate_cases(root: Path, tasks: list[we.Task]) -> tuple[list[Case], list[
                 raise ValueError(f"invalid run path: {rel}")
             patch = source.path(f"{rel}/final.patch")
             name = patch.relative_to(root).as_posix()
-            if not patch.is_file():
+            try:
+                patch_bytes = source.read_bytes(f"{rel}/final.patch")
+            except FileNotFoundError:
                 excluded.append({"bug": bug, "patch": name, "reason": "no final patch"})
                 continue
             labels = set()
             label_sources = []
             errored = []
+            foreign = []
             for check in starts:
                 if check.get("kind") != "check" or check.get("checked_run") != rel:
+                    continue
+                if check.get("task") != bug or check["run"].split("/")[1] != bug:
+                    foreign.append(f'{part + "/" if part else ""}{check["run"]}/run.json')
                     continue
                 if _has_error(check) or _has_error(ended.get(check["run"], {})):
                     errored.append(f'{part + "/" if part else ""}{check["run"]}/run.json')
@@ -188,21 +375,30 @@ def enumerate_cases(root: Path, tasks: list[we.Task]) -> tuple[list[Case], list[
                 continue
             if len(labels) != 1:
                 excluded.append({"bug": bug, "patch": name,
-                                 "reason": "conflicting archived labels" if labels else "no archived label"})
+                                 "reason": "conflicting archived labels" if labels else
+                                 "foreign archived check" if foreign else "no archived label",
+                                 **({"checks": foreign} if foreign else {})})
                 continue
             rounds = source.read_json(f"{rel}/rounds.json")
-            digest = hashlib.sha256(source.read_bytes(f"{rel}/final.patch")).hexdigest()
+            digest = hashlib.sha256(patch_bytes).hexdigest()
             matched = []
             for review in rounds:
                 number = review["round"]
                 if type(number) is not int or number < 1:
                     raise ValueError(f"invalid round in {rel}")
                 round_rel = f"{rel}/rounds/round-{number}.patch"
-                if source.path(round_rel).is_file() and hashlib.sha256(source.read_bytes(round_rel)).hexdigest() == digest:
+                try:
+                    round_bytes = source.read_bytes(round_rel)
+                except FileNotFoundError:
+                    continue
+                if hashlib.sha256(round_bytes).hexdigest() == digest:
                     args = review.get("input")
                     input_rel = f"{rel}/rounds/round-{number}.input.json"
-                    if source.path(input_rel).is_file():
+                    try:
                         captured = source.read_json(input_rel)
+                    except FileNotFoundError:
+                        pass
+                    else:
                         captured = captured.get("tool_input", captured)
                         if args is not None and captured != args:
                             raise ValueError(f"archived review arguments disagree: {input_rel}")
@@ -643,7 +839,8 @@ def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
     options = parser.parse_args(argv)
     try:
         if options.score:
-            saved = json.loads(canonical_path(options.score).read_text(encoding="utf-8"))
+            score = _absolute_path(options.score)
+            saved = Source(score.parent).read_json(score.name)
             validate_record_pins(saved["records"], saved["plan"], saved.get("image_ids", {}))
             registration = load_registration()
             if saved.get("registration_sha256") != registration.sha256:
