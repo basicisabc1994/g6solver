@@ -2,8 +2,8 @@
 """Interpret candidate data on training observations without conferring authority.
 
 Predicates require strict isolation and use only the existing confined batch runner.
-No global environment changes occur here. Current inactive identities are read
-under the shared status transaction before execution, including training reuse.
+No global environment changes occur here. Status is snapshotted before execution
+and checked again afterwards; detector work never holds the status transaction.
 """
 from __future__ import annotations
 
@@ -13,16 +13,16 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from g6.core.ledger import canonical
+from g6.core.ledger import canonical, digest
 from g6.core import stop
 from g6.distillation import sandbox
 
 from .detectors import run_template
-from .facts import _extract_facts
+from .facts import _extract_facts, source_mapping
 from .inactive_identity import method_identity, recorded_cases
-from .ledger import Stores, failure_writer
-from .library import Library
+from .ledger import Stores
 from .records import MethodContract, VerifierCandidate
+from .runtime_state import StatusChanged, require_current, run_memo, run_scope, sample
 
 
 @dataclass(frozen=True)
@@ -50,13 +50,14 @@ def _recorded_verdicts(candidate, cases, resolve):
     values, costs = [], []
     for observation in observations:
         repeats = []
-        for _ in range(3):
+        for index in range(3):
             if stop.engaged() is not None:
                 raise ValueError('stop engaged during recorded comparison')
             start = time.monotonic()
             # Match the evaluator's abstention for unregistered feature/probe semantics.
-            repeats.append('abstain' if candidate.contract.applies_when or candidate.contract.probes else
-                           _execute_candidate(candidate, [observation], resolve)[0])
+            with sample(index):
+                repeats.append('abstain' if candidate.contract.applies_when or candidate.contract.probes else
+                               _execute_candidate(candidate, [observation], resolve)[0])
             costs.append(time.monotonic() - start)
         if len(set(repeats)) != 1:
             raise ValueError('flaky recorded verdict')
@@ -67,17 +68,19 @@ def _recorded_verdicts(candidate, cases, resolve):
 
 
 def _check_runtime_inactive(candidate, resolve):
-    entries = [entry for entry in Library().list() if entry.family == candidate.contract.family
-               and entry.status in {'held', 'withdrawn'}]
+    memo = run_memo()
     try:
-        identity = None
+        identity = method_identity(candidate, resolve=resolve)
+        key = ('training', identity)
+        if key in memo.checked:
+            return
+        entries = [entry for entry in memo.snapshot() if entry.family == candidate.contract.family
+                   and entry.status in {'held', 'withdrawn'}]
         for entry in sorted(entries, key=lambda entry: entry.status != 'held'):
             if entry.candidate_id == candidate.candidate_id:
                 raise ExecutionRefused(f'G6_E_DISTILL_METHOD_{entry.status.upper()}',
                                        f'G6_E_DISTILL_METHOD_{entry.status.upper()}: inactive executable method')
             historical = Stores().for_model(VerifierCandidate).get(entry.candidate_id)
-            if identity is None:
-                identity = method_identity(candidate)
             if identity == method_identity(historical):
                 raise ExecutionRefused(f'G6_E_DISTILL_METHOD_{entry.status.upper()}',
                                        f'G6_E_DISTILL_METHOD_{entry.status.upper()}: inactive executable method')
@@ -101,6 +104,7 @@ def _check_runtime_inactive(candidate, resolve):
         raise ExecutionRefused('G6_E_DISTILL_IDENTITY_UNKNOWN',
                                'G6_E_DISTILL_IDENTITY_UNKNOWN: G6_E_DISTILL_RECORDED_CASES: '
                                'inactive comparison unavailable') from None
+    memo.checked.add(key)
 
 
 def in_scope(contract: MethodContract, observation: Observation) -> bool:
@@ -133,19 +137,78 @@ def in_scope(contract: MethodContract, observation: Observation) -> bool:
     return True
 
 
-@failure_writer()
+@run_scope()
 def run_candidate(candidate: VerifierCandidate, observations: list[Observation], resolve, *, stack=()) -> list[str]:
     """Resolve parents read-only; reject stale parents and dependency cycles."""
+    if type(candidate) is not VerifierCandidate:
+        raise ValueError('typed candidate required')
     candidate = VerifierCandidate.model_validate_json(canonical(candidate.model_dump(mode="json")))
+    memo = run_memo()
+    resolved = {}
+
+    def frozen_resolve(ref):
+        if ref not in resolved:
+            child = resolve(ref)
+            resolved[ref] = VerifierCandidate.model_validate_json(canonical(child.model_dump(mode='json')))
+        return resolved[ref]
+    if not isinstance(observations, list) or not callable(resolve):
+        raise ValueError('typed observations and dependency resolver required')
+    for observation in observations:
+        if (not isinstance(observation, Observation) or not isinstance(observation.facts, dict)
+                or any(not isinstance(value, str) for value in
+                       (observation.expected, observation.language, observation.framework))):
+            raise ValueError('invalid training observation')
+        source_mapping(observation.before)
+        source_mapping(observation.after)
+        canonical(observation.facts)
+    snapshot = memo.snapshot()
+    _guard_dependencies(candidate, frozen_resolve, stack=stack)
+    try:
+        require_current(snapshot)
+        result = _execute_candidate(candidate, observations, frozen_resolve, stack=stack)
+        require_current(snapshot)
+    except StatusChanged as error:
+        raise ExecutionRefused(error.code, str(error)) from None
+    return result
+
+
+def _guard_dependencies(candidate, resolve, *, stack=()):
+    if candidate.candidate_id in stack or len(stack) >= 16:
+        raise ExecutionRefused('G6_E_SYNTH_DEPENDENCY', 'cyclic or over-deep method dependency')
+    memo = run_memo()
+    key = ('training', candidate.candidate_id)
+    if key in memo.walked:
+        return
+    refs = ([candidate.body] if candidate.form == 'reuse' else
+            candidate.body.entries if candidate.form == 'composition' else [])
+    for ref in refs:
+        child = resolve(ref)
+        child = VerifierCandidate.model_validate_json(canonical(child.model_dump(mode='json')))
+        _guard_dependencies(child, resolve, stack=(*stack, candidate.candidate_id))
     _check_runtime_inactive(candidate, resolve)
-    return _execute_candidate(candidate, observations, resolve, stack=stack)
+    memo.walked.add(key)
 
 
 def _execute_candidate(candidate, observations, resolve, *, stack=()):
-    """Internal recorded replay skips only the top-level guard; parents remain guarded."""
+    """Raw replay never starts another inactive comparison, even for dependencies."""
     if candidate.candidate_id in stack or len(stack) >= 16:
         raise ExecutionRefused("G6_E_SYNTH_DEPENDENCY", "cyclic or over-deep method dependency")
     stack = (*stack, candidate.candidate_id)
+    memo = run_memo()
+    identity = method_identity(candidate, resolve=resolve)
+    keys = [('training', identity, digest([obs.before, obs.after, obs.facts, obs.language, obs.framework]),
+             memo.repeat) for obs in observations]
+    missing = list(dict.fromkeys(key for key in keys if key not in memo.values))
+    if not missing:
+        return [memo.values[key] for key in keys]
+    selected_indices = [keys.index(key) for key in missing]
+    pending = [observations[index] for index in selected_indices]
+    values = _execute_uncached(candidate, pending, resolve, stack=stack)
+    memo.values.update(zip(missing, values, strict=True))
+    return [memo.values[key] for key in keys]
+
+
+def _execute_uncached(candidate, observations, resolve, *, stack):
     active = [i for i, obs in enumerate(observations) if in_scope(candidate.contract, obs)]
     results = ["abstain"] * len(observations)
     if not active:
@@ -179,7 +242,7 @@ def _execute_candidate(candidate, observations, resolve, *, stack=()):
                 raise ExecutionRefused("G6_E_SYNTH_EXECUTION", "predicate must return verdict and reason")
             values.append(out["verdict"])
     elif candidate.form == "reuse":
-        values = run_candidate(resolve(candidate.body), selected, resolve, stack=stack)
+        values = _execute_candidate(resolve(candidate.body), selected, resolve, stack=stack)
     else:
         body = candidate.body
         if body.op == "sequence":
@@ -188,11 +251,11 @@ def _execute_candidate(candidate, observations, resolve, *, stack=()):
                 pending = [i for i, value in enumerate(values) if value == "abstain"]
                 if not pending:
                     break
-                outcomes = run_candidate(resolve(ident), [selected[i] for i in pending], resolve, stack=stack)
+                outcomes = _execute_candidate(resolve(ident), [selected[i] for i in pending], resolve, stack=stack)
                 for i, value in zip(pending, outcomes, strict=True):
                     values[i] = value
         else:
-            columns = [run_candidate(resolve(ident), selected, resolve, stack=stack) for ident in body.entries]
+            columns = [_execute_candidate(resolve(ident), selected, resolve, stack=stack) for ident in body.entries]
             values = []
             for row in zip(*columns, strict=True):
                 concerns, abstains = row.count("concern"), row.count("abstain")

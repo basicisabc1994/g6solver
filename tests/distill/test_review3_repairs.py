@@ -297,6 +297,9 @@ def test_only_dialog_restore_readmits_and_spends_a_fresh_look(state_home, monkey
     from g6.mcp.distill_backend import Service
     from tests.distill.test_acceptance_measurements import sample
     _, _, frozen, _ = sample.__wrapped__()
+    policy, settings = gate._policy()
+    monkeypatch.setattr(gate, '_policy', lambda: (policy, settings | {
+        'registrations': {digest('registration'): {'path': 'synthetic-custody'}}}))
     monkeypatch.setattr(gate, '_load', lambda *args: frozen)
     failure = r.FailureRecord(**(bodies()[0][1] | {'provenance': {'case': {
         'before': {'tests/test_seed.py': 'def test_seed():\n    assert calc() == 2\n'},

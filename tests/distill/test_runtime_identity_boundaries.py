@@ -336,9 +336,13 @@ def test_training_and_gate_canonical_identities_agree(candidate):
 
 @pytest.mark.parametrize('code', ['G6_E_DISTILL_METHOD_HELD', 'G6_E_DISTILL_METHOD_WITHDRAWN',
                                   'G6_E_DISTILL_IDENTITY_UNKNOWN'])
-def test_inactive_training_refusal_has_a_service_decision_without_spending(disk, code):
+def test_inactive_training_refusal_has_a_service_decision_without_spending(disk, code, monkeypatch):
     from g6.distill.synthesis import Refusal, SynthesisResult
     from g6.mcp.distill_backend import Service
+
+    policy, settings = gate._policy()
+    monkeypatch.setattr(gate, '_policy', lambda: (policy, settings | {
+        'registrations': {digest('registration'): {'path': 'synthetic-custody'}}}))
 
     failure = r.FailureRecord(**(bodies()[0][1] | {
         'provenance': {'case': {'before': BEFORE, 'after': AFTER}}}))

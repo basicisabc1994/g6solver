@@ -45,6 +45,7 @@ from .library import Library
 from .records import (AcceptanceEvidence, Cost, DecidedBy, FieldEvidence,
                       Interval, LibraryEntry, MethodContract, Model, RegressionCase, Sha256,
                       TemplateInstance, VerifierCandidate)
+from .runtime_state import require_current, run_memo, run_scope, sample, status_snapshot
 
 ROOT = Path(__file__).resolve().parents[3]
 POLICY_PATH = ROOT / "validation/distill/held_out/policy.json"
@@ -56,9 +57,9 @@ _RESTORING = ContextVar('distill_restoring', default='')
 @contextmanager
 def _writer():
     """Single evaluator writer across threads/processes; stale locks block."""
-    # Always acquire the shared status transaction first, including callers
-    # already inside failure intake. The evaluator lock retains crash recovery.
-    with failure_writer(), _MUTEX:
+    # Evaluation serialization is independent of the short status transaction.
+    # Owner withdrawal never queues behind this evaluator's method execution.
+    with _MUTEX:
         path = state_path("distill", "acceptance_gate.lock")
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -193,16 +194,50 @@ def _chronology(anchor, registration, candidate):
         raise ValueError("concept commit does not bind this concept")
 
 
-@failure_writer()
+def _registration(registration_id, *, required=False):
+    """Preflight an explicit anchor; only the custody loader requires one.
+
+    Default hosts can still train and receive the existing inactive decisions.
+    Absence never supplies custody or permits an independent admission look.
+    """
+    if registration_id is None or registration_id == '':
+        if required:
+            raise ValueError('missing owner registration anchor')
+        return None
+    if not isinstance(registration_id, str) or not re.fullmatch(r'[0-9a-f]{64}', registration_id):
+        raise ValueError('missing owner registration anchor')
+    policy = _policy()
+    # An injected policy port without a manifest cannot establish custody. Keep
+    # the parent's pre-load checks reachable, but the real loader still refuses.
+    if policy is None:
+        if required:
+            raise ValueError('missing owner registration anchor')
+        return None
+    _, settings = policy
+    anchor = settings['registrations'].get(registration_id)
+    if not isinstance(anchor, dict) or not anchor:
+        raise ValueError('missing owner registration anchor')
+    path = anchor.get('path')
+    if (not isinstance(path, str) or not path or Path(path).is_absolute()
+            or '..' in Path(path).parts or ':' in path or '\\' in path):
+        raise ValueError('invalid owner registration anchor path')
+    return anchor
+
+
 def _load(registration_id, candidate, library) -> EvaluationSet:
     from g6.distill.held_out import oracle, sealed_gate
     from g6.distill.held_out.case_gate import CaseRecord
     from g6.distill.held_out.registration_gate import read_registration, strict_json
 
-    _, settings = _policy()
-    anchor = settings["registrations"].get(registration_id)
-    if not anchor:
-        raise ValueError("missing owner registration anchor")
+    anchor = _registration(registration_id, required=True)
+    if type(candidate) is not VerifierCandidate:
+        raise ValueError('typed candidate required')
+    candidate = VerifierCandidate.model_validate_json(canonical(candidate.model_dump(mode='json')))
+    if type(library) is not Library:
+        raise ValueError('gate requires persisted library')
+    if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:
+        raise ValueError('candidate differs from persisted proposal')
+    entries = status_snapshot()
     _check_inactive(candidate, library, restoring=_RESTORING.get())
     path = _plain(ROOT / anchor["path"], ROOT / "validation/distill")
     frozen = read_registration(path, expected_digest=registration_id)
@@ -226,7 +261,7 @@ def _load(registration_id, candidate, library) -> EvaluationSet:
     controls = tuple(frozen.study["acceptance_controls"])
     if len(controls) != 2 or controls[0] == controls[1]:
         raise ValueError("registered planted controls required")
-    wanted = {c.case_ref for e in library.list() if e.authority in {"A1", "A2"} for c in e.regression_suite}
+    wanted = {c.case_ref for e in entries if e.authority in {"A1", "A2"} for c in e.regression_suite}
     groups = {"acceptance": [], "monitor": [], "regression": []}
     for ref in frozen.cases:
         if ref.split not in {"acceptance", "tuning", "monitor"} and ref.case_id not in wanted:
@@ -262,6 +297,7 @@ def _load(registration_id, candidate, library) -> EvaluationSet:
             raise ValueError("archived regression digest changed")
         result = oracle.label(case, policy=frozen.policy, workspace=workspace)
         groups["regression"].append(Observation(case, result.label, "regression"))
+    require_current(entries)
     return EvaluationSet(registration_id, digest([o.case.case_id for o in observations]), observations,
                          tuple(groups["monitor"]), tuple(groups["regression"]), controls)
 
@@ -301,22 +337,67 @@ class _InactiveMethod(ValueError):
         super().__init__(f'{code}: {reason}')
 
 
-@failure_writer()
+@run_scope()
 def _run(candidate, case, entries, stack=frozenset()):
-    # Caller snapshots (including restored/imported rows) cannot retain authority
-    # after a status change. Keep the transaction through actual execution.
+    if type(candidate) is not VerifierCandidate:
+        raise ValueError('typed candidate required')
+    candidate = VerifierCandidate.model_validate_json(canonical(candidate.model_dump(mode='json')))
+    entries = [LibraryEntry.model_validate_json(canonical(entry.model_dump(mode='json'))) for entry in entries]
+    if any(not isinstance(getattr(case, key, None), str) for key in ('before_tests', 'after_tests')):
+        # The parent already refused a known inactive candidate. Retain that
+        # code for an invalid observation without reading status or case bodies.
+        for status in ('held', 'withdrawn'):
+            if any(entry.candidate_id == candidate.candidate_id and entry.status == status
+                   and not (entry.entry_id == _RESTORING.get() and status == 'withdrawn') for entry in entries):
+                raise _InactiveMethod(f'G6_E_DISTILL_METHOD_{status.upper()}', f'{status} executable method')
+        raise ValueError('invalid method observation')
+    snapshot = run_memo().snapshot()
+    _guard_dependencies(candidate, entries, stack)
+    require_current(snapshot)
+    verdict = _execute(candidate, case, entries, stack)
+    require_current(snapshot)
+    return verdict
+
+
+def _guard_dependencies(candidate, entries, stack=frozenset()):
+    if candidate.candidate_id in stack or len(stack) >= 16:
+        raise ValueError('cyclic or over-deep method dependency')
+    memo = run_memo()
+    key = ('acceptance', candidate.candidate_id, tuple(e.entry_id for e in _active(entries)))
+    if key in memo.walked:
+        return
+    refs = ([candidate.body] if candidate.form == 'reuse' else
+            candidate.body.entries if candidate.form == 'composition' else [])
+    for ref in refs:
+        historical = Stores().for_model(LibraryEntry).get(ref)
+        current = next((e for e in _active(entries) if e.candidate_id == historical.candidate_id), None)
+        if current is None:
+            _check_inactive(_candidate(historical), Library(), restoring=_RESTORING.get())
+            raise ValueError('method dependency has lost authority')
+        _guard_dependencies(_candidate(current), entries, stack | {candidate.candidate_id})
+    # Parent behavioural comparison may itself need these dependencies. Refuse
+    # an inactive child with its stable code before attempting that comparison.
     _check_inactive(candidate, Library(), restoring=_RESTORING.get())
-    return _execute(candidate, case, entries, stack)
+    memo.walked.add(key)
 
 
 def _execute(candidate, case, entries, stack=frozenset()):
     """Execute after a runtime guard, or solely for recorded identity comparison.
 
-    Dependency execution still enters _run and checks current persisted status.
+    Raw comparisons never recurse into dependencies' inactive comparisons.
     """
-    if candidate.candidate_id in stack:
+    if candidate.candidate_id in stack or len(stack) >= 16:
         raise ValueError("cyclic method dependency")
     stack = stack | {candidate.candidate_id}
+    memo = run_memo()
+    key = ('acceptance', _method_identity(candidate), digest([case.before_tests, case.after_tests]),
+           tuple(e.entry_id for e in _active(entries)), memo.repeat)
+    if key not in memo.values:
+        memo.values[key] = _execute_uncached(candidate, case, entries, stack)
+    return memo.values[key]
+
+
+def _execute_uncached(candidate, case, entries, stack):
     contract = candidate.contract
     if contract.applies_when or contract.probes:
         # Feature predicate aggregation/probe receipts have no registered semantics
@@ -363,7 +444,7 @@ def _execute(candidate, case, entries, stack=frozenset()):
             current = next((e for e in _active(entries) if e.candidate_id == historical.candidate_id), None)
             if current is None:
                 raise ValueError("method dependency has lost authority")
-            children.append(_run(_candidate(current), case, entries, stack))
+            children.append(_execute(_candidate(current), case, entries, stack))
         if candidate.form == "reuse":
             verdict = children[0]
         elif body.op == "sequence":
@@ -380,16 +461,18 @@ def _execute(candidate, case, entries, stack=frozenset()):
     return verdict
 
 
+@run_scope()
 def _measure(candidate, observations, entries, *, identity_replay=False):
     verdicts, costs, over = [], [], 0
     for observation in observations:
         repeats = []
-        for _ in range(3):
+        for index in range(3):
             if stop.engaged() is not None:
                 raise ValueError("stop engaged during evaluation")
             start = time.monotonic()
             run = _execute if identity_replay else _run
-            repeats.append(run(candidate, observation.case, entries))
+            with sample(index):
+                repeats.append(run(candidate, observation.case, entries))
             cost = max(0, time.monotonic() - start)
             costs.append(cost)
             over += cost > candidate.contract.cost_bound.wall_s
@@ -617,6 +700,7 @@ def _append(journal, kind, body):
     return ident
 
 
+@failure_writer(reading=True)
 def _look_available(registration):
     journal = _journal()
     rows = journal.entries()
@@ -630,6 +714,7 @@ def _look_available(registration):
     return journal, index
 
 
+@failure_writer()
 def _spend(registration, candidate):
     journal, index = _look_available(registration)
     reservation = _append(journal, "reserve", {"registration": registration, "candidate_id": candidate.candidate_id,
@@ -637,6 +722,7 @@ def _spend(registration, candidate):
     return index, reservation
 
 
+@failure_writer()
 def _record(answer, reservation=""):
     _append(_journal(), "decision", asdict(answer) | {"reservation": reservation, "gate_version": VERSION})
     return answer
@@ -656,18 +742,24 @@ def _save_report(data):
     return ident
 
 
-def _snapshot(library, entry_id):
+def _entry_inputs(library, entry_id):
+    from pydantic import TypeAdapter
+    TypeAdapter(Sha256).validate_python(entry_id)
     if type(library) is not Library:
         raise ValueError("gate requires the persisted library view")
+
+
+def _snapshot(library, entry_id):
+    _entry_inputs(library, entry_id)
     entry = library.get(entry_id)
     if entry is None:
         raise ValueError("stale or missing library snapshot")
     return entry
 
 
-def _persist(candidate, answer, evidence, own, frozen, data, library):
+def _persist(candidate, answer, evidence, own, frozen, data, library, *, snapshot):
     if any(e.candidate_id == candidate.candidate_id and e.status in {"probation", "admitted", "held"}
-           for e in library.list()):
+           for e in snapshot):
         raise ValueError("candidate already active")
     contracts = Stores().for_model(MethodContract)
     try:
@@ -677,7 +769,7 @@ def _persist(candidate, answer, evidence, own, frozen, data, library):
     else:
         if existing != candidate.contract:
             raise ValueError("stored method contract differs")
-    previous = [e for e in Stores().for_model(LibraryEntry).list() if e.candidate_id == candidate.candidate_id]
+    previous = [e for e in snapshot if e.candidate_id == candidate.candidate_id]
     for observation in frozen.acceptance:
         case = observation.case
         path = state_path("distill", "held_out", "regression_cases", f"{case.case_id}.json")
@@ -700,7 +792,9 @@ def _persist(candidate, answer, evidence, own, frozen, data, library):
         field=FieldEvidence(fired=0, confirmed=0, refuted=0, unlabelled=0, precision=None),
         decided_by=DecidedBy(gate_version=VERSION, person=None), certificate_sha256=_save_report(certificate),
         created_at=now, changed_at=now, reason="; ".join(answer.reasons))
-    Stores().for_model(LibraryEntry).put(entry)
+    with failure_writer():
+        require_current(snapshot)
+        Stores().for_model(LibraryEntry).put(entry)
     return replace(answer, entry_id=entry.entry_id)
 
 
@@ -720,6 +814,10 @@ def decide_batch(candidates, library: Library, registration: str) -> tuple[Accep
 
 def restore(entry_id: str, library: Library, registration: str) -> AcceptanceDecision:
     """Person-authorized restore path; still requires fresh independent admission."""
+    try:
+        _registration(registration)
+    except ValueError as error:
+        return AcceptanceDecision('block', (str(error),))
     entry = _snapshot(library, entry_id)
     return _decide_batch((_candidate(entry),), library, registration, restoring=entry_id)[0]
 
@@ -728,7 +826,7 @@ def lift_hold(entry_id: str, library: Library, *, reason: str, person: str) -> A
     """Release a suspension only after the existing wire dialog accepts it."""
     from .rectify_gate import Rectifier
     try:
-        with _writer():
+        with failure_writer():
             if stop.engaged() is not None:
                 raise ValueError("stop engaged")
             if not person.strip() or is_automated(person) or not reason.strip():
@@ -902,10 +1000,14 @@ def _inactive_behaviour_match(candidate, entry, entries):
                               f'{code}: inactive recorded-case comparison unknown') from None
 
 
-@failure_writer()
+@run_scope()
 def _check_inactive(candidate, library, *, restoring=''):
     """Run before every registration load, and before reserving any new look."""
-    entries = library.list()
+    memo = run_memo()
+    entries = memo.snapshot()
+    key = ('acceptance', _method_identity(candidate), restoring)
+    if key in memo.checked:
+        return
     inactive = [e for e in entries if e.family == candidate.contract.family
                 and e.status in {'held', 'withdrawn'}
                 and not (e.entry_id == restoring and e.status == 'withdrawn')]
@@ -923,6 +1025,8 @@ def _check_inactive(candidate, library, *, restoring=''):
     for entry in inactive:
         if _inactive_behaviour_match(candidate, entry, entries):
             raise _InactiveMethod(f'G6_E_DISTILL_METHOD_{entry.status.upper()}', reasons[entry.status])
+    require_current(entries)
+    memo.checked.add(key)
 
 
 @contextmanager
@@ -946,12 +1050,12 @@ def _decide_batch(candidates, library, registration, *, restoring=''):
     if not candidates or len({c.candidate_id for c in candidates}) != len(candidates):
         raise ValueError("nonempty batch of distinct candidates required")
     try:
+        _registration(registration)
+        if type(library) is not Library:
+            raise ValueError('gate requires persisted library')
         with _writer(), _restoring(restoring):
             if stop.engaged() is not None:
                 return tuple(_record(AcceptanceDecision("block", ("stop engaged",), c.candidate_id)) for c in candidates)
-            _policy()
-            if type(library) is not Library:
-                raise ValueError("gate requires persisted library")
             if restoring:
                 entry = _snapshot(library, restoring)
                 if (len(candidates) != 1 or entry.candidate_id != candidates[0].candidate_id
@@ -964,14 +1068,21 @@ def _decide_batch(candidates, library, registration, *, restoring=''):
                 try:
                     if candidate.form == 'reuse':
                         raise ValueError('reuse is a reuse row, never an admission candidate')
+                    snapshot = status_snapshot()
                     _check_inactive(candidate, library, restoring=restoring)
                     _look_available(registration)  # A spent split never reaches the oracle again.
+                    require_current(snapshot)
                     _check_inactive(candidate, library, restoring=restoring)
+                    require_current(snapshot)
                     frozen = _load(registration, candidate, library)
+                    require_current(snapshot)
                     if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:
                         raise ValueError("candidate differs from persisted proposal")
-                    index, reservation = _spend(registration, candidate)
-                    answer, evidence, own, data = _assess(candidate, library.list(), frozen, index)
+                    with failure_writer():
+                        require_current(snapshot)
+                        index, reservation = _spend(registration, candidate)
+                    answer, evidence, own, data = _assess(candidate, snapshot, frozen, index)
+                    require_current(snapshot)
                     evaluated[candidate.candidate_id] = (answer, evidence, own, frozen, data)
                 except (ValueError, KeyError, FileNotFoundError) as error:
                     # Do not echo corpus bodies, subprocess stderr or model output.
@@ -992,16 +1103,31 @@ def _decide_batch(candidates, library, registration, *, restoring=''):
                     if ident not in accepted:
                         raise ValueError("batch Benjamini-Hochberg bar not met")
                     # Earlier members of this batch may already have changed L_t.
-                    answer, evidence, own, data = _assess(candidate, library.list(), frozen, evidence.reuse_index)
+                    snapshot = status_snapshot()
+                    _check_inactive(candidate, library, restoring=restoring)
+                    answer, evidence, own, data = _assess(candidate, snapshot, frozen, evidence.reuse_index)
                     if answer.p_value > .05 * len(accepted) / len(candidates):
                         raise ValueError("batch bar not met after library changed")
-                    answer = _persist(candidate, answer, evidence, own, frozen, data, library)
+                    answer = _persist(candidate, answer, evidence, own, frozen, data, library, snapshot=snapshot)
                 except ValueError as error:
                     answer = replace(answer, verdict="refuse", reasons=(str(error),))
                 results[ident] = (answer, "")
                 _record(answer)
-            return tuple(results[c.candidate_id][0] for c in candidates)
-    except (ValueError, FileNotFoundError) as error:
+            with failure_writer(reading=True):
+                current = {entry.candidate_id: entry for entry in library.list()}
+                for ident, (answer, reservation) in results.items():
+                    if answer.verdict != 'admit_probation' or not answer.entry_id:
+                        continue
+                    entry = current.get(ident)
+                    if entry is None or entry.entry_id != answer.entry_id:
+                        status = entry.status if entry and entry.status in {'held', 'withdrawn'} else None
+                        code = (f'G6_E_DISTILL_METHOD_{status.upper()}_DURING_RUN' if status else
+                                'G6_E_DISTILL_STATUS_CHANGED_DURING_RUN')
+                        answer = replace(answer, verdict='refuse', reasons=(code,))
+                        results[ident] = (answer, reservation)
+                        _record(answer)
+                return tuple(results[c.candidate_id][0] for c in candidates)
+    except (ValueError, KeyError, FileNotFoundError) as error:
         reason = str(error) if isinstance(error, ValueError) else "evaluator input unavailable"
         return tuple(AcceptanceDecision("block", (reason,), c.candidate_id) for c in candidates)
 
@@ -1101,8 +1227,10 @@ def _health(candidate):
 def recheck(entry_id: str, library: Library, registration: str) -> AcceptanceDecision:
     """Withdraw on reproduced regression drift, weekly overruns or observed defeaters."""
     try:
+        _registration(registration)
+        _entry_inputs(library, entry_id)
         with _writer():
-            _policy()
+            snapshot = status_snapshot()
             entry = _snapshot(library, entry_id)
             if entry not in _active(library.list()):
                 raise ValueError("recheck requires an active entry")
@@ -1124,12 +1252,14 @@ def recheck(entry_id: str, library: Library, registration: str) -> AcceptanceDec
                         known.update((row.case_ref, row) for row in error.observed)
                         inactive_cases = list(known.values())
                     reason = "own regression suite no longer reproduces"
-            if reason is None:
-                return _record(AcceptanceDecision("retain", ("regression and health checks held",), entry.candidate_id))
-            changed = _change(entry, status="withdrawn", authority="A0", reason=reason,
-                              inactive_cases=inactive_cases)
-            _cascade(changed, library)
-            return _record(AcceptanceDecision("withdraw", (reason,), entry.candidate_id, entry_id=changed.entry_id))
+            with failure_writer():
+                require_current(snapshot)
+                if reason is None:
+                    return _record(AcceptanceDecision("retain", ("regression and health checks held",), entry.candidate_id))
+                changed = _change(entry, status="withdrawn", authority="A0", reason=reason,
+                                  inactive_cases=inactive_cases)
+                _cascade(changed, library)
+                return _record(AcceptanceDecision("withdraw", (reason,), entry.candidate_id, entry_id=changed.entry_id))
     except (ValueError, KeyError, FileNotFoundError) as error:
         return AcceptanceDecision("block", (str(error) if isinstance(error, ValueError) else "recheck evidence unavailable",))
 
@@ -1137,7 +1267,10 @@ def recheck(entry_id: str, library: Library, registration: str) -> AcceptanceDec
 def ablate(entry_id: str, library: Library, registration: str) -> AcceptanceDecision:
     """Archive an entry only if its removal costs nothing on the family's frozen suites."""
     try:
+        _registration(registration)
+        _entry_inputs(library, entry_id)
         with _writer():
+            snapshot = status_snapshot()
             if stop.engaged() is not None:
                 return _record(AcceptanceDecision("block", ("stop engaged",)))
             entry = _snapshot(library, entry_id)
@@ -1158,14 +1291,19 @@ def ablate(entry_id: str, library: Library, registration: str) -> AcceptanceDeci
             # replacement. _run refuses that dependency when target is removed.
             if _library_verdicts(entries, suite) != _library_verdicts(rest, suite):
                 raise ValueError("removal loses a frozen family verdict")
-            changed = _change(entry, status="superseded", authority="A0", reason="removal costs no frozen family verdict")
-            _cascade(changed, library)
-            return _record(AcceptanceDecision("supersede", (changed.reason,), entry.candidate_id, entry_id=changed.entry_id))
+            with failure_writer():
+                require_current(snapshot)
+                changed = _change(entry, status="superseded", authority="A0", reason="removal costs no frozen family verdict")
+                _cascade(changed, library)
+                return _record(AcceptanceDecision("supersede", (changed.reason,), entry.candidate_id, entry_id=changed.entry_id))
     except (ValueError, KeyError) as error:
         return AcceptanceDecision("refuse", (str(error) if isinstance(error, ValueError) else "ablation evidence unavailable",))
 
 
+@failure_writer()
 def _change(entry, *, status, authority, reason, person=None, field=None, inactive_cases=None):
+    if Library().get(entry.entry_id) != entry:
+        raise ValueError('stale library status; no authority change')
     data = entry.model_dump(mode="json", exclude={"entry_id"}) | {
         "version": entry.version + 1, "status": status, "authority": authority,
         "changed_at": datetime.now(timezone.utc).isoformat(), "reason": reason,
@@ -1205,7 +1343,10 @@ def _cascade(changed, library):
 def promote(entry_id: str, library: Library, registration: str) -> AcceptanceDecision:
     """A1 -> A2 only after held-out precision, independent field labels and regression."""
     try:
+        _registration(registration)
+        _entry_inputs(library, entry_id)
         with _writer():
+            snapshot = status_snapshot()
             if stop.engaged() is not None:
                 return _record(AcceptanceDecision("block", ("stop engaged",)))
             entry = _snapshot(library, entry_id)
@@ -1232,10 +1373,12 @@ def promote(entry_id: str, library: Library, registration: str) -> AcceptanceDec
             _regress(library.list(), (*frozen.acceptance, *frozen.monitor, *frozen.regression))
             if not frozen.monitor:
                 raise ValueError("A2 dev plus monitor regression unavailable")
-            changed = _change(entry, status="admitted", authority="A2", field=field,
-                              reason="held-out and labelled field precision bars met; regression passed again")
-            return _record(AcceptanceDecision("admit", (changed.reason,), entry.candidate_id,
-                                             evidence.acceptance_report_sha256, changed.entry_id))
+            with failure_writer():
+                require_current(snapshot)
+                changed = _change(entry, status="admitted", authority="A2", field=field,
+                                  reason="held-out and labelled field precision bars met; regression passed again")
+                return _record(AcceptanceDecision("admit", (changed.reason,), entry.candidate_id,
+                                                 evidence.acceptance_report_sha256, changed.entry_id))
     except (ValueError, KeyError, FileNotFoundError) as error:
         return AcceptanceDecision("refuse", (str(error) if isinstance(error, ValueError) else "A2 evidence unavailable",))
 
@@ -1243,7 +1386,7 @@ def promote(entry_id: str, library: Library, registration: str) -> AcceptanceDec
 def monitor(entry_id: str, library: Library) -> AcceptanceDecision:
     """Demote at the frozen policy's exact one-sided binomial threshold."""
     try:
-        with _writer():
+        with failure_writer():
             policy, _ = _policy()
             entry = _snapshot(library, entry_id)
             if entry.authority != "A2":
@@ -1275,7 +1418,7 @@ def demote(entry_id: str, library: Library, *, reason: str, person: str) -> Acce
 
 def _lower(entry_id, library, *, action, reason, person):
     try:
-        with _writer():
+        with failure_writer():
             if not person.strip() or is_automated(person) or not reason.strip():
                 raise ValueError("named person and reason required; wire consent dialog authenticates the request")
             entry = _snapshot(library, entry_id)

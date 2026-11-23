@@ -23,10 +23,10 @@ _FAILURE_LOCAL = threading.local()
 
 @contextmanager
 def failure_writer(*, reading=False):
-    """Shared transaction for failure intake, library status and method execution.
+    """Short shared transaction for failure intake and library status reads/writes.
 
     Reentrant within a thread; the same file lock excludes other server processes.
-    Admission and runtime readers hold it through the load or execution boundary.
+    Method execution and recorded comparison must run outside this transaction.
     """
     from g6.core.repair_log import _process_lock
     with _FAILURE_MUTEX:

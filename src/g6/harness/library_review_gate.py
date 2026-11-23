@@ -15,6 +15,7 @@ from g6.core.storage import state_path
 from g6.distill.ledger import Stores, failure_writer
 from g6.distill.library import Library
 from g6.distill.records import LibraryEntry, VerifierCandidate
+from g6.distill.runtime_state import StatusChanged, require_current, status_snapshot
 
 _FIRE_MUTEX = threading.RLock()
 
@@ -63,12 +64,20 @@ def record_fire(found: dict, before: dict, after: dict) -> None:
             lock.unlink()
 
 
-@failure_writer()
 def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", tests=()) -> list[dict]:
     from g6.distill.acceptance_gate import _InactiveMethod, _run
+    from g6.distill.facts import source_mapping
     from g6.workforce.repo_tests import is_test_related
+    from g6.distill.records import Sha256
+    from pydantic import TypeAdapter
 
-    entries = Library().list()
+    before, after = source_mapping(before), source_mapping(after)
+    if not isinstance(entry_id, str) or not isinstance(tests, (list, tuple)) or any(
+            not isinstance(path, str) or not path for path in tests):
+        raise ValueError('invalid library application input')
+    if entry_id:
+        TypeAdapter(Sha256).validate_python(entry_id)
+    entries = status_snapshot()
     selected = entries
     if entry_id:
         historical = Stores().for_model(LibraryEntry).get(entry_id)
@@ -83,6 +92,7 @@ def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", 
                 or (contract.frameworks and "pytest" not in contract.frameworks):
             continue
         verdicts = []
+        changed = None
         began = time.monotonic()
         for path in sorted(before.keys() | after.keys()):
             if not path.endswith(".py") or not (is_test_related(path) or path in tests) \
@@ -91,20 +101,33 @@ def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", 
             case = SimpleNamespace(before_tests=before.get(path, ""), after_tests=after.get(path, ""))
             try:
                 verdicts.append(_run(candidate, case, entries))
+            except StatusChanged as error:
+                changed = error
+                break
             except _InactiveMethod:
                 # An inactive alias has no application observation or authority.
                 verdicts.clear()
                 break
             except (ValueError, KeyError, LedgerError):
                 verdicts.append("abstain")
-        if verdicts:
+        if verdicts or changed:
             # Authority is the library's at reporting time, never the snapshot taken before the run: a demotion
             # or withdrawal that completed meanwhile applies, and a method no longer in the library reports nothing.
-            entry = next((e for e in Library().list() if e.candidate_id == entry.candidate_id), None)
-            if entry is None:
-                continue
-            verdict = "concern" if "concern" in verdicts else "abstain" if "abstain" in verdicts else "no_concern"
-            found = observation(entry, verdict)
+            with failure_writer(reading=True):
+                try:
+                    current = require_current(entries)
+                except StatusChanged as error:
+                    changed = error
+                    current = Library().list()
+                entry = next((e for e in current if e.candidate_id == entry.candidate_id), None)
+                if entry is None:
+                    continue
+                verdict = ('abstain' if changed else 'concern' if 'concern' in verdicts else
+                           'abstain' if 'abstain' in verdicts else 'no_concern')
+                found = observation(entry, verdict)
+                if changed:
+                    found.update(authority='A0', verdict='abstain', outcome='insufficient_evidence',
+                                 code=changed.code, reason=str(changed))
             found["seconds"] = time.monotonic() - began
             if verdict == "concern":
                 try:
@@ -114,6 +137,13 @@ def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", 
                     found["field_recorded"] = False
                     found["field_note"] = "The unlabelled field fire could not be retained; no field evidence was added."
             findings.append(found)
+    with failure_writer(reading=True):
+        try:
+            require_current(entries)
+        except StatusChanged as error:
+            for found in findings:
+                found.update(authority='A0', verdict='abstain', outcome='insufficient_evidence',
+                             code=error.code, reason=str(error))
     return findings
 
 

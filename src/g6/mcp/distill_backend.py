@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import json
 from pathlib import Path
+import re
 import time
 
 from g6.core.door import blocked_reply
@@ -198,7 +199,14 @@ class Service:
 
     def distill_start(self, family, failure_ids=''):
         from g6.distill.synthesis import SynthesisCase, Synthesizer
+        # A configured admission anchor is checked before even training intake.
+        # Hosts without one may still perform training-only work, never admission.
+        self.validate_registration()
+        if not isinstance(family, str) or not family.strip() or len(family) > 200 or not isinstance(failure_ids, str):
+            raise ValueError('invalid training request')
         ids = failure_ids.replace(',', ' ').split()
+        if any(not re.fullmatch(r'[0-9a-f]{64}', ident) for ident in ids):
+            raise ValueError('invalid failure record identity')
         everything = Stores().for_model(FailureRecord).list()
         selected = [f for f in everything if f.family == family and (not ids or f.record_id in ids)]
         if not selected or (ids and set(ids) != {f.record_id for f in selected}):
@@ -325,7 +333,8 @@ class Service:
                 # Runtime refusal produces no proposal or admission look. Keep
                 # its explicit blocked outcome visible to the requesting dialog.
                 inactive = {'G6_E_DISTILL_METHOD_HELD', 'G6_E_DISTILL_METHOD_WITHDRAWN',
-                            'G6_E_DISTILL_IDENTITY_UNKNOWN'}
+                            'G6_E_DISTILL_IDENTITY_UNKNOWN', 'G6_E_DISTILL_METHOD_HELD_DURING_RUN',
+                            'G6_E_DISTILL_METHOD_WITHDRAWN_DURING_RUN', 'G6_E_DISTILL_STATUS_CHANGED_DURING_RUN'}
                 reasons = tuple(dict.fromkeys(refusal.code for refusal in result.refusals if refusal.code in inactive))
                 if reasons:
                     decisions = (AcceptanceDecision('block', reasons),)
@@ -339,14 +348,18 @@ class Service:
             return refused('G6_E_JOB_UNKNOWN', 'No retained job store in this process.')
         return self.jobs.status(job_id, detail=detail)
 
+    def validate_registration(self):
+        if self.registration != '':
+            from g6.distill.acceptance_gate import _registration
+            _registration(self.registration)
+
     def restore(self, entry_id):
         from g6.distill.acceptance_gate import restore
         from g6.distill.library import Library
-        library = Library()
-        entry = library.get(entry_id)
-        if entry is None:
-            raise ValueError('stale library entry')
-        return asdict(restore(entry_id, library, self.registration))
+        # Explicit bad anchors retain the service input-refusal envelope before
+        # gate.restore turns admission refusals into decision dictionaries.
+        self.validate_registration()
+        return asdict(restore(entry_id, Library(), self.registration))
 
     def extend(self, request, repo=''):
         return self.jobs.start(lambda: self._extend(request, repo)) if self.jobs is not None else self._extend(request, repo)

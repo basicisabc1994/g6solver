@@ -30,6 +30,9 @@ def test_failure_to_review_prediction_and_draft_rehearsal(home, monkeypatch):
     # A fake host custody port supplies sealed, independently labelled fixture
     # cases. Neither the proposer nor synthesis receives these cases/labels.
     registration = digest([o.case.case_id for o in frozen.acceptance])
+    policy, settings = gate._policy()
+    monkeypatch.setattr(gate, '_policy', lambda: (policy, settings | {
+        'registrations': {registration: {'path': 'synthetic-custody'}}}))
     def custody(ident, candidate, library):
         assert ident == registration
         assert not set(candidate.training_case_ids) & {o.case.case_id for o in frozen.acceptance}

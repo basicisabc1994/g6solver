@@ -65,6 +65,10 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
 
         if action not in {"demote", "withdraw", "restore"} or not reason.strip():
             return blocked_reply("[G6_E_DISTILL_INPUT] Choose demote, withdraw or restore and supply a reason.")
+        if action == 'restore' and hasattr(backend, 'validate_registration'):
+            invalid = _call(backend.validate_registration)
+            if invalid is not None:
+                return invalid
         found = _call(surface.library, "describe", entry_id)
         if "entry" not in found:
             return found

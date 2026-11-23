@@ -41,6 +41,9 @@ def rig(monkeypatch, tmp_path):
     monitor = tuple(case(i + 200, i < 100, "monitor") for i in range(200))
     frozen = gate.EvaluationSet("a" * 64, "b" * 64, observations, monitor, (),
                                 (observations[0].case.case_id, observations[-1].case.case_id))
+    policy, settings = gate._policy()
+    monkeypatch.setattr(gate, '_policy', lambda: (policy, settings | {
+        'registrations': {'a' * 64: {'path': 'unused'}}}))
     monkeypatch.setattr(gate, "_load", lambda *args: frozen)
     return gate, candidate, contract, frozen, case
 
