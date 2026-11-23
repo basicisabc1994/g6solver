@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 """Interrupt every setup line after duplication; the caller and reader retain their own fds."""
-import builtins
 import os
 import sys
 import threading
@@ -93,6 +92,7 @@ def _setup_probe(target=None, error_kind="keyboard", *, opcodes=False, completed
     acquisition_completed = False
     validation_started = False
     placeholders = []
+    real_input_file = stdio._InputFile
     codes = {stdio._lines.__wrapped__.__code__, stdio._InputDescriptor.__init__.__code__}
     acquire_code = getattr(stdio._InputDescriptor, "duplicate", stdio._InputDescriptor.__init__).__code__
     codes.add(acquire_code)
@@ -111,7 +111,7 @@ def _setup_probe(target=None, error_kind="keyboard", *, opcodes=False, completed
     acquisition_codes = {acquire_code, duplicate.__code__}
 
     def opened(*args, **kwargs):
-        slot = builtins.open(*args, **kwargs)
+        slot = real_input_file(*args, **kwargs)
         placeholders.append(slot)
         return slot
 
@@ -167,7 +167,7 @@ def _setup_probe(target=None, error_kind="keyboard", *, opcodes=False, completed
             patch.setattr(stdio, "_read_lines", delayed_reader)
             patch.setattr(stdio.threading.Thread, "start", start)
             if validation_lines:
-                patch.setattr(stdio, "open", opened, raising=False)
+                patch.setattr(stdio, "_InputFile", opened)
 
             async def enter():
                 sys.settrace(trace)

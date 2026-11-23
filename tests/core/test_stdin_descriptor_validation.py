@@ -71,7 +71,7 @@ def test_closed_stdin_refuses_before_allocating_or_yielding(monkeypatch, entry, 
             source.close()
         with monkeypatch.context() as patch:
             patch.setattr(stdio.sys, "stdin", source)
-            patch.setattr(stdio, "open", no_placeholder, raising=False)
+            patch.setattr(stdio, "_InputFile", no_placeholder)
             with pytest.raises(OSError, match=r"\[G6_E_STDIN_HANDOFF\]"):
                 async with stdio._lines(None if entry == "default" else anyio.wrap_file(source)):
                     pytest.fail("closed stdin yielded a stream")
@@ -90,7 +90,7 @@ def test_invalid_descriptor_has_stable_refusal_without_placeholder(monkeypatch, 
         pytest.fail("invalid stdin allocated a placeholder")
 
     with monkeypatch.context() as patch:
-        patch.setattr(stdio, "open", no_placeholder, raising=False)
+        patch.setattr(stdio, "_InputFile", no_placeholder)
         with pytest.raises(OSError, match=r"\[G6_E_STDIN_HANDOFF\]"):
             owner.duplicate(fd)
     assert owner.file is None
@@ -119,7 +119,7 @@ def test_same_number_after_validation_closes_placeholder_and_refuses(monkeypatch
 
     async def run():
         with monkeypatch.context() as patch:
-            patch.setattr(stdio, "open", raced_open, raising=False)
+            patch.setattr(stdio, "_InputFile", raced_open)
             patch.setattr(stdio.os, "dup2", no_duplicate)
             with pytest.raises(OSError, match=r"\[G6_E_STDIN_HANDOFF\]"):
                 async with stdio._lines(anyio.wrap_file(source)):
@@ -143,9 +143,11 @@ def test_uncertain_duplicate_refuses_without_yielding_and_closes_once(monkeypatc
         placeholders, closed = [], []
         real_close = stdio._InputDescriptor.close
         real_inheritable = os.get_inheritable
+        real_input_file = stdio._InputFile
+        real_dup2 = os.dup2
 
         def opened(*args, **kwargs):
-            slot = builtins.open(*args, **kwargs)
+            slot = real_input_file(*args, **kwargs)
             placeholders.append(slot)
             return slot
 
@@ -154,7 +156,10 @@ def test_uncertain_duplicate_refuses_without_yielding_and_closes_once(monkeypatc
                 closed.append(owner.file)
             real_close(owner, reader=reader)
 
-        def duplicate_error(*args, **kwargs):
+        def duplicate_error(fd, target, **kwargs):
+            # Model the native failure after the copy exists, rather than an error leaving fd2 untouched.
+            real_dup2(fd, target, **kwargs)
+            os.close(target)
             raise OSError("cannot establish a non-inheritable duplicate")
 
         def inheritance(fd):
@@ -166,7 +171,7 @@ def test_uncertain_duplicate_refuses_without_yielding_and_closes_once(monkeypatc
 
         async def run():
             with monkeypatch.context() as patch:
-                patch.setattr(stdio, "open", opened, raising=False)
+                patch.setattr(stdio, "_InputFile", opened)
                 patch.setattr(stdio._InputDescriptor, "close", close)
                 if failure == "duplicate":
                     patch.setattr(stdio.os, "dup2", duplicate_error)
@@ -192,6 +197,7 @@ def test_source_is_checked_once_before_placeholder_and_duplicate_is_non_inherita
         owner = stdio._InputDescriptor()
         checked = []
         real_fstat = os.fstat
+        real_input_file = stdio._InputFile
 
         def fstat(fd):
             checked.append(fd)
@@ -199,12 +205,12 @@ def test_source_is_checked_once_before_placeholder_and_duplicate_is_non_inherita
 
         def opened(*args, **kwargs):
             assert checked == [source.fileno()], "stdin was not checked before placeholder allocation"
-            return builtins.open(*args, **kwargs)
+            return real_input_file(*args, **kwargs)
 
         try:
             with monkeypatch.context() as patch:
                 patch.setattr(stdio.os, "fstat", fstat)
-                patch.setattr(stdio, "open", opened, raising=False)
+                patch.setattr(stdio, "_InputFile", opened)
                 owner.duplicate(source.fileno())
             assert checked == [source.fileno()]
             assert owner.file.fileno() != source.fileno()

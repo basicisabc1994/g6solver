@@ -16,7 +16,7 @@ import os
 import sys
 import threading
 from contextlib import asynccontextmanager, suppress
-from io import TextIOWrapper, UnsupportedOperation
+from io import FileIO, TextIOWrapper, UnsupportedOperation
 
 import anyio
 import anyio.lowlevel
@@ -100,6 +100,27 @@ def _raw_lines(fd, stopped, prefix=b"", read=None):
             scan -= start
 
 
+class _InputFile(FileIO):
+    """A native file owner that can abandon an uncertain descriptor without another OS close.
+
+    FileIO acquires the placeholder in C, with its closing owner already allocated. Its IOBase finalizer uses
+    closed/close too, so releasing the claim also prevents a later finalizer from closing a reused number.
+    """
+
+    _released = False
+
+    @property
+    def closed(self):
+        return self._released or super().closed
+
+    def release(self):
+        self._released = True
+
+    def close(self):
+        if not self._released:
+            super().close()
+
+
 class _InputDescriptor:
     """Reserve an owning file before dup2: replacement never returns an unowned descriptor integer."""
 
@@ -112,12 +133,18 @@ class _InputDescriptor:
         # Setup has not published this owner to a reader yet. Its outer handler covers every return/opcode.
         try:
             os.fstat(fd)                 # validate the borrowed source before an allocation can reuse its number
-            self.file = open(os.devnull, "rb", buffering=0)
+            self.file = _InputFile(os.devnull, "rb")
             if self.file.fileno() == fd:
                 # The external owner closed stdin after validation; this slot now owns only the placeholder.
                 self.close()
                 raise OSError("stdin closed during descriptor handoff")
-            os.dup2(fd, self.file.fileno(), inheritable=False)
+            try:
+                os.dup2(fd, self.file.fileno(), inheritable=False)
+            except OSError:
+                # CPython may close fd2 after copying it, then raise on its inheritance flag. Neither a
+                # successful fstat nor an open number establishes that this slot still owns that number.
+                self.file.release()
+                raise
             if os.get_inheritable(self.file.fileno()) is not False:
                 raise OSError("stdin duplicate inheritance state is unknown or inheritable")
         except (OSError, ValueError, TypeError, OverflowError, NotImplementedError) as exc:
@@ -183,24 +210,29 @@ async def _lines(stdin):
     else:
         yield stdin
         return
-    if getattr(source, "closed", False):
-        raise OSError("[G6_E_STDIN_HANDOFF] stdin descriptor handoff refused")
     fd = None
-    fileno = getattr(source, "fileno", None)
-    if callable(fileno):
-        try:
-            fd = fileno()
-            if fd is None:
-                raise ValueError("stdin fileno returned no descriptor")
-        except UnsupportedOperation:
-            pass
-        except (OSError, ValueError, TypeError, OverflowError, NotImplementedError) as exc:
-            raise OSError("[G6_E_STDIN_HANDOFF] stdin descriptor handoff refused") from exc
+    try:
+        if getattr(source, "closed", False):
+            raise ValueError("stdin is closed")
+        fileno = getattr(source, "fileno", None)
+        if callable(fileno):
+            try:
+                fd = fileno()
+                if fd is None:
+                    raise ValueError("stdin fileno returned no descriptor")
+            except UnsupportedOperation:
+                pass                    # only an explicitly descriptor-less source takes readline's path
+        if fd is None:
+            readline = source.readline
+        else:
+            cached, console = cache_reader(source)
+    except Exception as exc:  # noqa: BLE001 - every source probe has the same stable refusal
+        raise OSError("[G6_E_STDIN_HANDOFF] stdin descriptor handoff refused") from exc
     if fd is None:
         sender, receiver = anyio.create_memory_object_stream(0)
         stopped = threading.Event()
         threading.Thread(target=_read_file_lines,
-                         args=(source.readline, sender, anyio.lowlevel.current_token(), stopped),
+                         args=(readline, sender, anyio.lowlevel.current_token(), stopped),
                          name="g6-stdin-reader", daemon=True).start()
         try:
             with receiver:
@@ -208,7 +240,6 @@ async def _lines(stdin):
         finally:
             stopped.set()
         return
-    cached, console = cache_reader(source)  # reject opaque buffering before acquiring or consuming anything
     # Windows' CRT also locks a descriptor during os.read. Give the thread its own descriptor so finalization of
     # the caller's file cannot wait on that CRT lock. An unbuffered file owns the duplicate throughout setup.
     descriptor = _InputDescriptor()

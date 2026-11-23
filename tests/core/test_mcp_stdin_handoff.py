@@ -174,7 +174,7 @@ def test_lossless_text_error_modes_preserve_cached_invalid_input(errors):
 @pytest.mark.parametrize("shape", ["opaque", "encoding", "lossy", "custom_method"])
 def test_unsupported_descriptor_stacks_fail_before_reading_or_duplicating(monkeypatch, shape):
     read_fd, write_fd = os.pipe()
-    inner = os.fdopen(read_fd, "r", encoding="latin-1" if shape == "encoding" else "utf-8",
+    inner = os.fdopen(read_fd, "r", encoding="utf-7" if shape == "encoding" else "utf-8",
                       errors="replace" if shape == "lossy" else "strict")
 
     class Opaque:
@@ -193,12 +193,15 @@ def test_unsupported_descriptor_stacks_fail_before_reading_or_duplicating(monkey
         pytest.fail("unsupported stdin acquired a duplicate")
 
     async def run():
-        with pytest.raises((TypeError, ValueError), match="stdin"):
+        with pytest.raises(OSError, match=r"\[G6_E_STDIN_HANDOFF\]"):
             async with stdio._lines(anyio.wrap_file(source)):
                 pytest.fail("unsupported stdin yielded a connection")
 
     try:
-        os.write(write_fd, b"still owned by caller\n")
+        os.write(write_fd, (b"launcher\n" if shape in ("encoding", "lossy") else b"")
+                 + b"still owned by caller\n")
+        if shape in ("encoding", "lossy"):
+            assert inner.readline() == "launcher\n"
         with monkeypatch.context() as patch:
             patch.setattr(stdio.os, "dup2", duplicate)
             anyio.run(run)
