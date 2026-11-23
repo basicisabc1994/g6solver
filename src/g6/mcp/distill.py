@@ -60,6 +60,7 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
         from g6.core.door import blocked_reply
         from g6.distill import acceptance_gate as gate
         from g6.distill.library import Library
+        from g6.distill.library import public_decision
         from g6.mcp.consent import elicit
 
         if action not in {"demote", "withdraw", "restore"} or not reason.strip():
@@ -82,6 +83,10 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
         else:
             result = asdict(getattr(gate, action)(entry_id, Library(), reason=reason,
                                                 person=content["name"].strip()))
+        # Includes both restore paths and the nested refusal envelope. Raw owner
+        # text remains in the local gate decision, never in the MCP reply.
+        if 'verdict' in result:
+            result = public_decision(result)
         if result.get('verdict') in {'refuse', 'block'}:
             return {**blocked_reply("[G6_E_DISTILL_DECISION] The acceptance gate refused the decision."),
                     'decision': result}

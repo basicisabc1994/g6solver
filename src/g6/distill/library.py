@@ -5,12 +5,26 @@ from __future__ import annotations
 from .ledger import Stores
 from .records import Concept, FailureRecord, LibraryEntry, MethodContract, Status, VerifierCandidate
 
+_PRIVATE_DECISION = '<private decision>'
+
+
+def public_decision(decision: dict) -> dict:
+    """Owner decisions disclose outcomes and measurements, never dialog text.
+
+    An allowlist also keeps future private fields from becoming public by default.
+    Local acceptance journal and library rows keep the original decision.
+    """
+    fields = {'verdict', 'candidate_id', 'report_sha256', 'entry_id', 'p_value',
+              'minimum_detectable_gain', 'p_value_upper_bound', 'minimum_detectable_precision_difference'}
+    return {**{key: value for key, value in decision.items() if key in fields},
+            'reasons': (_PRIVATE_DECISION,)}
+
 
 def public_entry(entry: LibraryEntry) -> dict:
     """One outward view; local custody retains the full decision record."""
     data = entry.model_dump(mode='json')
     data['decided_by']['person'] = None
-    data['reason'] = '<private decision>'
+    data['reason'] = _PRIVATE_DECISION
     return data
 
 
