@@ -705,6 +705,113 @@ def _execution_contract(candidate):
     return contract
 
 
+class _IdentityAST(ast.NodeTransformer):
+    """Bounded static rewrites for the JSON predicate calling convention.
+
+    This does not execute predicates or claim general Python equivalence. Keep
+    duplicate keys, effectful values and non-identity decorators in the identity.
+    """
+
+    @staticmethod
+    def _pure(node):
+        return isinstance(node, (ast.Constant, ast.Name)) or (
+            isinstance(node, ast.IfExp) and all(_IdentityAST._pure(part)
+                for part in (node.test, node.body, node.orelse)))
+
+    def visit_BinOp(self, node):
+        node = self.generic_visit(node)
+        if not isinstance(node.left, ast.Constant) or not isinstance(node.right, ast.Constant):
+            return node
+        left, right = node.left.value, node.right.value
+        # Do not evaluate arbitrary AST or allocate from unbounded repetition.
+        numeric = type(left) in (int, float, bool) and type(right) in (int, float, bool)
+        try:
+            if isinstance(node.op, ast.Add) and (numeric or type(left) is type(right) is str):
+                value = left + right
+            elif isinstance(node.op, ast.Sub) and numeric:
+                value = left - right
+            elif isinstance(node.op, ast.Mult) and numeric:
+                value = left * right
+            else:
+                return node
+            if ((isinstance(value, str) and len(value) > 8192)
+                    or (type(value) is int and value.bit_length() > 4096)
+                    or (type(value) is float and not math.isfinite(value))):
+                return node
+            return ast.copy_location(ast.Constant(value=value), node)
+        except (ArithmeticError, ValueError):
+            return node
+
+    def visit_UnaryOp(self, node):
+        node = self.generic_visit(node)
+        if not isinstance(node.operand, ast.Constant):
+            return node
+        value = node.operand.value
+        if isinstance(node.op, ast.Not):
+            return ast.copy_location(ast.Constant(value=not value), node)
+        if type(value) in (int, float, bool):
+            if isinstance(node.op, ast.USub):
+                return ast.copy_location(ast.Constant(value=-value), node)
+            if isinstance(node.op, ast.UAdd):
+                return ast.copy_location(ast.Constant(value=+value), node)
+        return node
+
+    def visit_Dict(self, node):
+        node = self.generic_visit(node)
+        keys = [key.value for key in node.keys if isinstance(key, ast.Constant) and type(key.value) is str]
+        if (len(keys) == len(node.keys) and len(set(keys)) == len(keys)
+                and all(self._pure(value) for value in node.values)):
+            pairs = sorted(zip(node.keys, node.values), key=lambda pair: pair[0].value)
+            node.keys = [key for key, _ in pairs]
+            node.values = [value for _, value in pairs]
+        return node
+
+    def visit_FunctionDef(self, node):
+        node = self.generic_visit(node)
+        if (node.body and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+                and isinstance(node.body[0].value.value, str)):
+            node.body.pop(0)
+        if node.name == 'solve':
+            # The predicate runner always supplies its one positional argument.
+            if all(isinstance(value, ast.Constant) for value in node.args.defaults):
+                node.args.defaults = []
+            used = {part.id for statement in node.body for part in ast.walk(statement)
+                    if isinstance(part, ast.Name)}
+            kept = [(arg, value) for arg, value in zip(node.args.kwonlyargs, node.args.kw_defaults)
+                    if arg.arg in used or not isinstance(value, ast.Constant)]
+            node.args.kwonlyargs = [arg for arg, _ in kept]
+            node.args.kw_defaults = [value for _, value in kept]
+        return node
+
+
+def _predicate_identity(source):
+    tree = _IdentityAST().visit(ast.parse(source))
+    # Erase only a top-level, undecorated, single-return identity helper whose
+    # name has no uses other than the decorators removed here.
+    definitions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    helpers = {}
+    for node in definitions:
+        args = node.args
+        if (node.name != 'solve' and len(args.args) == 1 and not args.posonlyargs
+                and not args.defaults and not args.kwonlyargs and not args.vararg and not args.kwarg
+                and not node.decorator_list and not node.returns and not args.args[0].annotation
+                and len(node.body) == 1 and isinstance(node.body[0], ast.Return)
+                and isinstance(node.body[0].value, ast.Name)
+                and node.body[0].value.id == args.args[0].arg
+                and sum(other.name == node.name for other in definitions) == 1):
+            uses = [part for part in ast.walk(tree) if isinstance(part, ast.Name) and part.id == node.name]
+            decorators = [part for fn in definitions for part in fn.decorator_list
+                          if isinstance(part, ast.Name) and part.id == node.name]
+            if uses and len(uses) == len(decorators):
+                helpers[node.name] = node
+    for node in definitions:
+        node.decorator_list = [part for part in node.decorator_list
+                               if not (isinstance(part, ast.Name) and part.id in helpers)]
+    tree.body = [node for node in tree.body if node not in helpers.values()]
+    return ast.dump(tree, include_attributes=False)
+
+
 def _method_identity(candidate, stack=()):
     """Typed executable identity, independent of proposal/observation metadata.
 
@@ -717,7 +824,7 @@ def _method_identity(candidate, stack=()):
     stack = (*stack, candidate.candidate_id)
     contract = _execution_contract(candidate)
     if candidate.form == 'predicate':
-        body = {'ast': ast.dump(ast.parse(candidate.body), include_attributes=False)}
+        body = {'ast': _predicate_identity(candidate.body)}
     elif candidate.form == 'template_instance':
         seed = SEED_TEMPLATES[candidate.body.template]
         body = {'oracle': 'weakening.detect_test_weakening', 'supported': seed.supported,
