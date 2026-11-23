@@ -69,7 +69,15 @@ def subject_artefact(claim: ClaimRecord) -> str | None:
     return found.group(1) if found else None
 
 
-def _control_holds(ledger: Any, rec: EvidenceRecord, contaminated: set) -> bool:
+def _custody_refused(reasons: list[str], *refusals: tuple[tuple[str, str], ...]) -> bool:
+    """Carry every receipt role's custody codes to the verdict, and thus its trace."""
+    for refused in refusals:
+        for code, _why in refused:
+            _once(reasons, code)
+    return any(refusals)
+
+
+def _control_holds(ledger: Any, rec: EvidenceRecord, contaminated: set, reasons: list[str]) -> bool:
     """Whether the check's negative control is in the ledger, is one, failed on its injected defect, concerns the same
     standard and predicate as the check (each read through its custody binding, which it agrees with), was taken by
     the same evaluator, compared by its bytes (``evaluator_of``), and was not taken against a compromised fixture.
@@ -80,8 +88,10 @@ def _control_holds(ledger: Any, rec: EvidenceRecord, contaminated: set) -> bool:
         control = EvidenceRecord.from_dict(ledger.get("evidence", rec.negative_control_ref))
     except (KeyError, ValueError, TypeError, RecursionError, MemoryError):
         return False
-    (of_control, control_refused), (of_check, _) = about(control), about(rec)
-    return (not control_refused and control.purpose == "negative_control" and control.result == "fail"
+    (of_control, control_refused), (of_check, check_refused) = about(control), about(rec)
+    refused = _custody_refused(reasons, control_refused, check_refused)
+    return (not refused and control.purpose == "negative_control" and control.result == "fail"
+            and bool(premise_text(of_control.scope)) and bool(premise_text(of_check.scope))
             and of_control.standard == of_check.standard
             and not fixture_contaminated(of_control.fixture, contaminated)
             and of_control.predicates == of_check.predicates and evaluator_of(control) == evaluator_of(rec)
@@ -94,7 +104,7 @@ def _once(items: list[str], item: str) -> None:
 
 
 def _premise(ledger: Any, rec: EvidenceRecord, claim: ClaimRecord, ref: str, purpose: str,
-             contaminated: set) -> EvidenceRecord | None:
+             contaminated: set, reasons: list[str]) -> EvidenceRecord | None:
     """Resolve independent executable support for an exact record and population, never from explanatory text.
 
     This uses the research ledger's existing trusted-input/independence boundary. It issues no product status.
@@ -104,7 +114,9 @@ def _premise(ledger: Any, rec: EvidenceRecord, claim: ClaimRecord, ref: str, pur
         premise = EvidenceRecord.from_dict(ledger.get("evidence", ref))
         parts, refused = about(premise)
         original, original_refused = about(rec)
-        if (refused or original_refused or premise.evidence_id != ref or premise.purpose != purpose
+        custody_refused = _custody_refused(reasons, refused, original_refused)
+        controlled = _control_holds(ledger, premise, contaminated, reasons)
+        if (custody_refused or premise.evidence_id != ref or premise.purpose != purpose
                 or premise.result != "pass" or premise.oracle_category not in EXECUTABLE
                 or not premise.independent or premise.independence_group == rec.independence_group
                 or not original.check_sha or not parts.check_sha or parts.check_sha == original.check_sha
@@ -116,10 +128,11 @@ def _premise(ledger: Any, rec: EvidenceRecord, claim: ClaimRecord, ref: str, pur
                 or premise_text(rec.population) != premise_text(claim.population)
                 or premise_text(rec.sample_unit) != premise_text(claim.sample_unit)
                 or fixture_contaminated(parts.fixture, contaminated)
-                or not _control_holds(ledger, premise, contaminated)):
+                or not controlled):
             return None
         if purpose == "scope_mapping" and (
                 not premise_text(rec.checked_statement)
+                or not premise_text(parts.scope) or not premise_text(claim.scope)
                 or premise_text(premise.checked_statement) != premise_text(rec.checked_statement)
                 or premise_text(parts.scope) != premise_text(claim.scope)):
             return None
@@ -137,6 +150,7 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
     subject = subject_artefact(claim)
     reasons: list[str] = []
     cited: list[EvidenceRecord] = []
+    unplaced_failures: list[str] = []
     for eid in claim.evidence_ids:
         try:
             rec = EvidenceRecord.from_dict(ledger.get("evidence", eid))
@@ -145,13 +159,15 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
             continue
         parts, disagree = about(rec)
         bound = parts.artefact or None
-        if disagree:   # a field that is not its binding's: the record is refused, with the code naming the part
-            for code, _why in disagree:
-                _once(reasons, code)
+        if _custody_refused(reasons, disagree):
+            if rec.purpose == "check" and rec.result == "fail" and rec.oracle_category in EXECUTABLE:
+                unplaced_failures.append(rec.evidence_id)
         elif bound is not None and bound != subject:   # evidence on other bytes is never this subject's
             _once(reasons, "evidence_for_another_subject")
         elif subject is not None and bound is None:   # a claim about bytes counts only evidence taken on them
             _once(reasons, "evidence_not_bound_to_subject")
+            if rec.purpose == "check" and rec.result == "fail" and rec.oracle_category in EXECUTABLE:
+                unplaced_failures.append(rec.evidence_id)
         elif rec.purpose != "check":
             _once(reasons, "cited_record_is_a_control_not_a_check")
         elif parts.standard != claim.standard_sha256:
@@ -165,13 +181,13 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
 
     active: list[EvidenceRecord] = []
     structural: list[str] = []
-    leads: list[str] = []
+    leads: list[str] = list(unplaced_failures)
     for rec in cited:
         if rec.oracle_category == "HEURISTIC_REVIEW":
             if rec.result == "fail":
                 leads.append(rec.evidence_id)
         elif rec.oracle_category in EXECUTABLE and rec.result in ("pass", "fail"):
-            if _control_holds(ledger, rec, contaminated):   # a formal check too, as the issuer requires
+            if _control_holds(ledger, rec, contaminated, reasons):   # a formal check too, as the issuer requires
                 active.append(rec)
             else:
                 structural.append(rec.evidence_id)
@@ -184,12 +200,12 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
     # Two groups over one evaluator are one voice: groups count only as far as there are distinct evaluators behind
     # them, each named by its bytes when it has them (evaluator_of), never by a label
     voices = min(len(groups), len({evaluator_of(r) for r in passing if r.independent}))
-    unexplained = [r.evidence_id for r in cited if r.oracle_category in EXECUTABLE and r.result == "fail"
-                   and r.evidence_id in structural]
+    unexplained = unplaced_failures + [r.evidence_id for r in cited if r.oracle_category in EXECUTABLE and r.result == "fail"
+                                      and r.evidence_id in structural]
     bounds: dict[tuple[tuple[str, str], str], float] = {}
     calibrations: dict[str, EvidenceRecord] = {}
     for rec in active:
-        cal = _premise(ledger, rec, claim, rec.calibration_ref, "calibration", contaminated)
+        cal = _premise(ledger, rec, claim, rec.calibration_ref, "calibration", contaminated, reasons)
         if cal is not None and rec.oracle_error_bound is not None and cal.oracle_error_bound == rec.oracle_error_bound:
             calibrations[rec.evidence_id] = cal
             key = (evaluator_of(rec), rec.independence_group)
@@ -205,7 +221,7 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
                        if identified and passing and all(v is not None for v in lowers) else None)
     general = False
     for rec in passing:
-        mapping = _premise(ledger, rec, claim, rec.scope_mapping_ref, "scope_mapping", contaminated)
+        mapping = _premise(ledger, rec, claim, rec.scope_mapping_ref, "scope_mapping", contaminated, reasons)
         if rec.oracle_category == "FORMAL_CHECK" and mapping is not None:
             general = True
 
@@ -240,6 +256,11 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
             _once(reasons, "not_an_active_check")
         if cited and all(r.oracle_category == "HEURISTIC_REVIEW" for r in cited):
             _once(reasons, "only_heuristic_evidence")
+
+    if result == "supported" and (not premise_text(claim.scope) or not premise_text(claim.population)
+                                   or not premise_text(claim.sample_unit)):
+        result = "inconclusive"
+        _once(reasons, "claim_text_premise_missing")
 
     limits: list[str] = list(claim.known_limitations)
     for rec in active:
