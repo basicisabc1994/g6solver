@@ -17,6 +17,8 @@ Development fixtures only: G6's test runs are replaced by recorded results, so n
 """
 from __future__ import annotations
 
+from tests.evidence.observed_fixtures import assess_observed, observed_report
+
 import ast
 import subprocess
 import sys
@@ -74,7 +76,7 @@ def test_finding_1_a_base_fixture_error_is_not_a_killed_control(monkeypatch, fai
         runs, deadline = [], time.monotonic() + 60
         patch_review._at_base(change, [req], norm, verdicts, deadline, [], runs, [], [])
         again = patch_review._run_again(Path.cwd(), change, [req], norm, verdicts, runs, deadline, "a" * 64)
-        return requirement_evidence.assess(
+        return assess_observed(
             evaluated, runs, artifact="a" * 64, base_commit=change.base_commit,
             check_sha={NODE: "c" * 64}, written=lambda _: False, environment={}, again=again)
 
@@ -221,11 +223,11 @@ def review(monkeypatch, root: Path, *, on_patch: dict, at_base: dict) -> tuple[d
 
     def execute(root, ids, *, timeout_s, change=None, roots=()):
         calls.append("patch")   # the stated checks' run, then the test file's derived run and the run again: passes
-        return recorded(on_patch if calls.count("patch") == 1 else PASSED)
+        return observed_report(root, ids, recorded(on_patch if calls.count("patch") == 1 else PASSED))
 
     def execute_at_base(change, ids, *, timeout_s, roots=()):
         calls.append("base")
-        return recorded(at_base)
+        return observed_report(change.repo, ids, recorded(at_base), subject="0" * 64)
 
     monkeypatch.setattr(patch_review, "_execute", execute)
     monkeypatch.setattr(patch_review, "_execute_at_base", execute_at_base)
@@ -290,16 +292,16 @@ def test_the_issuer_s_adapter_reads_a_hand_made_base_record_by_the_one_rule():
     common = {"artifact": "a" * 64, "base_commit": "0" * 40, "check_sha": {NODE: "c" * 64},
               "written": lambda _check: False, "environment": {}, "again": {"verdicts": {NODE: "passed"}}}
     killed = [{"check": requirement_evidence.AT_BASE, "outcomes": {NODE: "failed"}}]
-    assert requirement_evidence.assess([req], killed, **common)["requirements"][0]["checked"] is True
+    assert assess_observed([req], killed, **common)["requirements"][0]["checked"] is True
     errored = [{**killed[0], "observations": {NODE: patch_review.ERROR}}]
-    found = requirement_evidence.assess([req], errored, **common)["requirements"][0]
+    found = assess_observed([req], errored, **common)["requirements"][0]
     assert found["checked"] is False and "(error)" in found["not_counted"]
     first = {**req, "checks": [{"id": NODE, "provenance": "stated", "verdict": "failed",
                                 "observation": patch_review.ERROR}]}
     facts, artefact, records = requirement_evidence.records_for([first], killed, **{
         k: v for k, v in common.items() if k != "again"})
     assert [r.result for r in records] == ["unknown"]   # an error on the patch is no failure of the check
-    assert "did not run to a pass on the patch (error)" in requirement_evidence.assess([first], killed, **common)[
+    assert "did not run to a pass on the patch (error)" in assess_observed([first], killed, **common)[
         "requirements"][0]["not_counted"]
     assert m.issue_records(facts, artefact, records).certificate.predicates[0].caveats   # and still withholds
 

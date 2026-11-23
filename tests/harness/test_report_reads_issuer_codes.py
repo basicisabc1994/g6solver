@@ -11,6 +11,8 @@ fails on one over issuer or check text.
 """
 from __future__ import annotations
 
+from tests.evidence.observed_fixtures import assess_observed
+
 import ast
 import inspect
 from pathlib import Path
@@ -24,7 +26,7 @@ NODE = "test_advisory_check_failed.py::test_ok"
 def _evidence(node: str, *, written: bool, again: str = "passed", at_base: str = "failed") -> dict:
     evaluated = [{"id": "R1", "text": "new behaviour", "kind": "requirement", "provenance": "stated",
                   "checks": [{"id": node, "provenance": "stated", "verdict": "passed"}]}]
-    evidence = requirement_evidence.assess(
+    evidence = assess_observed(
         evaluated, [{"check": requirement_evidence.AT_BASE, "outcomes": {node: at_base}}], artifact="a" * 64,
         base_commit="0" * 40, check_sha={node: "c" * 64}, written=lambda _: written, environment={"python": "3.12"},
         again={"verdicts": {node: again}})

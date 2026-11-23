@@ -6,6 +6,7 @@ import ast
 # These are every product entry point that receives a repo_tests run (including
 # helpers its callers hand that run to). Exclude similarly named summary rows.
 RECEIVERS = {
+    "evidence/custody.py": {"found"},  # the host producer reads typed telemetry and its execution boundary
     "harness/patch_review.py": {"ran", "first", "second", "out"},
     "harness/verification_search.py": {"ran"},
     "harness/completion_loop.py": {"ran"},

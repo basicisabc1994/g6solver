@@ -16,8 +16,9 @@ one row that fixes:
 ``promote`` turns one ``SourceRecord`` into the issuer's inputs, or refuses it with a stable ``G6_E_EVIDENCE_*`` code for
 each part it lacks; nothing it refuses reaches the issuer as evidence. A kind whose row has no issuer kind (a review, a
 step that ran, a proposed check) is a lead, never a source: it is refused as ``G6_E_EVIDENCE_KIND_NOT_PROMOTED``.
-``issue_records`` promotes a batch, writes what G6 observed into a fresh ``g6.core.ledger.ChainLedger`` with the issuer's
-own ``record``, and asks the issuer for the certificate. The mapping refuses what is missing; the issuer judges what is
+``issue_records`` promotes a batch only after resolving host-store execution, control and reference receipts. It
+projects those observations into a fresh ``g6.core.ledger.ChainLedger`` and asks the issuer for the certificate.
+Formal authority also resolves the exact checker request and decision. The mapping refuses what is missing; the issuer judges what is
 present (a control that was not killed, a check frozen after the artefact, a pass taken before its control), so the two
 never overlap.
 
@@ -88,6 +89,7 @@ from g6.evidence.certificate import (
 )
 from g6.evidence.certificate import _check_of as _issuers_check   # the issuer's own reading of a check it wrote
 from g6.evidence.certificate import _issue as _issuers_decision
+from g6.evidence.custody import FormalRequest, RunReference, checker_matches, run_position
 
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _ID = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
@@ -121,16 +123,21 @@ BINDING_CHECK = "G6_E_EVIDENCE_BINDING_CHECK"
 BINDING_UNREADABLE = "G6_E_EVIDENCE_BINDING_UNREADABLE"
 #: A record its source does not believe, whatever it says (the patch review's integrity problem): refused whole.
 NOT_BELIEVED = "G6_E_EVIDENCE_RUN_NOT_BELIEVED"
+NO_EXECUTION = "G6_E_EVIDENCE_EXECUTION_NOT_OBSERVED"
+NO_CONTROL_RUN = "G6_E_EVIDENCE_CONTROL_NOT_OBSERVED"
+NO_POSITIVE_RUN = "G6_E_EVIDENCE_REFERENCE_NOT_OBSERVED"
+NO_CHECKER_RUN = "G6_E_EVIDENCE_CHECKER_NOT_OBSERVED"
 CODES = (UNMAPPED, NOT_PROMOTED, NO_ARTEFACT, OTHER_ARTEFACT, OTHER_PRODUCER, OTHER_ORDER, NO_MODEL, NO_STANDARD,
          OTHER_STANDARD, NO_CHECK, NO_ENVIRONMENT, NO_CONTROL, NO_INDEPENDENCE, NO_ORDER, NO_SCOPE, NO_RESULT,
          CONFLICTING, BINDING_ARTEFACT, BINDING_STANDARD, BINDING_PREDICATE, BINDING_CHECK, BINDING_UNREADABLE,
-         NOT_BELIEVED)
+         NOT_BELIEVED, NO_EXECUTION, NO_CONTROL_RUN, NO_POSITIVE_RUN, NO_CHECKER_RUN)
 #: The ledger kind under which a promoted receipt's environment, model, scope and source are kept beside it.
 PROVENANCE_KIND = "provenance"
 #: Every field G6 itself writes in a provenance entry, a promoted receipt's or a caveat's (``_provenance``). None is a
 #: caller's to state, in either entry and whether or not the entry has it: a test reads the fields from the code.
 PROVENANCE_OWN = frozenset({"source_kind", "issuer_kind", "environment_sha256", "model_sha256", "scope", "binding",
-                            "kept_as", "record_id", "refused"})
+                            "kept_as", "record_id", "refused", "execution", "control_runs", "positive",
+                            "formal_request"})
 #: The issuer kind a refused record's observation is kept as (``caveat_of``): with no control, a check of this kind can
 #: neither support nor refute, and its failure is a caveat (the issuer's rule, and this table's row for the kind).
 CAVEAT_KIND = "partial_falsifier"
@@ -412,9 +419,9 @@ def bound_parts(binding: object, *, environment: str = "", scope: str = "",
 class SourceRecord:
     """One receipt as its source gives it, in the parts the mapping table asks of every kind.
 
-    ``controls`` are the issuer's ``Control`` values G6 observed for this check; ``seq`` and the other positions are the
-    order G6 observed things in, never one a caller chose. Every reader takes the parts a record is about from
-    ``about``, never from these fields alone."""
+    ``controls`` and local positions are declarations until host-store references resolve. The local positions feed
+    the issuer's chronology rule; host-store order separately checks the runs they cite. Every reader takes the
+    parts a record is about from ``about``, never from these fields alone."""
 
     kind: str
     record_id: str
@@ -438,12 +445,19 @@ class SourceRecord:
     #: The custody binding that fixes what this record is about, when it came with one (``from_binding``); one that
     #: does not read as one (``UnreadableBinding``) is refused, never read as none.
     binding: CheckBinding | UnreadableBinding | None = None
+    #: References into the host run store, distinct from author independence and local ledger positions.
+    execution: RunReference | None = None
+    control_runs: tuple[tuple[str, RunReference], ...] = ()
+    positive: RunReference | None = None
+    formal_request: FormalRequest | None = None
 
     @classmethod
     def from_binding(cls, binding: CheckBinding, *, kind: str, record_id: str, result: str, producer: str,
                      artefact_seq: int | None, author: str, frozen_seq: int | None, environment_sha256: str,
                      seq: int | None, scope: str, controls: tuple[Control, ...] = (), positive_seq: int | None = None,
-                     model_sha256: str = "", certificate: str = "") -> SourceRecord:
+                     model_sha256: str = "", certificate: str = "", execution: RunReference | None = None,
+                     control_runs: tuple[tuple[str, RunReference], ...] = (), positive: RunReference | None = None,
+                     formal_request: FormalRequest | None = None) -> SourceRecord:
         """A receipt bound by a custody binding: the fields that repeat its parts are the binding's own."""
         parts, _ = bound_parts(binding, environment=environment_sha256, scope=scope)
         if parts is None:
@@ -453,7 +467,8 @@ class SourceRecord:
                    standard_sha256=parts.standard, check_id=parts.check_id, check_sha256=parts.check_sha,
                    author=author, frozen_seq=frozen_seq, environment_sha256=environment_sha256, seq=seq, scope=scope,
                    model_sha256=model_sha256, certificate=certificate, controls=controls, positive_seq=positive_seq,
-                   binding=binding)
+                   binding=binding, execution=execution, control_runs=control_runs, positive=positive,
+                   formal_request=formal_request)
 
 
 def read_about(binding: object, *, environment: str = "", scope: str = "",
@@ -501,7 +516,8 @@ def _controls(rec: SourceRecord) -> list[Control]:
 
 def problems(rec: SourceRecord, *, facts: MissionFacts, artifact: Artifact) -> list[tuple[str, str]]:
     """Each part ``rec`` lacks for its kind's row, or states otherwise than the issuer would be handed it, as (code,
-    what is missing or other); empty when it may be promoted. ``facts`` and ``artifact`` are what ``issue`` is handed
+    what is missing or other); empty when its structure is complete. Promotion also resolves ``custody_problems``.
+    ``facts`` and ``artifact`` are what ``issue`` is handed
     beside the record: the mission and the artefact it would count for. Each of their values the record also states
     is compared with the record's statement (``ISSUER_SIDE``), so the issuer never judges a record by a value the
     record contradicts."""
@@ -577,6 +593,8 @@ def promote(rec: SourceRecord, *, facts: MissionFacts, artifact: Artifact) -> tu
     record's own statement (``about`` for what it is about), or ``PromotionRefused`` naming every part it lacks or
     states otherwise (``problems``)."""
     found = problems(rec, facts=facts, artifact=artifact)
+    if not found:
+        found = custody_problems(rec)
     if found:
         raise PromotionRefused(rec.record_id, found)
     parts, _ = about(rec)
@@ -584,6 +602,47 @@ def promote(rec: SourceRecord, *, facts: MissionFacts, artifact: Artifact) -> tu
     check = Check(parts.check_id, tuple(parts.predicates), rec.author, issuer_kind(rec), parts.check_sha,
                   int(rec.frozen_seq), controls, rec.certificate, rec.positive_seq)
     return check, Receipt(rec.record_id, parts.check_id, parts.check_sha, parts.artefact, rec.result, int(rec.seq))
+
+
+def custody_problems(rec: SourceRecord) -> list[tuple[str, str]]:
+    """Both polarities need host observation. A positive position alone is no reference receipt."""
+    parts, _ = about(rec)
+    common = dict(check_id=parts.check_id, check_sha256=parts.check_sha,
+                  environment_sha256=parts.environment)
+    found = []
+    execution = run_position(rec.execution, subject=parts.artefact, result=rec.result, **common)
+    if execution is None:
+        found.append((NO_EXECUTION, "the host store does not resolve this execution for this check and subject"))
+    runs: dict[str, RunReference] = {}
+    if isinstance(rec.control_runs, tuple):
+        for item in rec.control_runs:
+            if (not isinstance(item, tuple) or len(item) != 2 or not isinstance(item[0], str)
+                    or not isinstance(item[1], RunReference) or runs.get(item[0], item[1]) != item[1]):
+                found.append((NO_CONTROL_RUN, "control references have distinct typed identities"))
+                break
+            runs[item[0]] = item[1]
+    for control in _controls(rec):
+        if type(control.killed) is not bool:
+            found.append((NO_CONTROL_RUN, "a control outcome is an explicit boolean"))
+            break
+        position = run_position(runs.get(control.control_id), result="fail" if control.killed else "pass", **common)
+        if position is None or (execution is not None and control.seq < rec.seq and position >= execution):
+            found.append((NO_CONTROL_RUN, "the host store does not resolve this control before the execution"))
+            break
+    if rec.positive_seq is not None:
+        position = run_position(rec.positive, result="pass", **common)
+        if position is None or execution is None or position >= execution:
+            found.append((NO_POSITIVE_RUN, "the host store does not resolve an earlier passing reference"))
+    elif rec.positive is not None and not isinstance(rec.positive, RunReference):
+        found.append((NO_POSITIVE_RUN, "a reference has a typed host identity"))
+    if rec.formal_request is not None and not isinstance(rec.formal_request, FormalRequest):
+        found.append((NO_CHECKER_RUN, "a checker request has the declared type"))
+    if MAPPING[rec.kind].needs_certificate and not checker_matches(
+            rec.formal_request, rec.certificate, subject=parts.artefact, standard=parts.standard,
+            predicates=tuple(parts.predicates), check_id=parts.check_id, check_sha256=parts.check_sha,
+            environment_sha256=parts.environment, model_sha256=rec.model_sha256, result=rec.result):
+        found.append((NO_CHECKER_RUN, "the host store does not resolve the exact checker request and decision"))
+    return found
 
 
 def caveat_of(rec: SourceRecord, ident: str, *, facts: MissionFacts,
@@ -758,6 +817,10 @@ def issue_records(facts: MissionFacts, artifact: Artifact, records: Iterable[Sou
             ledger.append(PROVENANCE_KIND, receipt.receipt_id, _provenance({
                 "source_kind": rec.kind, "issuer_kind": checks[receipt.check_id].kind, "environment_sha256":
                 parts.environment, "model_sha256": rec.model_sha256, "scope": parts.scope,
+                "execution": asdict(rec.execution) if rec.execution else None,
+                "control_runs": [[ident, asdict(ref)] for ident, ref in rec.control_runs],
+                "positive": asdict(rec.positive) if rec.positive else None,
+                "formal_request": asdict(rec.formal_request) if rec.formal_request else None,
                 **({"binding": rec.binding.to_dict()} if rec.binding else {})}, extra))
         except (RecursionError, MemoryError):
             raise ValueError("a JSON record exceeds decoder limits") from None
@@ -882,8 +945,9 @@ def render_markdown() -> str:
 __all__ = ["BINDING_ARTEFACT", "BINDING_CHECK", "BINDING_PREDICATE", "BINDING_STANDARD", "BINDING_UNREADABLE",
            "CAVEAT_KIND", "CODES", "COLUMNS", "CONFLICTING", "ISSUER_SIDE", "MAPPING", "NOT_BELIEVED", "NOT_PROMOTED",
            "NO_ARTEFACT", "NO_CHECK", "NO_CONTROL", "NO_ENVIRONMENT", "NO_INDEPENDENCE", "NO_MODEL", "NO_ORDER",
+           "NO_EXECUTION", "NO_CONTROL_RUN", "NO_POSITIVE_RUN", "NO_CHECKER_RUN",
            "NO_RESULT", "NO_SCOPE", "NO_STANDARD", "OTHER_ARTEFACT", "OTHER_ORDER", "OTHER_PRODUCER", "OTHER_STANDARD",
            "PROVENANCE_KIND", "PROVENANCE_OWN", "RECEIPT_GATES", "UNMAPPED", "About", "CheckBinding", "Issued",
            "PromotionRefused", "Row", "SourceRecord", "UnreadableBinding", "about", "bound_parts", "caveat_of",
-           "check_id_of", "environment_sha256", "id_of", "issue_records", "issuer_kind", "problems", "promote",
+           "check_id_of", "custody_problems", "environment_sha256", "id_of", "issue_records", "issuer_kind", "problems", "promote",
            "read_about", "read_binding", "receipt_roles", "render_markdown", "strict_json"]

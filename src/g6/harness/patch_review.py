@@ -778,7 +778,8 @@ def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", 
              "tests": list(ids),
              "verdict": ran.get("verdict"), "seconds": ran.get("seconds", 0.0), "passed": ran.get("passed", 0),
              "failed": ran.get("failed", 0), "skipped": ran.get("not_passed", 0), "said": ran.get("said", ""),
-             "receipt": ran.get("receipt", ""), "provenance": provenance}
+             "receipt": ran.get("receipt", ""), "provenance": provenance,
+             **{key: ran[key] for key in ("custody_receipt", "source_before") if key in ran}}
     found.update({key: ran[key] for key in _SEEN_KEYS if ran.get(key)})
     if ran.get("loaded_complete") is False:
         found["loaded_complete"] = False
@@ -1221,7 +1222,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         else:
             second = _confined(_execute(root, derived, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
             runs.append(_record(2, "tests that touch the changed modules", derived, second, provenance=DERIVED))
-            seen = {"run": ["derived"], "verdicts": _observed(stated_ids, second)}   # a stated check it collected
+            seen = {"run": ["derived"], "verdicts": _observed(stated_ids, second),
+                    "custody_receipt": second.get("custody_receipt", ""),
+                    "source_before": second.get("source_before", "")}   # a stated check it collected
             observed.append(seen)
             if second["verdict"] in UNTRUSTED:
                 reason("integrity", "run_not_trusted", _untrusted(2, second))
@@ -1450,7 +1453,8 @@ def _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, r
     if ran.get("verdict") not in repo_tests.RAN:
         return {"checks": ids, "why": f"the run again gave no result ({ran.get('verdict')})"}
     return {"checks": ids, "verdicts": {check: observation(found) for check, found in _verdicts(ids, ran).items()},
-            "receipt": ran.get("receipt", ""), "seconds": ran.get("seconds", 0.0)}
+            "receipt": ran.get("receipt", ""), "seconds": ran.get("seconds", 0.0),
+            "custody_receipt": ran.get("custody_receipt", ""), "source_before": ran.get("source_before", "")}
 
 
 def _check_shas(root: Path, checks: Sequence[str]) -> dict[str, str]:
@@ -1604,7 +1608,8 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, ro
             seen = dict.fromkeys(mine, NOT_READ)
         if seen:   # it ran on the patch: each stated check it ran, as it ran there
             observed.append({"run": ["replay", rel], "verdicts": dict.fromkeys(seen, NOT_LOADED) if elsewhere
-                             else seen})
+                             else seen, "custody_receipt": out.get("custody_receipt", ""),
+                             "source_before": out.get("source_before", "")})
         if elsewhere:   # review C1: a replay of code the patch did not change says nothing of the patch
             uncompared(f"{shown(rel)} fails on the patch, and its replay in a copy is not read: {elsewhere}")
         elif out.get("verdict") == repo_tests.FAILED:

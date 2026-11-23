@@ -143,6 +143,9 @@ def assert_parity(raw, *, case="complete"):
         assert rt.read_report(raw).wire() == raw
     before = reading(old_review, old_search, old_completion, raw)
     expected = intended_reading(before, case)
+    # B3 adds host identities to the persisted run channel. Pin their exact values
+    # and absence; all released verdict, phase and annotation comparisons stand.
+    expected["record"].update({key: raw[key] for key in ("custody_receipt", "source_before") if key in raw})
     for label, projected in (("direct", raw), ("projected", patch_review._confined(raw))):
         after = reading(patch_review, verification_search, completion_loop, projected)
         delta = differences(expected, after)

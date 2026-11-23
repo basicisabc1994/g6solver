@@ -15,6 +15,8 @@ here: slice 3 asks the question.
 """
 from __future__ import annotations
 
+from tests.evidence.observed_fixtures import issue_observed_records
+
 import hashlib
 from dataclasses import replace
 
@@ -163,8 +165,8 @@ def test_in_the_issuer_s_terms_it_counts_only_with_a_control_and_a_receipt_on_th
                          standard_sha256=standard.sha256, check_id=got.expectation_id, check_sha256=got.check_sha256,
                          author=got.answered_by, frozen_seq=0, environment_sha256="f" * 64, seq=3,
                          scope="the confirmed case, on the final patch")
-    lone = m.issue_records(standard.facts("1" * 64), Artifact(PATCH_SHA, "the patch's author", 1), [rec])
+    lone = issue_observed_records(standard.facts("1" * 64), Artifact(PATCH_SHA, "the patch's author", 1), [rec])
     assert [c for c, _ in lone.refused[0][1]] == [m.NO_CONTROL] and lone.certificate.verified_predicates == ()
     controlled = replace(rec, controls=(Control("k1", got.check_sha256, got.expectation_id, "g6", 2, True),))
-    held = m.issue_records(standard.facts("1" * 64), Artifact(PATCH_SHA, "the patch's author", 1), [controlled])
+    held = issue_observed_records(standard.facts("1" * 64), Artifact(PATCH_SHA, "the patch's author", 1), [controlled])
     assert held.certificate.verified_predicates == (got.expectation_id,)

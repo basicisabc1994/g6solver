@@ -21,6 +21,8 @@ Development fixtures only: no test runs, and no model runs.
 """
 from __future__ import annotations
 
+from tests.evidence.observed_fixtures import issue_observed_records
+
 import ast
 import enum
 import inspect
@@ -54,7 +56,7 @@ SUBCLASSES = pytest.mark.parametrize("named", [Hashed, Plain, member], ids=["own
 
 
 def _entry(record, extra=None):
-    issued = mapping.issue_records(FACTS, SUBJECT, [record], extra=extra)
+    issued = issue_observed_records(FACTS, SUBJECT, [record], extra=extra)
     ident = issued.caveats[0][1] if issued.caveats else record.record_id
     return issued.ledger.get(mapping.PROVENANCE_KIND, ident)
 

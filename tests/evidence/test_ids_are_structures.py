@@ -12,6 +12,8 @@ on any not built through the one function.
 """
 from __future__ import annotations
 
+from tests.evidence.observed_fixtures import assess_observed
+
 import ast
 import dataclasses
 import importlib
@@ -22,7 +24,7 @@ from pathlib import Path
 
 import g6
 from g6.evidence import mapping as m
-from g6.harness import patch_review, requirement_evidence
+from g6.harness import patch_review
 
 SRC = Path(g6.__file__).resolve().parent
 
@@ -52,8 +54,8 @@ def test_finding_6_distinct_pytest_checks_and_requirements_do_not_share_a_contro
                   written=lambda _: False, environment={"python": sys.executable},
                   again={"verdicts": {first: "passed", second: "passed"}})
     for one in evaluated:
-        assert requirement_evidence.assess([one], **common)["requirements"][0]["checked"] is True
-    combined = requirement_evidence.assess(evaluated, **common)
+        assert assess_observed([one], **common)["requirements"][0]["checked"] is True
+    combined = assess_observed(evaluated, **common)
     assert [one["checked"] for one in combined["requirements"]] == [True, True], (
         "distinct check/requirement pairs were concatenated into one control id", combined["refused"])
 

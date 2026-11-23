@@ -3,6 +3,7 @@
   "consumers": {
     "harness/patch_review.py": {
       "_assess": [
+        "custody_receipt",
         "receipt",
         "receipt_error",
         "receipt_withheld",
@@ -36,10 +37,12 @@
       ],
       "_on_base": [
         "baseline",
+        "custody_receipt",
         "failed_ids",
         "output",
         "patched",
         "said",
+        "source_before",
         "verdict"
       ],
       "_patch_imports_missing": [
@@ -47,6 +50,7 @@
         "output"
       ],
       "_record": [
+        "custody_receipt",
         "failed",
         "generated_copied",
         "generated_left_out",
@@ -59,6 +63,7 @@
         "receipt",
         "said",
         "seconds",
+        "source_before",
         "submodules_not_hashed",
         "verdict"
       ],
@@ -70,6 +75,7 @@
         "repo_env"
       ],
       "_run_again": [
+        "custody_receipt",
         "receipt",
         "seconds",
         "source_before",
@@ -255,6 +261,18 @@
       "shadowed": [
         "loaded_complete",
         "loaded_outside"
+      ]
+    },
+    "evidence/custody.py": {
+      "_pytest_observation": [
+        "isolation"
+      ],
+      "run_environment": [
+        "env_set_by_g6",
+        "interpreter_source",
+        "isolation",
+        "python",
+        "repo_env"
       ]
     }
   },
@@ -526,7 +544,8 @@
         "harness/patch_review.py:_reply",
         "harness/verification_search.py:reading",
         "harness/verification_search.py:reproduce",
-        "algorithm_design/autonomous.py:_observed"
+        "algorithm_design/autonomous.py:_observed",
+        "evidence/custody.py:run_environment"
       ],
       "type": "<class 'str'>",
       "constraint": "text only"
@@ -538,7 +557,8 @@
         "harness/verification_search.py:reading",
         "harness/verification_search.py:reproduce",
         "workforce/bench.py:_in_place",
-        "algorithm_design/autonomous.py:_observed"
+        "algorithm_design/autonomous.py:_observed",
+        "evidence/custody.py:run_environment"
       ],
       "type": "<class 'str'>",
       "constraint": "text only"
@@ -559,7 +579,9 @@
         "harness/patch_review.py:_run_again",
         "harness/verification_search.py:reading",
         "harness/verification_search.py:_run_check",
-        "algorithm_design/autonomous.py:_observed"
+        "algorithm_design/autonomous.py:_observed",
+        "harness/patch_review.py:_record",
+        "harness/patch_review.py:_on_base"
       ],
       "type": "<class 'str'>",
       "constraint": "text only"
@@ -641,7 +663,8 @@
       "meaning": "how the run was made, never what a test did",
       "consumers": [
         "harness/patch_review.py:_reply",
-        "workforce/receipt_store.py:_body"
+        "workforce/receipt_store.py:_body",
+        "evidence/custody.py:run_environment"
       ],
       "type": "[<class 'str'>]",
       "constraint": "text members; os_errors annotate recorded failures"
@@ -677,7 +700,8 @@
       "meaning": "how the run was made, never what a test did",
       "consumers": [
         "harness/patch_review.py:_reply",
-        "workforce/receipt_store.py:_body"
+        "workforce/receipt_store.py:_body",
+        "evidence/custody.py:run_environment"
       ],
       "type": "{<class 'str'>: <class 'str'>}",
       "constraint": "text keys and values"
@@ -749,7 +773,9 @@
         "workforce/receipt_store.py:_body",
         "bundles/agent_change.py:run",
         "workforce/bench.py:_in_place",
-        "algorithm_design/autonomous.py:_observed"
+        "algorithm_design/autonomous.py:_observed",
+        "evidence/custody.py:run_environment",
+        "evidence/custody.py:_pytest_observation"
       ],
       "type": "{'backend': (<class 'str'>, <class 'NoneType'>), 'why': <class 'str'>, 'network': <class 'bool'>, 'container': (<class 'str'>, <class 'NoneType'>), 'profile': (<class 'str'>, <class 'NoneType'>), 'warning': <class 'str'>, 'allowed_by': <class 'str'>, 'cleanup': <class 'str'>}",
       "constraint": "known typed fields, backend required"
@@ -827,6 +853,17 @@
       ],
       "type": "<class 'str'>",
       "constraint": "text only"
+    },
+    "custody_receipt": {
+      "meaning": "host-store identity of per-check observations; ingestion resolves it before counting",
+      "consumers": [
+        "harness/patch_review.py:_assess",
+        "harness/patch_review.py:_on_base",
+        "harness/patch_review.py:_record",
+        "harness/patch_review.py:_run_again"
+      ],
+      "type": "<class 'str'>",
+      "constraint": "text identity only; an empty or unresolved identity supplies no authority"
     }
   },
   "values": {
@@ -872,7 +909,8 @@
     "output/failure_messages/os_errors": "missing id and collection error text; assertion vs access-error diagnostics; observation output",
     "source_before/receipt": "absent vs present; exact snapshot digest and stored receipt identity",
     "copy_annotations": "absent/empty vs entries: forward observed omissions/hashes and withheld receipt reason",
-    "ordered_raw_failed_ids": "replay detail reads only failed_ids, in emission order and without rootdir qualification; phase evidence uses qualified identities and the failure union"
+    "ordered_raw_failed_ids": "replay detail reads only failed_ids, in emission order and without rootdir qualification; phase evidence uses qualified identities and the failure union",
+    "custody_receipt": "absent/empty vs a host-store identity: transport only; exact execution, control and reference resolution precedes authority"
   },
   "internal_tallies": {
     "_judge": [

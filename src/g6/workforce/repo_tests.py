@@ -397,6 +397,9 @@ for _name in ("seconds",):
 for _name in ("python", "interpreter_source", "command", "source_before", "receipt", "receipt_withheld",
               "receipt_error", "baseline", "patched"):
     REPORT_FIELDS[_name] = ReportField(str, "", "execution or receipt annotation", "text only")
+REPORT_FIELDS["custody_receipt"] = ReportField(
+    str, "", "host-store identity of per-check observations; ingestion resolves it before counting",
+    "text identity only; an empty or unresolved identity supplies no authority")
 for _name in ("changed", "os_errors", "import_path", "env_set_by_g6", "ignored_loadable"):
     REPORT_FIELDS[_name] = ReportField([str], [], "execution identity listing", "text members; os_errors annotate recorded failures")
 REPORT_FIELDS["changed"] = ReportField([str], [], "files that changed under the run",
@@ -3040,7 +3043,8 @@ def _test_id(repo: Path, test: str, what: str = "test") -> str:
 def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int, network: bool,
          mutant: tuple[str, str] | None = None, copied: bool = False, python: str = "",
          scratch_dir: Path | None = None, deadline: float | None = None, receipt: bool = False,
-         require_isolation: bool = False, links: dict | None = None, observation: dict | None = None) -> dict:
+         require_isolation: bool = False, links: dict | None = None, observation: dict | None = None,
+         observe: bool = False) -> dict:
     """The shared execution path; only old-test replay uses a copy without git metadata. ``require_isolation``: a run
     no backend confines is refused (``G6_E_ISOLATION_UNAVAILABLE``) before it starts, even where the person allowed
     unconfined runs (verification search's proposed checks). ``links``: what the copy (``repository_copy``'s
@@ -3219,13 +3223,28 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                                              for where in list(elsewhere.values())[:5])))
             return found
         try:
+            from g6.evidence.custody import _pytest_observation
+
+            observed = _pytest_observation(repo, before, after, ids, found)
             found["receipt"] = receipt_store._record(receipt_store._body(
                 started_at=began, finished_at=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                 before=before, after=after, base_commit=head, python=python, requested=ids, found=found,
-                ignored=scan.other))
+                ignored=scan.other, observed=observed))
+            found["custody_receipt"] = found["receipt"] if observed is not None else ""
+        except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+            raise
         except (OSError, ValueError) as exc:
             found["receipt_error"] = (f"the test receipt could not be recorded ({type(exc).__name__}); if the store is "
                                       f"unreadable, move it aside ({receipt_store.RECOVERY})")
+    if observe and copied:
+        from g6.evidence.custody import _observe_pytest
+
+        try:
+            found["custody_receipt"] = _observe_pytest(repo, before, after, ids, found)
+        except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+            raise
+        except (OSError, ValueError):
+            found["custody_receipt"] = ""
     return found
 
 
@@ -4073,7 +4092,7 @@ def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = ()
             with _base_revision(change, copy, deadline, keep=keep, materialised=report.get("links_materialised")):
                 return _run(copy, tests, roots=roots, timeout_s=bound, network=network, copied=True,
                             python=interpreter(change.repo), scratch_dir=copy.parent, deadline=deadline,
-                            require_isolation=require_isolation, links=report)
+                            require_isolation=require_isolation, links=report, observe=True)
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
     except (OSError, RepoRefused, CopyNotRun) as exc:

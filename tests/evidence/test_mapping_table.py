@@ -14,6 +14,8 @@
 """
 from __future__ import annotations
 
+from tests.evidence.observed_fixtures import issue_observed_records
+
 import ast
 import typing
 from dataclasses import replace
@@ -136,7 +138,7 @@ def codes(record: m.SourceRecord) -> list[str]:
 
 def test_a_complete_record_is_promoted_and_the_issuer_counts_it():
     assert codes(rec()) == []   # the positive control for every refusal below
-    out = m.issue_records(facts(), Artifact(A, "agent", 1), [rec()])
+    out = issue_observed_records(facts(), Artifact(A, "agent", 1), [rec()])
     assert out.refused == () and out.promoted == (("r1", "independent_executable", "independent_executable"),)
     assert out.certificate.verified_predicates == (P,)
 
@@ -169,7 +171,7 @@ def test_a_record_that_lacks_a_part_is_refused_with_the_code_that_names_it(over,
     with pytest.raises(m.PromotionRefused) as refused:
         m.promote(rec(**over), facts=facts(), artifact=Artifact(A, "agent", 1))
     assert [c for c, _ in refused.value.codes] == [code] and code in str(refused.value)
-    out = m.issue_records(facts(), Artifact(A, "agent", 1), [rec(**over)])
+    out = issue_observed_records(facts(), Artifact(A, "agent", 1), [rec(**over)])
     assert out.promoted == () and [c for c, _ in out.refused[0][1]] == [code]
     assert out.certificate.verified_predicates == ()
 
@@ -179,6 +181,9 @@ def test_a_formal_record_names_its_model_and_its_certificate():
     assert codes(formal) == []
     assert codes(replace(formal, model_sha256="")) == [m.NO_MODEL]
     assert codes(replace(formal, certificate="")) == [m.NO_CHECK]
+    with pytest.raises(m.PromotionRefused) as refused:
+        m.promote(formal, facts=facts(), artifact=Artifact(A, "agent", 1))
+    assert m.NO_CHECKER_RUN in [code for code, _ in refused.value.codes]
 
 
 def test_every_refusal_code_is_stable_and_named():
@@ -188,26 +193,26 @@ def test_every_refusal_code_is_stable_and_named():
 def test_the_issuer_kind_follows_the_author_whatever_the_source_calls_it():
     own = rec(author="agent")   # the artefact's producer wrote the check
     assert m.issuer_kind(own) == "partial_falsifier"
-    out = m.issue_records(facts(), Artifact(A, "agent", 1), [own])
+    out = issue_observed_records(facts(), Artifact(A, "agent", 1), [own])
     assert out.promoted[0][2] == "partial_falsifier" and out.certificate.verified_predicates == ()
 
 
 def test_conflicting_records_are_kept_apart_never_merged_and_a_conflict_stays_a_fourth_state():
     clash = rec(record_id="r2", check_sha256="9" * 64, controls=(control(check_sha="9" * 64),))   # same check id
-    out = m.issue_records(facts(), Artifact(A, "agent", 1), [rec(), clash])
+    out = issue_observed_records(facts(), Artifact(A, "agent", 1), [rec(), clash])
     assert [rid for rid, _ in out.refused] == ["r2"] and out.refused[0][1][0][0] == m.CONFLICTING
     twin = rec(record_id="r3", check_id="c2", controls=(control(control_id="k1", seq=1),))   # one control, two bodies
-    assert [rid for rid, _ in m.issue_records(facts(), Artifact(A, "agent", 1), [rec(), twin]).refused] == ["r3"]
+    assert [rid for rid, _ in issue_observed_records(facts(), Artifact(A, "agent", 1), [rec(), twin]).refused] == ["r3"]
     # one check supports, another refutes (it was shown able to fail and to pass a known-good reference first)
     fails = rec(record_id="r4", check_id="c4", check_sha256="8" * 64, result="fail", positive_seq=2,
                 controls=(control(control_id="k4", check_sha="8" * 64),))
-    both = m.issue_records(facts(), Artifact(A, "agent", 1), [rec(), fails])
+    both = issue_observed_records(facts(), Artifact(A, "agent", 1), [rec(), fails])
     statement = both.certificate.predicates[0]
     assert statement.support and statement.refute and both.certificate.state == "blocked-escalated"
 
 
 def test_what_the_mapping_promotes_rests_on_g6_s_ledger_and_is_decided_again_from_it():
-    out = m.issue_records(facts(), Artifact(A, "agent", 1), [rec()], extra={"run": "unit"})
+    out = issue_observed_records(facts(), Artifact(A, "agent", 1), [rec()], extra={"run": "unit"})
     kinds = [entry["kind"] for entry in out.ledger.entries()]
     assert kinds == ["control", "receipt", m.PROVENANCE_KIND]
     kept = out.ledger.get(m.PROVENANCE_KIND, "r1")
@@ -225,7 +230,7 @@ def test_a_custody_binding_gives_a_receipt_its_artefact_standard_and_check():
                                         controls=(control(),))
     assert (bound.artefact_sha256, bound.standard_sha256, bound.check_sha256, bound.predicates) == (A, STANDARD, CODE,
                                                                                                    (P,))
-    out = m.issue_records(facts(), Artifact(A, "agent", 1), [bound])
+    out = issue_observed_records(facts(), Artifact(A, "agent", 1), [bound])
     assert out.certificate.verified_predicates == (P,)
     assert out.ledger.get(m.PROVENANCE_KIND, "r1")["binding"] == binding.to_dict()
     with pytest.raises(ValueError):
@@ -237,7 +242,7 @@ def test_verify_needs_the_bytes_the_records_were_taken_on():
     import hashlib
 
     sha = hashlib.sha256(data).hexdigest()
-    out = m.issue_records(facts(), Artifact(sha, "agent", 1), [rec(artefact_sha256=sha)])
+    out = issue_observed_records(facts(), Artifact(sha, "agent", 1), [rec(artefact_sha256=sha)])
     assert verify(out.certificate.as_dict(), data, ledger=out.ledger) == []
 
 

@@ -2,13 +2,14 @@
 import ast
 import json
 import os
+from tests.evidence.observed_fixtures import assess_observed
 from pathlib import Path
 import time
 from types import SimpleNamespace
 
 import pytest
 
-from g6.harness import patch_review as review, requirement_evidence as evidence
+from g6.harness import patch_review as review
 from g6.workforce import repo_tests as runner
 
 
@@ -52,7 +53,7 @@ def test_literal_pytest_identity_cannot_borrow_a_negative_control(tmp_path, monk
     runs, deadline = [], time.monotonic() + 30
     review._at_base(change, requests, norm, verdicts, deadline, [], runs, [], [])
     again = review._run_again(Path.cwd(), change, requests, norm, verdicts, runs, deadline, "a" * 64)
-    assessed = evidence.assess([review._requirement(req, verdicts, norm) for req in requests], runs,
+    assessed = assess_observed([review._requirement(req, verdicts, norm) for req in requests], runs,
                                artifact="a" * 64, base_commit=change.base_commit,
                                check_sha={first: "c" * 64, second: "d" * 64}, written=lambda _: False,
                                environment={}, again=again)

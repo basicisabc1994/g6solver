@@ -15,6 +15,8 @@ Development fixtures only: no model runs, and no test runs.
 """
 from __future__ import annotations
 
+from tests.evidence.observed_fixtures import issue_observed_records
+
 import ast
 from pathlib import Path
 
@@ -52,9 +54,9 @@ def test_finding_3_a_promoted_check_cannot_collide_with_the_generated_caveat_id(
                           check_id=caveat_id if field == "check_id" else "good-check", result="pass",
                           controls=(Control("control", "c" * 64, "R1", "g6", 2, True),), **common)
     bad = m.SourceRecord(record_id="failed-run", check_id="failed-check", result="fail", **common)
-    assert m.issue_records(facts, artifact, [good]).certificate.verified_predicates == ("R1",)
+    assert issue_observed_records(facts, artifact, [good]).certificate.verified_predicates == ("R1",)
     try:
-        got = m.issue_records(facts, artifact, [good, bad])
+        got = issue_observed_records(facts, artifact, [good, bad])
     except ValueError as exc:
         raise AssertionError("a generated caveat ID collided with an accepted source ID, aborting issuance") from exc
     assert got.refused and got.caveats
@@ -82,7 +84,7 @@ def test_an_accepted_id_spelled_as_a_caveat_s_id_never_stops_issuance(order, fie
     good = record(taken if field in ("record_id", "both") else "good-run",
                   taken if field in ("check_id", "both") else "good-check")
     bad = record("failed-run", "failed-check", "fail")
-    out = m.issue_records(FACTS, SUBJECT, [good, bad] if order == "accepted-first" else [bad, good])
+    out = issue_observed_records(FACTS, SUBJECT, [good, bad] if order == "accepted-first" else [bad, good])
     checks, receipts = ids(out)
     assert len(checks) == len(set(checks)) and len(receipts) == len(set(receipts))
     (rid, caveat), = out.caveats
@@ -94,7 +96,7 @@ def test_a_caveat_skips_every_accepted_id_it_would_try_and_two_caveats_never_sha
     tried = caveat_ids(0, "failed-run") + caveat_ids(1, "other-run")
     good = [record(f"good-{n}", taken, seq=3 + n) for n, taken in enumerate(tried)]
     bad = [record("failed-run", "failed-check", "fail", seq=9), record("other-run", "other-check", "fail", seq=10)]
-    out = m.issue_records(FACTS, SUBJECT, [*good, *bad])
+    out = issue_observed_records(FACTS, SUBJECT, [*good, *bad])
     checks, receipts = ids(out)
     assert len(checks) == len(set(checks)) and len(receipts) == len(set(receipts))
     made = [cid for _, cid in out.caveats]
@@ -103,13 +105,13 @@ def test_a_caveat_skips_every_accepted_id_it_would_try_and_two_caveats_never_sha
 
 
 def test_with_nothing_taken_a_caveat_keeps_the_id_it_always_had():
-    out = m.issue_records(FACTS, SUBJECT, [record("good-run", "good-check"), record("failed-run", "x", "fail")])
+    out = issue_observed_records(FACTS, SUBJECT, [record("good-run", "good-check"), record("failed-run", "x", "fail")])
     assert out.caveats == (("failed-run", m.id_of("caveat", 0, "failed-run")),)
 
 
 def test_the_caveat_and_its_ledger_entries_are_written_under_the_id_it_was_given():
     taken = caveat_ids(0, "failed-run")[0]
-    out = m.issue_records(FACTS, SUBJECT, [record("good-run", taken), record("failed-run", "failed-check", "fail")])
+    out = issue_observed_records(FACTS, SUBJECT, [record("good-run", taken), record("failed-run", "failed-check", "fail")])
     (_, caveat), = out.caveats
     assert out.ledger.get(m.PROVENANCE_KIND, caveat)["kept_as"] == "caveat"
     assert out.ledger.get("receipt", caveat)["result"] == "fail"
@@ -123,7 +125,7 @@ def test_a_bound_record_s_derived_check_id_stated_by_another_record_is_refused_n
                                         producer="agent", artefact_seq=1, author="reviewer", frozen_seq=0,
                                         environment_sha256="e" * 64, seq=3, scope="one input", controls=(CONTROL,))
     other = record("unbound", m.check_id_of(binding), author="someone else", seq=4)
-    out = m.issue_records(FACTS, SUBJECT, [bound, other])
+    out = issue_observed_records(FACTS, SUBJECT, [bound, other])
     assert [code for rid, found in out.refused for code, _ in found if rid == "unbound"] == [m.CONFLICTING]
     assert out.certificate.verified_predicates == ("R1",)
 

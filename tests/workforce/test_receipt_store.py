@@ -134,6 +134,9 @@ def _a_receipt_binds_the_run(repo, backend: str) -> None:
     assert body["result"] == {"verdict": rt.PASSED, "passed": 2, "failed": 0, "not_passed": 0, "total": 2,
                               "failed_ids": [], "completed": True, "degraded": False}
     assert body["ignored_inputs"] == {}
+    assert found["custody_receipt"] == found["receipt"]   # one host receipt serves both consumers
+    assert set(body["observed"]["checks"]) >= set(IDS)
+    assert all(body["observed"]["checks"][node]["result"] == "pass" for node in IDS)
     # lookup gives it back for the tree the run began on, and for nothing else
     assert receipt_store.lookup(found["receipt"], artifact_digest=artifact) == body
     assert receipt_store.lookup(found["receipt"], artifact_digest="0" * 64) is None

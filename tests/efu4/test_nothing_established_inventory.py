@@ -198,9 +198,20 @@ def _receipt(monkeypatch, tmp_path, raw):
     return receipt_store.counts_as_pass(body)
 
 
+def _custody(monkeypatch, tmp_path, raw):
+    """Host-store per-check evidence uses the same total report and loading decision."""
+    from g6.evidence.custody import _pytest_observation
+
+    (tmp_path / "test_calc.py").write_text("def test_add(): pass\n", encoding="utf-8")
+    observed = _pytest_observation(tmp_path, {}, {}, [NODE], raw)
+    return observed is not None and observed["checks"][NODE]["result"] in ("pass", "fail")
+
+
 #: Every place that states something of a run, with the sides it states (a pass, a failure) and the fields its clean
 #: report needs beyond the common ones.
 ROWS = {
+    "a host custody observation": (_custody, ("pass", "fail"), {
+        "loaded_complete": True, "loaded_outside": {}, "python_sources": ["test_calc.py"]}),
     "the stated checks' run": (_stated, ("pass", "fail"), {}),
     "another run that observed a stated check": (_observed, ("pass", "fail"), {}),
     "the run at the base commit as a control": (_control, ("fail",), {}),
@@ -318,6 +329,7 @@ def scan(root: Path) -> dict[tuple[str, str], set[str]]:
 #: Every function the scan finds, classified. A row of the matrix (``ROWS``) for each that states something of a run;
 #: for the others, why what they read states nothing.
 CLASSIFIED = {
+    ("evidence/custody.py", "_pytest_observation"): "a host custody observation",
     # the reader itself, and the producer
     ("workforce/repo_tests.py", "read_report"): "the one reader: decides every state from the whole report",
     ("workforce/repo_tests.py", "of"): "the reading's statement for a check, with whose code ran",

@@ -20,6 +20,8 @@ Development fixtures only: G6's test runs are replaced by recorded results, so n
 """
 from __future__ import annotations
 
+from tests.evidence.observed_fixtures import assess_observed
+
 import ast
 import time
 from pathlib import Path
@@ -29,7 +31,6 @@ import pytest
 
 import g6
 from g6.harness import patch_review as review
-from g6.harness import requirement_evidence as evidence
 from g6.workforce import repo_tests
 
 CHECK, NODE, OTHER = "test_calc.py", "test_calc.py::test_add", "test_calc.py::test_more"
@@ -65,7 +66,7 @@ def test_finding_1_unreadable_phase_is_unknown_and_cannot_kill_a_control(monkeyp
     deadline = time.monotonic() + 30
     review._at_base(change, [req], {node: node}, verdicts, deadline, [], runs, [], [])
     again = review._run_again(Path.cwd(), change, [req], {node: node}, verdicts, runs, deadline, "a" * 64)
-    got = evidence.assess([review._requirement(req, verdicts, {node: node})], runs,
+    got = assess_observed([review._requirement(req, verdicts, {node: node})], runs,
                           artifact="a" * 64, base_commit=change.base_commit,
                           check_sha={node: "c" * 64}, written=lambda _: False, environment={}, again=again)
     assert got["requirements"][0]["checked"] is False, "unreadable or partial phases were counted as evidence"
@@ -82,7 +83,7 @@ def test_finding_2_a_failed_test_with_missing_phases_is_not_lost_beside_a_passin
     verdicts = review._verdicts([check], ran)
     req = review.Requirement(id="R1", text="calculation is correct", checks=[check])
     evaluated = [review._requirement(req, verdicts, {check: check})]
-    got = evidence.assess(evaluated, [{"check": review.AT_BASE, "outcomes": {check: "failed"}}],
+    got = assess_observed(evaluated, [{"check": review.AT_BASE, "outcomes": {check: "failed"}}],
                           artifact="a" * 64, base_commit="0" * 40, check_sha={check: "c" * 64},
                           written=lambda _: False, environment={}, again={"verdicts": {check: "passed"}},
                           observed=[{"run": ["derived"], "verdicts": review._observed([check], ran)}])
@@ -129,7 +130,7 @@ def checked(monkeypatch, *, at_base: dict, on_patch: dict) -> bool:
     deadline = time.monotonic() + 30
     review._at_base(change, [req], norm, verdicts, deadline, [], runs, [], [])
     again = review._run_again(Path.cwd(), change, [req], norm, verdicts, runs, deadline, "a" * 64)
-    got = evidence.assess([review._requirement(req, verdicts, norm)], runs, artifact="a" * 64,
+    got = assess_observed([review._requirement(req, verdicts, norm)], runs, artifact="a" * 64,
                           base_commit=change.base_commit, check_sha={CHECK: "c" * 64}, written=lambda _: False,
                           environment={}, again=again)
     return got["requirements"][0]["checked"]
@@ -334,6 +335,7 @@ NOT_READ = {
     "loaded_outside": COPY, "loaded_complete": COPY, "submodules_not_hashed": COPY, "links_left_out": COPY,
     "links_materialised": COPY, "generated_copied": COPY, "generated_left_out": COPY,
     "receipt": RECEIPT, "receipt_withheld": RECEIPT, "receipt_error": RECEIPT, "ignored_inputs": RECEIPT,
+    "custody_receipt": "the host-store observation identity: ingestion resolves it; it states no test outcome",
     "ignored_loadable": RECEIPT,
     "baseline": "a replay's verdict at the base commit (run_before): _on_base reads it; it names no test",
     "patched": "a replay's verdict on the patch when it did not match its tests (run_before): _on_base reads it",

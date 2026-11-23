@@ -162,7 +162,25 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
                                 timeout_s=vs._bound(deadline - vs._clock()), **rooted, **binding)
             if ran.get(vs.NOT_THE_ARTEFACT_KEY):   # the executor refused a copy that is not the tree under review
                 result["tree_changed"] = ran.get("said", vs.NOT_THE_ARTEFACT)
-            return normal_reading(vs._guarded(change, ran, vs.reading(ran, node)))
+            reading = normal_reading(vs._guarded(change, ran, vs.reading(ran, node)))
+            # Only this host executor writes observations. The ingestion adapter only resolves them.
+            if (before is not None and not ran.get(vs.NOT_THE_ARTEFACT_KEY)
+                    and (ran.get("isolation") or {}).get("backend") and vs._to_a_result(reading)):
+                from g6.core.ledger import digest
+                from g6.evidence.custody import _record_case, run_environment
+
+                subject = ran.get("source_before") if at_base else artifact
+                if isinstance(subject, str) and subject:
+                    try:
+                        reading["custody_receipt"] = _record_case(artifact=subject,
+                            environment_sha256=digest(run_environment(ran)), checks={ident: {
+                                "sha256": one.check_sha256, "result": "pass" if reading["result"] == PASSED else "fail"}})
+                        reading["source_before"] = subject
+                    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+                        raise
+                    except (OSError, ValueError):
+                        reading["custody_receipt"] = ""
+            return reading
 
         on_the_patch: list[dict] = []
         step = "patch"

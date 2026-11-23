@@ -20,6 +20,8 @@ called.
 """
 from __future__ import annotations
 
+from tests.evidence.observed_fixtures import observed_report
+
 import subprocess
 import sys
 from pathlib import Path
@@ -77,11 +79,11 @@ class Runs:
         def execute(root, ids, *, timeout_s, change=None, roots=()):
             self.calls.append(("in_place", tuple(ids)))
             queue = given[tuple(ids)]
-            return queue.pop(0) if len(queue) > 1 else queue[0]
+            return observed_report(root, ids, queue.pop(0) if len(queue) > 1 else queue[0])
 
         def execute_at_base(change, ids, *, timeout_s, roots=()):
             self.calls.append(("base", tuple(ids)))
-            return at_base if at_base is not None else {"verdict": "not_run", "said": "no run was recorded",
+            return observed_report(change.repo, ids, at_base, subject="0" * 64) if at_base is not None else {"verdict": "not_run", "said": "no run was recorded",
                 'output': '', 'rootdir': '', 'test_outcomes': None,
                 'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
                 'omitted_ids': []}

@@ -56,6 +56,7 @@ from g6.evidence.certificate import (
     grounding,
 )
 from g6.evidence.mapping import SourceRecord, about, environment_sha256, id_of, issue_records
+from g6.evidence.custody import RunReference, resolve
 from g6.harness.patch_review import AT_BASE   # the review's run of the stated checks against the base commit's code
 from g6.harness.patch_review import at_base_observations, observation   # the one rule: a run read by phase
 
@@ -79,7 +80,8 @@ def observed_runs(observed: Sequence[Mapping[str, Any]] | None) -> list[dict]:
         parts = list(name) if isinstance(name, (list, tuple)) else [str(name)]
         verdicts = {str(check): str(said) for check, said in dict(one.get("verdicts") or {}).items()}
         if verdicts:
-            found.append({"run": parts, "verdicts": verdicts})
+            found.append({"run": parts, "verdicts": verdicts,
+                          **{key: one[key] for key in ("custody_receipt", "source_before") if key in one}})
     return found
 
 
@@ -105,6 +107,22 @@ def standard_sha256(evaluated: Sequence[Mapping[str, Any]]) -> str:
     return digest([{"id": req["id"], "text": req["text"], "kind": req.get("kind", "requirement"),
                     "provenance": req.get("provenance", "stated"), "checks": [c["id"] for c in req["checks"]]}
                    for req in evaluated])
+
+
+def _reference(run: Mapping[str, Any]) -> RunReference | None:
+    receipt, artifact = run.get("custody_receipt"), run.get("source_before")
+    return RunReference(receipt, artifact) if type(receipt) is str and type(artifact) is str else None
+
+
+def _execution(rec: SourceRecord, run: Mapping[str, Any]) -> SourceRecord:
+    """Keep the host reference, using only the stored observation's environment when it resolves."""
+    from dataclasses import replace
+
+    ref = _reference(run)
+    held = resolve(ref)
+    environment = held[0].get("environment_sha256") if held else None
+    return replace(rec, execution=ref, environment_sha256=environment if type(environment) is str
+                   else about(rec)[0].environment)
 
 
 def records_for(evaluated: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[str, Any]], *, artifact: str,
@@ -145,23 +163,26 @@ def records_for(evaluated: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[s
                          for rid in one["requirements"]
                          if kinds[rid] != "preserve" and at_base.get(check) == "failed" and sha)
         keeps = all(kinds[rid] == "preserve" for rid in one["requirements"]) and at_base.get(check) == "passed"
+        base = next((run for run in runs if run.get("check") == AT_BASE), {})
+        first = next((run for run in runs if run.get("tier") == 1), {})
         common = dict(kind=one["provenance"], predicates=tuple(one["requirements"]), artefact_sha256=artifact,
                       producer=PATCH_AUTHOR, artefact_seq=ARTEFACT, standard_sha256=standard, check_id=check,
                       check_sha256=sha, author=PATCH_AUTHOR if mine else REPOSITORY,
                       frozen_seq=ARTEFACT if mine else FROZEN, environment_sha256=environment_digest,
                       scope=f"the tests {check} names, on the working tree under review", controls=controls,
-                      positive_seq=base_run if keeps else None)
-        records.append(SourceRecord(record_id=id_of("stated-run", check),
-                                    result=_RESULT.get(str(one["observed"]), "unknown"), seq=RECEIPT, **common))
+                      positive_seq=base_run if keeps else None, positive=_reference(base) if keeps else None,
+                      control_runs=tuple((control.control_id, _reference(base)) for control in controls))
+        records.append(_execution(SourceRecord(record_id=id_of("stated-run", check),
+                                    result=_RESULT.get(str(one["observed"]), "unknown"), seq=RECEIPT, **common), first))
         if one["provenance"] != "stated":
             continue
         for at, run in enumerate(seen, start=RECEIPT + 1):   # each other run that observed it, in the order it ran
             if check in run["verdicts"]:
-                records.append(SourceRecord(record_id=id_of(*run["run"], check), seq=at,
-                                            result=_RESULT.get(run["verdicts"][check], "unknown"), **common))
+                records.append(_execution(SourceRecord(record_id=id_of(*run["run"], check), seq=at,
+                                            result=_RESULT.get(run["verdicts"][check], "unknown"), **common), run))
         if check in again_verdicts:
-            records.append(SourceRecord(record_id=id_of("again", check), seq=again_at,
-                                        result=_RESULT.get(str(again_verdicts[check]), "unknown"), **common))
+            records.append(_execution(SourceRecord(record_id=id_of("again", check), seq=again_at,
+                                        result=_RESULT.get(str(again_verdicts[check]), "unknown"), **common), again or {}))
     return facts, Artifact(artifact, PATCH_AUTHOR, ARTEFACT), records
 
 
@@ -339,6 +360,8 @@ def confirmed_evidence(standard: Any, results: Sequence[Mapping[str, Any]], *, a
                       artefact_seq=ARTEFACT, standard_sha256=standard.sha256, check_id=ident,
                       check_sha256=one.check_sha256, author=one.answered_by, frozen_seq=FROZEN,
                       environment_sha256=environment_digest, controls=controls,
+                      control_runs=tuple((control.control_id, _reference(runs.get("base") or {}))
+                                         for control in controls),
                       scope=f"the case the person confirmed ({one.scope}), on the working tree under review")
         for name, seq in (("patch", RECEIPT), ("again", CONFIRMED_AGAIN)):
             if name in runs:
@@ -348,8 +371,9 @@ def confirmed_evidence(standard: Any, results: Sequence[Mapping[str, Any]], *, a
                 if runs[name].get("result") in ("passed", "failed") and (
                         runs[name].get("result") != found.get("result")):
                     continue
-                records.append(SourceRecord(record_id=id_of("confirmed", name, ident), seq=seq,
-                                            result=_RESULT.get(str(runs[name].get("result")), "unknown"), **common))
+                records.append(_execution(SourceRecord(record_id=id_of("confirmed", name, ident), seq=seq,
+                                            result=_RESULT.get(str(runs[name].get("result")), "unknown"), **common),
+                                            runs[name]))
     if integrity:
         records = []
     try:

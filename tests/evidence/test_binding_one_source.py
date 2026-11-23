@@ -18,6 +18,8 @@ there is one, with a field that repeats a bound part and disagrees refused by th
 """
 from __future__ import annotations
 
+from tests.evidence.observed_fixtures import assess_observed, issue_observed_records
+
 import ast
 from dataclasses import fields, replace
 from pathlib import Path
@@ -70,9 +72,9 @@ def refused_codes(issued: m.Issued) -> list[str]:
 
 def test_finding_1_a_custody_binding_cannot_be_retargeted_by_its_redundant_fields():
     rec = bound()
-    assert m.issue_records(facts(), Artifact(A, "agent", 1), [rec]).certificate.verified_predicates == ("R1",)
+    assert issue_observed_records(facts(), Artifact(A, "agent", 1), [rec]).certificate.verified_predicates == ("R1",)
     retargeted = replace(rec, artefact_sha256=OTHER)
-    issued = m.issue_records(facts(), Artifact(OTHER, "agent", 1), [retargeted])
+    issued = issue_observed_records(facts(), Artifact(OTHER, "agent", 1), [retargeted])
     assert issued.certificate.verified_predicates == (), (
         "mapping counted a receipt whose custody binding names another artefact", issued.certificate.verified_predicates)
     assert m.BINDING_ARTEFACT in refused_codes(issued)
@@ -81,7 +83,7 @@ def test_finding_1_a_custody_binding_cannot_be_retargeted_by_its_redundant_field
 def test_finding_2_a_repeated_record_id_with_another_scope_and_environment_is_refused():
     rec = plain()
     clash = replace(rec, environment_sha256="f" * 64, scope="all inputs")
-    issued = m.issue_records(facts(), Artifact(A, "agent", 1), [rec, clash])
+    issued = issue_observed_records(facts(), Artifact(A, "agent", 1), [rec, clash])
     assert any(m.CONFLICTING in [code for code, _ in codes] for _, codes in issued.refused), (
         "same id silently replaced its provenance body", issued.refused, issued.ledger.get(m.PROVENANCE_KIND, "run"))
     kept = issued.ledger.get(m.PROVENANCE_KIND, "run")
@@ -89,7 +91,7 @@ def test_finding_2_a_repeated_record_id_with_another_scope_and_environment_is_re
 
 
 def test_finding_7_receipts_for_separate_bound_predicates_keep_their_own_results():
-    issued = m.issue_records(facts("R1", "R2"), Artifact(A, "agent", 1),
+    issued = issue_observed_records(facts("R1", "R2"), Artifact(A, "agent", 1),
                              [bound("R1", "pass", "run-R1", request_id="request-R1"),
                               bound("R2", "fail", "run-R2", request_id="request-R2")])
     states = [(s.support, s.refute) for s in issued.certificate.predicates]
@@ -158,7 +160,7 @@ def test_a_field_that_repeats_a_bound_part_with_another_value_is_refused_with_th
     changed = replace(rec, **{field_name: value})
     found = [c for c, _ in m.problems(changed, facts=facts("R1", "R2"), artifact=Artifact(A, "agent", 1))]
     assert found and found[0] == code, found
-    issued = m.issue_records(facts("R1", "R2"), Artifact(A, "agent", 1), [changed])
+    issued = issue_observed_records(facts("R1", "R2"), Artifact(A, "agent", 1), [changed])
     assert issued.promoted == () and code in refused_codes(issued)
     assert not any(s.support or s.refute for s in issued.certificate.predicates)
 
@@ -169,7 +171,7 @@ def test_a_binding_replaced_under_its_record_s_fields_is_refused_never_read_from
     rec = bound()
     value = {"request_id": "elsewhere", "task_id": "elsewhere", "predicate_id": "R2"}.get(part, "9" * 64)
     moved = replace(rec, binding=replace(rec.binding, **{part: value}))
-    issued = m.issue_records(facts("R1", "R2"), Artifact(A, "agent", 1), [moved])
+    issued = issue_observed_records(facts("R1", "R2"), Artifact(A, "agent", 1), [moved])
     assert issued.promoted == () and m.BINDING_CHECK in refused_codes(issued), issued.refused
 
 
@@ -177,7 +179,7 @@ def test_a_binding_that_does_not_read_as_one_is_refused():
     broken = replace(bound(), binding={"request_id": "request"})   # malformed: a dict where a binding belongs
     found = [c for c, _ in m.problems(broken, facts=facts(), artifact=Artifact(A, "agent", 1))]
     assert found[0] == m.BINDING_UNREADABLE
-    assert m.issue_records(facts(), Artifact(A, "agent", 1), [broken]).certificate.verified_predicates == ()
+    assert issue_observed_records(facts(), Artifact(A, "agent", 1), [broken]).certificate.verified_predicates == ()
 
 
 # --- one id, one record; one check id, one check --------------------------------------------------------------------
@@ -190,7 +192,7 @@ def test_a_binding_that_does_not_read_as_one_is_refused():
 ])
 def test_a_duplicate_record_id_differing_in_any_part_is_refused_and_the_first_stands(over):
     first = plain()
-    issued = m.issue_records(facts("R1", "R2"), Artifact(A, "agent", 1), [first, replace(first, **over)])
+    issued = issue_observed_records(facts("R1", "R2"), Artifact(A, "agent", 1), [first, replace(first, **over)])
     assert [rid for rid, _ in issued.refused] == ["run"] and refused_codes(issued) == [m.CONFLICTING], issued.refused
     assert issued.promoted == (("run", "independent_executable", "independent_executable"),)
     # slice 2's follow-up (review 4's finding 2): refusing a record never drops what it observed, so a duplicate that
@@ -201,7 +203,7 @@ def test_a_duplicate_record_id_differing_in_any_part_is_refused_and_the_first_st
 
 
 def test_the_same_record_twice_is_one_record():
-    issued = m.issue_records(facts(), Artifact(A, "agent", 1), [plain(), plain()])
+    issued = issue_observed_records(facts(), Artifact(A, "agent", 1), [plain(), plain()])
     assert issued.refused == () and len(issued.certificate.receipts) == 1
 
 
@@ -209,14 +211,14 @@ def test_two_predicates_sharing_an_unbound_check_id_are_never_merged():
     one = plain(record_id="r1")
     other = plain(record_id="r2", predicates=("R2",), result="fail", positive_seq=1,
                   controls=(Control("control-2", CODE, "R2", "g6", 2, True),))
-    issued = m.issue_records(facts("R1", "R2"), Artifact(A, "agent", 1), [one, other])
+    issued = issue_observed_records(facts("R1", "R2"), Artifact(A, "agent", 1), [one, other])
     assert [(rid, [c for c, _ in found]) for rid, found in issued.refused] == [("r2", [m.CONFLICTING])]
     states = {s.predicate: (s.support, s.refute) for s in issued.certificate.predicates}
     assert states == {"R1": (True, False), "R2": (False, False)}   # neither got the other's result
 
 
 def test_two_receipts_of_one_bound_check_are_one_check_with_both_receipts():
-    issued = m.issue_records(facts(), Artifact(A, "agent", 1), [bound(record_id="first"),
+    issued = issue_observed_records(facts(), Artifact(A, "agent", 1), [bound(record_id="first"),
                                                               bound(result="fail", record_id="later")])
     assert len(issued.certificate.checks) == 1 and len(issued.certificate.receipts) == 2
     statement = issued.certificate.predicates[0]
@@ -232,7 +234,7 @@ def test_a_bound_check_id_covers_every_part_of_its_binding():
 
 
 def test_the_provenance_kept_beside_a_receipt_survives_a_restart(tmp_path):
-    issued = m.issue_records(facts(), Artifact(A, "agent", 1), [bound()])
+    issued = issue_observed_records(facts(), Artifact(A, "agent", 1), [bound()])
     path = tmp_path / "ledger.jsonl"
     kept = ChainLedger(path)
     for entry in issued.ledger.entries():
@@ -244,11 +246,9 @@ def test_the_provenance_kept_beside_a_receipt_survives_a_restart(tmp_path):
 
 
 def test_the_patch_review_adapter_reads_each_refused_record_s_check_through_the_accessor():
-    from g6.harness import requirement_evidence
-
     req = {"id": "R1", "text": "t", "kind": "requirement", "provenance": "stated",
            "checks": [{"id": "tests/test_x.py::test_a", "provenance": "stated", "verdict": "passed"}]}
-    got = requirement_evidence.assess([req], [], artifact=A, base_commit="0" * 40, check_sha={},
+    got = assess_observed([req], [], artifact=A, base_commit="0" * 40, check_sha={},
                                       written=lambda _check: False, environment={})
     assert [(r["check"], r["record"]) for r in got["refused"]] == [("tests/test_x.py::test_a",
                                                                      m.id_of("stated-run", "tests/test_x.py::test_a"))]
@@ -334,6 +334,8 @@ PLACES: dict[tuple[str, str, str], tuple[str, str]] = {
     ("evidence/mapping.py", "SourceRecord.from_binding", "parts"): ("through", THROUGH),
     ("evidence/mapping.py", "problems", "parts"): ("through", THROUGH),
     ("evidence/mapping.py", "promote", "parts"): ("through", THROUGH),
+    ("evidence/mapping.py", "custody_problems", "parts"): (
+        "through", THROUGH + ": host custody resolves the exact check, subject, environment and standard"),
     ("evidence/mapping.py", "issue_records", "parts"): ("through", THROUGH),
     ("evidence/mapping.py", "_merged", "old"): ("other", ISSUER),
     ("evidence/mapping.py", "_merged", "new"): ("other", ISSUER),

@@ -16,6 +16,8 @@ called.
 """
 from __future__ import annotations
 
+from tests.evidence.observed_fixtures import assess_observed, observed_report
+
 import ast
 import hashlib
 import subprocess
@@ -107,11 +109,11 @@ def recorded(monkeypatch, calls: list[str], on_patch=None) -> None:
         calls.append("patch")
         if on_patch is not None:
             on_patch(len([c for c in calls if c == "patch"]))
-        return result(True)
+        return observed_report(root, ids, result(True))
 
     def at_base(change, ids, *, timeout_s, roots=()):
         calls.append("base")
-        return result(False)
+        return observed_report(change.repo, ids, result(False), subject="0" * 64)
 
     monkeypatch.setattr(patch_review, "_execute", execute)
     monkeypatch.setattr(patch_review, "_execute_at_base", at_base)
@@ -213,8 +215,8 @@ def test_an_integrity_problem_gives_the_issuer_nothing_to_count_and_the_report_s
     runs = [{"check": requirement_evidence.AT_BASE, "outcomes": {NODE: "failed"}}]
     common = {"artifact": "a" * 64, "base_commit": "0" * 40, "check_sha": {NODE: "c" * 64},
               "written": lambda _check: False, "environment": {}, "again": {"verdicts": {NODE: "passed"}}}
-    assert requirement_evidence.assess([req], runs, **common)["requirements"][0]["checked"] is True
-    got = requirement_evidence.assess([req], runs, integrity=["runner_configuration_changed"], **common)
+    assert assess_observed([req], runs, **common)["requirements"][0]["checked"] is True
+    got = assess_observed([req], runs, integrity=["runner_configuration_changed"], **common)
     found = got["requirements"][0]
     assert found["checked"] is False and got["certificate"]["receipts"] == [] and got["integrity"]
     assert "runner_configuration_changed" in found["not_counted"]

@@ -1,6 +1,7 @@
 """Class-by-class controls; all observations and models are local values."""
 import uuid
 import pytest
+from tests.evidence.observed_fixtures import issue_observed_records
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -34,7 +35,7 @@ def test_identity_from_rendering_and_generated_id_boundaries():
         taken = m.id_of("caveat", 0, FLAKY_FAIL.record_id)
         good = replace(DECISIVE, **{field: taken})
         for records in ([good, FLAKY_FAIL], [FLAKY_FAIL, good]):
-            got = m.issue_records(FACTS, SUBJECT, records)
+            got = issue_observed_records(FACTS, SUBJECT, records)
             assert len(got.refused) == len(got.caveats) == 1
             assert got.caveats[0][1] != taken
             assert got.certificate.predicates[0].caveats
@@ -103,7 +104,7 @@ def test_check_then_act_snapshot_detaches_mutable_inputs():
 
 
 def test_state_not_durable_ledger_round_trip(tmp_path):
-    issued = m.issue_records(FACTS, SUBJECT, [DECISIVE, FLAKY_FAIL])
+    issued = issue_observed_records(FACTS, SUBJECT, [DECISIVE, FLAKY_FAIL])
     path = tmp_path / "ledger.jsonl"
     writer = ChainLedger(path)
     for entry in issued.ledger.entries():
@@ -117,7 +118,7 @@ def test_state_not_durable_ledger_round_trip(tmp_path):
 
 def test_untrusted_fields_never_replace_an_unreadable_binding():
     lied = replace(FLAKY_FAIL, binding=m.UnreadableBinding("broken"))
-    out = m.issue_records(FACTS, SUBJECT, [DECISIVE, lied])
+    out = issue_observed_records(FACTS, SUBJECT, [DECISIVE, lied])
     assert out.refused and not out.caveats
     assert m.about(lied)[0].artefact == ""
     for binding in ({"broken": "binding"}, "not a binding", False, 1, []):
@@ -127,15 +128,15 @@ def test_untrusted_fields_never_replace_an_unreadable_binding():
 
 def test_refused_failures_for_every_code_and_no_caveat_lends_authority():
     for code, records in REFUSED.values():
-        out = m.issue_records(FACTS, SUBJECT, [DECISIVE, *records])
+        out = issue_observed_records(FACTS, SUBJECT, [DECISIVE, *records])
         assert code in {code for _, codes in out.refused for code, _ in codes}
         assert out.caveats and not out.certificate.predicates[0].verified
         assert not out.certificate.predicates[0].refute
     for over in ({"artefact_sha256": "b" * 64}, {"predicates": ("R2",)}):
-        out = m.issue_records(FACTS, SUBJECT, [DECISIVE, replace(FLAKY_FAIL, **over)])
+        out = issue_observed_records(FACTS, SUBJECT, [DECISIVE, replace(FLAKY_FAIL, **over)])
         assert out.refused and not out.caveats
         assert out.certificate.predicates[0].verified
-    out = m.issue_records(FACTS, SUBJECT, [DECISIVE, FLAKY_FAIL], not_believed="untrusted run")
+    out = issue_observed_records(FACTS, SUBJECT, [DECISIVE, FLAKY_FAIL], not_believed="untrusted run")
     assert len(out.refused) == 2 and not out.promoted
     assert out.certificate.predicates[0].caveats and not out.certificate.predicates[0].support
 
@@ -144,7 +145,7 @@ def test_view_gates_and_status_copy():
     for gate, (receipts, checks, held) in PLANTED.items():
         roles, statement = seen(*receipts, checks=checks, held=held)
         assert roles["planted"] == ("not counted", gate)
-    issued = m.issue_records(FACTS, SUBJECT, [DECISIVE, FLAKY_FAIL])
+    issued = issue_observed_records(FACTS, SUBJECT, [DECISIVE, FLAKY_FAIL])
     body = issued.certificate.as_dict()
     view = certificate_view(body, artifact_sha256=SUBJECT.sha256, ledger=issued.ledger)
     expected = {key: value for key, value in body["predicates"][0].items() if key != "predicate"}
@@ -171,6 +172,6 @@ def test_boundary_case_numeric_limits_and_empty_inputs():
         for wrong in (-1, sys.maxsize, sys.maxsize + 1):
             assert not repo_tests.read_report(report(PASSED, **{field: wrong})).valid
     assert not repo_tests.read_report({}).valid
-    assert m.issue_records(FACTS, SUBJECT, []).certificate.predicates[0].support is False
-    assert m.issue_records(FACTS, SUBJECT, [DECISIVE]).certificate.predicates[0].support is True
+    assert issue_observed_records(FACTS, SUBJECT, []).certificate.predicates[0].support is False
+    assert issue_observed_records(FACTS, SUBJECT, [DECISIVE]).certificate.predicates[0].support is True
 

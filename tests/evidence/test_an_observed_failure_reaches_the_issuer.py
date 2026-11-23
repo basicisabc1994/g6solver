@@ -16,6 +16,8 @@ Development fixtures only: no test runs, and no model runs.
 """
 from __future__ import annotations
 
+from tests.evidence.observed_fixtures import assess_observed, issue_observed_records
+
 import ast
 from dataclasses import replace
 from pathlib import Path
@@ -40,7 +42,7 @@ def test_finding_2_a_flaky_check_without_its_own_control_still_withholds_checked
     runs = [{"check": evidence.AT_BASE, "outcomes": {decisive: "failed", flaky: "passed"}}]
 
     def assess(later):
-        return evidence.assess(
+        return assess_observed(
             evaluated, runs, artifact="a" * 64, base_commit="0" * 40,
             check_sha={decisive: "c" * 64, flaky: "d" * 64}, written=lambda _: False,
             environment={"python": "recorded test run"}, again={"verdicts": {decisive: "passed"}},
@@ -121,7 +123,7 @@ REFUSED = {
 
 
 def issued(*records: m.SourceRecord, **kwargs) -> m.Issued:
-    return m.issue_records(FACTS, SUBJECT, [DECISIVE, *records], **kwargs)
+    return issue_observed_records(FACTS, SUBJECT, [DECISIVE, *records], **kwargs)
 
 
 def test_the_supporting_check_alone_is_verified():   # the positive control for every plant below

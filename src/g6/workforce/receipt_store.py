@@ -52,6 +52,7 @@ from pathlib import Path
 from time import monotonic, sleep
 
 from g6.core.ledger import LedgerError, ChainLedger, digest
+from g6.core.component_process import ContainmentFailure, ExecutionInterrupted
 from g6.core.outside import find_program
 from g6.core.storage import state_path
 
@@ -109,8 +110,9 @@ def _locked(path: Path) -> Iterator[None]:
 
 
 def _record(body: dict) -> str:
-    """Append ``body`` to the store and return its id. Private by convention: only ``repo_tests.run`` calls it, after
-    a confined run it watched. Raises ``OSError`` or ``ValueError`` (``g6.core.ledger.LedgerError``) when the receipt
+    """Append ``body`` to the store and return its id. Private by convention: host runner and checker adapters call
+    it after their own runs. Consumers distinguish receipt schemas before granting authority. Raises ``OSError`` or
+    ``ValueError`` (``g6.core.ledger.LedgerError``) when the receipt
     cannot be written; a store whose chain does not check out takes nothing further."""
     ident = receipt_id(body)
     path = store_path()
@@ -127,16 +129,20 @@ def check(receipt: str, *, artifact_digest: str) -> tuple[str, dict | None]:
     hashes to the id and whose run began on ``artifact_digest`` (its ``source_before``); ``("artifact_mismatch",
     None)`` when it holds such a receipt but ``artifact_digest`` is empty or another; ``("store_unreadable", None)``
     when the store is there but its chain does not check out (``RECOVERY``); ``("unknown", None)`` for anything else, a
-    missing store or an edited body included. Reads only: never raises, never writes."""
+    missing store or an edited body included. Reads only; execution-control signals still propagate."""
     try:
         path = store_path()
         if not (isinstance(receipt, str) and receipt and path.is_file()):
             return UNKNOWN, None
         ledger = ChainLedger(path)   # opening the ledger checks its whole chain
+    except (ExecutionInterrupted, ContainmentFailure):
+        raise
     except Exception:  # a store that cannot be read vouches for nothing
         return STORE_UNREADABLE, None
     try:
         body = ledger.get(KIND, receipt)
+    except (ExecutionInterrupted, ContainmentFailure):
+        raise
     except Exception:
         return UNKNOWN, None
     if receipt_id(body) != receipt:
@@ -180,7 +186,8 @@ def _executable(python: str) -> dict:
 
 
 def _body(*, started_at: str, finished_at: str, before: dict, after: dict, base_commit: str, python: str,
-          requested: list[str], found: dict, ignored: dict[str, str] | None = None) -> dict:
+          requested: list[str], found: dict, ignored: dict[str, str] | None = None,
+          observed: dict | None = None) -> dict:
     """A receipt's body (schema ``g6.test_receipt/1``) for one confined run: ``before`` and ``after`` are the run's
     ``repo_tests.snapshot`` before and after it, digested as the patch review digests its ``artifact_digest``;
     ``found`` is the run's result; ``ignored`` the git-ignored Python files G6 did not judge, path to SHA-256
@@ -204,7 +211,8 @@ def _body(*, started_at: str, finished_at: str, before: dict, after: dict, base_
             "ignored_inputs": dict(sorted((ignored or {}).items())),
             "repo_env": dict(found.get("repo_env") or {}), "env_set_by_g6": list(found.get("env_set_by_g6") or []),
             "result": {key: found.get(key) for key in ("verdict", "passed", "failed", "not_passed", "total",
-                                                       "failed_ids", "completed", "degraded")}}
+                                                       "failed_ids", "completed", "degraded")},
+            **({"observed": observed} if observed is not None else {})}
 
 
 def counts_as_pass(body: dict) -> bool:

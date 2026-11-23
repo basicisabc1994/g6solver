@@ -13,6 +13,8 @@ and no model is called.
 """
 from __future__ import annotations
 
+from tests.evidence.observed_fixtures import issue_observed_records, observed_report
+
 import re
 import subprocess
 import sys
@@ -76,10 +78,10 @@ def recorded(monkeypatch, in_place, at_base=None, default=None):
     def execute(root, ids, *, timeout_s, change=None, roots=()):
         got = in_place.get(tuple(ids), default)
         assert got is not None, f"no recorded result for {ids}"
-        return got
+        return observed_report(root, ids, got)
 
     def execute_at_base(change, ids, *, timeout_s, roots=()):
-        return at_base if at_base is not None else {"verdict": "not_run", "said": "no run was recorded",
+        return observed_report(change.repo, ids, at_base, subject="0" * 64) if at_base is not None else {"verdict": "not_run", "said": "no run was recorded",
             'output': '', 'rootdir': '', 'test_outcomes': None,
             'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
             'omitted_ids': []}
@@ -151,7 +153,7 @@ def test_the_adapter_records_what_g6_observed_in_the_order_it_observed_it():
     assert add.controls[0].killed and add.controls[0].generated_by == "g6" and add.positive_seq is None
     assert negative.controls == () and negative.positive_seq == 3   # behaviour to keep: the base is the reference
     assert negative.result == "fail" and facts.predicates == ("R1", "K1")
-    out = m.issue_records(facts, artefact, records)
+    out = issue_observed_records(facts, artefact, records)
     # the ledger holds what G6 observed in the order it observed it: the two first runs' receipts, then the run at the
     # base commit; the check of the behaviour to keep has no negative control, so the mapping refuses it, and (slice 2's
     # follow-up, review 4's finding 2) its failure still reaches the issuer as a caveat, at its own position

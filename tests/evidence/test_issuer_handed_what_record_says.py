@@ -14,6 +14,8 @@ repair 2; review 2's findings 1 and 7; class ``guard_covers_less_than_it_guards`
 """
 from __future__ import annotations
 
+from tests.evidence.observed_fixtures import issue_observed_records
+
 import ast
 import inspect
 from dataclasses import fields, replace
@@ -56,9 +58,9 @@ def codes_of(issued: m.Issued) -> list[str]:
 def test_finding_1_two_controls_with_one_id_inside_one_record_are_refused_never_collapsed():
     uncaught = control(killed=False)
     killed = replace(uncaught, killed=True)
-    assert m.issue_records(facts(), SUBJECT, [plain(controls=(uncaught,))]).certificate.verified_predicates == ()
-    assert m.issue_records(facts(), SUBJECT, [plain(controls=(killed,))]).certificate.verified_predicates == ("R1",)
-    issued = m.issue_records(facts(), SUBJECT, [plain(controls=(uncaught, killed))])
+    assert issue_observed_records(facts(), SUBJECT, [plain(controls=(uncaught,))]).certificate.verified_predicates == ()
+    assert issue_observed_records(facts(), SUBJECT, [plain(controls=(killed,))]).certificate.verified_predicates == ("R1",)
+    issued = issue_observed_records(facts(), SUBJECT, [plain(controls=(uncaught, killed))])
     assert issued.certificate.verified_predicates == (), (
         "conflicting controls with one id were collapsed to the last, killed=True body", issued.refused)
     assert codes_of(issued) == [m.CONFLICTING] and issued.promoted == ()
@@ -67,9 +69,9 @@ def test_finding_1_two_controls_with_one_id_inside_one_record_are_refused_never_
 
 
 def test_finding_7_a_record_s_artefact_position_must_be_the_artefact_s_own():
-    assert m.issue_records(facts(), SUBJECT, [plain()]).certificate.verified_predicates == ("R1",)
+    assert issue_observed_records(facts(), SUBJECT, [plain()]).certificate.verified_predicates == ("R1",)
     inconsistent = plain(artefact_seq=4)   # the receipt at 3 on an artefact the record says only existed at 4
-    issued = m.issue_records(facts(), SUBJECT, [inconsistent])
+    issued = issue_observed_records(facts(), SUBJECT, [inconsistent])
     assert issued.certificate.verified_predicates == (), (
         "issuance silently substituted Artifact.seq for the contradictory position in the source record",
         issued.refused)
@@ -77,7 +79,7 @@ def test_finding_7_a_record_s_artefact_position_must_be_the_artefact_s_own():
 
 
 def test_the_same_control_twice_inside_one_record_is_one_control():
-    issued = m.issue_records(facts(), SUBJECT, [plain(controls=(control(), control()))])
+    issued = issue_observed_records(facts(), SUBJECT, [plain(controls=(control(), control()))])
     assert issued.refused == () and issued.certificate.verified_predicates == ("R1",)
 
 
@@ -91,7 +93,7 @@ def test_the_same_control_twice_inside_one_record_is_one_control():
 ])
 def test_each_value_the_issuer_is_handed_beside_a_record_is_checked_against_the_record(issuer_side, over):
     rec = plain(**over)
-    issued = m.issue_records(facts(), SUBJECT, [rec])
+    issued = issue_observed_records(facts(), SUBJECT, [rec])
     assert issued.promoted == () and issued.certificate.verified_predicates == ()
     field_name = next(iter(over))
     expected = next(code for side, _, record_field, code in m.ISSUER_SIDE
@@ -102,10 +104,10 @@ def test_each_value_the_issuer_is_handed_beside_a_record_is_checked_against_the_
 def test_a_producer_the_record_names_otherwise_is_refused_whichever_way_it_would_have_gone():
     # the record says its check is independent of the producer it names; the artefact's producer wrote it
     hidden = plain(author="agent", producer="someone else")
-    assert codes_of(m.issue_records(facts(), SUBJECT, [hidden])) == [m.OTHER_PRODUCER]
+    assert codes_of(issue_observed_records(facts(), SUBJECT, [hidden])) == [m.OTHER_PRODUCER]
     # and the other way: the mapping would call it self-authored by a producer the artefact does not have
     other = plain(author="someone else", producer="someone else")
-    assert codes_of(m.issue_records(facts(), SUBJECT, [other])) == [m.OTHER_PRODUCER]
+    assert codes_of(issue_observed_records(facts(), SUBJECT, [other])) == [m.OTHER_PRODUCER]
 
 
 # --- one id, one body: each id kind, inside one record, across two, and across calls --------------------------------
@@ -115,7 +117,7 @@ def test_a_control_id_given_another_body_by_another_record_is_refused_even_when_
     beside = control(control_id="beside", check_sha="9" * 64)   # a control for other code: the check does not use it
     first = plain(record_id="r1", controls=(control(), beside))
     second = plain(record_id="r2", result="pass", controls=(control(), replace(beside, killed=False)))
-    issued = m.issue_records(facts(), SUBJECT, [first, second])
+    issued = issue_observed_records(facts(), SUBJECT, [first, second])
     assert [rid for rid, _ in issued.refused] == ["r2"] and codes_of(issued) == [m.CONFLICTING]
 
 
@@ -126,7 +128,7 @@ def test_each_id_kind_with_two_bodies_across_two_records_is_refused_and_the_firs
               "control": plain(record_id="r2", controls=(control(seq=1),)),
               "check": plain(record_id="r2", check_sha256="9" * 64, controls=(control(control_id="k2",
                                                                                       check_sha="9" * 64),))}[kind]
-    issued = m.issue_records(facts(), SUBJECT, [first, second])
+    issued = issue_observed_records(facts(), SUBJECT, [first, second])
     assert codes_of(issued) == [m.CONFLICTING], issued.refused
     assert issued.certificate.verified_predicates == ("R1",)   # the first record stands
 
@@ -145,13 +147,13 @@ def test_each_id_kind_with_two_bodies_inside_one_record_is_refused(kind):
                                             environment_sha256=ENV, seq=3, scope="one input", controls=(control(),))
         rec = replace(bound, check_id="check")   # its field gives the bound check another id
         expected = m.BINDING_CHECK
-    issued = m.issue_records(facts(), SUBJECT, [rec])
+    issued = issue_observed_records(facts(), SUBJECT, [rec])
     assert issued.promoted == () and codes_of(issued) == [expected]
 
 
 def test_ids_from_two_calls_meet_only_in_a_ledger_both_are_written_to_and_it_refuses_the_second_body(tmp_path):
-    one = m.issue_records(facts(), SUBJECT, [plain()])
-    two = m.issue_records(facts(), SUBJECT, [plain(controls=(control(seq=1),))])
+    one = issue_observed_records(facts(), SUBJECT, [plain()])
+    two = issue_observed_records(facts(), SUBJECT, [plain(controls=(control(seq=1),))])
     assert one.ledger.get("control", "control")["seq"] == 2 and two.ledger.get("control", "control")["seq"] == 1
     kept = ChainLedger(tmp_path / "ledger.jsonl")
     for entry in one.ledger.entries():

@@ -1,10 +1,10 @@
 """Local review fixtures; runner calls are fakes and start no processes."""
 import time
+from tests.evidence.observed_fixtures import assess_observed
 from pathlib import Path
 from types import SimpleNamespace
 
 from g6.harness import patch_review as review
-from g6.harness import requirement_evidence as evidence
 
 NODE = "test_calc.py::test_add"
 CHECK = NODE
@@ -33,7 +33,7 @@ def assess_runs(monkeypatch, base, patch, observed=()):
     review._at_base(change, [req], {CHECK: CHECK}, verdicts, deadline, [], runs, [], [])
     again = review._run_again(Path.cwd(), change, [req], {CHECK: CHECK}, verdicts,
                               runs, deadline, "a" * 64)
-    return evidence.assess(
+    return assess_observed(
         [review._requirement(req, verdicts, {CHECK: CHECK})], runs,
         artifact="a" * 64, base_commit=change.base_commit,
         check_sha={CHECK: "c" * 64}, written=lambda _: False,
