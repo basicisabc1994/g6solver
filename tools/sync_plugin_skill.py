@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from g6.skills.install import KEPT, MARKER, MISSING, install_files, with_records
+from g6.skills.install import KEPT, MARKER, MISSING, install_files, recover_installs, source_files, with_records
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src" / "g6" / "skills" / "using-g6"
@@ -23,8 +23,13 @@ BUNDLE_SHIPPED = ROOT / "plugins/g6/vendor/langextract"
 
 
 def _files(folder: Path, *, source: bool, whole: bool = False) -> dict[str, Path]:
-    found = ([folder / "SKILL.md", *(folder / "references").rglob("*")]
-             if source and not whole else list(folder.rglob("*")))
+    if source:
+        if not folder.exists():
+            return {}
+        files = source_files(folder)
+        return {name: path for name, path in files.items()
+                if name != MARKER and (whole or name == "SKILL.md" or name.startswith("references/"))}
+    found = list(folder.rglob("*"))
     return {p.relative_to(folder).as_posix(): p for p in found if p.is_file() and "__pycache__" not in p.parts
             and p.relative_to(folder).as_posix() != MARKER}
 
@@ -48,12 +53,14 @@ def problems(source: Path = SOURCE, shipped: Path = SHIPPED, *, whole: bool = Fa
 
 def write(source: Path = SOURCE, shipped: Path = SHIPPED, *, whole: bool = False) -> str:
     """Copy the source, replacing only an unchanged earlier G6 installation."""
+    recover_installs(shipped)
     files = _files(source, source=True, whole=whole)
     if whole and not files:
         raise FileNotFoundError(f"{MISSING}: source bundle is missing or empty")
     if whole:
         files = with_records(files, source)
-    code = install_files(files, shipped)
+    identity = f"plugin/{'bundle' if whole else 'guide'}/{source.name}"
+    code = install_files(files, shipped, skill_id=identity)
     detail = "left as is; personal or edited skill" if code == KEPT else "installed"
     print(f"{shipped.name}: {code}: {detail}")
     return code

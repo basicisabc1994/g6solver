@@ -65,8 +65,16 @@ def _superpowers_plugin(home: Path) -> bool:
 
 
 def _skills(args: argparse.Namespace) -> int:
+    from g6.skills.install import KEPT, install_files, recover_installs, source_files, with_records
+
+    if args.skills_cmd == "install":
+        dest = (Path.home() if args.user else Path.cwd()) / f".{args.client}" / "skills"
+        try:
+            recover_installs(dest, children=True)
+        except OSError as exc:
+            print(f"G6_SKILL_INSTALL_FAILED: {exc}", file=sys.stderr)
+            return 1
     from g6.core import skills
-    from g6.skills.install import KEPT, install_files, source_files, with_records
 
     components = {c: skills.skill_name(c) for c in skills.components_with_skills()}
     vendored = skills.vendored()
@@ -108,7 +116,8 @@ def _skills(args: argparse.Namespace) -> int:
             files = source_files(sources[name])
             if name in vendored:
                 files = with_records(files, vendored[name].parent)
-            code = install_files(files, target)
+            identity = (f"vendor/{vendored[name].parent.name}/{name}" if name in vendored else f"g6/{name}")
+            code = install_files(files, target, skill_id=identity)
         except OSError as exc:
             print(f"{name}: G6_SKILL_INSTALL_FAILED: {exc}", file=sys.stderr)
             failed = True

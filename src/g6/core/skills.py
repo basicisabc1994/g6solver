@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 
 from g6.core.registry import get_registry
+from g6.skills.install import unique_destinations
 
 GUIDE = "using-g6"
 #: The sections every component's skill has, in this order (D7, FW-01); ``tests/core/test_component_skills.py`` holds
@@ -105,8 +106,10 @@ def vendored(source: str | None = None) -> dict[str, Path]:
     for root in roots:
         for directory in sorted(root.iterdir()):
             if (directory / "SKILL.md").is_file():
-                if directory.name in found:
-                    raise ValueError(f"duplicate vendored skill: {directory.name}")
+                try:
+                    unique_destinations([*found, directory.name])
+                except ValueError as exc:
+                    raise ValueError(f"G6_SKILL_DUPLICATE_DESTINATION: duplicate vendored skill {directory.name!r}") from exc
                 found[directory.name] = directory
     return found
 

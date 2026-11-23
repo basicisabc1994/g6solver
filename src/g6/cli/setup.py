@@ -102,6 +102,15 @@ STEPS: tuple[Callable[[argparse.Namespace, Ask, Say], int], ...] = (isolation,)
 
 
 def main(args: argparse.Namespace, *, ask: Ask = input, say: Say = print) -> int:
+    from pathlib import Path
+    from g6.skills.install import recover_installs
+
+    for client in dict.fromkeys(getattr(args, "client", [])):
+        try:
+            recover_installs(Path.home() / f".{client}" / "skills", children=True)
+        except OSError as exc:
+            say(f"G6_SKILL_INSTALL_FAILED: {exc}")
+            return 1
     for step in STEPS:
         code = step(args, ask, say)
         if code:
