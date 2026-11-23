@@ -29,7 +29,8 @@ import re
 import time
 from typing import Any
 
-from g6.core.door import blocked_reply, card, door_envelope
+from g6.core.door import card, door_envelope
+from g6.mcp.consent_controls import blocked_reply
 from g6.core.ledger import digest
 from g6.core.storage import state_path
 from g6.harness import behaviour_question as bq
@@ -70,7 +71,14 @@ def bound(reply: Any, identity: str | None) -> Any:
 
     if identity is None or not isinstance(reply, dict) or not isinstance(reply.get("assessment"), dict):
         return reply
-    return BoundReply(reply, identity)
+    from g6.core import cloud_consent as cloud
+    from g6.mcp.consent_controls import producer_reply
+
+    reply = producer_reply(reply)
+    _, refs, metadata = cloud.freeze_output(reply)
+    return cloud.bind_output(BoundReply(reply, identity),
+                             refs if refs is not None else cloud.current_sources() or (cloud.UNKNOWN,),
+                             metadata=metadata)
 
 
 def identity_of(repo: str, task: str) -> str | None:

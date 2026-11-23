@@ -38,7 +38,8 @@ def register(server: Any, context_type: Any, jobs: Any) -> None:
         standing. Show both answers and the model name. A substitute never passes a requirement or becomes evidence.
         """
         from g6._agentic import decode, kernel
-        from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, is_allowed
+        from g6.core.door import SENSITIVE_ENV, allowed_sensitive, is_allowed
+        from g6.mcp.consent_controls import blocked_reply, refused_send, producer_reply
         from g6.mcp.consent_controls import public_instructions
 
         allow = allowed_sensitive()
@@ -47,21 +48,23 @@ def register(server: Any, context_type: Any, jobs: Any) -> None:
                 "[G6_E_SENSITIVE_COMPONENT_DENIED] agentic.run is not allowed: an override runs G6's code again with a "
                 "model standing in for part of it. Only the person who runs this server can allow it, by adding "
                 f"agentic.run to {SENSITIVE_ENV} where the server is registered. Host/endpoint calls still require "
-                "the existing consent check (remote consent or local admission); process callers use the code's allowance."))
+                "the existing consent check (remote consent or local admission); process callers use the code's allowance.", public=True))
         try:   # the client's text, bounded in size and depth before it is decoded
             params = decode.loads(params_json or "{}", max_chars=PARAMS_CHARS)
         except decode.Undecodable as exc:
-            return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not decoded: {exc}")
+            return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not decoded: {exc}", public=True)
         if not isinstance(params, dict):
-            return blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object")
+            return blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", public=True)
         prepared = await asyncio.to_thread(partial(kernel.prepare, component, op, params, part=part or None,
                                                    mode=mode, reason=reason, allow=allow))
         if not isinstance(prepared, kernel.Pending):
             card = prepared.get("warning_card") if isinstance(prepared.get("warning_card"), dict) else {}
             if card.get("code") == "G6_E_SENSITIVE_COMPONENT_DENIED" and "original" not in prepared:
-                return public_instructions(prepared)
+                return refused_send(public_instructions(prepared), code='G6_E_SENSITIVE_COMPONENT_DENIED')
+            if prepared.get('ok') is False and card.get('code'):
+                return refused_send(prepared, code=card['code'])
             return prepared
-        return jobs.start(lambda: kernel.override(prepared))
+        return producer_reply(jobs.start(lambda: producer_reply(kernel.override(prepared))))
 
     g6_agentic_run.__annotations__["ctx"] = context_type
     g6_agentic_run._g6_declaration = TOOLS["g6_agentic_run"]

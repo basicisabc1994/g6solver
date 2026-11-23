@@ -80,14 +80,15 @@ def _learning(state: dict) -> dict:
 
 def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
     """One step of the loop, for a job over MCP: see the module's docstring."""
-    from g6.core.door import blocked_reply
+    from g6.mcp.consent_controls import blocked_reply
     from g6.core.reliability_envelope import envelope_fields, warning_card
     from g6.harness import completion_hook, completion_loop as loop
     from g6.workforce import repo_tests
     from g6.workspace._envelope import WorkspaceRefused
 
     if not task.strip() or not session.strip():
-        return blocked_reply("[G6_E_INPUT_VALIDATION] a task and a session are needed: name one session for one task")
+        return blocked_reply("[G6_E_INPUT_VALIDATION] a task and a session are needed: name one session for one task",
+                             public=True)
     folder = completion_hook.folder(f"mcp:{session}")
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     request_id = uuid.uuid4().hex[:12]
@@ -96,12 +97,14 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
             asked = _asked(repo, task, base, folder)
         done = loop.advance(asked["repo"], asked["task"], asked["base"], folder, said=reason, answered=bool(reason.strip()))
     except repo_tests.RepoRefused as exc:
-        return blocked_reply(f"[{exc.code}] {exc}", request_id=request_id)
+        return blocked_reply(f"[{exc.code}] {exc}", request_id=request_id, public=exc.code == 'G6_E_INPUT_VALIDATION')
     except WorkspaceRefused:
         done = loop.Step(loop.WAIT, loop.ALREADY_RUNNING, loop.BUSY)
     if done.action == loop.WAIT:      # the step that is running owns the state, so nothing of it is read here
-        return {**blocked_reply(f"[{done.code}] {done.text}", request_id=request_id), "run_id": folder.name,
-                "action": done.action}
+        from g6.mcp.consent_controls import refused_send
+
+        return refused_send({**blocked_reply(f"[{done.code}] {done.text}", request_id=request_id, public=True),
+                             "run_id": folder.name, "action": done.action}, code=done.code)
     state = loop._load(folder)
     evidence = _evidence(state, asked["base"])
     text = done.text or loop.read_report(folder, state)
@@ -131,20 +134,21 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
 def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
     """Retain the run's saved origins; never rebind old report content to the current request."""
     from g6.core.cloud_consent import Source, bind_output, repository_source, freeze_output
-    from g6.core.door import blocked_reply
+    from g6.mcp.consent_controls import blocked_reply
+    from g6.mcp.consent_controls import public_instructions, refused_send
     from g6.harness import completion_loop
     from g6.workforce import repo_tests
     try:
         repo = str(repo_tests.admit_folder(repo))
     except repo_tests.RepoRefused as exc:
-        return blocked_reply(f"[{exc.code}] {exc}")
+        return blocked_reply(f"[{exc.code}] {exc}", public=True)
     result = _step(repo, task, session, base, reason)
     if str(result.get('error', '')).startswith('[G6_E_INPUT_VALIDATION]'):
-        return result
+        # This branch is a fresh caller-input refusal, not a retained report.
+        return refused_send(public_instructions(result), code='G6_E_INPUT_VALIDATION')
     if result.get('action') == completion_loop.WAIT:
         # The running step owns the state. This reply contains only fresh host
         # envelope fields and the fixed busy message; do not load its report.
-        from g6.mcp.consent_controls import public_instructions
         return public_instructions(result)
     from g6.core.cloud_consent import REQUIRED, current_capture, input_source
     capture = current_capture()

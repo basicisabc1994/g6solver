@@ -41,12 +41,13 @@ HOLDS = ("every field of the review: each requirement's status, assessment.compl
 def review(repo: str | os.PathLike, **kwargs: Any) -> dict:
     """``review_patch`` for a job over MCP: what it lets reach an enclosing door is named here, for a job has none."""
     from g6.core import component_process
-    from g6.core.door import blocked_reply
+    from g6.mcp.consent_controls import blocked_reply
     from g6.core.stop import STOPPED
     from g6.harness.patch_review import review_patch
+    from g6.mcp.consent_controls import producer_reply
 
     try:
-        return review_patch(repo, **kwargs)
+        return producer_reply(review_patch(repo, **kwargs))
     except component_process.ExecutionInterrupted as exc:
         if exc.stopped:
             return refused_send(blocked_reply(f"[{STOPPED}] the patch review was stopped before it finished: {exc}"),
@@ -202,7 +203,7 @@ def finish(reply: Any, job_id: str) -> Any:
         return reply
     from g6.core import cloud_consent as cloud
     from g6.core.storage import g6_home
-    body, refs, _ = cloud.freeze_output(reply)
+    body, refs, metadata = cloud.freeze_output(reply)
     # the reply's task binding (review_binding.BoundReply) goes with the copy, so save writes it
     custody = getattr(reply, "custody", None)
     try:
@@ -222,7 +223,7 @@ def finish(reply: Any, job_id: str) -> Any:
         recorded = carried(job_id)
         refs = tuple(dict.fromkeys((*refs, *recorded))) if recorded is not None else (*refs, cloud.Source.text(
             cloud.repository_source(g6_home() / 'reviews'), 'assessment-location', saved))
-    return cloud.bind_output(compact(reply, job_id, saved), refs)
+    return cloud.bind_output(compact(reply, job_id, saved), refs, metadata=metadata)
 
 
 __all__ = ["BUDGET", "SOURCES", "carried", "compact", "finish", "record", "review", "save"]

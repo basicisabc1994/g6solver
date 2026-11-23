@@ -5,7 +5,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from g6.core.compose import Stage, compose
-from g6.core.door import blocked_reply, door_envelope
+from g6.core.door import door_envelope
+from g6.mcp.consent_controls import blocked_reply, refused_send
 
 
 class StageInput(BaseModel):
@@ -30,8 +31,11 @@ def compose_reply(payload: dict, *, allow_sensitive: frozenset[str] = frozenset(
         result = pipeline.infer(request.inputs).value
         envelope = door_envelope(result["completion_state"], who="composition", value=result,
                                  evidence=result["evidence"], warning_card=result["warning_card"])
-        return {**result, **envelope}
+        reply = {**result, **envelope}
+        if reply.get('ok') is False:
+            return refused_send(reply, code=envelope['warning_card']['code'])
+        return reply
     except ValidationError:
-        return blocked_reply("[G6_E_INPUT_VALIDATION] composition needs stages and inputs; unknown fields refused")
+        return blocked_reply("[G6_E_INPUT_VALIDATION] composition needs stages and inputs; unknown fields refused", public=True)
     except (ValueError, KeyError, TypeError) as exc:
         return blocked_reply(str(exc))

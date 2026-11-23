@@ -75,10 +75,10 @@ def refusal(consent: Consent, *, nothing: str = "No change was made.") -> dict:
     """The one refusal for a dialog that ended without a person's agreement: a code for each way it ended, what did not
     happen (``nothing``), and what the person can do."""
     from g6.metaharness import schema
-    from g6.metaharness.api import _blocked
+    from g6.mcp.consent_controls import blocked as _blocked
 
     codes = {"declined": schema.CONSENT_DECLINED, "cancelled": schema.CONSENT_CANCELLED,
              "unavailable": schema.CONSENT_NO_DIALOG, "invalid": schema.CONSENT_NO_NAME}
     message, can = CAN[consent.status]
     return _blocked(codes[consent.status], message, f"{nothing} {can}",
-                    consent_status=consent.status, consent_error_type=consent.error_type)
+                    consent_status=consent.status, consent_error_type=consent.error_type, public=True)

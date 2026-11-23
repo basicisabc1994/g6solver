@@ -105,14 +105,14 @@ def input_refusal(tool: str, fields, *, arguments=None, session=None) -> dict:
 
     Only published field names and G6's program text are returned; no argument value is read back.
     """
-    from g6.core.door import blocked_reply
+    from g6.mcp.consent_controls import blocked_reply, refused_send, public_instructions
     from g6.mcp.repair import observe
 
-    reply = blocked_reply('[G6_E_INPUT_VALIDATION] Undeclared tool argument; use only the declared arguments.')
+    reply = blocked_reply('[G6_E_INPUT_VALIDATION] Undeclared tool argument; use only the declared arguments.', public=True)
     reply = observe(tool, arguments, reply, session)
     if reply.get('repair') is not None and reply['repair']['by'] == 'agent':
         reply['repair']['fill'] = sorted(fields)
-    return reply
+    return refused_send(public_instructions(reply), code='G6_E_INPUT_VALIDATION')
 
 
 def input_error_result(tool: str, fields, *, arguments=None, session=None):
@@ -172,7 +172,7 @@ async def request_grant(ctx: Any, source: str, provider: str, *, description: st
 
 
 def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unknown', sources=(), session=None):
-    from g6.core.door import blocked_reply
+    from g6.mcp.consent_controls import blocked_reply, refused_send
     from g6.core.ledger import digest
     result = result if isinstance(result, dict) else {}
     control = dict(metadata or {})
@@ -182,6 +182,22 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
     empty_result = control.pop('empty_result', None)
     review_provider = control.pop('review_provider', '')
     has_report, has_text = control.pop('has_report', False), control.pop('has_text', False)
+    if code == 'G6_E_INPUT_VALIDATION':
+        # Only the producer's bound host control selects this case. Private
+        # diagnostics remain withheld; an input refusal needs no sharing grant.
+        from g6.mcp.repair import block
+
+        refused = {**blocked_reply(
+            '[G6_E_INPUT_VALIDATION] G6 refused the tool arguments. Check the arguments and call again; '
+            'no source content was returned.', public=True), **control}
+        refused['repair'] = block('', refused)
+        if job is not None and job.get('digest') == digest(result):
+            if job['status'] == 'completed':
+                refused = {'ok': True, 'job_id': job['job_id'], 'status': 'completed', 'result': refused,
+                           'repair': refused['repair']}
+            else:
+                refused.update(job_id=job['job_id'], status=job['status'])
+        return policy.bind_output(refused, (), metadata={'error_code': code, **control})
     message = ('Results were withheld from a source not shared with this provider. Tell the person. ' +
                policy.withheld_message(provider, sources).removeprefix(policy.WITHHELD).lstrip())
     refused = {**blocked_reply(f'[{code}] {message}'), **control}
@@ -199,10 +215,10 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
             recipient = f' to {review_provider}' if _PROVIDER.fullmatch(review_provider) else ''
             refused.update(action='stop', ending='untested', report=f'The review was not sent{recipient}. ' + message)
         if job['status'] == 'completed':
-            return {'ok': True, 'job_id': job['job_id'], 'status': 'completed', 'result': refused,
-                    'repair': refused['repair']}
-        return {**refused, 'job_id': job['job_id'], 'status': job['status']}
-    return refused
+            return refused_send({'ok': True, 'job_id': job['job_id'], 'status': 'completed', 'result': refused,
+                                 'repair': refused['repair']}, code=code)
+        return refused_send({**refused, 'job_id': job['job_id'], 'status': job['status']}, code=code)
+    return refused_send(refused, code=code)
 
 
 def protect_reply(ctx: Any, result: dict, sources, *, supplied=(), job=None, record=True) -> dict:
@@ -323,7 +339,7 @@ def install(server) -> None:
 
 
 def register(server, context_type):
-    from g6.core.door import blocked_reply
+    from g6.mcp.consent_controls import blocked_reply
     from g6.core.reliability_envelope import envelope_fields, warning_card
     from g6.mcp.consent_controls import public_instructions
 
@@ -332,7 +348,7 @@ def register(server, context_type):
             result = operation()
         except (LLMError, ValueError, RecursionError, MemoryError):
             return public_instructions(blocked_reply(
-                f'[{policy.STATE_UNAVAILABLE}] Sharing state is unavailable; no sharing was authorized.'))
+                f'[{policy.STATE_UNAVAILABLE}] Sharing state is unavailable; no sharing was authorized.', public=True))
         capture = policy.current_capture()
         if isinstance(result, dict) and capture is not None and capture.client is not None \
                 and capture.client[0] == 'cloud:unknown':

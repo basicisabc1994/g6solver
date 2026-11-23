@@ -132,7 +132,8 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
     ``allow_sensitive`` (by default ``G6_MCP_SENSITIVE``) lists it or its component. A component whose block takes a
     model (``__g6_model__``) is given the one the person configured, built once for the call; with none configured,
     nothing is passed."""
-    from g6.core.door import blocked_reply, invoke_checked
+    from g6.core.door import invoke_checked
+    from g6.mcp.consent_controls import blocked_reply, refused_send
 
     request_id = uuid.uuid4().hex[:12]
     try:
@@ -141,9 +142,9 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
         except (RecursionError, MemoryError):
             raise ValueError("a JSON record exceeds decoder limits") from None
     except json.JSONDecodeError as exc:
-        return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id)
+        return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id, public=True)
     if not isinstance(params, dict):
-        return blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id)
+        return blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id, public=True)
     allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
     from g6.core.consent_registry import GuardedRegistry
     from g6.core.registry import ComponentRegistry, get_registry
@@ -166,7 +167,10 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
         sensitive = getattr(module, '__g6_sensitive_ops__', ())
         if op in sensitive and not _allowed(component, op, allow):
             from g6.mcp.consent_controls import public_instructions
-            return public_instructions(reply)
+            return refused_send(public_instructions(reply), code='G6_E_SENSITIVE_COMPONENT_DENIED')
+    if reply.get('ok') is False:
+        # This envelope was minted by invoke_checked, not supplied as result data.
+        return refused_send(reply, code=reply['warning_card']['code'])
     return reply
 
 
@@ -272,14 +276,14 @@ def build_server(surface: Any = None) -> Any:
         """Run explicit stages with input mappings (caller.field or 0.field). Strict contracts and honest evidence.
         JSON contains stages [{component, op, inputs?, params?}] and inputs {field: value}. No Python code."""
         from g6.mcp.composition import compose_reply
-        from g6.core.door import blocked_reply
+        from g6.mcp.consent_controls import blocked_reply
         try:
             try:
                 payload = json.loads(composition_json)
             except (RecursionError, MemoryError):
                 raise ValueError("a JSON record exceeds decoder limits") from None
         except json.JSONDecodeError:
-            return blocked_reply("[G6_E_INPUT_VALIDATION] composition_json must be JSON")
+            return blocked_reply("[G6_E_INPUT_VALIDATION] composition_json must be JSON", public=True)
         return compose_reply(payload, allow_sensitive=allowed_sensitive())
 
     _metaharness_tools(server, surface, Context)
@@ -294,6 +298,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     """The meta-harness tools (META_HARNESS_PLAN.md Phase 6): additive, the Python API's envelopes as JSON. Approval
     and rollback ask the person through the client (MCP elicitation); the agent never supplies the approver."""
     from g6.metaharness.surface import Surface
+    from g6.mcp.consent_controls import producer_reply
 
     mh = surface or Surface()
     from g6.metaharness.jobs import Jobs
@@ -378,9 +383,9 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         qualified-draft. A refusal is blocked-escalated with no outcome. Test receipts are kept in a file owned by the
         same user as G6: they stop a caller from claiming that G6 ran a test, not a program running as that user. merge
         is always requires_separate_approval; nothing is merged. This is sensitive; the person must allow it themselves. Tell the person."""
-        from g6.core.door import blocked_reply
+        from g6.mcp.consent_controls import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):
-            return public_instructions(blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it"))
+            return public_instructions(blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it", public=True))
         from g6.harness.question_store import StoreUnreadable
         from g6.mcp import behaviour, workflow
         from g6.mcp.review_reply import finish, review
@@ -391,11 +396,11 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             return blocked_reply(str(exc))
         # what the person confirmed for this task (g6_confirm_behaviour), read from G6's store, never an argument, and
         # read when the review executes, so an answer given while it waits is the one enforced
-        return jobs.start(lambda: behaviour.reviewed(
+        return producer_reply(jobs.start(lambda: behaviour.reviewed(
             review, repo, task, requirements=requirements or [], tests=tests or [], claim=claim, sources=sources,
             base=base, expected_artifact_digest=expected_artifact_digest, timeout_s=timeout_s, intent=intent,
             proposed_checks=proposed_checks, template_instances=template_instances, search=search,
-            import_roots=import_roots or []), compact=workflow.finishing(finish, repo, task, intent))
+            import_roots=import_roots or []), compact=workflow.finishing(finish, repo, task, intent)))
 
     @server.tool()
     def g6_review_until_clean(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
@@ -423,14 +428,14 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         repository, task and base commit, and a call for another repository or task is refused. A later call's base is not
         read, so a commit you make does not move it. Needs a boundary (g6 doctor says what this computer needs) and G6_LOOP_CRITIC=codex in the person's key file, which approves their Codex sign-in. The line
         G6_LOOP_MODE=scouts, or no critic and G6_LLM_PROVIDER=claude_code, runs the scouts' loop here instead. This is sensitive; the person must allow it themselves. Tell the person."""
-        from g6.core.door import blocked_reply
+        from g6.mcp.consent_controls import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):
             return public_instructions(blocked_reply(f"{_DENIED} g6_review_until_clean runs repository code and tests a model wrote; the host "
-                                 "must allow it, with patch_review.review"))
+                                 "must allow it, with patch_review.review", public=True))
         from g6.mcp.review_loop import step
 
         from g6.mcp import workflow
-        return jobs.start(lambda: workflow.stepped(step, repo, task, session, base, reason))
+        return producer_reply(jobs.start(lambda: workflow.stepped(step, repo, task, session, base, reason)))
 
     def session(ctx: Any) -> str:
         return str(getattr(ctx, "session_id", None) or id(getattr(ctx, "session", ctx)))
@@ -441,14 +446,14 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         """Create a data-only Python application workflow: name, task with {input}, cases [{input, expected}],
         baseline_code {main.py: source defining solve(task)}, check (exact/contains/number), tolerance, seed.
         Does not confirm or execute it. Below 30 held-out cases is exploration only."""
-        from g6.core.door import blocked_reply
+        from g6.mcp.consent_controls import blocked_reply
         try:
             try:
-                return mh.start(json.loads(specification_json))
+                return producer_reply(mh.start(json.loads(specification_json)))
             except (RecursionError, MemoryError):
                 raise ValueError("a JSON record exceeds decoder limits") from None
         except json.JSONDecodeError:
-            return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json must be JSON")
+            return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json must be JSON", public=True)
 
     async def metaharness_confirm(workflow: str, workflow_digest: str, ctx: Any) -> dict:
         """Confirm the frozen task, checks, split and baseline: the person answers in the client's dialog, bound to the
@@ -459,9 +464,9 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
 
         held = mh.harness(workflow)
         if isinstance(held, dict):
-            return held
+            return producer_reply(held)
         if held.workflow.digest() != workflow_digest:
-            return workflow_changed()
+            return producer_reply(workflow_changed())
         # The binding: the digest, which covers every other field shown, and what it covers that the person reads.
         bound = {"Workflow": workflow, "Workflow digest": workflow_digest, "Task": held.workflow.task,
                  "Development cases": len(held.workflow.suite.dev), "Held-out cases": len(held.workflow.suite.held_out)}
@@ -472,51 +477,51 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         if consent.status != "accepted":
             return consent_refusal(consent)
         # checked again holding the workspace's lock, immediately before it is recorded, and the digest recorded
-        return mh.confirm(workflow, bound["Workflow digest"], answer=consent.answer)
+        return producer_reply(mh.confirm(workflow, bound["Workflow digest"], answer=consent.answer))
 
     def metaharness_propose_code(workflow: str, files_json: str, hypothesis: str, ctx: Any) -> dict:
         """Propose generated application code as {filename.py: source}, with a falsifiable hypothesis.
         Stores content by digest; does not edit the evaluator or activate the candidate."""
-        from g6.core.door import blocked_reply
+        from g6.mcp.consent_controls import blocked_reply
         try:
             files = json.loads(files_json)
             if not isinstance(files, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in files.items()):
                 raise ValueError("files must map filenames to source strings")
-            return mh.propose_code(workflow, files, hypothesis=hypothesis, session=session(ctx))
+            return producer_reply(mh.propose_code(workflow, files, hypothesis=hypothesis, session=session(ctx)))
         except (ValueError, TypeError, RecursionError, MemoryError) as exc:
             if isinstance(exc, (RecursionError, MemoryError)):
                 exc = ValueError("a JSON record exceeds decoder limits")
-            return blocked_reply(f"[G6_E_INPUT_VALIDATION] {exc}")
+            return blocked_reply(f"[G6_E_INPUT_VALIDATION] {exc}", public=True)
 
     def runs_code(op: str) -> dict | None:
         """The refusal of a tool that runs a workflow's code, unless the host lists ``metaharness.<op>`` (or
         ``metaharness``) in G6_MCP_SENSITIVE (the security review of W1-W5, F2)."""
         if _allowed("metaharness", op, allowed_sensitive()):
             return None
-        from g6.core.door import blocked_reply
+        from g6.mcp.consent_controls import blocked_reply
         return public_instructions(blocked_reply(f"{_DENIED} metaharness.{op} runs the workflow's code. "
-                             "The person must allow it themselves. Tell the person and stop."))
+                             "The person must allow it themselves. Tell the person and stop.", public=True))
 
     def metaharness_evaluate_start(workflow: str, proposal_digest: str) -> dict:
         """Start a bounded evaluation job. Poll metaharness_job for its result; no approval is implied. It runs the
         workflow's code: this is sensitive; the person must allow it themselves. Tell the person."""
-        return runs_code("evaluate_start") or jobs.start(lambda: mh.evaluate(workflow, proposal_digest))
+        return runs_code("evaluate_start") or producer_reply(jobs.start(lambda: producer_reply(mh.evaluate(workflow, proposal_digest))))
 
     def metaharness_job(job_id: str, detail: str = "compact") -> dict:
         """Read a process-local job's pending/running/completed/failed status and retained result. A finished
         g6_review_patch or g6_mission_submit job replies compactly by default: assessment.report first, then the outcome, the reasons, the
         next actions, the unknowns, the merge authorisation, and in full_assessment where the full assessment is (a
         file under G6's state folder); detail="full" returns the full assessment instead. Other jobs reply in full."""
-        return jobs.status(job_id, detail)
+        return producer_reply(jobs.status(job_id, detail))
 
     def metaharness_run(workflow: str, task_input: str) -> dict:
         """Run the currently approved application version on new input as a job. It runs the workflow's code:
         this is sensitive; the person must allow it themselves. Tell the person."""
-        return runs_code("run") or jobs.start(lambda: mh.run(workflow, task_input))
+        return runs_code("run") or producer_reply(jobs.start(lambda: producer_reply(mh.run(workflow, task_input))))
 
     def metaharness_inspect(workflow: str) -> dict:
         """A declared workflow's versions, confirmations, evaluations and decisions."""
-        return mh.inspect(workflow)
+        return producer_reply(mh.inspect(workflow))
 
     def metaharness_propose(workflow: str, ctx: Any, profile_json: str = "", proposer: str = "") -> dict:
         """A candidate profile (``profile_json``: acting fields only), or with none, the declared search space's
@@ -527,25 +532,25 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             except (RecursionError, MemoryError):
                 raise ValueError("a JSON record exceeds decoder limits") from None
         except json.JSONDecodeError as exc:
-            from g6.metaharness.api import _blocked
+            from g6.mcp.consent_controls import blocked as _blocked
 
-            return _blocked("G6_E_META_SCHEMA", f"profile_json is not JSON: {exc}")
-        return mh.propose(workflow, session=session(ctx), profile=profile, proposer=proposer)
+            return _blocked("G6_E_META_SCHEMA", f"profile_json is not JSON: {exc}", public=True)
+        return producer_reply(mh.propose(workflow, session=session(ctx), profile=profile, proposer=proposer))
 
     def metaharness_evaluate(workflow: str, proposal_digest: str) -> dict:
         """Measure a candidate against the active version on the held-out split (paired, compute-matched). It runs the
         workflow's code: this is sensitive; the person must allow it themselves. Tell the person."""
-        return runs_code("evaluate") or mh.evaluate(workflow, proposal_digest)
+        return runs_code("evaluate") or producer_reply(mh.evaluate(workflow, proposal_digest))
 
     def metaharness_decide(workflow: str, report_digest: str, proposal_digest: str) -> dict:
         """The meta-gate's decision: recommend (qualified-draft at best), refuse or block, with a G6_E_META_* code.
         A decision that is not recommend carries ``recovery``: why, and what can be done next. Tell your user."""
-        return mh.decide(workflow, report_digest, proposal_digest)
+        return producer_reply(mh.decide(workflow, report_digest, proposal_digest))
 
     def metaharness_diagnose(workflow: str) -> dict:
         """Recovery and root cause: why the active version fails on the dev split, and what can be done next (G6
         components to try as candidates, and what only your user can unblock). Changes nothing."""
-        return mh.diagnose(workflow)
+        return producer_reply(mh.diagnose(workflow))
 
     async def metaharness_approve(workflow: str, decision_digest: str, ctx: Any) -> dict:
         """Present digest-bound client-mediated consent, including in the proposing session.
@@ -553,21 +558,21 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         who = session(ctx)
         refused, question = mh.approval_check(workflow, decision_digest, session=who)
         if refused is not None:
-            return refused
+            return producer_reply(refused)
         consent = await request_consent(ctx, question)
         if consent.status != "accepted":
             return consent_refusal(consent)
-        return mh.approve(workflow, decision_digest, session=who, answer=consent.answer)
+        return producer_reply(mh.approve(workflow, decision_digest, session=who, answer=consent.answer))
 
     async def metaharness_rollback(workflow: str, version: int, ctx: Any) -> dict:
         """Ask the person, through the client, to move back to a version they approved."""
         refused, question, binding = mh.rollback_check(workflow, version)
         if refused is not None:
-            return refused
+            return producer_reply(refused)
         consent = await request_consent(ctx, question)
         if consent.status != "accepted":
             return consent_refusal(consent)
-        return mh.rollback(workflow, version, answer=consent.answer, binding=binding)
+        return producer_reply(mh.rollback(workflow, version, answer=consent.answer, binding=binding))
 
     def g6_premortem(repo: str, task: str, intent: dict | None = None) -> dict:
         """Before the work: what done would mean and how the task can fail, with no model call and nothing run, from
@@ -628,9 +633,9 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             if consent.status != "accepted":
                 return refusal(consent, nothing="Nothing was recorded.")
             who = consent.answer
-        return jobs.start(lambda: mission.create(found["name"], objective, lines=lines, who=who, module=module,
+        return producer_reply(jobs.start(lambda: mission.create(found["name"], objective, lines=lines, who=who, module=module,
                                                  function=function, helpers=helpers, risk=risk,
-                                                 budget_cents=budget_cents))
+                                                 budget_cents=budget_cents)))
 
     def g6_mission_clarify(mission_id: str, replay_semantics: str) -> dict:
         """Answer the one question a mission on retries or duplicates asks before its standard is frozen, from
@@ -639,7 +644,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         the person must allow it themselves. Tell the person. Returns a job: poll metaharness_job."""
         from g6.mcp import mission
 
-        return mission.refused() or jobs.start(lambda: mission.clarify(mission_id, replay_semantics))
+        return mission.refused() or producer_reply(jobs.start(lambda: mission.clarify(mission_id, replay_semantics)))
 
     async def g6_mission_confirm(mission_id: str, ctx: Any) -> dict:
         """Ask the person, in the client's own dialog, to confirm the frozen standard of what counts as done. Only the
@@ -662,7 +667,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         consent = await request_consent(ctx, question)
         if consent.status != "accepted":
             return refusal(consent, nothing="Nothing was recorded.")
-        return jobs.start(lambda: mission.confirm(mission_id, lines, sha, consent.answer))
+        return producer_reply(jobs.start(lambda: mission.confirm(mission_id, lines, sha, consent.answer)))
 
     def g6_mission_submit(mission_id: str, repo: str, claim: str = "", timeout_s: int = 300) -> dict:
         """Check your change in repo, the repository's folder, against the frozen standard. G6 never writes code: you
@@ -680,8 +685,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         the person's own decision. This is sensitive; the person must allow it themselves. Tell the person."""
         from g6.mcp import mission
 
-        return mission.refused() or jobs.start(
-            lambda: mission.submit(mission_id, repo, claim=claim, timeout_s=timeout_s), compact=mission.finish)
+        return mission.refused() or producer_reply(jobs.start(
+            lambda: mission.submit(mission_id, repo, claim=claim, timeout_s=timeout_s), compact=mission.finish))
 
     def g6_mission_status(mission_id: str, detail: str = "summary") -> dict:
         """A mission's state, what it waits for and its result; detail="full" adds every step, check and receipt.

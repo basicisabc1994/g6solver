@@ -50,9 +50,9 @@ def _ok(result: dict[str, Any], sources: tuple[cloud.Source, ...], evidence: lis
 
 
 def _refused(code: str, reason: str) -> dict:
-    from g6.core.door import blocked_reply
+    from g6.mcp.consent_controls import blocked_reply
 
-    return cloud.bind_output(blocked_reply(f"[{code}] {reason}"), ())
+    return blocked_reply(f"[{code}] {reason}", public=True)
 
 
 def _guarded(fn: Any) -> Any:

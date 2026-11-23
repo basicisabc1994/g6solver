@@ -6,7 +6,8 @@ import json
 from pydantic import ValidationError
 from returns.result import Success
 
-from g6.core.door import blocked_reply, door_reply, is_allowed
+from g6.core.door import door_reply, is_allowed
+from g6.mcp.consent_controls import blocked_reply
 from g6.harness import outcome_history
 from g6.harness.outcome_history import LETS_THROUGH
 from g6.learning_history.block import HistoryInput
@@ -45,7 +46,7 @@ async def forget_reply(ctx, params_json: str, *, allow: frozenset[str]) -> dict:
             close='Type your name to erase it, or decline. Identity is recorded as supplied, not authenticated.')
         answer = await consent.request_consent(ctx, asked)
         if answer.status != 'accepted':
-            return {'ok': False, **consent.refusal(answer, nothing='No learning history was removed.')}
+            return consent.refusal(answer, nothing='No learning history was removed.')
         await asyncio.to_thread(outcome_history.forget, root, history.repository, expected=expected)
         return door_reply('learning_history', 'forget', Success({
             'repository_id': history.repository, 'forgotten': True,

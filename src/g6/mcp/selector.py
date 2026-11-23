@@ -35,9 +35,10 @@ def register(server: Any) -> None:
         from g6.core.selector import select
         from pathlib import Path
         from g6.harness.outcome_history import read
+        from g6.mcp.consent_controls import producer_reply
 
-        return select(task, phase, last_outcome, considering, limit, rerank, request_id=uuid.uuid4().hex[:12],
-                      run_id="", _history=lambda: read(Path.cwd()))
+        return producer_reply(select(task, phase, last_outcome, considering, limit, rerank,
+                                     request_id=uuid.uuid4().hex[:12], run_id="", _history=lambda: read(Path.cwd())))
 
     g6_select._g6_declaration = TOOLS["g6_select"]
     server.tool()(g6_select)

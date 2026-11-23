@@ -30,7 +30,6 @@ from typing import Any
 from g6.core import cloud_consent as cloud, git_env
 from g6.core.door import (
     allowed_sensitive,
-    blocked_reply,
     card,
     corrected_result,
     door_envelope,
@@ -44,7 +43,7 @@ from g6.harness.patch_review import DEFECT, INTEGRITY
 from g6.intent_engine import IntentElicitor
 from g6.invariants import ERROR_CODE_PATTERN
 from g6.mcp import review_reply
-from g6.mcp.consent_controls import host_controls, public_instructions
+from g6.mcp.consent_controls import blocked_reply, host_controls, public_instructions
 from g6.reliability_pipeline import premortem as checklist
 from g6.workforce import acceptance, api, bench, coding, repo_tests
 
@@ -105,7 +104,7 @@ def refused() -> dict | None:
         return None
     return public_instructions(blocked_reply(
         f"[G6_E_SENSITIVE_COMPONENT_DENIED] {WHO} runs the repository's code. "
-        "The person must allow it themselves. Tell the person and stop."))
+        "The person must allow it themselves. Tell the person and stop.", public=True))
 
 
 def _here(value: Any) -> Any:
@@ -137,6 +136,8 @@ def reply(found: dict, *, control_id: str | None = None) -> dict:
     state = envelope["completion_state"]
     value = {"ok": state != "blocked-escalated", **corrected_result(_here(found), state), **envelope}
     controls = {"request_id": envelope["request_id"]}
+    if state == "blocked-escalated":
+        controls['error_code'] = shown['code']
     # Only the explicit producer callsite knows whether a handle is host-minted
     # or was literally supplied by this client. Result field names establish neither.
     if control_id is not None:
@@ -147,7 +148,9 @@ def reply(found: dict, *, control_id: str | None = None) -> dict:
 
 
 def _refusal(said: str, code: str = REFUSED) -> dict:
-    return _here(blocked_reply(f"[{code}] {said}"))
+    from g6.mcp.consent_controls import refused_send
+
+    return refused_send(_here(blocked_reply(f"[{code}] {said}")), code=code)
 
 
 def _guarded(work: Callable[[], dict]) -> dict:
@@ -341,7 +344,12 @@ def submit(mission_id: str, repo: str, *, claim: str = "", timeout_s: int = 300)
 def finish(found: Any, job_id: str) -> Any:
     """What ``metaharness_job`` returns for a finished submission: the review's compact reply, and the mission's."""
     shown = review_reply.finish(found, job_id)
-    return {**shown, "mission": found["mission"]} if isinstance(found, dict) and "mission" in found else shown
+    if not isinstance(found, dict) or "mission" not in found:
+        return shown
+    _, refs, metadata = cloud.freeze_output(shown)
+    original = cloud.output_sources(found)
+    refs = cloud.boundary_sources(carried=(*(refs if refs is not None else (cloud.UNKNOWN,)), *(original or ())))
+    return cloud.bind_output({**shown, "mission": found["mission"]}, refs, metadata=metadata)
 
 
 def status(mission_id: str, detail: str = "summary") -> dict:
