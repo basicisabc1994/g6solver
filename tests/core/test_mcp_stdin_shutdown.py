@@ -9,7 +9,7 @@ import textwrap
 import pytest
 
 
-def _connection_process(state, *, wrapped=False, reply=False):
+def _connection_process(state, *, wrapped=False, reply=False, utf8_mode=True):
     child = textwrap.dedent('''
         import os
         import sys
@@ -53,9 +53,12 @@ def _connection_process(state, *, wrapped=False, reply=False):
         anyio.run(run)
         print("CONNECTION_ENDED", file=sys.stderr, flush=True)
     ''')
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() not in ("PYTHONUTF8", "PYTHONIOENCODING")}
     process = subprocess.Popen(
-        [sys.executable, "-B", "-X", "utf8", "-c", child, str(wrapped), str(reply), state],
-        env=dict(os.environ, G6_CLAUDE=r"C:\nonexistent\g6-no-host.exe",
+        [sys.executable, "-B", *(["-X", "utf8"] if utf8_mode else []),
+         "-c", child, str(wrapped), str(reply), state],
+        env=dict(env, G6_CLAUDE=r"C:\nonexistent\g6-no-host.exe",
                  G6_CODEX=r"C:\nonexistent\g6-no-host.exe"),
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
@@ -84,15 +87,17 @@ def _connection_process(state, *, wrapped=False, reply=False):
 
 
 class TestConnectionProcessExit:
+    @pytest.mark.parametrize("utf8_mode", [False, True], ids=["default_encoding", "utf8_mode"])
     @pytest.mark.parametrize("wrapped", [False, True], ids=["stdin", "wrapped_pipe"])
     @pytest.mark.parametrize("state", ["open", "closed", "mid_line"])
-    def test_failed_writer_exits_with_any_input_state(self, state, wrapped):
-        exited, code, _, diagnostic = _connection_process(state, wrapped=wrapped)
+    def test_failed_writer_exits_with_any_input_state(self, state, wrapped, utf8_mode):
+        exited, code, _, diagnostic = _connection_process(state, wrapped=wrapped, utf8_mode=utf8_mode)
         assert "CONNECTION_ENDED" in diagnostic, diagnostic
         assert exited and code == 0, f"stdin={state}: exited={exited}, code={code}\n{diagnostic}"
 
-    def test_complete_reply_is_flushed_before_exit_with_stdin_open(self):
-        exited, code, output, diagnostic = _connection_process("open", reply=True)
+    @pytest.mark.parametrize("utf8_mode", [False, True], ids=["default_encoding", "utf8_mode"])
+    def test_complete_reply_is_flushed_before_exit_with_stdin_open(self, utf8_mode):
+        exited, code, output, diagnostic = _connection_process("open", reply=True, utf8_mode=utf8_mode)
         assert output.endswith(b"\n"), (output, diagnostic)
         assert json.loads(output) == {"jsonrpc": "2.0", "id": 7, "result": {"text": "x" * 1000}}
         assert "CONNECTION_ENDED" in diagnostic, diagnostic
@@ -100,8 +105,9 @@ class TestConnectionProcessExit:
 
 
 class TestStdinShapes:
+    @pytest.mark.parametrize("utf8_mode", [False, True], ids=["default_encoding", "utf8_mode"])
     @pytest.mark.parametrize("shape", ["pipe", "no_fileno", "unsupported", "closed", "oserror"])
-    def test_failed_writer_ends_connection_and_process(self, shape):
+    def test_failed_writer_ends_connection_and_process(self, shape, utf8_mode):
         child = textwrap.dedent('''
             import io
             import os
@@ -172,9 +178,11 @@ class TestStdinShapes:
                 os.close(client_fd)
                 inner.close()
         ''')
+        env = {key: value for key, value in os.environ.items()
+               if key.upper() not in ("PYTHONUTF8", "PYTHONIOENCODING")}
         process = subprocess.Popen(
-            [sys.executable, "-B", "-X", "utf8", "-c", child, shape],
-            env=dict(os.environ, G6_CLAUDE=r"C:\nonexistent\g6-no-host.exe",
+            [sys.executable, "-B", *(["-X", "utf8"] if utf8_mode else []), "-c", child, shape],
+            env=dict(env, G6_CLAUDE=r"C:\nonexistent\g6-no-host.exe",
                      G6_CODEX=r"C:\nonexistent\g6-no-host.exe"),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
@@ -232,7 +240,8 @@ def test_raw_input_refuses_invalid_utf8_and_keeps_following_lines():
     assert anyio.run(run) == ["ValidationError", "ValidationError", 2]
 
 
-def test_raw_input_keeps_long_utf8_lines_and_all_text_line_endings():
+@pytest.mark.parametrize("utf8_mode", [False, True], ids=["default_encoding", "utf8_mode"])
+def test_raw_input_keeps_long_utf8_lines_and_all_text_line_endings(utf8_mode):
     """Framing must preserve split UTF-8, CRLF, lone CR, LF and an unterminated final request."""
     child = textwrap.dedent('''
         import json
@@ -262,9 +271,12 @@ def test_raw_input_keeps_long_utf8_lines_and_all_text_line_endings():
                                    (3, "ping", "\n"), (4, "ping", "")):
         payload += (json.dumps({"jsonrpc": "2.0", "id": ident, "method": method}, ensure_ascii=False)
                     + ending).encode("utf-8")
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() not in ("PYTHONUTF8", "PYTHONIOENCODING")}
     result = subprocess.run(
-        [sys.executable, "-B", "-X", "utf8", "-c", child], input=payload, capture_output=True, timeout=5,
-        env=dict(os.environ, G6_CLAUDE=r"C:\nonexistent\g6-no-host.exe",
+        [sys.executable, "-B", *(["-X", "utf8"] if utf8_mode else []), "-c", child],
+        input=payload, capture_output=True, timeout=5,
+        env=dict(env, G6_CLAUDE=r"C:\nonexistent\g6-no-host.exe",
                  G6_CODEX=r"C:\nonexistent\g6-no-host.exe"),
     )
     assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")

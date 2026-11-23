@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """A native console reader must preserve Unicode and let a failed writer end the process."""
+import os
 import subprocess
 import sys
 import textwrap
@@ -9,8 +10,9 @@ import pytest
 
 @pytest.mark.skipif(sys.platform != "win32", reason="CPython native Windows console")
 @pytest.mark.parametrize("finish", ["eof", "broken_writer"])
-@pytest.mark.parametrize("warm", [False, True], ids=["fresh", "raw_utf8_tail"])
-def test_native_console_unicode_and_shutdown(finish, warm):
+@pytest.mark.parametrize("warm", ["fresh", "raw_utf8_tail", "text_cache"])
+@pytest.mark.parametrize("utf8_mode", [False, True], ids=["default_encoding", "utf8_mode"])
+def test_native_console_unicode_and_shutdown(finish, warm, utf8_mode):
     child = textwrap.dedent(r'''
         import ctypes
         import msvcrt
@@ -42,7 +44,7 @@ def test_native_console_unicode_and_shutdown(finish, warm):
         kernel.WriteConsoleInputW.restype = wintypes.BOOL
         handle = msvcrt.get_osfhandle(source.fileno())
         payload = '{"jsonrpc":"2.0","id":73,"method":"p\u00e9\u20ac"}\r'
-        if sys.argv[2] == "True":
+        if sys.argv[2] != "fresh":
             payload = "\u00e9\r" + payload
         records = (Record * len(payload))()
         for record, char in zip(records, payload):
@@ -51,8 +53,11 @@ def test_native_console_unicode_and_shutdown(finish, warm):
         written = wintypes.DWORD()
         assert kernel.WriteConsoleInputW(handle, records, len(records), ctypes.byref(written))
         assert written.value == len(records)
-        if sys.argv[2] == "True":
+        if sys.argv[2] == "raw_utf8_tail":
             assert source.buffer.raw.read(1) == b"\xc3"
+        elif sys.argv[2] == "text_cache":
+            assert source.read(1) == "\u00e9"
+            assert source.read(1) == "\n"
 
         class Output:
             async def write(self, data):
@@ -65,7 +70,7 @@ def test_native_console_unicode_and_shutdown(finish, warm):
         async def run():
             with anyio.fail_after(5):
                 async with stdio_server(stdout=Output()) as (incoming, outgoing):
-                    if sys.argv[2] == "True":
+                    if sys.argv[2] == "raw_utf8_tail":
                         error = await incoming.receive()
                         assert type(error).__name__ == "ValidationError", error
                     request = await incoming.receive()
@@ -87,7 +92,11 @@ def test_native_console_unicode_and_shutdown(finish, warm):
     startup = subprocess.STARTUPINFO()
     startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     startup.wShowWindow = 0
-    completed = subprocess.run([sys.executable, "-X", "utf8", "-c", child, finish, str(warm)], capture_output=True,
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+    env.update(G6_CLAUDE=r"C:\nonexistent\g6-no-host.exe", G6_CODEX=r"C:\nonexistent\g6-no-host.exe")
+    completed = subprocess.run([sys.executable, *(["-X", "utf8"] if utf8_mode else []), "-c", child, finish, warm],
+                               env=env, capture_output=True,
                                text=True, creationflags=subprocess.CREATE_NEW_CONSOLE,
                                startupinfo=startup, timeout=20)
     assert completed.returncode == 0, completed.stderr
