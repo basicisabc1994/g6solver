@@ -252,7 +252,8 @@ def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dic
                                    "traces_held": held, "traces_not_replayable": unplayable}}
     shown = ", ".join(map(str, broken))
     # Raising during an invoked action/read is a failed replay, with no claim that its invariant was evaluated.
-    failure = "fail during an operation or break the invariants" if failed else "break the invariants"
+    failure = ("fail during an operation (their invariants were not evaluated)" if len(failed) == len(broken) else
+               "fail during an operation or break evaluated invariants" if failed else "break the invariants")
     if intent == "change":
         return {"result": vs.COUNTEREXAMPLE, "detail": f"trace(s) {shown} the model checker found {failure} "
                                                        "on the patch's real code",
@@ -267,10 +268,22 @@ def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dic
     base = _outcomes(at_base, count)
     if isinstance(base, str):
         return error("at the base commit", base)
-    also = [i for i in broken if base[i]["outcome"] in ("broken", "operation_failed")]
+    also = [i for i in broken if base[i]["outcome"] == patch[i]["outcome"]]
     # the review of VS-4, I1: only a trace the base commit replays and keeps is new; one it cannot replay is not kept
     new = [i for i in broken if base[i]["outcome"] == "holds"]
+    refused = [i for i in broken if patch[i]['outcome'] == 'broken' and base[i]['outcome'] == 'operation_failed']
+    if refused:
+        names = sorted({name for i in refused for name in patch[i].get('broken', [])})
+        return {"result": vs.COUNTEREXAMPLE,
+                "detail": f"trace(s) {', '.join(map(str, refused))}: the base commit refused the step; "
+                          "the patch ran it and broke the named invariants: " + ', '.join(names),
+                "shape": "the patch ran a step the base commit refused and broke the named invariants",
+                "correspondence": {"result": "reproduced", "traces_reproduced": refused, "on": "the patch",
+                                   "steps_refused_at_base": refused}}
     unknown = {str(i): str(base[i].get("why", ""))[:200] for i in broken if base[i]["outcome"] == "not_replayable"}
+    for i in broken:
+        if base[i]['outcome'] == 'broken' and patch[i]['outcome'] == 'operation_failed':
+            unknown[str(i)] = 'the base evaluated a violation; the patch operation failed before evaluation'
     if not new and unknown:
         return {"result": vs.CHECK_ERROR,
                 "detail": f"trace(s) {', '.join(unknown)} {failure} on the patch's real code, and whether "
@@ -280,8 +293,15 @@ def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dic
                                    "at_base": "not established at the base commit",
                                    "traces_not_replayable_at_base": unknown, "at_base_too": also}}
     if not new:
-        return {"result": vs.FAILS_ON_BASE_TOO, "detail": f"trace(s) {shown} {failure} on the real code at "
-                                                          "the base commit too",
+        violated = [str(i) for i in also if base[i]['outcome'] == 'broken']
+        refused = [str(i) for i in also if base[i]['outcome'] == 'operation_failed']
+        descriptions = []
+        if violated:
+            descriptions.append('trace(s) ' + ', '.join(violated) + ' break the invariants at the base commit too')
+        if refused:
+            descriptions.append('trace(s) ' + ', '.join(refused) + ' failed during an operation at the base commit '
+                                'too; their invariants were not evaluated')
+        return {"result": vs.FAILS_ON_BASE_TOO, "detail": '; '.join(descriptions),
                 "correspondence": {"result": "reproduced", "traces_reproduced": broken, "at_base_too": also}}
     return {"result": vs.COUNTEREXAMPLE,
             "detail": f"trace(s) {', '.join(map(str, new))} the model checker found {failure} on the "
