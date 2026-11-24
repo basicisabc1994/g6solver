@@ -1,98 +1,128 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Completion filesystem calls must be read-only or use the audited store."""
+"""Static completion writer inventory with explicit collaborator operations."""
 import ast
 from pathlib import Path
 
 import pytest
 
 
-def unguarded_calls(source):
-    """Fail closed on filesystem methods, including captured and dynamic writers.
+READONLY = set('absolute as_posix exists expanduser glob is_absolute is_dir is_file is_relative_to is_symlink '
+               'iterdir joinpath lstat read_bytes read_text relative_to resolve rglob stat with_name with_suffix'.split())
+VALUES = set('add append clear count decode encode endswith extend format fromkeys fullmatch get get_grouped_opcodes '
+             'hexdigest items join keys lower lstrip match partition pop removeprefix rfind rsplit rstrip search '
+             'setdefault split splitlines start startswith strip sub update values set reset'.split())
+BUILTINS = set('all any bool bytes chr dict enumerate float frozenset getattr int isinstance len list map max min next '
+               'object print range reversed set sorted str sum super tuple type zip ValueError SystemExit'.split())
+OPERATIONS = {
+    'hashlib': 'sha256', 'json': 'loads dumps', 'os': 'environ.get fspath', 're': 'compile escape finditer fullmatch match search sub',
+    'sys': 'stdin.buffer.read', 'time': 'time monotonic', 'uuid': 'uuid4', 'threading': 'RLock',
+    'bisect': 'bisect_left bisect_right', 'difflib': 'SequenceMatcher', 'contextvars': 'ContextVar',
+    'pathlib': 'Path', 'dataclasses': 'asdict dataclass', 'contextlib': 'contextmanager',
+    'g6.harness._completion_storage': ('home_path mkdir path read_task task_path task_present task_publication touch write_retained write_text '
+        'append_text check_tree remove_tree replace retained_paths sync_state temporary_root unlink visible_copy write_bytes'),
+    'g6.core.cloud_consent': ('Source Source.text admission bind_output boundary_sources collect_sources freeze_output '
+        'input_source prompt_sources read_retained record_sources repository_source request_sources sha256 current_capture'),
+    'g6.core.refusals': 'code_of current_watch watching_consent resolve',
+    'g6.core.keys': 'get path', 'g6.core.selector': 'hint',
+    'g6.core.host_models': 'CodexCaller _environment _folders _plain _run',
+    'g6.core.consent_callers': 'guard session_admission provider_from_env',
+    'g6.core.llm': '_start_model_call', 'g6.core.model_calls': 'counting', 'g6.core.ledger': 'digest',
+    'g6.harness.completion_loop': ('_load _save _writing advance attempted prepare reply_for settle source_refs '
+        'refusal_reason Step _held read_report'),
+    'g6.harness.completion_hook': 'folder',
+    'g6.workforce.repo_tests': ('_git checked_repo _base_revision _bytes_line _cut_lines _decoded _normal _paths '
+        'change diff_read diff_text now_line read_phases read_report repository_copy shown_name snapshot RepoRefused'),
+    'g6.harness.verification_proposer': '_PLUGIN.search _backend boundary',
+    'g6.harness.verification_search': 'LOADED_ELSEWHERE.format _run_check classify placements proposed_checks',
+    'g6.harness.patch_report': 'code completion_report findings',
+    'g6.harness.patch_review': '_loaded_elsewhere review_patch',
+    'g6.workspace._coordination': 'Coordination',
+    'g6.harness.workflow.policy': 'enabled', 'g6.harness.workflow.adapters': 'observe_step',
+    'g6.harness.workflow.view': 'appended', 'g6.harness.workflow.obstacle': 'none_sent',
+    'g6.skills.corpus': 'load', 'g6.cegis': 'InputDomain.of SearchResult cegis',
+    'g6.context.redact': 'mask_paths secret_spans', 'g6.core.door': 'blocked_reply',
+    'g6.core.reliability_envelope': 'envelope_fields warning_card',
+    'g6.mcp.consent_controls': 'public_instructions', 'g6.workspace._envelope': 'WorkspaceRefused',
+    'g6.invariants': 'ERROR_CODE_PATTERN.match',
+}
+IMPORTED_CALLS = {f'{module}.{name}' for module, names in OPERATIONS.items() for name in names.split()}
+LOCAL_METHODS = {
+    'self': {'_launch', '_reply', 'check', 'locate', 'total', 'tree'},
+    'run': {'into', 'total'}, 'watch': {'mark', 'refused', 'told_since'},
+    'record': {'body'}, 'report': {'full', 'wire'},
+}
 
-    Non-filesystem methods are admitted explicitly too: an unfamiliar method on
-    a local receiver needs review rather than inheriting permission to write.
-    """
+
+def unguarded_calls(source):
+    """Admit named collaborator operations; refuse unknown or indirect calls."""
     tree = ast.parse(source)
-    readonly = {
-        "absolute", "as_posix", "exists", "expanduser", "glob", "is_absolute", "is_dir", "is_file",
-        "is_relative_to", "is_symlink", "iterdir", "joinpath", "lstat", "read_bytes", "read_text",
-        "relative_to", "resolve", "rglob", "stat", "with_name", "with_suffix",
-    }
-    values = {
-        "add", "append", "clear", "count", "decode", "encode", "endswith", "extend", "format", "fromkeys",
-        "fullmatch", "get", "get_grouped_opcodes", "hexdigest", "items", "join", "keys", "lower", "lstrip",
-        "match", "partition", "pop", "removeprefix", "rfind", "rsplit", "rstrip", "search", "setdefault",
-        "split", "splitlines", "start", "startswith", "strip", "sub", "update", "values", "set", "reset",
-    }
-    # These are collaborators, never inferred from an arbitrary local receiver.
     imports = {alias.asname or alias.name.split('.')[0]: alias.name
                for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
-    imports.update({alias.asname or alias.name: f"{node.module}.{alias.name}"
+    imports.update({alias.asname or alias.name: f'{node.module}.{alias.name}'
                     for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) for alias in node.names})
-    filesystem = {"os", "shutil", "tempfile", "pathlib", "json", "builtins"}
-    collaborators = {"self", "run", "watch", "record", "report"}
-    collaboration = {"into", "total", "mark", "refused", "told_since", "body", "full", "wire",
-                     "_launch", "_reply", "check", "locate", "tree", "masked", "__init__"}
-    special = {"sys.stdin.buffer.read", "super().__init__"}
-    data_fields = {"modes", "old", "text", "session", "ran", "pending", "refused_provider"}
+    defined = {node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
+    # These callback parameters are reviewed by name, not any unknown plain name.
+    callbacks = {'host', 'scout', 'report_reader', 'make', 'say', 'mask', 'full', 'literal', 'own', 'by_row', 'numbered'}
+    special = {'consent.guard(caller).complete', '_seen(rest).masked', '_seen(task).masked', '_seen(text).masked',
+               'super().__init__', 'HOOKS[args[0]]'}
+    data = {'g6.core.cloud_consent.WITHHELD', 'g6.harness.completion_loop.NEW_SESSION', 'uuid.uuid4().hex'}
+    aliases = {target.id for node in ast.walk(tree) if isinstance(node, ast.Assign)
+               and isinstance(node.value, ast.Attribute) and ast.unparse(node.value) == 'time.monotonic'
+               for target in node.targets if isinstance(target, ast.Name)}
     found = set()
 
     def allowed(node, *, captured=False):
         call = ast.unparse(node)
-        root = call.split('.', 1)[0]
-        origin = imports.get(root, root)
-        if call.startswith("store.") and imports.get('store') == 'g6.harness._completion_storage':
+        if captured and call in data:
+            return True
+        if call in special:
             return True
         receiver = node
         while isinstance(receiver, ast.Attribute):
             receiver = receiver.value
-        if isinstance(receiver, ast.Name) and origin.split('.')[0] in filesystem:
-            # All shutil/tempfile calls require the gate. json.dump is a writer.
+        if isinstance(receiver, ast.Name) and (receiver.id in imports or receiver.id in {
+            'os', 'shutil', 'tempfile', 'pathlib', 'json', 'builtins',
+        }):
             canonical = imports.get(receiver.id, receiver.id) + call[len(receiver.id):]
-            return canonical in {"os.environ.get", "os.fspath", "json.loads", "json.dumps"}
-        if isinstance(node, ast.Attribute) and node.attr in readonly | values:
-            return True
-        if root in imports and origin != "pathlib.Path":
-            return True
+            return canonical in IMPORTED_CALLS or captured and canonical in data
         if isinstance(node, ast.Attribute):
-            if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
-                constructor = imports.get(node.value.func.id, '')
-                if constructor and not constructor.startswith(('pathlib.', 'os.', 'shutil.', 'tempfile.')):
-                    return True
-            if root in collaborators and node.attr in collaboration:
+            if node.attr in READONLY | VALUES:
                 return True
-            if node.attr == "replace" and not captured:
-                return False  # admitted below only for the two-string form
-        return call in special or call in {"consent.guard(caller).complete", "_seen(rest).masked",
-                                           "_seen(task).masked", "_seen(text).masked"}
+            if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
+                constructor = imports.get(node.value.func.id, node.value.func.id)
+                if constructor == 'g6.workspace._coordination.Coordination' and node.attr == 'mutex':
+                    return True
+                if constructor == 'ToolSession' and node.attr == 'run':
+                    return True
+            return isinstance(node.value, ast.Name) and node.attr in LOCAL_METHODS.get(node.value.id, ())
+        if isinstance(node, ast.Name):
+            return node.id in defined | BUILTINS | callbacks | aliases
+        return False
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
-            call = ast.unparse(node.func)
-            if call == 'getattr':
+            name = ast.unparse(node.func)
+            if name in {'exec', 'eval', '__import__', 'open'}:
+                found.add((node.lineno, name))
+            elif name == 'getattr':
                 if len(node.args) < 2 or not isinstance(node.args[1], ast.Constant) or node.args[1].value not in {
                     'model', 'program', 'name',
                 }:
-                    found.add((node.lineno, call))
-            elif call == 'open':
-                found.add((node.lineno, call))
-            elif isinstance(node.func, ast.Call):
-                found.add((node.lineno, call))
-            elif isinstance(node.func, ast.Attribute):
-                # str.replace takes two arguments; Path.replace takes one.
-                root = call.split('.', 1)[0]
-                origin = imports.get(root, root).split('.', 1)[0]
-                text_replace = node.func.attr == "replace" and len(node.args) >= 2 and origin not in filesystem
-                if not text_replace and not allowed(node.func):
-                    found.add((node.lineno, call))
-            elif isinstance(node.func, ast.Name):
-                origin = imports.get(call, "")
-                if origin.startswith(("os.", "shutil.", "tempfile.", "pathlib.Path.", "builtins.open", "json.dump")):
-                    found.add((node.lineno, call))
-        if isinstance(node, (ast.Assign, ast.AnnAssign)):
-            value = node.value
-            if isinstance(value, ast.Attribute) and value.attr not in data_fields and not allowed(value, captured=True):
-                found.add((node.lineno, ast.unparse(value)))
+                    found.add((node.lineno, name))
+            elif (isinstance(node.func, ast.Attribute) and node.func.attr == 'replace' and len(node.args) >= 2
+                  and not allowed(node.func)):
+                root = node.func.value
+                # Only a literal or known text variable can use str.replace.
+                if not (isinstance(root, (ast.Constant, ast.JoinedStr, ast.Subscript)) or
+                        isinstance(root, ast.Name) and root.id in {'text', 'data'} or
+                        isinstance(root, ast.Call) and isinstance(root.func, ast.Attribute) and root.func.attr == 'replace'):
+                    found.add((node.lineno, name))
+            elif not allowed(node.func):
+                found.add((node.lineno, name))
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(node.value, ast.Attribute):
+            if node.value.attr not in {'modes', 'old', 'text', 'session', 'ran', 'pending', 'refused_provider'}:
+                if not allowed(node.value, captured=True):
+                    found.add((node.lineno, ast.unparse(node.value)))
     return found
 
 
