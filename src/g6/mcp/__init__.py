@@ -334,6 +334,8 @@ def build_server(surface: Any = None) -> Any:
     workflow.register(server, Context)   # after the consent egress above: it stays the last thing to touch a reply
     from g6.mcp.families import compact_server
     compact_server(server, "g6")
+    from g6.mcp.dependencies import record_loaded_required_imports
+    record_loaded_required_imports()
     return server
 
 

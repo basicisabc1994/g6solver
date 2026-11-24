@@ -299,11 +299,11 @@ def _without_required_aliases(optional: set[str], required: set[str]) -> frozens
         history = _known_paths.setdefault(root, set())
         if observed:
             # Positive evidence of a different target retires the old alias's
-            # association, even if an independent source failed. Other failed
-            # sources and still-advertised absent locations keep their facts.
+            # association, even if an independent source failed. A source
+            # omitted from the live paths is absence, not a replacement.
             replaced = {record[1] for record in observed}
             history.intersection_update({record for record in history
-                                         if (not established and record[1] not in replaced)
+                                         if record[1] not in replaced
                                          or any(_compatible_paths(record, current) for current in observed | absent)})
         for record in observed:
             compatible = {previous for previous in history if _compatible_paths(previous, record)}
@@ -482,6 +482,14 @@ def optional_import_roots(extras: str, required_extras: str = "mcp") -> frozense
     with _ownership_lock:
         optional, required = _optional_root_declarations(extras, required_extras)
         return _without_required_aliases(optional, required)
+
+
+def record_loaded_required_imports(required_extras: str = "mcp") -> None:
+    """Record successful startup's loaded required files in the shared ownership store."""
+    with _ownership_lock:
+        _, required = _optional_root_declarations("", required_extras)
+        loaded = {root for root in required if sys.modules.get(root) is not None}
+        _without_required_aliases(set(), loaded)
 
 
 def _clear_optional_roots():

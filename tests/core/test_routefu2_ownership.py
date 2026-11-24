@@ -609,3 +609,118 @@ def test_path_only_history_retires_on_existing_retarget(ownership, tmp_path, mon
         if os.path.lexists(junction):
             os.rmdir(junction)
         other.unlink(missing_ok=True)
+
+
+@pytest.fixture
+def startup_ownership(tmp_path, monkeypatch, request):
+    from g6 import mcp
+
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("FASTMCP_HOME", str(tmp_path / "sdk-state"))
+    monkeypatch.setenv("FASTMCP_CHECK_FOR_UPDATES", "off")
+    monkeypatch.setenv("FASTMCP_ENV_FILE", os.devnull)
+    # Load the real SDK before the ownership fixture supplies dependency metadata.
+    mcp._quiet()
+    return mcp, request.getfixturevalue("ownership")
+
+
+@pytest.mark.parametrize("clear_history", (False, True), ids=("retained", "explicit-clear"))
+@pytest.mark.parametrize("load_stage", ("quiet", "final-registration"))
+def test_successful_startup_records_loaded_required_file(startup_ownership, tmp_path, monkeypatch,
+                                                       load_stage, clear_history):
+    from g6.mcp import families
+
+    mcp, (dependencies, specs) = startup_ownership
+    required = tmp_path / "required.py"
+    optional = tmp_path / "optional.py"
+    required.write_text("value = 73\n", encoding="utf-8")
+    os.link(required, optional)
+    try:
+        specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, optional)
+        assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+        spec = util.spec_from_file_location(REQUIRED, required)
+
+        def load_required():
+            loaded = util.module_from_spec(spec)
+            monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+            spec.loader.exec_module(loaded)
+            assert loaded.value == 73
+
+        if load_stage == "quiet":
+            quiet = mcp._quiet
+
+            def quiet_with_required():
+                quiet()
+                load_required()
+
+            monkeypatch.setattr(mcp, "_quiet", quiet_with_required)
+        else:
+            compact = families.compact_server
+
+            def compact_with_required(server, server_id):
+                compact(server, server_id)
+                load_required()
+
+            monkeypatch.setattr(families, "compact_server", compact_with_required)
+
+        assert mcp.build_server().name == "g6"
+        monkeypatch.delitem(sys.modules, REQUIRED)
+        specs.clear()
+        required.unlink()
+        optional.unlink()
+        invalidate_caches()
+        failure = ModuleNotFoundError("loaded required alias disappeared", name=OPTIONAL)
+        assert not dependencies.optional_dependency_missing("abstraction", failure)
+        if clear_history:
+            dependencies.optional_import_roots.cache_clear()
+            assert dependencies.optional_dependency_missing("abstraction", failure)
+    finally:
+        optional.unlink(missing_ok=True)
+
+
+def test_successful_startup_does_not_own_an_unloaded_required_file(startup_ownership, tmp_path):
+    mcp, (dependencies, specs) = startup_ownership
+    shared = tmp_path / "unloaded.py"
+    shared.write_text("value = 73\n", encoding="utf-8")
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, shared)
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+    specs[REQUIRED] = util.spec_from_file_location(REQUIRED, shared)
+    assert mcp.build_server().name == "g6"
+    assert REQUIRED not in sys.modules
+    specs.clear()
+    shared.unlink()
+    invalidate_caches()
+    failure = ModuleNotFoundError("unloaded optional alias disappeared", name=OPTIONAL)
+    assert dependencies.optional_dependency_missing("abstraction", failure)
+
+
+@pytest.mark.parametrize("clear_history", (False, True), ids=("retained", "explicit-clear"))
+def test_namespace_history_survives_one_location_then_the_other(ownership, tmp_path, monkeypatch, clear_history):
+    dependencies, specs = ownership
+    shared = tmp_path / "shared"
+    extra = tmp_path / "extra"
+    shared.mkdir()
+    extra.mkdir()
+    for root, locations in ((REQUIRED, [str(shared)]), (OPTIONAL, [str(shared), str(extra)])):
+        spec = machinery.ModuleSpec(root, loader=None, is_package=True)
+        spec.submodule_search_locations = locations
+        specs[root] = spec
+    loaded = util.module_from_spec(specs[OPTIONAL])
+    monkeypatch.setitem(sys.modules, OPTIONAL, loaded)
+    assert _roots(dependencies, SCOPES[0]) == frozenset()
+    shared.rmdir()
+    # Mirror the namespace path recalculation: the vanished location is no
+    # longer advertised by either independent live source.
+    loaded.__path__ = [str(extra)]
+    loaded.__spec__.submodule_search_locations = loaded.__path__
+    invalidate_caches()
+    assert _roots(dependencies, SCOPES[1]) == frozenset()
+    monkeypatch.delitem(sys.modules, OPTIONAL)
+    specs.clear()
+    extra.rmdir()
+    invalidate_caches()
+    failure = ModuleNotFoundError("namespace alias disappeared", name=OPTIONAL)
+    assert not dependencies.optional_dependency_missing("abstraction", failure)
+    if clear_history:
+        dependencies.optional_import_roots.cache_clear()
+        assert dependencies.optional_dependency_missing("abstraction", failure)
