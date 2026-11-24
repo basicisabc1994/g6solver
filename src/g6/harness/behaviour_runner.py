@@ -5,6 +5,8 @@ The result channel excludes repository test configuration. The bootstrap shares 
 under test: the channel is not an authentication boundary inside Python.
 The observation.v2 frame carries canonical value digests and byte sizes with bounded diagnostic prefixes. Existing
 observation.v1 frames keep their comparison semantics; neither format authenticates its producer inside the child.
+A tree folder sharing an installed package's name may load as an empty namespace package. If no import fails,
+the isolated runner has no missing-import evidence to distinguish its later attribute failure from the code's.
 """
 from __future__ import annotations
 from g6.core.guidance_builders import confine_refusal, confine_refused
@@ -401,6 +403,8 @@ def own_import_absent(exc, args):
         return True
     tree = os.path.normcase(os.path.realpath(globals().get('root', os.getcwd())))
     parts = name.split('.')
+    if missing_module and len(parts) == 1 and name in globals().get('data', {}).get('own_modules', ()):
+        return True
 
     def guarded_export(file):
         # IMPORT_FROM supplies the requested name without parsing repository exception text.
@@ -420,7 +424,16 @@ def own_import_absent(exc, args):
                 source = handle.read(1048577)
             if len(source) > 1048576:
                 return True
-            nodes = tuple(ast.walk(ast.parse(source)))
+            pending = [ast.parse(source)]
+            nodes = []
+            while pending:
+                node = pending.pop()
+                nodes.append(node)
+                # Bindings inside these scopes are not exports of the containing module. The definition's
+                # own name is considered below, without visiting its body, parameters or decorators.
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda,
+                                         ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+                    pending.extend(ast.iter_child_nodes(node))
         except (OSError, SyntaxError, ValueError):
             return True
         return any((isinstance(node, ast.Name) and node.id == exported and isinstance(node.ctx, ast.Store))
@@ -463,7 +476,8 @@ def own_import_absent(exc, args):
             actual = os.path.normcase(os.path.realpath(path))
             if any(os.path.isfile(file) and os.path.normcase(os.path.realpath(file)) == actual
                    and (file == held[0] or regular(target)) for file in held):
-                return not (globals().get('_missing_preparation_imports') and guarded_export(path))
+                return not ((globals().get('_missing_preparation_imports') or globals().get('_missing_imports'))
+                            and guarded_export(path))
     return False
 
 
@@ -476,10 +490,20 @@ def track_imports():
     load = importlib._bootstrap._find_and_load
 
     def tracked(name, import_):
+        frame = sys._getframe(1)
+        while frame is not None and (frame.f_code.co_filename.startswith('<frozen importlib.')
+                                     or frame.f_globals.get('__name__') == 'importlib'):
+            frame = frame.f_back
+        filename = frame.f_code.co_filename if frame is not None else ''
+        file = os.path.normcase(os.path.realpath(filename)) if os.path.isabs(filename) else ''
+        tree = os.path.normcase(os.path.realpath(globals().get('root', os.getcwd())))
+        requested_here = bool(file and os.path.splitdrive(file)[0] == os.path.splitdrive(tree)[0]
+                              and os.path.commonpath((tree, file)) == tree)
+        del frame
         try:
             return load(name, import_)
         except ModuleNotFoundError as exc:
-            if ImportError.__dict__['name'].__get__(exc) == name and not own_import_absent(exc, ()):
+            if requested_here and ImportError.__dict__['name'].__get__(exc) == name and not own_import_absent(exc, ()):
                 _missing_imports.append(exc)
                 if globals().get('_preparation_depth', 0):
                     _missing_preparation_imports.add(ImportError.__dict__['name'].__get__(exc))
@@ -625,17 +649,26 @@ _SETUP_CONTROLS = ()
 _IMPORT_OPS = (dis.opmap['IMPORT_NAME'], dis.opmap['IMPORT_FROM'])
 
 def unavailable_import(exc):
-    if not exception_matches(exc, ImportError) or own_import_absent(exc, ()):
-        return False
-    if any(exc is missing for missing in _missing_imports):
-        return True
-    # IMPORT_FROM can raise after the import machinery returned a module. An explicit raise by the
-    # operation is still an outcome: metadata alone never turns that raise into an unavailable import.
-    trace = BaseException.__dict__['__traceback__'].__get__(exc)
-    while trace is not None:
-        if trace.tb_frame.f_code.co_code[trace.tb_lasti] in _IMPORT_OPS:
+    pending, seen = [exc], set()
+    while pending:
+        one = pending.pop()
+        if id(one) in seen:
+            continue
+        seen.add(id(one))
+        for field in ('__cause__', '__context__'):
+            linked = BaseException.__dict__[field].__get__(one)
+            if linked is not None:
+                pending.append(linked)
+        if not exception_matches(one, ImportError) or own_import_absent(one, ()):
+            continue
+        if any(one is missing for missing in _missing_imports):
             return True
-        trace = trace.tb_next
+        # IMPORT_FROM can fail after loading a module. Metadata on an explicit raise is not import evidence.
+        trace = BaseException.__dict__['__traceback__'].__get__(one)
+        while trace is not None:
+            if trace.tb_frame.f_code.co_code[trace.tb_lasti] in _IMPORT_OPS:
+                return True
+            trace = trace.tb_next
     return False
 def _name(kind):
     return setup_call("exception_description", exception_name, kind)
@@ -649,6 +682,7 @@ def _shown(value, limit=200):
         if execution_control(exc):
             raise
         text = "<a value whose repr raised " + _name(type(exc)) + ">"
+    text = re.sub(r" at 0x[0-9A-Fa-f]+", "", text)
     text = ''.join(ch if ch.isprintable() else json.dumps(ch, ensure_ascii=True)[1:-1] for ch in text)
     text = text.replace(';', r'\u003b').replace('G6_E_', r'\u00476_E_')
     return text if len(text) <= limit else text[:limit - 3] + "..."
@@ -692,7 +726,7 @@ def _plain(value, depth=0):
         return _sorted([_plain(key, depth + 1), _plain(item, depth + 1)] for key, item in value.items())
     found = _attributes(value)
     if found is None:
-        return {"type": _name(type(value)), "repr": re.sub(r" at 0x[0-9A-Fa-f]+", "", _shown(value))}
+        return {"type": _name(type(value)), "repr": _shown(value)}
     return {"type": _name(type(value)), "attributes": {key: _plain(item, depth + 1) for key, item in found.items()}}
 
 def _bounded(value):
@@ -848,14 +882,12 @@ for call in data["calls"]:
         unavailable = None
         if unavailable_import(exc):
             unavailable = ObservationUnavailable(type(exc))
-            if data['probe'] or not any(id(kind) in errors.values()
-                                       for kind in type.__dict__['__mro__'].__get__(type(exc))):
+            if data['probe']:
                 setup_failed(unavailable)
         alive.append(exc)
         outcomes.append(_exception_observation(exc, errors, data['probe']))
         if unavailable is not None:
-            # Only the host knows which outcome this particular call confirms. An error type named for
-            # another call cannot authorize this import failure; keep the fixed cause until host comparison.
+            # An import that did not run cannot establish even a confirmed raises-ImportError outcome.
             outcomes[-1]['unavailable_import'] = exception_detail(unavailable, 'setup')
     else:
         errors = resolved()
@@ -864,6 +896,9 @@ for call in data["calls"]:
             one["probe"] = ({"raised": None} if data["mode"] == "exceptions" else
                             {"returned": _bounded(_plain(result))})
         outcomes.append(one)
+    if _missing_imports:
+        # The host alone knows whether a fallback matched. Keep provenance even when no exception escaped.
+        outcomes[-1]['missing_import'] = ObservationUnavailable.DETAIL
 payload = dumps({"version": "observation.v2", "outcomes": outcomes, "errors": errors},
                 sort_keys=True, allow_nan=False).encode("utf-8")
 if len(payload) > 1048576:
@@ -919,6 +954,10 @@ def read_frame(raw: bytes) -> dict | None:
             if not isinstance(one, dict):
                 return None
             fields = set(one) - {"probe"}
+            if 'missing_import' in fields:
+                if value['version'] != 'observation.v2' or one['missing_import'] != ObservationUnavailable.DETAIL:
+                    return None
+                fields.remove('missing_import')
             if 'unavailable_import' in fields:
                 if (value['version'] != 'observation.v2' or 'raised' not in fields
                         or not ObservationUnavailable.valid_detail(one['unavailable_import'])
@@ -997,6 +1036,9 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
             for call, one in zip(calls, observed["outcomes"], strict=True)):
         return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: observation does not match the scenario"}
     if "cases" not in data:
+        if any('unavailable_import' in one or 'missing_import' in one for one in observed['outcomes']):
+            return {'result': 'error', 'detail': ObservationUnavailable.DETAIL,
+                    'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE'}
         if any("probe" not in one for one in observed["outcomes"]):
             return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: missing probe observation"}
         return {"result": "passed", "detail": "G6 observed the calls in its isolated runner", "observed": observed,
@@ -1005,8 +1047,7 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
     failures = []
     for index, (case, outcome) in enumerate(zip(calls, observed["outcomes"], strict=True)):
         expected = case["expect"]
-        if ('unavailable_import' in outcome and not (expected == 'raises'
-                and observed['errors'].get(_encoded(case['error'])) in outcome['raised'])):
+        if 'unavailable_import' in outcome:
             return {'result': 'error', 'detail': outcome['unavailable_import'],
                     'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE'}
         if expected == "raises":
@@ -1029,6 +1070,9 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
             return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: unknown comparison"}
         if not matches:
             failures.append(index)
+    if failures and any('missing_import' in one for one in observed['outcomes']):
+        return {'result': 'error', 'detail': ObservationUnavailable.DETAIL,
+                'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE'}
     return {"result": "failed" if failures else "passed", "observed": observed,
             "detail": ("the confirmed outcome did not match the observed call(s): " + str(failures)) if failures
                       else "the confirmed outcome matched what the entry point returned or raised in G6's runner"}
@@ -1090,6 +1134,7 @@ def request(data: dict) -> dict:
     return {"function": data["function"], "calls": [{"args": c["args"], "kwargs": c.get("kwargs", {})} for c in calls],
             "errors": data.get("errors", [case["error"] for case in calls if case.get("expect") == "raises"]),
             "probe": "cases" not in data, "mode": data.get("mode", "outputs"),
+            **({'own_modules': data['own_modules']} if 'own_modules' in data else {}),
             **({'import_roots': data['import_roots']} if 'import_roots' in data else {})}
 
 

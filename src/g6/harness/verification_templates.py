@@ -832,6 +832,22 @@ def _located(target: Target) -> list[str]:
     return [*target.spec(), target.file] if target.kind == "module" else target.spec()
 
 
+def _own_modules(tree: Tree) -> dict:
+    """Top-level import owners from the host's file lists, including files deleted by this change."""
+    paths = (set(getattr(tree, 'known', ())) | set(getattr(tree, 'at_base', ()))
+             | set(getattr(getattr(tree, 'change', None), 'files', ())))
+    modules = set()
+    for prefix in tree.folders():
+        for path in paths:
+            if not path.startswith(prefix):
+                continue
+            rel = path[len(prefix):]
+            name = rel[:-12] if rel.endswith('/__init__.py') else rel[:-3] if rel.endswith('.py') else ''
+            if name.isidentifier():
+                modules.add(name)
+    return {'own_modules': sorted(modules)} if modules else {}
+
+
 def _call_target(tree: Tree, dotted: str, side: str, constructor: MethodConstructor | None = None) -> Target:
     """Bind an ordinary method to explicitly stated JSON setup; never infer setup for another callable."""
     target = resolve(tree, dotted, side)
@@ -885,7 +901,7 @@ def _example(tree: Tree, b: ExampleBindings, side: str) -> Applied:
             entry.update(expect="returns", value=case.returns)
         cases.append(entry)
     roots = {'import_roots': [*(root.rstrip('/') or '.' for root in tree.roots), '.', 'src']} if tree.roots else {}
-    return Applied({"function": _located(target), "cases": cases, **roots}, notes)
+    return Applied({"function": _located(target), "cases": cases, **roots, **_own_modules(tree)}, notes)
 
 
 def _relation(tree: Tree, b: RelationBindings, side: str) -> Applied:
@@ -916,7 +932,7 @@ def _differential(tree: Tree, b: DifferentialBindings, side: str) -> Applied:
     notes = _checked(b.function, target, [(call.args, call.kwargs, f"call {index}")
                                           for index, call in enumerate(b.calls)])
     roots = {"import_roots": [*tree.roots, ".", "src"]} if target.kind == "method" and tree.roots else {}
-    return Applied({"function": target.spec(), "mode": b.mode, **roots,
+    return Applied({"function": target.spec(), "mode": b.mode, **roots, **_own_modules(tree),
                     "calls": [{"args": call.args, "kwargs": call.kwargs} for call in b.calls]}, notes)
 
 
@@ -1151,7 +1167,7 @@ def _plain(value, depth=0):
         return _sorted([_plain(key, depth + 1), _plain(item, depth + 1)] for key, item in value.items())
     found = _attributes(value)
     if found is None:
-        return {"type": _name(type(value)), "repr": re.sub(r" at 0x[0-9A-Fa-f]+", "", _shown(value))}
+        return {"type": _name(type(value)), "repr": _shown(value)}
     return {"type": _name(type(value)), "attributes": {key: _plain(item, depth + 1) for key, item in found.items()}}
 
 
@@ -1459,6 +1475,7 @@ def _shown(value, limit=200):
         if execution_control(exc):
             raise
         text = "<a value whose repr raised " + _name(type(exc)) + ">"
+    text = re.sub(r" at 0x[0-9A-Fa-f]+", "", text)
     text = ''.join(ch if ch.isprintable() else json.dumps(ch, ensure_ascii=True)[1:-1] for ch in text)
     text = text.replace(';', r'\\u003b').replace('G6_E_', r'\\u00476_E_')
     return text if len(text) <= limit else text[:limit - 3] + "..."
