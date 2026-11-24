@@ -107,6 +107,11 @@ everything the task needs. Merging needs your separate decision. The patch's own
 in the repository's own environment (its `.venv`, which the agent can change): a patch written to defeat the checks
 can make them report a pass, and G6 does not catch that.
 
+The advisory change map reads static named calls from collected or explicitly selected test bodies. Its
+`exercised` answer carries the same-process limit: repository code running inside the collection child can make
+a check look exercised. The pre-launch read restores answers for ordinary repositories; it is not authority
+against repository code written to deceive collection. A static named call can be reachable without running.
+
 Not a programmer? Ready-made **bundles** (double-click apps) are described in the
 [install guide](site/docs/install.md).
 
