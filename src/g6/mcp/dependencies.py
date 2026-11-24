@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import csv
 from functools import cache
-from importlib import machinery, metadata, util
+from importlib import _bootstrap_external, machinery, metadata, util
+import os
 from pathlib import PurePosixPath
+import sys
 
 
 _EXCEPTION_WORK_LIMIT = 100_000
@@ -52,23 +54,22 @@ def missing_module(exc: BaseException) -> str | None:
 
 
 def _missing_modules(exc: BaseException) -> tuple[str, ...] | None:
-    """Missing-module leaves of visible chains/groups; None denotes a defect."""
-    # Build the graph once. A permanent visited set prevents shared children
-    # from expanding repeatedly; finishing order also lets cycles share evidence.
+    """Member-local missing evidence in visible chains/groups; None denotes a defect."""
+    # Collect each object's edges once, with a permanent visited set. Named
+    # missing errors seed evidence; a group cannot seed its own cyclic members.
     work = _ExceptionWork()
-    pending = [(exc, False)]
+    pending = [exc]
     seen = set()
     nodes = {}
-    edges = {}
     parents = {}
-    finished = []
+    member_counts = {}
+    supported = set()
+    ready = []
+    modules = {}
     while pending:
         work.spend()
-        current, exiting = pending.pop()
+        current = pending.pop()
         key = id(current)
-        if exiting:
-            finished.append(key)
-            continue
         if key in seen:
             continue
         seen.add(key)
@@ -80,68 +81,42 @@ def _missing_modules(exc: BaseException) -> tuple[str, ...] | None:
             links.append(current.__context__)
         members = current.exceptions if isinstance(current, BaseExceptionGroup) else ()
         work.spend(len(links) + len(members))
-        children = (*links, *members)
-        edges[key] = (tuple(id(child) for child in children), len(links))
-        for child in children:
-            parents.setdefault(id(child), []).append(key)
-        pending.append((current, True))
-        pending.extend((child, False) for child in reversed(children))
+        if isinstance(current, BaseExceptionGroup):
+            member_counts[key] = len(members)
+        for child in links:
+            parents.setdefault(id(child), []).append((key, False))
+        for child in members:
+            parents.setdefault(id(child), []).append((key, True))
+        pending.extend(reversed((*links, *members)))
+        if isinstance(current, ModuleNotFoundError) and current.name:
+            # Keep every missing name, including installed/submodule defects
+            # with optional evidence further down their chain or cycle.
+            modules[current.name] = None
+            supported.add(key)
+            ready.append(key)
 
-    # Collapse strongly connected components using the reverse graph. This is
-    # iterative too: a shared context cycle must retain its missing leaf without
-    # treating a cycle edge as fresh evidence or rescanning exception objects.
-    component_of = {}
-    components = []
-    for key in reversed(finished):
-        if key in component_of:
-            continue
-        component = []
-        todo = [key]
-        while todo:
-            work.spend()
-            member = todo.pop()
-            if member in component_of:
+    # Propagate evidence from seeds, never from an unestablished cycle. A chain
+    # wrapper needs a supported child; a group needs every member independently
+    # supported before it can supply evidence to anything pointing back to it.
+    while ready:
+        work.spend()
+        incoming = parents.get(ready.pop(), ())
+        work.spend(len(incoming))
+        for parent, member_edge in incoming:
+            if parent in supported:
                 continue
-            component_of[member] = len(components)
-            component.append(member)
-            incoming = parents.get(member, ())
-            work.spend(len(incoming))
-            todo.extend(incoming)
-        components.append(component)
-
-    results = {}
-    for index in reversed(range(len(components))):
-        component = components[index]
-        modules = {}
-        for key in component:
-            work.spend()
-            children, _ = edges[key]
-            work.spend(len(children))
-            for child in children:
-                owner = component_of[child]
-                if owner != index:
-                    branch = results[owner]
-                    work.spend(len(branch))
-                    modules.update(dict.fromkeys(branch))
-            current = nodes[key]
-            if not children and not (isinstance(current, ModuleNotFoundError) and current.name):
-                return None
-        if not modules:
-            for key in component:
-                work.spend()
-                current = nodes[key]
-                if isinstance(current, ModuleNotFoundError) and current.name:
-                    modules[current.name] = None
-        for key in component:
-            children, link_count = edges[key]
-            work.spend(len(children))
-            if isinstance(nodes[key], BaseExceptionGroup) and any(
-                not (modules if component_of[child] == index else results[component_of[child]])
-                for child in children[link_count:]
-            ):
-                return None  # Every group member needs its own missing-module evidence.
-        results[index] = tuple(modules)
-    return results[component_of[id(exc)]]
+            if parent in member_counts:
+                if not member_edge:
+                    continue
+                member_counts[parent] -= 1
+                if member_counts[parent]:
+                    continue
+            supported.add(parent)
+            ready.append(parent)
+    if len(supported) != len(nodes):
+        return None  # A defect anywhere invalidates the entire graph.
+    work.spend(len(modules))
+    return tuple(modules)
 
 
 def _import_root(module: str) -> str:
@@ -149,6 +124,80 @@ def _import_root(module: str) -> str:
     if any(char in module for char in "/\\:\0") or any(not part for part in module.split(".")):
         return ""
     return module.split(".", 1)[0]
+
+
+def _root_identities(root: str) -> tuple[set[tuple], bool]:
+    """Retain established aliases and whether the lookup completed, without imports."""
+    # Use the interpreter's actual FileFinder matching policy, including
+    # PYTHONCASEOK and ignore-environment mode, rather than filesystem casing.
+    def name_identity(name):
+        return ("name", name.lower() if _bootstrap_external._relax_case() else name)
+
+    identities = set()
+    established = True
+
+    def lookup(probe):
+        nonlocal established
+        try:
+            return probe()
+        except Exception:
+            established = False
+            return None
+
+    try:
+        lookup(lambda: identities.add(name_identity(root)))
+        loaded = sys.modules.get(root)
+        if loaded is not None:
+            identities.add(("loaded", id(loaded)))
+            spec = lookup(lambda: getattr(loaded, "__spec__", None))
+        else:
+            spec = lookup(lambda: util.find_spec(root))
+        resolved_name = lookup(lambda: getattr(spec, "name", None))
+        if resolved_name:
+            lookup(lambda: identities.add(name_identity(resolved_name)))
+        origin = lookup(lambda: getattr(spec, "origin", None) if getattr(spec, "has_location", False) else None)
+        origin = origin or lookup(lambda: getattr(loaded, "__file__", None))
+        if origin:
+            lookup(lambda: identities.add(("file", os.path.realpath(origin))))
+
+            def inode_identity():
+                try:
+                    status = os.stat(origin)
+                except FileNotFoundError:
+                    return  # Known absence retains resolved path ownership.
+                if status.st_ino:
+                    identities.add(("inode", status.st_dev, status.st_ino))
+
+            lookup(inode_identity)
+        locations = lookup(lambda: getattr(spec, "submodule_search_locations", None))
+        if not origin and locations:
+            identities.add(("namespace", tuple(sorted(os.path.realpath(path) for path in locations))))
+    except Exception:
+        # Lookup uncertainty is possibly required; keep aliases found before it.
+        return identities, False
+    return identities, established
+
+
+def _without_required_aliases(optional: set[str], required: set[str]) -> frozenset[str]:
+    identities = {}
+    aliases = {}
+    blocked = set(required)
+    for root in optional | required:
+        identities[root], established = _root_identities(root)
+        if not established:
+            blocked.add(root)
+        for identity in identities[root]:
+            aliases.setdefault(identity, []).append(root)
+    # Follow equivalence transitively: an optional declaration may connect a
+    # required file to another spelling whose own file is already missing.
+    pending = list(blocked)
+    while pending:
+        for identity in identities[pending.pop()]:
+            for alias in aliases.pop(identity, ()):
+                if alias not in blocked:
+                    blocked.add(alias)
+                    pending.append(alias)
+    return frozenset(optional - blocked)
 
 
 def _record_roots(record: str) -> set[str]:
@@ -285,7 +334,7 @@ def optional_import_roots(extras: str, required_extras: str = "mcp") -> frozense
     # Missing required metadata is an invalid base install, never an empty closure.
     required = _requirement_closure(pending, metadata.requires)
     base = {module for name in required for module in _distribution_roots(name, imports)}
-    return frozenset(_declared_roots(extras, imports) - base)
+    return _without_required_aliases(_declared_roots(extras, imports), base)
 
 
 def absent_module_roots(exc: BaseException, *, mcp_startup: bool = False) -> frozenset[str]:
@@ -303,7 +352,7 @@ def absent_module_roots(exc: BaseException, *, mcp_startup: bool = False) -> fro
         try:
             if util.find_spec(root) is not None:
                 return frozenset()
-        except (ImportError, ValueError):
+        except Exception:
             return frozenset()  # An indeterminate lookup is not evidence of absence.
         roots.add(root)
     return frozenset(roots)
