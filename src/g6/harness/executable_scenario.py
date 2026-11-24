@@ -137,7 +137,7 @@ class Scenario:
         helpers = "\n\n".join(runner._portable_source(one) for one in (
             runner.CheckSetupError, runner.ObservationUnavailable, runner.own_import_absent,
             runner.raised_during_setup, runner.exception_name, runner.exception_matches, runner.exception_detail,
-            runner.exception_message,
+            runner.exception_message, runner.execution_control, runner.setup_outcome,
             runner.setup_call, runner.call_absent, runner.register_setup_error,
             _comparison,
             runner._unique, runner._encoded, runner._fingerprint, runner._valid_encoding,

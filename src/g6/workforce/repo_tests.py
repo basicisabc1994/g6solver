@@ -2156,7 +2156,12 @@ class _Counted:
             (self.started if report.when == "setup" else self.finished).add(report.nodeid)
         if report.failed:
             crash = getattr(report.longrepr, "reprcrash", None)
-            self.messages.setdefault(report.nodeid, str(getattr(crash, "message", "") or report.longrepr)[-2000:])
+            text = str(getattr(crash, "message", "") or report.longrepr)
+            stem = report.nodeid.partition("::")[0].replace("\\", "/").rsplit("/", 1)[-1]
+            generated = stem in ("test_g6_example.py", "test_g6_relation.py", "test_g6_access_rule.py",
+                                 "test_g6_differential.py", "test_g6_state_invariant.py")
+            # Keep the compiled producer's first message line before bounding it; a value cannot choose the tail.
+            self.messages.setdefault(report.nodeid, text[:2000] if generated else text[-2000:])
             if report.when == "setup" and type(report.longrepr).__name__ == "FixtureLookupErrorRepr":
                 self.setup_errors[report.nodeid] = str(report.longrepr)
             elif report.nodeid not in self.failed and report.nodeid not in self.setup_errors:

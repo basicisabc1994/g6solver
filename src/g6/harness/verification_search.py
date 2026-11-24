@@ -569,11 +569,25 @@ def _messages(ran: dict, node: str) -> list[str]:
 def _failure(ran: dict, node: str) -> str:
     """How a check failed, from its structured failure annotation (empty when absent)."""
     for text in _messages(ran, node):
+        if _generated_template(node) is not None:
+            # The producer's first message line is authoritative; a value's display cannot append another one.
+            line = next((part for part in text.splitlines() if part.strip()), '')
+            marked = _RAISED_LINE.fullmatch(line)
+            line = marked[1] if marked else line
+            return line.strip()
         raised = _RAISED_LINE.findall(text)
         line = raised[-1] if raised else next((part for part in text.splitlines() if part.strip()), "")
         if line.strip():
             return line.strip()[:300]
     return ""
+
+
+def _generated_template(node: str) -> str | None:
+    from g6.harness.verification_templates import REGISTRY
+
+    stem = node.partition('::')[0].replace('\\', '/').rsplit('/', 1)[-1].removesuffix('.py')
+    return next((ident for ident, definition in REGISTRY.items()
+                 if definition.text and stem == 'test_g6_' + ident.partition('.')[0]), None)
 
 
 def _setup_failure_line(how: str, node: str) -> bool:
@@ -655,6 +669,14 @@ def reading(ran: dict, node: str) -> dict:
         if not how:   # the repository's options hid it (--tb=no -rN, say): a refused access cannot be ruled out
             return error("it failed, and nothing it recorded says how, so G6 cannot tell a failure of the code from "
                          "an access the boundary refused")
+        template = _generated_template(node)
+        if template is not None:
+            from g6.harness.verification_templates import failure_matches
+
+            if not failure_matches(template, how):
+                return error('G6_E_CHECK_SETUP: the generated check recorded no compiled failure line')
+            # Validate the complete producer line before bounding the display.
+            how = how[:300]
         if _refused_access(ran, node):
             return error("it failed on an operating-system error, which is how a boundary refuses an access (a file "
                          f"outside its copy, the network, a name lookup), or on such a refusal: {how}")

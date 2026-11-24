@@ -97,7 +97,7 @@ from g6.harness.behaviour_runner import (
     CheckSetupError, bind_method, example_text, runtime_method, setup_call,
     raised_during_setup, exception_name, exception_matches, exception_detail, exception_message,
     target_attribute, call_absent, register_setup_error, CODE_CARRIER_HELPERS, ObservationUnavailable, own_import_absent,
-    execution_control,
+    execution_control, setup_outcome,
 )
 from g6.workforce import repo_tests
 
@@ -1033,6 +1033,11 @@ def test_relation():
                 left, right = _call(function, _call(other, value)), _call(function, value)
             holds = _same(left, right)
         except BaseException as exc:
+            if execution_control(exc) or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError)):
+                raise
+            preparation = setup_outcome(exc)
+            if preparation is not None:
+                raise preparation from exc
             if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
                     or raised_during_setup(exc)):
                 raise
@@ -1050,6 +1055,11 @@ def test_relation():
                 ordered = low > high if BINDINGS["strict"] else low >= high
             ordered = bool(ordered)
         except BaseException as exc:
+            if execution_control(exc) or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError)):
+                raise
+            preparation = setup_outcome(exc)
+            if preparation is not None:
+                raise preparation from exc
             if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
                     or raised_during_setup(exc)):
                 raise
@@ -1076,6 +1086,11 @@ def test_access_rule():
             result = operation(*copy.deepcopy(case["args"]), **copy.deepcopy(case["kwargs"]))
             refused = error is None and not result
         except BaseException as exc:
+            if execution_control(exc) or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError)):
+                raise
+            preparation = setup_outcome(exc)
+            if preparation is not None:
+                raise preparation from exc
             if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
                     or raised_during_setup(exc)):
                 raise
@@ -1156,6 +1171,11 @@ def _outcome(call):
             _function = _load(BINDINGS["function"])
         function = _function
     except BaseException as exc:
+        if execution_control(exc) or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError)):
+            raise
+        preparation = setup_outcome(exc)
+        if preparation is not None:
+            raise preparation from exc
         if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
                 or raised_during_setup(exc)):
             raise
@@ -1163,6 +1183,11 @@ def _outcome(call):
     try:
         result = function(*copy.deepcopy(call["args"]), **copy.deepcopy(call["kwargs"]))
     except BaseException as exc:
+        if execution_control(exc) or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError)):
+            raise
+        preparation = setup_outcome(exc)
+        if preparation is not None:
+            raise preparation from exc
         if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
                 or raised_during_setup(exc)):
             raise
@@ -1172,6 +1197,11 @@ def _outcome(call):
     try:
         return {"returned": _bounded(_plain(result))}
     except BaseException as exc:
+        if execution_control(exc) or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError)):
+            raise
+        preparation = setup_outcome(exc)
+        if preparation is not None:
+            raise preparation from exc
         if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
                 or raised_during_setup(exc)):
             raise
@@ -1258,6 +1288,11 @@ def _read(state, read):
     try:
         result = _call(read, state)
     except BaseException as exc:
+        if execution_control(exc) or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError)):
+            raise
+        preparation = setup_outcome(exc)
+        if preparation is not None:
+            raise preparation from exc
         if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
                 or raised_during_setup(exc) or error is None or not exception_matches(exc, error)):
             raise
@@ -1273,14 +1308,21 @@ def _replay(trace):
     try:
         state = setup_call("constructor", _call, BINDINGS["constructor"])
     except BaseException as exc:
-        if (not raised_during_setup(exc, 'constructor') or execution_control(exc)
-                or exception_matches(exc, CheckSetupError) or call_absent(exc)):
+        if execution_control(exc) or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError)):
             raise
-        raise CheckSetupError('constructor') from exc
+        preparation = setup_outcome(exc)
+        if preparation is not None:
+            raise preparation from exc
+        raise
     for step, value in enumerate(trace["actions"]):
         try:
             _call(BINDINGS["actions"][str(value)], state)
         except BaseException as exc:
+            if execution_control(exc) or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError)):
+                raise
+            preparation = setup_outcome(exc)
+            if preparation is not None:
+                raise preparation from exc
             if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
                     or raised_during_setup(exc)):
                 raise
@@ -1291,6 +1333,11 @@ def _replay(trace):
         try:
             got = _read(state, read)
         except BaseException as exc:
+            if execution_control(exc) or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError)):
+                raise
+            preparation = setup_outcome(exc)
+            if preparation is not None:
+                raise preparation from exc
             if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
                     or raised_during_setup(exc)):
                 raise
@@ -1302,6 +1349,11 @@ def _replay(trace):
     try:
         broken = [name for name, term in BINDINGS["invariants"].items() if not _value(term, values)]
     except BaseException as exc:
+        if execution_control(exc) or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError)):
+            raise
+        preparation = setup_outcome(exc)
+        if preparation is not None:
+            raise preparation from exc
         if exception_matches(exc, KeyboardInterrupt) or raised_during_setup(exc):
             raise
         return _not_replayable("evaluating the invariants on the values read", exc)
@@ -1348,6 +1400,7 @@ import pytest
 
 _LEGACY_COMMON = ("\n" + CODE_CARRIER_HELPERS + inspect.getsource(CheckSetupError) + "\n" + inspect.getsource(raised_during_setup)
                   + "\n" + inspect.getsource(execution_control)
+                  + "\n" + inspect.getsource(setup_outcome)
                   + "\n" + inspect.getsource(ObservationUnavailable) + "\n" + inspect.getsource(own_import_absent)
                   + "\n" + inspect.getsource(exception_name) + "\n" + inspect.getsource(exception_matches)
                   + "\n" + inspect.getsource(exception_detail) + "\n" + inspect.getsource(setup_call)
@@ -1360,10 +1413,12 @@ def _load(spec):
     try:
         return setup_call("import_or_binding", _load_target, spec)
     except BaseException as exc:
-        if (not raised_during_setup(exc, 'constructor') or execution_control(exc)
-                or exception_matches(exc, CheckSetupError) or call_absent(exc)):
+        if execution_control(exc) or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError)):
             raise
-        raise CheckSetupError('constructor') from exc
+        preparation = setup_outcome(exc)
+        if preparation is not None:
+            raise preparation from exc
+        raise
 
 
 def _load_target(spec):
@@ -1399,6 +1454,7 @@ def _shown(value, limit=200):
         text = repr(value)
     except Exception as exc:
         text = "<a value whose repr raised " + _name(type(exc)) + ">"
+    text = ''.join(ch if ch.isprintable() else json.dumps(ch, ensure_ascii=True)[1:-1] for ch in text)
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
 
@@ -1426,8 +1482,16 @@ def _same(left, right):
 def _fail(failures, raised):
     # one line that says what failed, then each exception raised, its type first
     if failures:
-        more = len(failures) - 5
-        summary = "; ".join(failures[:5]) + ("; and %d more" % more if more > 0 else "")
+        shown = []
+        for failure in failures[:5]:
+            more = len(failures) - len(shown) - 1
+            tail = "; and %d more" % more if more > 0 else ""
+            # Leave room for pytest's 'Failed: ' prefix in the producer's 2,000-character record.
+            if len("; ".join(shown + [failure]) + tail) > 1992:
+                break
+            shown.append(failure)
+        more = len(failures) - len(shown)
+        summary = "; ".join(shown) + ("; and %d more" % more if more > 0 else "")
         pytest.fail("\\n".join([summary] + raised[:5]))
 """
 
@@ -1451,6 +1515,113 @@ def compile_text(definition: TemplateDefinition, data: dict) -> str:
     if ast.literal_eval(literal) != data:
         raise ValueError("the bindings do not read back as the same literal")
     return definition.text.replace(SLOT, literal)
+
+
+# Retain the four fixed diagnostic producers of _LEGACY_EXAMPLE and _EXAMPLE before 7da85ef8.
+# Old run records and saved reproductions still carry these lines. This text is parsed, never executed.
+_PREVIOUS_EXAMPLE_FAILURES = '''
+failures.append("case %d raised %s" % (index, _name(type(exc))))
+failures.append("case %d returned %s where %s was expected" % (index, _shown(result), _name(errors[index])))
+failures.append("case %d returned %s, expected %s" % (index, _shown(result), _shown(case["value"])))
+failures.append("case %d left argument %d as %s, expected %s" % (
+    index, case["argument"], _shown(args[case["argument"]]), _shown(case["value"])))
+'''
+
+
+def failure_inventory(ident: str) -> tuple[str, ...]:
+    """Read the failure grammar from the compiler's fixed producers, never repository output.
+
+    Literal words stay exact. Display slots stay on one line; exception slots follow exception_name.
+    This is a grammar inventory, not producer authentication inside a shared interpreter.
+    """
+    from g6.harness import behaviour_runner as runner
+
+    # The example wrapper packs preparation helpers, and its comparison producer lives in finish.
+    # Read those fixed producers directly rather than treating compressed literals as Python statements.
+    source = REGISTRY[ident].text.replace(SLOT, '{}')
+    if ident == 'example.v1':
+        source += '\n' + inspect.getsource(runner.finish) + '\n' + inspect.getsource(CheckSetupError)
+        source += '\n' + _PREVIOUS_EXAMPLE_FAILURES
+    tree = ast.parse(source)
+    assignments = {node.targets[0].id: node.value for node in ast.walk(tree)
+                   if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)}
+    display = r'[^\r\n]*?'
+    # Python identifiers include Unicode combining marks and Other_ID_Start characters that re's \w omits.
+    # Capture each name and apply Python's own identifier rule in failure_matches instead.
+    names = r'([^\r\n :;()\[\],]+)'
+
+    def pattern(expr, seen=()):
+        if isinstance(expr, ast.Constant) and type(expr.value) is str:
+            return re.escape(expr.value)
+        if isinstance(expr, ast.Name) and expr.id in assignments and expr.id not in seen:
+            return pattern(assignments[expr.id], (*seen, expr.id))
+        if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
+            return pattern(expr.left, seen) + pattern(expr.right, seen)
+        if (isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Mod)
+                and isinstance(expr.left, ast.Constant) and type(expr.left.value) is str):
+            values = expr.right.elts if isinstance(expr.right, ast.Tuple) else [expr.right]
+            chunks, offset = [], 0
+            for match, value in zip(re.finditer(r'%[ds]', expr.left.value), values, strict=True):
+                chunks.extend((re.escape(expr.left.value[offset:match.start()]),
+                               r'[0-9]+' if match[0] == '%d' else pattern(value, seen)))
+                offset = match.end()
+            return ''.join(chunks) + re.escape(expr.left.value[offset:])
+        if isinstance(expr, ast.IfExp):
+            return '(?:' + pattern(expr.body, seen) + '|' + pattern(expr.orelse, seen) + ')'
+        if isinstance(expr, ast.Call):
+            if isinstance(expr.func, ast.Name) and expr.func.id in ('_name', 'exception_name'):
+                return names
+            if isinstance(expr.func, ast.Attribute) and expr.func.attr == 'join':
+                return r'[0-9]+(?:, [0-9]+)*'
+            if isinstance(expr.func, ast.Name) and expr.func.id == 'str':
+                return r'\[[0-9]+(?:, [0-9]+)*\]'
+        return display
+
+    summaries, direct = [], []
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.args
+                and isinstance(node.func.value, ast.Name)):
+            if node.func.value.id == 'failures' and node.func.attr == 'append' and not isinstance(node.args[0], ast.Name):
+                summaries.append(pattern(node.args[0]))
+            if node.func.value.id == 'pytest' and node.func.attr == 'fail':
+                # Dynamic summaries and forwarded exception text are accounted for by their actual producers.
+                if isinstance(node.args[0], ast.BinOp):
+                    direct.append('Failed: ' + pattern(node.args[0]))
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
+            values = {key.value: value for key, value in zip(node.value.keys, node.value.values, strict=True)
+                      if isinstance(key, ast.Constant)}
+            result = values.get('result')
+            if (isinstance(result, ast.IfExp) and isinstance(result.body, ast.Constant)
+                    and result.body.value == 'failed' and 'detail' in values):
+                detail = values['detail']
+                direct.append('Failed: ' + pattern(detail.body if isinstance(detail, ast.IfExp) else detail))
+        if isinstance(node, ast.Constant) and type(node.value) is str and node.value.startswith('call failed: builtins.'):
+            direct.extend((re.escape(node.value.partition('builtins.')[2] + ': ' + node.value),
+                           'Failed: ' + re.escape(node.value)))
+    if summaries:
+        one = '(?:' + '|'.join(summaries) + ')'
+        # Expand the five bounded slots so each exception name is captured, including earlier summaries.
+        direct.extend('Failed: ' + '; '.join([one] * count) + r'(?:; and [0-9]+ more)?'
+                      for count in range(1, 6))
+    # These exceptions are emitted by shared preparation, rather than pytest.fail. Legacy records lack
+    # exception-object annotations; admitting an exact producer line does not confer setup authority.
+    module = 'test_g6_' + ident.partition('.')[0]
+    direct.extend(re.escape(module + '.CheckSetupError: ' + detail) for detail in CheckSetupError.details())
+    unavailable = re.escape(module + '.ObservationUnavailable: ' + ObservationUnavailable.DETAIL)
+    direct.append(unavailable + '(?:: ' + names + ')?')
+    return tuple(dict.fromkeys(direct))
+
+
+def failure_matches(ident: str, line: str) -> bool:
+    """A whole compiler-produced failure line, with the same name rule as exception_name."""
+    for pattern in failure_inventory(ident):
+        matched = re.fullmatch(pattern, line)
+        if matched is not None and all(
+                len(name) <= 200 and all((part.isidentifier() or part in ('<locals>', '<unavailable>'))
+                                         and 'G6_E_' not in part for part in name.split('.'))
+                for name in matched.groups() if name is not None):
+            return True
+    return False
 
 
 # --- the registry ---------------------------------------------------------------------------------------------------------
