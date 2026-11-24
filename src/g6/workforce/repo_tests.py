@@ -60,6 +60,7 @@ from __future__ import annotations
 from g6.core.guidance_builders import confine_not_started, confine_record, confine_refusal, confine_refused, confine_summary
 
 import ast
+import base64
 import configparser
 import fnmatch
 import hashlib
@@ -75,8 +76,10 @@ import sys
 import tempfile
 import time
 import tomllib
+from collections import deque
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -2218,7 +2221,10 @@ _BOOT = confine.CHILD_PRELUDE + _BOOT
 
 # Ordinary execution keeps its original bootstrap and progress schema. Only
 # the isolated collect-only child writes this separate advisory report.
-_COLLECTION_BOOT = _BOOT.replace('args = sys.argv[9:]\n', '''_g6_collection_repo = sys.argv.pop(9)
+_COLLECTION_BOOT = _BOOT.replace('import pytest\n', '''import pytest
+# Runtime context captured before any repository path or code is admitted.
+_g6_compiler_runtime = {"python": sys.executable, "paths": list(sys.path)}
+''', 1).replace('args = sys.argv[9:]\n', '''_g6_collection_repo = sys.argv.pop(9)
 args = sys.argv[9:]
 ''').replace('        status = getattr(session, "exitstatus", None)\n', '''        status = getattr(session, "exitstatus", None)
         import os, types, pytest
@@ -2282,6 +2288,8 @@ args = sys.argv[9:]
                 pass
         report = {"nodes": list(names.values()), "root": report_root,
                   "exit": int(status) if status is not None else None}
+        if globals().get("_g6_compiler_runtime"):
+            report["compiler_runtime"] = _g6_compiler_runtime
         if bodies:
             report["bodies"] = bodies
             report["codes"] = codes
@@ -3130,37 +3138,150 @@ def collect(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), 
         return {"status": "uncertain", "reason": f"pytest collection unavailable ({type(exc).__name__})"}
 
 
-def _collection_evidence(repo: Path):
-    """G6's bounded, pre-launch read; child-writable reports carry no authority.
+_COLLECTION_INVENTORIES = ContextVar("collection_copy_inventories", default={})
 
-    Any configuration, hook/plugin declaration, or unreadable/import-time code
-    outside the small static subset disables identity for the whole report.
-    Scanning the repository's Python inventory also covers imported hook modules.
+
+def _collection_source_passive(tree, modules):
+    """Read collection effects on ordinary code, within the same-process limit.
+
+    Installed imports, constructors and function bodies are ordinary Python.
+    Hooks/plugins, imported attribute writes and import-time repository calls
+    disable collected identity. This is not a hostile-code boundary.
     """
+    nodes, pending = [], deque([tree])
+    while pending:
+        component_process.checkpoint()
+        node = pending.popleft()
+        nodes.append(node)
+        pending.extend(ast.iter_child_nodes(node))
+    aliases, definitions = {"setattr": "builtins.setattr", "delattr": "builtins.delattr"}, set()
+    for node in nodes:
+        component_process.checkpoint()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            definitions.add(node.name)
+        if isinstance(node, ast.Import):
+            aliases.update({alias.asname or alias.name.split(".")[0]: alias.name for alias in node.names})
+        elif isinstance(node, ast.ImportFrom):
+            aliases.update({alias.asname or alias.name: f"{node.module or ''}.{alias.name}" for alias in node.names})
+        if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("pytest_") or
+                isinstance(node, ast.Name) and node.id == "pytest_plugins"):
+            return False
+    imported = set(aliases)
+    assignments = [node for node in nodes if isinstance(node, ast.Assign)]
+    # Follow simple aliases to repository callables and imported objects. This
+    # preserves the existing refusal of import-time calls/writes through aliases.
+    while True:
+        added = False
+        for node in assignments:
+            component_process.checkpoint()
+            if not isinstance(node.value, (ast.Name, ast.Attribute)):
+                continue
+            name = ast.unparse(node.value)
+            head = name.split(".")[0]
+            if head not in aliases and head not in definitions:
+                continue
+            resolved = aliases.get(head, head) + name[len(head):]
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id not in aliases and target.id != head:
+                    aliases[target.id] = resolved
+                    if head in imported:
+                        imported.add(target.id)
+                    added = True
+        if not added:
+            break
+    inert = set()
+    for definition in tree.body:
+        if (isinstance(definition, ast.FunctionDef) and not definition.decorator_list and
+                len(definition.body) == 1 and isinstance(definition.body[0], ast.Return)):
+            value = definition.body[0].value
+            arguments = {argument.arg for argument in (*definition.args.posonlyargs, *definition.args.args)}
+            if (isinstance(value, ast.Name) and value.id in arguments or
+                    isinstance(value, ast.Lambda) and not any(isinstance(part, ast.Call) for part in ast.walk(value))):
+                inert.add(definition.name)
+
+    def repository_call(function):
+        name = ast.unparse(function)
+        head = name.split(".")[0]
+        resolved = aliases.get(head, head)
+        # Retain the existing spelling-based decorator exceptions. Repository
+        # code shadowing these names is part of the owner's stated limit.
+        if (resolved + name[len(head):]).startswith("pytest.mark.") or name in ("staticmethod", "classmethod"):
+            return False
+        return head in definitions or resolved.split(".")[0] in modules | definitions or resolved.startswith(".")
+
+    def imported_object(node):
+        while isinstance(node, (ast.Attribute, ast.Subscript)):
+            node = node.value
+        return isinstance(node, ast.Name) and node.id in imported
+
+    # Visit only expressions evaluated at import: bodies of functions and
+    # __main__ guards do not execute then. Class bodies and headers do.
+    pending = list(tree.body)
+    while pending:
+        component_process.checkpoint()
+        node = pending.pop()
+        if isinstance(node, ast.If) and ast.unparse(node.test) in (
+                "__name__ == '__main__'", "'__main__' == __name__"):
+            pending.extend(node.orelse)
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            for decorator in node.decorator_list:
+                function = decorator.func if isinstance(decorator, ast.Call) else decorator
+                if repository_call(function) and not (isinstance(function, ast.Name) and function.id in inert):
+                    return False
+                if isinstance(decorator, ast.Call):
+                    pending.extend([*decorator.args, *(keyword.value for keyword in decorator.keywords)])
+            if isinstance(node, ast.ClassDef):
+                pending.extend([*node.bases, *(keyword.value for keyword in node.keywords), *node.body])
+            else:
+                pending.extend([node.args, *([node.returns] if node.returns else [])])
+            continue
+        if isinstance(node, ast.Lambda):
+            pending.append(node.args)
+            continue
+        if (isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)) and
+                imported_object(node.value)):
+            return False
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and
+                aliases.get(node.func.id, node.func.id) in ("setattr", "delattr", "builtins.setattr", "builtins.delattr") and
+                node.args and imported_object(node.args[0])):
+            return False
+        if isinstance(node, ast.Call) and repository_call(node.func):
+            return False
+        pending.extend(ast.iter_child_nodes(node))
+    return True
+
+
+def _collection_evidence(repo: Path, *, roots=()):
+    """Bounded pre-launch source read for honest collection, not hostile authority."""
     from g6.harness import change_map
 
     sources = {}
     try:
-        paths = _paths(_git(repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z"))
-        if change_map.pytest_context_paths(paths):
+        paths = _COLLECTION_INVENTORIES.get().get(repo.resolve())
+        if paths is None:
+            paths = _paths(_git(repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z"))
+        if any(path == "conftest.py" or path.endswith("/conftest.py")
+               for path in change_map.pytest_context_paths(paths)):
             return sources, False
         files = sorted({file for file in paths if file.endswith(".py")})
         if len(files) > change_map.MAX_FILES:
             return sources, False
         directories = {repo}
         for file in files:
+            component_process.checkpoint()
             path = _disk(repo, file)
             if path is None:
                 return sources, False
             directory = path.parent
             while directory != repo:
+                component_process.checkpoint()
                 if not _within(repo, directory):
                     return sources, False
                 directories.add(directory)
                 directory = directory.parent
         # Ignoring a configuration in git does not stop pytest loading it.
-        if any(os.path.lexists(directory / name) for directory in directories
-               for name in (*change_map.PYTEST_CONFIGS, "conftest.py")):
+        if any(_configures_pytest(directory) or os.path.lexists(directory / "conftest.py") for directory in directories):
             return sources, False
         total = 0
         for file in files:
@@ -3176,99 +3297,13 @@ def _collection_evidence(repo: Path):
             sources[file] = data
         modules = {file.removesuffix(".py").replace("/", ".").removeprefix("src.").split(".")[0]
                    for file in sources}
-        allowed = {*sys.stdlib_module_names, "pytest", *modules}
+        for root in roots:
+            prefix = root.replace("\\", "/").rstrip("/") + "/"
+            modules.update(file.removeprefix(prefix).removesuffix(".py").replace("/", ".").split(".")[0]
+                           for file in sources if file.startswith(prefix))
         for data in sources.values():
-            tree = ast.parse(data)
-            aliases = {"pytest": "pytest"}
-            bindings = {}
-            for node in ast.walk(tree):
-                names = []
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    names = [node.name]
-                elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-                    names = [node.id]
-                elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                    names = [alias.asname or alias.name.split(".")[0] for alias in node.names]
-                for name in names:
-                    bindings[name] = bindings.get(name, 0) + 1
-            # A local decorator that merely returns its argument or creates a
-            # call-free lambda cannot arrange a later report write. Its return
-            # still needs the independent code comparison for body admission.
-            inert_decorators = set()
-            for definition in tree.body:
-                if (isinstance(definition, (ast.FunctionDef, ast.AsyncFunctionDef)) and
-                        not isinstance(definition, ast.AsyncFunctionDef) and not definition.decorator_list and
-                        bindings.get(definition.name) == 1 and
-                        len(definition.body) == 1 and isinstance(definition.body[0], ast.Return)):
-                    value = definition.body[0].value
-                    arguments = {argument.arg for argument in (*definition.args.posonlyargs, *definition.args.args)}
-                    if (isinstance(value, ast.Name) and value.id in arguments or
-                            isinstance(value, ast.Lambda) and not any(isinstance(part, ast.Call)
-                                                                    for part in ast.walk(value))):
-                        inert_decorators.add(definition.name)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        if alias.name.split(".")[0] not in allowed:
-                            return sources, False
-                        aliases[alias.asname or alias.name] = alias.name
-                elif isinstance(node, ast.ImportFrom):
-                    if not node.level and (node.module or "").split(".")[0] not in allowed:
-                        return sources, False
-                    for alias in node.names:
-                        aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
-                if ((isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("pytest_")) or
-                        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and
-                        node.name.startswith("__") and node.name.endswith("__") or
-                        isinstance(node, ast.Name) and node.id == "pytest_plugins"):
-                    return sources, False
-
-            def passive(body, in_class=False):
-                for node in body:
-                    component_process.checkpoint()
-                    if isinstance(node, (ast.Import, ast.ImportFrom, ast.Pass)):
-                        continue
-                    if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
-                        continue
-                    if isinstance(node, (ast.Assign, ast.AnnAssign)):
-                        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                        if any(not isinstance(target, ast.Name) for target in targets):
-                            return False
-                        try:
-                            ast.literal_eval(node.value)
-                        except (TypeError, ValueError):
-                            return False
-                        if isinstance(node, ast.AnnAssign) and any(
-                                isinstance(part, ast.Call) for part in ast.walk(node.annotation)):
-                            return False
-                        continue
-                    if isinstance(node, ast.ClassDef):
-                        if (node.decorator_list or node.keywords or
-                                any(not isinstance(base, (ast.Name, ast.Attribute)) for base in node.bases) or
-                                not passive(node.body, True)):
-                            return False
-                        continue
-                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        for decorator in node.decorator_list:
-                            function = decorator.func if isinstance(decorator, ast.Call) else decorator
-                            name = ast.unparse(function)
-                            head, dot, tail = name.partition(".")
-                            name = aliases.get(head, head) + dot + tail
-                            if not (name.startswith("pytest.mark.") or
-                                    in_class and name in ("staticmethod", "classmethod") or
-                                    isinstance(decorator, ast.Name) and name in inert_decorators):
-                                return False
-                            if any(isinstance(part, ast.Call) and part is not decorator
-                                   for part in ast.walk(decorator)):
-                                return False
-                        headers = [node.args, *([node.returns] if node.returns is not None else [])]
-                        if any(isinstance(part, ast.Call) for header in headers for part in ast.walk(header)):
-                            return False
-                        continue
-                    return False
-                return True
-
-            if not passive(tree.body):
+            component_process.checkpoint()
+            if not _collection_source_passive(ast.parse(data), modules):
                 return sources, False
         return sources, True
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
@@ -3277,7 +3312,53 @@ def _collection_evidence(repo: Path):
         return {}, False
 
 
-def _read_collection(counted: Path, code: int | None, repo: Path, *, evidence=None) -> dict:
+def _compile_collection_sources(repo, sources, runtime, python=None):
+    """Compile our source bytes in an isolated owned process using the test runtime.
+
+    Runtime hints are diagnostic collection data within the same-process limit;
+    the production runner supplies the chosen executable independently.
+    """
+    component_process.checkpoint()
+    runtime = runtime if isinstance(runtime, dict) else {}
+    executable = python or runtime.get("python") or interpreter(repo)
+    if (not isinstance(executable, str) or not Path(executable).is_absolute() or
+            not _PYTHON_NAME.fullmatch(Path(executable).name) or not Path(executable).is_file()):
+        raise ValueError("repository compiler interpreter unavailable")
+    if not python and _within(repo.resolve(), Path(executable).resolve()):
+        # A report cannot choose a repository executable. Only the ordinary
+        # interpreter preflight can authorize the repository's environment.
+        if executable != interpreter(repo):
+            raise ValueError("repository compiler interpreter not selected by G6")
+    paths = runtime.get("paths", [])
+    if not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
+        raise ValueError("repository compiler pytest paths unavailable")
+    environments = tuple(Path(folder).resolve() for folder in _environment_of(executable))
+    paths = [path for path in paths if Path(path).is_absolute() and
+             (not _within(repo.resolve(), Path(path).resolve()) or any(
+                 _within(folder, Path(path).resolve()) and Path(path).name in ("site-packages", "dist-packages")
+                 for folder in environments))]
+    remaining = component_process.checkpoint()
+    seconds = min(10., remaining) if remaining is not None else 10.
+    request = {"seconds": seconds, "repository": str(repo.resolve()), "paths": paths, "sources": {
+        file: {"bytes": base64.b64encode(data).decode("ascii"),
+               "filename": str(repo / _test_id(repo, file, "collection source"))} for file, data in sources.items()}}
+    worker = Path(__file__).with_name("_collection_compile.py")
+    with component_process.window(seconds):
+        completed = component_process.run_contained(
+            [executable, "-I", "-B", "-X", "utf8", str(worker)], cwd=worker.parent,
+            env={key: value for key, value in os.environ.items() if key in _KEEP},
+            input_bytes=json.dumps(request).encode("utf-8"))
+    if completed.returncode != 0:
+        raise ValueError(f"repository compiler exited {completed.returncode}")
+    response = json.loads(completed.stdout)
+    if response.get("error"):
+        raise ValueError(response["error"])
+    if type(response.get("compiled")) is not dict or set(response["compiled"]) != set(sources):
+        raise ValueError("repository compiler returned incomplete source identities")
+    return response["compiled"]
+
+
+def _read_collection(counted: Path, code: int | None, repo: Path, *, evidence=None, python=None) -> dict:
     """Read structured selected ids, never terminal output or a partial collection."""
     if code not in (0, 5):
         reason = "timed out" if code is None else f"errors (exit {code})"
@@ -3294,6 +3375,7 @@ def _read_collection(counted: Path, code: int | None, repo: Path, *, evidence=No
         prefix = _root(repo, rootdir)
         result = []
         for node in nodes:
+            component_process.checkpoint()
             if (not isinstance(node, str) or shape_problem(node, "collected node") or
                     "::" not in node or ".." in node.partition("::")[0].split("/")):
                 raise ValueError("invalid collected node")
@@ -3306,6 +3388,7 @@ def _read_collection(counted: Path, code: int | None, repo: Path, *, evidence=No
                 raise ValueError("invalid collected callable identities")
             mapped = {}
             for node, body in bodies.items():
+                component_process.checkpoint()
                 if type(body) is not dict or set(body) != {"file", "line"}:
                     raise ValueError("invalid collected callable identity")
                 file, line = body["file"], body["line"]
@@ -3323,39 +3406,46 @@ def _read_collection(counted: Path, code: int | None, repo: Path, *, evidence=No
                 mapped[f"{prefix}/{node}" if prefix else node] = {"file": file, "line": line}
             if mapped:
                 answer["bodies"] = mapped
-                from g6.harness import change_map
-
                 sources, authoritative = _collection_evidence(repo) if evidence is None else evidence
-                codes, compiled, unresolved, admitted_codes = raw.get("codes", {}), {}, [], {}
+                codes, unresolved, admitted_codes = raw.get("codes", {}), [], {}
+                wanted = {body["file"] for body in mapped.values() if body["file"] in sources}
+                compiled = {}
+                if authoritative and wanted:
+                    try:
+                        compiled = _compile_collection_sources(repo, {file: sources[file] for file in wanted},
+                                                               raw.get("compiler_runtime"), python)
+                    except component_process.ExecutionInterrupted as exc:
+                        if exc.stopped:
+                            raise
+                        component_process.checkpoint()  # an enclosing allowance still reaches the Door
+                        return {"status": "uncertain", "reason": "pytest collection compilation time limit reached"}
+                    except (OSError, ValueError, TypeError, KeyError, RecursionError, ImportError) as exc:
+                        return {"status": "uncertain", "reason": f"pytest collection compilation unavailable ({exc})"}
+                tables = {file: {(name, line): values for name, line, values in item["codes"]}
+                          for file, item in compiled.items()}
+                call_tables = {file: {tuple(key) for key in item["calls"]} for file, item in compiled.items()}
                 for node, body in mapped.items():
+                    component_process.checkpoint()
                     original = node.removeprefix(prefix + "/") if prefix else node
                     file = body["file"]
                     try:
-                        if not authoritative or type(codes) is not dict or file not in sources:
+                        if not authoritative or type(codes) is not dict or file not in compiled:
                             raise ValueError("collection producer authority unavailable")
-                        if file not in compiled:
-                            compiled[file] = change_map.compiled_identities(sources[file], str(repo / file))
                         selection = original.partition("::")[2]
                         name = selection.split("[", 1)[0].rsplit("::", 1)[-1]
-                        expected = compiled[file].get((name, body["line"]), ())
+                        key = (name, body["line"])
+                        expected = tables[file].get(key, ())
                         if not isinstance(codes.get(original), str) or codes[original] not in expected:
                             raise ValueError("collected code differs from G6 compilation")
-                        # Transport content evidence for bodies that could
-                        # contribute calls. Location-only, call-free records
-                        # retain their existing diagnostic shape.
-                        tree = ast.parse(sources[file])
-                        if any(isinstance(definition, (ast.FunctionDef, ast.AsyncFunctionDef)) and
-                               definition.name == name and
-                               min([definition.lineno, *(d.lineno for d in definition.decorator_list)]) == body["line"] and
-                               any(isinstance(part, ast.Call) for part in ast.walk(definition))
-                               for definition in ast.walk(tree)):
+                        if key in call_tables[file]:
                             admitted_codes[node] = codes[original]
-                    except (OSError, ValueError, SyntaxError, TypeError, RecursionError, ImportError):
+                    except (ValueError, TypeError):
                         unresolved.append(node)
                 if unresolved:
                     answer["unresolved"] = unresolved
                 if admitted_codes:
                     answer["codes"] = admitted_codes
+                    answer["compilations"] = compiled
         if not nodes:
             _, authoritative = _collection_evidence(repo) if evidence is None else evidence
             if not authoritative:
@@ -3457,7 +3547,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
     # tests collected, the output, the mutant's source and an empty config.
     # Both in one folder G6 makes, so a confined run can see where its report goes (pytest creates the report's folder,
     # and checks each folder above it, before writing).
-    collection_evidence = _collection_evidence(repo) if collect_only else None
+    collection_evidence = _collection_evidence(repo, roots=roots) if collect_only else None
     scratch_dir = outside_temp(repo, scratch_dir)
     with confine.run_folder(prefix="g6_repo_run_", dir=scratch_dir, ignore_cleanup_errors=True) as top:
         work, own = Path(top) / "home", Path(top) / "report"
@@ -3522,7 +3612,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 isolation = {**isolation, "cleanup": left}
         output, counts = _output(log), _counts(report, repo, tuple(Path(entry) for entry in entries))
         collection = (_read_collection(Path(str(counted) + ".collection.json"), code, repo,
-                                       evidence=collection_evidence) if collect_only else None)
+                                       evidence=collection_evidence, python=python) if collect_only else None)
         progress = _progress(counts or {}, counted)
         seen[:] = _loaded(own / "loaded.json")
         if counts is not None:
@@ -4241,7 +4331,12 @@ def repository_copy(repo: Path, *, deadline: float, before: dict[str, str] | Non
                                                                                for rel, data in generated.items()}),
                                                          ("generated_left_out", generated_left)) if value})
         _copy_caps(*tally, deadline)
-        yield copy
+        token = _COLLECTION_INVENTORIES.set({**_COLLECTION_INVENTORIES.get(),
+                                             copy.resolve(): tuple(dict.fromkeys([*known, *before]))})
+        try:
+            yield copy
+        finally:
+            _COLLECTION_INVENTORIES.reset(token)
 
 
 def _copy_snapshot(repo: Path, *, deadline: float | None = None) -> dict[str, str]:

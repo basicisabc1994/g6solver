@@ -10,9 +10,12 @@ external packages and arbitrary data flow are outside this map's view.
 from __future__ import annotations
 
 import ast
+import configparser
+import fnmatch
 import hashlib
 import json
 import time
+import tomllib
 import types
 from bisect import bisect_left
 from contextlib import contextmanager
@@ -41,7 +44,9 @@ MAX_LITERAL_OUTPUT = 8192  # Characters in emitted, deduplicated literal source 
 MAX_OUTPUT_CHARS = 2_000_000  # Compact, ASCII-escaped JSON characters.
 MAX_WORK = 2_000_000
 STATIC_LIMIT = ("Static named calls only: this cannot see dynamic dispatch, reflection, external code, fixture "
-                "injection or arbitrary data flow; a named call may never execute. No execution coverage is claimed.")
+                "injection or arbitrary data flow; a named call may never execute. No execution coverage is claimed. "
+                "Not checked against code written to deceive collection: repository code running inside the collection "
+                "child can make a check look exercised, and the pre-launch read is not authority against it.")
 _FUNCTION = (ast.FunctionDef, ast.AsyncFunctionDef)
 PYTEST_CONFIGS = ("pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg")
 
@@ -383,6 +388,8 @@ class _Index:
         self.namespaces, self.resolved, self.call_cache, self.mros = {}, {}, {}, {}
         self.lineages = {}
         self.compiled = {}
+        self.static_scans = {}
+        self.collection_names = {}
         self.sources, self.offsets, self.fingerprints, self.lines = {}, {}, {}, {}
         self.literal_nodes, self.literal_ranges = {}, {}
 
@@ -1131,14 +1138,89 @@ def _selected(index, rel, selection):
     raise _FileOmitted("collected body has an unavailable or ambiguous source")
 
 
+def _pytest_names(texts, rel):
+    """Read collection names without executing configuration or repository code.
+
+    Matching a name never overrides the existing configuration/context guard.
+    """
+    options = {"python_files": ["test_*.py", "*_test.py"], "python_classes": ["Test"], "python_functions": ["test"]}
+    for directory in (PurePosixPath(rel).parent, *PurePosixPath(rel).parent.parents):
+        for name in PYTEST_CONFIGS:
+            path = (directory / name).as_posix()
+            if path not in texts:
+                continue
+            text = texts[path]
+            try:
+                if name.endswith(".toml"):
+                    data = tomllib.loads(text)
+                    data = data.get("tool", {}).get("pytest", {}) if name == "pyproject.toml" else data.get("pytest", {})
+                    values = data.get("ini_options", data)
+                    if not data and name == "pyproject.toml":
+                        continue
+                else:
+                    parser = configparser.ConfigParser(interpolation=None)
+                    parser.read_string(text)
+                    section = "tool:pytest" if name == "setup.cfg" else "pytest"
+                    if not parser.has_section(section) and name not in ("pytest.ini", ".pytest.ini"):
+                        continue
+                    values = dict(parser[section]) if parser.has_section(section) else {}
+                for key in options:
+                    if key in values:
+                        value = values[key]
+                        options[key] = value.split() if isinstance(value, str) else list(value)
+                        if any(not isinstance(item, str) for item in options[key]):
+                            raise ValueError("non-text collection name")
+                break
+            except (ValueError, TypeError, AttributeError, configparser.Error):
+                raise _FileOmitted("pytest collection naming configuration unavailable") from None
+        else:
+            continue
+        break
+    return options
+
+
+def _static_names(texts, rel, selection, cache):
+    directory = PurePosixPath(rel).parent
+    if directory not in cache:
+        try:
+            cache[directory] = _pytest_names(texts, rel)
+        except _FileOmitted as exc:
+            cache[directory] = exc.args[0]
+    options = cache[directory]
+    if isinstance(options, str):
+        raise _FileOmitted(options)
+    parts = selection.split("[", 1)[0].replace("::", ".").split(".")
+    if not any(fnmatch.fnmatch(PurePosixPath(rel).name, pattern) for pattern in options["python_files"]):
+        raise _FileOmitted("file does not match pytest collection names")
+    for name, key in [*( (part, "python_classes") for part in parts[:-1]), (parts[-1], "python_functions")]:
+        if not any(name.startswith(pattern) or any(char in pattern for char in "?*[") and fnmatch.fnmatch(name, pattern)
+                   for pattern in options[key]):
+            raise _FileOmitted("body does not match pytest collection names")
+
+
+def _static_module(index, rel, *, collection_only=False):
+    """Cache success and failure once per module in this map's index."""
+    if rel not in index.static_scans:
+        try:
+            if rel not in index.trees or rel in index.invalid:
+                raise _FileOmitted("explicit body has an unreadable definition module")
+            identity_reason = _static_test_writes(index.trees[rel])
+            index.static_scans[rel] = (None, identity_reason)
+        except _FileOmitted as exc:
+            index.static_scans[rel] = (exc.args[0], None)
+    collection_reason, identity_reason = index.static_scans[rel]
+    reason = collection_reason or (None if collection_only else identity_reason)
+    if reason is not None:
+        raise _FileOmitted(reason)
+
+
 def _static_selected(index, rel, selection):
     """Reject suppressed containing classes before admitting an explicit body.
 
     This is a conservative guard, not a replacement for collection. Configured
     class patterns and custom collectors need an available collection result.
     """
-    _static_test_writes(index.trees[rel])
-    scanned_modules = {rel}
+    _static_module(index, rel)
     parts = selection.split("[", 1)[0].replace("::", ".").split(".")
     module = index.modules[rel]
     for end in _each(range(1, len(parts))):
@@ -1155,9 +1237,7 @@ def _static_selected(index, rel, selection):
                 raise _FileOmitted("explicit body has an unreadable ancestor module")
             # Many ancestors can share one module. Its whole-tree scan covers
             # every class already; repeating it can exhaust the work budget.
-            if ancestor.file not in scanned_modules:
-                _static_test_writes(tree)
-                scanned_modules.add(ancestor.file)
+            _static_module(index, ancestor.file)
             if ancestor.node.decorator_list or ancestor.node.keywords:
                 raise _FileOmitted("explicit body has dynamic ancestor class creation")
             scope = index.symbol_scopes[id(ancestor.node)]
@@ -1188,6 +1268,7 @@ def _static_selected(index, rel, selection):
             raise _FileOmitted("explicit body has a suppressed or unavailable module")
     symbols = _selected(index, rel, selection)
     for symbol in _each(symbols):
+        _static_module(index, symbol.file, collection_only=True)
         _same_function_decorators(index, symbol)
     return symbols
 
@@ -1260,6 +1341,7 @@ def _static_test_writes(tree):
                    for target in _each(node.targets if isinstance(node, ast.Assign) else [node.target])
                    if isinstance(target, ast.Name)}
     setters, aliases = {"setattr", "delattr", "builtins.setattr", "builtins.delattr"}, []
+    identity_reason = None
     for node in _walk(tree):
         if (isinstance(node, ast.Name) and node.id == "__test__" and
                 isinstance(node.ctx, (ast.Store, ast.Del)) and id(node) not in local_names):
@@ -1278,9 +1360,9 @@ def _static_test_writes(tree):
     for node in _walk(tree):
         if (isinstance(node, ast.Attribute) and node.attr in ("__code__", "__wrapped__") and
                 isinstance(node.ctx, (ast.Store, ast.Del))):
-            raise _FileOmitted("explicit body has an external callable identity write")
+            identity_reason = "explicit body has an external callable identity write"
         if isinstance(node, ast.Call) and _name(node.func).split(".")[-1] in ("exec", "compile"):
-            raise _FileOmitted("explicit body has dynamic code construction")
+            identity_reason = "explicit body has dynamic code construction"
         if isinstance(node, (ast.Global, ast.Nonlocal)) and "__test__" in node.names:
             raise _FileOmitted("explicit body has a redirected collection attribute binding")
         if isinstance(node, ast.Call) and (
@@ -1311,9 +1393,10 @@ def _static_test_writes(tree):
                     ast.literal_eval(node.value)
                 except (ValueError, TypeError):
                     raise _FileOmitted("explicit body has an unreadable collection attribute write") from None
+    return identity_reason
 
 
-def _collected_selected(index, rel, selection, body, identity=None):
+def _collected_selected(index, rel, selection, body, identity=None, compilations=None):
     """Resolve a reader-validated identity to the corresponding AST body.
 
     The collection reader compares code contents against G6's compilation and
@@ -1332,7 +1415,11 @@ def _collected_selected(index, rel, selection, body, identity=None):
             if not isinstance(identity, str):
                 raise _FileOmitted("collected callable code identity unavailable")
             if symbol.file not in index.compiled:
-                index.compiled[symbol.file] = compiled_identities(index.sources[symbol.file].decode("utf-8"), symbol.file)
+                supplied = (compilations or {}).get(symbol.file, {})
+                if supplied.get("source") == hashlib.sha256(index.sources[symbol.file]).hexdigest():
+                    index.compiled[symbol.file] = {(name, line): codes for name, line, codes in supplied["codes"]}
+                else:
+                    index.compiled[symbol.file] = compiled_identities(index.sources[symbol.file].decode("utf-8"), symbol.file)
             expected = index.compiled[symbol.file].get((symbol.node.name, body["line"]), ())
             if identity not in expected:
                 raise _FileOmitted("collected callable code differs from the source body")
@@ -1383,6 +1470,8 @@ def collect_checks(change, stated_checks, proposed_checks, roots, *, collector, 
                     if isinstance(answer.get("codes"), dict):
                         answers[check]["codes"] = {node: answer["codes"][node]
                                                    for node in answers[check]["nodes"] if node in answer["codes"]}
+                    if isinstance(answer.get("compilations"), dict):
+                        answers[check]["compilations"] = answer["compilations"]
                 else:
                     answers[check] = {"status": "uncertain", "reason": answer.get("reason") or
                                       "pytest collection result unavailable"}
@@ -1425,6 +1514,15 @@ def _exercised(targets: Sequence[dict], checks: Mapping[str, str], roots: Sequen
                         bodies = _static_selected(index, rel, selection)
                     except _FileOmitted:
                         pass
+            # Resolve inside the file transaction before filtering names, so a
+            # local stage failure still discards that file's partial advice.
+            if check in explicit and separator and selection:
+                try:
+                    _static_names(texts, rel, selection, index.collection_names)
+                except _FileOmitted as exc:
+                    uncertain.add(check)
+                    skipped.append(skip(check, exc.args[0]))
+                    continue
             if not bodies:
                 uncertain.add(check)
                 skipped.append(skip(check, answer.get("reason") or "pytest collection unavailable (not supplied)"))
@@ -1448,7 +1546,8 @@ def _exercised(targets: Sequence[dict], checks: Mapping[str, str], roots: Sequen
                     codes = answer.get("codes", {})
                     bodies = (_selected(index, rel, selection) if check in static else
                               _collected_selected(index, rel, selection, body,
-                                                  codes.get(node) if isinstance(codes, dict) else None))
+                                                  codes.get(node) if isinstance(codes, dict) else None,
+                                                  answer.get("compilations")))
                 except _FileOmitted as exc:
                     uncertain.add(check)
                     skipped.append(skip(check, exc.args[0]))
