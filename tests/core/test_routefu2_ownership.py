@@ -724,3 +724,151 @@ def test_namespace_history_survives_one_location_then_the_other(ownership, tmp_p
     if clear_history:
         dependencies.optional_import_roots.cache_clear()
         assert dependencies.optional_dependency_missing("abstraction", failure)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction ownership")
+@pytest.mark.parametrize("replace_file", (True, False), ids=("different-inode", "same-inode-control"))
+def test_stale_resolved_path_cannot_own_a_different_stat_identity(ownership, tmp_path, monkeypatch,
+                                                              replace_file):
+    import _winapi
+
+    dependencies, specs = ownership
+    target = tmp_path / "target"
+    target.mkdir()
+    shared = target / "shared.py"
+    shared.write_text("value = 'required'\n", encoding="utf-8")
+    junction = tmp_path / "site"
+    _winapi.CreateJunction(str(target), str(junction))
+    try:
+        specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, shared)
+        assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+        loaded = ModuleType(REQUIRED)
+        loaded.__file__ = str(junction / "shared.py")
+        monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+        dependencies.record_loaded_required_imports()
+        monkeypatch.delitem(sys.modules, REQUIRED)
+        os.rmdir(junction)
+        if replace_file:
+            old = target / "old-required.py"
+            shared.rename(old)
+            shared.write_text("value = 'independent optional'\n", encoding="utf-8")
+            assert (old.stat().st_dev, old.stat().st_ino) != (shared.stat().st_dev, shared.stat().st_ino)
+        assert _roots(dependencies, SCOPES[2]) == ({OPTIONAL} if replace_file else frozenset())
+        specs.clear()
+        shared.unlink()
+        failure = ModuleNotFoundError("optional replacement disappeared", name=OPTIONAL)
+        assert dependencies.optional_dependency_missing("abstraction", failure) is replace_file
+    finally:
+        if os.path.lexists(junction):
+            os.rmdir(junction)
+
+
+@pytest.mark.parametrize("location", ("fileless", "file", "cache-only"))
+def test_loaded_snapshot_does_not_promote_optional_name_history(ownership, tmp_path, monkeypatch, location):
+    dependencies, specs = ownership
+    needs = {"g6": ['rfu2build-base; extra == "mcp"', 'rfu2build-extra; extra == "abstraction"'],
+             "rfu2build-base": [], "rfu2build-extra": []}
+    monkeypatch.setattr(dependencies.metadata, "requires", lambda name: needs[name])
+    monkeypatch.setattr(dependencies.metadata, "packages_distributions",
+                        lambda: {REQUIRED: ["rfu2build-base", "rfu2build-extra"], OPTIONAL: ["rfu2build-extra"]})
+    old_optional = tmp_path / "optional-only.py"
+    actual_required = tmp_path / "actual-required.py"
+    old_optional.write_text("value = 'optional only'\n", encoding="utf-8")
+    actual_required.write_text("value = 'required'\n", encoding="utf-8")
+    for root in (REQUIRED, OPTIONAL):
+        specs[root] = util.spec_from_file_location(root, old_optional)
+    assert _roots(dependencies, SCOPES[2]) == {REQUIRED, OPTIONAL}
+    loaded = ModuleType(REQUIRED)
+    loaded.__spec__ = machinery.ModuleSpec(REQUIRED, loader=None, origin="frozen")
+    if location == "file":
+        loaded.__file__ = str(actual_required)
+    elif location == "cache-only":
+        loaded.__cached__ = str(old_optional)
+        loaded.__spec__.cached = str(old_optional)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    dependencies.record_loaded_required_imports()
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    specs.clear()
+    old_optional.unlink()
+    actual_required.unlink()
+    assert OPTIONAL in _roots(dependencies, SCOPES[2])
+
+
+@pytest.mark.parametrize("mutate_locations", (False, True), ids=("unload-only", "unload-and-mutate"))
+def test_loaded_snapshot_keeps_original_file_after_unload(ownership, tmp_path, monkeypatch, mutate_locations):
+    dependencies, specs = ownership
+    loaded_alias = "rfu2build_loaded_alias"
+    monkeypatch.setattr(dependencies.metadata, "packages_distributions",
+                        lambda: {REQUIRED: ["rfu2build-base"], OPTIONAL: ["rfu2build-extra"],
+                                 loaded_alias: ["rfu2build-extra"]})
+    original_file = tmp_path / "actually-loaded.py"
+    replacement = tmp_path / "never-loaded.py"
+    original_file.write_text("value = 'required'\n", encoding="utf-8")
+    replacement.write_text("value = 'optional only'\n", encoding="utf-8")
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, replacement)
+    specs[loaded_alias] = util.spec_from_file_location(loaded_alias, original_file)
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL, loaded_alias}
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(original_file)
+    loaded.__spec__ = util.spec_from_file_location(REQUIRED, original_file)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    record = dependencies._without_required_aliases
+
+    def unload_after_snapshot(optional, required):
+        assert not optional and REQUIRED in required
+        monkeypatch.delitem(sys.modules, REQUIRED)
+        specs[REQUIRED] = util.spec_from_file_location(REQUIRED, replacement)
+        if mutate_locations:
+            loaded.__file__ = str(replacement)
+            loaded.__spec__.origin = str(replacement)
+        return record(optional, required)
+
+    with monkeypatch.context() as snapshot:
+        snapshot.setattr(dependencies, "_without_required_aliases", unload_after_snapshot)
+        dependencies.record_loaded_required_imports()
+    specs.clear()
+    original_file.unlink()
+    replacement.unlink()
+    # Both optional names were seen before startup; only the actually loaded
+    # file becomes required, even after its module object is unloaded/mutated.
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+
+
+def test_loaded_snapshot_freezes_each_namespace_provider(ownership, tmp_path, monkeypatch):
+    dependencies, specs = ownership
+    other_alias = "rfu2build_namespace_alias"
+    monkeypatch.setattr(dependencies.metadata, "packages_distributions",
+                        lambda: {REQUIRED: ["rfu2build-base"], OPTIONAL: ["rfu2build-extra"],
+                                 other_alias: ["rfu2build-extra"]})
+    module_location = tmp_path / "module-location"
+    spec_location = tmp_path / "spec-location"
+    module_location.mkdir()
+    spec_location.mkdir()
+    for root, location in ((OPTIONAL, module_location), (other_alias, spec_location)):
+        spec = machinery.ModuleSpec(root, loader=None, is_package=True)
+        spec.submodule_search_locations = [str(location)]
+        specs[root] = spec
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL, other_alias}
+    loaded = ModuleType(REQUIRED)
+    loaded.__spec__ = machinery.ModuleSpec(REQUIRED, loader=None, is_package=True)
+    loaded.__spec__.submodule_search_locations = [str(spec_location)]
+    loaded.__path__ = [str(module_location)]
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    record = dependencies._without_required_aliases
+
+    def remove_namespace_after_snapshot(optional, required):
+        assert not optional and REQUIRED in required
+        monkeypatch.delitem(sys.modules, REQUIRED)
+        loaded.__path__.clear()
+        loaded.__spec__.submodule_search_locations.clear()
+        return record(optional, required)
+
+    with monkeypatch.context() as snapshot:
+        snapshot.setattr(dependencies, "_without_required_aliases", remove_namespace_after_snapshot)
+        dependencies.record_loaded_required_imports()
+    specs.clear()
+    module_location.rmdir()
+    spec_location.rmdir()
+    assert _roots(dependencies, SCOPES[2]) == frozenset()
+    dependencies.optional_import_roots.cache_clear()
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL, other_alias}

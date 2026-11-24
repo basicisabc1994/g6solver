@@ -139,7 +139,8 @@ def _existing_realpath(path):
 
 
 def _root_identities(root: str, paths: set | None = None,
-                     absent_paths: set | None = None) -> tuple[set[tuple], bool]:
+                     absent_paths: set | None = None, *, locations: tuple | None = None,
+                     live_paths: set | None = None) -> tuple[set[tuple], bool]:
     """Retain established aliases and whether the lookup completed, without imports."""
     # Use the interpreter's actual FileFinder matching policy, including
     # PYTHONCASEOK and ignore-environment mode, rather than filesystem casing.
@@ -177,7 +178,9 @@ def _root_identities(root: str, paths: set | None = None,
             device, inode = status.st_dev, status.st_ino
             if status.st_ino:
                 identities.add(("inode", status.st_dev, status.st_ino))
-        elif resolved is not None:
+        if live_paths is not None and (resolved is not None or status is not None):
+            live_paths.add((kind, source, os.fspath(path), resolved, device, inode))
+        if status is None and resolved is not None:
             # Keep live path matches independent, but never update ownership
             # from non-strict realpath's fallback for a missing/broken path.
             resolved = lookup(lambda: _existing_realpath(path))
@@ -190,6 +193,13 @@ def _root_identities(root: str, paths: set | None = None,
         if locations is not None:
             for path in locations:
                 path_identity(path, (source, os.fspath(path)), "namespace")
+
+    if locations is not None:
+        # Startup supplies copied locations, never root names to rediscover or
+        # history to promote. An empty snapshot contributes no ownership.
+        for path, source, kind in locations:
+            lookup(lambda: path_identity(path, source, kind))
+        return identities, established
 
     try:
         lookup(lambda: identities.add(name_identity(root)))
@@ -227,6 +237,16 @@ def _path_aliases(paths):
         if inode:
             identities.add(("inode", device, inode))
     return identities
+
+
+def _paths_match(left, right):
+    """Stat identity decides a match; a spelling cannot contradict that evidence."""
+    if left[4] is not None and right[4] is not None:
+        if left[4:] != right[4:]:
+            return False
+        if left[5]:
+            return True
+    return left[0] == right[0] and left[3] is not None and left[3] == right[3]
 
 
 def _compatible_paths(previous, current):
@@ -288,14 +308,26 @@ def _refresh_path_ownership() -> set[str]:
     return blocked
 
 
-def _without_required_aliases(optional: set[str], required: set[str]) -> frozenset[str]:
+def _without_required_aliases(optional: set[str], required: set[str] | dict[str, tuple]) -> frozenset[str]:
+    if isinstance(required, dict):
+        # Loaded-module snapshots contain only their own copied locations.
+        # Use the same store and probes without claiming a root's prior files.
+        _refresh_path_ownership()
+        for root, locations in required.items():
+            observed = set()
+            _root_identities(root, observed, locations=locations)
+            _required_paths.update(observed)
+        return frozenset()
+
     identities = {}
+    live_paths = {}
     aliases = {}
     blocked = required | _refresh_path_ownership()
     for root in optional | required:
         observed = set()
         absent = set()
-        identities[root], established = _root_identities(root, observed, absent)
+        live_paths[root] = set()
+        identities[root], established = _root_identities(root, observed, absent, live_paths=live_paths[root])
         history = _known_paths.setdefault(root, set())
         if observed:
             # Positive evidence of a different target retires the old alias's
@@ -313,6 +345,7 @@ def _without_required_aliases(optional: set[str], required: set[str]) -> frozens
                                         for old, new in zip(previous[3:], record[3:])))
             history.add(record)
         identities[root].update(_path_aliases(history))
+        live_paths[root].update(history)
         if root in required:
             _required_paths.update(history)
         if not established:
@@ -320,10 +353,10 @@ def _without_required_aliases(optional: set[str], required: set[str]) -> frozens
 
     # Only file evidence transfers persistent ownership. Live object/name
     # aliases and uncertain verdicts participate in this discovery alone.
-    owned = _path_aliases(_required_paths)
+    owned = tuple(_required_paths)
     for root in optional | required:
         for record in _known_paths[root]:
-            if _path_aliases((record,)) & owned:
+            if any(_paths_match(record, owner) for owner in owned):
                 _required_paths.add(record)
                 blocked.add(root)
         for identity in identities[root]:
@@ -332,9 +365,16 @@ def _without_required_aliases(optional: set[str], required: set[str]) -> frozens
     # required file to another spelling whose own file is already missing.
     pending = list(blocked & identities.keys())
     while pending:
-        for identity in identities[pending.pop()]:
-            for alias in aliases.pop(identity, ()):
-                if alias not in blocked:
+        root = pending.pop()
+        for identity in identities[root]:
+            file_alias = identity[0] in {"file", "namespace", "inode"}
+            # A rejected path match must remain available to a different
+            # required file with a compatible stat identity.
+            candidates = aliases.get(identity, ()) if file_alias else aliases.pop(identity, ())
+            for alias in candidates:
+                if alias not in blocked and (not file_alias or any(
+                    _paths_match(left, right) for left in live_paths[root] for right in live_paths[alias]
+                )):
                     blocked.add(alias)
                     pending.append(alias)
     return frozenset(optional - blocked)
@@ -488,8 +528,39 @@ def record_loaded_required_imports(required_extras: str = "mcp") -> None:
     """Record successful startup's loaded required files in the shared ownership store."""
     with _ownership_lock:
         _, required = _optional_root_declarations("", required_extras)
-        loaded = {root for root in required if sys.modules.get(root) is not None}
-        _without_required_aliases(set(), loaded)
+        loaded = {root: module for root, module in sys.modules.copy().items()
+                  if root in required and module is not None}
+        locations = {root: _loaded_locations(module) for root, module in loaded.items()}
+        _without_required_aliases(set(), locations)
+
+
+def _loaded_locations(module) -> tuple:
+    """Copy a loaded object's own file and namespace locations before probing."""
+    def attribute(obj, name):
+        try:
+            return getattr(obj, name, None)
+        except Exception:
+            return None
+
+    locations = []
+    spec = attribute(module, "__spec__")
+    for source, path in (("loaded-file", attribute(module, "__file__")),
+                         ("origin", attribute(spec, "origin"))):
+        try:
+            if path and path not in {"built-in", "frozen"}:
+                locations.append((os.fspath(path), source, "file"))
+        except Exception:
+            pass  # One failed location must not suppress independent evidence.
+    for source, paths in (("loaded-locations", attribute(module, "__path__")),
+                          ("spec-locations", attribute(spec, "submodule_search_locations"))):
+        try:
+            if paths is not None:
+                for path in paths:
+                    spelling = os.fspath(path)
+                    locations.append((spelling, (source, spelling), "namespace"))
+        except Exception:
+            pass
+    return tuple(locations)
 
 
 def _clear_optional_roots():
