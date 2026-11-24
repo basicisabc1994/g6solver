@@ -1232,7 +1232,9 @@ def _well_formed_case(case: Any) -> bool:
             and all(isinstance(origin, dict) for origin in case["origins"]))
 
 
-def _current_evaluation(saved: dict, registration: Registration, start: dict | None) -> dict | None:
+def _current_evaluation(saved: dict, registration: Registration, start: dict | Path | None) -> dict | None:
+    if isinstance(start, Path):
+        start = _batch_start(start)
     plan = saved["plan"]
     if (not _well_formed_snapshot(plan.get("source_snapshot")) or not isinstance(start, dict)
             or start.get("kind") != "replay-rc-batch" or start.get("task") != "development"
@@ -1248,6 +1250,25 @@ def _current_evaluation(saved: dict, registration: Registration, start: dict | N
             or not all(_well_formed_case(case) for case in plan["cases"])):
         return None
     try:
+        cases = {}
+        for row in plan["cases"]:
+            key = row["bug"], row["digest"]
+            if key in cases:
+                return None
+            cases[key] = Case(**{**row, "patch": Path(row["patch"]), "source": Path()})
+        # Reconstruct exactly what the writer sent, including the image's repo
+        # and base substitutions and each agent call's own archived arguments.
+        by_id = {task.id: task for task in we.load_tasks()} if saved["records"] else {}
+        for record in saved["records"]:
+            case = cases[record["bug"], record["digest"]]
+            mode = record["mode"]
+            if mode == "agent":
+                views = [view for view in agent_views(case) if view.origins[0]["run"] == record.get("origin_run")]
+                if len(views) != 1:
+                    return None
+                case = views[0]
+            if record.get("arguments") != review_arguments(case, by_id[case.bug], mode):
+                return None
         result = evaluate(saved["records"], plan["cases"], modes=plan["modes"], s0=saved["s0"],
                           excluded=plan["excluded"], index_excluded=plan["index_excluded"], registration=registration)
         # JSON equality also distinguishes true from 1 and rejects non-finite numbers.
@@ -1255,7 +1276,7 @@ def _current_evaluation(saved: dict, registration: Registration, start: dict | N
                 saved.get("evaluation"), sort_keys=True, allow_nan=False):
             return None
         return result
-    except (KeyError, TypeError, ValueError):
+    except (OSError, RuntimeError, KeyError, TypeError, ValueError):
         return None
 
 
@@ -1274,14 +1295,18 @@ def _score_result(result: dict, version: Any, source: str) -> dict:
                        "saved_evidence_rule_version": version, "evidence_source": source})
 
 
-def score_saved(saved: dict, registration: Registration, *, source: Path | None = None,
-                start: dict | None = None) -> tuple[dict, int]:
+def score_saved(saved: dict, registration: Registration | None = None, *, source: Path | None = None,
+                start: dict | Path | None = None) -> tuple[dict, int]:
     """Use saved evidence only under the rule that produced it.
 
     An older batch can supply review responses, but its labels and exclusions
     must come from a fresh enumeration of the same allowlisted source reads.
     Only the command line supplies a source; no manifest path is opened.
     """
+    validate_record_pins(saved["records"], saved["plan"], saved.get("image_ids", {}))
+    registration = registration or load_registration()
+    if saved.get("registration_sha256") != registration.sha256:
+        raise ValueError("saved registration digest differs from committed registration")
     plan = saved["plan"]
     version = saved.get("evidence_rule_version")
     newer = type(version) is int and version > EVIDENCE_RULE_VERSION
@@ -1360,13 +1385,7 @@ def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
             # reading JSON, preserving the path rule's own refusal message.
             score = canonical_path(options.score)
             saved = Source(score.parent).read_json(score.name)
-            validate_record_pins(saved["records"], saved["plan"], saved.get("image_ids", {}))
-            registration = load_registration()
-            if saved.get("registration_sha256") != registration.sha256:
-                raise ValueError("saved registration digest differs from committed registration")
-            start = (_batch_start(score) if type(saved.get("evidence_rule_version")) is int
-                     and saved["evidence_rule_version"] == EVIDENCE_RULE_VERSION else None)
-            result, status = score_saved(saved, registration, source=options.source, start=start)
+            result, status = score_saved(saved, source=options.source, start=score)
             print(json.dumps(result, indent=2, allow_nan=False))
             return status
         if options.source is None or not re.fullmatch(r"[0-9a-f]{40}", options.registered_commit or ""):
