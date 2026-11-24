@@ -253,10 +253,13 @@ def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dic
                                    "traces_held": held, "traces_not_replayable": unplayable}}
     shown = ", ".join(map(str, broken))
     # Raising during an invoked action/read is a failed replay, with no claim that its invariant was evaluated.
-    failure = ("fail during an operation (their invariants were not evaluated)" if len(failed) == len(broken) else
-               "fail during an operation or break evaluated invariants" if failed else "break the invariants")
+    def failure(indices):
+        operations = sum(i in failed for i in indices)
+        return ("fail during an operation (their invariants were not evaluated)" if operations == len(indices) else
+                "fail during an operation or break evaluated invariants" if operations else "break the invariants")
+
     if intent == "change":
-        return {"result": vs.COUNTEREXAMPLE, "detail": f"trace(s) {shown} the model checker found {failure} "
+        return {"result": vs.COUNTEREXAMPLE, "detail": f"trace(s) {shown} the model checker found {failure(broken)} "
                                                        "on the patch's real code",
                 "shape": "a trace the model checker found fails on the patch's real code" if failed else
                          "a trace the model checker found breaks the invariants on the patch's real code",
@@ -269,14 +272,27 @@ def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dic
     base = _outcomes(at_base, count)
     if isinstance(base, str):
         return error("at the base commit", base)
-    also = [i for i in broken if base[i]["outcome"] == patch[i]["outcome"]]
-    # the review of VS-4, I1: only a trace the base commit replays and keeps is new; one it cannot replay is not kept
+    def failed_operation(outcome):
+        why = outcome.get('why')
+        if type(why) is not str:
+            return None
+        if why == 'step refused':
+            return ('step', 'legacy')
+        step = re.fullmatch(r'step ([1-9][0-9]*) \(action (-?[0-9]+)\) raised \S+', why)
+        if step is not None:
+            return ('step', *step.groups())
+        read = re.fullmatch(r'reading (\S+) raised \S+', why)
+        return ('read', read[1]) if read is not None else None
+
+    also = [i for i in broken if base[i]["outcome"] == patch[i]["outcome"]
+            and (patch[i]['outcome'] != 'operation_failed' or failed_operation(patch[i]) is not None
+                 and failed_operation(base[i]) == failed_operation(patch[i]))]
+    # Only a trace the base commit replays and keeps is new; one it cannot replay is not kept.
     new = [i for i in broken if base[i]["outcome"] == "holds"]
     def step_raised(outcome):
-        why = outcome.get('why')
         # The earlier comparison matrix also uses the explicit legacy step-refusal marker.
-        return type(why) is str and (why == 'step refused' or re.fullmatch(
-            r'step [1-9][0-9]* \(action -?[0-9]+\) raised \S+', why) is not None)
+        operation = failed_operation(outcome)
+        return operation is not None and operation[0] == 'step'
 
     refused = [i for i in broken if patch[i]['outcome'] == 'broken' and base[i]['outcome'] == 'operation_failed'
                and step_raised(base[i])]
@@ -295,15 +311,20 @@ def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dic
                         and not step_raised(base[i])}
     evaluated_base = {str(i): 'the base evaluated a violation; the patch operation failed before evaluation'
                       for i in broken if base[i]['outcome'] == 'broken' and patch[i]['outcome'] == 'operation_failed'}
-    unknown = {**unplayable_base, **unevaluated_base, **evaluated_base}
+    different_operations = {str(i): 'the base failure is in a different or unknown operation'
+                            for i in broken if base[i]['outcome'] == patch[i]['outcome'] == 'operation_failed'
+                            and i not in also}
+    unknown = {**unplayable_base, **unevaluated_base, **evaluated_base, **different_operations}
     unknown_fields = {
         **({'traces_not_replayable_at_base': unplayable_base} if unplayable_base else {}),
         **({'invariants_not_evaluated_at_base': unevaluated_base} if unevaluated_base else {}),
         **({'violations_evaluated_at_base': evaluated_base} if evaluated_base else {}),
+        **({'operations_differ_at_base': different_operations} if different_operations else {}),
     }
     if not new and unknown:
+        description = failure([int(i) for i in unknown])
         return {"result": vs.CHECK_ERROR,
-                "detail": f"trace(s) {', '.join(unknown)} {failure} on the patch's real code, and whether "
+                "detail": f"trace(s) {', '.join(unknown)} {description} on the patch's real code, and whether "
                           "the patch introduced that outcome is not established at the base commit: "
                           + '; '.join(unknown.values()),
                 "correspondence": {"result": "reproduced", "traces_reproduced": broken, "on": "the patch",
@@ -321,9 +342,10 @@ def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dic
         return {"result": vs.FAILS_ON_BASE_TOO, "detail": '; '.join(descriptions),
                 "correspondence": {"result": "reproduced", "traces_reproduced": broken, "at_base_too": also}}
     return {"result": vs.COUNTEREXAMPLE,
-            "detail": f"trace(s) {', '.join(map(str, new))} the model checker found {failure} on the "
+            "detail": f"trace(s) {', '.join(map(str, new))} the model checker found {failure(new)} on the "
                       "patch's real code and keep them at the base commit's",
-            "shape": "a trace the model checker found fails on the patch's real code, and succeeds at base" if failed
+            "shape": "a trace the model checker found fails on the patch's real code, and succeeds at base"
+                     if any(i in failed for i in new)
                      else "a trace the model checker found breaks the invariants on the patch's real code, and keeps them "
                      "at the base commit's",
             "correspondence": {"result": "reproduced", "traces_reproduced": new, "traces_also_at_base": also,
