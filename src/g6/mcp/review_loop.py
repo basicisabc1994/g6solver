@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from g6.core.refusals import code_of
+from g6.harness import _completion_storage as store
 from g6.invariants import ERROR_CODE_PATTERN
 
 
@@ -43,10 +44,10 @@ def _asked(repo: str, task: str, base: str, session: Path) -> dict:
     from g6.workforce import repo_tests
     from g6.core import cloud_consent as cloud
 
-    root, known = repo_tests.checked_repo(repo), session / "task.json"
+    root, known = repo_tests.checked_repo(repo), store.path(session, "task.json")
     if known.is_file():
         try:
-            expected = (session / 'task.sha256').read_text(encoding='ascii')
+            expected = store.path(session, 'task.sha256').read_text(encoding='ascii')
             asked = json.loads(cloud.read_retained(known, expected))
             if not isinstance(asked, dict) or set(asked) != {'repo', 'task', 'base'}:
                 raise ValueError('malformed retained task')
@@ -60,7 +61,7 @@ def _asked(repo: str, task: str, base: str, session: Path) -> dict:
                                                                   "call's task as it was, or name a new session")
         return asked
     asked = {"repo": str(root), "task": task, "base": repo_tests.change(root, base).base_commit}
-    cloud.write_retained(known, json.dumps(asked).encode('utf-8'))
+    store.write_retained(known, json.dumps(asked).encode('utf-8'))
     return asked
 
 
@@ -78,7 +79,7 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
     from g6.core.reliability_envelope import envelope_fields, warning_card
     from g6.harness import completion_hook, completion_loop as loop
     from g6.workforce import repo_tests
-    from g6.workspace._envelope import OUTSIDE_ROOT, WorkspaceRefused
+    from g6.workspace._envelope import BUSY as WORKSPACE_BUSY, WorkspaceRefused
 
     if not task.strip() or not session.strip():
         return {**blocked_reply("[G6_E_INPUT_VALIDATION] a task and a session are needed: name one session for one task"),
@@ -86,35 +87,33 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
     request_id = uuid.uuid4().hex[:12]
     try:
         folder = completion_hook.folder(f"mcp:{session}")
-        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        store.mkdir(folder, parents=True, exist_ok=True, mode=0o700)
         with loop._held(folder):
             asked = _asked(repo, task, base, folder)
         done = loop.advance(asked["repo"], asked["task"], asked["base"], folder, said=reason, answered=bool(reason.strip()))
     except repo_tests.RepoRefused as exc:
         return {**blocked_reply(f"[{exc.code}] {exc}", request_id=request_id), "code": exc.code}
     except WorkspaceRefused as exc:
-        if exc.code == OUTSIDE_ROOT:
-            return {**blocked_reply(str(exc), request_id=request_id), "action": loop.WAIT, "code": exc.code}
+        if exc.code not in (WORKSPACE_BUSY, loop.BUSY):
+            return {**blocked_reply(str(exc), request_id=request_id), "action": loop.STOP, "code": exc.code}
         done = loop.Step(loop.WAIT, loop.ALREADY_RUNNING, loop.BUSY)
     if done.action == loop.WAIT:      # the step that is running owns the state, so nothing of it is read here
         return {**blocked_reply(f"[{done.code}] {done.text}", request_id=request_id), "run_id": folder.name,
                 "action": done.action, "code": done.code}
+    total = None
     try:
         # A late worker can reserve after advance releases its lock. Read the
         # report and accounting together under that same writer serialization.
-        with loop._state_write(folder):
-            state = loop._load(folder)
-            total = loop.attempted(state)
-            if state.get("done"):
-                done = loop.Step(loop.STOP, code=state.get("code", ""), note=done.note,
-                                 ending=state.get("ending", ""))
-            text = state.get("reply_text", "") if done.action == loop.CONTINUE else loop.read_report(folder, state)
+        state = loop.reply_state(folder)
+        total = loop.attempted(state)
+        if state.get("done"):
+            done = loop.Step(loop.STOP, code=state.get("code", ""), note=done.note,
+                             ending=state.get("ending", ""))
+        text = state.get("reply_text", "") if done.action == loop.CONTINUE else loop.read_report(folder, state)
     except WorkspaceRefused as exc:
-        if exc.code == OUTSIDE_ROOT:
-            return {**blocked_reply(str(exc), request_id=request_id), "run_id": folder.name,
-                    "action": loop.WAIT, "code": exc.code}
-        return {**blocked_reply(f"[{loop.BUSY}] {loop.ALREADY_RUNNING}", request_id=request_id),
-                "run_id": folder.name, "action": loop.WAIT, "code": loop.BUSY}
+        return {**blocked_reply(str(exc), request_id=request_id), "run_id": folder.name,
+                "action": loop.STOP, "code": exc.code,
+                **({"requests_sent": total} if total is not None else {})}
     evidence = _evidence(state, asked["base"])
     code, ending, why, note = done.code, done.ending, state.get("stop") or text or NOTHING, done.note
     if note == loop.ALREADY_ENDED:     # a repeat ran nothing: its report is of the patch as the session's loop ended
@@ -132,8 +131,9 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
         result = {"ok": True, **said, **envelope_fields(
             reliability_label="qualified-draft", warning_card=warning_card(CODE, *card), evidence=evidence, request_id=request_id,
             run_id=folder.name, degradation_reason=card[0][:300])}
-    if code:
-        # None retains an unknown bound; only a retained zero means unsent.
+    if code and (total is not None or state.get("done")):
+        # Completed legacy runs keep their unknown-count field and metadata.
+        # A stateless refusal has no field; only a retained zero means unsent.
         result["requests_sent"] = total
     from g6.core.cloud_consent import bind_output
     return bind_output(result, loop.source_refs(state))

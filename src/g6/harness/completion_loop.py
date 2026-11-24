@@ -50,10 +50,8 @@ import bisect
 import difflib
 import json
 import contextvars
-import os
+import os  # noqa: F401 - direct callers use the filesystem observation seam
 import re
-import shutil
-import tempfile
 import threading
 import time
 import uuid
@@ -74,15 +72,15 @@ from g6.core.llm import LLMCaller, LLMError, _start_model_call
 from g6.core.model_calls import counting
 from g6.core import cloud_consent as cloud, consent_callers as consent
 from g6.core.consent_callers import provider_from_env
-from g6.core.storage import g6_home, state_path
-from g6.harness import patch_report
+from g6.core.storage import PathRefused, state_path  # noqa: F401 - retained direct-call compatibility
+from g6.harness import patch_report, _completion_storage as store
 from g6.harness.completion_hook import CHILD
 from g6.harness import verification_proposer as proposer
 from g6.harness import verification_search as vs
 from g6.harness.patch_review import _loaded_elsewhere, review_patch
 from g6.workforce import repo_tests
-from g6.workspace._coordination import Coordination, bookkeeping_path
-from g6.workspace._envelope import OUTSIDE_ROOT, WorkspaceRefused
+from g6.workspace._coordination import Coordination, MUTEX_WAIT
+from g6.workspace._envelope import OUTSIDE_ROOT, BUSY as WORKSPACE_BUSY, WorkspaceRefused
 
 HARNESS = Path(__file__).with_name("data") / "completion_harness.json"
 #: The parts of the loop harness training can add to: never the sets, the scoring, the reply forms or the stop rule.
@@ -381,14 +379,16 @@ class ToolSession(consent.ConsentClaude):
     disk. It starts in ``cwd``, may write only there and in ``where``, and runs no hook and no MCP server."""
 
     def run(self, prompt: str, cwd: Path, where: Path, seconds: float) -> str:
+        where = store.check_tree(where)
         refs = cloud.boundary_sources((cloud.Source.text('model_inputs', 'scout-request', prompt),
                                        cloud.Source.text('agent_environment', 'scout-environment', '')),
                                       directories=(cwd, where))
         with cloud.admission("anthropic:claude_code", refs, cloud.sha256(prompt)), cloud.request_sources(refs):
             program = self.locate()
+            store.temporary_root()
             with host_models._folders() as (_, files):
-                (files / "no_mcp_servers.json").write_text(host_models.NO_SERVERS, encoding="utf-8")
-                (files / "g6_settings.json").write_text(json.dumps(SCOUT_SETTINGS), encoding="utf-8")
+                store.write_text(files / "no_mcp_servers.json", host_models.NO_SERVERS, encoding="utf-8")
+                store.write_text(files / "g6_settings.json", json.dumps(SCOUT_SETTINGS), encoding="utf-8")
                 argv = [program, "-p", "--output-format", "json", "--tools", SCOUT_TOOLS, "--permission-mode", "acceptEdits",
                         "--add-dir", host_models._plain(where), "--strict-mcp-config",
                         "--mcp-config", host_models._plain(files / "no_mcp_servers.json"),
@@ -552,7 +552,7 @@ def _base_copy(change: repo_tests.Change, seconds: float):
 def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: Host, deadline: float) -> dict:
     """One scout's set: its session, its probes run at the base commit, and, if they are refused, one more try, told what
     G6 counted and what they did, as it could not run them itself. A set that exercised nothing is left out."""
-    (where / "probes").mkdir(parents=True, exist_ok=True)
+    store.mkdir(where / "probes", parents=True, exist_ok=True)
     asked = located(text.format(number=1, title=task.splitlines()[0][:200], text=task), where)
     failed, again = "", ""
     got, origins = None, ()
@@ -564,7 +564,7 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
         try:
             with _base_copy(change, left) as copy:
                 with cloud.request_sources(origins if again else ()):
-                    host(asked + again, copy, where, left)
+                    host(asked + again, copy, store.check_tree(where), left)
         except (LLMError, repo_tests.CopyNotRun, OSError) as exc:
             failed = f"{type(exc).__name__}: {exc}"[:400]
         got, origins = _snapshot_probe(run_set(change, where / "probes", at_base=True, deadline=deadline))
@@ -917,8 +917,8 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
     if hidden and found["verdict"] == "none":
         found = {**found, "verdict": "failed", "error": HIDDEN}
     if found["test"]:
-        where.mkdir(parents=True, exist_ok=True)
-        (where / critic_file(n)).write_text(found["test"] + "\n", encoding="utf-8")
+        store.mkdir(where, parents=True, exist_ok=True)
+        store.write_text(where / critic_file(n), found["test"] + "\n", encoding="utf-8")
     return {**found, "reviewer": _named(caller), **({"masked": masked} if masked else {})}
 
 
@@ -960,9 +960,9 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     mark = watch.mark() if watch is not None else 0
     read, kept, mine = repo_tests.diff_read(change), session / "rounds" / f"round-{n}.patch", critic_file(n)
     patch = read.text
-    kept.parent.mkdir(parents=True, exist_ok=True)
-    kept.write_bytes(patch.encode("utf-8"))
-    (where / mine).unlink(missing_ok=True)
+    store.mkdir(kept.parent, parents=True, exist_ok=True)
+    store.write_bytes(kept, patch.encode("utf-8"))
+    store.unlink(where / mine, missing_ok=True)
     said = run_critic(change, task, critic, shipped.critic, where, n, patch=read, whole=True, system_sources=shipped.sources)
 
     def run(name: str) -> None:
@@ -986,7 +986,7 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
         run(name)
     if said.get("unrun") and said["verdict"] == "defect" and not failing:
         told, claimed = said.pop("unrun"), said["rule"]
-        (where / mine).unlink(missing_ok=True)
+        store.unlink(where / mine, missing_ok=True)
         del results[mine], failed[mine]
         said.update(run_critic(change, task, critic, shipped.critic, where, n, told=WOULD_NOT_RUN.format(error=told),
                                patch=read, whole=True, system_sources=shipped.sources,
@@ -1076,49 +1076,63 @@ CONSENT_STATE_AFTER_SEND = "G6_E_CLOUD_CONSENT_STATE_AFTER_SEND"
 class _RetainedState(dict):
     """A read's publication identity, outside the persisted mapping and its JSON shape."""
 
-    def __init__(self, state: dict, version: tuple[str, str] | None) -> None:
+    def __init__(self, state: dict, version: tuple[str, str] | None, *, readable: bool = True) -> None:
         super().__init__(state)
         self.version = version
+        self.readable = readable
 
 
 def _read_version(session: Path) -> str:
+    path = store.path(session, '.write-version')
     try:
         # G6's own write token, read like state.sha256 beside it; never on the way to the reviewer.
-        token = (session / '.write-version').read_text(encoding='ascii')
+        token = path.read_text(encoding='ascii')
     except (OSError, UnicodeError):
         return ''
     return token if re.fullmatch(r'[0-9a-f]{32}', token) else ''
 
 
 def _load(session: Path) -> dict:
-    session = bookkeeping_path(Path(session))
-    path = session / "state.json"
+    session = store.path(session)
+    path = store.path(session, "state.json")
+    receipt = store.path(session, 'state.sha256')
     if not path.is_file():
         return {}
-    version = None
+    version, readable = None, True
     try:
         before = _read_version(session)
-        expected = (session / 'state.sha256').read_text(encoding='ascii')
+        expected = receipt.read_text(encoding='ascii')
         state = json.loads(cloud.read_retained(path, expected))
         if not isinstance(state, dict):
             raise ValueError('retained state is not an object')
         if before and before == _read_version(session):
             version = (before, expected)
     except (OSError, TypeError, ValueError, RecursionError, MemoryError):
+        readable = False
         # Neither content nor control fields from unbound state are reusable.
         state = {'done': True, 'code': cloud.REQUIRED, 'ending': 'untested', 'stop': cloud.WITHHELD,
                  'consent_sources': [asdict(cloud.UNKNOWN)]}
     if state.get('code') in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND):
         state['stop'] = _consent_stop(attempted(state))
     cloud.record_sources(source_refs(state))
-    return _RetainedState(state, version)
+    return _RetainedState(state, version, readable=readable)
 
 
-def read_report(session: Path, state: dict) -> str:
-    """Read a completed report only against the digest in its checked state."""
-    if state.get('code') in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND):
+def _require_readable(state: dict) -> None:
+    if isinstance(state, _RetainedState) and not state.readable:
+        raise ValueError(f'{cloud.REQUIRED}: {cloud.WITHHELD}')
+
+
+def read_report(session: Path, state: dict, *, code: str = "") -> str:
+    """Read a completed report against its digest; word a consent stop from the retained count.
+
+    A step's refusal code can describe a partial publication, but never supplies
+    its count or report words. A retained ending takes precedence over it.
+    """
+    retained_code = state.get('code') if state.get('done') else state.get('code') or code
+    if retained_code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND):
         return _consent_stop(attempted(state))
-    path = session / 'report.md'
+    path = store.path(session, 'report.md')
     if not path.is_file() and not state.get('done'):
         return ''
     try:
@@ -1171,26 +1185,31 @@ class _Writer:
 
 
 _WRITER: contextvars.ContextVar[_Writer | None] = contextvars.ContextVar("g6_run_writer", default=None)
+_WRITER_WAIT: contextvars.ContextVar[float] = contextvars.ContextVar("g6_run_writer_wait", default=0)
 
 
 @contextmanager
-def _writing(session: Path):
+def _writing(session: Path, *, wait: float = 0):
     """Check the given run before resolution, then pin it for this operation and its send observers."""
-    session = bookkeeping_path(Path(session))
-    with _held(session):
-        owner = _Writer(session)
-        token = _WRITER.set(owner)
-        try:
-            yield owner
-        finally:
-            with owner.guard:
-                owner.active = False
-            _WRITER.reset(token)
+    session = store.path(session)
+    waiting = _WRITER_WAIT.set(wait)
+    try:
+        with _held(session):
+            owner = _Writer(session)
+            token = _WRITER.set(owner)
+            try:
+                yield owner
+            finally:
+                with owner.guard:
+                    owner.active = False
+                _WRITER.reset(token)
+    finally:
+        _WRITER_WAIT.reset(waiting)
 
 
 @contextmanager
 def _state_write(session: Path):
-    session = bookkeeping_path(Path(session))
+    session = store.path(session)
     owner = _WRITER.get()
     if owner is not None and owner.session == session:
         with owner.guard:
@@ -1198,8 +1217,24 @@ def _state_write(session: Path):
                 yield
                 return
     # A copied context can outlive its step. It must acquire the OS lock anew.
-    with _writing(session) as owner, owner.guard:
+    with _writing(session, wait=MUTEX_WAIT) as owner, owner.guard:
         yield
+
+
+def reply_state(session: Path) -> dict:
+    """Wait for a reservation, then render only digest-checked retained content.
+
+    If the bounded wait expires, an integrity-checked read may still supply a
+    completed publication. It grants no write authority and never means that
+    the step did nothing. An interrupted publication stays withheld/unknown.
+    """
+    try:
+        with _state_write(session):
+            return _load(session)
+    except WorkspaceRefused as exc:
+        if exc.code not in (WORKSPACE_BUSY, BUSY):
+            raise
+        return _load(session)
 
 
 class _RunCount:
@@ -1207,7 +1242,7 @@ class _RunCount:
 
     def __init__(self, session: Path, state: dict) -> None:
         # The observer may run after a callback or another thread changes cwd.
-        self.session, self.state = bookkeeping_path(Path(session)), state
+        self.session, self.state = store.path(session), state
         self.guard = threading.RLock()
         self.active = True
 
@@ -1270,7 +1305,7 @@ _RESERVATION: contextvars.ContextVar[tuple[Path, dict] | None] = contextvars.Con
 
 def _reserve_request(session: Path, state: dict) -> None:
     """Enter the reservation transaction through the unchanged state-save seam."""
-    session = bookkeeping_path(Path(session))
+    session = store.path(session)
     token = _RESERVATION.set((session, state))
     try:
         _save(session, state)
@@ -1283,6 +1318,7 @@ def _save_reservation(session: Path, state: dict, *, sources=None) -> None:
     operation = _WRITER.get()
     with _state_write(session):
         stored = _load(session)
+        _require_readable(stored)
         owned = (operation is not None and operation is _WRITER.get()
                  and operation.session == session and operation.active)
         run = _RUN_COUNT.get()
@@ -1311,7 +1347,7 @@ def _save_reservation(session: Path, state: dict, *, sources=None) -> None:
 
 
 def _save(session: Path, state: dict, *, sources=None) -> None:
-    session = bookkeeping_path(Path(session))
+    session = store.path(session)
     reservation = _RESERVATION.get()
     if reservation is not None and reservation[0] == session and reservation[1] is state:
         _save_reservation(session, state, sources=sources)
@@ -1319,6 +1355,7 @@ def _save(session: Path, state: dict, *, sources=None) -> None:
     operation = _WRITER.get()
     with _state_write(session):
         stored = _load(session)
+        _require_readable(stored)
         incoming = dict(state)
         total, prior = attempted(incoming), attempted(stored)
         total = (max(prior, total) if total is not None else prior) if prior is not None else (
@@ -1359,41 +1396,36 @@ def _save_locked(session: Path, state: dict, *, sources=None,
         else:
             refs = cloud.boundary_sources(sources, carried=cloud.prompt_sources())
         state['consent_sources'] = [asdict(source) for source in dict.fromkeys(refs)]
-    session.mkdir(parents=True, exist_ok=True, mode=0o700)
+    store.mkdir(session, parents=True, exist_ok=True, mode=0o700)
+    # Check the entire publication before changing even its operation token.
+    store.path(session, '.write-version')
+    store.retained_paths(session / 'state.json')
     # Invalidate older snapshots before publication. A partial token after a
     # crash grants no authority; the state retains its existing digest check.
     version = uuid.uuid4().hex
-    (session / '.write-version').write_bytes(version.encode('ascii'))
+    store.write_bytes(session / '.write-version', version.encode('ascii'))
     body = json.dumps(state).encode('utf-8')
-    cloud.write_retained(session / 'state.json', body)
+    store.write_retained(session / 'state.json', body)
     return version, cloud.sha256(body)
 
 
 def _sync_state(session: Path) -> None:
     # Retained publication is atomic; flush its files and version before admitting
     # the request. A failed flush propagates through the observer and prevents send.
-    for name in ('state.json', 'state.sha256', '.write-version'):
-        with (session / name).open('r+b') as stream:
-            os.fsync(stream.fileno())
-    if os.name != 'nt':
-        descriptor = os.open(session, os.O_RDONLY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+    store.sync_state(session, ("state.json", "state.sha256", ".write-version"))
 
 
 def _finish(session: Path, state: dict, report: str, code: str = "", ending: str = "", *, patch: str = "") -> Step:
     """The end of the loop for this session: the report, which is kept beside the state, then the state that says so, with
     the code and the ending a later call repeats, and ``patch``, the digest of the patch as the loop ended, which a repeat
     compares with whatever ended it. A hook cut short between them ends the loop again, so no session ends with no report."""
-    session.mkdir(parents=True, exist_ok=True, mode=0o700)
+    store.mkdir(session, parents=True, exist_ok=True, mode=0o700)
     body = report.encode('utf-8')
-    (session / "report.md").write_bytes(body)
+    store.write_bytes(session / "report.md", body)
     state.update(done=True, code=code, ending=ending, ended_patch=patch, report_sha256=cloud.sha256(body))
     _save(session, state)
     if state.get("visible"):
-        shutil.rmtree(state["visible"], ignore_errors=True)
+        store.remove_tree(Path(state["visible"]))
     return Step(STOP, report, code, ending=ending)
 
 
@@ -1487,26 +1519,30 @@ def _write_row(session: Path, state: dict) -> None:
     cannot be written costs no report: it stays in the state, with why in ``row``, and its mark stays, so a later call tries
     again (``settle``)."""
     try:
-        path = state_path(*FAILURES)
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path = store.home_path(*FAILURES)
+        store.mkdir(path.parent, parents=True, exist_ok=True, mode=0o700)
         with Coordination(path.with_name(".failures")).mutex():
             log = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
             lines = [line for line in log.split("\n") if line]
             others = [line for line in lines if not _row_of(line, session)]
             if len(others) == len(lines):
-                with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a", encoding="utf-8",
-                               newline="\n") as out:
-                    out.write(("\n" if log and not log.endswith("\n") else "") + state["row_due"] + "\n")
+                store.append_text(path, ("\n" if log and not log.endswith("\n") else "") + state["row_due"] + "\n")
             elif state["row_due"] not in lines:
                 fresh = path.with_name(f"{path.name}.new")
-                with os.fdopen(os.open(fresh, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8",
-                               newline="\n") as out:
-                    out.write("\n".join([*others, state["row_due"]]) + "\n")
-                os.replace(fresh, path)
+                store.write_bytes(fresh, ("\n".join([*others, state["row_due"]]) + "\n").encode('utf-8'))
+                store.replace(fresh, path)
+        store.unlink(store.home_path(*OWING, session.name), missing_ok=True)
         del state["row_due"]
         state.pop("row", None)
-        state_path(*OWING, session.name).unlink(missing_ok=True)
-    except (OSError, ValueError, WorkspaceRefused) as exc:
+    except PathRefused as exc:
+        raise WorkspaceRefused(OUTSIDE_ROOT, exc.reason) from None
+    except WorkspaceRefused as exc:
+        if exc.code not in (WORKSPACE_BUSY, BUSY):
+            raise
+        # Log contention postpones delivery; it does not replace the review's
+        # own ending or make an already-counted operation a no-op.
+        state["row"] = f"{type(exc).__name__}: {exc}"[:300]
+    except (OSError, ValueError) as exc:
         state["row"] = f"{type(exc).__name__}: {exc}"[:300]
 
 
@@ -1516,9 +1552,9 @@ def _owe_row(task: str, base: str, session: Path, state: dict, now: str, cause: 
     whatever its text holds. A mark that cannot be made leaves the row to the run's own later calls."""
     state["row_due"] = json.dumps(_failure_row(task, base, session, state, now, cause))
     try:
-        mark = state_path(*OWING, session.name)
-        mark.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        mark.touch()
+        mark = store.home_path(*OWING, session.name)
+        store.mkdir(mark.parent, parents=True, exist_ok=True, mode=0o700)
+        store.touch(mark)
     except OSError as exc:
         state["row"] = f"{type(exc).__name__}: {exc}"[:300]
     _save(session, state)
@@ -1619,9 +1655,8 @@ def _told(state: dict, shipped: Harness) -> str:
     one = state["sets"].get("scout")
     if state.get("visible") or not one or one["left_out"]:
         return ""
-    visible = Path(tempfile.mkdtemp(prefix="g6_scout_"))
+    visible = store.visible_copy(Path(one["where"]))
     state["visible"] = str(visible)
-    shutil.copytree(one["where"], visible, dirs_exist_ok=True)
     parts = [located(shipped.fixer, visible), *(f"{path.name}:\n{path.read_text(encoding='utf-8', errors='replace')}"
                                                 for path in [visible / "tree.json", *sorted((visible / "probes").glob("*.py"))]
                                                 if path.is_file())]
@@ -1635,7 +1670,7 @@ def prepare(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     did not happen. Nothing is spent on a repository with no Python, or where the review-until-clean loop will run."""
     if not _before_fix() or (critic_host() is not None and not _scouts_chosen()):
         return ""
-    session = bookkeeping_path(Path(session))
+    session = store.path(session)
     root = repo_tests.checked_repo(repo)
     python = any(rel.endswith(".py") for rel in repo_tests._paths(repo_tests._git(root, "ls-files", "-z")))
     if not python or proposer.boundary(root):
@@ -1672,10 +1707,9 @@ def _prepare_locked(root: Path, task: str, base: str, session: Path, scout: Host
 
 def _held(session: Path) -> Any:
     """One step of a session at a time. The lock is the operating system's, so it dies with its process, and a hook that is
-    killed leaves no session stuck. A call that cannot take it at once is refused (``WorkspaceRefused``): it does not wait
-    its turn, as the step it found has not reached the agent yet, and a tree the agent never had the chance to touch would
-    read as a finding it rejected."""
-    return Coordination(session / ".step").mutex(wait=0)
+    killed leaves no session stuck. New steps try at once: a step that has not reached the agent cannot be treated as a
+    rejected finding. State transactions and reply reads instead use their bounded writer wait."""
+    return Coordination(store.path(session, ".step")).mutex(wait=_WRITER_WAIT.get())
 
 
 def settle() -> None:
@@ -1684,8 +1718,8 @@ def settle() -> None:
     passed over, as that step has its row in hand, and so is one that cannot be read, which holds up no other. A row the log
     keeps out stays owed and ends the round: the rest would only wait for the same lock in turn."""
     try:
-        # Keep the configured words: state_path would resolve a linked parent first.
-        owing = bookkeeping_path(g6_home() / OWING[0], OWING[1])
+        # Resolve only the trusted home; inspect the owing components below it.
+        owing = store.home_path(*OWING)
     except WorkspaceRefused:
         return
     for mark in sorted(owing.iterdir()) if owing.is_dir() else ():
@@ -1695,7 +1729,7 @@ def settle() -> None:
                 run = owner.session
                 state = _load(run)
                 if "row_due" not in state:
-                    mark.unlink(missing_ok=True)
+                    store.unlink(mark, missing_ok=True)
                     continue
                 _write_row(run, state)
                 _save(run, state)
@@ -1720,20 +1754,20 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     A step reads its round from the state and then writes that round's files, so two at once would undo each other: a call
     that finds another running does nothing, and says ``WAIT``."""
     try:
-        session = bookkeeping_path(Path(session))
-        session.mkdir(parents=True, exist_ok=True, mode=0o700)
+        session = store.path(session)
+        store.mkdir(session, parents=True, exist_ok=True, mode=0o700)
         settle()
         with _writing(session):
             return _advance(repo, task, base, session, scout, critic, said, answered, agent)
     except WorkspaceRefused as exc:
-        if exc.code == OUTSIDE_ROOT:
-            return Step(WAIT, exc.reason, exc.code)
-        return Step(WAIT, ALREADY_RUNNING, BUSY)
+        if exc.code in (WORKSPACE_BUSY, BUSY):
+            return Step(WAIT, ALREADY_RUNNING, BUSY)
+        return Step(STOP, exc.reason, exc.code, ending="untested")
 
 
 def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host | None, critic: LLMCaller | None,
              said: str, answered: bool, agent: str) -> Step:
-    session = bookkeeping_path(Path(session))
+    session = store.path(session)
     # Direct callers need the same live operation lease as the public entry.
     # Otherwise a reservation supersedes their snapshot before refusal is saved.
     owner = _WRITER.get()
@@ -1759,7 +1793,21 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
     """One step, with the session held: the state is read here, so a step sees what the one before it wrote."""
     state = _load(session)
     with _run_count(session, state, fresh=not state) as run:
-        return _step(state, run, repo, task, base, session, scout, critic, said, answered, agent)
+        try:
+            return _step(state, run, repo, task, base, session, scout, critic, said, answered, agent)
+        except (WorkspaceRefused, PathRefused, repo_tests.RepoRefused) as exc:
+            # A body refusal is terminal, even if the operation already reserved
+            # a send. Save that ending before any optional report publication.
+            code = OUTSIDE_ROOT if isinstance(exc, PathRefused) else exc.code
+            run.into(state)
+            text = f"[{code}] The review stopped: {exc}"
+            state.update(done=True, code=code, ending="untested", stop=text)
+            _save(session, state)
+            try:
+                return _finish(session, state, text, code, "untested")
+            except WorkspaceRefused:
+                # A refused report target cannot undo the saved terminal state.
+                return Step(STOP, text, code, ending="untested")
 
 
 def _step(state: dict, run: _RunCount, repo: str | Path, task: str, base: str, session: Path, scout: Host | None,

@@ -37,8 +37,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from g6.core.storage import g6_home
-from g6.workspace._coordination import bookkeeping_path
+from g6.harness import _completion_storage as store
 from g6.core import cloud_consent as cloud
 
 #: Set in a scout's session.
@@ -56,8 +55,7 @@ HINTS_LINE = "G6_HINTS"
 
 def folder(session_id: str) -> Path:
     """A session's state folder."""
-    # Check the original run and parent components before state_path can resolve them.
-    return bookkeeping_path(g6_home() / "completion_loop", hashlib.sha256(str(session_id).encode("utf-8")).hexdigest()[:32])
+    return store.home_path("completion_loop", hashlib.sha256(str(session_id).encode("utf-8")).hexdigest()[:32])
 
 
 def current(session_id: str, asked: dict) -> Path:
@@ -74,7 +72,8 @@ def _one_prompt(session: Path) -> Any:
     run found. The lock is the operating system's, so it dies with its process. The scouts run outside it."""
     from g6.workspace._coordination import Coordination
 
-    session.mkdir(parents=True, exist_ok=True, mode=0o700)
+    session = store.path(session)
+    store.mkdir(session, parents=True, exist_ok=True, mode=0o700)
     return Coordination(session / ".prompt").mutex(wait=PROMPT_WAIT)
 
 
@@ -96,17 +95,17 @@ def _record(session: Path, cwd: str, task: str) -> dict | None:
     here = _here(cwd)
     if here is None:
         return None
-    session.mkdir(parents=True, exist_ok=True, mode=0o700)
+    store.mkdir(session, parents=True, exist_ok=True, mode=0o700)
     asked = {"repo": str(here[0]), "task": task, "base": here[1]}
-    cloud.write_retained(session / 'task.json', json.dumps(asked).encode('utf-8'))
+    store.write_retained(session / 'task.json', json.dumps(asked).encode('utf-8'))
     return asked
 
 
 def _task(session: Path) -> dict:
     """Read the task binding from exactly the bytes its producer completed."""
     try:
-        expected = (session / 'task.sha256').read_text(encoding='ascii')
-        asked = json.loads(cloud.read_retained(session / 'task.json', expected))
+        expected = store.path(session, 'task.sha256').read_text(encoding='ascii')
+        asked = json.loads(cloud.read_retained(store.path(session, 'task.json'), expected))
         if not isinstance(asked, dict) or not {'repo', 'task', 'base'} <= asked.keys():
             raise ValueError('malformed retained task')
         return asked
@@ -137,7 +136,7 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> bool:
     fresh = {"repo": repo, "task": f"{asked['task']}\n\n{task}" if same else task, "base": base,
              "run": asked.get("run", 0) + 1}
     run = current(session_id, fresh)
-    run.mkdir(parents=True, exist_ok=True, mode=0o700)
+    store.mkdir(run, parents=True, exist_ok=True, mode=0o700)
     read = {"reviewed": read_last} if same and read_last and not ended.get("code") else {}
     from g6.harness import completion_loop as loop
     refs = cloud.boundary_sources(carried=(*loop.source_refs(ended),
@@ -147,7 +146,7 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> bool:
         # A retry may find this run already used: never reset its count or reviews.
         retained = loop._load(run)
         loop._save(run, retained or {**read, loop.ATTEMPTED: 0}, sources=refs)
-        cloud.write_retained(session / 'task.json', json.dumps(fresh).encode('utf-8'))
+        store.write_retained(session / 'task.json', json.dumps(fresh).encode('utf-8'))
     return True
 
 
@@ -247,7 +246,7 @@ def on_prompt(event: dict) -> dict:
             if state.get("done") or idle:
                 armed = _again(event, asked, state, task)
             elif "started" not in state:
-                cloud.write_retained(known, json.dumps({**asked, "task": f"{asked['task']}\n\n{task}"}).encode('utf-8'))
+                store.write_retained(known, json.dumps({**asked, "task": f"{asked['task']}\n\n{task}"}).encode('utf-8'))
             if not armed:
                 return {}
         else:
@@ -276,17 +275,40 @@ def on_stop(event: dict) -> dict:
         from g6.harness.workflow import adapters
 
         adapters.observe_step(asked["repo"], asked["task"], run, step, base=asked["base"])    # never fails the hook
+    if step.action == loop.WAIT:
+        return {"systemMessage": step.text or step.note}
+    # The same completion-artifact reader used by MCP, distinct from the
+    # repo_tests run-report decision reader of the same name.
+    from g6.harness.completion_loop import read_report as retained_report
+    from g6.workspace._envelope import WorkspaceRefused
+
+    try:
+        state = loop.reply_state(run)
+        sent = loop.attempted(state)
+        if state.get("done"):
+            step = loop.Step(loop.STOP, code=state.get("code", ""), note=step.note,
+                             ending=state.get("ending", ""))
+        text = state.get("reply_text", "") if step.action == loop.CONTINUE else retained_report(run, state, code=step.code)
+    except WorkspaceRefused as exc:
+        return {"systemMessage": str(exc)}
+    if not state and not step.code:
+        # Stateless steps have no retained report. Once a run has a publication,
+        # its checked state and receipts alone supply both words and accounting.
+        text = step.text
     if step.action == loop.CONTINUE:
-        return {"decision": "block", "reason": step.text}
+        return {"decision": "block", "reason": text}
     if step.note:      # no loop ran, so nothing but this tells the next prompt that a turn ended
-        (run / TURN_ENDED).touch()
-    said = step.text or step.note
-    if step.text and workflow_policy.enabled()[0]:    # after the whole report: the optional view of the task
+        store.touch(run / TURN_ENDED)
+    if step.note == loop.ALREADY_ENDED:
+        text = ""      # this turn ran nothing; the retained report belongs to the earlier turn
+    said = text or step.note
+    if not said and (step.text or step.code):
+        said = f"[{step.code}] {cloud.WITHHELD}" if step.code else cloud.WITHHELD
+    if text and workflow_policy.enabled()[0]:    # after the whole report: the optional view of the task
         from g6.harness.workflow import view
 
-        sent = loop.attempted(loop._load(run))
         said = view.appended(asked["repo"], asked["task"], said, provider="anthropic:claude_code", loop={
-            "ending": step.ending, "error": f"[{step.code}]" if step.code else "", "run_id": run.name, "report": step.text,
+            "ending": step.ending, "error": f"[{step.code}]" if step.code else "", "run_id": run.name, "report": text,
             **({"requests_sent": sent} if sent is not None else {})})
     return {"systemMessage": said} if said else {}
 
@@ -378,8 +400,8 @@ def on_tool(event: dict) -> dict:
             codes = set()
         if code in codes:
             return {}
-        seen.parent.mkdir(parents=True, exist_ok=True)
-        seen.write_text(json.dumps(sorted(codes | {code})), encoding="utf-8")
+        store.mkdir(seen.parent, parents=True, exist_ok=True)
+        store.write_text(seen, json.dumps(sorted(codes | {code})), encoding="utf-8")
         return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": line}}
     except Exception:  # noqa: BLE001 - optional context must never fail a tool hook, including recursion errors
         return {}
