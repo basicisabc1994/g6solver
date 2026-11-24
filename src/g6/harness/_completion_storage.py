@@ -91,7 +91,7 @@ def check_tree(folder: Path) -> Path:
 
 
 def remove_tree(folder: Path) -> None:
-    shutil.rmtree(check_tree(folder), ignore_errors=True)
+    shutil.rmtree(check_tree(folder))
 
 
 def append_text(target: Path, text: str) -> None:

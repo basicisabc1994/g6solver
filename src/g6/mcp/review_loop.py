@@ -22,6 +22,7 @@ from typing import Any
 
 from g6.core.refusals import code_of
 from g6.harness import _completion_storage as store
+from g6.harness.completion_loop import CHANGED as CHANGED
 from g6.invariants import ERROR_CODE_PATTERN
 
 
@@ -33,8 +34,6 @@ ENDED = ("The loop has ended. A review that reproduces nothing is not evidence t
          "found no failure it could show.", "Show the report as it is. Merging is the person's own decision.")
 NOTHING = ("No Python changed against the base commit, so nothing was tested and nothing was spent. Call again once the "
            "session has changed Python.")
-CHANGED = ("The code has changed since this session's loop ended, so the report below is of an earlier patch and nothing in "
-           "this call tested the code as it stands. Name a new session to review it.")
 
 
 def _asked(repo: str, task: str, base: str, session: Path) -> dict:
@@ -104,25 +103,26 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
     try:
         # A late worker can reserve after advance releases its lock. Read the
         # report and accounting together under that same writer serialization.
-        state = loop.reply_state(folder)
+        # Keep this surface's report reader here; the common builder decides
+        # whether this turn has any retained report to read.
+        done, state, why = loop.reply_for(folder, done, asked['repo'], asked['base'],
+            report_reader=lambda run, state, *, code: loop.read_report(run, state, code=code))
         total = loop.attempted(state)
-        if state.get("done"):
-            done = loop.Step(loop.STOP, code=state.get("code", ""), note=done.note,
-                             ending=state.get("ending", ""))
-        text = state.get("reply_text", "") if done.action == loop.CONTINUE else loop.read_report(folder, state)
+        text = done.text
     except WorkspaceRefused as exc:
+        if exc.code in (WORKSPACE_BUSY, loop.BUSY):
+            return {**blocked_reply(f'[{loop.BUSY}] The retained reply is waiting for its writer. Retry this call; '
+                                   'the send count is unavailable while publication is in progress.', request_id=request_id),
+                    'run_id': folder.name, 'action': loop.WAIT, 'code': loop.BUSY}
         return {**blocked_reply(str(exc), request_id=request_id), "run_id": folder.name,
                 "action": loop.STOP, "code": exc.code,
                 **({"requests_sent": total} if total is not None else {})}
     evidence = _evidence(state, asked["base"])
-    code, ending, why, note = done.code, done.ending, state.get("stop") or text or NOTHING, done.note
-    if note == loop.ALREADY_ENDED:     # a repeat ran nothing: its report is of the patch as the session's loop ended
-        reviews = state.get("reviews") or []    # a stop with a code keeps it, as it says why the session's loop ended
-        ended = state.get("ended_patch") or (reviews[-1]["patch"] if reviews else "")    # a session ended before it was kept
-        if ended and loop._patch_now(Path(asked["repo"]), asked["base"]) != ended:
-            text, code, ending, why, note = f"{CHANGED}\n\n{text}", code or loop.NO_CLEAN_REVIEW, "untested", CHANGED, CHANGED
+    code, ending, note = done.code, done.ending, done.note
     said = {"action": done.action, "text": text} if done.action == loop.CONTINUE else {
         "action": done.action, "report": text, "ending": ending, **({"note": note} if note else {})}
+    if note == loop.ALREADY_ENDED:
+        said['recovery'] = 'Call g6_review_until_clean with a new session to review further changes.'
     if code:
         refused = blocked_reply(f"[{code}] {why}"[:600], request_id=request_id)
         result = {**refused, "run_id": folder.name, "evidence": evidence, **said, "code": code}
@@ -131,9 +131,9 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
         result = {"ok": True, **said, **envelope_fields(
             reliability_label="qualified-draft", warning_card=warning_card(CODE, *card), evidence=evidence, request_id=request_id,
             run_id=folder.name, degradation_reason=card[0][:300])}
-    if code and (total is not None or state.get("done")):
+    if code and code != loop.NO_PYTHON and (total is not None or state.get("done")):
         # Completed legacy runs keep their unknown-count field and metadata.
-        # A stateless refusal has no field; only a retained zero means unsent.
+        # NO_PYTHON omits the field; other stateless refusals have no count.
         result["requests_sent"] = total
     from g6.core.cloud_consent import bind_output
     return bind_output(result, loop.source_refs(state))

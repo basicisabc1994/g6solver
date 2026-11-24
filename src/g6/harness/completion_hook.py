@@ -135,19 +135,27 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> bool:
     same, read_last = (repo, base) == (asked["repo"], asked["base"]), reviews[-1]["patch"] if reviews else ended.get("reviewed")
     fresh = {"repo": repo, "task": f"{asked['task']}\n\n{task}" if same else task, "base": base,
              "run": asked.get("run", 0) + 1}
-    run = current(session_id, fresh)
-    store.mkdir(run, parents=True, exist_ok=True, mode=0o700)
     read = {"reviewed": read_last} if same and read_last and not ended.get("code") else {}
     from g6.harness import completion_loop as loop
     refs = cloud.boundary_sources(carried=(*loop.source_refs(ended),
         cloud.Source.text(cloud.input_source(asked['task']), 'prior-task', asked['task']),
         cloud.Source.text(cloud.input_source(task), 'task', task)))
-    with loop._writing(run):
-        # A retry may find this run already used: never reset its count or reviews.
+    while True:
+        run = current(session_id, fresh)
         retained = loop._load(run)
-        loop._save(run, retained or {**read, loop.ATTEMPTED: 0}, sources=refs)
-        store.write_retained(session / 'task.json', json.dumps(fresh).encode('utf-8'))
-    return True
+        if isinstance(retained, loop._RetainedState) and not retained.readable:
+            fresh['run'] += 1
+            continue
+        with loop._writing(run):
+            # An interrupted publication owns these bytes, even if unreadable.
+            retained = loop._load(run)
+            if isinstance(retained, loop._RetainedState) and not retained.readable:
+                fresh['run'] += 1
+                continue
+            # A retry may find this run already used: never reset its count or reviews.
+            loop._save(run, retained or {**read, loop.ATTEMPTED: 0}, sources=refs)
+            store.write_retained(session / 'task.json', json.dumps(fresh).encode('utf-8'))
+            return True
 
 
 def _moved(event: dict, asked: dict) -> bool:
@@ -261,6 +269,26 @@ def on_prompt(event: dict) -> dict:
 
 
 def on_stop(event: dict) -> dict:
+    """Keep every G6 refusal, including entry and marker failures, in the hook envelope."""
+    from g6.core.refusals import code_of
+    from g6.core.storage import PathRefused
+    from g6.workspace._envelope import OUTSIDE_ROOT, WorkspaceRefused
+
+    try:
+        return _on_stop(event)
+    except WorkspaceRefused as exc:
+        return {'systemMessage': str(exc)}
+    except PathRefused as exc:
+        return {'systemMessage': f'[{OUTSIDE_ROOT}] {exc.reason}'}
+    except Exception as exc:  # noqa: BLE001 - only coded G6 refusals become hook messages
+        code = code_of(exc)
+        if code == 'unknown':
+            raise
+        from g6.harness.completion_loop import refusal_reason
+        return {'systemMessage': f'[{code}] {refusal_reason(str(exc), code)}'}
+
+
+def _on_stop(event: dict) -> dict:
     session = folder(event["session_id"])
     if not (session / "task.json").is_file() and _record(session, event["cwd"], _prompts(event.get("transcript_path"))) is None:
         return {"systemMessage": NO_REPOSITORY}
@@ -277,30 +305,12 @@ def on_stop(event: dict) -> dict:
         adapters.observe_step(asked["repo"], asked["task"], run, step, base=asked["base"])    # never fails the hook
     if step.action == loop.WAIT:
         return {"systemMessage": step.text or step.note}
-    # The same completion-artifact reader used by MCP, distinct from the
-    # repo_tests run-report decision reader of the same name.
-    from g6.harness.completion_loop import read_report as retained_report
-    from g6.workspace._envelope import WorkspaceRefused
-
-    try:
-        state = loop.reply_state(run)
-        sent = loop.attempted(state)
-        if state.get("done"):
-            step = loop.Step(loop.STOP, code=state.get("code", ""), note=step.note,
-                             ending=state.get("ending", ""))
-        text = state.get("reply_text", "") if step.action == loop.CONTINUE else retained_report(run, state, code=step.code)
-    except WorkspaceRefused as exc:
-        return {"systemMessage": str(exc)}
-    if not state and not step.code:
-        # Stateless steps have no retained report. Once a run has a publication,
-        # its checked state and receipts alone supply both words and accounting.
-        text = step.text
+    step, state, _ = loop.reply_for(run, step, asked['repo'], asked['base'], hook=True)
+    sent, text = loop.attempted(state), step.text
     if step.action == loop.CONTINUE:
         return {"decision": "block", "reason": text}
     if step.note:      # no loop ran, so nothing but this tells the next prompt that a turn ended
         store.touch(run / TURN_ENDED)
-    if step.note == loop.ALREADY_ENDED:
-        text = ""      # this turn ran nothing; the retained report belongs to the earlier turn
     said = text or step.note
     if not said and (step.text or step.code):
         said = f"[{step.code}] {cloud.WITHHELD}" if step.code else cloud.WITHHELD

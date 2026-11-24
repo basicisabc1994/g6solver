@@ -1071,6 +1071,12 @@ class Step:
 #: The sharing state could not be read after a request of this review had gone out (``G6_E_CLOUD_CONSENT_STATE`` says
 #: nothing was shared, which a counted request makes untrue).
 CONSENT_STATE_AFTER_SEND = "G6_E_CLOUD_CONSENT_STATE_AFTER_SEND"
+UNREADABLE_STATE = ("The retained completion state cannot be read now against its receipt. "
+                    "No report is available; the send count is unknown.")
+CHANGED = ("The code has changed since this session's loop ended, so the report below is of an earlier patch and nothing in "
+           "this call tested the code as it stands. Name a new session to review it.")
+MCP_ENDED = ("G6's completion loop did not run: it has already ended for this task, and its report stands. "
+             "Call g6_review_until_clean with a new session to review further changes.")
 
 
 class _RetainedState(dict):
@@ -1080,6 +1086,11 @@ class _RetainedState(dict):
         super().__init__(state)
         self.version = version
         self.readable = readable
+
+
+def _unreadable_publication() -> _RetainedState:
+    return _RetainedState({'done': True, 'code': NO_CLEAN_REVIEW, 'ending': 'untested', 'stop': UNREADABLE_STATE,
+                           'consent_sources': [asdict(cloud.UNKNOWN)]}, None, readable=False)
 
 
 def _read_version(session: Path) -> str:
@@ -1093,13 +1104,23 @@ def _read_version(session: Path) -> str:
 
 
 def _load(session: Path) -> dict:
+    return _read_publication(session)
+
+
+def _read_publication(session: Path) -> dict:
+    """Use the same bytes for the receipt check and decoding, including without a lock."""
     session = store.path(session)
     path = store.path(session, "state.json")
     receipt = store.path(session, 'state.sha256')
-    if not path.is_file():
+    present = path.is_file()
+    if not present and not any(store.path(session, name).exists() for name in (
+        'state.json', 'state.sha256', '.write-version', 'state.json.new', 'state.sha256.new',
+    )):
         return {}
     version, readable = None, True
     try:
+        if not present:
+            raise ValueError('incomplete first state publication')
         before = _read_version(session)
         expected = receipt.read_text(encoding='ascii')
         state = json.loads(cloud.read_retained(path, expected))
@@ -1110,8 +1131,7 @@ def _load(session: Path) -> dict:
     except (OSError, TypeError, ValueError, RecursionError, MemoryError):
         readable = False
         # Neither content nor control fields from unbound state are reusable.
-        state = {'done': True, 'code': cloud.REQUIRED, 'ending': 'untested', 'stop': cloud.WITHHELD,
-                 'consent_sources': [asdict(cloud.UNKNOWN)]}
+        state = _unreadable_publication()
     if state.get('code') in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND):
         state['stop'] = _consent_stop(attempted(state))
     cloud.record_sources(source_refs(state))
@@ -1120,7 +1140,7 @@ def _load(session: Path) -> dict:
 
 def _require_readable(state: dict) -> None:
     if isinstance(state, _RetainedState) and not state.readable:
-        raise ValueError(f'{cloud.REQUIRED}: {cloud.WITHHELD}')
+        raise ValueError(f'{NO_CLEAN_REVIEW}: {UNREADABLE_STATE}')
 
 
 def read_report(session: Path, state: dict, *, code: str = "") -> str:
@@ -1167,6 +1187,95 @@ def attempted(state: dict) -> int | None:
     """The run's upper bound on sends. Older states have no bound, even if they kept a step count."""
     value = state.get(ATTEMPTED)
     return value if type(value) is int and value >= 0 else None
+
+
+def refusal_reason(text: str, code: str) -> str:
+    """A reason without copies of the code its envelope will carry."""
+    return re.sub(rf"(?:\[{re.escape(code)}\]|{re.escape(code)}:)\s*", "", text).strip() if code else text
+
+
+def reply_for(session: Path, step: Step, repo: str, base: str, *, hook: bool = False,
+              report_reader: Callable[..., str] | None = None) -> tuple[Step, dict, str]:
+    """Join one step with one checked retained snapshot for both public surfaces.
+
+    An unretained refusal is about this call; a saved ending cannot erase it.
+    A repeat and the changed-patch check depend on the saved ending, never on
+    whether a refused step managed to carry the usual repeat note.
+    """
+    try:
+        state = reply_state(session)
+    except WorkspaceRefused as exc:
+        if exc.code not in (WORKSPACE_BUSY, BUSY):
+            raise
+        # An absent publication supplies no count or replacement for a known refusal.
+        state = _unreadable_publication() if step.code in (
+            '', cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND,
+        ) else {}
+    if isinstance(state, _RetainedState) and not state.readable:
+        # Neither a retained ending nor consent accounting can be inferred.
+        code = step.code if step.code and step.code not in (
+            cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND, NO_PYTHON,
+        ) else NO_CLEAN_REVIEW
+        text = UNREADABLE_STATE
+        if code != NO_CLEAN_REVIEW:
+            text = f'{step.text or step.note or "The completion step was refused."} {text}'
+        return Step(STOP, f'[{code}] {refusal_reason(text, code)}' if hook else text, code), state, text
+    total = attempted(state)
+    own_refusal = bool(step.code and step.code != state.get('code'))
+    settled = bool(state.get('done'))
+    if step.code == NO_PYTHON:
+        # Nothing was reviewed. Keep the report empty and do not manufacture a
+        # retained publication (or its origins) merely to word a zero-send reply.
+        why = 'No Python changed against the base commit, so nothing was tested and nothing was spent. '
+        why += 'Call again once the session has changed Python.'
+        return Step(STOP, code=NO_PYTHON, note=NOTHING_CHANGED if hook else step.note,
+                    ending='untested'), state, why
+    if step.note and not step.text and not step.code and not settled:
+        return step, state, step.note
+    repeat = settled and (own_refusal or not step.text)
+    code = step.code if own_refusal or not settled else state.get('code', '')
+    action = STOP if settled or code else step.action
+    ending = 'untested' if own_refusal else state.get('ending', step.ending) if settled else step.ending
+    # Preserve the parent's notice for a known ending patch. A legacy ending
+    # without that patch still gets an explicit way on in its MCP notice.
+    note = (ALREADY_ENDED if hook or state.get('ended_patch') else MCP_ENDED) if repeat else step.note
+    if own_refusal:
+        text = step.text or step.note or 'The completion step was refused.'
+    elif action == CONTINUE:
+        text = state.get('reply_text', '') if state else step.text
+    elif code and not settled:
+        text = state.get('stop') if state.get('code') == code else ''
+        text = text or step.text or step.note or 'The completion step was refused.'
+    else:
+        report_reader = report_reader or read_report
+        text = report_reader(session, state, code=code)
+        if not state:
+            text = step.text or step.note
+        elif code and text == cloud.WITHHELD:
+            text = state.get('stop') or 'The retained completion report cannot be read.'
+    if code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND):
+        text = _consent_stop(total)
+    why = (state.get('stop') if not own_refusal and state.get('code') == code else '') or text
+    # Consent wording is always regenerated from this snapshot's count.
+    if code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND):
+        why = text
+    if repeat and not (hook and not own_refusal):
+        reviews = state.get('reviews') or []
+        ended = state.get('ended_patch') or (reviews[-1]['patch'] if reviews else '')
+        if ended and _patch_now(Path(repo), base) != ended:
+            code, ending = code or NO_CLEAN_REVIEW, 'untested'
+            text = f'{CHANGED}\n\n{text}'
+            why, note = (why if own_refusal else CHANGED), CHANGED
+    if hook:
+        if repeat and not own_refusal:
+            text = ''  # Only the notice belongs to this turn; no report or workflow view ran.
+        elif code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND):
+            text = f'{refusal_reason(text, code)} [{code}]'
+        elif code and code != NO_PYTHON:
+            text = f'[{code}] {refusal_reason(text, code)}'
+        elif not text and (state or step.text):
+            text = cloud.WITHHELD
+    return Step(action, text, code, note, ending), state, refusal_reason(why, code)
 
 
 def _consent_stop(total: int | None) -> str:
@@ -1222,19 +1331,19 @@ def _state_write(session: Path):
 
 
 def reply_state(session: Path) -> dict:
-    """Wait for a reservation, then render only digest-checked retained content.
-
-    If the bounded wait expires, an integrity-checked read may still supply a
-    completed publication. It grants no write authority and never means that
-    the step did nothing. An interrupted publication stays withheld/unknown.
-    """
+    """Wait for the writer, then fall back only to bytes matching their receipt."""
     try:
         with _state_write(session):
             return _load(session)
     except WorkspaceRefused as exc:
         if exc.code not in (WORKSPACE_BUSY, BUSY):
             raise
-        return _load(session)
+        # The content and receipt can change between reads. _read_publication
+        # admits only a digest-matched body, never separately decoded JSON.
+        state = _read_publication(session)
+        if not state:
+            raise
+        return state
 
 
 class _RunCount:
@@ -1425,7 +1534,14 @@ def _finish(session: Path, state: dict, report: str, code: str = "", ending: str
     state.update(done=True, code=code, ending=ending, ended_patch=patch, report_sha256=cloud.sha256(body))
     _save(session, state)
     if state.get("visible"):
-        store.remove_tree(Path(state["visible"]))
+        try:
+            store.remove_tree(Path(state["visible"]))
+        except (WorkspaceRefused, OSError, ValueError) as exc:
+            state["cleanup"] = f"{type(exc).__name__}: {exc}"[:300]
+            try:
+                _save(session, state)
+            except (WorkspaceRefused, OSError, ValueError):
+                pass  # The settled report survives even if its diagnostic cannot be saved.
     return Step(STOP, report, code, ending=ending)
 
 
@@ -1534,15 +1650,7 @@ def _write_row(session: Path, state: dict) -> None:
         store.unlink(store.home_path(*OWING, session.name), missing_ok=True)
         del state["row_due"]
         state.pop("row", None)
-    except PathRefused as exc:
-        raise WorkspaceRefused(OUTSIDE_ROOT, exc.reason) from None
-    except WorkspaceRefused as exc:
-        if exc.code not in (WORKSPACE_BUSY, BUSY):
-            raise
-        # Log contention postpones delivery; it does not replace the review's
-        # own ending or make an already-counted operation a no-op.
-        state["row"] = f"{type(exc).__name__}: {exc}"[:300]
-    except (OSError, ValueError) as exc:
+    except (WorkspaceRefused, OSError, ValueError) as exc:
         state["row"] = f"{type(exc).__name__}: {exc}"[:300]
 
 
@@ -1555,7 +1663,7 @@ def _owe_row(task: str, base: str, session: Path, state: dict, now: str, cause: 
         mark = store.home_path(*OWING, session.name)
         store.mkdir(mark.parent, parents=True, exist_ok=True, mode=0o700)
         store.touch(mark)
-    except OSError as exc:
+    except (WorkspaceRefused, OSError, ValueError) as exc:
         state["row"] = f"{type(exc).__name__}: {exc}"[:300]
     _save(session, state)
 
@@ -1728,6 +1836,8 @@ def settle() -> None:
             with _writing(run) as owner:
                 run = owner.session
                 state = _load(run)
+                if isinstance(state, _RetainedState) and not state.readable:
+                    continue  # An unreadable publication cannot cancel its outstanding debt.
                 if "row_due" not in state:
                     store.unlink(mark, missing_ok=True)
                     continue
@@ -1796,18 +1906,43 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         try:
             return _step(state, run, repo, task, base, session, scout, critic, said, answered, agent)
         except (WorkspaceRefused, PathRefused, repo_tests.RepoRefused) as exc:
-            # A body refusal is terminal, even if the operation already reserved
-            # a send. Save that ending before any optional report publication.
             code = OUTSIDE_ROOT if isinstance(exc, PathRefused) else exc.code
             run.into(state)
-            text = f"[{code}] The review stopped: {exc}"
-            state.update(done=True, code=code, ending="untested", stop=text)
-            _save(session, state)
+            reason = exc.reason if isinstance(exc, (WorkspaceRefused, PathRefused)) else str(exc)
+            text = f"[{code}] The review stopped: {refusal_reason(reason, code)}"
             try:
-                return _finish(session, state, text, code, "untested")
-            except WorkspaceRefused:
-                # A refused report target cannot undo the saved terminal state.
+                retained = _load(session)
+                if retained.get('done'):
+                    # This call's refusal is returned, but no settled bytes change.
+                    return Step(STOP, text, code, ending="untested")
+                if isinstance(exc, repo_tests.RepoRefused) and run.total() == 0:
+                    return Step(STOP, text, code, ending="untested")
+                return _refused(session, state, task, base, Path(repo), text, code,
+                                "completion_body_refused", untested=True)
+            except (WorkspaceRefused, PathRefused, OSError, ValueError):
+                # A refused state or report target cannot replace the original refusal.
                 return Step(STOP, text, code, ending="untested")
+
+
+def _refused(session: Path, state: dict, task: str, base: str, root: Path,
+             text: str, code: str, cause: str, *, untested: bool = False) -> Step:
+    """Every terminal refusal owes its row before publishing its ending."""
+    state['stop'] = text
+    _owe_row(task, base, session, state, _patch_now(root, base), cause)
+    _write_row(session, state)
+    now = _patch_now(root, base)
+    if not state.get('reviews') or untested:
+        try:
+            return _finish(session, state, text, code, 'untested', patch=now)
+        except (WorkspaceRefused, PathRefused, OSError, ValueError):
+            # A refused publication is terminal; an interrupted hook before
+            # publication remains resumable on the patch present when it ends.
+            state.update(done=True, code=code, ending='untested', ended_patch=now)
+            state.pop('report_sha256', None)
+            _save(session, state)
+            raise  # The caller still returns this call's publication refusal.
+    ending = _ending(text, state['reviews'])
+    return _finish(session, state, _reviews_report(state, text, code, ending, ''), code, ending, patch=now)
 
 
 def _step(state: dict, run: _RunCount, repo: str | Path, task: str, base: str, session: Path, scout: Host | None,
@@ -1822,15 +1957,7 @@ def _step(state: dict, run: _RunCount, repo: str | Path, task: str, base: str, s
     change = repo_tests.change(root, base)
 
     def refused(text: str, code: str, cause: str, *, untested: bool = False) -> Step:
-        state["stop"] = text
-        _owe_row(task, base, session, state, _patch_now(root, base), cause)
-        _write_row(session, state)
-        now = _patch_now(root, base)    # the patch as the loop ends: read after the row's wait, as ``_review_end`` reads it
-        reviews = state.get("reviews") or []
-        if not reviews or untested:
-            return _finish(session, state, text, code, "untested", patch=now)
-        ending = _ending(text, reviews)      # what earlier rounds found stands: the refusal is why the loop stopped
-        return _finish(session, state, _reviews_report(state, text, code, ending, ""), code, ending, patch=now)
+        return _refused(session, state, task, base, root, text, code, cause, untested=untested)
 
     watch = None
     try:
