@@ -1190,8 +1190,8 @@ def _static_names(texts, rel, selection, cache):
     if isinstance(options, str):
         raise _FileOmitted(options)
     parts = selection.split("[", 1)[0].replace("::", ".").split(".")
-    if not any(fnmatch.fnmatch(PurePosixPath(rel).name, pattern) for pattern in options["python_files"]):
-        raise _FileOmitted("file does not match pytest collection names")
+    # This path serves only explicit file::body selections. pytest admits a
+    # file named on its command line regardless of python_files.
     for name, key in [*( (part, "python_classes") for part in parts[:-1]), (parts[-1], "python_functions")]:
         if not any(name.startswith(pattern) or any(char in pattern for char in "?*[") and fnmatch.fnmatch(name, pattern)
                    for pattern in options[key]):
