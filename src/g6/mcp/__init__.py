@@ -195,10 +195,11 @@ def _quiet() -> None:
 
 def _import_error_message(exc: ImportError) -> str:
     """Name the failing dependency without attributing unrelated imports to MCP."""
-    from g6.mcp.dependencies import extra_import_roots, missing_module
+    from g6.mcp.dependencies import absent_module_roots, missing_module, optional_import_roots
 
     module = missing_module(exc)
-    if module and module.split(".", 1)[0] in extra_import_roots("mcp"):
+    roots = absent_module_roots(exc, mcp_startup=True)
+    if roots and roots <= optional_import_roots("mcp", required_extras=""):
         return (f"g6-mcp needs the MCP extra (import failed: {module}): "
                 "pip install 'g6[mcp] @ git+https://github.com/basicisabc1994/g6solver'")
     if module:
