@@ -402,7 +402,7 @@ for _name in ("changed", "os_errors", "import_path", "env_set_by_g6", "ignored_l
 REPORT_FIELDS["changed"] = ReportField([str], [], "files that changed under the run",
                                        "text members; named only beside the verdict that says files changed")
 for _name in ("failure_messages", "messages", "repo_env", "loaded_outside", "submodules_not_hashed", "links_left_out",
-              "links_materialised", "generated_copied", "generated_left_out", "ignored_inputs"):
+              "links_materialised", "generated_copied", "generated_left_out", "ignored_inputs", "generated_checks"):
     REPORT_FIELDS[_name] = ReportField({str: str}, {}, "execution annotation by identity", "text keys and values")
 REPORT_FIELDS["isolation"] = ReportField(_ISOLATION, {"backend": "recorded"}, "execution boundary",
                                         "known typed fields, backend required", required_members=("backend",))
@@ -2034,6 +2034,7 @@ import json, os, socket, sys
 # Generated checks register their exact class before importing the repository under test.
 # Like the existing exception-object annotations, this does not authenticate against interpreter-state tampering.
 sys._g6_check_setup_types = []
+_g6_generated_checks = {}
 sys.path[:] = [p for p in sys.path if p not in ("", os.getcwd())]
 with open(sys.argv[6], encoding="utf-8") as _g6_env:
     os.environ.update(json.load(_g6_env))
@@ -2097,7 +2098,8 @@ try:
 except Exception:  # no importlib.metadata (Python 3.7): the repository's options stand as they are
     pass
 class _Counted:
-    def __init__(self):
+    def __init__(self, generated_checks=None):
+        self.generated_checks = dict(generated_checks or {})
         self.collected, self.deselected, self.started, self.finished = None, 0, set(), set()
         self.failed, self.setup_errors = [], {}
         self.test_outcomes, self.collected_ids, self.omitted_ids = {}, set(), set()
@@ -2157,9 +2159,12 @@ class _Counted:
         if report.failed:
             crash = getattr(report.longrepr, "reprcrash", None)
             text = str(getattr(crash, "message", "") or report.longrepr)
-            stem = report.nodeid.partition("::")[0].replace("\\", "/").rsplit("/", 1)[-1]
-            generated = stem in ("test_g6_example.py", "test_g6_relation.py", "test_g6_access_rule.py",
-                                 "test_g6_differential.py", "test_g6_state_invariant.py")
+            file = report.nodeid.partition("::")[0].replace("\\", "/")
+            if self.session is not None:
+                import os
+                root = str(getattr(self.session.config, "rootpath", None) or self.session.config.rootdir)
+                file = os.path.relpath(os.path.join(root, file), os.getcwd()).replace(os.sep, "/")
+            generated = file in self.generated_checks
             # Keep the compiled producer's first message line before bounding it; a value cannot choose the tail.
             self.messages.setdefault(report.nodeid, text[:2000] if generated else text[-2000:])
             if report.when == "setup" and type(report.longrepr).__name__ == "FixtureLookupErrorRepr":
@@ -2176,6 +2181,7 @@ class _Counted:
         if self.collected is not None:
             with open(counted, "w", encoding="utf-8") as handle:
                 json.dump({"collected": self.collected, "deselected": self.deselected, "started": len(self.started),
+                           "generated_checks": self.generated_checks,
                            "finished": len(self.finished), "failed_ids": self.failed,
                            "setup_errors": self.setup_errors, "test_outcomes": self.test_outcomes,
                            "collected_ids": sorted(self.collected_ids), "omitted_ids": sorted(self.omitted_ids),
@@ -2230,7 +2236,7 @@ class _Loaded:
                 json.dump({"modules": found, "complete": complete}, handle)
         except Exception:
             pass
-sys.exit(pytest.main(args, plugins=[_Counted(), _Capture(), _Loaded()]))
+sys.exit(pytest.main(args, plugins=[_Counted(_g6_generated_checks), _Capture(), _Loaded()]))
 '''.replace("NETWORK_OFF", repr(SAID["network_off"]))
 _BOOT = confine.CHILD_PRELUDE + _BOOT
 
@@ -2854,6 +2860,7 @@ def _progress(counts: dict[str, int], counted: Path) -> dict:
             "rootdir": found.get("rootdir", ""), "failure_messages": found.get("messages", {}),
             "os_errors": found.get("os_errors", []),
             "check_errors": found.get("check_errors", {}),
+            "generated_checks": found.get("generated_checks", {}),
             "missing_modules": found.get("missing_modules", []), "not_found_ids": found.get("not_found_ids", []),
             "collection_stopped": found.get("collection_stopped"),
             "passed": max(0, counts.get("passed", 0) - max(0, started - finished))}
@@ -3060,7 +3067,8 @@ def _test_id(repo: Path, test: str, what: str = "test") -> str:
 def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int, network: bool,
          mutant: tuple[str, str] | None = None, copied: bool = False, python: str = "",
          scratch_dir: Path | None = None, deadline: float | None = None, receipt: bool = False,
-         require_isolation: bool = False, links: dict | None = None, observation: dict | None = None) -> dict:
+         require_isolation: bool = False, links: dict | None = None, observation: dict | None = None,
+         generated_checks: dict[str, str] | None = None) -> dict:
     """The shared execution path; only old-test replay uses a copy without git metadata. ``require_isolation``: a run
     no backend confines is refused (``G6_E_ISOLATION_UNAVAILABLE``) before it starts, even where the person allowed
     unconfined runs (verification search's proposed checks). ``links``: what the copy (``repository_copy``'s
@@ -3118,6 +3126,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "failure_messages": tally.get("failure_messages") or {},
                 "os_errors": list(tally.get("os_errors") or []),
                 "check_errors": dict(tally.get("check_errors") or {}),
+                "generated_checks": dict(generated_checks or {}),
                 "missing_modules": list(tally.get("missing_modules") or []),
                 "not_found_ids": list(tally.get("not_found_ids") or []),
                 "probe_observations": probe_observations(output),
@@ -3153,7 +3162,9 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         # the run's own log file, empty (truth.no_null_device): with none named, pytest's is the null device, which an
         # AppContainer may be refused; one the repository names could not be written into a repository in place
         own_config[:] = _config_args(repo, ids, own)
-        cmd = [python, "-I", "-B", "-X", "utf8", "-c", _BOOT, json.dumps(entries), "1" if network else "0",
+        bootstrap = _BOOT.replace('_g6_generated_checks = {}',
+                                  '_g6_generated_checks = ' + ascii(generated_checks or {}), 1)
+        cmd = [python, "-I", "-B", "-X", "utf8", "-c", bootstrap, json.dumps(entries), "1" if network else "0",
                target, source, str(counted), str(variables), str(own / "loaded.json"), str(LOADED_LIMIT), *ids, "-q",
                "-p", "no:cacheprovider",
                f"--junitxml={report}", *own_config, f"--log-file={own / 'pytest.log'}",
@@ -4076,7 +4087,8 @@ OLD_TEST_LIMIT = "the limit of {n} old test file(s) was reached"
 
 
 def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = (), timeout_s: int = DEFAULT_TIMEOUT_S,
-                network: bool = False, overlay: dict[str, str] | None = None, require_isolation: bool = False) -> dict:
+                network: bool = False, overlay: dict[str, str] | None = None, require_isolation: bool = False,
+                generated_checks: dict[str, str] | None = None) -> dict:
     """``tests`` (files, folders or ``file::test`` ids) as they are now, run against the base commit's code: in a copy
     (``repository_copy``, with its caps), every file the change touched is put back as it was at the base commit
     (``_base_revision``) except the files and folders ``tests`` name, which keep their text now. A check that passes
@@ -4094,7 +4106,8 @@ def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = ()
             with _base_revision(change, copy, deadline, keep=keep, materialised=report.get("links_materialised")):
                 return _run(copy, tests, roots=roots, timeout_s=bound, network=network, copied=True,
                             python=interpreter(change.repo), scratch_dir=copy.parent, deadline=deadline,
-                            require_isolation=require_isolation, links=report)
+                            require_isolation=require_isolation, links=report,
+                            **({'generated_checks': generated_checks} if generated_checks else {}))
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
     except (OSError, RepoRefused, CopyNotRun) as exc:

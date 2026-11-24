@@ -502,7 +502,8 @@ def _copy_differs(copy: Path, artefact: dict[str, str], placed: str) -> bool:
 
 
 def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *, at_base: bool,
-               timeout_s: int, roots: tuple[str, ...] = (), artefact: dict[str, str] | None = None) -> dict:
+               timeout_s: int, roots: tuple[str, ...] = (), artefact: dict[str, str] | None = None,
+               template: str | None = None) -> dict:
     """Ordinary proposed tests retain their executor; confirmed checks and probes use G6's observation runner."""
     from contextlib import nullcontext
     from g6.harness import behaviour_runner
@@ -510,9 +511,10 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
     generated = source.observation if type(source) is behaviour_runner.ExecutableSource else None
     owned = generated is not None
     overlay = {} if owned else {placed: source}
+    origins = {'generated_checks': {placed: template}} if template else {}
     if at_base and not owned:
         return repo_tests.run_at_base(change, [node], roots=roots, timeout_s=timeout_s, overlay=overlay,
-                                     require_isolation=True)
+                                     require_isolation=True, **origins)
     deadline = time.monotonic() + timeout_s
     refused = {"verdict": "not_run", "said": NOT_THE_ARTEFACT, NOT_THE_ARTEFACT_KEY: True}
     try:
@@ -539,7 +541,7 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
                 else:
                     ran = repo_tests._run(copy, [node], roots=roots, timeout_s=timeout_s, network=False, copied=True,
                                           python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
-                                          deadline=deadline, require_isolation=True, links=report)
+                                          deadline=deadline, require_isolation=True, links=report, **origins)
             if expected is not None and ran.get("source_before") and ran["source_before"] != digest(copied):
                 return refused
             if expected is not None and not ran.get('source_before') and ran.get('verdict') in {'passed', 'failed'}:
@@ -566,10 +568,10 @@ def _messages(ran: dict, node: str) -> list[str]:
             if _covers(node, report.full(named)) or report.full(named) == file]
 
 
-def _failure(ran: dict, node: str) -> str:
+def _failure(ran: dict, node: str, template: str | None = None) -> str:
     """How a check failed, from its structured failure annotation (empty when absent)."""
     for text in _messages(ran, node):
-        if _generated_template(node) is not None:
+        if template is not None:
             # The producer's first message line is authoritative; a value's display cannot append another one.
             line = next((part for part in text.splitlines() if part.strip()), '')
             marked = _RAISED_LINE.fullmatch(line)
@@ -583,6 +585,7 @@ def _failure(ran: dict, node: str) -> str:
 
 
 def _generated_template(node: str) -> str | None:
+    """Historical generated-file labels for saved callers; never used to decide a run's origin."""
     from g6.harness.verification_templates import REGISTRY
 
     stem = node.partition('::')[0].replace('\\', '/').rsplit('/', 1)[-1].removesuffix('.py')
@@ -590,15 +593,13 @@ def _generated_template(node: str) -> str | None:
                  if definition.text and stem == 'test_g6_' + ident.partition('.')[0]), None)
 
 
-def _setup_failure_line(how: str, node: str) -> bool:
+def _setup_failure_line(how: str, template: str | None) -> bool:
     """Legacy records admit only the compiled check's exact qualified type and fixed reason."""
     from g6.harness.behaviour_runner import CheckSetupError
 
     modules = ('example', 'relation', 'access_rule', 'differential', 'state_invariant')
-    stem = node.partition('::')[0].replace('\\', '/').rsplit('/', 1)[-1].removesuffix('.py')
     known = tuple('test_g6_' + one for one in modules)
-    # A node in a template's own generated file admits only that template's class; any other node, any template's.
-    allowed = (stem,) if stem in known else known
+    allowed = ('test_g6_' + template.partition('.')[0],) if template else known
     return any(how == module + '.CheckSetupError: ' + detail
                for module in allowed for detail in CheckSetupError.details())
 
@@ -620,7 +621,7 @@ def _uncollected(ran: dict, node: str) -> bool:
     return bool(report.collection_errors_for(node))
 
 
-def reading(ran: dict, node: str) -> dict:
+def reading(ran: dict, node: str, *, template: str | None = None) -> dict:
     """What one run of a check says: ``result`` ``passed`` (every test of the check passed its call), ``failed`` (one
     failed its call, or the check's own file could not be collected, ``collection`` true; either way not on an
     operating-system error or a refusal, and its recorded messages say how) or ``error`` (anything else: not finished
@@ -641,6 +642,8 @@ def reading(ran: dict, node: str) -> dict:
     structured_setup = 'check_errors' in ran
     report = repo_tests.read_report(ran)
     ran = report.wire()
+    if template is None:
+        template = ran.get('generated_checks', {}).get(node.partition('::')[0])
     verdict = report.verdict
     found = {"verdict": verdict, "seconds": float(ran.get("seconds") or 0.0),
              "tree_digest": ran.get("source_before") or "", **{key: ran[key] for key in RAN_WITH if key in ran}}
@@ -655,6 +658,8 @@ def reading(ran: dict, node: str) -> dict:
             from g6.harness.behaviour_runner import ObservationUnavailable
 
             for line in how.splitlines():
+                if line.endswith(ObservationUnavailable.NO_OBSERVATION):
+                    return error(ObservationUnavailable.NO_OBSERVATION)
                 _, found_detail, name = line.partition(ObservationUnavailable.DETAIL + ': ')
                 detail = found_detail + name
                 if found_detail and ObservationUnavailable.valid_detail(detail):
@@ -664,12 +669,11 @@ def reading(ran: dict, node: str) -> dict:
                 or report.full(named) == node.partition('::')[0])
                for named, reason in report.data.get('check_errors', {}).items()):
             return error('G6_E_CHECK_SETUP: the generated check could not prepare its call')
-        if not structured_setup and _setup_failure_line(how, node):
+        if not structured_setup and _setup_failure_line(how, template):
             return error(how)
         if not how:   # the repository's options hid it (--tb=no -rN, say): a refused access cannot be ruled out
             return error("it failed, and nothing it recorded says how, so G6 cannot tell a failure of the code from "
                          "an access the boundary refused")
-        template = _generated_template(node)
         if template is not None:
             from g6.harness.verification_templates import failure_matches
 
@@ -692,7 +696,7 @@ def reading(ran: dict, node: str) -> dict:
     mine = {n: phases for n, phases in report.phases.items() if _covers(node, n)}
     if not mine and verdict in (repo_tests.FAILED, "collection_error") and _uncollected(ran, node):
         # review 5, as tier 2 reads a test file: an import the patch broke fails the check where it is collected
-        how = _failure(ran, node)
+        how = _failure(ran, node, template)
         return failed(f"could not be collected: {how}" if how else "", collection=True)
     if verdict not in repo_tests.RAN:
         return error(f"{verdict}: {ran.get('said') or 'no result'}")
@@ -713,7 +717,7 @@ def reading(ran: dict, node: str) -> dict:
             return error(observed)
         return {**found, "result": "passed", "detail": f"{len(mine)} test(s) passed", "observations": observed}
     if decided == repo_tests.FAILED and verdict == repo_tests.FAILED:
-        return failed(_failure(ran, node))
+        return failed(_failure(ran, node, template))
     if any(_covers(node, left) for left in report.omitted):
         return error("pytest left out a test of the check (deselected), so the check did not run whole")
     return error(f"its tests did not run to a pass or a fail ({verdict})")
@@ -840,6 +844,8 @@ class Origin:
     keep_observations: bool = False
     patch_only: bool = False
     judge: Callable[[str, dict, dict | None], dict] | None = None
+    #: A multi-step access rule is compiled through the state-invariant replay producer.
+    compiled_template: str = ""
 
 
 FREE_FORM = Origin()
@@ -891,10 +897,12 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
             checks, patch_only=lambda ident: (origins or {}).get(ident, FREE_FORM).patch_only)
 
     def read(at_base: bool) -> dict:
+        compiled_template = origin.compiled_template or origin.template
         ran = _run_check(change, activity["placed"], one.source, node, at_base=at_base,
                          timeout_s=_bound(deadline - _clock()), **rooted,
+                         **({'template': compiled_template} if compiled_template else {}),
                          **({'artefact': before} if before is not None and origin.template == 'differential.v1' else {}))
-        found = _guarded(change, ran, reading(ran, node))
+        found = _guarded(change, ran, reading(ran, node, template=compiled_template or None))
         if origin.template == "differential.v1":   # the binding as the run's reading read it from its record
             activity.owned_runs.append(found.get("owned_probe") is True and bool(found.get('execution_artifact')))
             if found.get('execution_artifact'):

@@ -84,6 +84,7 @@ import math
 import re
 import time
 import tomllib
+from functools import lru_cache
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, Callable, Literal
@@ -1452,9 +1453,14 @@ def _name(kind):
 def _shown(value, limit=200):
     try:
         text = repr(value)
-    except Exception as exc:
+    except BaseException as exc:
+        if raised_during_setup(exc) and execution_control(exc):
+            raise
+        if execution_control(exc):
+            raise
         text = "<a value whose repr raised " + _name(type(exc)) + ">"
     text = ''.join(ch if ch.isprintable() else json.dumps(ch, ensure_ascii=True)[1:-1] for ch in text)
+    text = text.replace(';', r'\\u003b').replace('G6_E_', r'\\u00476_E_')
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
 
@@ -1528,10 +1534,11 @@ failures.append("case %d left argument %d as %s, expected %s" % (
 '''
 
 
-def failure_inventory(ident: str) -> tuple[str, ...]:
+@lru_cache(maxsize=8)
+def failure_inventory(ident: str) -> tuple[tuple, tuple]:
     """Read the failure grammar from the compiler's fixed producers, never repository output.
 
-    Literal words stay exact. Display slots stay on one line; exception slots follow exception_name.
+    Literal words stay exact. Slots are data for a forward parser, never regular expressions.
     This is a grammar inventory, not producer authentication inside a shared interpreter.
     """
     from g6.harness import behaviour_runner as runner
@@ -1545,48 +1552,49 @@ def failure_inventory(ident: str) -> tuple[str, ...]:
     tree = ast.parse(source)
     assignments = {node.targets[0].id: node.value for node in ast.walk(tree)
                    if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)}
-    display = r'[^\r\n]*?'
-    # Python identifiers include Unicode combining marks and Other_ID_Start characters that re's \w omits.
-    # Capture each name and apply Python's own identifier rule in failure_matches instead.
-    names = r'([^\r\n :;()\[\],]+)'
+    def join(left, right):
+        return [one + other for one in left for other in right]
+
+    def literal(text):
+        return [(('literal', text),)]
 
     def pattern(expr, seen=()):
         if isinstance(expr, ast.Constant) and type(expr.value) is str:
-            return re.escape(expr.value)
+            return literal(expr.value)
         if isinstance(expr, ast.Name) and expr.id in assignments and expr.id not in seen:
             return pattern(assignments[expr.id], (*seen, expr.id))
         if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
-            return pattern(expr.left, seen) + pattern(expr.right, seen)
+            return join(pattern(expr.left, seen), pattern(expr.right, seen))
         if (isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Mod)
                 and isinstance(expr.left, ast.Constant) and type(expr.left.value) is str):
             values = expr.right.elts if isinstance(expr.right, ast.Tuple) else [expr.right]
-            chunks, offset = [], 0
+            chunks, offset = [()], 0
             for match, value in zip(re.finditer(r'%[ds]', expr.left.value), values, strict=True):
-                chunks.extend((re.escape(expr.left.value[offset:match.start()]),
-                               r'[0-9]+' if match[0] == '%d' else pattern(value, seen)))
+                chunks = join(chunks, literal(expr.left.value[offset:match.start()]))
+                chunks = join(chunks, [(('digits', ''),)] if match[0] == '%d' else pattern(value, seen))
                 offset = match.end()
-            return ''.join(chunks) + re.escape(expr.left.value[offset:])
+            return join(chunks, literal(expr.left.value[offset:]))
         if isinstance(expr, ast.IfExp):
-            return '(?:' + pattern(expr.body, seen) + '|' + pattern(expr.orelse, seen) + ')'
+            return pattern(expr.body, seen) + pattern(expr.orelse, seen)
         if isinstance(expr, ast.Call):
             if isinstance(expr.func, ast.Name) and expr.func.id in ('_name', 'exception_name'):
-                return names
+                return [(('name', ''),)]
             if isinstance(expr.func, ast.Attribute) and expr.func.attr == 'join':
-                return r'[0-9]+(?:, [0-9]+)*'
+                return [(('indices', ''),)]
             if isinstance(expr.func, ast.Name) and expr.func.id == 'str':
-                return r'\[[0-9]+(?:, [0-9]+)*\]'
-        return display
+                return [(('brackets', ''),)]
+        return [(('display', ''),)]
 
     summaries, direct = [], []
     for node in ast.walk(tree):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.args
                 and isinstance(node.func.value, ast.Name)):
             if node.func.value.id == 'failures' and node.func.attr == 'append' and not isinstance(node.args[0], ast.Name):
-                summaries.append(pattern(node.args[0]))
+                summaries.extend(pattern(node.args[0]))
             if node.func.value.id == 'pytest' and node.func.attr == 'fail':
                 # Dynamic summaries and forwarded exception text are accounted for by their actual producers.
                 if isinstance(node.args[0], ast.BinOp):
-                    direct.append('Failed: ' + pattern(node.args[0]))
+                    direct.extend(join(literal('Failed: '), pattern(node.args[0])))
         if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
             values = {key.value: value for key, value in zip(node.value.keys, node.value.values, strict=True)
                       if isinstance(key, ast.Constant)}
@@ -1594,34 +1602,83 @@ def failure_inventory(ident: str) -> tuple[str, ...]:
             if (isinstance(result, ast.IfExp) and isinstance(result.body, ast.Constant)
                     and result.body.value == 'failed' and 'detail' in values):
                 detail = values['detail']
-                direct.append('Failed: ' + pattern(detail.body if isinstance(detail, ast.IfExp) else detail))
+                direct.extend(join(literal('Failed: '), pattern(detail.body if isinstance(detail, ast.IfExp) else detail)))
         if isinstance(node, ast.Constant) and type(node.value) is str and node.value.startswith('call failed: builtins.'):
-            direct.extend((re.escape(node.value.partition('builtins.')[2] + ': ' + node.value),
-                           'Failed: ' + re.escape(node.value)))
-    if summaries:
-        one = '(?:' + '|'.join(summaries) + ')'
-        # Expand the five bounded slots so each exception name is captured, including earlier summaries.
-        direct.extend('Failed: ' + '; '.join([one] * count) + r'(?:; and [0-9]+ more)?'
-                      for count in range(1, 6))
+            direct.extend(literal(node.value.partition('builtins.')[2] + ': ' + node.value))
+            direct.extend(literal('Failed: ' + node.value))
     # These exceptions are emitted by shared preparation, rather than pytest.fail. Legacy records lack
     # exception-object annotations; admitting an exact producer line does not confer setup authority.
     module = 'test_g6_' + ident.partition('.')[0]
-    direct.extend(re.escape(module + '.CheckSetupError: ' + detail) for detail in CheckSetupError.details())
-    unavailable = re.escape(module + '.ObservationUnavailable: ' + ObservationUnavailable.DETAIL)
-    direct.append(unavailable + '(?:: ' + names + ')?')
-    return tuple(dict.fromkeys(direct))
+    for detail in CheckSetupError.details():
+        direct.extend(literal(module + '.CheckSetupError: ' + detail))
+    unavailable = module + '.ObservationUnavailable: ' + ObservationUnavailable.DETAIL
+    direct.extend(literal(unavailable))
+    direct.extend(join(literal(unavailable + ': '), [(('name', ''),)]))
+    direct.extend(literal(module + '.ObservationUnavailable: ' + ObservationUnavailable.NO_OBSERVATION))
+    return tuple(dict.fromkeys(direct)), tuple(dict.fromkeys(summaries))
+
+
+def _failure_fragment(tokens: tuple, text: str) -> bool:
+    """Forward reachable offsets; each fixed slot examines at most 200 characters per offset.
+
+    The compiler fixes the number of tokens and alternatives. No split is retried recursively and no display
+    is interpreted as grammar. Work is bounded by a constant times the length of this fragment.
+    """
+    positions, size = {0}, len(text)
+    for kind, value in tokens:
+        if kind == 'literal':
+            positions = {at + len(value) for at in positions if text.startswith(value, at)}
+        elif kind == 'display':
+            following, latest = set(), -201
+            for end in range(size + 1):
+                if end and (not text[end - 1].isprintable() or text[end - 1] == ';'):
+                    latest = -201
+                if end in positions:
+                    latest = end
+                if 0 <= end - latest <= 200:
+                    following.add(end)
+            positions = following
+        else:
+            following = set()
+            for at in positions:
+                for end in range(at + 1, min(size, at + 200) + 1):
+                    part = text[at:end]
+                    if kind == 'name':
+                        valid = ('G6_E_' not in part and all(
+                            piece.isidentifier() or piece in ('<locals>', '<unavailable>')
+                            for piece in part.split('.')))
+                    elif kind == 'digits':
+                        valid = all('0' <= char <= '9' for char in part)
+                    else:
+                        if kind == 'brackets':
+                            part = part[1:-1] if part.startswith('[') and part.endswith(']') else ''
+                        valid = bool(part) and all(piece and all('0' <= char <= '9' for char in piece)
+                                                   for piece in part.split(', '))
+                    if valid:
+                        following.add(end)
+            positions = following
+        if not positions:
+            return False
+    return size in positions
 
 
 def failure_matches(ident: str, line: str) -> bool:
-    """A whole compiler-produced failure line, with the same name rule as exception_name."""
-    for pattern in failure_inventory(ident):
-        matched = re.fullmatch(pattern, line)
-        if matched is not None and all(
-                len(name) <= 200 and all((part.isidentifier() or part in ('<locals>', '<unavailable>'))
-                                         and 'G6_E_' not in part for part in name.split('.'))
-                for name in matched.groups() if name is not None):
-            return True
-    return False
+    """One pass over producer-owned fragment boundaries, with bounded forward slot matching."""
+    if (ident not in REGISTRY or not REGISTRY[ident].text or type(line) is not str
+            or len(line) > 2000 or not line or any(not ch.isprintable() for ch in line)):
+        return False
+    direct, summaries = failure_inventory(ident)
+    if any(_failure_fragment(tokens, line) for tokens in direct):
+        return True
+    if not line.startswith('Failed: ') or 'G6_E_' in line:
+        return False
+    fragments = line[len('Failed: '):].split('; ')
+    if fragments[-1].startswith('and ') and fragments[-1].endswith(' more'):
+        count = fragments.pop()[4:-5]
+        if not count or not all('0' <= char <= '9' for char in count):
+            return False
+    return (1 <= len(fragments) <= 5
+            and all(any(_failure_fragment(tokens, fragment) for tokens in summaries) for fragment in fragments))
 
 
 # --- the registry ---------------------------------------------------------------------------------------------------------
@@ -1962,7 +2019,7 @@ def compiled_check(root: Path, one: TemplateInstance, data: dict, notes: list[st
                           "bindings written in it as one literal; it imports and runs the repository's code, so G6 ran "
                           "it only inside its operating-system boundary, with no network. Read it before you run it, "
                           "or run it in a container."),
-              "template": one.template,
+              "template": one.template, "compiled_template": definition.id,
               "refuted_by_difference": one.template == "differential.v1" and one.intent == "preserve", **origin}
     return check, placed, vs.Origin(**fields)
 

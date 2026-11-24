@@ -12,6 +12,7 @@ from g6.core.guidance_builders import confine_refusal, confine_refused
 import ast
 import base64
 import concurrent.futures
+import dis
 import hashlib
 import inspect
 import json
@@ -204,12 +205,13 @@ class ObservationUnavailable(CheckSetupError):
     """Import preparation yielded no observation of the repository callable."""
 
     DETAIL = 'G6_E_OBSERVATION_UNAVAILABLE: import or lazy lookup did not complete'
+    NO_OBSERVATION = 'G6_E_OBSERVATION_UNAVAILABLE: no single completed observation'
 
     @classmethod
     def valid_detail(cls, detail):
         if type(detail) is not str:
             return False
-        if detail == cls.DETAIL:
+        if detail in (cls.DETAIL, cls.NO_OBSERVATION):
             return True
         prefix = cls.DETAIL + ': '
         name = detail[len(prefix):]
@@ -400,6 +402,34 @@ def own_import_absent(exc, args):
     tree = os.path.normcase(os.path.realpath(globals().get('root', os.getcwd())))
     parts = name.split('.')
 
+    def guarded_export(file):
+        # IMPORT_FROM supplies the requested name without parsing repository exception text.
+        # An unrelated optional dependency cannot supply a name this module never defines.
+        exported = None
+        trace = BaseException.__dict__['__traceback__'].__get__(exc)
+        while trace is not None:
+            instruction = next((one for one in dis.get_instructions(trace.tb_frame.f_code)
+                                if one.offset == trace.tb_lasti), None)
+            if instruction is not None and instruction.opname == 'IMPORT_FROM':
+                exported = instruction.argval
+            trace = trace.tb_next
+        if exported is None:
+            return True
+        try:
+            with open(file, 'rb') as handle:
+                source = handle.read(1048577)
+            if len(source) > 1048576:
+                return True
+            nodes = tuple(ast.walk(ast.parse(source)))
+        except (OSError, SyntaxError, ValueError):
+            return True
+        return any((isinstance(node, ast.Name) and node.id == exported and isinstance(node.ctx, ast.Store))
+                   or (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                       and node.name in (exported, '__getattr__'))
+                   or (isinstance(node, ast.alias) and (node.asname or node.name.split('.')[0]) in (exported, '*'))
+                   or (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                       and node.func.id in ('exec', 'globals', 'locals', 'setattr')) for node in nodes)
+
     def regular(package):
         try:
             with open(os.path.join(package, '__init__.py'), 'rb') as handle:
@@ -433,13 +463,36 @@ def own_import_absent(exc, args):
             actual = os.path.normcase(os.path.realpath(path))
             if any(os.path.isfile(file) and os.path.normcase(os.path.realpath(file)) == actual
                    and (file == held[0] or regular(target)) for file in held):
-                return True
+                return not (globals().get('_missing_preparation_imports') and guarded_export(path))
     return False
+
+
+def track_imports():
+    """Install before repository loading; retain failed external imports even if a guard catches them."""
+    import importlib._bootstrap
+
+    global _missing_preparation_imports, _missing_imports
+    _missing_preparation_imports, _missing_imports = set(), []
+    load = importlib._bootstrap._find_and_load
+
+    def tracked(name, import_):
+        try:
+            return load(name, import_)
+        except ModuleNotFoundError as exc:
+            if ImportError.__dict__['name'].__get__(exc) == name and not own_import_absent(exc, ()):
+                _missing_imports.append(exc)
+                if globals().get('_preparation_depth', 0):
+                    _missing_preparation_imports.add(ImportError.__dict__['name'].__get__(exc))
+            raise
+
+    importlib._bootstrap._find_and_load = tracked
 
 
 def setup_call(phase, function, *args, **kwargs):
     """Keep preparation exceptions out of the operation's outcome handlers."""
     LETS_THROUGH = (CheckSetupError, concurrent.futures.CancelledError, *globals().get('_SETUP_CONTROLS', ()))
+    global _preparation_depth
+    _preparation_depth = globals().get('_preparation_depth', 0) + 1
     try:
         return function(*args, **kwargs)
     except LETS_THROUGH:
@@ -457,6 +510,8 @@ def setup_call(phase, function, *args, **kwargs):
         if code is not None:
             raise CheckSetupError(code + ': ' + phase) from exc
         raise CheckSetupError(phase) from exc
+    finally:
+        _preparation_depth -= 1
 
 
 def call_absent(exc):
@@ -558,23 +613,44 @@ BOOTSTRAP = (CODE_CARRIER_HELPERS + inspect.getsource(observable_exception) + '\
              + inspect.getsource(exception_message) + '\n'
              + inspect.getsource(_exception_observation) + '\n' + inspect.getsource(CheckSetupError) + '\n'
              + inspect.getsource(ObservationUnavailable) + '\n' + inspect.getsource(own_import_absent) + '\n'
+             + inspect.getsource(track_imports) + '\n'
              + inspect.getsource(setup_call) + '\n' + inspect.getsource(runtime_method) + '\n'
              + inspect.getsource(call_absent) + '\n'
              + inspect.getsource(target_attribute) + '\n'
              + inspect.getsource(bind_method) + '\n'
              + inspect.getsource(_import_roots)) + r'''
-import builtins, collections.abc, concurrent.futures, copy, hashlib, importlib, importlib.machinery, inspect, json, os, re, struct, sys
+import ast, builtins, collections.abc, concurrent.futures, copy, dis, hashlib, importlib, importlib.machinery, inspect, json, os, re, struct, sys
 _SETUP_CODE_CARRIERS = ()
 _SETUP_CONTROLS = ()
+_IMPORT_OPS = (dis.opmap['IMPORT_NAME'], dis.opmap['IMPORT_FROM'])
+
+def unavailable_import(exc):
+    if not exception_matches(exc, ImportError) or own_import_absent(exc, ()):
+        return False
+    if any(exc is missing for missing in _missing_imports):
+        return True
+    # IMPORT_FROM can raise after the import machinery returned a module. An explicit raise by the
+    # operation is still an outcome: metadata alone never turns that raise into an unavailable import.
+    trace = BaseException.__dict__['__traceback__'].__get__(exc)
+    while trace is not None:
+        if trace.tb_frame.f_code.co_code[trace.tb_lasti] in _IMPORT_OPS:
+            return True
+        trace = trace.tb_next
+    return False
 def _name(kind):
     return setup_call("exception_description", exception_name, kind)
 
 def _shown(value, limit=200):
     try:
         text = repr(value)
-    except Exception as exc:
+    except BaseException as exc:
+        if raised_during_setup(exc) and execution_control(exc):
+            raise
+        if execution_control(exc):
+            raise
         text = "<a value whose repr raised " + _name(type(exc)) + ">"
     text = ''.join(ch if ch.isprintable() else json.dumps(ch, ensure_ascii=True)[1:-1] for ch in text)
+    text = text.replace(';', r'\u003b').replace('G6_E_', r'\u00476_E_')
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
 def _attributes(value):
@@ -636,6 +712,7 @@ def _no_sourceless(self, fullname):
     raise ImportError("G6_E_OBSERVATION_UNAVAILABLE: sourceless bytecode is outside the execution manifest")
 importlib.machinery.SourcelessFileLoader.get_code = _no_sourceless
 sys.path[:0] = [os.path.join(root, part) for part in _import_roots(data["function"], data.get("import_roots"))]
+track_imports()
 def encode(value):
     try:
         return _fingerprint(dumps(value, sort_keys=True, allow_nan=False))
@@ -717,7 +794,7 @@ def resolved():
 def setup_failed(exc, *, constructor=False):
     # Ordinary probe setup stays unavailable; a constructor signal keeps its setup outcome.
     if data['probe'] and not constructor and type(exc) is not ObservationUnavailable:
-        exc = ObservationUnavailable()
+        exc = ObservationUnavailable(detail=ObservationUnavailable.NO_OBSERVATION)
     version = 'observation_unavailable.v1' if type(exc) is ObservationUnavailable else 'check_setup.v1'
     payload = dumps({"version": version, "detail": exception_detail(exc, "setup")},
                     sort_keys=True, allow_nan=False).encode("utf-8")
@@ -767,9 +844,19 @@ for call in data["calls"]:
             setup_failed(preparation, constructor=raised_during_setup(exc, 'constructor'))
         if call_absent(exc):
             call_failed(exc)
-        alive.append(exc)
         errors = resolved()
+        unavailable = None
+        if unavailable_import(exc):
+            unavailable = ObservationUnavailable(type(exc))
+            if data['probe'] or not any(id(kind) in errors.values()
+                                       for kind in type.__dict__['__mro__'].__get__(type(exc))):
+                setup_failed(unavailable)
+        alive.append(exc)
         outcomes.append(_exception_observation(exc, errors, data['probe']))
+        if unavailable is not None:
+            # Only the host knows which outcome this particular call confirms. An error type named for
+            # another call cannot authorize this import failure; keep the fixed cause until host comparison.
+            outcomes[-1]['unavailable_import'] = exception_detail(unavailable, 'setup')
     else:
         errors = resolved()
         one = {"returned": encode(result), "arguments": [encode(arg) for arg in args]}
@@ -832,6 +919,12 @@ def read_frame(raw: bytes) -> dict | None:
             if not isinstance(one, dict):
                 return None
             fields = set(one) - {"probe"}
+            if 'unavailable_import' in fields:
+                if (value['version'] != 'observation.v2' or 'raised' not in fields
+                        or not ObservationUnavailable.valid_detail(one['unavailable_import'])
+                        or not one['unavailable_import'].startswith(ObservationUnavailable.DETAIL + ': ')):
+                    return None
+                fields.remove('unavailable_import')
             if 'exception_detail' in fields:
                 detail = one['exception_detail']
                 if (value['version'] != 'observation.v2'
@@ -912,6 +1005,10 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
     failures = []
     for index, (case, outcome) in enumerate(zip(calls, observed["outcomes"], strict=True)):
         expected = case["expect"]
+        if ('unavailable_import' in outcome and not (expected == 'raises'
+                and observed['errors'].get(_encoded(case['error'])) in outcome['raised'])):
+            return {'result': 'error', 'detail': outcome['unavailable_import'],
+                    'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE'}
         if expected == "raises":
             token = observed["errors"].get(_encoded(case["error"]))
             if "raised" not in outcome:
@@ -1019,11 +1116,11 @@ def example_text(slot: str) -> str:
         exception_name, exception_matches,
         exception_detail, exception_message,
         setup_call, call_absent, register_setup_error,
-        _unique, _encoded, _fingerprint, _valid_encoding, _matches_encoding, finish,
+        _unique, _encoded, _fingerprint, _valid_encoding, _matches_encoding,
         _import_roots, located, request))
     bootstrap = base64.b85encode(zlib.compress((confine.CHILD_PRELUDE + BOOTSTRAP).encode('utf-8'), 9)).decode('ascii')
     carriers = base64.b85encode(zlib.compress(CODE_CARRIER_HELPERS.encode('utf-8'), 9)).decode('ascii')
-    preparation = '\n\n'.join(_portable_source(one) for one in (own_import_absent, setup_outcome, read_frame))
+    preparation = '\n\n'.join(_portable_source(one) for one in (own_import_absent, setup_outcome, read_frame, finish))
     packed = base64.b85encode(zlib.compress(preparation.encode('utf-8'), 9)).decode('ascii')
     return ("import base64, zlib, concurrent.futures, hashlib, json, struct, subprocess, tempfile, sys, os\nfrom pathlib import Path\n"
             "TEMPLATE = 'example.v1'\nBINDINGS = " + slot
