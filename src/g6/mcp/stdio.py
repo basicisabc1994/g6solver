@@ -15,10 +15,12 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import tempfile
 import threading
 from contextlib import asynccontextmanager, suppress
 from io import FileIO, TextIOWrapper, UnsupportedOperation
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory as TemporaryDirectory  # retained for callers of the former allocation seam
+from uuid import uuid4
 
 import anyio
 import anyio.lowlevel
@@ -102,6 +104,9 @@ def _raw_lines(fd, stopped, prefix=b"", read=None):
             scan -= start
 
 
+_retired_input_files = {}
+
+
 class _InputFile(FileIO):
     """A native file owner that can abandon an uncertain descriptor without another OS close.
 
@@ -110,21 +115,22 @@ class _InputFile(FileIO):
     """
 
     _released = False
+    _retired = _retired_input_files
 
     @property
     def closed(self):
-        return self._released or super().closed
+        return self._released or id(self) in self._retired or super().closed
 
     def release(self):
         self._released = True
 
     def fileno(self):
-        if self._released:
+        if self.closed:
             raise ValueError("stdin descriptor ownership was released")
         return super().fileno()
 
     def close(self):
-        if not self._released:
+        if not self.closed:
             try:
                 super().close()
             finally:
@@ -145,6 +151,43 @@ def _input_cleanup(close, resource):
     return True
 
 
+def _placeholder_path():
+    # One candidate, no probing/collision loop and no implicit current-directory fallback. Honor an
+    # explicitly selected tempfile directory without invoking tempfile's directory-discovery writes.
+    folder = tempfile.tempdir
+    if folder is None:
+        folder = next((os.environ[key] for key in ("TMPDIR", "TEMP", "TMP") if os.environ.get(key)), None)
+    if folder is None:
+        folder = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "Temp") if os.name == "nt" else "/tmp"
+    if not os.path.isabs(folder):
+        raise OSError("stdin temporary directory must be absolute")
+    return os.path.join(os.fsdecode(folder), "g6-stdin-" + uuid4().hex)
+
+
+def _open_placeholder(path, flags):
+    # FileIO allocates the owning object before its opener is called. O_EXCL is explicit even though
+    # mode x already asks for it. Windows deletes the file when dup2 closes this native handle.
+    return os.open(path, flags | os.O_EXCL | getattr(os, "O_TEMPORARY", 0), 0o600)
+
+
+class _PlaceholderName:
+    """Only POSIX needs an unlink, immediately after acquiring the file owner."""
+
+    def __init__(self, name, owner):
+        self.name = name
+        self.owner = owner
+        self.owned = False
+
+    def cleanup(self):
+        # The marker predates the open, so interruption immediately after acquisition still has an
+        # unlink owner. A collision/open failure never authorizes removing somebody else's pathname.
+        self.owned = self.owned or self.owner.file is not None
+        if not self.owned:
+            return
+        with suppress(FileNotFoundError):
+            os.unlink(self.name)
+
+
 class _InputDescriptor:
     """Reserve an owning file before dup2: replacement never returns an unowned descriptor integer."""
 
@@ -158,41 +201,56 @@ class _InputDescriptor:
         # Setup has not published this owner to a reader yet. Its outer handler covers every return/opcode.
         try:
             os.fstat(fd)                 # validate the borrowed source before an allocation can reuse its number
-            # A null-device identity also matches another owner's newly opened null device. A private,
-            # unique file makes the placeholder distinguishable even when the target number is reused.
+            # The exclusive, unnamed/delete-on-close file has a unique identity. Its lifetime is its
+            # native handle, including on refused setup and process termination; no directory is made.
             unique = False
             try:
-                self.placeholder = TemporaryDirectory(prefix="g6-stdin-")
-                self.file = _InputFile(os.path.join(self.placeholder.name, "slot"), "xb+")
+                path = _placeholder_path()
+                if os.name != "nt":
+                    self.placeholder = _PlaceholderName(path, self)
+                self.file = _InputFile(path, "xb+", opener=_open_placeholder)
+                if os.name != "nt":
+                    self.placeholder.cleanup()  # interrupts here propagate through startup's cleanup
+                    self.placeholder = None
             except OSError:
-                # A healthy stdin must not depend on writable temporary storage. The null-device fallback
-                # keeps the parent's identity comparison, with its weaker distinction between null opens.
-                self._cleanup_placeholder()
+                # Every failed allocation takes the same fallback.
+                self.close()
                 self.file = _InputFile(os.devnull, "rb")
             else:
-                unique = True
+                # A failed query is a probe refusal, leaving the owned file for the caller's cleanup.
+                # A successful query with no usable identity instead takes the allocation fallback.
+                placeholder = os.stat(self.file.fileno())
+                identity = (getattr(placeholder, "st_dev", None), getattr(placeholder, "st_ino", None))
+                if any(type(part) is not int for part in identity) or identity[1] <= 0:
+                    self.close()
+                    self.file = _InputFile(os.devnull, "rb")
+                else:
+                    unique = True
             if self.file.fileno() == fd:
                 # The external owner closed stdin after validation; this slot now owns only the placeholder.
                 self.close()
                 raise OSError("stdin closed during descriptor handoff")
-            placeholder = os.stat(self.file.fileno())
-            if unique and not placeholder.st_ino:
-                raise OSError("stdin placeholder has no file identity")
             try:
                 os.dup2(fd, self.file.fileno(), inheritable=False)
             except OSError:
-                try:
-                    target = os.stat(self.file.fileno())
-                except OSError:
-                    self.file.release()  # consumed, or no longer identifiable: never close that number again
-                else:
-                    if (target.st_dev, target.st_ino) != (placeholder.st_dev, placeholder.st_ino):
-                        self.file.release()  # replaced: the native call or another owner has the closing claim
-                    # The placeholder identity survived: normal cleanup still owes exactly one close.
+                untouched = False
+                if unique:
+                    try:
+                        target = os.stat(self.file.fileno())
+                        untouched = (target.st_dev, target.st_ino) == identity
+                    except OSError:
+                        pass
+                if not untouched:
+                    # NUL, pipes and consoles can all report (0,0); even POSIX /dev/null can be reopened.
+                    # A failed copy gives no pre-copy guarantee. Retire the claim without touching its
+                    # number or asking a factory result for a private method. Keep plain FileIO objects
+                    # alive too, so their finalizers cannot close a foreign descriptor after collection.
+                    file = self.file
+                    _retired_input_files[id(file)] = file
+                    # Keep the owner present through its one cleanup transition. Retired files must
+                    # not run an OS close, even when a plain factory result cannot mark itself closed.
+                    self.close()
                 raise
-            # dup2 has closed the unique slot's native handle. Remove its name and directory before a
-            # reader is published, so a terminated server leaves no per-session placeholder behind.
-            self._cleanup_placeholder()
             if os.get_inheritable(self.file.fileno()) is not False:
                 raise OSError("stdin duplicate inheritance state is unknown or inheritable")
         except (OSError, ValueError, TypeError, OverflowError, NotImplementedError) as exc:
@@ -208,12 +266,12 @@ class _InputDescriptor:
     def close(self, *, reader=False):
         with self.lock:
             if self.claimed == reader:
+                self._cleanup_placeholder()
                 # The factory returns a file object, not necessarily G6's native owner. Retire our
                 # closing claim first; the file's close owns its own bookkeeping, including on failure.
                 file, self.file = self.file, None
-                if file is not None:
+                if file is not None and id(file) not in _retired_input_files:
                     _input_cleanup(file.close, "descriptor")
-                self._cleanup_placeholder()
 
     def _cleanup_placeholder(self):
         if self.placeholder is not None and _input_cleanup(self.placeholder.cleanup, "placeholder"):
@@ -258,6 +316,14 @@ def _read_file_lines(readline, lines, token, stopped) -> None:
             anyio.from_thread.run_sync(lines.close, token=token)
 
 
+def _stdin_prefix(cached):
+    """Translate cache faults while the caller's uninterrupted startup handler owns the duplicate."""
+    try:
+        return cached()
+    except Exception as exc:  # noqa: BLE001 - keep the stable startup refusal for every cache fault
+        raise OSError("[G6_E_STDIN_HANDOFF] stdin descriptor handoff refused") from exc
+
+
 @asynccontextmanager
 async def _lines(stdin):
     """Transfer file caches before raw reads; use readline without descriptors. Keep other async iterables."""
@@ -283,7 +349,7 @@ async def _lines(stdin):
         if fd is None:
             readline = source.readline
         else:
-            cached, console = cache_reader(source)
+            cached, console = cache_reader(source, defer=True)
     except Exception as exc:  # noqa: BLE001 - every source probe has the same stable refusal
         raise OSError("[G6_E_STDIN_HANDOFF] stdin descriptor handoff refused") from exc
     if fd is None:
@@ -307,8 +373,13 @@ async def _lines(stdin):
         descriptor.duplicate(fd)
         sender, receiver = anyio.create_memory_object_stream(0)
         stopped = threading.Event()
+        # Codec validation must finish on the startup path, where a refusal reaches the caller.
+        # The transactional cache probe restores native pending text on any codec refusal.
+        # Keep exception translation in a helper: a nested try's header can be an unprotected trace
+        # point in this frame. The call and every probe/helper exit stay under startup's BaseException handler.
+        prefix = _stdin_prefix(cached)
         threading.Thread(target=_read_lines,
-                         args=(descriptor, sender, anyio.lowlevel.current_token(), stopped, cached, console),
+                         args=(descriptor, sender, anyio.lowlevel.current_token(), stopped, lambda: prefix, console),
                          name="g6-stdin-reader", daemon=True).start()
         with receiver:
             yield receiver

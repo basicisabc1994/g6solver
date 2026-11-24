@@ -109,8 +109,64 @@ def _check_codec_inverse(encoding, text):
         raise ValueError("text codec has no unique bounded byte inverse for this cache")
 
 
+def _restore_text(source, buffer, raw, method, decoder, text, state, cookie):
+    """Put refused characters back in the native wrapper without reading more pipe input.
+
+    Seekable wrappers can restore their original cookie. Pipes have no cookie: feed one synthetic chunk
+    through the codec's Python adapter and consume only its sentinel. The remaining characters then belong
+    to TextIOWrapper's own cache again, including for readline/iteration; no caller method is replaced.
+    """
+    newline = isinstance(decoder, io.IncrementalNewlineDecoder)
+    codec = _decoder(decoder) if newline else decoder
+    seen = decoder.newlines if newline else None
+
+    def restore_decoder(saved):
+        if newline:
+            # Native newline history is separate from getstate(). Rebuild only observations the
+            # caller already had; synthetic normalized LFs must not add a new newline kind.
+            observed = "\0".join(seen if isinstance(seen, tuple) else (seen,) if seen else ())
+            with _method(codec, "decode", lambda *args, **kwargs: observed):
+                decoder.reset()
+                decoder.decode(b"", final=True)
+        decoder.setstate(saved)
+
+    if cookie is not None:
+        try:
+            source.seek(cookie)
+        except (OSError, ValueError):
+            pass
+        else:
+            restore_decoder(decoder.getstate())
+            return
+    # A newline decoder holds the artificial final CR instead of exposing it. This also lets a real
+    # trailing CR through when translation is disabled. Restore the original held CR/bytes afterwards.
+    chunk = "\0" + text + ("\r" if newline else "")
+
+    def decode(*args, **kwargs):
+        return chunk
+
+    def read(*args):
+        return b"\0"
+
+    def readinto(target):
+        target[:1] = b"\0"
+        return 1
+
+    try:
+        decoder.setstate((b"", state[1] & ~1 if newline else state[1]))
+        with ExitStack() as stack:
+            stack.enter_context(_method(codec, "decode", decode))
+            stack.enter_context(_method(raw, method, read if method == "read" else readinto))
+            if type(buffer) is io.BufferedReader:
+                stack.enter_context(_method(buffer, "read1", read))
+            if source.read(1) != "\0":
+                raise ValueError("[G6_E_STDIN_HANDOFF] stdin text cache could not be restored")
+    finally:
+        restore_decoder(state)
+
+
 def _text_cache(source, buffer, raw, method):
-    """Take decoded characters separately from original decoder bytes and buffered wire input.
+    """Prepare a transactional transfer of decoded characters and original decoder bytes.
 
     read(1) consumes only an existing character; the first attempt to refill raises at the binary boundary.
     Unlike EOF, this neither finalizes a codec nor flushes its partial byte/newline state. It also distinguishes
@@ -120,6 +176,7 @@ def _text_cache(source, buffer, raw, method):
     # after a decoded read, even if the last chunk is exhausted. This is a history guard, not a pending cursor:
     # ordinary lossless codecs still need the boundary probe below. Never infer text from GC string referents,
     # which also include the wrapper's fixed read-newline setting.
+    saved_state = _decoder(source).getstate()
     decoded_history = False
     try:
         io.TextIOWrapper.reconfigure(source, encoding=source.encoding, errors=source.errors)
@@ -127,6 +184,10 @@ def _text_cache(source, buffer, raw, method):
         decoded_history = True
     # A successful reconfiguration can replace the decoder, so inspect its state afterwards.
     decoder = _decoder(source)
+    if not decoded_history:
+        # A read through EOF can leave no decoded chunk yet retain part of a utf-8-sig signature.
+        # The history probe must not reset those original bytes or its initial-signature flag.
+        decoder.setstate(saved_state)
     buffered, flags = decoder.getstate()
     newline = isinstance(decoder, io.IncrementalNewlineDecoder)
     pending_cr = newline and flags & 1
@@ -145,47 +206,59 @@ def _text_cache(source, buffer, raw, method):
         except (UnicodeError, LookupError, TypeError, ValueError) as exc:
             raise ValueError("[G6_E_STDIN_HANDOFF] stdin has no inspectable lossless text cache") from exc
 
-    def boundary(*args):
-        raise _TextBoundary
+    def take():
+        def boundary(*args):
+            raise _TextBoundary
 
-    chars = []
-    with ExitStack() as stack:
-        stack.enter_context(_method(raw, method, boundary))
-        if type(buffer) is io.BufferedReader:
-            stack.enter_context(_method(buffer, "read1", boundary))
+        cookie = None
         try:
-            while char := source.read(1):
-                chars.append(char)
-        except _TextBoundary:
-            pass
-    text = "".join(chars)
-    pending = b""
-    if text or pending_cr:
-        try:
-            _check_codec_inverse(source.encoding, text + ("\r" if pending_cr else ""))
-            encoder = codecs.getincrementalencoder(source.encoding)(source.errors)
-            encoder.encode("", final=False)  # consume only an encoder's initial signature, never insert a new one
-            initial_encoder_state = encoder.getstate()
-            pending = encoder.encode(text, final=False)
-            check = codecs.getincrementaldecoder(source.encoding)(source.errors)
-            if newline:
-                check = io.IncrementalNewlineDecoder(check, translate=False)
-            check.setstate((b"", clean_flags))
-            if (check.decode(pending, final=False) != text or check.getstate() != (b"", clean_flags)
-                    or encoder.getstate() != initial_encoder_state):
-                raise ValueError("text codec does not round-trip in its current state")
-            if pending_cr:
-                pending += encoder.encode("\r", final=False)
-        except (UnicodeError, LookupError, TypeError, ValueError) as exc:
-            raise ValueError("[G6_E_STDIN_HANDOFF] stdin has unrecoverable text decoder state") from exc
-    # Decoder bytes have never been decoded by this handoff. They follow decoded text (and any held CR),
-    # ahead of the byte buffer. An empty decoded cache needs no encoder or initial decoder-state assumption.
-    decoder.setstate((b"", clean_flags))
-    return pending + buffered
+            cookie = source.tell()
+        except (OSError, ValueError):
+            pass                        # pipes and wrappers read by iteration have no usable cookie
+        chars = []
+        with ExitStack() as stack:
+            stack.enter_context(_method(raw, method, boundary))
+            if type(buffer) is io.BufferedReader:
+                stack.enter_context(_method(buffer, "read1", boundary))
+            try:
+                while char := source.read(1):
+                    chars.append(char)
+            except _TextBoundary:
+                pass
+        text = "".join(chars)
+        pending = b""
+        if text or pending_cr:
+            try:
+                # Match the standing whole-cache decision on a copy of decoder state. Per-character
+                # checks can mistake partial surrogateescape bytes for new refusals. An empty cache
+                # needs no inverse, and unrelated GC string referents say nothing about its cursor.
+                _check_codec_inverse(source.encoding, text + ("\r" if pending_cr else ""))
+                encoder = codecs.getincrementalencoder(source.encoding)(source.errors)
+                encoder.encode("", final=False)
+                initial_encoder_state = encoder.getstate()
+                pending = encoder.encode(text, final=False)
+                check = codecs.getincrementaldecoder(source.encoding)(source.errors)
+                if newline:
+                    check = io.IncrementalNewlineDecoder(check, translate=False)
+                check.setstate((b"", clean_flags))
+                if (check.decode(pending, final=False) != text or check.getstate() != (b"", clean_flags)
+                        or encoder.getstate() != initial_encoder_state):
+                    raise ValueError("text codec does not round-trip in its current state")
+                if pending_cr:
+                    pending += encoder.encode("\r", final=False)
+            except (UnicodeError, LookupError, TypeError, ValueError) as exc:
+                if text:
+                    _restore_text(source, buffer, raw, method, decoder, text, (buffered, flags), cookie)
+                raise ValueError("[G6_E_STDIN_HANDOFF] stdin has unrecoverable text decoder state") from exc
+        # Only a successful transfer retires the original decoder's bytes and held CR.
+        decoder.setstate((b"", clean_flags))
+        return pending + buffered
+
+    return take
 
 
-def cache_reader(source):
-    """Validate before duplication; return the finite cache transfer and optional native-console raw reader."""
+def cache_reader(source, *, defer=False):
+    """Check standing refusals; optionally defer the transactional probe past descriptor setup."""
     text = type(source) is io.TextIOWrapper
     buffer = source.buffer if text else source
     console_type = getattr(_io, "_WindowsConsoleIO", None)
@@ -202,10 +275,13 @@ def cache_reader(source):
     for stream in (source, buffer, raw):
         if any(name in vars(stream) for name in ("read", "read1", "readinto", "readline")):
             raise TypeError("stdin descriptor has custom read methods")
-    # Validate/recover before acquiring a duplicate, so an unrecoverable codec gets the stable startup refusal.
-    prefix = _text_cache(source, buffer, raw, method) if text else b""
+    take = _text_cache(source, buffer, raw, method) if text else lambda: b""
+    prefix = None if defer else take()
 
     def drain():
+        nonlocal prefix
+        if prefix is None:
+            prefix = take()
         def eof(*args):
             return b"" if method == "read" else 0
 
