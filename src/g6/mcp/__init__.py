@@ -225,10 +225,13 @@ def _check_cached_import_parents(module: str) -> None:
 def build_server(surface: Any = None) -> Any:
     try:
         _quiet()
+        from fastmcp import Context, FastMCP
+
         # FastMCP can already be loaded: its cached MCP server import must not
         # conceal a parent that was removed or replaced by a non-package alias.
+        # Inspect parents only after the real SDK import: its own failure must
+        # remain the startup cause, even when a cached parent is also broken.
         _check_cached_import_parents("mcp.server")
-        from fastmcp import Context, FastMCP
     except ImportError as exc:
         raise SystemExit(_import_error_message(exc)) from exc
 
