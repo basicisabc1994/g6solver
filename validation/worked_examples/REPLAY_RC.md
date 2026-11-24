@@ -68,13 +68,42 @@ are saved as failed with result `no review`; they enter no outcome denominator.
 python validation/worked_examples/replay_rc.py --source <source> --registered-commit <full-commit> --dry
 python validation/worked_examples/replay_rc.py --source <source> --registered-commit <full-commit> --s0 before
 python validation/worked_examples/replay_rc.py --score <saved-batch-run.json>
+python validation/worked_examples/replay_rc.py --score <saved-batch-run.json> --source <source>
 ```
 
 Dry mode prints cases by bug and mode, image names, and named exclusions; it
 does not instantiate Docker, check images, or create the output folder. Live
 execution is sequential. The lead checks the 6.5 GB free-memory floor first.
 Saved case records, the plan and the registration digest allow plain-code
-rescoring without containers, models or access to the source archive.
+rescoring without containers or models. A current-rule batch needs no source
+archive if its source manifest is well formed, its evaluation matches a fresh
+evaluation of its saved cases, exclusions and flags, and its batch start row
+matches. The manifest holds relative names and a source identity digest, never
+an absolute source root. Scoring reads its start row from the output archive
+containing the command-line batch file.
+
+Older, absent or structurally inconsistent rule bindings require an explicit
+`--source` to re-derive labels, exclusions and flags. The selected tasks, source
+identity, round inventory and every consumed byte must match the saved snapshot;
+saved review arguments must also match the freshly derived case. Without that
+match, every enabled prediction is incomplete, with no asserted result or kill,
+and scoring exits 2. A newer-rule batch is always incomplete with exit 2: older
+code never re-derives its evidence. A mode the current rule cannot review also
+takes that incomplete route. Registration and image-pin refusals exit 1 before
+rule-version handling. Each score prints standard JSON naming the rule version
+and whether evidence came from the batch, the source, or was unavailable.
+Scoring never opens a source folder or share named inside a batch.
+
+A batch is a local file editable by its owner. These consistency checks do not
+protect against deliberate, self-consistent same-user edits to a batch or its
+start row. They detect mismatched saved evidence; they do not authenticate its
+author. A version/digest test binds the evidence rule's code to its version so
+an honest rule change must also raise that version.
+
+JSON text is saved with escapes, preserving even lone surrogate escapes in
+captured tool inputs. Dry and live planning use the same evidence enumeration;
+such text is serializable in either route. A failed replay-record finalization
+is handled by the batch failure path, which saves a failed batch naming the file.
 
 Every count and denominator is retained by bug. Registration thresholds that
 mention patch totals are applied to those grouped counts without confidence
