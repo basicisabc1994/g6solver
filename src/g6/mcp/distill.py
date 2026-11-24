@@ -20,11 +20,15 @@ _INPUT_ERRORS = (ValueError, KeyError, OSError, RecursionError)
 
 def _refusal(exc):
     from g6.core.door import blocked_reply
+    from g6.distill.ledger import PartialAuthorityWrite
+    if isinstance(exc, PartialAuthorityWrite):
+        return {**blocked_reply(f'[{exc.code}] Recovery incomplete; durable state: ' +
+                                '; '.join(exc.durable_state)), 'durable_state': exc.durable_state}
     code = getattr(exc, 'code', '')
     if isinstance(code, str) and code.startswith('G6_E_'):
-        return blocked_reply(f'[{code}] Backend refused the operation; no authority was granted.')
+        return blocked_reply(f'[{code}] Backend refused the operation; read the current durable state.')
     return blocked_reply("[G6_E_DISTILL_INPUT] Invalid input, missing entry or unreadable distillation record. "
-                         "No authority was granted.")
+                         "The operation could not complete; read the current durable state.")
 
 
 def _call(fn, *args, **kwargs) -> dict:

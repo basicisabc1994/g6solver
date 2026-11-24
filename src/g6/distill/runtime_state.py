@@ -4,6 +4,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
+from g6.core import stop
+
 from .ledger import failure_writer
 from .library import Library
 
@@ -83,3 +85,57 @@ def sample(index):
         yield
     finally:
         memo.repeat = previous
+
+
+def cost_exceeded(costs, bound):
+    """A cached verdict supplies no new cost evidence; require three observations."""
+    if len(costs) < 3:
+        raise ValueError('three real executions required for timing evidence')
+    return sum(cost > bound for cost in costs) / len(costs) > .1
+
+
+def measure_executions(candidate, observations, *, key_for, execute, clock):
+    """One measurement rule for evaluator and training/recorded replay.
+
+    A measurement miss executes the complete method three times with all verdict
+    caches bypassed, including dependencies. A hit reuses those original samples
+    once per case in this set; it never measures or counts a lookup.
+    """
+    memo = run_memo()
+    snapshot = memo.snapshot()
+    verdicts, costs, seen = [], [], set()
+    for observation in observations:
+        key = key_for(observation)
+        require_current(snapshot)
+        if stop.engaged() is not None:
+            raise ValueError('stop engaged during evaluation')
+        if key not in memo.measurements:
+            repeats, measured = [], []
+            previous = memo.measuring
+            memo.measuring = True
+            try:
+                for index in range(3):
+                    if stop.engaged() is not None:
+                        raise ValueError('stop engaged during evaluation')
+                    start = clock()
+                    with sample(index):
+                        repeats.append(execute(observation))
+                    measured.append(max(0, clock() - start))
+            finally:
+                memo.measuring = previous
+            if len(set(repeats)) != 1:
+                raise ValueError('flaky verdict across three runs')
+            memo.measurements[key] = (tuple(repeats), tuple(measured))
+        repeats, measured = memo.measurements[key]
+        if len(measured) != 3:
+            raise ValueError('three real executions required for timing evidence')
+        if len(set(repeats)) != 1:
+            raise ValueError('flaky verdict across three runs')
+        if key not in seen:
+            costs.extend(measured)
+            seen.add(key)
+        verdicts.append(repeats[0])
+    require_current(snapshot)
+    if cost_exceeded(costs, candidate.contract.cost_bound.wall_s):
+        raise ValueError('cost bound exceeded on more than 10% of runs')
+    return verdicts, costs

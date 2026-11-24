@@ -40,12 +40,13 @@ from g6.safety_engine import weakening
 from .detectors import SEED_TEMPLATES
 from .facts import _extract_facts
 from .judging import JUDGING_PATHS
-from .ledger import Stores, failure_writer
+from .ledger import Stores, failure_writer, retain_before_write
 from .library import Library
 from .records import (AcceptanceEvidence, Cost, DecidedBy, FieldEvidence,
                       Interval, LibraryEntry, MethodContract, Model, RegressionCase, Sha256,
                       TemplateInstance, VerifierCandidate)
-from .runtime_state import StatusChanged, require_current, run_memo, run_scope, sample, status_snapshot
+from .runtime_state import (StatusChanged, cost_exceeded, measure_executions, require_current,
+                            run_memo, run_scope, status_snapshot)
 
 ROOT = Path(__file__).resolve().parents[3]
 POLICY_PATH = ROOT / "validation/distill/held_out/policy.json"
@@ -470,54 +471,17 @@ def _measure(candidate, observations, entries, *, identity_replay=False):
     if type(candidate) is not VerifierCandidate:
         raise ValueError('typed candidate required')
     candidate = VerifierCandidate.model_validate_json(canonical(candidate.model_dump(mode='json')))
-    verdicts, costs, seen = [], [], set()
-    memo = run_memo()
-    snapshot = memo.snapshot()
-    for observation in observations:
-        # Case identity includes the bug unit, not just its test bodies. Raw
-        # application observations without an ID still have a bounded body key.
+
+    def key_for(observation):
         case = observation.case
-        key = (candidate.candidate_id, getattr(case, 'case_id', None),
-               digest([case.before_tests, case.after_tests]),
-               tuple(e.entry_id for e in entries), identity_replay)
-        require_current(snapshot)
-        if stop.engaged() is not None:
-            raise ValueError("stop engaged during evaluation")
-        if key not in memo.measurements:
-            repeats, measured = [], []
-            previous = memo.measuring
-            memo.measuring = True
-            try:
-                for index in range(3):
-                    if stop.engaged() is not None:
-                        raise ValueError("stop engaged during evaluation")
-                    start = time.monotonic()
-                    run = _execute if identity_replay else _run
-                    with sample(index):
-                        repeats.append(run(candidate, case, entries))
-                    measured.append(max(0, time.monotonic() - start))
-            finally:
-                memo.measuring = previous
-            if len(set(repeats)) != 1:
-                raise ValueError("flaky verdict across three runs")
-            memo.measurements[key] = (tuple(repeats), tuple(measured))
-        repeats, measured = memo.measurements[key]
-        # Reusing a verdict creates no new sample. Its original real executions
-        # remain the evidence for this method and case, counted once per set.
-        if len(measured) != 3:
-            raise ValueError('three real executions required for timing evidence')
-        if key not in seen:
-            costs.extend(measured)
-            seen.add(key)
-        if len(set(repeats)) != 1:
-            raise ValueError("flaky verdict across three runs")
-        verdicts.append(repeats[0])
-    require_current(snapshot)
-    if len(costs) < 3:
-        raise ValueError('three real executions required for timing evidence')
-    if sum(cost > candidate.contract.cost_bound.wall_s for cost in costs) / len(costs) > .1:
-        raise ValueError("cost bound exceeded on more than 10% of runs")
-    return verdicts, costs
+        return ('acceptance', candidate.candidate_id, getattr(case, 'case_id', None),
+                digest([case.before_tests, case.after_tests]),
+                tuple(e.entry_id for e in entries), identity_replay)
+
+    run = _execute if identity_replay else _run
+    return measure_executions(candidate, observations, key_for=key_for,
+                              execute=lambda observation: run(candidate, observation.case, entries),
+                              clock=time.monotonic)
 
 
 def _union(verdicts):
@@ -732,6 +696,7 @@ def _journal():
 
 def _append(journal, kind, body):
     ident = digest([kind, len(journal.entries()), body])
+    retain_before_write(journal.path)
     journal.append(kind, ident, body)
     return ident
 
@@ -772,13 +737,26 @@ def _record(answer, reservation="", *, snapshot=None):
             require_current(expected)
         except StatusChanged as error:
             answer = replace(answer, verdict='refuse', reasons=(str(error),), entry_id='', report_sha256='')
-    _append(_journal(), "decision", asdict(answer) | {"reservation": reservation, "gate_version": VERSION})
+    journal = _journal()
+    body = asdict(answer) | {"reservation": reservation, "gate_version": VERSION}
+    # Admission already published this exact receipt atomically with its entry.
+    # The outward call still rechecks status at its own transaction boundary.
+    if not (answer.verdict == 'admit_probation' and any(
+            row['kind'] == 'decision' and canonical(row['body']) == canonical(body) for row in journal.entries())):
+        _append(journal, "decision", body)
     return answer
 
 
 @failure_writer()
-def _save_report(data, *, snapshot):
+def _save_report(data, *, snapshot, provisional=False):
     require_current(snapshot)
+    if provisional:
+        data = data | {'authority': 'A0', 'publication': 'provisional'}
+    return _write_report(data)
+
+
+def _write_report(data):
+    """Caller holds the status transaction and has rechecked its snapshot."""
     ident = digest(data)
     path = state_path("distill", "acceptance_gate_reports", f"{ident}.json")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -787,8 +765,11 @@ def _save_report(data, *, snapshot):
         if path.read_text(encoding="utf-8") != text:
             raise ValueError("acceptance report changed")
     else:
+        retain_before_write(path)
         with path.open("x", encoding="utf-8", newline="\n") as stream:
             stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
     return ident
 
 
@@ -834,6 +815,14 @@ def _persist(candidate, answer, evidence, own, frozen, data, library, *, snapsho
     now = datetime.now(timezone.utc).isoformat()
     certificate = {"gate": VERSION, "candidate": candidate.candidate_id, "report": _save_report(data, snapshot=snapshot),
                    "authority": "A1", "scope": "checked on the registered held-out cases; not proof"}
+    # Staging can be interrupted by withdrawal. It never carries authority.
+    _save_report(certificate, snapshot=snapshot, provisional=True)
+    with failure_writer():
+        require_current(snapshot)
+        return _activate(candidate, answer, evidence, own, frozen, certificate, previous, now)
+
+
+def _activate(candidate, answer, evidence, own, frozen, certificate, previous, now):
     entry = LibraryEntry(candidate_id=candidate.candidate_id, contract_sha256=candidate.contract.content_id,
         concept_id=candidate.concept_id, family=candidate.contract.family,
         version=max((e.version for e in previous), default=0) + 1, parents=candidate.lineage,
@@ -841,12 +830,12 @@ def _persist(candidate, answer, evidence, own, frozen, data, library, *, snapsho
         regression_suite=[RegressionCase(case_ref=o.case.case_id, verdict=v) for o, v in zip(frozen.acceptance, own)],
         field=FieldEvidence(fired=0, confirmed=0, refuted=0, unlabelled=0, precision=None),
         decided_by=DecidedBy(gate_version=VERSION, person=None),
-        certificate_sha256=_save_report(certificate, snapshot=snapshot),
+        certificate_sha256=_write_report(certificate),
         created_at=now, changed_at=now, reason="; ".join(answer.reasons))
-    with failure_writer():
-        require_current(snapshot)
-        Stores().for_model(LibraryEntry).put(entry)
-    return replace(answer, entry_id=entry.entry_id)
+    Stores().for_model(LibraryEntry).put(entry)
+    answer = replace(answer, entry_id=entry.entry_id)
+    _append(_journal(), 'decision', asdict(answer) | {'reservation': '', 'gate_version': VERSION})
+    return answer
 
 
 def decide(candidate: VerifierCandidate, library: Library, registration: str) -> AcceptanceDecision:
@@ -1252,7 +1241,7 @@ def _health_bar(candidate, costs, conditions):
         raise ValueError("withdrawal condition was not pre-stated")
     if conditions:
         return "pre-stated withdrawal condition observed"
-    if costs and sum(c > candidate.contract.cost_bound.wall_s for c in costs) / len(costs) > .1:
+    if costs and cost_exceeded(costs, candidate.contract.cost_bound.wall_s):
         return "weekly cost bound exceeded"
     return None
 

@@ -8,6 +8,8 @@ authenticate an actor who can replace an entire history and its external anchors
 from __future__ import annotations
 
 from contextlib import contextmanager, nullcontext
+import json
+import os
 import threading
 
 from pydantic import ValidationError
@@ -21,12 +23,72 @@ _FAILURE_MUTEX = threading.RLock()
 _FAILURE_LOCAL = threading.local()
 
 
+class PartialAuthorityWrite(OSError):
+    """Recovery failed; expose only freshly read state names, never diagnostics."""
+    code = 'G6_E_DISTILL_PARTIAL_WRITE'
+
+    def __init__(self, paths):
+        self.durable_state = durable_state(paths)
+        super().__init__(self.code + ': recovery incomplete; durable state: ' + '; '.join(self.durable_state))
+
+
+def durable_state(paths):
+    states = []
+    library = state_path('distill', 'library.jsonl')
+    try:
+        latest = {}
+        for row in ChainLedger(library).entries():
+            body = row['body']
+            latest[body['candidate_id']] = body
+        states.extend(f"library {ident} {body['status']}/{body['authority']}" for ident, body in latest.items())
+        if not latest:
+            states.append('library empty/A0')
+    except (OSError, ValueError, KeyError, LedgerError):
+        states.append('library unreadable/authority unknown')
+    for path in paths:
+        try:
+            if not path.exists():
+                state = 'absent'
+            elif path.parent.name == 'acceptance_gate_reports':
+                state = 'report/' + json.loads(path.read_text(encoding='utf-8')).get('authority', 'no authority')
+            elif path.suffix == '.jsonl':
+                state = f'{len(ChainLedger(path).entries())} durable rows'
+            else:
+                state = 'present'
+        except (OSError, ValueError, LedgerError):
+            state = 'unreadable/authority unknown'
+        states.append(f'{path.name} {state}')
+    return tuple(states)
+
+
+def retain_before_write(path, *, recover=None):
+    """Register exact bytes before a write in the short status transaction."""
+    if path is None:   # an in-memory ledger keeps nothing on disk to restore
+        return
+    before = getattr(_FAILURE_LOCAL, 'before', None)
+    if before is not None and path not in before:
+        before[path] = path.read_bytes() if path.exists() else None
+    if before is not None and recover is not None:
+        _FAILURE_LOCAL.recover.append((path, recover))
+
+
+def _restore(path, content):
+    if content is None:
+        path.unlink(missing_ok=True)
+    else:
+        with path.open('wb') as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+
+
 @contextmanager
 def failure_writer(*, reading=False):
     """Short shared transaction for failure intake and library status reads/writes.
 
     Reentrant within a thread; the same file lock excludes other server processes.
     Method execution and recorded comparison must run outside this transaction.
+    Registered writes roll back together on failure, while exclusion still holds.
     """
     from g6.core.repair_log import _process_lock
     with _FAILURE_MUTEX:
@@ -40,10 +102,29 @@ def failure_writer(*, reading=False):
         path.parent.mkdir(parents=True, exist_ok=True)
         with _process_lock(path):
             _FAILURE_LOCAL.path = path
+            _FAILURE_LOCAL.before = {}
+            _FAILURE_LOCAL.recover = []
             try:
                 yield True
+            except BaseException:
+                failed = []
+                for target, content in reversed(tuple(_FAILURE_LOCAL.before.items())):
+                    try:
+                        _restore(target, content)
+                    except OSError:
+                        failed.append(target)
+                for target, recover in _FAILURE_LOCAL.recover:
+                    try:
+                        recover()
+                    except (OSError, ValueError, LedgerError):
+                        failed.append(target)
+                if failed:
+                    raise PartialAuthorityWrite(tuple(_FAILURE_LOCAL.before)) from None
+                raise
             finally:
                 _FAILURE_LOCAL.path = None
+                _FAILURE_LOCAL.before = None
+                _FAILURE_LOCAL.recover = None
 
 
 class Stores:
@@ -61,7 +142,7 @@ class RecordStore:
         self.stores, self.kind, self.model = stores, kind, model
         self.path = state_path("distill", f"{kind}.jsonl")
         self._expect_head = expect_head
-        with failure_writer(reading=True) if model is FailureRecord else nullcontext(True) as locked:
+        with failure_writer(reading=True) if model in {FailureRecord, LibraryEntry} else nullcontext(True) as locked:
             self.chain = ChainLedger(self.path if locked else None,
                                      expect_head=expect_head, validate=self._validate)
 
@@ -82,7 +163,7 @@ class RecordStore:
         return state_path("distill", "objects", f"{ident}.json")
 
     def _read(self, *, references=True) -> list[Record]:
-        if self.model is FailureRecord:
+        if self.model in {FailureRecord, LibraryEntry}:
             with failure_writer(reading=True) as locked:
                 if not locked:
                     if self.chain.entries() or self._expect_head:
@@ -233,7 +314,15 @@ class RecordStore:
             if obj.read_text(encoding="utf-8") != text:
                 raise LedgerCorrupt("existing content-addressed object was edited")
         else:
+            retain_before_write(obj)
             with obj.open("x", encoding="utf-8", newline="\n") as handle:
                 handle.write(text)
+                handle.flush()
+                os.fsync(handle.fileno())
+        retain_before_write(self.path, recover=self._recover_chain)
         self.chain.append(self.kind, ident, body)
         return ident
+
+    def _recover_chain(self):
+        # A caller may retry with this same store after a failed transaction.
+        self.chain = ChainLedger(self.path, expect_head=self._expect_head, validate=self._validate)
