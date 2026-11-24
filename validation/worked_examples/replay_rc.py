@@ -108,6 +108,7 @@ class _Opened:
     path: Path
     fd: int | None
     mode: int | None
+    identity: tuple[int, int] | None = None
 
 
 class _WindowsAPI:
@@ -122,6 +123,7 @@ class _WindowsAPI:
         signatures = {
             "CreateFileW": ([w.LPCWSTR, w.DWORD, w.DWORD, w.LPVOID, w.DWORD, w.DWORD, w.HANDLE], w.HANDLE),
             "GetFileInformationByHandleEx": ([w.HANDLE, ctypes.c_int, w.LPVOID, w.DWORD], w.BOOL),
+            "GetFileInformationByHandle": ([w.HANDLE, w.LPVOID], w.BOOL),
             "GetFinalPathNameByHandleW": ([w.HANDLE, w.LPWSTR, w.DWORD, w.DWORD], w.DWORD),
             "GetFileType": ([w.HANDLE], w.DWORD),
             "CloseHandle": ([w.HANDLE], w.BOOL),
@@ -159,10 +161,24 @@ class _WindowsAPI:
         actual = _absolute_path(Path(buffer.value))
         return actual, stat.S_IFDIR if info[0] & 0x10 else stat.S_IFREG
 
+    def file_identity(self, handle: int) -> tuple[int, int]:
+        from ctypes import wintypes as w
+
+        class FileInformation(self.ctypes.Structure):
+            _fields_ = [("attributes", w.DWORD), ("created", w.FILETIME),
+                        ("accessed", w.FILETIME), ("written", w.FILETIME),
+                        ("volume", w.DWORD), ("size_high", w.DWORD), ("size_low", w.DWORD),
+                        ("links", w.DWORD), ("index_high", w.DWORD), ("index_low", w.DWORD)]
+
+        info = FileInformation()
+        if not self.kernel.GetFileInformationByHandle(handle, self.ctypes.byref(info)):
+            raise self.ctypes.WinError(self.ctypes.get_last_error())
+        return info.volume, (info.index_high << 32) | info.index_low
+
 
 @contextmanager
 def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False, readable: bool = False,
-                 directory: bool = False):
+                 directory: bool = False, identify: bool = False):
     """Walk top down without following links; keep every handle through the read.
 
     Windows checks each handle's final name, refusing redirected traversal even
@@ -224,7 +240,14 @@ def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False,
                 handles.pop()  # fd now owns this Windows handle
             else:
                 content_fd = handles[-1]
-        yield _Opened(actual, content_fd, mode)
+        identity = None
+        if directory and identify:
+            if windows:
+                identity = windows.file_identity(handles[-1])
+            else:
+                info = os.fstat(handles[-1])
+                identity = info.st_dev, info.st_ino
+        yield _Opened(actual, content_fd, mode, identity)
     finally:
         if windows and content_fd is not None:
             os.close(content_fd)
@@ -1247,22 +1270,37 @@ def _well_formed_case(case: Any) -> bool:
             and all(isinstance(origin, dict) for origin in case["origins"]))
 
 
-def _origin_run_identity(run: Any, source: Path | None = None) -> Path | None:
-    """Use archive-resolved folder names, or lexical names without a source."""
+def _origin_run_identity(run: Any, source: Path | None = None) -> str | tuple[int, int] | None:
+    """Read a retained folder handle's identity, or keep an unchecked name exact."""
     if not _relative_evidence_name(run):
         return None
     try:
         if source is None:
             # Current batches retain relative names, never a source root. Do
             # not open a folder named by saved data just to compare its name.
-            return _path_key(Path(run))
+            return run
         archive = Source(source)
-        with _open_handle(archive.path(run), root=archive.root, missing=True) as opened:
-            if opened.mode is not None and not stat.S_ISDIR(opened.mode):
-                return None
-            return _path_key(opened.path)
+        with _open_handle(archive.path(run), root=archive.root, directory=True, identify=True) as opened:
+            return opened.identity
     except (OSError, RuntimeError, ValueError):
         return None
+
+
+def _origin_names_may_alias(left: str, right: str) -> bool:
+    """Without disk identities, possible case/DOS aliases are undecidable.
+
+    A DOS-shaped component has no recorded expansion. Conservatively allow it
+    to stand for any component at that depth, including hashed short names.
+    Separate path depths or non-aliasing ancestors still distinguish folders.
+    """
+    def short_name(part: str) -> bool:
+        stem = part.split(".", 1)[0]
+        return len(stem) <= 8 and re.fullmatch(r"[^ .]{0,6}~[0-9]+(?:\.[^ .]{1,3})?", part) is not None
+
+    first, second = left.split("/"), right.split("/")
+    return len(first) == len(second) and all(
+        a.casefold() == b.casefold() or short_name(a) or short_name(b)
+        for a, b in zip(first, second))
 
 
 def _unique_origin_digests(cases: list[Case], *, source: Path | None = None) -> bool:
@@ -1271,7 +1309,12 @@ def _unique_origin_digests(cases: list[Case], *, source: Path | None = None) -> 
     for case in cases:
         for origin in case.origins:
             run = _origin_run_identity(origin.get("run"), source)
-            if run is None or digests.setdefault(run, case.digest) != case.digest:
+            if run is None:
+                return False
+            if source is None and run not in digests and any(
+                    _origin_names_may_alias(run, other) for other in digests):
+                return False
+            if digests.setdefault(run, case.digest) != case.digest:
                 return False
     return True
 
