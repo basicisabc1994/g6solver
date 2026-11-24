@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""No-spend development replay. Source records and labels never enter the task image."""
+"""No-spend development replay. Source records and labels never enter the task image.
+
+The source boundary rejects links that redirect path traversal. Hard links are
+indistinguishable from copied content here; their provenance is not checked.
+"""
 from __future__ import annotations
 
 import argparse
@@ -15,7 +19,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 from statistics import median
 from typing import Any
 
@@ -30,12 +34,22 @@ AGENT_ARMS = {"B", "C", "D", "E", "F", "G", "G1", "H", "H1"}
 NEIGHBOURS = ("black-5634", "starlette-3718", "pydantic-14052", "click-3769")
 OUTCOMES = {"supported_within_scope", "insufficient_evidence", "defect_detected", "test_integrity_compromised"}
 REGISTRATION = Path(__file__).with_name("REPLAY_RC.md")
-# Archive.start kinds emitted by run.py; only run/check supply replay content.
-INDEX_KINDS = ("run", "check", "build", "dryrun", "validate", "amend", "recheck",
-               "selfcheck", "g6replay", "replay", "modelcheck", "freecheck")
+# Archive.start writers: run.py, loop.py, evolve.py and this module. None marks
+# replay content/labels; every other value is its index-row exclusion reason.
+# test_we_replay_writer_inventory walks all package writers to keep this closed.
+INDEX_CLASSIFICATION = {
+    "run": None, "check": None,
+    "build": "image build", "dryrun": "dry run", "validate": "oracle validation",
+    "amend": "amended control", "recheck": "amended check", "selfcheck": "oracle self-check",
+    "g6replay": "finding replay", "replay": "probe replay", "modelcheck": "model check",
+    "freecheck": "confined control", "distill": "harness distillation",
+    "replay-rc": "replay output", "replay-rc-batch": "replay batch output",
+}
+INDEX_KINDS = tuple(INDEX_CLASSIFICATION)
 
 
 def _normal_path(path: Path) -> Path:
+    """Remove Windows namespace prefixes without changing any name's case."""
     text = str(path)
     if os.name == "nt":
         if text[:8].casefold() == "\\\\?\\unc\\":
@@ -43,30 +57,44 @@ def _normal_path(path: Path) -> Path:
         elif text.startswith("\\\\?\\"):
             text = text[4:]
         path = Path(text)
-        return Path(os.path.normcase(str(path)))
     return path
 
 
-def _check_names(path: Path) -> None:
-    # The drive colon belongs to the anchor. No component may name a stream.
+def _path_key(path: Path) -> Path:
+    """Comparison only: never use this value for I/O, git or saved names."""
+    return Path(os.path.normcase(str(_normal_path(path))))
+
+
+def _within(path: Path, root: Path) -> bool:
+    return _path_key(path).is_relative_to(_path_key(root))
+
+
+def _check_names(path: PurePath) -> None:
+    # Pure paths let the name rules be checked independently of the host OS.
+    windows = isinstance(path, PureWindowsPath)
     parts = path.parts[1:] if path.anchor else path.parts
-    if os.name == "nt" and path.anchor.startswith("\\\\"):
+    if windows and path.anchor.startswith("\\\\"):
         parts = (*path.anchor.strip("\\").split("\\"), *parts)
     for component in parts:
         for part in re.split(r"[\\/]", component):
-            name = part.split(":", 1)[0].rstrip(" .").casefold()
+            name = (part.split(":", 1)[0].rstrip(" .") if windows else part).casefold()
             if (name == "sealed" or re.fullmatch(r"final-.*\.json", name)
-                    or ":" in part or part.endswith((".", " ")) or "\x00" in part):
+                    or windows and (":" in part or part.endswith((".", " "))) or "\x00" in part):
                 raise ValueError(f"forbidden archive path: {path}")
 
 
 def _absolute_path(path: Path) -> Path:
     path = _normal_path(Path(path))
-    _check_names(path)
-    if ".." in path.parts or (os.name == "nt" and (
-            path.drive and not re.fullmatch(r"[a-zA-Z]:|\\\\[^\\]+\\[^\\]+", path.drive))):
+    if os.name == "nt" and (path.drive and not re.fullmatch(r"[a-zA-Z]:|\\\\[^\\]+\\[^\\]+", path.drive)):
         raise ValueError(f"forbidden archive path: {path}")
-    path = path.absolute()
+    # Collapse navigation lexically, before Windows GetFullPathName can erase a
+    # trailing dot/space. Resolving links would bypass the no-follow walk.
+    if os.name == "nt" and path.drive and not path.root:
+        base = Path(os.path.abspath(path.drive + "."))
+        path = base.joinpath(*path.parts[1:])
+    else:
+        path = Path.cwd() / path
+    path = Path(os.path.normpath(path))
     _check_names(path)
     return path
 
@@ -99,10 +127,10 @@ class _WindowsAPI:
             function.argtypes, function.restype = args, result
 
     def open(self, path: Path, readable: bool) -> int:
-        # Exclude both WRITE and DELETE sharing. Every ancestor stays pinned,
-        # preventing rename and reparse mutation until the content handle closes.
+        # Share reads/writes with Archive.append, but exclude delete sharing.
+        # Attribute-only ancestors can move: final-name checks refuse a swap.
         access = 0x80000000 if readable else 0x80  # GENERIC_READ / FILE_READ_ATTRIBUTES
-        handle = self.kernel.CreateFileW(str(path), access, 1, None, 3, 0x02200000, None)
+        handle = self.kernel.CreateFileW(str(path), access, 3, None, 3, 0x02200000, None)
         if handle == self.ctypes.c_void_p(-1).value:
             code = self.ctypes.get_last_error()
             if code in (2, 3):
@@ -129,15 +157,16 @@ class _WindowsAPI:
 
 
 @contextmanager
-def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False, readable: bool = False):
+def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False, readable: bool = False,
+                 directory: bool = False):
     """Walk top down without following links; keep every handle through the read.
 
-    Windows pins the entire chain against rename/reparse writes and checks the
-    final name of each handle. POSIX opens each child relative to its retained
+    Windows checks each handle's final name, refusing redirected traversal even
+    if an attribute-only ancestor moves. POSIX opens each child relative to its retained
     parent fd with O_NOFOLLOW. Content is consumed only from the final fd.
     """
     path = _absolute_path(path)
-    if root is not None and not path.is_relative_to(root):
+    if root is not None and not _within(path, root):
         raise ValueError(f"archive path escapes source: {path}")
     handles = []
     content_fd = None
@@ -151,13 +180,13 @@ def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False,
             last = index == len(components) - 1
             try:
                 if windows:
-                    handle = windows.open(current, readable and last)
+                    handle = windows.open(current, (readable or directory) and last)
                     handles.append(handle)
                     previous = actual
                     actual, mode = windows.describe(handle, current)
-                    if component is not None and actual.parent != previous:
+                    if component is not None and _path_key(actual.parent) != _path_key(previous):
                         raise ValueError(f"archive path escapes source: {path}")
-                    if root is not None and index >= len(root.parts) - 1 and not actual.is_relative_to(root):
+                    if root is not None and index >= len(root.parts) - 1 and not _within(actual, root):
                         raise ValueError(f"archive path escapes source: {path}")
                 else:
                     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
@@ -180,6 +209,8 @@ def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False,
                 raise
             if not last and not stat.S_ISDIR(mode):
                 raise ValueError(f"forbidden archive path: {path}")
+        if directory and not stat.S_ISDIR(mode):
+            raise ValueError("source root is missing or unreadable")
         if readable:
             if not stat.S_ISREG(mode):
                 raise ValueError(f"forbidden archive path: {path}")
@@ -222,8 +253,24 @@ class _HandlePath(type(Path())):
 class Source:
     """Allowlisted relative reads, with no write API and no recursive discovery."""
 
-    def __init__(self, root: Path):
-        self.root = canonical_path(root)
+    def __init__(self, root: Path, *, required: bool = False):
+        if required:
+            try:
+                with _open_handle(root, directory=True) as opened:
+                    self.root = _absolute_path(opened.path)
+            except FileNotFoundError:
+                # A supplied Path byte-reader may provide an in-memory index.
+                # Require that positive read when no on-disk directory exists;
+                # the default retained-handle reader still refuses a missing root.
+                self.root = canonical_path(root)
+                try:
+                    self.read_bytes("runs.jsonl")
+                except OSError as exc:
+                    raise ValueError("source root is missing or unreadable") from exc
+            except OSError as exc:
+                raise ValueError("source root is missing or unreadable") from exc
+        else:
+            self.root = canonical_path(root)
 
     @staticmethod
     def _check(path: Path) -> Path:
@@ -234,7 +281,7 @@ class Source:
         if raw.startswith("/") or re.match(r"^[A-Za-z]:", raw) or ".." in raw.split("/"):
             raise ValueError(f"archive path must stay relative: {rel}")
         path = canonical_path(self.root / raw)
-        if not path.is_relative_to(canonical_path(self.root)):
+        if not _within(path, canonical_path(self.root)):
             raise ValueError(f"archive path escapes source: {rel}")
         return path
 
@@ -257,7 +304,20 @@ class Source:
             content = self.read_bytes("runs.jsonl")
         except FileNotFoundError:
             return []
-        return [json.loads(line) for line in content.decode("utf-8").splitlines() if line.strip()]
+        rows = []
+        lines = content.split(b"\n")
+        for index, line in enumerate(lines):
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line.decode("utf-8")))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                if index < len(lines) - 1:
+                    raise
+                # Archive.append may still be writing the final JSON/UTF-8
+                # record. A complete JSON tail remains compatible with older
+                # indexes lacking their last newline; never parse a partial one.
+        return rows
 
 
 @dataclass
@@ -300,8 +360,8 @@ def _index_paths(source: Source, row: dict) -> None:
         if not isinstance(rel, str):
             raise ValueError(f"invalid {key} path: {rel}")
         # Name refusals keep their existing message, ahead of structural refusal.
-        _check_names(Path(rel.replace("\\", "/")))
-        kind = "run" if key == "checked_run" else row.get("kind")
+        _absolute_path(source.root / rel.replace("\\", "/"))
+        kind = None if key == "checked_run" else row.get("kind")
         if kind is not None and kind not in INDEX_KINDS:
             raise ValueError(f"invalid {key} path: {rel}")
         prefix = kind if kind is not None else "(?:" + "|".join(INDEX_KINDS) + ")"
@@ -310,9 +370,14 @@ def _index_paths(source: Source, row: dict) -> None:
         source.path(rel)
 
 
-def enumerate_cases(root: Path, tasks: list[we.Task]) -> tuple[list[Case], list[dict]]:
-    """Refuse unsafe index paths with a caller-visible ValueError before candidate reads."""
-    root = Source(root).root
+def enumerate_cases(root: Path, tasks: list[we.Task], *,
+                    index_excluded: list[dict] | None = None) -> tuple[list[Case], list[dict]]:
+    """Refuse unsafe paths before candidate reads; optionally report metadata rows.
+
+    Index exclusions are separate from missing patch evidence: distillation and
+    dry runs must not add expected reviews to prediction denominators.
+    """
+    root = Source(root, required=True).root
     task_ids = {t.id for t in tasks}
     found: dict[tuple[str, str], Case] = {}
     excluded = []
@@ -330,6 +395,18 @@ def enumerate_cases(root: Path, tasks: list[we.Task]) -> tuple[list[Case], list[
             _index_paths(source, row)
         indices.append((archive_round, part, source, rows, starts))
     for archive_round, part, source, rows, starts in indices:
+        by_run = {row["run"]: row for row in starts}
+        for row in rows:
+            if "run" not in row:
+                continue
+            kind = row["run"].split("/")[0]
+            reason = INDEX_CLASSIFICATION[kind]
+            checked = row.get("checked_run", by_run.get(row["run"], {}).get("checked_run"))
+            if kind == "check" and checked and checked.split("/")[0] != "run":
+                reason = f"check of non-replayable {checked.split('/')[0]} folder"
+            if reason and index_excluded is not None:
+                index_excluded.append({"run": f'{part + "/" if part else ""}{row["run"]}',
+                                       "kind": kind, "event": row.get("event"), "reason": reason})
         ended = {r["run"]: r for r in rows if r.get("event") == "ended"}
         for row in sorted(starts, key=lambda r: r["run"]):
             bug, rel = row.get("task"), row["run"]
@@ -343,6 +420,9 @@ def enumerate_cases(root: Path, tasks: list[we.Task]) -> tuple[list[Case], list[
                 patch_bytes = source.read_bytes(f"{rel}/final.patch")
             except FileNotFoundError:
                 excluded.append({"bug": bug, "patch": name, "reason": "no final patch"})
+                continue
+            if not patch_bytes.strip():
+                excluded.append({"bug": bug, "patch": name, "reason": "empty patch"})
                 continue
             labels = set()
             label_sources = []
@@ -431,7 +511,7 @@ def enumerate_cases(root: Path, tasks: list[we.Task]) -> tuple[list[Case], list[
 
 def output_archive(source: Path, target: Path) -> c.Archive:
     source, target = canonical_path(source), canonical_path(target)
-    if target.is_relative_to(source) or source.is_relative_to(target):
+    if _within(target, source) or _within(source, target):
         raise ValueError("output root must be disjoint from source archive")
     if target.exists():
         raise ValueError("output archive must be a new root")
@@ -514,9 +594,9 @@ def _parse_registration(content: bytes) -> Registration:
 def load_registration() -> Registration:
     path = canonical_path(REGISTRATION)
     root = canonical_path(we.REPO_ROOT)
-    if not path.is_relative_to(root):
+    if not _within(path, root):
         raise ValueError("registration must stay inside repository")
-    rel = REGISTRATION.relative_to(we.REPO_ROOT).as_posix()
+    rel = path.relative_to(root).as_posix()
     got = subprocess.run(["git", "-C", str(root), "show", f"HEAD:{rel}"], capture_output=True, timeout=30)
     current = path.read_bytes().replace(b"\r\n", b"\n")
     if got.returncode or got.stdout.replace(b"\r\n", b"\n") != current:
@@ -741,7 +821,7 @@ def evaluate(records: list[dict], cases: list[Case] | list[dict], *, modes: list
     def count(mode, field):
         return sum(g[field] for g in groups(mode).values())
 
-    def prediction(number, met, kill, selected, *, ready=True, **details):
+    def prediction(number, met, kill, selected, *, ready=True, observed_miss=False, **details):
         enabled = any(mode in modes for mode in selected)
         done = enabled and ready and all(mode in modes and complete(mode) for mode in selected)
         missing = sum(count(mode, "missing") + count(mode, "no_review") for mode in selected)
@@ -750,7 +830,8 @@ def evaluate(records: list[dict], cases: list[Case] | list[dict], *, modes: list
                 "kill_criterion": registration.predictions[number - 1][1],
                 "status": "disabled" if not enabled else "incomplete" if excluded_count else "killed" if kill else
                           "incomplete" if not done else "met" if met else "missed",
-                "prediction_met": met if done or met is False else None, "kill": kill if enabled else None,
+                "prediction_met": met if done else False if enabled and observed_miss else None,
+                "kill": kill if enabled else None,
                 "missing": missing, **details}
 
     p4 = {bug: {"wrong": groups("neighbourhood").get(bug, {}).get("wrong", 0),
@@ -771,26 +852,34 @@ def evaluate(records: list[dict], cases: list[Case] | list[dict], *, modes: list
     predictions = {
         "P1": prediction(1, count("agent", "right_integrity") + count("hook", "right_integrity") == 0,
                          count("agent", "right_integrity") + count("hook", "right_integrity") > 0,
-                         ["agent", "hook"], ready=False, limitation="maintainers' fix control is outside final-patch replay"),
+                         ["agent", "hook"], ready=False,
+                         observed_miss=count("agent", "right_integrity") + count("hook", "right_integrity") > 0,
+                         limitation="maintainers' fix control is outside final-patch replay"),
         "P2": prediction(2, None if s0 == "before" and wrong_supported else wrong_supported == 0,
                          s0 == "after" and wrong_supported > 0, ["agent"],
                          ready=count("agent", "wrong") > 0 and (s0 == "after" or wrong_supported == 0), s0=s0,
+                         observed_miss=s0 == "after" and wrong_supported > 0,
                          attribution="S0 attribution required" if s0 == "before" and wrong_supported else None),
         "P3": prediction(3, count("hook", "wrong_defect") <= limits["hook_wrong"]
                          and count("hook", "right_defect") == limits["hook_right"],
                          count("hook", "right_defect") > limits["hook_kill"], ["hook"],
+                         observed_miss=count("hook", "wrong_defect") > limits["hook_wrong"]
+                         or count("hook", "right_defect") > limits["hook_right"],
                          ready=count("hook", "wrong") > 0 and count("hook", "right") > 0),
         "P4": prediction(4, reached >= limits["reached"],
                          p4_ready and complete("neighbourhood") and reached < limits["reached_kill"],
                          ["neighbourhood"], ready=bool(p4_ready), by_bug=p4, threshold_percent=limits["percent"]),
         "P5": prediction(5, count("neighbourhood", "right_lead") <= limits["right_leads"],
                          count("neighbourhood", "right_lead") > limits["right_leads_kill"], ["neighbourhood"],
+                         observed_miss=count("neighbourhood", "right_lead") > limits["right_leads"],
                          ready=count("neighbourhood", "right") > 0),
         "P6": prediction(6, black_leads == 0 and click_leads == 0 and click.get("questions", 0) >= 1,
                          False, ["neighbourhood"], ready=bool(black and click),
+                         observed_miss=black_leads > 0 or click_leads > 0,
                          welcome_surprise=bool(black.get("reviewed") and black_leads * 2 > black["reviewed"])),
         "P7": prediction(7, middle is not None and middle < limits["seconds"],
-                         middle is not None and middle > limits["seconds_kill"],
+                         complete("neighbourhood") and len(times) == count("neighbourhood", "reviewed")
+                         and middle is not None and middle > limits["seconds_kill"],
                          ["neighbourhood"], ready=len(times) == count("neighbourhood", "reviewed"), median_seconds=middle),
     }
     return {"standing": "development", "unit": "bug", "registration_sha256": registration.sha256,
@@ -857,8 +946,10 @@ def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
         if "neighbourhood" in modes:
             raise ValueError("neighbourhood execution is disabled until the mechanism exists")
         tasks = we.load_tasks()
-        cases, excluded = enumerate_cases(options.source, tasks)
+        index_excluded = []
+        cases, excluded = enumerate_cases(options.source, tasks, index_excluded=index_excluded)
         plan = make_plan(cases, excluded, tasks, options.registered_commit, modes, options.variant)
+        plan["index_excluded"] = index_excluded
         if options.dry:
             print(json.dumps(plan, indent=2))
             return 0
