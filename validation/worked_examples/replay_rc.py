@@ -558,8 +558,14 @@ def enumerate_cases(root: Path, tasks: list[we.Task], *,
                         labels.add("right" if result["passes"] else "wrong")
                         label_sources.append(f'{part + "/" if part else ""}{check["run"]}/run.json')
                     else:
+                        # run.check writes patch.stem: round producers number
+                        # round-N patches from 1. These and base are metadata,
+                        # even if their verdict is absent or not a boolean.
+                        patch_label = result.get("patch")
+                        nonfinal = isinstance(patch_label, str) and (
+                            patch_label == "base" or re.fullmatch(r"round-[1-9][0-9]*", patch_label) is not None)
                         omit(check, "check result is not an applied final-patch boolean label",
-                             affects=result.get("patch") != "base", result=result_number)
+                             affects=not nonfinal, result=result_number)
             if errored:
                 excluded.append({"bug": bug, "patch": name, "reason": "errored archived check", "checks": errored})
                 continue
