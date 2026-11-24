@@ -222,3 +222,118 @@ def test_changed_source_retires_old_identity_despite_independent_lookup_failure(
     specs.pop(OPTIONAL)
     optional.unlink()
     assert _roots(dependencies, SCOPES[1]) == {OPTIONAL}
+
+
+@pytest.mark.parametrize("failed_probe", (True, False), ids=("stat-fails", "healthy-control"))
+def test_required_path_evidence_survives_stat_failure(ownership, tmp_path, monkeypatch, failed_probe):
+    dependencies, specs = ownership
+    shared = tmp_path / "shared.py"
+    shared.write_text("value = 73\n", encoding="utf-8")
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, shared)
+    assert _roots(dependencies, SCOPES[0]) == {OPTIONAL}
+    specs.clear()
+    (tmp_path / "through").mkdir()
+    spelling = str(tmp_path / "through") + os.sep + ".." + os.sep + "shared.py"
+    spec = util.spec_from_file_location(REQUIRED, spelling)
+    spec.origin = spelling
+    specs[REQUIRED] = spec
+    stat = os.stat
+
+    def transient_stat(path, *args, **kwargs):
+        if failed_probe and os.fspath(path) == spelling:
+            raise OSError("transient required stat failure")
+        return stat(path, *args, **kwargs)
+
+    failure = ModuleNotFoundError("required alias is unavailable", name=OPTIONAL)
+    with monkeypatch.context() as transient:
+        transient.setattr(os, "stat", transient_stat)
+        assert not dependencies.optional_dependency_missing("abstraction", failure)
+    specs.clear()
+    shared.unlink()
+    invalidate_caches()
+    assert _roots(dependencies, SCOPES[1]) == frozenset()
+
+
+@pytest.mark.parametrize("failed_probe", (True, False), ids=("realpath-fails", "healthy-control"))
+def test_inode_evidence_survives_realpath_failure_and_removal(ownership, tmp_path, monkeypatch, failed_probe):
+    dependencies, specs = ownership
+    required = tmp_path / "required.py"
+    optional = tmp_path / "optional.py"
+    required.write_text("value = 73\n", encoding="utf-8")
+    os.link(required, optional)
+    try:
+        specs[REQUIRED] = util.spec_from_file_location(REQUIRED, required)
+        specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, optional)
+        realpath = os.path.realpath
+
+        def transient_realpath(path, *args, **kwargs):
+            if failed_probe and os.fspath(path) == str(optional):
+                raise OSError("transient optional realpath failure")
+            return realpath(path, *args, **kwargs)
+
+        with monkeypatch.context() as transient:
+            transient.setattr(os.path, "realpath", transient_realpath)
+            assert _roots(dependencies, SCOPES[0]) == frozenset()
+        specs.clear()
+        required.unlink()
+        optional.unlink()
+        invalidate_caches()
+        failure = ModuleNotFoundError("established required alias is unavailable", name=OPTIONAL)
+        assert not dependencies.optional_dependency_missing("abstraction", failure)
+    finally:
+        optional.unlink(missing_ok=True)
+
+
+def test_inode_replacement_retires_history_while_realpath_fails(ownership, tmp_path, monkeypatch):
+    dependencies, specs = ownership
+    required = tmp_path / "required.py"
+    optional = tmp_path / "optional.py"
+    required.write_text("value = 73\n", encoding="utf-8")
+    os.link(required, optional)
+    try:
+        specs[REQUIRED] = util.spec_from_file_location(REQUIRED, required)
+        specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, optional)
+        assert _roots(dependencies, SCOPES[0]) == frozenset()
+        optional.unlink()
+        optional.write_text("value = 'independent optional'\n", encoding="utf-8")
+        assert not os.path.samefile(required, optional)
+        realpath = os.path.realpath
+
+        def transient_realpath(path, *args, **kwargs):
+            if os.fspath(path) == str(optional):
+                raise OSError("transient optional realpath failure")
+            return realpath(path, *args, **kwargs)
+
+        with monkeypatch.context() as transient:
+            transient.setattr(os.path, "realpath", transient_realpath)
+            assert _roots(dependencies, SCOPES[0]) == frozenset()  # Live uncertainty only.
+        specs.pop(OPTIONAL)
+        optional.unlink()
+        assert _roots(dependencies, SCOPES[1]) == {OPTIONAL}
+    finally:
+        optional.unlink(missing_ok=True)
+
+
+def test_path_only_history_acquires_stat_identity_before_replacement(ownership, tmp_path, monkeypatch):
+    dependencies, specs = ownership
+    slot = tmp_path / "slot.py"
+    slot.write_text("value = 'required'\n", encoding="utf-8")
+    specs[REQUIRED] = util.spec_from_file_location(REQUIRED, slot)
+    stat = os.stat
+
+    def transient_stat(path, *args, **kwargs):
+        if os.fspath(path) == str(slot):
+            raise OSError("transient required stat failure")
+        return stat(path, *args, **kwargs)
+
+    with monkeypatch.context() as transient:
+        transient.setattr(os, "stat", transient_stat)
+        assert _roots(dependencies, SCOPES[0]) == {OPTIONAL}
+    specs.clear()
+    # Refresh the retained path without a live spec; the successful stat must
+    # supply the identity needed to detect a later independent replacement.
+    assert _roots(dependencies, STARTUP_SCOPE) == frozenset()
+    slot.rename(tmp_path / "old.py")
+    slot.write_text("value = 'independent optional'\n", encoding="utf-8")
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, slot)
+    assert _roots(dependencies, SCOPES[1]) == {OPTIONAL}

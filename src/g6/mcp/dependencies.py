@@ -130,7 +130,8 @@ def _import_root(module: str) -> str:
     return module.split(".", 1)[0]
 
 
-def _root_identities(root: str, paths: set | None = None) -> tuple[set[tuple], bool]:
+def _root_identities(root: str, paths: set | None = None,
+                     absent_paths: set | None = None) -> tuple[set[tuple], bool]:
     """Retain established aliases and whether the lookup completed, without imports."""
     # Use the interpreter's actual FileFinder matching policy, including
     # PYTHONCASEOK and ignore-environment mode, rather than filesystem casing.
@@ -152,24 +153,26 @@ def _root_identities(root: str, paths: set | None = None) -> tuple[set[tuple], b
         if not path:
             return
         resolved = lookup(lambda: os.path.realpath(path))
+        if resolved is not None:
+            identities.add((kind, resolved))
 
         def inode_identity():
             try:
-                status = os.stat(path)
+                return os.stat(path), False
             except FileNotFoundError:
-                if resolved is not None:
-                    identities.add((kind, resolved, None, None))
-                    if paths is not None:
-                        paths.add((kind, source, os.fspath(path), resolved, None, None))
-                return  # Absence cannot replace an established identity.
+                return None, True  # Absence cannot replace an established identity.
+
+        result = lookup(inode_identity)
+        status, absent = result if result is not None else (None, False)
+        device = inode = None
+        if status is not None:
+            device, inode = status.st_dev, status.st_ino
             if status.st_ino:
                 identities.add(("inode", status.st_dev, status.st_ino))
-            if resolved is not None:
-                identities.add((kind, resolved, status.st_dev, status.st_ino))
-                if paths is not None:
-                    paths.add((kind, source, os.fspath(path), resolved, status.st_dev, status.st_ino))
-
-        lookup(inode_identity)
+        # Each successful probe contributes even when its companion failed.
+        records = absent_paths if absent else paths
+        if records is not None and (resolved is not None or status is not None):
+            records.add((kind, source, os.fspath(path), resolved, device, inode))
 
     def namespace_identities(locations, source):
         if locations is not None:
@@ -207,36 +210,58 @@ def _root_identities(root: str, paths: set | None = None) -> tuple[set[tuple], b
 def _path_aliases(paths):
     identities = set()
     for kind, _, _, resolved, device, inode in paths:
-        identities.add((kind, resolved, device, inode))
+        if resolved is not None:
+            identities.add((kind, resolved))
         if inode:
             identities.add(("inode", device, inode))
     return identities
+
+
+def _compatible_paths(previous, current):
+    """Same source with no conflicting successful identity probe."""
+    return previous[:3] == current[:3] and all(
+        old is None or new is None or old == new for old, new in zip(previous[3:], current[3:]))
 
 
 def _refresh_path_ownership() -> set[str]:
     """Retire replaced identities everywhere; missing files retain established facts."""
     stale = set()
     uncertain = set()
+    refreshed = {}
     paths = _required_paths.union(*_known_paths.values())
     for record in paths:
         _, _, source, resolved, device, inode = record
         try:
-            if os.path.realpath(source) != resolved:
-                stale.add(record)
-                continue
-            status = os.stat(source)
-            if (status.st_dev, status.st_ino) != (device, inode):
-                stale.add(record)
-        except FileNotFoundError:
-            pass
+            current_path = os.path.realpath(source)
         except Exception:
+            current_path = None
             uncertain.add(record)
-    _required_paths.difference_update(stale)
+        try:
+            status = os.stat(source)
+        except FileNotFoundError:
+            status = None
+        except Exception:
+            status = None
+            uncertain.add(record)
+        if ((resolved is not None and current_path is not None and current_path != resolved)
+                or (device is not None and status is not None
+                    and (status.st_dev, status.st_ino) != (device, inode))):
+            stale.add(record)
+        # Fill previously unavailable fields without losing a known value to
+        # absence or uncertainty. Later replacements can retire the fuller fact.
+        refreshed[record] = (*record[:3], current_path if current_path is not None else resolved,
+                             status.st_dev if status is not None else device,
+                             status.st_ino if status is not None else inode)
+    retained = {refreshed[record] for record in _required_paths - stale}
+    _required_paths.clear()
+    _required_paths.update(retained)
     blocked = set()
     for root, history in _known_paths.items():
-        history.difference_update(stale)
-        if history & uncertain:
+        if (history - stale) & uncertain:
             blocked.add(root)
+        retained = {refreshed[record] for record in history - stale}
+        history.clear()
+        history.update(retained)
     return blocked
 
 
@@ -246,18 +271,24 @@ def _without_required_aliases(optional: set[str], required: set[str]) -> frozens
     blocked = required | _refresh_path_ownership()
     for root in optional | required:
         observed = set()
-        identities[root], established = _root_identities(root, observed)
+        absent = set()
+        identities[root], established = _root_identities(root, observed, absent)
         history = _known_paths.setdefault(root, set())
-        current = {record for record in observed if record[4] is not None}
-        absent = {record[:4] for record in observed if record[4] is None}
-        if current:
+        if observed:
             # Positive evidence of a different target retires the old alias's
             # association, even if an independent source failed. Other failed
             # sources and still-advertised absent locations keep their facts.
-            replaced = {record[1] for record in current}
+            replaced = {record[1] for record in observed}
             history.intersection_update({record for record in history
-                                         if record[:4] in absent or (not established and record[1] not in replaced)})
-        history.update(current)
+                                         if (not established and record[1] not in replaced)
+                                         or any(_compatible_paths(record, current) for current in observed | absent)})
+        for record in observed:
+            compatible = {previous for previous in history if _compatible_paths(previous, record)}
+            history.difference_update(compatible)
+            for previous in compatible:
+                record = (*record[:3], *(new if new is not None else old
+                                        for old, new in zip(previous[3:], record[3:])))
+            history.add(record)
         identities[root].update(_path_aliases(history))
         if root in required:
             _required_paths.update(history)
