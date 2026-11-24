@@ -250,3 +250,234 @@ def test_root_package_helper_relative_import_keeps_identity(tmp_path, monkeypatc
         "test_api.py": "def test_call(): pass\n",
     })
     assert usable is True
+
+
+@pytest.mark.parametrize("level,expected", [(2, False), (3, True)], ids=["two-levels", "three-levels"])
+def test_src_package_relative_import_uses_full_package(tmp_path, monkeypatch, level, expected):
+    helper = "from .. import configure\nconfigure()\n" if level == 2 else "from ... import values\nVALUE = values.VALUE\n"
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "__init__.py": "from .src.pkg import helper\n",
+        "src/__init__.py": "import os\ndef configure():\n    os.environ['PATH'] = 'local'\n",
+        "src/pkg/__init__.py": "",
+        "src/pkg/helper.py": helper,
+        "values.py": "VALUE = 2\n",
+        "test_api.py": "def test_call(): pass\n",
+    })
+    assert usable is expected
+
+
+@pytest.mark.parametrize("source,expected", [
+    ("from .helper import configure\nconfigure()\n", True),
+    ("from ..helper import configure\nconfigure()\n", False),
+], ids=["same-module-aliases", "different-package-depths"])
+def test_relative_import_alternatives_must_agree(tmp_path, monkeypatch, source, expected):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "src/pkg/__init__.py": "",
+        "src/pkg/helper.py": "def configure(): pass\n",
+        "src/pkg/setup.py": source,
+        "test_api.py": "from pkg import setup\n",
+    })
+    assert usable is expected
+
+
+@pytest.mark.parametrize("body,expected", [("os.environ['PATH'] = 'local'", False), ("pass", True)],
+                         ids=["runner-write", "both-inert"])
+@pytest.mark.parametrize("branches", [
+    "if sys.platform == 'win32':\n{first}\nelse:\n{second}\n",
+    "try:\n{first}\nexcept Exception:\n{second}\n",
+    "while False:\n{first}\nelse:\n{second}\n",
+    "for item in ():\n{first}\nelse:\n{second}\n",
+    "with nullcontext():\n{first}\n{plain_second}\n",
+    "match sys.platform:\n    case 'win32':\n{nested_first}\n    case _:\n{nested_second}\n",
+    "{plain_first}\n{plain_second}\n",
+], ids=["if", "try", "while", "for", "with", "match", "sequential"])
+def test_every_definition_candidate_is_followed(tmp_path, monkeypatch, body, expected, branches):
+    first = "def configure():\n    " + body
+    second = "def configure():\n    pass"
+    def indent(text, spaces):
+        return "\n".join(" " * spaces + line for line in text.splitlines())
+
+    source = "import os\nimport sys\nfrom contextlib import nullcontext\n" + branches.format(
+        first=indent(first, 4), second=indent(second, 4), plain_first=first, plain_second=second,
+        nested_first=indent(first, 8), nested_second=indent(second, 8)) + "configure()\n"
+    _, usable = inventory(tmp_path, monkeypatch, {"conftest.py": source, "test_api.py": "def test_call(): pass\n"})
+    assert usable is expected
+
+
+@pytest.mark.parametrize("binding", [
+    "run = active\nrun = inert\n",
+    "from helper import active as run\nfrom helper import inert as run\n",
+    "class run:\n    def __init__(self):\n        active()\nclass run:\n    pass\n",
+], ids=["assignments", "imports", "classes"])
+@pytest.mark.parametrize("body,expected", [("os.environ['PATH'] = 'local'", False), ("pass", True)],
+                         ids=["runner-write", "both-inert"])
+def test_repeated_binding_kinds_keep_all_candidates(tmp_path, monkeypatch, binding, body, expected):
+    helpers = "import os\ndef active():\n    " + body + "\ndef inert():\n    pass\n"
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "helper.py": helpers,
+        "test_api.py": "from helper import active, inert\n" + binding + "run()\n",
+    })
+    assert usable is expected
+
+
+def test_unavailable_binding_candidate_is_not_discarded(tmp_path, monkeypatch):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "test_api.py": "def configure(): pass\nconfigure = unknown\nconfigure()\n",
+    })
+    assert usable is False
+
+
+@pytest.mark.parametrize("inherited", [False, True], ids=["direct", "inherited"])
+@pytest.mark.parametrize("body,expected", [("os.environ['PATH'] = 'local'", False), ("pass", True)],
+                         ids=["runner-write", "inert"])
+def test_metaclass_prepare_effect_is_followed(tmp_path, monkeypatch, inherited, body, expected):
+    source = ("import os\nclass Meta(type):\n    @classmethod\n"
+              "    def __prepare__(mcls, name, bases):\n        " + body + "\n        return {}\n")
+    source += "class Base(metaclass=Meta): pass\nclass Settings(Base): pass\n" if inherited else (
+        "class Settings(metaclass=Meta): pass\n")
+    _, usable = inventory(tmp_path, monkeypatch, {"test_api.py": source})
+    assert usable is expected
+
+
+@pytest.mark.parametrize("inherited", [False, True], ids=["direct", "inherited"])
+@pytest.mark.parametrize("body,expected", [("os.environ['PATH'] = 'local'", False), ("pass", True)],
+                         ids=["runner-write", "inert"])
+def test_descriptor_set_name_effect_is_followed(tmp_path, monkeypatch, inherited, body, expected):
+    source = ("import os\nclass Descriptor:\n    def __set_name__(self, owner, name):\n        " + body + "\n")
+    source += "class ChildDescriptor(Descriptor): pass\n" if inherited else ""
+    source += "class Settings:\n    value = " + ("ChildDescriptor" if inherited else "Descriptor") + "()\n"
+    _, usable = inventory(tmp_path, monkeypatch, {"test_api.py": source})
+    assert usable is expected
+
+
+@pytest.mark.parametrize("decorator", ["dataclass", "dataclass()"], ids=["bare", "called"])
+@pytest.mark.parametrize("body,expected", [("os.environ['PATH'] = 'local'", False), ("self.ready = True", True)],
+                         ids=["runner-write", "inert"])
+def test_dataclass_post_init_effect_is_followed(tmp_path, monkeypatch, decorator, body, expected):
+    source = ("import os\nfrom dataclasses import dataclass\n@" + decorator + "\nclass Settings:\n"
+              "    def __post_init__(self):\n        " + body + "\nSettings()\n")
+    _, usable = inventory(tmp_path, monkeypatch, {"test_api.py": source})
+    assert usable is expected
+
+
+@pytest.mark.parametrize("body,expected", [("os.environ['PATH'] = 'local'", False), ("return 2", True)],
+                         ids=["runner-write", "inert"])
+def test_dataclass_default_factory_effect_is_followed(tmp_path, monkeypatch, body, expected):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "test_api.py": "import os\nfrom dataclasses import dataclass, field\ndef make():\n    " + body + "\n"
+                       "@dataclass\nclass Settings:\n    value: int = field(default_factory=make)\nSettings()\n",
+    })
+    assert usable is expected
+
+
+@pytest.mark.parametrize("instantiate,expected", [(False, True), (True, False)], ids=["creation", "instantiation"])
+def test_unmodelled_class_decorator_instantiation_is_unavailable(tmp_path, monkeypatch, instantiate, expected):
+    source = "def decorate(cls):\n    return cls\n@decorate\nclass Settings:\n    pass\n"
+    source += "Settings()\n" if instantiate else ""
+    _, usable = inventory(tmp_path, monkeypatch, {"test_api.py": source})
+    assert usable is expected
+
+
+@pytest.mark.parametrize("body,expected", [("os.environ['PATH'] = 'local'", False), ("pass", True)],
+                         ids=["runner-write", "both-inert"])
+def test_function_scope_keeps_definition_candidates(tmp_path, monkeypatch, body, expected):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "test_api.py": "import os\ndef setup():\n    if True:\n        def run():\n            " + body + "\n"
+                       "    else:\n        def run(): pass\n    run()\nsetup()\n",
+    })
+    assert usable is expected
+
+
+@pytest.mark.parametrize("source,expected", [
+    ("@dataclass\nclass Base:\n    def __post_init__(self): pass\nclass Settings(Base):\n"
+     "    def __post_init__(self):\n        os.environ['PATH'] = 'local'\nSettings()\n", False),
+    ("@dataclass\nclass Settings:\n    value: list = field(default_factory=lambda: [])\nSettings()\n", True),
+    ("@dataclass\nclass Settings:\n    value: int = field(default_factory=unknown)\nSettings()\n", False),
+], ids=["inherited-post-init", "inert-lambda-factory", "unavailable-factory"])
+def test_dataclass_generated_calls_keep_inheritance_and_unknowns(tmp_path, monkeypatch, source, expected):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "test_api.py": "import os\nfrom dataclasses import dataclass, field\n" + source,
+    })
+    assert usable is expected
+
+
+def test_aliased_descriptor_set_name_effect_is_followed(tmp_path, monkeypatch):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "test_api.py": "import os\nclass Descriptor:\n    def __set_name__(self, owner, name):\n"
+                       "        os.environ['PATH'] = 'local'\nheld = Descriptor()\n"
+                       "class Settings:\n    value = held\n",
+    })
+    assert usable is False
+
+
+def test_same_line_descriptor_calls_keep_distinct_values(tmp_path, monkeypatch):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "test_api.py": "import os\nclass Active:\n    def __set_name__(self, owner, name):\n"
+                       "        os.environ['PATH'] = 'local'\nclass Inert: pass\n"
+                       "active = Active(); inert = Inert()\nclass Settings:\n    value = active\n",
+    })
+    assert usable is False
+
+
+def test_imported_descriptor_set_name_effect_is_followed(tmp_path, monkeypatch):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "helper.py": "import os\nclass Descriptor:\n    def __set_name__(self, owner, name):\n"
+                     "        os.environ['PATH'] = 'local'\n",
+        "test_api.py": "from helper import Descriptor\nclass Settings:\n    value = Descriptor()\n",
+    })
+    assert usable is False
+
+
+def test_aliased_dataclass_field_factory_effect_is_followed(tmp_path, monkeypatch):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "test_api.py": "import os\nfrom dataclasses import dataclass, field\ndef make():\n"
+                       "    os.environ['PATH'] = 'local'\nheld = field(default_factory=make)\n"
+                       "@dataclass\nclass Settings:\n    value: int = held\nSettings()\n",
+    })
+    assert usable is False
+
+
+@pytest.mark.parametrize("body,expected", [("os.environ['PATH'] = 'local'", False), ("pass", True)],
+                         ids=["runner-write", "inert"])
+def test_relative_import_of_root_attribute_is_followed(tmp_path, monkeypatch, body, expected):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "__init__.py": "import os\ndef configure():\n    " + body + "\nfrom . import helper\n",
+        "helper.py": "from . import configure\nconfigure()\n",
+        "test_api.py": "def test_call(): pass\n",
+    })
+    assert usable is expected
+
+
+def test_missing_relative_module_is_an_unavailable_effect(tmp_path, monkeypatch):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "pkg/__init__.py": "",
+        "pkg/helper.py": "from .missing import configure\n",
+        "test_api.py": "def test_call(): pass\n",
+    })
+    assert usable is False
+
+
+def test_implicit_method_uses_module_scope_for_bare_names(tmp_path, monkeypatch):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "test_api.py": "import os\ndef configure():\n    os.environ['PATH'] = 'local'\n"
+                       "class Settings:\n    @staticmethod\n    def configure(): pass\n"
+                       "    def __init__(self):\n        configure()\nSettings()\n",
+    })
+    assert usable is False
+
+
+def test_builtin_setter_candidate_is_checked(tmp_path, monkeypatch):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "test_api.py": "import os\nif True:\n    configure = setattr\nelse:\n"
+                       "    def configure(*args): pass\nconfigure(os, 'ready', True)\n",
+    })
+    assert usable is False
+
+
+def test_destructured_class_value_keeps_descriptor_effect(tmp_path, monkeypatch):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "test_api.py": "import os\nclass Descriptor:\n    def __set_name__(self, owner, name):\n"
+                       "        os.environ['PATH'] = 'local'\nclass Settings:\n"
+                       "    value, count = Descriptor(), 2\n",
+    })
+    assert usable is False

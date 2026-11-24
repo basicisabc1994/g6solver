@@ -3243,7 +3243,7 @@ def _collection_evidence(repo: Path, *, roots=(), selections=()):
                 trees[file] = ast.parse(data)
             except (SyntaxError, ValueError):
                 invalid.add(file)
-        reader = CollectionEffects.from_trees(trees, roots=roots)
+        reader = CollectionEffects.from_trees(trees, roots=roots, files=files)
         imported = set()
         for file, tree in trees.items():
             pending = deque([tree])
