@@ -207,7 +207,8 @@ class RunFolder:
         return target
 
     def write_json(self, name: str, obj: Any) -> Path:
-        return self.write(name, json.dumps(obj, indent=1, ensure_ascii=False, default=str))
+        # Escapes retain every JSON string, including a lone UTF-16 surrogate.
+        return self.write(name, json.dumps(obj, indent=1, ensure_ascii=True, default=str))
 
     def fresh_path(self, name: str) -> Path:
         target = self.path / name
@@ -237,7 +238,7 @@ class Archive:
     def append(self, row: Mapping[str, Any]) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         with open(self.index, "a", encoding="utf-8", newline="\n") as stream:
-            stream.write(json.dumps(dict(row), ensure_ascii=False) + "\n")
+            stream.write(json.dumps(dict(row), ensure_ascii=True) + "\n")
 
     def rows(self) -> list[dict[str, Any]]:
         if not self.index.is_file():

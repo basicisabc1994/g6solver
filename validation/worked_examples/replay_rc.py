@@ -10,6 +10,7 @@ import argparse
 import errno
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -462,8 +463,6 @@ def enumerate_cases(root: Path, tasks: list[we.Task], *,
     """
     root = Source(root, required=True).root
     evidence_files = {} if source_snapshot is not None else None
-    if source_snapshot is not None:
-        source_snapshot.update(root=str(root), tasks=sorted(t.id for t in tasks), files=evidence_files)
     index_excluded = [] if index_excluded is None else index_excluded
     source_inventory = [] if source_inventory is None else source_inventory
     task_ids = {t.id for t in tasks}
@@ -521,6 +520,11 @@ def enumerate_cases(root: Path, tasks: list[we.Task], *,
         indices.append((archive_round, part, source, rows, starts))
     if require_index and not any(source.index_present for _, _, source, _, _ in indices):
         raise ValueError("source has no runs.jsonl in root, round2 or round3")
+    if source_snapshot is not None:
+        # Publish identity only after every index preflight can refuse.
+        # Identity is compared, never used as an I/O destination by --score.
+        source_snapshot.update(identity_sha256=hashlib.sha256(str(root).encode("utf-8")).hexdigest(),
+                               tasks=sorted(t.id for t in tasks), files=evidence_files)
     for archive_round, part, source, rows, starts in indices:
         by_run = {row["run"]: row for row in starts}
 
@@ -938,7 +942,11 @@ def replay_case(case: Case, task: we.Task, mode: str, archive: c.Archive, docker
             except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
                 status, body["result"] = "failed", "no review"
                 body["error"] = f'{body.get("error", "")} cleanup: {type(exc).__name__}: {exc}'.strip()
-    return folder.finish(body, status)
+    try:
+        return folder.finish(body, status)
+    except (OSError, RuntimeError, ValueError) as exc:
+        # Propagate into the batch's failure handler, retaining the failed file.
+        raise RuntimeError(f"cannot save {folder.rel}/run.json: {exc}") from exc
 
 
 def _signals(assessment: dict) -> tuple[bool, bool]:
@@ -1138,38 +1146,168 @@ def make_plan(cases: list[Case], excluded: list[dict], tasks: list[we.Task], com
             "cases": [case.saved() for case in cases]}
 
 
-def score_saved(saved: dict, registration: Registration) -> tuple[dict, int]:
+def _relative_evidence_name(value: Any) -> bool:
+    relative = (isinstance(value, str) and bool(value) and not value.startswith("/")
+            and not any(part in ("", ".", "..") for part in value.split("/"))
+            and not any(char in value for char in ("\\", ":", "\x00")))
+    if not relative:
+        return False
+    try:
+        _check_names(PureWindowsPath(value))
+    except ValueError:
+        return False
+    return True
+
+
+def _well_formed_snapshot(snapshot: Any) -> bool:
+    if not isinstance(snapshot, dict) or set(snapshot) != {"identity_sha256", "tasks", "files", "inventory"}:
+        return False
+    digest = snapshot["identity_sha256"]
+    tasks, files, inventory = snapshot["tasks"], snapshot["files"], snapshot["inventory"]
+    if (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or not isinstance(tasks, list) or not all(isinstance(task, str) and task for task in tasks)
+            or tasks != sorted(set(tasks)) or not isinstance(files, dict)
+            or not all(_relative_evidence_name(name) and (value is None or isinstance(value, str)
+                       and re.fullmatch(r"[0-9a-f]{64}", value)) for name, value in files.items())
+            or not isinstance(inventory, list) or len(inventory) != 3):
+        return False
+    for row, name in zip(inventory, ("runs.jsonl", "round2/runs.jsonl", "round3/runs.jsonl")):
+        if not isinstance(row, dict) or row.get("index") != name or name not in files:
+            return False
+        if row.get("status") == "read":
+            if set(row) != {"index", "status"} or files[name] is None:
+                return False
+        elif row.get("status") == "excluded":
+            if (set(row) != {"index", "status", "reason", "affects_denominator"} or files[name] is not None
+                    or row.get("reason") not in {"optional round folder absent", "index absent from existing round folder",
+                                                 "root index absent"}
+                    or type(row.get("affects_denominator")) is not bool
+                    or row["affects_denominator"] != (row["reason"] != "optional round folder absent")):
+                return False
+        else:
+            return False
+    return any(row["status"] == "read" for row in inventory)
+
+
+def _comparison_snapshot(snapshot: Any) -> dict | None:
+    """Translate a previous manifest's root to data only; never open that root."""
+    if not isinstance(snapshot, dict):
+        return None
+    snapshot = dict(snapshot)
+    if "root" in snapshot:
+        root = snapshot.pop("root")
+        if not isinstance(root, str):
+            return None
+        try:
+            identity = hashlib.sha256(root.encode("utf-8")).hexdigest()
+        except UnicodeError:
+            return None
+        snapshot.setdefault("identity_sha256", identity)
+    return snapshot if _well_formed_snapshot(snapshot) else None
+
+
+def _batch_start(score: Path) -> dict | None:
+    """Read the writer's start row relative to the CLI batch path, never batch data."""
+    folder = score.parent
+    if score.name != "run.json" or folder.parent.name != "development" or folder.parent.parent.name != "replay-rc-batch":
+        return None
+    root = folder.parents[2]
+    try:
+        rows = Source(root).rows()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    starts = [row for row in rows if row.get("event") == "started" and row.get("run") == folder.relative_to(root).as_posix()]
+    return starts[0] if len(starts) == 1 else None
+
+
+def _well_formed_case(case: Any) -> bool:
+    keys = {"bug", "digest", "label", "patch", "task_text", "arm", "round", "arguments", "origins"}
+    return (isinstance(case, dict) and set(case) == keys and isinstance(case["bug"], str)
+            and isinstance(case["digest"], str) and re.fullmatch(r"[0-9a-f]{64}", case["digest"]) is not None
+            and case["label"] in ("right", "wrong") and _relative_evidence_name(case["patch"])
+            and isinstance(case["task_text"], str) and isinstance(case["arm"], str)
+            and (case["round"] is None or type(case["round"]) is int and case["round"] > 0)
+            and (case["arguments"] is None or isinstance(case["arguments"], dict))
+            and isinstance(case["origins"], list) and bool(case["origins"])
+            and all(isinstance(origin, dict) for origin in case["origins"]))
+
+
+def _current_evaluation(saved: dict, registration: Registration, start: dict | None) -> dict | None:
+    plan = saved["plan"]
+    if (not _well_formed_snapshot(plan.get("source_snapshot")) or not isinstance(start, dict)
+            or start.get("kind") != "replay-rc-batch" or start.get("task") != "development"
+            or type(start.get("evidence_rule_version")) is not int
+            or start["evidence_rule_version"] != EVIDENCE_RULE_VERSION
+            or start.get("g6_commit") != plan.get("registered_commit")
+            or saved.get("status") not in ("finished", "failed") or saved.get("s0") not in ("before", "after")
+            or not isinstance(plan.get("modes"), list) or not plan["modes"]
+            or any(mode not in ("agent", "hook") for mode in plan["modes"])
+            or len(set(plan["modes"])) != len(plan["modes"])
+            or any(not isinstance(plan.get(key), list) for key in ("cases", "excluded", "index_excluded"))
+            or plan.get("source_inventory") != plan["source_snapshot"]["inventory"]
+            or not all(_well_formed_case(case) for case in plan["cases"])):
+        return None
+    try:
+        result = evaluate(saved["records"], plan["cases"], modes=plan["modes"], s0=saved["s0"],
+                          excluded=plan["excluded"], index_excluded=plan["index_excluded"], registration=registration)
+        # JSON equality also distinguishes true from 1 and rejects non-finite numbers.
+        if json.dumps(result, sort_keys=True, allow_nan=False) != json.dumps(
+                saved.get("evaluation"), sort_keys=True, allow_nan=False):
+            return None
+        return result
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def _score_result(result: dict, version: Any, source: str) -> dict:
+    return _json_safe({**result, "evidence_rule_version": EVIDENCE_RULE_VERSION,
+                       "saved_evidence_rule_version": version, "evidence_source": source})
+
+
+def score_saved(saved: dict, registration: Registration, *, source: Path | None = None,
+                start: dict | None = None) -> tuple[dict, int]:
     """Use saved evidence only under the rule that produced it.
 
     An older batch can supply review responses, but its labels and exclusions
     must come from a fresh enumeration of the same allowlisted source reads.
-    No source is guessed from patch names, and no manifest path is opened.
+    Only the command line supplies a source; no manifest path is opened.
     """
     plan = saved["plan"]
     version = saved.get("evidence_rule_version")
+    newer = type(version) is int and version > EVIDENCE_RULE_VERSION
     if type(version) is int and version == EVIDENCE_RULE_VERSION:
-        return evaluate(saved["records"], plan["cases"], modes=plan["modes"], s0=saved["s0"],
-                        excluded=plan.get("excluded", []), index_excluded=plan.get("index_excluded", []),
-                        registration=registration), 0
+        result = _current_evaluation(saved, registration, start)
+        if result is not None:
+            return _score_result(result, version, "batch"), 0
 
-    snapshot = plan.get("source_snapshot")
+    snapshot = _comparison_snapshot(plan.get("source_snapshot")) if not newer else None
     unavailable = "no saved source identity and read manifest"
-    if (isinstance(snapshot, dict) and isinstance(snapshot.get("root"), str)
-            and Path(snapshot["root"]).is_absolute() and isinstance(snapshot.get("tasks"), list)
-            and all(isinstance(task, str) for task in snapshot["tasks"])
-            and isinstance(snapshot.get("files"), dict) and isinstance(snapshot.get("inventory"), list)):
+    if newer:
+        unavailable = "newer evidence rules cannot be reviewed by this code"
+    elif source is None:
+        unavailable = "--source is required to re-derive saved evidence"
+    elif snapshot is not None:
         try:
             tasks = we.load_tasks()
             fresh_snapshot = {}
-            cases, excluded = enumerate_cases(Path(snapshot["root"]), tasks, require_index=True,
-                                              source_snapshot=fresh_snapshot)
+            cases, excluded = enumerate_cases(source, tasks, require_index=True, source_snapshot=fresh_snapshot)
             if fresh_snapshot != snapshot:
                 raise ValueError("source identity, selection or evidence bytes changed")
-        except (OSError, RuntimeError, ValueError) as exc:
-            unavailable = str(exc)
-        else:
             # Labels come exclusively from the current source. Reuse only a
             # response to the same patch and review arguments in a current case.
+            if (any(mode not in ("agent", "hook") for mode in plan["modes"])
+                    or any(record.get("mode") not in ("agent", "hook") for record in saved["records"])):
+                raise ValueError("mode unavailable under the current evidence rule: neighbourhood")
             by_id = {task.id: task for task in tasks}
             views = {}
             for case in cases:
@@ -1188,18 +1326,22 @@ def score_saved(saved: dict, registration: Registration) -> tuple[dict, int]:
                         "affects_denominator": True})
                     continue
                 records.append({**record, "label": view.label})
-            return evaluate(records, cases, modes=plan["modes"], s0=saved["s0"], excluded=excluded,
-                            registration=registration), 0
+            result = evaluate(records, cases, modes=plan["modes"], s0=saved["s0"], excluded=excluded,
+                              registration=registration)
+            return _score_result(result, version, "source"), 0
+        except (OSError, RuntimeError, ValueError) as exc:
+            unavailable = str(exc)
 
     # Saved labels, omission flags and review outcomes have no authority here.
     # A global gap covers every enabled prediction, including observed kills.
-    gap = {"reason": "saved under an older evidence rule", "affects_denominator": True,
+    gap = {"reason": "saved under a newer evidence rule than this code" if newer else "saved under an older evidence rule",
+           "affects_denominator": True,
            "saved_evidence_rule_version": version, "current_evidence_rule_version": EVIDENCE_RULE_VERSION,
            "source_unavailable": unavailable}
     result = evaluate([], [], modes=plan["modes"], s0=saved["s0"], index_excluded=[gap], registration=registration)
     for prediction in result["predictions"].values():
         prediction["kill"] = None
-    return result, 2
+    return _score_result(result, version, "unavailable"), 2
 
 
 def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
@@ -1222,8 +1364,10 @@ def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
             registration = load_registration()
             if saved.get("registration_sha256") != registration.sha256:
                 raise ValueError("saved registration digest differs from committed registration")
-            result, status = score_saved(saved, registration)
-            print(json.dumps(result, indent=2))
+            start = (_batch_start(score) if type(saved.get("evidence_rule_version")) is int
+                     and saved["evidence_rule_version"] == EVIDENCE_RULE_VERSION else None)
+            result, status = score_saved(saved, registration, source=options.source, start=start)
+            print(json.dumps(result, indent=2, allow_nan=False))
             return status
         if options.source is None or not re.fullmatch(r"[0-9a-f]{40}", options.registered_commit or ""):
             raise ValueError("--source and a full --registered-commit are required")
@@ -1277,6 +1421,8 @@ def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
             batch.finish(body, "finished")
         except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
             body["error"] = f"{type(exc).__name__}: {exc}"
+            body["evaluation"] = evaluate(records, cases, modes=modes, s0=options.s0,
+                                           excluded=excluded, registration=registration, index_excluded=index_excluded)
             batch.finish(body, "failed")
             raise
         print(json.dumps(body["evaluation"], indent=2))
