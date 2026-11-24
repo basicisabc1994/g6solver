@@ -1306,10 +1306,16 @@ def _origin_names_may_alias(left: str, right: str) -> bool:
 def _unique_origin_digests(cases: list[Case], *, source: Path | None = None) -> bool:
     """An archived run supplies one final.patch across all bugs and cases."""
     digests = {}
+    names = {}
     for case in cases:
         for origin in case.origins:
-            run = _origin_run_identity(origin.get("run"), source)
+            name = origin.get("run")
+            run = _origin_run_identity(name, source)
             if run is None:
+                return False
+            # Look up every occurrence as before, then also bind its exact name.
+            # A replacement between lookups must not let that name bind twice.
+            if names.setdefault(name, case.digest) != case.digest:
                 return False
             if source is None and run not in digests and any(
                     _origin_names_may_alias(run, other) for other in digests):

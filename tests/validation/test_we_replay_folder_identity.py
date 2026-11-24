@@ -181,3 +181,53 @@ def test_explicit_source_missing_origin_takes_incomplete_route(batch, tmp_path, 
     status, result = trust.score(batch, capsys, source=True)
     assert (status, result["evidence_source"], result["predictions"]["P2"]["status"]) == (
         2, "unavailable", "incomplete")
+
+
+@pytest.mark.parametrize("source", [False, True], ids=["batch", "source"])
+def test_honest_distinct_short_and_long_names_score_met(batch, capsys, source):
+    right_names = iter(("RIGHTI", "RIGHTII"))
+    replacements = {}
+    for case in batch.saved["plan"]["cases"]:
+        for origin in case["origins"]:
+            old = origin["run"]
+            leaf = next(right_names) if case["label"] == "right" else "WRONGORIGIN"
+            new = old.rsplit("/", 1)[0] + "/" + leaf
+            (batch.source / old).rename(batch.source / new)
+            replacements[old] = new
+            origin["run"] = new
+    for record in batch.saved["records"]:
+        if record["mode"] == "agent":
+            record["origin_run"] = replacements[record["origin_run"]]
+    right = batch.source / next(name for name in replacements.values() if name.endswith("/RIGHTI"))
+    wrong = batch.source / next(name for name in replacements.values() if name.endswith("/WRONGORIGIN"))
+    assert not right.samefile(wrong)
+    assert right.joinpath("final.patch").read_bytes() != wrong.joinpath("final.patch").read_bytes()
+    status, result = trust.score(batch, capsys, source=source)
+    assert (status, result["evidence_source"], result["predictions"]["P2"]["status"]) == (
+        0, "batch", "met")
+
+
+@pytest.mark.parametrize("source", [False, True], ids=["batch", "source"])
+@pytest.mark.parametrize("conflict", [False, True], ids=["same-digest", "different-digest"])
+def test_exact_name_digest_binding_survives_replacement(tmp_path, monkeypatch, source, conflict):
+    name = "run/synthetic/origin"
+    folder = tmp_path / name
+    folder.mkdir(parents=True)
+    original = rc._origin_run_identity
+    identities = []
+
+    def identify(run, root=None):
+        identity = original(run, root)
+        identities.append(identity)
+        if root is not None and len(identities) == 1:
+            folder.rename(tmp_path / "retained-origin")
+            folder.mkdir()
+        return identity
+
+    monkeypatch.setattr(rc, "_origin_run_identity", identify)
+    cases = [SimpleNamespace(origins=[{"run": name}], digest=digest)
+             for digest in ["a" * 64, "b" * 64 if conflict else "a" * 64]]
+    assert rc._unique_origin_digests(cases, source=tmp_path if source else None) is (not conflict)
+    assert len(identities) == 2
+    if source:
+        assert None not in identities and identities[0] != identities[1]
