@@ -206,7 +206,8 @@ class Coordination:
                 raise WorkspaceRefused(BUSY, "the workspace mutex was replaced while waiting")
             yield
         except PathRefused as exc:
-            raise WorkspaceRefused(BUSY, exc.reason) from None
+            # Refusals from the protected body are not lock contention.
+            raise WorkspaceRefused(OUTSIDE_ROOT, exc.reason) from None
         finally:
             try:
                 if locked:
