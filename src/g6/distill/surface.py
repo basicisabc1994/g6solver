@@ -14,6 +14,7 @@ from .library import Library, public_entry
 from .records import FailureRecord, LibraryEntry, Sha256
 
 
+@failure_writer(reading=True)
 def library(op: str = "list", entry_id: str = "") -> dict:
     if op not in {"list", "describe", "history"}:
         raise ValueError("library op must be list, describe or history")

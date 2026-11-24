@@ -40,7 +40,7 @@ from g6.safety_engine import weakening
 from .detectors import SEED_TEMPLATES
 from .facts import _extract_facts
 from .judging import JUDGING_PATHS
-from .ledger import Stores, failure_writer, retain_before_write
+from .ledger import Stores, append_retained, failure_writer, retain_before_write
 from .library import Library
 from .records import (AcceptanceEvidence, Cost, DecidedBy, FieldEvidence,
                       Interval, LibraryEntry, MethodContract, Model, RegressionCase, Sha256,
@@ -690,14 +690,14 @@ def _assess(candidate, entries, frozen, reuse_index):
     return answer, evidence, own, data
 
 
+@failure_writer(reading=True)
 def _journal():
     return ChainLedger(state_path("distill", "acceptance_gate.jsonl"))
 
 
 def _append(journal, kind, body):
     ident = digest([kind, len(journal.entries()), body])
-    retain_before_write(journal.path)
-    journal.append(kind, ident, body)
+    append_retained(journal, kind, ident, body)
     return ident
 
 
@@ -765,7 +765,7 @@ def _write_report(data):
         if path.read_text(encoding="utf-8") != text:
             raise ValueError("acceptance report changed")
     else:
-        retain_before_write(path)
+        retain_before_write(path, after=text.encode('utf-8'))
         with path.open("x", encoding="utf-8", newline="\n") as stream:
             stream.write(text)
             stream.flush()

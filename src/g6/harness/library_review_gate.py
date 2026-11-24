@@ -12,7 +12,7 @@ import time
 
 from g6.core.ledger import ChainLedger, LedgerError, digest
 from g6.core.storage import state_path
-from g6.distill.ledger import PartialAuthorityWrite, Stores, failure_writer, retain_before_write
+from g6.distill.ledger import PartialAuthorityWrite, Stores, append_retained, failure_writer, retain_before_write
 from g6.distill.library import Library
 from g6.distill.records import LibraryEntry, VerifierCandidate
 from g6.distill.runtime_state import StatusChanged, require_current, status_snapshot
@@ -52,6 +52,10 @@ def record_fire(found: dict, before: dict, after: dict, snapshot) -> None:
         require_current(snapshot)
         path.parent.mkdir(parents=True, exist_ok=True)
         lock = path.with_suffix(".lock")
+        # The sentinel is also undone if the process dies before its finally.
+        # An existing sentinel remains a refusal and is never taken over.
+        if not lock.exists():
+            retain_before_write(lock, after=None)
         try:
             stream = lock.open("x", encoding="utf-8", newline="\n")
         except FileExistsError:
@@ -60,8 +64,7 @@ def record_fire(found: dict, before: dict, after: dict, snapshot) -> None:
             with stream:
                 ledger = ChainLedger(path)
                 if not any(row["id"] == ident for row in ledger.entries()):
-                    retain_before_write(path)
-                    ledger.append("field_fire", ident, body)
+                    append_retained(ledger, "field_fire", ident, body)
         finally:
             lock.unlink()
 
@@ -84,7 +87,7 @@ def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", 
     if entry_id:
         historical = Stores().for_model(LibraryEntry).get(entry_id)
         selected = [e for e in entries if e.candidate_id == historical.candidate_id]
-    findings = []
+    findings, retention_failed = [], []
     for entry in selected:
         if entry.status not in {"probation", "admitted", "demoted"} or entry.authority not in {"A1", "A2"}:
             continue
@@ -142,17 +145,33 @@ def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", 
                     found.update(field_recorded=False, code=error.code,
                                  durable_state=error.durable_state,
                                  field_note='Field retention recovery incomplete; inspect the named durable state.')
+                    retention_failed.append(found)
                 except (LedgerError, OSError):
                     found["field_recorded"] = False
                     found["field_note"] = "The unlabelled field fire could not be retained; no field evidence was added."
             findings.append(found)
-    with failure_writer(reading=True):
-        try:
-            require_current(entries)
-        except StatusChanged as error:
-            for found in findings:
-                found.update(authority='A0', verdict='abstain', outcome='insufficient_evidence',
-                             code=error.code, reason=str(error))
+    try:
+        with failure_writer(reading=True):
+            try:
+                require_current(entries)
+            except StatusChanged as error:
+                for found in findings:
+                    found.update(authority='A0', verdict='abstain', outcome='insufficient_evidence',
+                                 code=error.code, reason=str(error))
+    except PartialAuthorityWrite as error:
+        # The last read retries recovery too. Preserve the incomplete-retention
+        # reply if that undo still fails, and serve no authority from the intent.
+        for found in findings:
+            found.update(authority='A0', verdict='abstain', outcome='insufficient_evidence',
+                         field_recorded=False, code=error.code, durable_state=error.durable_state,
+                         reason='Field retention recovery incomplete; inspect the named durable state.',
+                         field_note='Field retention recovery incomplete; inspect the named durable state.')
+    else:
+        for found in retention_failed:
+            if found.get('code') == PartialAuthorityWrite.code:
+                found.pop('code', None)
+            found.pop('durable_state', None)
+            found['field_note'] = 'The unlabelled field fire could not be retained; no field evidence was added.'
     return findings
 
 

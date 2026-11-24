@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import PurePosixPath
 
 from g6.core.ledger import LedgerError
+from .decision_log import record_hold_lift
 from .intake import class_key, earlier
 from .ledger import Stores, failure_writer
 from .records import CapabilityExtension, FailureMode, FailureRecord, LibraryEntry, Rectification, RemovalCheck
@@ -32,6 +33,7 @@ class Rectifier:
     def __init__(self, stores: Stores | None = None):
         self.stores = stores or Stores()
 
+    @failure_writer(reading=True)
     def _logs(self):
         # Audit all logs before any write, even if this operation only needs one.
         return {cls: self.stores.for_model(cls).list() for cls in
@@ -194,11 +196,13 @@ class Rectifier:
         if not classes:
             raise LedgerError("held recurrence evidence missing")
         body = entry.model_dump(mode="json", exclude={"entry_id"})
-        return self._append_once(LibraryEntry(**(body | dict(version=entry.version + 1,
+        changed = self._append_once(LibraryEntry(**(body | dict(version=entry.version + 1,
             status="admitted", authority="A2", changed_at=datetime.now(timezone.utc).isoformat(),
             reason="independent complete replay lifted recurrence hold: " + ", ".join(
                 check.receipt_sha256 for check in checks),
             decided_by=dict(gate_version="distill.findings.recurrence.v1", person=None)))))
+        record_hold_lift(changed)
+        return changed
 
     @failure_writer()
     def reconcile(self) -> dict:

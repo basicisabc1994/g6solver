@@ -7,20 +7,23 @@ authenticate an actor who can replace an entire history and its external anchors
 """
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
+import base64
 import json
 import os
+from pathlib import Path
 import threading
 
 from pydantic import ValidationError
 
-from g6.core.ledger import ChainLedger, LedgerCorrupt, LedgerError, canonical
+from g6.core.ledger import ChainLedger, LedgerCorrupt, LedgerError, canonical, digest
 from g6.core.storage import state_path
 from .records import (RECORD_KINDS, CapabilityExtension, Concept, FailureMode, FailureRecord, LibraryEntry,
                       MethodContract, Record, Rectification, VerifierCandidate)
 
 _FAILURE_MUTEX = threading.RLock()
 _FAILURE_LOCAL = threading.local()
+_UNPLANNED = object()
 
 
 class PartialAuthorityWrite(OSError):
@@ -61,15 +64,115 @@ def durable_state(paths):
     return tuple(states)
 
 
-def retain_before_write(path, *, recover=None):
-    """Register exact bytes before a write in the short status transaction."""
+def _intent_path():
+    return state_path('distill', 'authority_intent.json')
+
+
+def _sync_parent(path):
+    # Windows fsync flushes the file; directory handles are not openable this way.
+    if os.name != 'nt':
+        fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
+def _save_intent(*, committed=False):
+    """Replace a flushed intent before allowing any corresponding target write."""
+    rows = []
+    for path, content in _FAILURE_LOCAL.before.items():
+        after = _FAILURE_LOCAL.after.get(path, _UNPLANNED)
+        rows.append({'path': str(path.absolute()),
+                     'before': None if content is None else base64.b64encode(content).decode('ascii'),
+                     'operation': 'replace' if after is not _UNPLANNED else 'retain',
+                     'after': None if after is _UNPLANNED or after is None else
+                     base64.b64encode(after).decode('ascii')})
+    body = {'version': 1, 'committed': committed, 'writes': rows}
+    path = _intent_path()
+    staging = path.with_suffix('.pending')
+    with staging.open('wb') as stream:
+        stream.write((canonical({'body': body, 'sha256': digest(body)}) + '\n').encode('utf-8'))
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(staging, path)
+    _sync_parent(path)
+
+
+def _read_intent():
+    path = _intent_path()
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+        body = data['body']
+        if (data['sha256'] != digest(body) or body['version'] != 1
+                or type(body['committed']) is not bool or not isinstance(body['writes'], list)):
+            raise ValueError('invalid intent')
+        writes = {}
+        for row in body['writes']:
+            target = Path(row['path'])
+            if not target.is_absolute() or target in writes or target in {path, path.with_suffix('.pending')}:
+                raise ValueError('invalid intent target')
+            writes[target] = None if row['before'] is None else base64.b64decode(row['before'], validate=True)
+        return body['committed'], writes
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, KeyError, TypeError):
+        raise PartialAuthorityWrite((path,)) from None
+
+
+def _retire_intent():
+    path = _intent_path()
+    path.unlink(missing_ok=True)
+    _sync_parent(path)
+
+
+def _recover_intent():
+    """Always undo an uncommitted publication, including an interrupted undo."""
+    intent = _read_intent()
+    if intent is None:
+        return
+    committed, writes = intent
+    try:
+        if not committed:
+            for target, content in reversed(tuple(writes.items())):
+                _restore(target, content)
+        _retire_intent()
+    except OSError:
+        raise PartialAuthorityWrite(tuple(writes)) from None
+
+
+def retain_before_write(path, *, recover=None, after=_UNPLANNED):
+    """Persist the undo bytes and planned write before touching a target.
+
+    Intent grows under the process lock before each newly named durable step.
+    No reader trusts any of its targets until the outer transaction commits.
+    The optional unplanned form retains the existing internal snapshot API.
+    """
     if path is None:   # an in-memory ledger keeps nothing on disk to restore
         return
     before = getattr(_FAILURE_LOCAL, 'before', None)
-    if before is not None and path not in before:
-        before[path] = path.read_bytes() if path.exists() else None
+    if before is not None:
+        path = Path(path).absolute()
+        if path not in before:
+            before[path] = path.read_bytes() if path.exists() else None
+        if after is not _UNPLANNED:
+            _FAILURE_LOCAL.after[path] = after
+        _save_intent()
     if before is not None and recover is not None:
         _FAILURE_LOCAL.recover.append((path, recover))
+
+
+def append_retained(chain, kind, ident, body, *, recover=None):
+    """Plan the exact next ChainLedger bytes without changing its file API."""
+    if chain.path is not None:
+        entry = {'seq': len(chain.entries()), 'kind': kind, 'id': ident, 'body': body,
+                 'body_sha256': digest(body), 'prev': chain.head()}
+        entry['entry_sha256'] = digest({key: entry[key] for key in
+                                       ('seq', 'kind', 'id', 'body_sha256', 'prev')})
+        before = chain.path.read_bytes() if chain.path.exists() else b''
+        after = before + (json.dumps(entry, sort_keys=True, ensure_ascii=False, allow_nan=False) + '\n').encode('utf-8')
+        retain_before_write(chain.path, recover=recover, after=after)
+    return chain.append(kind, ident, body)
 
 
 def _restore(path, content):
@@ -80,6 +183,7 @@ def _restore(path, content):
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
+    _sync_parent(path)
 
 
 @contextmanager
@@ -88,7 +192,8 @@ def failure_writer(*, reading=False):
 
     Reentrant within a thread; the same file lock excludes other server processes.
     Method execution and recorded comparison must run outside this transaction.
-    Registered writes roll back together on failure, while exclusion still holds.
+    Registered writes have durable undo intent. Recovery precedes every trusted
+    read/write; a process death leaves either the committed set or the prior set.
     """
     from g6.core.repair_log import _process_lock
     with _FAILURE_MUTEX:
@@ -101,12 +206,30 @@ def failure_writer(*, reading=False):
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         with _process_lock(path):
+            _recover_intent()
             _FAILURE_LOCAL.path = path
             _FAILURE_LOCAL.before = {}
+            _FAILURE_LOCAL.after = {}
             _FAILURE_LOCAL.recover = []
+            committing = False
             try:
                 yield True
+                if _FAILURE_LOCAL.before:
+                    # All planned records must be on disk before the commit mark.
+                    for target, content in _FAILURE_LOCAL.after.items():
+                        if (target.read_bytes() if target.exists() else None) != content:
+                            raise OSError('publication differs from its intent')
+                        _sync_parent(target)
+                    committing = True
+                    _save_intent(committed=True)
             except BaseException:
+                if committing:
+                    # A commit-marker flush/rename can fail after replacement.
+                    # Make undo durable again BEFORE changing any target back.
+                    try:
+                        _save_intent()
+                    except OSError:
+                        raise PartialAuthorityWrite(tuple(_FAILURE_LOCAL.before)) from None
                 failed = []
                 for target, content in reversed(tuple(_FAILURE_LOCAL.before.items())):
                     try:
@@ -120,10 +243,21 @@ def failure_writer(*, reading=False):
                         failed.append(target)
                 if failed:
                     raise PartialAuthorityWrite(tuple(_FAILURE_LOCAL.before)) from None
+                if _FAILURE_LOCAL.before:
+                    _retire_intent()
                 raise
+            else:
+                if _FAILURE_LOCAL.before:
+                    # A failed cleanup leaves a committed intent for the next
+                    # lock holder; it must never undo a completed publication.
+                    try:
+                        _retire_intent()
+                    except OSError:
+                        raise PartialAuthorityWrite(tuple(_FAILURE_LOCAL.before)) from None
             finally:
                 _FAILURE_LOCAL.path = None
                 _FAILURE_LOCAL.before = None
+                _FAILURE_LOCAL.after = None
                 _FAILURE_LOCAL.recover = None
 
 
@@ -142,9 +276,10 @@ class RecordStore:
         self.stores, self.kind, self.model = stores, kind, model
         self.path = state_path("distill", f"{kind}.jsonl")
         self._expect_head = expect_head
-        with failure_writer(reading=True) if model in {FailureRecord, LibraryEntry} else nullcontext(True) as locked:
-            self.chain = ChainLedger(self.path if locked else None,
-                                     expect_head=expect_head, validate=self._validate)
+        with failure_writer(reading=True):
+            # Naming the file creates nothing. Even before the state directory
+            # exists, direct legacy appends must persist to this same chain.
+            self.chain = ChainLedger(self.path, expect_head=expect_head, validate=self._validate)
 
     def _validate(self, kind, ident, body, seen):
         try:
@@ -163,16 +298,12 @@ class RecordStore:
         return state_path("distill", "objects", f"{ident}.json")
 
     def _read(self, *, references=True) -> list[Record]:
-        if self.model in {FailureRecord, LibraryEntry}:
-            with failure_writer(reading=True) as locked:
-                if not locked:
-                    if self.chain.entries() or self._expect_head:
-                        raise LedgerCorrupt('previously observed failure ledger is missing')
-                    return []
-                if self.chain.path is None:
-                    self.chain = ChainLedger(self.path, expect_head=self._expect_head, validate=self._validate)
-                return self._read_locked(references=references)
-        return self._read_locked(references=references)
+        with failure_writer(reading=True) as locked:
+            if not locked:
+                if self.chain.entries() or self._expect_head:
+                    raise LedgerCorrupt('previously observed failure ledger is missing')
+                return []
+            return self._read_locked(references=references)
 
     def _read_locked(self, *, references=True) -> list[Record]:
         self.chain.reload()
@@ -290,7 +421,7 @@ class RecordStore:
                         raise LedgerError("class removal requires replay of every known failure")
 
     def put(self, value: Record) -> str:
-        with failure_writer() if self.model in {FailureRecord, LibraryEntry, Rectification} else nullcontext():
+        with failure_writer():
             return self._put_locked(value)
 
     def _put_locked(self, value: Record) -> str:
@@ -314,13 +445,12 @@ class RecordStore:
             if obj.read_text(encoding="utf-8") != text:
                 raise LedgerCorrupt("existing content-addressed object was edited")
         else:
-            retain_before_write(obj)
+            retain_before_write(obj, after=text.encode('utf-8'))
             with obj.open("x", encoding="utf-8", newline="\n") as handle:
                 handle.write(text)
                 handle.flush()
                 os.fsync(handle.fileno())
-        retain_before_write(self.path, recover=self._recover_chain)
-        self.chain.append(self.kind, ident, body)
+        append_retained(self.chain, self.kind, ident, body, recover=self._recover_chain)
         return ident
 
     def _recover_chain(self):
