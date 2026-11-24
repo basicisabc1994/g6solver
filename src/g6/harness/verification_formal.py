@@ -41,6 +41,7 @@ and never gives ``defect_detected``.
 from __future__ import annotations
 
 import functools
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -271,7 +272,14 @@ def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dic
     also = [i for i in broken if base[i]["outcome"] == patch[i]["outcome"]]
     # the review of VS-4, I1: only a trace the base commit replays and keeps is new; one it cannot replay is not kept
     new = [i for i in broken if base[i]["outcome"] == "holds"]
-    refused = [i for i in broken if patch[i]['outcome'] == 'broken' and base[i]['outcome'] == 'operation_failed']
+    def step_raised(outcome):
+        why = outcome.get('why')
+        # The earlier comparison matrix also uses the explicit legacy step-refusal marker.
+        return type(why) is str and (why == 'step refused' or re.fullmatch(
+            r'step [1-9][0-9]* \(action -?[0-9]+\) raised \S+', why) is not None)
+
+    refused = [i for i in broken if patch[i]['outcome'] == 'broken' and base[i]['outcome'] == 'operation_failed'
+               and step_raised(base[i])]
     if refused:
         names = sorted({name for i in refused for name in patch[i].get('broken', [])})
         return {"result": vs.COUNTEREXAMPLE,
@@ -280,18 +288,27 @@ def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dic
                 "shape": "the patch ran a step the base commit refused and broke the named invariants",
                 "correspondence": {"result": "reproduced", "traces_reproduced": refused, "on": "the patch",
                                    "steps_refused_at_base": refused}}
-    unknown = {str(i): str(base[i].get("why", ""))[:200] for i in broken if base[i]["outcome"] == "not_replayable"}
-    for i in broken:
-        if base[i]['outcome'] == 'broken' and patch[i]['outcome'] == 'operation_failed':
-            unknown[str(i)] = 'the base evaluated a violation; the patch operation failed before evaluation'
+    unplayable_base = {str(i): str(base[i].get('why', ''))[:200] for i in broken
+                      if base[i]['outcome'] == 'not_replayable'}
+    unevaluated_base = {str(i): str(base[i].get('why', ''))[:200] for i in broken
+                        if base[i]['outcome'] == 'operation_failed' and patch[i]['outcome'] == 'broken'
+                        and not step_raised(base[i])}
+    evaluated_base = {str(i): 'the base evaluated a violation; the patch operation failed before evaluation'
+                      for i in broken if base[i]['outcome'] == 'broken' and patch[i]['outcome'] == 'operation_failed'}
+    unknown = {**unplayable_base, **unevaluated_base, **evaluated_base}
+    unknown_fields = {
+        **({'traces_not_replayable_at_base': unplayable_base} if unplayable_base else {}),
+        **({'invariants_not_evaluated_at_base': unevaluated_base} if unevaluated_base else {}),
+        **({'violations_evaluated_at_base': evaluated_base} if evaluated_base else {}),
+    }
     if not new and unknown:
         return {"result": vs.CHECK_ERROR,
                 "detail": f"trace(s) {', '.join(unknown)} {failure} on the patch's real code, and whether "
-                          "the base commit's keeps them is not established at the base commit: it could not replay "
-                          "them",
+                          "the patch introduced that outcome is not established at the base commit: "
+                          + '; '.join(unknown.values()),
                 "correspondence": {"result": "reproduced", "traces_reproduced": broken, "on": "the patch",
                                    "at_base": "not established at the base commit",
-                                   "traces_not_replayable_at_base": unknown, "at_base_too": also}}
+                                   **unknown_fields, "at_base_too": also}}
     if not new:
         violated = [str(i) for i in also if base[i]['outcome'] == 'broken']
         refused = [str(i) for i in also if base[i]['outcome'] == 'operation_failed']
@@ -310,7 +327,7 @@ def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dic
                      else "a trace the model checker found breaks the invariants on the patch's real code, and keeps them "
                      "at the base commit's",
             "correspondence": {"result": "reproduced", "traces_reproduced": new, "traces_also_at_base": also,
-                               **({"traces_not_replayable_at_base": unknown} if unknown else {})}}
+                               **unknown_fields}}
 
 
 def _record(one, b) -> dict:
