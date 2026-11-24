@@ -97,21 +97,41 @@ def _record(session: Path, cwd: str, task: str) -> dict | None:
         return None
     store.mkdir(session, parents=True, exist_ok=True, mode=0o700)
     asked = {"repo": str(here[0]), "task": task, "base": here[1]}
-    store.write_retained(session / 'task.json', json.dumps(asked).encode('utf-8'))
+    with store.task_publication(session / 'task.json'):
+        store.write_retained(session / 'task.json', json.dumps(asked).encode('utf-8'))
     return asked
 
 
 def _task(session: Path) -> dict:
     """Read the task binding from exactly the bytes its producer completed."""
-    try:
-        expected = store.path(session, 'task.sha256').read_text(encoding='ascii')
-        asked = json.loads(cloud.read_retained(store.path(session, 'task.json'), expected))
-        if not isinstance(asked, dict) or not {'repo', 'task', 'base'} <= asked.keys():
-            raise ValueError('malformed retained task')
-        return asked
-    except (OSError, TypeError, ValueError, RecursionError, MemoryError):
-        cloud.record_sources((cloud.UNKNOWN,))
-        raise ValueError(f'{cloud.REQUIRED}: {cloud.WITHHELD}') from None
+    return store.read_task(session / 'task.json')
+
+
+def _recover_task(event: dict, task: str) -> bool:
+    """Leave unreadable bindings and runs intact; bind only this prompt's task."""
+    from g6.harness import completion_loop as loop
+
+    here = _here(event['cwd'])
+    if here is None:
+        return False
+    session = folder(event['session_id'])
+    prior = store.task_path(session / 'task.json')
+    number = int(prior.stem[5:]) + 1 if prior.stem.startswith('task-') else 1
+    fresh = {'repo': str(here[0]), 'base': here[1], 'task': task, 'run': number}
+    while True:
+        run = current(event['session_id'], fresh)
+        if run.exists():
+            fresh['run'] += 1
+            continue
+        with loop._writing(run):
+            retained = loop._load(run)
+            if retained:
+                fresh['run'] += 1
+                continue
+            loop._save(run, {loop.ATTEMPTED: 0})
+            with store.task_publication(session / f'task-{number}.json'):
+                store.write_retained(session / f'task-{number}.json', json.dumps(fresh).encode('utf-8'))
+            return True
 
 
 def _again(event: dict, asked: dict, ended: dict, task: str) -> bool:
@@ -154,7 +174,8 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> bool:
                 continue
             # A retry may find this run already used: never reset its count or reviews.
             loop._save(run, retained or {**read, loop.ATTEMPTED: 0}, sources=refs)
-            store.write_retained(session / 'task.json', json.dumps(fresh).encode('utf-8'))
+            with store.task_publication(store.task_path(session / 'task.json')):
+                store.write_retained(store.task_path(session / 'task.json'), json.dumps(fresh).encode('utf-8'))
             return True
 
 
@@ -240,21 +261,26 @@ def _context(found: str, task: str) -> dict:
 
 def on_prompt(event: dict) -> dict:
     session = folder(event["session_id"])
-    task, known = str(event.get("prompt") or "").strip(), session / "task.json"
+    task = str(event.get("prompt") or "").strip()
     if not task:
         return {}
     armed = False
     with _one_prompt(session):
-        if known.exists():
+        known = store.task_path(session / 'task.json')
+        if store.task_present(session / 'task.json'):
             from g6.harness import completion_loop as loop
-            asked = _task(session)
+            try:
+                asked = _task(session)
+            except store.TaskUnreadable:
+                return _context('', task) if _recover_task(event, task) else {}
             run = current(event["session_id"], asked)
             state = loop._load(run)
             idle = "started" not in state and (run / TURN_ENDED).exists() and _moved(event, asked)
             if state.get("done") or idle:
                 armed = _again(event, asked, state, task)
             elif "started" not in state:
-                store.write_retained(known, json.dumps({**asked, "task": f"{asked['task']}\n\n{task}"}).encode('utf-8'))
+                with store.task_publication(known):
+                    store.write_retained(known, json.dumps({**asked, "task": f"{asked['task']}\n\n{task}"}).encode('utf-8'))
             if not armed:
                 return {}
         else:
@@ -290,7 +316,7 @@ def on_stop(event: dict) -> dict:
 
 def _on_stop(event: dict) -> dict:
     session = folder(event["session_id"])
-    if not (session / "task.json").is_file() and _record(session, event["cwd"], _prompts(event.get("transcript_path"))) is None:
+    if not store.task_present(session / 'task.json') and _record(session, event["cwd"], _prompts(event.get("transcript_path"))) is None:
         return {"systemMessage": NO_REPOSITORY}
     from g6.harness import completion_loop as loop
 

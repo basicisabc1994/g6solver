@@ -565,6 +565,8 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
             with _base_copy(change, left) as copy:
                 with cloud.request_sources(origins if again else ()):
                     host(asked + again, copy, store.check_tree(where), left)
+        except _ReservationUnsaved:
+            raise
         except (LLMError, repo_tests.CopyNotRun, OSError) as exc:
             failed = f"{type(exc).__name__}: {exc}"[:400]
         got, origins = _snapshot_probe(run_set(change, where / "probes", at_base=True, deadline=deadline))
@@ -912,6 +914,8 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
         with cloud.request_sources(refs):
             found = critic_report(consent.guard(caller).complete(
                 system, sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), proof=proof)
+    except _ReservationUnsaved:
+        raise
     except (LLMError, OSError) as exc:
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
     if hidden and found["verdict"] == "none":
@@ -1060,12 +1064,23 @@ class Step:
     ``WAIT``, when this step did nothing, as another of the session was running or the person must answer first. ``code``: the
     stable code of a call that tested nothing or left no clean review, for a surface with G6's envelope. ``note``: with no
     report, the line a hook shows the person in its place, as a tool's reply has its own words for what did not run.
-    ``ending``: on a stop, how the run ended, one of ``patch_report.ENDINGS``."""
+    ``ending``: on a stop, how the run ended, one of ``patch_report.ENDINGS``.
+    ``ran`` identifies this call, ``settled_here`` its settlement, and ``refusal``
+    an error of this call even when its code equals the retained ending's."""
     action: str
     text: str = ""
     code: str = ""
     note: str = ""
     ending: str = ""
+    call_ran: bool | None = None
+    settled_here: bool = False
+    refusal: bool = False
+
+    @property
+    def ran(self) -> bool:
+        # Legacy direct callers supplied result text, or an empty repeat note.
+        # Execution paths below supply the identity explicitly, including errors.
+        return bool(self.text) if self.call_ran is None else self.call_ran
 
 
 #: The sharing state could not be read after a request of this review had gone out (``G6_E_CLOUD_CONSENT_STATE`` says
@@ -1073,6 +1088,16 @@ class Step:
 CONSENT_STATE_AFTER_SEND = "G6_E_CLOUD_CONSENT_STATE_AFTER_SEND"
 UNREADABLE_STATE = ("The retained completion state cannot be read now against its receipt. "
                     "No report is available; the send count is unknown.")
+NEW_SESSION = 'Call g6_review_until_clean with a new session to review further changes.'
+RESERVATION_UNSAVED = 'G6_E_COMPLETION_RESERVATION_UNSAVED'
+PUBLICATION_UNSAVED = 'G6_E_COMPLETION_PUBLICATION_UNSAVED'
+
+
+class _ReservationUnsaved(OSError):
+    """The observer prevented dispatch because persistence failed."""
+    code = RESERVATION_UNSAVED
+
+
 CHANGED = ("The code has changed since this session's loop ended, so the report below is of an earlier patch and nothing in "
            "this call tested the code as it stands. Name a new session to review it.")
 MCP_ENDED = ("G6's completion loop did not run: it has already ended for this task, and its report stands. "
@@ -1114,9 +1139,13 @@ def _read_publication(session: Path) -> dict:
     receipt = store.path(session, 'state.sha256')
     present = path.is_file()
     if not present and not any(store.path(session, name).exists() for name in (
-        'state.json', 'state.sha256', '.write-version', 'state.json.new', 'state.sha256.new',
+        'state.json', 'state.sha256', 'state.json.new', 'state.sha256.new',
     )):
-        return {}
+        # A real token precedes the first byte of content. Malformed control
+        # bytes still grant no authority to start over an unknown publication.
+        if not store.path(session, '.write-version').exists() or _read_version(session):
+            return {}
+        return _unreadable_publication()
     version, readable = None, True
     try:
         if not present:
@@ -1219,9 +1248,11 @@ def reply_for(session: Path, step: Step, repo: str, base: str, *, hook: bool = F
         text = UNREADABLE_STATE
         if code != NO_CLEAN_REVIEW:
             text = f'{step.text or step.note or "The completion step was refused."} {text}'
-        return Step(STOP, f'[{code}] {refusal_reason(text, code)}' if hook else text, code), state, text
+        return Step(STOP, f'[{code}] {refusal_reason(text, code)}' if hook else text, code,
+                    call_ran=step.ran), state, text
     total = attempted(state)
-    own_refusal = bool(step.code and step.code != state.get('code'))
+    own_refusal = bool(step.code and (step.refusal or not step.ran and bool(step.text)
+                                     or step.code != state.get('code')))
     settled = bool(state.get('done'))
     if step.code == NO_PYTHON:
         # Nothing was reviewed. Keep the report empty and do not manufacture a
@@ -1229,16 +1260,17 @@ def reply_for(session: Path, step: Step, repo: str, base: str, *, hook: bool = F
         why = 'No Python changed against the base commit, so nothing was tested and nothing was spent. '
         why += 'Call again once the session has changed Python.'
         return Step(STOP, code=NO_PYTHON, note=NOTHING_CHANGED if hook else step.note,
-                    ending='untested'), state, why
+                    ending='untested', call_ran=False), state, why
     if step.note and not step.text and not step.code and not settled:
         return step, state, step.note
-    repeat = settled and (own_refusal or not step.text)
+    repeat = settled and not step.ran
     code = step.code if own_refusal or not settled else state.get('code', '')
     action = STOP if settled or code else step.action
     ending = 'untested' if own_refusal else state.get('ending', step.ending) if settled else step.ending
     # Preserve the parent's notice for a known ending patch. A legacy ending
     # without that patch still gets an explicit way on in its MCP notice.
     note = (ALREADY_ENDED if hook or state.get('ended_patch') else MCP_ENDED) if repeat else step.note
+    is_report = False
     if own_refusal:
         text = step.text or step.note or 'The completion step was refused.'
     elif action == CONTINUE:
@@ -1249,16 +1281,27 @@ def reply_for(session: Path, step: Step, repo: str, base: str, *, hook: bool = F
     else:
         report_reader = report_reader or read_report
         text = report_reader(session, state, code=code)
+        is_report = bool(state) and text != cloud.WITHHELD and (not code or text != state.get('stop'))
         if not state:
             text = step.text or step.note
         elif code and text == cloud.WITHHELD:
             text = state.get('stop') or 'The retained completion report cannot be read.'
-    if code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND):
+    consent_ending = code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND) and not step.refusal
+    if consent_ending:
         text = _consent_stop(total)
     why = (state.get('stop') if not own_refusal and state.get('code') == code else '') or text
     # Consent wording is always regenerated from this snapshot's count.
-    if code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND):
+    if consent_ending:
         why = text
+    if step.settled_here and own_refusal:
+        # This call settled the run but could not publish its report. Keep both
+        # facts: the envelope's publication refusal and the retained ending.
+        retained_code = state.get('code', '')
+        retained_text = (_consent_stop(total) if retained_code in (
+            cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND,
+        ) else state.get('stop') or 'The run ended without a retained report.')
+        text = f'[{retained_code}] {refusal_reason(retained_text, retained_code)}\n\n[{code}] {refusal_reason(text, code)}'
+        ending = state.get('ending', step.ending)
     if repeat and not (hook and not own_refusal):
         reviews = state.get('reviews') or []
         ended = state.get('ended_patch') or (reviews[-1]['patch'] if reviews else '')
@@ -1271,11 +1314,12 @@ def reply_for(session: Path, step: Step, repo: str, base: str, *, hook: bool = F
             text = ''  # Only the notice belongs to this turn; no report or workflow view ran.
         elif code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND):
             text = f'{refusal_reason(text, code)} [{code}]'
-        elif code and code != NO_PYTHON:
+        elif code and code != NO_PYTHON and not is_report and not (step.settled_here and own_refusal):
             text = f'[{code}] {refusal_reason(text, code)}'
         elif not text and (state or step.text):
             text = cloud.WITHHELD
-    return Step(action, text, code, note, ending), state, refusal_reason(why, code)
+    return Step(action, text, code, note, ending, call_ran=step.ran,
+                settled_here=step.settled_here, refusal=step.refusal), state, refusal_reason(why, code)
 
 
 def _consent_stop(total: int | None) -> str:
@@ -1417,7 +1461,11 @@ def _reserve_request(session: Path, state: dict) -> None:
     session = store.path(session)
     token = _RESERVATION.set((session, state))
     try:
-        _save(session, state)
+        try:
+            _save(session, state)
+        except OSError as exc:
+            raise _ReservationUnsaved(f'The request reservation could not be saved: {exc}. '
+                                      'This request was not sent. Retry this call.') from None
     finally:
         _RESERVATION.reset(token)
 
@@ -1542,7 +1590,7 @@ def _finish(session: Path, state: dict, report: str, code: str = "", ending: str
                 _save(session, state)
             except (WorkspaceRefused, OSError, ValueError):
                 pass  # The settled report survives even if its diagnostic cannot be saved.
-    return Step(STOP, report, code, ending=ending)
+    return Step(STOP, report, code, ending=ending, call_ran=True, settled_here=True)
 
 
 def _before_fix() -> bool:
@@ -1575,6 +1623,24 @@ def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
         review)
 
 
+def _scouts_end(root: Path, task: str, base: str, session: Path, state: dict, reason: str, report: str) -> Step:
+    """Replace an interrupted ending's debt; a fresh successful scouts run owes no row.
+
+    The caller builds the report under the step's consent guard before any row
+    changes, so a refused final review owes only the refusal's row.
+    """
+    interrupted = bool(state.get('stop') or 'row_due' in state or 'row' in state)
+    state['stop'] = reason
+    if interrupted:
+        try:
+            _owe_row(task, base, session, state, _patch_now(root, base), scouts=True)
+        except (KeyError, TypeError, AttributeError, ValueError, OSError, RecursionError, MemoryError) as exc:
+            state['row'] = f'{type(exc).__name__}: {exc}'[:300]
+        else:
+            _write_row(session, state)
+    return _finish(session, state, report, patch=_patch_now(root, base))
+
+
 def _cause(state: dict, fixed: list[dict], still: list[dict]) -> str:
     """Why a run ended, from what stopped it, so a review that failed with a finding open is a failed review: the findings speak
     only where nothing else ended the loop."""
@@ -1594,7 +1660,7 @@ def _round_outcome(one: dict) -> str:
     return "test_showed_nothing" if one["results"].get(one["file"]) in SHOWED_NOTHING else "nothing_reproduced"
 
 
-def _failure_row(task: str, base: str, session: Path, state: dict, now: str, cause: str = "") -> dict:
+def _failure_row(task: str, base: str, session: Path, state: dict, now: str, cause: str = "", *, scouts: bool = False) -> dict:
     """A run's row for the next cycle of the self-improvement loop: ``metaharness.domain.FailureRecord``'s fields first, as
     a cause must be a stable code. ``independently_observed`` means only that G6 saw a test fail: it ran another family's test,
     apart from the agent, so a run where none failed observed nothing, whatever else it says. ``session`` names the folder
@@ -1602,21 +1668,24 @@ def _failure_row(task: str, base: str, session: Path, state: dict, now: str, cau
     refused run has no reviews. ``now``: the digest of the patch as the caller read it, "" if it could not. Nothing here reads
     the repository, which could fail: with no ``now``, ``tree_changed`` is None, unknown, and the run still has its row.
     ``cause``: a refusal's own, for this row alone. It is no part of the state, which a killed hook leaves for a run that goes
-    on, and that run's row must say how that run ended."""
-    reviews = state.get("reviews") or []
-    fixed, still = patch_report.findings(reviews)
+    on, and that run's row must say how that run ended. Scouts use their own
+    rounds, not retained review history, which need not contain test results."""
+    reviews = [] if scouts else state.get("reviews") or []
+    fixed, still = ([], []) if scouts else patch_report.findings(reviews)
     cause = cause or _cause(state, fixed, still)
     return {"case_id": f"{digest(task)[:16]}:{base[:12]}", "cause": cause, "changeable": cause not in NOT_CHANGEABLE,
             "note": (still or fixed)[0]["rule"] if still or fixed else state["stop"],
-            "independently_observed": bool(fixed or still), "task": digest(task), "base": base, "label": "",
+            "independently_observed": (any(one.get('failing') for one in state.get('rounds') or []) if scouts else
+                                       bool(fixed or still)), "task": digest(task), "base": base, "label": "",
             "models": {"agent": state.get("agent", ""),
-                       "reviewer": next((one["reviewer"] for one in reversed(reviews) if one.get("reviewer")), "")},
-            "session": session.name, "rounds": len(reviews),
+                       "reviewer": ((state.get('critic') or {}).get('reviewer', '') if scouts else
+                                    next((one["reviewer"] for one in reversed(reviews) if one.get("reviewer")), ""))},
+            "session": session.name, "rounds": len(state.get('rounds') or []) if scouts else len(reviews),
             "reviews": [{**{k: one[k] for k in ("verdict", "rule", "why", "test", "patch", "results")},
                          "outcome": _round_outcome(one), "told": one.get("told", ""), "reviewer": one.get("reviewer", "")}
                         for one in reviews],
             "stop": state["stop"], "left": state.get("left", ""),
-            "tree_changed": (now != reviews[0]["patch"] if now else None) if reviews else False}
+            "tree_changed": None if scouts else (now != reviews[0]["patch"] if now else None) if reviews else False}
 
 
 def _row_of(line: str, session: Path) -> bool:
@@ -1654,11 +1723,23 @@ def _write_row(session: Path, state: dict) -> None:
         state["row"] = f"{type(exc).__name__}: {exc}"[:300]
 
 
-def _owe_row(task: str, base: str, session: Path, state: dict, now: str, cause: str = "") -> None:
+def _owe_row(task: str, base: str, session: Path, state: dict, now: str, cause: str = "", *, scouts: bool = False) -> None:
     """The run's row, owed from here on: built, marked in ``OWING`` and saved with the state, before anything that can fail, so
     what follows can delay the row and cannot lose it. ``_write_row`` delivers it. It is JSON in ASCII, so it is one line
     whatever its text holds. A mark that cannot be made leaves the row to the run's own later calls."""
-    state["row_due"] = json.dumps(_failure_row(task, base, session, state, now, cause))
+    try:
+        state["row_due"] = json.dumps(_failure_row(task, base, session, state, now, cause, scouts=scouts))
+    except (KeyError, TypeError, AttributeError, ValueError, RecursionError, MemoryError) as exc:
+        if not scouts:
+            raise
+        # An unbuildable scouts row must neither block its report nor replay
+        # the interrupted refusal's cause. Keep only known identity and stop.
+        state['row_build'] = f'{type(exc).__name__}: {exc}'[:300]
+        state["row_due"] = json.dumps({
+            'case_id': f'{digest(task)[:16]}:{base[:12]}', 'cause': '', 'changeable': False,
+            'note': state['stop'], 'independently_observed': False, 'task': digest(task), 'base': base,
+            'session': session.name, 'label': '', 'models': {'agent': '', 'reviewer': ''},
+            'rounds': None, 'reviews': [], 'stop': state['stop'], 'left': '', 'tree_changed': None})
     try:
         mark = store.home_path(*OWING, session.name)
         store.mkdir(mark.parent, parents=True, exist_ok=True, mode=0o700)
@@ -1802,6 +1883,8 @@ def _prepare_locked(root: Path, task: str, base: str, session: Path, scout: Host
         try:
             try:
                 _scouts(repo_tests.change(root, base), task, session, state, shipped, scout, BEFORE)
+            except _ReservationUnsaved as exc:
+                return f'[{RESERVATION_UNSAVED}] {exc}'
             except repo_tests.RepoRefused as exc:
                 if exc.code != ISOLATION_UNAVAILABLE:
                     raise
@@ -1871,8 +1954,8 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
             return _advance(repo, task, base, session, scout, critic, said, answered, agent)
     except WorkspaceRefused as exc:
         if exc.code in (WORKSPACE_BUSY, BUSY):
-            return Step(WAIT, ALREADY_RUNNING, BUSY)
-        return Step(STOP, exc.reason, exc.code, ending="untested")
+            return Step(WAIT, ALREADY_RUNNING, BUSY, call_ran=False)
+        return Step(STOP, exc.reason, exc.code, ending="untested", call_ran=False, refusal=True)
 
 
 def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host | None, critic: LLMCaller | None,
@@ -1902,9 +1985,19 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
              said: str, answered: bool, agent: str) -> Step:
     """One step, with the session held: the state is read here, so a step sees what the one before it wrote."""
     state = _load(session)
+    ended_before = bool(state.get('done'))
     with _run_count(session, state, fresh=not state) as run:
         try:
             return _step(state, run, repo, task, base, session, scout, critic, said, answered, agent)
+        except _ReservationUnsaved as exc:
+            return Step(STOP, str(exc), RESERVATION_UNSAVED, ending='untested', call_ran=True, refusal=True)
+        except OSError as exc:
+            retained = _load(session)
+            if (not ended_before and retained.get('done')
+                    and not (isinstance(retained, _RetainedState) and not retained.readable)):
+                return Step(STOP, str(exc), PUBLICATION_UNSAVED, ending=retained.get('ending', 'untested'),
+                            call_ran=True, settled_here=True, refusal=True)
+            raise
         except (WorkspaceRefused, PathRefused, repo_tests.RepoRefused) as exc:
             code = OUTSIDE_ROOT if isinstance(exc, PathRefused) else exc.code
             run.into(state)
@@ -1914,14 +2007,25 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
                 retained = _load(session)
                 if retained.get('done'):
                     # This call's refusal is returned, but no settled bytes change.
-                    return Step(STOP, text, code, ending="untested")
+                    return Step(STOP, text, code, ending="untested", call_ran=not ended_before,
+                                settled_here=not ended_before, refusal=True)
                 if isinstance(exc, repo_tests.RepoRefused) and run.total() == 0:
-                    return Step(STOP, text, code, ending="untested")
+                    return Step(STOP, text, code, ending="untested", call_ran=False, refusal=True)
                 return _refused(session, state, task, base, Path(repo), text, code,
                                 "completion_body_refused", untested=True)
-            except (WorkspaceRefused, PathRefused, OSError, ValueError):
-                # A refused state or report target cannot replace the original refusal.
-                return Step(STOP, text, code, ending="untested")
+            except (WorkspaceRefused, PathRefused, OSError, ValueError) as publication:
+                if not ended_before and state.get('done'):
+                    # The original ending is saved. Expose the publication's
+                    # own failure alongside it, including equal-code failures.
+                    publication_code = (OUTSIDE_ROOT if isinstance(publication, PathRefused) else
+                                        publication.code if isinstance(publication, WorkspaceRefused) else code)
+                    publication_reason = (publication.reason if isinstance(publication, (WorkspaceRefused, PathRefused))
+                                          else str(publication))
+                    return Step(STOP, publication_reason, publication_code, ending=state.get('ending', 'untested'),
+                                call_ran=True, settled_here=True, refusal=True)
+                # An unsaved ending cannot replace the original refusal.
+                return Step(STOP, text, code, ending="untested", call_ran=not ended_before,
+                            settled_here=not ended_before and bool(state.get('done')), refusal=True)
 
 
 def _refused(session: Path, state: dict, task: str, base: str, root: Path,
@@ -1951,7 +2055,7 @@ def _step(state: dict, run: _RunCount, repo: str | Path, task: str, base: str, s
         if "row_due" in state:
             _write_row(session, state)
             _save(session, state)
-        return Step(STOP, code=state.get("code", ""), note=ALREADY_ENDED, ending=state.get("ending", ""))
+        return Step(STOP, code=state.get("code", ""), note=ALREADY_ENDED, ending=state.get("ending", ""), call_ran=False)
     state["agent"] = agent or state.get("agent", "")
     root = repo_tests.checked_repo(repo)
     change = repo_tests.change(root, base)
@@ -1964,9 +2068,9 @@ def _step(state: dict, run: _RunCount, repo: str | Path, task: str, base: str, s
         with watching_consent() as watch:
             if not change.sources:
                 return (_review_end(root, task, base, session, state, WITHDRAWN) if state.get("reviews") else
-                        Step(STOP, code=NO_PYTHON, note=NOTHING_CHANGED, ending="untested"))
+                        Step(STOP, code=NO_PYTHON, note=NOTHING_CHANGED, ending="untested", call_ran=False))
             if state.get("reviewed") and "started" not in state and state["reviewed"] == digest(repo_tests.diff_text(change)):
-                return Step(STOP, note=ALREADY_READ)
+                return Step(STOP, note=ALREADY_READ, call_ran=False)
             if not task.strip():
                 return refused(NO_TASK, "G6_E_INPUT_VALIDATION", UNASKED)
             critic = critic or critic_host()
@@ -2024,8 +2128,9 @@ def _step(state: dict, run: _RunCount, repo: str | Path, task: str, base: str, s
                 if not reviewing:
                     _scouts(change, task, session, state, shipped, scout, AT_STOP)
                     if all(one["left_out"] for one in state["sets"].values()):
-                        return _finish(session, state, _report(root, task, base, state, "no probe set could run"),
-                                       patch=_patch_now(root, base))
+                        reason = 'no probe set could run'
+                        report = _report(root, task, base, state, reason)
+                        return _scouts_end(root, task, base, session, state, reason, report)
                 loop = Repairs(rounds, reviewed if reviewing else check, tree, answered, asks(said))
                 got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                             max_iterations=MAX_REPAIRS + 1, timeout_s=LOOP_S - (time.time() - state["started"]))
@@ -2035,19 +2140,20 @@ def _step(state: dict, run: _RunCount, repo: str | Path, task: str, base: str, s
                 return refused(NO_BOUNDARY.format(why=exc), ISOLATION_UNAVAILABLE, UNCONFINED)
             if loop.waiting:
                 _save(session, state)
-                return Step(WAIT, ASKED, WAITING_ON_PERSON)
+                return Step(WAIT, ASKED, WAITING_ON_PERSON, call_ran=False)
             if loop.pending and reviewing:
                 state["reply_text"] = loop.pending
                 _save(session, state)
-                return Step(CONTINUE, loop.pending)
+                return Step(CONTINUE, loop.pending, call_ran=True)
             if loop.pending:
                 told, first = shipped.repair.format(text=loop.pending), _told(state, shipped)   # first: no hook could say it before
                 state["reply_text"] = f"{first}\n\n{told}" if first else told
                 _save(session, state)
-                return Step(CONTINUE, state["reply_text"])
+                return Step(CONTINUE, state["reply_text"], call_ran=True)
             reason = loop.why or STOPPED.get(got.status, got.reason)
             if not reviewing:
-                return _finish(session, state, _report(root, task, base, state, reason), patch=_patch_now(root, base))
+                report = _report(root, task, base, state, reason)
+                return _scouts_end(root, task, base, session, state, reason, report)
             if got.status == "no_counterexample_in_domain":
                 reason = (NO_REVIEW if reviews[-1]["verdict"] not in READ_VERDICTS else UNREPRODUCED if _unreproduced(reviews) else CLEAN)
             elif got.status == "counterexample_budget_exhausted":

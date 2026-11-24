@@ -41,18 +41,15 @@ def _asked(repo: str, task: str, base: str, session: Path) -> dict:
     Called with the session held, so one first call binds it. A call for another repository or task is refused, as its
     reply would be about what the first asked. A later base is not compared: it may be HEAD, which the agent's commits move."""
     from g6.workforce import repo_tests
-    from g6.core import cloud_consent as cloud
 
-    root, known = repo_tests.checked_repo(repo), store.path(session, "task.json")
-    if known.is_file():
+    root, known = repo_tests.checked_repo(repo), store.task_path(session / 'task.json')
+    if store.task_present(session / 'task.json'):
         try:
-            expected = store.path(session, 'task.sha256').read_text(encoding='ascii')
-            asked = json.loads(cloud.read_retained(known, expected))
+            asked = store.read_task(session / 'task.json')
             if not isinstance(asked, dict) or set(asked) != {'repo', 'task', 'base'}:
                 raise ValueError('malformed retained task')
         except (OSError, TypeError, ValueError, RecursionError, MemoryError):
-            cloud.record_sources((cloud.UNKNOWN,))
-            raise repo_tests.RepoRefused(cloud.REQUIRED, cloud.WITHHELD) from None
+            raise repo_tests.RepoRefused(store.TASK_UNREADABLE, store.UNREADABLE_TASK) from None
         if asked["repo"] != str(root):
             raise repo_tests.RepoRefused("G6_E_INPUT_VALIDATION", "this session belongs to another repository")
         if asked["task"] != task:
@@ -60,7 +57,8 @@ def _asked(repo: str, task: str, base: str, session: Path) -> dict:
                                                                   "call's task as it was, or name a new session")
         return asked
     asked = {"repo": str(root), "task": task, "base": repo_tests.change(root, base).base_commit}
-    store.write_retained(known, json.dumps(asked).encode('utf-8'))
+    with store.task_publication(known):
+        store.write_retained(known, json.dumps(asked).encode('utf-8'))
     return asked
 
 
@@ -91,11 +89,12 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
             asked = _asked(repo, task, base, folder)
         done = loop.advance(asked["repo"], asked["task"], asked["base"], folder, said=reason, answered=bool(reason.strip()))
     except repo_tests.RepoRefused as exc:
-        return {**blocked_reply(f"[{exc.code}] {exc}", request_id=request_id), "code": exc.code}
+        return {**blocked_reply(f"[{exc.code}] {exc}", request_id=request_id), "code": exc.code,
+                **({'recovery': loop.NEW_SESSION} if exc.code == store.TASK_UNREADABLE else {})}
     except WorkspaceRefused as exc:
         if exc.code not in (WORKSPACE_BUSY, loop.BUSY):
             return {**blocked_reply(str(exc), request_id=request_id), "action": loop.STOP, "code": exc.code}
-        done = loop.Step(loop.WAIT, loop.ALREADY_RUNNING, loop.BUSY)
+        done = loop.Step(loop.WAIT, loop.ALREADY_RUNNING, loop.BUSY, call_ran=False)
     if done.action == loop.WAIT:      # the step that is running owns the state, so nothing of it is read here
         return {**blocked_reply(f"[{done.code}] {done.text}", request_id=request_id), "run_id": folder.name,
                 "action": done.action, "code": done.code}
@@ -123,6 +122,8 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
         "action": done.action, "report": text, "ending": ending, **({"note": note} if note else {})}
     if note == loop.ALREADY_ENDED:
         said['recovery'] = 'Call g6_review_until_clean with a new session to review further changes.'
+    elif isinstance(state, loop._RetainedState) and not state.readable:
+        said['recovery'] = loop.NEW_SESSION
     if code:
         refused = blocked_reply(f"[{code}] {why}"[:600], request_id=request_id)
         result = {**refused, "run_id": folder.name, "evidence": evidence, **said, "code": code}
