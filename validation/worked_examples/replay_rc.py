@@ -250,10 +250,22 @@ class _HandlePath(type(Path())):
                 yield stream
 
 
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict:
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON field: {key}")
+        value[key] = item
+    return value
+
+
 class Source:
     """Allowlisted relative reads, with no write API and no recursive discovery."""
 
     def __init__(self, root: Path, *, required: bool = False):
+        self.index_present = False
+        self.index_excluded: list[dict] = []
+        self.row_locations: dict[int, dict] = {}
         if required:
             try:
                 with _open_handle(root, directory=True) as opened:
@@ -297,26 +309,47 @@ class Source:
             return opened.mode is not None and stat.S_ISREG(opened.mode)
 
     def read_json(self, rel: str | Path) -> Any:
-        return json.loads(self.read_bytes(rel).decode("utf-8"))
+        content = self.read_bytes(rel)
+        try:
+            return json.loads(content.decode("utf-8"), object_pairs_hook=_unique_object)
+        except ValueError as exc:
+            raise ValueError(f"invalid source JSON in {rel}: {exc}") from exc
 
     def rows(self) -> list[dict]:
+        self.index_present = False
+        self.index_excluded = []
+        self.row_locations = {}
         try:
             content = self.read_bytes("runs.jsonl")
         except FileNotFoundError:
             return []
+        self.index_present = True
         rows = []
         lines = content.split(b"\n")
+        offset = 0
         for index, line in enumerate(lines):
+            length = len(line) + (index < len(lines) - 1)
+            location = {"index": "runs.jsonl", "offset": offset, "length": length}
+            offset += length
+            if not length:  # split's empty sentinel after a final newline, or an empty file
+                continue
             if not line.strip():
+                self.index_excluded.append({**location, "reason": "blank index line", "affects_denominator": False})
                 continue
             try:
-                rows.append(json.loads(line.decode("utf-8")))
-            except (UnicodeDecodeError, json.JSONDecodeError):
+                row = json.loads(line.decode("utf-8"), object_pairs_hook=_unique_object)
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 if index < len(lines) - 1:
-                    raise
+                    raise ValueError(f"invalid runs.jsonl line at byte {location['offset']}: {exc}") from exc
                 # Archive.append may still be writing the final JSON/UTF-8
-                # record. A complete JSON tail remains compatible with older
-                # indexes lacking their last newline; never parse a partial one.
+                # record, or the copy may be truncated. Neither is a whole index.
+                self.index_excluded.append({**location, "reason": "short final index line (invalid JSON or UTF-8)",
+                                            "affects_denominator": True})
+                continue
+            if not isinstance(row, dict):
+                raise ValueError(f"non-object runs.jsonl row at byte {location['offset']}")
+            rows.append(row)
+            self.row_locations[id(row)] = location
         return rows
 
 
@@ -370,17 +403,32 @@ def _index_paths(source: Source, row: dict) -> None:
         source.path(rel)
 
 
+class Exclusions(list):
+    """Candidate omissions plus named source records, retaining the two-list API.
+
+    make_plan and evaluate carry the attached records into their JSON results.
+    """
+
+    def __init__(self, index_excluded: list[dict], source_inventory: list[dict]):
+        super().__init__()
+        self.index_excluded = index_excluded
+        self.source_inventory = source_inventory
+
+
 def enumerate_cases(root: Path, tasks: list[we.Task], *,
-                    index_excluded: list[dict] | None = None) -> tuple[list[Case], list[dict]]:
+                    index_excluded: list[dict] | None = None, source_inventory: list[dict] | None = None,
+                    require_index: bool = False) -> tuple[list[Case], list[dict]]:
     """Refuse unsafe paths before candidate reads; optionally report metadata rows.
 
     Index exclusions are separate from missing patch evidence: distillation and
     dry runs must not add expected reviews to prediction denominators.
     """
     root = Source(root, required=True).root
+    index_excluded = [] if index_excluded is None else index_excluded
+    source_inventory = [] if source_inventory is None else source_inventory
     task_ids = {t.id for t in tasks}
     found: dict[tuple[str, str], Case] = {}
-    excluded = []
+    excluded = Exclusions(index_excluded, source_inventory)
     sources = [(number, part, Source(root / part))
                for number, part in enumerate(("", "round2", "round3"), 1)]
     # Preflight every index destination before reading even the first index.
@@ -389,24 +437,73 @@ def enumerate_cases(root: Path, tasks: list[we.Task], *,
     indices = []
     for archive_round, part, source in sources:
         rows = source.rows()
+        prefix = part + "/" if part else ""
+        if source.index_present:
+            inventory = {"index": prefix + "runs.jsonl", "status": "read"}
+        else:
+            with _open_handle(source.root, missing=True) as opened:
+                if opened.mode is not None and not stat.S_ISDIR(opened.mode):
+                    raise ValueError(f"source round is not a folder: {prefix or '.'}")
+                reason = ("optional round folder absent" if part and opened.mode is None else
+                          "index absent from existing round folder" if part else "root index absent")
+            inventory = {"index": prefix + "runs.jsonl", "status": "excluded", "reason": reason,
+                         "affects_denominator": reason != "optional round folder absent"}
+            if inventory["affects_denominator"]:
+                index_excluded.append(dict(inventory))
+        source_inventory.append(inventory)
+        index_excluded.extend({**row, "index": prefix + row["index"]} for row in source.index_excluded)
         starts = [r for r in rows if r.get("event") == "started"]
         # Validate paths across all rounds before reading or hashing candidates.
+        seen = set()
         for row in rows:
+            location = source.row_locations[id(row)]
+            where = f"{prefix}runs.jsonl at byte {location['offset']}"
+            event, kind = row.get("event"), row.get("kind")
+            # Path rules apply even when other metadata is incomplete or the
+            # event is unknown. Preserve their specific refusal before shape
+            # validation, as for every other index destination preflight.
             _index_paths(source, row)
+            if (event not in ("started", "ended") or not isinstance(row.get("run"), str)
+                    or event == "started" and (not isinstance(kind, str) or kind not in INDEX_KINDS
+                    or kind == "run" and (not isinstance(row.get("task"), str) or not row["task"])
+                    or row.get("task") is not None and not isinstance(row["task"], str)
+                    or "arm" in row and not isinstance(row["arm"], str)
+                    or kind == "check" and not isinstance(row.get("checked_run"), str))
+                    or event == "ended" and not isinstance(row.get("status"), str)):
+                raise ValueError(f"unknown index row shape: {where}")
+            if event == "started" and kind == "run" and row["run"].split("/")[1] != row["task"]:
+                raise ValueError(f"run task differs from index path: {where}")
+            identity = event, row["run"]
+            if identity in seen:
+                raise ValueError(f"duplicate index event for {row['run']}: {where}")
+            seen.add(identity)
         indices.append((archive_round, part, source, rows, starts))
+    if require_index and not any(source.index_present for _, _, source, _, _ in indices):
+        raise ValueError("source has no runs.jsonl in root, round2 or round3")
     for archive_round, part, source, rows, starts in indices:
         by_run = {row["run"]: row for row in starts}
+
+        def omit(row, reason, *, affects=True, **details):
+            location = source.row_locations[id(row)]
+            index_excluded.append({**location, "index": f'{part + "/" if part else ""}runs.jsonl',
+                                   "run": f'{part + "/" if part else ""}{row["run"]}',
+                                   "kind": row["run"].split("/")[0], "event": row["event"],
+                                   "reason": reason, "affects_denominator": affects, **details})
+
         for row in rows:
-            if "run" not in row:
-                continue
             kind = row["run"].split("/")[0]
             reason = INDEX_CLASSIFICATION[kind]
             checked = row.get("checked_run", by_run.get(row["run"], {}).get("checked_run"))
             if kind == "check" and checked and checked.split("/")[0] != "run":
                 reason = f"check of non-replayable {checked.split('/')[0]} folder"
-            if reason and index_excluded is not None:
-                index_excluded.append({"run": f'{part + "/" if part else ""}{row["run"]}',
-                                       "kind": kind, "event": row.get("event"), "reason": reason})
+            if reason:
+                omit(row, reason, affects=False)
+            elif row["run"] not in by_run:
+                omit(row, "ended row has no started row")
+            elif kind == "check" and checked not in by_run:
+                omit(row, "check has no indexed run")
+            elif by_run[row["run"]].get("task") not in task_ids:
+                omit(row, "task outside replay selection", affects=False)
         ended = {r["run"]: r for r in rows if r.get("event") == "ended"}
         for row in sorted(starts, key=lambda r: r["run"]):
             bug, rel = row.get("task"), row["run"]
@@ -433,23 +530,36 @@ def enumerate_cases(root: Path, tasks: list[we.Task], *,
                     continue
                 if check.get("task") != bug or check["run"].split("/")[1] != bug:
                     foreign.append(f'{part + "/" if part else ""}{check["run"]}/run.json')
+                    omit(check, "check belongs to a different task")
                     continue
                 if _has_error(check) or _has_error(ended.get(check["run"], {})):
                     errored.append(f'{part + "/" if part else ""}{check["run"]}/run.json')
                     continue
                 if ended.get(check["run"], {}).get("status") != "finished":
+                    omit(check, "archived check has no finished ended row")
                     continue
                 record = source.read_json(f'{check["run"]}/run.json')
+                if not isinstance(record, dict):
+                    raise ValueError(f'non-object check record: {check["run"]}/run.json')
                 if _has_error(record):
                     errored.append(f'{part + "/" if part else ""}{check["run"]}/run.json')
                     continue
                 if record.get("status") != "finished" or record.get("amended"):
+                    omit(check, "archived check record unfinished or amended")
                     continue
-                for result in record.get("checks", []):
+                results = record.get("checks")
+                if not isinstance(results, list) or any(not isinstance(result, dict) for result in results):
+                    raise ValueError(f'invalid checks in {check["run"]}/run.json')
+                if not results:
+                    omit(check, "archived check has no results")
+                for result_number, result in enumerate(results):
                     if (result.get("patch") == "final" and result.get("patch_applied") is True
                             and type(result.get("passes")) is bool):
                         labels.add("right" if result["passes"] else "wrong")
                         label_sources.append(f'{part + "/" if part else ""}{check["run"]}/run.json')
+                    else:
+                        omit(check, "check result is not an applied final-patch boolean label",
+                             affects=result.get("patch") != "base", result=result_number)
             if errored:
                 excluded.append({"bug": bug, "patch": name, "reason": "errored archived check", "checks": errored})
                 continue
@@ -460,16 +570,28 @@ def enumerate_cases(root: Path, tasks: list[we.Task], *,
                                  **({"checks": foreign} if foreign else {})})
                 continue
             rounds = source.read_json(f"{rel}/rounds.json")
+            if not isinstance(rounds, list) or any(not isinstance(review, dict) for review in rounds):
+                raise ValueError(f"invalid rounds in {rel}/rounds.json")
             digest = hashlib.sha256(patch_bytes).hexdigest()
             matched = []
+            review_excluded = []
+            seen_rounds = set()
+
+            def omit_review(path, reason):
+                review_excluded.append({"path": f'{part + "/" if part else ""}{path}', "reason": reason})
+
             for review in rounds:
-                number = review["round"]
+                number = review.get("round")
                 if type(number) is not int or number < 1:
                     raise ValueError(f"invalid round in {rel}")
+                if number in seen_rounds:
+                    raise ValueError(f"duplicate round in {rel}/rounds.json")
+                seen_rounds.add(number)
                 round_rel = f"{rel}/rounds/round-{number}.patch"
                 try:
                     round_bytes = source.read_bytes(round_rel)
                 except FileNotFoundError:
+                    omit_review(round_rel, "round patch absent")
                     continue
                 if hashlib.sha256(round_bytes).hexdigest() == digest:
                     args = review.get("input")
@@ -477,21 +599,40 @@ def enumerate_cases(root: Path, tasks: list[we.Task], *,
                     try:
                         captured = source.read_json(input_rel)
                     except FileNotFoundError:
-                        pass
+                        omit_review(input_rel, "captured input absent; inline input used if available")
                     else:
+                        if not isinstance(captured, dict):
+                            raise ValueError(f"invalid captured review input: {input_rel}")
                         captured = captured.get("tool_input", captured)
                         if args is not None and captured != args:
                             raise ValueError(f"archived review arguments disagree: {input_rel}")
                         args = captured
                     if isinstance(args, dict):
                         matched.append((number, args))
+                    else:
+                        omit_review(input_rel, "no object review arguments")
+                else:
+                    omit_review(round_rel, "round patch differs from final patch")
             number, arguments = max(matched, key=lambda x: x[0]) if matched else (None, None)
+            for earlier, _ in matched:
+                if earlier != number:
+                    omit_review(f"{rel}/rounds/round-{earlier}.patch", "matching review superseded by latest round")
             prompt = source.read_bytes(f"{rel}/prompt.txt").decode("utf-8")
             issue = re.search(r"(?m)^Issue #\d+:", prompt)
             if not issue:
                 raise ValueError(f"no issue text in {rel}/prompt.txt")
             origin = {"run": f'{part + "/" if part else ""}{rel}', "archive_round": archive_round,
                       "arm": row.get("arm") or "original", "round": number, "label_sources": label_sources}
+            origin["review_excluded"] = review_excluded
+            origin["task_text_selection"] = {"path": f'{part + "/" if part else ""}{rel}/prompt.txt',
+                                             "character_offset": issue.start(),
+                                             "reason": "issue suffix only; surrounding whitespace stripped"}
+            if not row.get("arm"):
+                origin["arm_default_reason"] = "arm absent or empty; original harness arm"
+            if not matched:
+                origin["arguments_excluded_reason"] = "no matching final-patch review arguments"
+            elif not _agent_origin(origin):
+                origin["arguments_excluded_reason"] = "arm outside agent replay selection"
             origin["arguments"] = arguments if _agent_origin(origin) else None
             origin["task_text"] = prompt[issue.start():].strip()
             candidate = Case(bug, digest, next(iter(labels)), patch, root, prompt[issue.start():].strip(),
@@ -738,9 +879,12 @@ def _signals(assessment: dict) -> tuple[bool, bool]:
 
 
 def evaluate(records: list[dict], cases: list[Case] | list[dict], *, modes: list[str], s0: str = "before",
-             excluded: list[dict] | None = None, registration: Registration | None = None) -> dict:
+             excluded: list[dict] | None = None, registration: Registration | None = None,
+             index_excluded: list[dict] | None = None) -> dict:
     """Score saved records against the committed registration, without reading source archives."""
     registration = registration or load_registration()
+    if index_excluded is None:
+        index_excluded = getattr(excluded, "index_excluded", [])
     limits = registration.limits
     cases = [case.saved() if isinstance(case, Case) else case for case in cases]
     expected = {(case["bug"], case["digest"], mode): case for case in cases for mode in modes
@@ -815,24 +959,29 @@ def evaluate(records: list[dict], cases: list[Case] | list[dict], *, modes: list
         return {bug: values[mode] for bug, values in by_bug.items() if mode in values}
 
     def complete(mode):
-        return bool(groups(mode)) and all(g["reviewed"] == g["expected"] and g["completed_calls"] == g["expected_calls"]
-                                          for g in groups(mode).values())
+        return (not any(row.get("affects_denominator", True) and mode in row.get("modes", MODES)
+                        for row in index_excluded)
+                and bool(groups(mode))
+                and all(g["reviewed"] == g["expected"] and g["completed_calls"] == g["expected_calls"]
+                        for g in groups(mode).values()))
 
     def count(mode, field):
         return sum(g[field] for g in groups(mode).values())
 
     def prediction(number, met, kill, selected, *, ready=True, observed_miss=False, **details):
         enabled = any(mode in modes for mode in selected)
-        done = enabled and ready and all(mode in modes and complete(mode) for mode in selected)
+        uncertain = [row for row in index_excluded or [] if row.get("affects_denominator", True)
+                     and any(mode in row.get("modes", MODES) for mode in selected)]
+        done = enabled and not uncertain and ready and all(mode in modes and complete(mode) for mode in selected)
         missing = sum(count(mode, "missing") + count(mode, "no_review") for mode in selected)
         excluded_count = sum(count(mode, "excluded") for mode in selected)
         return {"prediction": registration.predictions[number - 1][0],
                 "kill_criterion": registration.predictions[number - 1][1],
-                "status": "disabled" if not enabled else "incomplete" if excluded_count else "killed" if kill else
+                "status": "disabled" if not enabled else "incomplete" if uncertain or excluded_count else "killed" if kill else
                           "incomplete" if not done else "met" if met else "missed",
-                "prediction_met": met if done else False if enabled and observed_miss else None,
+                "prediction_met": None if uncertain else met if done else False if enabled and observed_miss else None,
                 "kill": kill if enabled else None,
-                "missing": missing, **details}
+                "missing": missing, "index_incomplete": bool(uncertain), **details}
 
     p4 = {bug: {"wrong": groups("neighbourhood").get(bug, {}).get("wrong", 0),
                 "leads": groups("neighbourhood").get(bug, {}).get("wrong_lead", 0)} for bug in registration.neighbours}
@@ -883,7 +1032,8 @@ def evaluate(records: list[dict], cases: list[Case] | list[dict], *, modes: list
                          ["neighbourhood"], ready=len(times) == count("neighbourhood", "reviewed"), median_seconds=middle),
     }
     return {"standing": "development", "unit": "bug", "registration_sha256": registration.sha256,
-            "by_bug": by_bug, "predictions": predictions, "excluded": omissions}
+            "by_bug": by_bug, "predictions": predictions, "excluded": omissions,
+            "index_excluded": list(index_excluded or [])}
 
 
 def validate_record_pins(records: list[dict], plan: dict, image_ids: dict) -> None:
@@ -909,6 +1059,8 @@ def make_plan(cases: list[Case], excluded: list[dict], tasks: list[we.Task], com
             "calls_by_bug": {bug: {"agent": sum(len(agent_views(case)) for case in cases if case.bug == bug),
                                    "hook": counts["hook"], "neighbourhood": 0} for bug, counts in by_bug.items()},
             "modes": modes, "neighbourhood": "disabled", "excluded": excluded,
+            "index_excluded": getattr(excluded, "index_excluded", []),
+            "source_inventory": getattr(excluded, "source_inventory", []),
             "unavailable": [{"bug": case.bug, "digest": case.digest, "mode": "agent",
                              "reason": "no matching final-patch review arguments in eligible arm"}
                             for case in cases if case.arguments is None],
@@ -928,7 +1080,9 @@ def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
     options = parser.parse_args(argv)
     try:
         if options.score:
-            score = _absolute_path(options.score)
+            # Check the full resolved destination before opening its parent or
+            # reading JSON, preserving the path rule's own refusal message.
+            score = canonical_path(options.score)
             saved = Source(score.parent).read_json(score.name)
             validate_record_pins(saved["records"], saved["plan"], saved.get("image_ids", {}))
             registration = load_registration()
@@ -936,6 +1090,7 @@ def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
                 raise ValueError("saved registration digest differs from committed registration")
             print(json.dumps(evaluate(saved["records"], saved["plan"]["cases"], modes=saved["plan"]["modes"],
                                       s0=saved["s0"], excluded=saved["plan"].get("excluded", []),
+                                      index_excluded=saved["plan"].get("index_excluded", []),
                                       registration=registration), indent=2))
             return 0
         if options.source is None or not re.fullmatch(r"[0-9a-f]{40}", options.registered_commit or ""):
@@ -947,10 +1102,15 @@ def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
             raise ValueError("neighbourhood execution is disabled until the mechanism exists")
         tasks = we.load_tasks()
         index_excluded = []
-        cases, excluded = enumerate_cases(options.source, tasks, index_excluded=index_excluded)
+        source_inventory = []
+        cases, excluded = enumerate_cases(options.source, tasks, index_excluded=index_excluded,
+                                          source_inventory=source_inventory, require_index=True)
         plan = make_plan(cases, excluded, tasks, options.registered_commit, modes, options.variant)
         plan["index_excluded"] = index_excluded
+        plan["source_inventory"] = source_inventory
         if options.dry:
+            plan["evaluation"] = evaluate([], cases, modes=modes, s0=options.s0, excluded=excluded,
+                                          index_excluded=index_excluded)
             print(json.dumps(plan, indent=2))
             return 0
         target = os.environ.get("G6_WE_ARCHIVE", "").strip()
@@ -976,7 +1136,7 @@ def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
                                                    pinned[case.bug], options.registered_commit))
             validate_record_pins(records, plan, pinned)
             body["evaluation"] = evaluate(records, cases, modes=modes, s0=options.s0,
-                                           excluded=excluded, registration=registration)
+                                           excluded=excluded, registration=registration, index_excluded=index_excluded)
             batch.finish(body, "finished")
         except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
             body["error"] = f"{type(exc).__name__}: {exc}"
