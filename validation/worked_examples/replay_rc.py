@@ -415,6 +415,23 @@ class Exclusions(list):
         self.source_inventory = source_inventory
 
 
+def _writer_round_label(label: Any) -> bool:
+    """Round stems accepted by run.check, including Windows glob casing.
+
+    The writer globs **/round-*.patch, sorts by int(p.stem.split("-")[1])
+    and records p.stem unchanged. Accept that conversion rather than a decimal
+    spelling rule. Windows-written labels remain readable on other hosts.
+    """
+    if (not isinstance(label, str) or not label.lower().startswith("round-")
+            or "/" in label or "\x00" in label):
+        return False
+    try:
+        int(label.split("-")[1])
+    except ValueError:
+        return False
+    return True
+
+
 def enumerate_cases(root: Path, tasks: list[we.Task], *,
                     index_excluded: list[dict] | None = None, source_inventory: list[dict] | None = None,
                     require_index: bool = False) -> tuple[list[Case], list[dict]]:
@@ -523,6 +540,8 @@ def enumerate_cases(root: Path, tasks: list[we.Task], *,
                 continue
             labels = set()
             label_sources = []
+            observed_labels = set()
+            observed_sources = []
             errored = []
             foreign = []
             for check in starts:
@@ -552,28 +571,47 @@ def enumerate_cases(root: Path, tasks: list[we.Task], *,
                     raise ValueError(f'invalid checks in {check["run"]}/run.json')
                 if not results:
                     omit(check, "archived check has no results")
+                final_label = Path("final.patch").stem
+                finals = [result for result in results if result.get("patch") == final_label]
+                unique_final = len(finals) == 1
+                if not unique_final:
+                    omit(check, "archived check does not have exactly one final-patch result",
+                         final_results=len(finals))
+                # Retain the existing conflict exclusion, including a duplicate
+                # check whose verdicts disagree with another check. These
+                # observations cannot supply final evidence for that check.
+                check_labels = {result["passes"] for result in finals
+                                if result.get("patch_applied") is True and type(result.get("passes")) is bool}
+                observed_labels.update(check_labels)
+                if check_labels:
+                    observed_sources.append(f'{part + "/" if part else ""}{check["run"]}/run.json')
+                if finals and _writer_round_label(final_label):
+                    omit(check, "ambiguous final-patch label")
+                    unique_final = False
                 for result_number, result in enumerate(results):
-                    if (result.get("patch") == "final" and result.get("patch_applied") is True
+                    if (unique_final and result.get("patch") == final_label and result.get("patch_applied") is True
                             and type(result.get("passes")) is bool):
                         labels.add("right" if result["passes"] else "wrong")
                         label_sources.append(f'{part + "/" if part else ""}{check["run"]}/run.json')
                     else:
-                        # run.check writes patch.stem: round producers number
-                        # round-N patches from 1. These and base are metadata,
-                        # even if their verdict is absent or not a boolean.
+                        # Known non-final stems are metadata regardless of
+                        # verdict, but cannot fill another check's final gap.
                         patch_label = result.get("patch")
-                        nonfinal = isinstance(patch_label, str) and (
-                            patch_label == "base" or re.fullmatch(r"round-[1-9][0-9]*", patch_label) is not None)
-                        omit(check, "check result is not an applied final-patch boolean label",
+                        nonfinal = patch_label == "base" or _writer_round_label(patch_label)
+                        reason = ("final result belongs to a check without unique final evidence"
+                                  if patch_label == final_label and not unique_final else
+                                  "check result is not an applied final-patch boolean label")
+                        omit(check, reason,
                              affects=not nonfinal, result=result_number)
             if errored:
                 excluded.append({"bug": bug, "patch": name, "reason": "errored archived check", "checks": errored})
                 continue
-            if len(labels) != 1:
+            if len(labels) != 1 or len(observed_labels) > 1:
+                conflicts = observed_sources if len(observed_labels) > 1 else []
                 excluded.append({"bug": bug, "patch": name,
-                                 "reason": "conflicting archived labels" if labels else
+                                 "reason": "conflicting archived labels" if conflicts else
                                  "foreign archived check" if foreign else "no archived label",
-                                 **({"checks": foreign} if foreign else {})})
+                                 **({"checks": conflicts or foreign} if conflicts or foreign else {})})
                 continue
             rounds = source.read_json(f"{rel}/rounds.json")
             if not isinstance(rounds, list) or any(not isinstance(review, dict) for review in rounds):
