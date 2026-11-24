@@ -14,7 +14,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from g6.core.ledger import canonical, digest
-from g6.core import stop
 from g6.distillation import sandbox
 
 from .detectors import run_template
@@ -22,7 +21,7 @@ from .facts import _extract_facts, source_mapping
 from .inactive_identity import method_identity, recorded_cases
 from .ledger import Stores
 from .records import MethodContract, VerifierCandidate
-from .runtime_state import StatusChanged, require_current, run_memo, run_scope, sample
+from .runtime_state import StatusChanged, measure_executions, require_current, run_memo, run_scope
 
 
 @dataclass(frozen=True)
@@ -41,29 +40,24 @@ class ExecutionRefused(ValueError):
         self.code = code
 
 
+@run_scope()
 def _recorded_verdicts(candidate, cases, resolve):
+    if type(candidate) is not VerifierCandidate:
+        raise ValueError('typed candidate required')
+    candidate = VerifierCandidate.model_validate_json(canonical(candidate.model_dump(mode='json')))
+    cases = list(cases)
     observations = [Observation({'tests/test_case.py': case['before_tests']},
                                 {'tests/test_case.py': case['after_tests']},
                                 _extract_facts({'tests/test_case.py': case['before_tests']},
                                                {'tests/test_case.py': case['after_tests']}))
                     for case in cases]
-    values, costs = [], []
-    for observation in observations:
-        repeats = []
-        for index in range(3):
-            if stop.engaged() is not None:
-                raise ValueError('stop engaged during recorded comparison')
-            start = time.monotonic()
-            # Match the evaluator's abstention for unregistered feature/probe semantics.
-            with sample(index):
-                repeats.append('abstain' if candidate.contract.applies_when or candidate.contract.probes else
-                               _execute_candidate(candidate, [observation], resolve)[0])
-            costs.append(time.monotonic() - start)
-        if len(set(repeats)) != 1:
-            raise ValueError('flaky recorded verdict')
-        values.append(repeats[0])
-    if costs and sum(cost > candidate.contract.cost_bound.wall_s for cost in costs) / len(costs) > .1:
-        raise ValueError('recorded cost bound exceeded')
+    context = tuple(entry.entry_id for entry in run_memo().snapshot())
+    values, _ = measure_executions(candidate, list(zip(cases, observations, strict=True)),
+        key_for=lambda pair: ('recorded', candidate.candidate_id, digest(pair[0]), context),
+        # Match evaluator abstention for unregistered feature/probe semantics.
+        execute=lambda pair: ('abstain' if candidate.contract.applies_when or candidate.contract.probes else
+                              _execute_candidate(candidate, [pair[1]], resolve)[0]),
+        clock=time.monotonic)
     return values
 
 
@@ -195,6 +189,8 @@ def _execute_candidate(candidate, observations, resolve, *, stack=()):
         raise ExecutionRefused("G6_E_SYNTH_DEPENDENCY", "cyclic or over-deep method dependency")
     stack = (*stack, candidate.candidate_id)
     memo = run_memo()
+    if memo.measuring:
+        return _execute_uncached(candidate, observations, resolve, stack=stack)
     identity = method_identity(candidate, resolve=resolve)
     keys = [('training', identity, digest([obs.before, obs.after, obs.facts, obs.language, obs.framework]),
              memo.repeat) for obs in observations]
