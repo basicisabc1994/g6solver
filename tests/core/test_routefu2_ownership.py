@@ -337,3 +337,138 @@ def test_path_only_history_acquires_stat_identity_before_replacement(ownership, 
     slot.write_text("value = 'independent optional'\n", encoding="utf-8")
     specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, slot)
     assert _roots(dependencies, SCOPES[1]) == {OPTIONAL}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction ownership")
+@pytest.mark.parametrize("advertised", (False, True), ids=("unloaded", "still-advertised"))
+@pytest.mark.parametrize("missing", ("junction", "target", "file-control"))
+def test_unresolved_junction_keeps_required_history(ownership, tmp_path, missing, advertised):
+    import _winapi
+
+    dependencies, specs = ownership
+    target = tmp_path / "target"
+    target.mkdir()
+    shared = target / "shared.py"
+    shared.write_text("value = 73\n", encoding="utf-8")
+    junction = tmp_path / "site"
+    _winapi.CreateJunction(str(target), str(junction))
+    try:
+        source = junction / "shared.py"
+        for root in (REQUIRED, OPTIONAL):
+            specs[root] = util.spec_from_file_location(root, source)
+        assert _roots(dependencies, SCOPES[0]) == frozenset()
+        if missing == "junction":
+            os.rmdir(junction)
+        elif missing == "target":
+            target.rename(tmp_path / "retained-target")
+        else:
+            shared.unlink()
+        if not advertised:
+            specs.clear()
+        invalidate_caches()
+        failure = ModuleNotFoundError("required alias is unavailable", name=OPTIONAL)
+        assert not dependencies.optional_dependency_missing("abstraction", failure)
+        specs.clear()
+        assert _roots(dependencies, SCOPES[1]) == frozenset()
+    finally:
+        if os.path.lexists(junction):
+            os.rmdir(junction)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction ownership")
+@pytest.mark.parametrize("failed_stat", (True, False), ids=("stat-fails", "healthy-control"))
+def test_existing_junction_replacement_retires_history(ownership, tmp_path, monkeypatch, failed_stat):
+    import _winapi
+
+    dependencies, specs = ownership
+    target = tmp_path / "target"
+    replacement = tmp_path / "replacement"
+    target.mkdir()
+    replacement.mkdir()
+    (target / "shared.py").write_text("value = 'required'\n", encoding="utf-8")
+    (replacement / "shared.py").write_text("value = 'independent optional'\n", encoding="utf-8")
+    junction = tmp_path / "site"
+    _winapi.CreateJunction(str(target), str(junction))
+    try:
+        source = junction / "shared.py"
+        for root in (REQUIRED, OPTIONAL):
+            specs[root] = util.spec_from_file_location(root, source)
+        assert _roots(dependencies, SCOPES[0]) == frozenset()
+        specs.clear()
+        os.rmdir(junction)
+        _winapi.CreateJunction(str(replacement), str(junction))
+        stat = os.stat
+
+        def transient_stat(path, *args, **kwargs):
+            if failed_stat and os.fspath(path) == str(source):
+                raise OSError("transient stat failure beside a resolved replacement")
+            return stat(path, *args, **kwargs)
+
+        with monkeypatch.context() as transient:
+            transient.setattr(os, "stat", transient_stat)
+            assert _roots(dependencies, SCOPES[1]) == {OPTIONAL}
+        os.rmdir(junction)
+        assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+    finally:
+        if os.path.lexists(junction):
+            os.rmdir(junction)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction ownership")
+def test_unresolved_namespace_junction_keeps_history_beside_live_location(ownership, tmp_path):
+    import _winapi
+
+    dependencies, specs = ownership
+    target = tmp_path / "target"
+    extra = tmp_path / "extra"
+    target.mkdir()
+    extra.mkdir()
+    junction = tmp_path / "site"
+    _winapi.CreateJunction(str(target), str(junction))
+    try:
+        for root, locations in ((REQUIRED, [str(junction)]), (OPTIONAL, [str(junction), str(extra)])):
+            spec = machinery.ModuleSpec(root, loader=None, is_package=True)
+            spec.submodule_search_locations = locations
+            specs[root] = spec
+        assert _roots(dependencies, SCOPES[0]) == frozenset()
+        os.rmdir(junction)
+        assert _roots(dependencies, SCOPES[1]) == frozenset()
+        specs.clear()
+        assert _roots(dependencies, SCOPES[2]) == frozenset()
+    finally:
+        if os.path.lexists(junction):
+            os.rmdir(junction)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction ownership")
+def test_unresolved_advertised_alias_keeps_history_through_stat_uncertainty(ownership, tmp_path, monkeypatch):
+    import _winapi
+
+    dependencies, specs = ownership
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "shared.py").write_text("value = 73\n", encoding="utf-8")
+    junction = tmp_path / "site"
+    _winapi.CreateJunction(str(target), str(junction))
+    try:
+        source = junction / "shared.py"
+        for root in (REQUIRED, OPTIONAL):
+            specs[root] = util.spec_from_file_location(root, source)
+        assert _roots(dependencies, SCOPES[0]) == frozenset()
+        specs.pop(REQUIRED)
+        os.rmdir(junction)
+        stat = os.stat
+
+        def transient_stat(path, *args, **kwargs):
+            if os.fspath(path) == str(source):
+                raise OSError("transient stat failure on an unresolved alias")
+            return stat(path, *args, **kwargs)
+
+        with monkeypatch.context() as transient:
+            transient.setattr(os, "stat", transient_stat)
+            assert _roots(dependencies, SCOPES[1]) == frozenset()
+        specs.clear()
+        assert _roots(dependencies, SCOPES[2]) == frozenset()
+    finally:
+        if os.path.lexists(junction):
+            os.rmdir(junction)

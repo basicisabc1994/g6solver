@@ -130,6 +130,14 @@ def _import_root(module: str) -> str:
     return module.split(".", 1)[0]
 
 
+def _existing_realpath(path):
+    """An unresolved spelling is not positive evidence of a different file."""
+    try:
+        return os.path.realpath(path, strict=True)
+    except FileNotFoundError:
+        return None
+
+
 def _root_identities(root: str, paths: set | None = None,
                      absent_paths: set | None = None) -> tuple[set[tuple], bool]:
     """Retain established aliases and whether the lookup completed, without imports."""
@@ -169,9 +177,13 @@ def _root_identities(root: str, paths: set | None = None,
             device, inode = status.st_dev, status.st_ino
             if status.st_ino:
                 identities.add(("inode", status.st_dev, status.st_ino))
+        elif resolved is not None:
+            # Keep live path matches independent, but never update ownership
+            # from non-strict realpath's fallback for a missing/broken path.
+            resolved = lookup(lambda: _existing_realpath(path))
         # Each successful probe contributes even when its companion failed.
         records = absent_paths if absent else paths
-        if records is not None and (resolved is not None or status is not None):
+        if records is not None and (absent or resolved is not None or status is not None):
             records.add((kind, source, os.fspath(path), resolved, device, inode))
 
     def namespace_identities(locations, source):
@@ -243,6 +255,12 @@ def _refresh_path_ownership() -> set[str]:
         except Exception:
             status = None
             uncertain.add(record)
+        if status is None and current_path is not None:
+            try:
+                current_path = _existing_realpath(source)
+            except Exception:
+                current_path = None
+                uncertain.add(record)
         if ((resolved is not None and current_path is not None and current_path != resolved)
                 or (device is not None and status is not None
                     and (status.st_dev, status.st_ino) != (device, inode))):
