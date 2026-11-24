@@ -2238,7 +2238,22 @@ args = sys.argv[9:]
                     report_root = ""  # an unreadable selection cannot establish absence
                 node = path + separator + selection
             names[item.nodeid] = node
-        bodies = {}
+        def identity(code):
+            import hashlib
+            def pack(value):
+                if isinstance(value, types.CodeType):
+                    return ["code", [pack(getattr(value, field, b"")) for field in (
+                        "co_code", "co_consts", "co_names", "co_varnames", "co_freevars", "co_cellvars",
+                        "co_argcount", "co_posonlyargcount", "co_kwonlyargcount", "co_nlocals",
+                        "co_stacksize", "co_flags", "co_name", "co_qualname", "co_exceptiontable")]]
+                if isinstance(value, (tuple, frozenset)):
+                    items = [pack(item) for item in value]
+                    if isinstance(value, frozenset):
+                        items.sort(key=lambda item: json.dumps(item, ensure_ascii=True))
+                    return [type(value).__name__, items]
+                return [type(value).__name__, repr(value)]
+            return hashlib.sha256(json.dumps(pack(code), ensure_ascii=True).encode("utf-8")).hexdigest()
+        bodies, codes = {}, {}
         for item in session.items:
             try:
                 if type(item) not in (pytest.Function, TestCaseFunction):
@@ -2262,12 +2277,14 @@ args = sys.argv[9:]
                 # A standalone producer can retain an absolute identity; only
                 # the reader, given the reviewed root, may make it relative.
                 bodies[names[item.nodeid]] = {"file": file, "line": code.co_firstlineno}
+                codes[names[item.nodeid]] = identity(code)
             except Exception:
                 pass
         report = {"nodes": list(names.values()), "root": report_root,
                   "exit": int(status) if status is not None else None}
         if bodies:
             report["bodies"] = bodies
+            report["codes"] = codes
         with open(counted + ".collection.json", "w", encoding="utf-8") as handle:
             json.dump(report, handle)
 ''')
@@ -3113,7 +3130,154 @@ def collect(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), 
         return {"status": "uncertain", "reason": f"pytest collection unavailable ({type(exc).__name__})"}
 
 
-def _read_collection(counted: Path, code: int | None, repo: Path) -> dict:
+def _collection_evidence(repo: Path):
+    """G6's bounded, pre-launch read; child-writable reports carry no authority.
+
+    Any configuration, hook/plugin declaration, or unreadable/import-time code
+    outside the small static subset disables identity for the whole report.
+    Scanning the repository's Python inventory also covers imported hook modules.
+    """
+    from g6.harness import change_map
+
+    sources = {}
+    try:
+        paths = _paths(_git(repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z"))
+        if change_map.pytest_context_paths(paths):
+            return sources, False
+        files = sorted({file for file in paths if file.endswith(".py")})
+        if len(files) > change_map.MAX_FILES:
+            return sources, False
+        directories = {repo}
+        for file in files:
+            path = _disk(repo, file)
+            if path is None:
+                return sources, False
+            directory = path.parent
+            while directory != repo:
+                if not _within(repo, directory):
+                    return sources, False
+                directories.add(directory)
+                directory = directory.parent
+        # Ignoring a configuration in git does not stop pytest loading it.
+        if any(os.path.lexists(directory / name) for directory in directories
+               for name in (*change_map.PYTEST_CONFIGS, "conftest.py")):
+            return sources, False
+        total = 0
+        for file in files:
+            component_process.checkpoint()
+            path = repo / _test_id(repo, file, "collection source")
+            if _linked(path) or not path.is_file() or path.stat().st_size > change_map.MAX_FILE_BYTES:
+                return {}, False
+            data = path.read_bytes()
+            total += len(data)
+            if len(data) > change_map.MAX_FILE_BYTES or total > change_map.MAX_TOTAL_CHARS:
+                return {}, False
+            # compile accepts Python's declared source encoding; no import or exec.
+            sources[file] = data
+        modules = {file.removesuffix(".py").replace("/", ".").removeprefix("src.").split(".")[0]
+                   for file in sources}
+        allowed = {*sys.stdlib_module_names, "pytest", *modules}
+        for data in sources.values():
+            tree = ast.parse(data)
+            aliases = {"pytest": "pytest"}
+            bindings = {}
+            for node in ast.walk(tree):
+                names = []
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    names = [node.name]
+                elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+                    names = [node.id]
+                elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                    names = [alias.asname or alias.name.split(".")[0] for alias in node.names]
+                for name in names:
+                    bindings[name] = bindings.get(name, 0) + 1
+            # A local decorator that merely returns its argument or creates a
+            # call-free lambda cannot arrange a later report write. Its return
+            # still needs the independent code comparison for body admission.
+            inert_decorators = set()
+            for definition in tree.body:
+                if (isinstance(definition, (ast.FunctionDef, ast.AsyncFunctionDef)) and
+                        not isinstance(definition, ast.AsyncFunctionDef) and not definition.decorator_list and
+                        bindings.get(definition.name) == 1 and
+                        len(definition.body) == 1 and isinstance(definition.body[0], ast.Return)):
+                    value = definition.body[0].value
+                    arguments = {argument.arg for argument in (*definition.args.posonlyargs, *definition.args.args)}
+                    if (isinstance(value, ast.Name) and value.id in arguments or
+                            isinstance(value, ast.Lambda) and not any(isinstance(part, ast.Call)
+                                                                    for part in ast.walk(value))):
+                        inert_decorators.add(definition.name)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name.split(".")[0] not in allowed:
+                            return sources, False
+                        aliases[alias.asname or alias.name] = alias.name
+                elif isinstance(node, ast.ImportFrom):
+                    if not node.level and (node.module or "").split(".")[0] not in allowed:
+                        return sources, False
+                    for alias in node.names:
+                        aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+                if ((isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("pytest_")) or
+                        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and
+                        node.name.startswith("__") and node.name.endswith("__") or
+                        isinstance(node, ast.Name) and node.id == "pytest_plugins"):
+                    return sources, False
+
+            def passive(body, in_class=False):
+                for node in body:
+                    component_process.checkpoint()
+                    if isinstance(node, (ast.Import, ast.ImportFrom, ast.Pass)):
+                        continue
+                    if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+                        continue
+                    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                        if any(not isinstance(target, ast.Name) for target in targets):
+                            return False
+                        try:
+                            ast.literal_eval(node.value)
+                        except (TypeError, ValueError):
+                            return False
+                        if isinstance(node, ast.AnnAssign) and any(
+                                isinstance(part, ast.Call) for part in ast.walk(node.annotation)):
+                            return False
+                        continue
+                    if isinstance(node, ast.ClassDef):
+                        if (node.decorator_list or node.keywords or
+                                any(not isinstance(base, (ast.Name, ast.Attribute)) for base in node.bases) or
+                                not passive(node.body, True)):
+                            return False
+                        continue
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        for decorator in node.decorator_list:
+                            function = decorator.func if isinstance(decorator, ast.Call) else decorator
+                            name = ast.unparse(function)
+                            head, dot, tail = name.partition(".")
+                            name = aliases.get(head, head) + dot + tail
+                            if not (name.startswith("pytest.mark.") or
+                                    in_class and name in ("staticmethod", "classmethod") or
+                                    isinstance(decorator, ast.Name) and name in inert_decorators):
+                                return False
+                            if any(isinstance(part, ast.Call) and part is not decorator
+                                   for part in ast.walk(decorator)):
+                                return False
+                        headers = [node.args, *([node.returns] if node.returns is not None else [])]
+                        if any(isinstance(part, ast.Call) for header in headers for part in ast.walk(header)):
+                            return False
+                        continue
+                    return False
+                return True
+
+            if not passive(tree.body):
+                return sources, False
+        return sources, True
+    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+        raise
+    except (OSError, ValueError, SyntaxError, TypeError, RecursionError, RepoRefused):
+        return {}, False
+
+
+def _read_collection(counted: Path, code: int | None, repo: Path, *, evidence=None) -> dict:
     """Read structured selected ids, never terminal output or a partial collection."""
     if code not in (0, 5):
         reason = "timed out" if code is None else f"errors (exit {code})"
@@ -3159,6 +3323,43 @@ def _read_collection(counted: Path, code: int | None, repo: Path) -> dict:
                 mapped[f"{prefix}/{node}" if prefix else node] = {"file": file, "line": line}
             if mapped:
                 answer["bodies"] = mapped
+                from g6.harness import change_map
+
+                sources, authoritative = _collection_evidence(repo) if evidence is None else evidence
+                codes, compiled, unresolved, admitted_codes = raw.get("codes", {}), {}, [], {}
+                for node, body in mapped.items():
+                    original = node.removeprefix(prefix + "/") if prefix else node
+                    file = body["file"]
+                    try:
+                        if not authoritative or type(codes) is not dict or file not in sources:
+                            raise ValueError("collection producer authority unavailable")
+                        if file not in compiled:
+                            compiled[file] = change_map.compiled_identities(sources[file], str(repo / file))
+                        selection = original.partition("::")[2]
+                        name = selection.split("[", 1)[0].rsplit("::", 1)[-1]
+                        expected = compiled[file].get((name, body["line"]), ())
+                        if not isinstance(codes.get(original), str) or codes[original] not in expected:
+                            raise ValueError("collected code differs from G6 compilation")
+                        # Transport content evidence for bodies that could
+                        # contribute calls. Location-only, call-free records
+                        # retain their existing diagnostic shape.
+                        tree = ast.parse(sources[file])
+                        if any(isinstance(definition, (ast.FunctionDef, ast.AsyncFunctionDef)) and
+                               definition.name == name and
+                               min([definition.lineno, *(d.lineno for d in definition.decorator_list)]) == body["line"] and
+                               any(isinstance(part, ast.Call) for part in ast.walk(definition))
+                               for definition in ast.walk(tree)):
+                            admitted_codes[node] = codes[original]
+                    except (OSError, ValueError, SyntaxError, TypeError, RecursionError, ImportError):
+                        unresolved.append(node)
+                if unresolved:
+                    answer["unresolved"] = unresolved
+                if admitted_codes:
+                    answer["codes"] = admitted_codes
+        if not nodes:
+            _, authoritative = _collection_evidence(repo) if evidence is None else evidence
+            if not authoritative:
+                return {"status": "uncertain", "reason": "pytest collection producer authority unavailable"}
         return answer
     except (OSError, ValueError, TypeError, KeyError, RecursionError):
         return {"status": "uncertain", "reason": "pytest collection report unavailable or incomplete"}
@@ -3256,6 +3457,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
     # tests collected, the output, the mutant's source and an empty config.
     # Both in one folder G6 makes, so a confined run can see where its report goes (pytest creates the report's folder,
     # and checks each folder above it, before writing).
+    collection_evidence = _collection_evidence(repo) if collect_only else None
     scratch_dir = outside_temp(repo, scratch_dir)
     with confine.run_folder(prefix="g6_repo_run_", dir=scratch_dir, ignore_cleanup_errors=True) as top:
         work, own = Path(top) / "home", Path(top) / "report"
@@ -3319,7 +3521,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
             if left:
                 isolation = {**isolation, "cleanup": left}
         output, counts = _output(log), _counts(report, repo, tuple(Path(entry) for entry in entries))
-        collection = _read_collection(Path(str(counted) + ".collection.json"), code, repo) if collect_only else None
+        collection = (_read_collection(Path(str(counted) + ".collection.json"), code, repo,
+                                       evidence=collection_evidence) if collect_only else None)
         progress = _progress(counts or {}, counted)
         seen[:] = _loaded(own / "loaded.json")
         if counts is not None:

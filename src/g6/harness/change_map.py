@@ -13,6 +13,7 @@ import ast
 import hashlib
 import json
 import time
+import types
 from bisect import bisect_left
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -381,6 +382,7 @@ class _Index:
         self.scopes, self.node_scopes, self.symbol_scopes = {}, {}, {}
         self.namespaces, self.resolved, self.call_cache, self.mros = {}, {}, {}, {}
         self.lineages = {}
+        self.compiled = {}
         self.sources, self.offsets, self.fingerprints, self.lines = {}, {}, {}, {}
         self.literal_nodes, self.literal_ranges = {}, {}
 
@@ -1136,6 +1138,7 @@ def _static_selected(index, rel, selection):
     class patterns and custom collectors need an available collection result.
     """
     _static_test_writes(index.trees[rel])
+    scanned_modules = {rel}
     parts = selection.split("[", 1)[0].replace("::", ".").split(".")
     module = index.modules[rel]
     for end in _each(range(1, len(parts))):
@@ -1147,6 +1150,14 @@ def _static_selected(index, rel, selection):
         lineage = _mro(index, cls)
         attributes = {}
         for ancestor in _each(lineage):
+            tree = index.trees.get(ancestor.file)
+            if tree is None or ancestor.file in index.invalid:
+                raise _FileOmitted("explicit body has an unreadable ancestor module")
+            # Many ancestors can share one module. Its whole-tree scan covers
+            # every class already; repeating it can exhaust the work budget.
+            if ancestor.file not in scanned_modules:
+                _static_test_writes(tree)
+                scanned_modules.add(ancestor.file)
             if ancestor.node.decorator_list or ancestor.node.keywords:
                 raise _FileOmitted("explicit body has dynamic ancestor class creation")
             scope = index.symbol_scopes[id(ancestor.node)]
@@ -1175,7 +1186,65 @@ def _static_selected(index, rel, selection):
             enabled = False
         if not enabled:
             raise _FileOmitted("explicit body has a suppressed or unavailable module")
-    return _selected(index, rel, selection)
+    symbols = _selected(index, rel, selection)
+    for symbol in _each(symbols):
+        _same_function_decorators(index, symbol)
+    return symbols
+
+
+def _same_function_decorators(index, symbol):
+    """Only pytest marks have a known same-function decorator result."""
+    for decorator in _each(symbol.node.decorator_list):
+        function = decorator.func if isinstance(decorator, ast.Call) else decorator
+        name = index.resolve(function, symbol)
+        if not name.startswith("pytest.mark."):
+            raise _FileOmitted("body has an unknown decorator result")
+
+
+def code_identity(code):
+    """Location-free code content, including constants and nested code.
+
+    Keep this encoding identical to the small collect-only producer below.
+    Code locations and __wrapped__ never substitute for these contents.
+    """
+    def pack(value):
+        _tick()
+        if isinstance(value, types.CodeType):
+            return ["code", [pack(getattr(value, field, b"")) for field in (
+                "co_code", "co_consts", "co_names", "co_varnames", "co_freevars", "co_cellvars",
+                "co_argcount", "co_posonlyargcount", "co_kwonlyargcount", "co_nlocals",
+                "co_stacksize", "co_flags", "co_name", "co_qualname", "co_exceptiontable")]]
+        if isinstance(value, (tuple, frozenset)):
+            items = [pack(item) for item in value]
+            if isinstance(value, frozenset):
+                items.sort(key=lambda item: json.dumps(item, ensure_ascii=True))
+            return [type(value).__name__, items]
+        return [type(value).__name__, repr(value)]
+
+    return hashlib.sha256(json.dumps(pack(code), ensure_ascii=True).encode("utf-8")).hexdigest()
+
+
+def compiled_identities(source, filename):
+    """Compile, never execute, G6's own source read with both assertion modes."""
+    found = {}
+
+    def remember(code):
+        pending = [code]
+        while pending:
+            _tick()
+            current = pending.pop()
+            found.setdefault((current.co_name, current.co_firstlineno), set()).add(code_identity(current))
+            pending.extend(value for value in current.co_consts if isinstance(value, types.CodeType))
+
+    remember(compile(source, filename, "exec", dont_inherit=True, optimize=0))
+    # pytest rewrites assertions before compiling a test module. Use G6's
+    # installed rewriter on our read, never a function or source from the child.
+    from _pytest.assertion.rewrite import rewrite_asserts
+
+    tree = ast.parse(source, filename=filename)
+    rewrite_asserts(tree, source.encode("utf-8") if isinstance(source, str) else source, filename)
+    remember(compile(tree, filename, "exec", dont_inherit=True, optimize=0))
+    return found
 
 
 def _static_test_writes(tree):
@@ -1207,6 +1276,11 @@ def _static_test_writes(tree):
             break
         setters.update(added)
     for node in _walk(tree):
+        if (isinstance(node, ast.Attribute) and node.attr in ("__code__", "__wrapped__") and
+                isinstance(node.ctx, (ast.Store, ast.Del))):
+            raise _FileOmitted("explicit body has an external callable identity write")
+        if isinstance(node, ast.Call) and _name(node.func).split(".")[-1] in ("exec", "compile"):
+            raise _FileOmitted("explicit body has dynamic code construction")
         if isinstance(node, (ast.Global, ast.Nonlocal)) and "__test__" in node.names:
             raise _FileOmitted("explicit body has a redirected collection attribute binding")
         if isinstance(node, ast.Call) and (
@@ -1239,8 +1313,12 @@ def _static_test_writes(tree):
                     raise _FileOmitted("explicit body has an unreadable collection attribute write") from None
 
 
-def _collected_selected(index, rel, selection, body):
-    """A selected check names no AST body until its callable location agrees."""
+def _collected_selected(index, rel, selection, body, identity=None):
+    """Resolve a reader-validated identity to the corresponding AST body.
+
+    The collection reader compares code contents against G6's compilation and
+    marks rejected reports unresolved. Locations alone remain diagnostic data.
+    """
     symbols = _selected(index, rel, selection)
     if not isinstance(body, dict) or type(body.get("line")) is not int:
         raise _FileOmitted("collected callable identity unavailable")
@@ -1248,6 +1326,16 @@ def _collected_selected(index, rel, selection, body):
         first = min([symbol.node.lineno, *(node.lineno for node in _each(symbol.node.decorator_list))])
         if body.get("file") != symbol.file or body["line"] != first:
             raise _FileOmitted("collected callable does not match the source body")
+        # A body with no call expressions cannot supply a positive. Retain its
+        # location for negatives; every body we follow needs content identity.
+        if any(isinstance(node, ast.Call) for node in _nodes(symbol.node, lambdas=True)):
+            if not isinstance(identity, str):
+                raise _FileOmitted("collected callable code identity unavailable")
+            if symbol.file not in index.compiled:
+                index.compiled[symbol.file] = compiled_identities(index.sources[symbol.file].decode("utf-8"), symbol.file)
+            expected = index.compiled[symbol.file].get((symbol.node.name, body["line"]), ())
+            if identity not in expected:
+                raise _FileOmitted("collected callable code differs from the source body")
     return symbols
 
 
@@ -1289,6 +1377,12 @@ def collect_checks(change, stated_checks, proposed_checks, roots, *, collector, 
                     if isinstance(answer.get("bodies"), dict):
                         answers[check]["bodies"] = {node: answer["bodies"][node]
                                                     for node in answers[check]["nodes"] if node in answer["bodies"]}
+                    if isinstance(answer.get("unresolved"), list):
+                        answers[check]["unresolved"] = [node for node in answers[check]["nodes"]
+                                                        if node in answer["unresolved"]]
+                    if isinstance(answer.get("codes"), dict):
+                        answers[check]["codes"] = {node: answer["codes"][node]
+                                                   for node in answers[check]["nodes"] if node in answer["codes"]}
                 else:
                     answers[check] = {"status": "uncertain", "reason": answer.get("reason") or
                                       "pytest collection result unavailable"}
@@ -1349,14 +1443,18 @@ def _exercised(targets: Sequence[dict], checks: Mapping[str, str], roots: Sequen
             with _file(rel):
                 try:
                     identities = answer.get("bodies")
-                    body = identities.get(node) if isinstance(identities, dict) else None
+                    body = (identities.get(node) if isinstance(identities, dict) and
+                            node not in answer.get("unresolved", ()) else None)
+                    codes = answer.get("codes", {})
                     bodies = (_selected(index, rel, selection) if check in static else
-                              _collected_selected(index, rel, selection, body))
+                              _collected_selected(index, rel, selection, body,
+                                                  codes.get(node) if isinstance(codes, dict) else None))
                 except _FileOmitted as exc:
                     uncertain.add(check)
                     skipped.append(skip(check, exc.args[0]))
                     continue
                 pending, seen = list(bodies), set()
+                admitted = {symbol.binding for symbol in bodies}
             while pending:
                 _tick()
                 symbol = pending.pop()
@@ -1364,10 +1462,24 @@ def _exercised(targets: Sequence[dict], checks: Mapping[str, str], roots: Sequen
                     continue
                 seen.add(symbol.binding)
                 with _file(symbol.file):
+                    if symbol.binding not in admitted:
+                        try:
+                            _same_function_decorators(index, symbol)
+                        except _FileOmitted as exc:
+                            uncertain.add(check)
+                            skipped.append(skip(check, exc.args[0]))
+                            continue
                     for binding in _each(index.calls(symbol)):
+                        callee = index.symbols.get(binding)
+                        if callee is not None and callee.binding not in admitted:
+                            try:
+                                _same_function_decorators(index, callee)
+                            except _FileOmitted as exc:
+                                uncertain.add(check)
+                                skipped.append(skip(check, exc.args[0]))
+                                continue
                         if binding in result and check not in result[binding]:
                             result[binding].append(check)
-                        callee = index.symbols.get(binding)
                         if callee is not None:
                             pending.append(callee)
     return result, skipped, uncertain, static
@@ -1413,7 +1525,8 @@ def _build(change: Change, base: Mapping[str, str], patch: Mapping[str, str], *,
         calls = called[sibling["binding"]]
         # Missing collection cannot establish either presence or absence.
         state = "uncertain" if uncertain else "not_required" if static else "available"
-        sibling.update(exercised="uncertain" if uncertain else bool(calls), checks=calls, collection=state)
+        sibling.update(exercised=True if calls else "uncertain" if uncertain else False,
+                       checks=calls, collection=state)
         if sibling["exercised"] is False:
             skipped.append(skip(sibling["symbol"], f"{sibling['symbol']} {sibling['reason']}; no check calls it"))
     targets = [*neighbours, *points]
