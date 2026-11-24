@@ -116,25 +116,32 @@ def _text_cache(source, buffer, raw, method):
     Unlike EOF, this neither finalizes a codec nor flushes its partial byte/newline state. It also distinguishes
     an exhausted last chunk from pending characters, without changing the wrapper's configuration.
     """
+    # Reconfiguration with the same encoding/errors leaves newline configuration alone. CPython refuses it
+    # after a decoded read, even if the last chunk is exhausted. This is a history guard, not a pending cursor:
+    # ordinary lossless codecs still need the boundary probe below. Never infer text from GC string referents,
+    # which also include the wrapper's fixed read-newline setting.
+    decoded_history = False
+    try:
+        io.TextIOWrapper.reconfigure(source, encoding=source.encoding, errors=source.errors)
+    except io.UnsupportedOperation:
+        decoded_history = True
+    # A successful reconfiguration can replace the decoder, so inspect its state afterwards.
     decoder = _decoder(source)
     buffered, flags = decoder.getstate()
     newline = isinstance(decoder, io.IncrementalNewlineDecoder)
     pending_cr = newline and flags & 1
     clean_flags = flags & ~1 if newline else flags
 
-    metadata = (source.encoding, source.errors)
-    chunks = [ref for ref in gc.get_referents(source)
-              if isinstance(ref, str) and ref and all(ref is not item for item in metadata)]
     if source.errors not in ("strict", "surrogateescape", "surrogatepass"):
-        # A lossy decoded chunk has no recoverable byte provenance. CPython visits that string for GC,
-        # including an exhausted last chunk; keep the standing refusal before consuming any of it.
-        if buffered or pending_cr or chunks:
+        # A used lossy decoder has no recoverable byte provenance. Keep the standing refusal before
+        # consuming caller text, including when the wrapper retains an exhausted decoded chunk.
+        if buffered or pending_cr or decoded_history:
             raise ValueError("[G6_E_STDIN_HANDOFF] stdin has unrecoverable lossy text")
-    if chunks:
+    if decoded_history:
         # With an opaque inverse, a pipe's consumed cursor cannot be inspected without consuming caller text.
         # Refuse before that destructive probe, even if its last decoded chunk might already be exhausted.
         try:
-            _check_codec_inverse(source.encoding, "".join(chunks))
+            _check_codec_inverse(source.encoding, "")
         except (UnicodeError, LookupError, TypeError, ValueError) as exc:
             raise ValueError("[G6_E_STDIN_HANDOFF] stdin has no inspectable lossless text cache") from exc
 
