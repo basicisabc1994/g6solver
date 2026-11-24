@@ -174,3 +174,79 @@ def test_unparsable_collection_source_loses_identity(tmp_path, monkeypatch, brok
 def test_unparsable_explicit_file_loses_identity(tmp_path, monkeypatch):
     _, usable = inventory(tmp_path, monkeypatch, {"checks.py": "def broken(:\n"}, selections=("checks.py::test_call",))
     assert usable is False
+
+
+@pytest.mark.parametrize("key,expected", [
+    ("PATH", False), ("LD_PRELOAD", False), ("APP_ENV", True), ("PYTESTAPP", True),
+])
+@pytest.mark.parametrize("write", [
+    "os.environ[{key!r}] = 'local'",
+    "os.environ.setdefault({key!r}, 'local')",
+    "os.environ.update({{{key!r}: 'local'}})",
+], ids=["store", "setdefault", "update"])
+def test_environment_writes_use_existing_runner_key_rule(tmp_path, monkeypatch, key, expected, write):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "conftest.py": "import os\n" + write.format(key=key) + "\n",
+        "test_api.py": "def test_call(): pass\n",
+    })
+    assert usable is expected
+
+
+@pytest.mark.parametrize("source", ["from . import helper\n", "from .helper import VALUE\n"],
+                         ids=["module", "value"])
+def test_root_package_relative_constant_import_keeps_identity(tmp_path, monkeypatch, source):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "__init__.py": source, "helper.py": "VALUE = 2\n", "test_api.py": "def test_call(): pass\n",
+    })
+    assert usable is True
+
+
+@pytest.mark.parametrize("body,expected", [("return 2", True), ("pytest.Function.runtest = None", False)],
+                         ids=["inert", "imported-write"])
+@pytest.mark.parametrize("source", [
+    "from . import helper\nhelper.setup()\n", "from .helper import setup\nsetup()\n",
+], ids=["module", "callee"])
+def test_root_package_relative_calls_follow_helper_effects(tmp_path, monkeypatch, body, expected, source):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "__init__.py": source,
+        "helper.py": "import pytest\ndef setup():\n    " + body + "\n",
+        "test_api.py": "def test_call(): pass\n",
+    })
+    assert usable is expected
+
+
+@pytest.mark.parametrize("file,source", [
+    ("__init__.py", "from .. import helper\n"),
+    ("module.py", "from . import helper\n"),
+    ("odd-name/__init__.py", "from . import helper\n"),
+], ids=["above-root", "no-package", "no-module-name"])
+def test_unresolvable_relative_import_is_local_to_its_effect(file, source):
+    from g6.core.git_name import GitName
+    from g6.workforce._collection_effects import CollectionEffects
+
+    bad, healthy = GitName(file.encode()), GitName(b"healthy.py")
+    reader = CollectionEffects.from_trees({
+        bad: ast.parse(source), healthy: ast.parse("def setup():\n    return 2\nsetup()\n"),
+    })
+    assert reader.passive(bad) is False
+    assert reader.passive(healthy) is True
+
+
+@pytest.mark.parametrize("source", ["from . import helper\n", "from .helper import VALUE\n"],
+                         ids=["module", "value"])
+def test_root_package_relative_import_keeps_invalid_helper_loaded(tmp_path, monkeypatch, source):
+    evidence = inventory(tmp_path, monkeypatch, {
+        "__init__.py": source, "helper.py": 'print "old"\n', "test_api.py": "def test_call(): pass\n",
+    })
+    assert evidence[1] is False
+    assert evidence[0].not_read == []
+
+
+def test_root_package_helper_relative_import_keeps_identity(tmp_path, monkeypatch):
+    _, usable = inventory(tmp_path, monkeypatch, {
+        "__init__.py": "from . import helper\n",
+        "helper.py": "from . import values\nVALUE = 2\n",
+        "values.py": "VALUE = 2\n",
+        "test_api.py": "def test_call(): pass\n",
+    })
+    assert usable is True

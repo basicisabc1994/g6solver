@@ -3255,7 +3255,7 @@ def _collection_evidence(repo: Path, *, roots=(), selections=()):
                 elif isinstance(node, ast.ImportFrom):
                     module = reader.import_module(file, node)
                     imported.add(module)
-                    imported.update(f"{module}.{alias.name}" for alias in node.names)
+                    imported.update(".".join(part for part in (module, alias.name) if part) for alias in node.names)
                 pending.extend(ast.iter_child_nodes(node))
         imported_modules = {".".join(parts[:end]) for dependency in imported for parts in [dependency.split(".")]
                             for end in range(1, len(parts) + 1)}

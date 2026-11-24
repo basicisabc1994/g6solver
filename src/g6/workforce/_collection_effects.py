@@ -75,7 +75,7 @@ class _Scope:
             elif isinstance(node, ast.ImportFrom):
                 module = reader.import_module(file, node)
                 for alias in node.names:
-                    self.bindings[alias.asname or alias.name] = f"{module}.{alias.name}"
+                    self.bindings[alias.asname or alias.name] = ".".join(part for part in (module, alias.name) if part)
             elif isinstance(node, (ast.Assign, ast.AnnAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 for target in targets:
@@ -134,6 +134,7 @@ class CollectionEffects:
         self.trees, self.modules = trees, set(modules)
         self.paths, self.definitions, self.scopes = {}, {}, {}
         self.names = {file: module_names(file, roots) for file in trees}
+        self.root_package = any(PurePosixPath(file) == PurePosixPath("__init__.py") for file in trees)
         self.function_scopes, self.checked, self.active = {}, {}, set()
         self.module_nodes, self.mark_aliases = {}, {}
         for file in trees:
@@ -147,11 +148,20 @@ class CollectionEffects:
         if not node.level:
             return node.module or ""
         names = self.names[file]
-        module = min(names, key=lambda name: (len(name.split(".")), name))
-        parts = module.split(".") if PurePosixPath(file).name == "__init__.py" else module.split(".")[:-1]
+        if names:
+            module = min(names, key=lambda name: (len(name.split(".")), name))
+            parts = module.split(".") if PurePosixPath(file).name == "__init__.py" else module.split(".")[:-1]
+        elif PurePosixPath(file) == PurePosixPath("__init__.py"):
+            parts = []
+        else:
+            return "?unresolved"
+        if self.root_package:
+            # The root package contributes a level, but no dotted identifier
+            # relative to the import root. Keep its children's _import_names.
+            parts.insert(0, "")
         if node.level > len(parts):
             return "?unresolved"
-        return ".".join([*parts[:len(parts) - node.level + 1], *([node.module] if node.module else [])])
+        return ".".join(part for part in [*parts[:len(parts) - node.level + 1], node.module] if part)
 
     def follow(self, name, seen=()):
         component_process.checkpoint()
@@ -208,7 +218,9 @@ class CollectionEffects:
 
     @staticmethod
     def _environment_key(node):
-        return isinstance(node, ast.Constant) and isinstance(node.value, str) and not node.value.upper().startswith(("PYTEST", "PYTHON"))
+        from g6.workforce.repo_tests import _runner_name
+
+        return isinstance(node, ast.Constant) and isinstance(node.value, str) and not _runner_name(node.value)
 
     def _call(self, function, scope, depth, strict):
         if not isinstance(function, (ast.Name, ast.Attribute)):
@@ -394,6 +406,8 @@ class CollectionEffects:
             if isinstance(node, ast.Lambda):
                 pending.append(node.args)
                 continue
+            if isinstance(node, ast.ImportFrom) and self.import_module(scope.file, node) == "?unresolved":
+                return False
             environment = self._environment(node, scope)
             if environment is False:
                 return False
