@@ -1322,6 +1322,13 @@ def _unique_origin_digests(cases: list[Case], *, source: Path | None = None) -> 
                 return False
             if digests.setdefault(run, case.digest) != case.digest:
                 return False
+    if source is not None:
+        for name, digest in names.items():
+            run = _origin_run_identity(name, source)
+            # The name joins every identity it has taken on, including this
+            # final read. Each identity in that group must share its digest.
+            if run is None or digests.setdefault(run, digest) != digest:
+                return False
     return True
 
 

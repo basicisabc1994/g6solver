@@ -231,3 +231,145 @@ def test_exact_name_digest_binding_survives_replacement(tmp_path, monkeypatch, s
     assert len(identities) == 2
     if source:
         assert None not in identities and identities[0] != identities[1]
+
+
+@pytest.mark.parametrize("alias,conflict", [(False, False), (True, False), (True, True)],
+                         ids=["same-name-same-digest", "case-alias-same-digest", "case-alias-conflict"])
+def test_source_replacement_joins_identities_by_name(tmp_path, monkeypatch, alias, conflict):
+    name = "run/synthetic/MixedCase"
+    other = name.rsplit("/", 1)[0] + "/mixedcase" if alias else name
+    folder = tmp_path / name
+    folder.mkdir(parents=True)
+    if alias and not (tmp_path / other).exists():
+        pytest.skip("requires case aliases; no directory flags changed")
+    assert folder.samefile(tmp_path / other)
+    original = rc._origin_run_identity
+    identities = []
+
+    def identify(run, source=None):
+        identity = original(run, source)
+        identities.append(identity)
+        if len(identities) == 1:
+            folder.rename(tmp_path / "retained-origin")
+            folder.mkdir()
+        return identity
+
+    monkeypatch.setattr(rc, "_origin_run_identity", identify)
+    cases = [SimpleNamespace(origins=[{"run": run}], digest=digest)
+             for run, digest in [(name, "a" * 64), (other, "b" * 64 if conflict else "a" * 64)]]
+    assert rc._unique_origin_digests(cases, source=tmp_path) is (not conflict)
+    assert identities[0] != identities[1] and None not in identities
+
+
+@pytest.mark.parametrize("conflict", [False, True], ids=["same-digest", "different-digest"])
+def test_source_stability_joins_every_observed_identity(monkeypatch, conflict):
+    # A takes identities 1, 2, then 4. B starts at 3 and ends at 2, joining
+    # through A's intermediate identity rather than its first or final one.
+    first, second = "run/synthetic/first", "run/synthetic/second"
+    reads = iter([(first, (1, 1)), (first, (1, 2)), (second, (1, 3)),
+                  (first, (1, 4)), (second, (1, 2))])
+
+    def identify(run, source=None):
+        expected, identity = next(reads)
+        assert run == expected and source == Path("synthetic-source")
+        return identity
+
+    monkeypatch.setattr(rc, "_origin_run_identity", identify)
+    cases = [SimpleNamespace(origins=[{"run": name}], digest=digest)
+             for name, digest in [(first, "a" * 64), (first, "a" * 64),
+                                  (second, "b" * 64 if conflict else "a" * 64)]]
+    assert rc._unique_origin_digests(cases, source=Path("synthetic-source")) is (not conflict)
+    assert next(reads, None) is None
+
+
+def test_source_stability_preserves_distinct_case_identities(monkeypatch):
+    names = ["run/synthetic/MixedCase", "run/synthetic/mixedcase"]
+    identities = {names[0]: (1, 1), names[1]: (1, 2)}
+
+    def identify(run, source=None):
+        assert source == Path("synthetic-source")
+        return identities[run]
+
+    monkeypatch.setattr(rc, "_origin_run_identity", identify)
+    cases = [SimpleNamespace(origins=[{"run": name}], digest=digest)
+             for name, digest in zip(names, ["a" * 64, "b" * 64])]
+    assert rc._unique_origin_digests(cases, source=Path("synthetic-source"))
+
+
+def test_source_second_identity_lookup_failure_is_unbound(tmp_path, monkeypatch):
+    name = "run/synthetic/origin"
+    folder = tmp_path / name
+    folder.mkdir(parents=True)
+    original = rc._origin_run_identity
+    reads = []
+
+    def identify(run, source=None):
+        identity = original(run, source)
+        reads.append(identity)
+        if len(reads) == 1:
+            folder.rename(tmp_path / "retained-origin")
+        return identity
+
+    monkeypatch.setattr(rc, "_origin_run_identity", identify)
+    case = SimpleNamespace(origins=[{"run": name}], digest="a" * 64)
+    assert not rc._unique_origin_digests([case], source=tmp_path)
+    assert len(reads) == 2 and reads[0] is not None and reads[1] is None
+
+
+@pytest.mark.parametrize("binding", ["exact-name", "identity"])
+def test_source_digest_conflict_returns_before_stability_read(monkeypatch, binding):
+    first = "run/synthetic/first"
+    second = first if binding == "exact-name" else "run/synthetic/second"
+    reads = iter([(1, 1), (1, 2) if binding == "exact-name" else (1, 1)])
+
+    def identify(run, source=None):
+        assert source == Path("synthetic-source")
+        identity = next(reads, None)
+        assert identity is not None, "rejected comparison performed a stability read"
+        return identity
+
+    monkeypatch.setattr(rc, "_origin_run_identity", identify)
+    cases = [SimpleNamespace(origins=[{"run": name}], digest=digest)
+             for name, digest in [(first, "a" * 64), (second, "b" * 64)]]
+    assert not rc._unique_origin_digests(cases, source=Path("synthetic-source"))
+
+
+def test_source_free_comparison_has_no_stability_read(monkeypatch):
+    original = rc._origin_run_identity
+    reads = []
+
+    def identify(run, source=None):
+        assert source is None
+        reads.append(run)
+        assert len(reads) <= 3, "source-free comparison performed a stability read"
+        return original(run, source)
+
+    monkeypatch.setattr(rc, "_origin_run_identity", identify)
+    names = ["run/synthetic/first", "run/synthetic/first", "run/synthetic/second"]
+    cases = [SimpleNamespace(origins=[{"run": name}], digest="a" * 64) for name in names]
+    assert rc._unique_origin_digests(cases)
+    assert reads == names
+
+
+@pytest.mark.parametrize("old", [False, True], ids=["current-rule", "old-rule"])
+def test_source_second_lookup_failure_scores_incomplete(batch, monkeypatch, capsys, old):
+    if old:
+        batch.saved["evidence_rule_version"] = 0
+    name = batch.saved["plan"]["cases"][0]["origins"][0]["run"]
+    folder = batch.source / name
+    original = rc._origin_run_identity
+    reads = []
+
+    def identify(run, source=None):
+        identity = original(run, source)
+        if source is not None and run == name:
+            reads.append(identity)
+            if len(reads) == 1:
+                folder.rename(batch.source / "retained-origin")
+        return identity
+
+    monkeypatch.setattr(rc, "_origin_run_identity", identify)
+    status, result = trust.score(batch, capsys, source=True)
+    assert (status, result["evidence_source"], result["predictions"]["P2"]["status"]) == (
+        2, "unavailable", "incomplete")
+    assert len(reads) >= 2 and reads[0] is not None and reads[1] is None
