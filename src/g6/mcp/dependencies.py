@@ -8,12 +8,27 @@ from importlib import machinery, metadata, util
 from pathlib import PurePosixPath
 
 
+_EXCEPTION_WORK_LIMIT = 100_000
+
+
+class _ExceptionWork:
+    def __init__(self):
+        self.remaining = _EXCEPTION_WORK_LIMIT
+
+    def spend(self, count=1):
+        self.remaining -= count
+        if self.remaining < 0:
+            raise RecursionError("exception dependency walk exceeded work limit")
+
+
 def missing_module(exc: BaseException) -> str | None:
     """Diagnostic name beneath visible wrappers; this alone does not establish absence."""
     pending = [(exc, False)]
     seen = set()
     diagnostic = None
+    work = _ExceptionWork()
     while pending:
+        work.spend()
         current, visited = pending.pop()
         if visited:
             if isinstance(current, ModuleNotFoundError) and current.name:
@@ -26,7 +41,9 @@ def missing_module(exc: BaseException) -> str | None:
         seen.add(id(current))
         pending.append((current, True))
         if isinstance(current, BaseExceptionGroup):
-            pending.extend((member, False) for member in reversed(current.exceptions))
+            members = current.exceptions
+            work.spend(len(members))
+            pending.extend((member, False) for member in reversed(members))
         if current.__context__ is not None and not current.__suppress_context__:
             pending.append((current.__context__, False))
         if current.__cause__ is not None:
@@ -36,41 +53,102 @@ def missing_module(exc: BaseException) -> str | None:
 
 def _missing_modules(exc: BaseException) -> tuple[str, ...] | None:
     """Missing-module leaves of visible chains/groups; None denotes a defect."""
-    pending = [(exc, None, 0)]
+    # Build the graph once. A permanent visited set prevents shared children
+    # from expanding repeatedly; finishing order also lets cycles share evidence.
+    work = _ExceptionWork()
+    pending = [(exc, False)]
     seen = set()
-    results = []
+    nodes = {}
+    edges = {}
+    parents = {}
+    finished = []
     while pending:
-        current, children, link_count = pending.pop()
-        if children is not None:
-            branches = results[-len(children):] if children else []
-            if children:
-                del results[-len(children):]
-            if isinstance(current, BaseExceptionGroup) and any(not branch for branch in branches[link_count:]):
-                return None  # Every group member needs its own missing-module evidence.
-            modules = tuple(dict.fromkeys(module for branch in branches for module in branch))
-            if not modules and not isinstance(current, BaseExceptionGroup):
-                if isinstance(current, ModuleNotFoundError) and current.name:
-                    modules = (current.name,)
-                elif not children:
-                    return None
-            seen.remove(id(current))
-            results.append(modules)
+        work.spend()
+        current, exiting = pending.pop()
+        key = id(current)
+        if exiting:
+            finished.append(key)
             continue
-        if id(current) in seen:
-            # A cycle edge adds no evidence. Revisit shared nodes on independent paths.
-            results.append(())
+        if key in seen:
             continue
-        seen.add(id(current))
+        seen.add(key)
+        nodes[key] = current
         links = []
         if current.__cause__ is not None:
             links.append(current.__cause__)
         if current.__context__ is not None and not current.__suppress_context__:
             links.append(current.__context__)
-        members = list(current.exceptions) if isinstance(current, BaseExceptionGroup) else []
-        children = links + members
-        pending.append((current, children, len(links)))
-        pending.extend((child, None, 0) for child in reversed(children))
-    return results[0]
+        members = current.exceptions if isinstance(current, BaseExceptionGroup) else ()
+        work.spend(len(links) + len(members))
+        children = (*links, *members)
+        edges[key] = (tuple(id(child) for child in children), len(links))
+        for child in children:
+            parents.setdefault(id(child), []).append(key)
+        pending.append((current, True))
+        pending.extend((child, False) for child in reversed(children))
+
+    # Collapse strongly connected components using the reverse graph. This is
+    # iterative too: a shared context cycle must retain its missing leaf without
+    # treating a cycle edge as fresh evidence or rescanning exception objects.
+    component_of = {}
+    components = []
+    for key in reversed(finished):
+        if key in component_of:
+            continue
+        component = []
+        todo = [key]
+        while todo:
+            work.spend()
+            member = todo.pop()
+            if member in component_of:
+                continue
+            component_of[member] = len(components)
+            component.append(member)
+            incoming = parents.get(member, ())
+            work.spend(len(incoming))
+            todo.extend(incoming)
+        components.append(component)
+
+    results = {}
+    for index in reversed(range(len(components))):
+        component = components[index]
+        modules = {}
+        for key in component:
+            work.spend()
+            children, _ = edges[key]
+            work.spend(len(children))
+            for child in children:
+                owner = component_of[child]
+                if owner != index:
+                    branch = results[owner]
+                    work.spend(len(branch))
+                    modules.update(dict.fromkeys(branch))
+            current = nodes[key]
+            if not children and not (isinstance(current, ModuleNotFoundError) and current.name):
+                return None
+        if not modules:
+            for key in component:
+                work.spend()
+                current = nodes[key]
+                if isinstance(current, ModuleNotFoundError) and current.name:
+                    modules[current.name] = None
+        for key in component:
+            children, link_count = edges[key]
+            work.spend(len(children))
+            if isinstance(nodes[key], BaseExceptionGroup) and any(
+                not (modules if component_of[child] == index else results[component_of[child]])
+                for child in children[link_count:]
+            ):
+                return None  # Every group member needs its own missing-module evidence.
+        results[index] = tuple(modules)
+    return results[component_of[id(exc)]]
+
+
+def _import_root(module: str) -> str:
+    """Accept dynamic import spelling while excluding relative and filesystem paths."""
+    if any(char in module for char in "/\\:\0") or any(not part for part in module.split(".")):
+        return ""
+    return module.split(".", 1)[0]
 
 
 def _record_roots(record: str) -> set[str]:
@@ -87,7 +165,7 @@ def _record_roots(record: str) -> set[str]:
             continue
         root = path.parts[0] if len(path.parts) > 1 else next(
             (path.name[:-len(suffix)] for suffix in suffixes if path.name.endswith(suffix)), "")
-        if root.isidentifier():
+        if root and "." not in root and _import_root(root):
             roots.add(root)
     return roots
 
@@ -99,8 +177,8 @@ def _import_roots() -> dict[str, set[str]]:
 
     roots: dict[str, set[str]] = {}
     for module, providers in metadata.packages_distributions().items():
-        root = module.split(".", 1)[0]
-        if not root.isidentifier():
+        root = _import_root(module)
+        if not root:
             continue
         for distribution in providers:
             roots.setdefault(canonicalize_name(distribution), set()).add(root)
@@ -109,7 +187,7 @@ def _import_roots() -> dict[str, set[str]]:
         top_level = distribution.read_text("top_level.txt")
         if top_level and top_level.strip():
             roots.setdefault(name, set()).update(
-                root for module in top_level.split() if (root := module.split(".", 1)[0]).isidentifier())
+                root for module in top_level.split() if (root := _import_root(module)))
             continue  # Declared import paths take precedence over RECORD inference.
         record = distribution.read_text("RECORD")
         if record is not None:
