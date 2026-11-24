@@ -262,7 +262,8 @@ class TestPytestSelections:
             source += "class TestAPI(Base):\n    pass\n"
         before = {"api.py": API, "test_api.py": source}
         record = mapped(before, {**before, "api.py": API.replace("return 1", "return 2")},
-                        stated_checks=[selection])
+                        stated_checks=[selection], collector=lambda *a, **k: {
+                            "status": "available", "nodes": ["test_api.py::TestAPI::test_call[value]"]})
         assert target(record, "neighbour")["checks"] == [selection]
 
     def test_other_selected_method_does_not_include_caller(self):

@@ -102,7 +102,10 @@ def test_selection_subsets_and_orders_equal_each_alone():
 ])
 def test_nested_and_inherited_parametrized_selections(selection):
     node = "test_api.py::" + selection
-    assert change_map.exercised([{"binding": "api.neighbour"}], {node: CHECKS}) == {"api.neighbour": [node]}
+    collection = {node: {"status": "available", "nodes": ["test_api.py::TestOuter::TestInner::test_call"]}} \
+        if selection == "TestOuter::TestInner" else None
+    assert change_map.exercised([{"binding": "api.neighbour"}], {node: CHECKS},
+                                 collection=collection) == {"api.neighbour": [node]}
 
 
 def test_call_cache_is_immutable():

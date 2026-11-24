@@ -1,20 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tier 0: AST-only leads, never review evidence or a decision.
 
-Inputs are file texts, not importable modules. ``exercised`` means a static named
-call was seen, not that the call ran. Dynamic dispatch, reflection, fixtures,
+Inputs are file texts and confined pytest collection results, never imported
+modules in this process. ``exercised`` means a static named call is reachable
+from a collected or explicitly stated body, not that the call ran. Expanding
+file or class selections needs collection. Dynamic dispatch, reflection, fixtures,
 external packages and arbitrary data flow are outside this map's view.
 """
 from __future__ import annotations
 
 import ast
-import configparser
-import fnmatch
 import hashlib
 import json
-import shlex
 import time
-import tomllib
 from bisect import bisect_left
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -23,7 +21,7 @@ from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Mapping, Sequence
 
 from g6.core import component_process
-from g6.core.git_name import shown_name
+from g6.core.git_name import shown, shown_name
 
 if TYPE_CHECKING:
     from g6.workforce.repo_tests import Change
@@ -44,7 +42,7 @@ MAX_WORK = 2_000_000
 STATIC_LIMIT = ("Static named calls only: this cannot see dynamic dispatch, reflection, external code, fixture "
                 "injection or arbitrary data flow; a named call may never execute. No execution coverage is claimed.")
 _FUNCTION = (ast.FunctionDef, ast.AsyncFunctionDef)
-PYTEST_CONFIGS = ("pytest.ini", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg")
+PYTEST_CONFIGS = ("pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg")
 
 
 class _Omitted(Exception):
@@ -120,7 +118,7 @@ def empty() -> dict:
 
 
 def skip(check: str, reason: str) -> dict:
-    return {"tier": 0, "check": check, "reason": reason}
+    return {"tier": 0, "check": shown(check), "reason": shown(reason)}
 
 
 def _name(node: ast.AST) -> str:
@@ -1063,7 +1061,7 @@ def _mro(index, cls):
                     candidate = next((s[0] for s in _each(sequences)
                                       if all(s[0] not in other[1:] for other in _each(sequences))), None)
                     if candidate is None:
-                        raise _FileOmitted("pytest cannot collect class (TypeError: inconsistent MRO hierarchy)")
+                        raise _FileOmitted("source class has an inconsistent MRO hierarchy")
                     result.append(candidate)
                     for sequence in _each(sequences):
                         if sequence and sequence[0] is candidate:
@@ -1091,154 +1089,206 @@ def _mro(index, cls):
     return index.mros[cls.binding]
 
 
-def _matches(name, patterns):
-    return any(name.startswith(pattern) or fnmatch.fnmatchcase(name, pattern) for pattern in _each(patterns))
+def _selected(index, rel, selection):
+    """Resolve one node pytest collected to source, without collection rules.
+
+    Inherited method lookup is static call-graph work. A dynamic or unavailable
+    base leaves the body unresolved; it cannot establish absence of a call.
+    """
+    selected = selection.split("[", 1)[0].replace("::", ".")
+    binding = f"{index.modules.get(rel, '')}.{selected}"
+    canonical = index.canonical(binding)
+    if not canonical:
+        raise _FileOmitted("collected body has an ambiguous source binding")
+    symbol = index.symbols.get(canonical)
+    if symbol is not None:
+        return [symbol]
+    owner, _, name = binding.rpartition(".")
+    cls = index.classes.get(owner)
+    if cls is not None:
+        for ancestor in _each(_mro(index, cls)):
+            scope = index.symbol_scopes[id(ancestor.node)]
+            entries = scope.names.get(name, ())
+            if entries:
+                symbol = index.symbols.get(f"{ancestor.binding}.{name}")
+                if len(entries) == 1 and symbol is not None:
+                    return [symbol]
+                break
+    raise _FileOmitted("collected body has an unavailable or ambiguous source")
 
 
-def _collection_patterns(texts, skipped):
-    defaults = {"python_classes": ("Test",), "python_functions": ("test",)}
-    for rel in _each(PYTEST_CONFIGS):
-        if rel not in texts:
+def _static_selected(index, rel, selection):
+    """Reject suppressed containing classes before admitting an explicit body.
+
+    This is a conservative guard, not a replacement for collection. Configured
+    class patterns and custom collectors need an available collection result.
+    """
+    parts = selection.split("[", 1)[0].replace("::", ".").split(".")
+    module = index.modules[rel]
+    for end in _each(range(1, len(parts))):
+        cls = index.classes.get(index.canonical(".".join((module, *parts[:end]))))
+        if cls is None or not cls.node.name.startswith("Test"):
+            raise _FileOmitted("explicit body has an unavailable or non-test containing class")
+        if cls.node.decorator_list or cls.node.keywords:
+            raise _FileOmitted("explicit body has dynamic containing class creation")
+        lineage = _mro(index, cls)
+        attributes = {}
+        for ancestor in _each(lineage):
+            if ancestor.node.decorator_list or ancestor.node.keywords:
+                raise _FileOmitted("explicit body has dynamic ancestor class creation")
+            scope = index.symbol_scopes[id(ancestor.node)]
+            for name in _each(("__test__", "__init__", "__new__")):
+                if name in scope.names and name not in attributes:
+                    entries = scope.names[name]
+                    if len(entries) != 1:
+                        raise _FileOmitted("explicit body has an ambiguous class collection attribute")
+                    attributes[name] = (entries[0], ancestor)
+        for name, (entry, ancestor) in _each(attributes.items()):
+            if name == "__test__":
+                try:
+                    enabled = ast.literal_eval(entry.value)
+                except (ValueError, TypeError):
+                    raise _FileOmitted("explicit body has an unavailable class collection attribute") from None
+                if not enabled:
+                    raise _FileOmitted("explicit body has a suppressed containing class")
+            elif not isinstance(entry.value, ast.AST) or index.resolve(entry.value, ancestor) != f"builtins.object.{name}":
+                raise _FileOmitted("explicit body has a containing class with a constructor")
+    # A module-level suppression also prevents every nested body collecting.
+    entries = index.scopes[module].names.get("__test__", ())
+    if entries:
+        try:
+            enabled = len(entries) == 1 and ast.literal_eval(entries[0].value)
+        except (ValueError, TypeError):
+            enabled = False
+        if not enabled:
+            raise _FileOmitted("explicit body has a suppressed or unavailable module")
+    return _selected(index, rel, selection)
+
+
+def collect_checks(change, stated_checks, proposed_checks, roots, *, collector, deadline):
+    """Expand selections through an injected collector, retaining each named failure.
+
+    The review supplies the confined runner. Text-only callers can supply fixture
+    node ids here without importing repository code or changing global defaults.
+    """
+    from g6.workforce import repo_tests
+
+    selections = dict.fromkeys(stated_checks)
+    selections.update({rel: None for rel in change.files if _is_test(rel)})
+    for item in proposed_checks:
+        node = item["file"] + ("::" + item["test"] if item.get("test") else "")
+        selections[node] = {item["file"]: item["source"]}
+    if len(selections) > MAX_CHECKS:
+        return {}
+    regular = [check for check, sources in selections.items() if sources is None]
+    groups = [(regular, None)] if regular else []
+    groups.extend(([check], sources) for check, sources in selections.items() if sources is not None)
+    answers = {}
+    for checks, sources in groups:
+        left = deadline - time.monotonic()
+        if left < 1:
+            answers.update({check: {"status": "uncertain", "reason": "pytest collection time budget is spent"}
+                            for check in checks})
             continue
         try:
-            text = texts[rel]
-            if len(text) > MAX_FILE_CHARS:
-                raise ValueError("configuration text limit reached")
-            if rel == "pyproject.toml":
-                table = tomllib.loads(text).get("tool", {}).get("pytest", {})
-                settings = table.get("ini_options", table)
-                if not table:
-                    continue
-            else:
-                parser = configparser.ConfigParser(interpolation=None)
-                parser.read_string(text)
-                section = "tool:pytest" if rel == "setup.cfg" else "pytest"
-                if not parser.has_section(section) and rel not in ("pytest.ini", ".pytest.ini"):
-                    continue
-                settings = dict(parser[section]) if parser.has_section(section) else {}
-            result = {}
-            for name, default in _each(defaults.items()):
-                value = settings.get(name, default)
-                if isinstance(value, str):
-                    value = tuple(shlex.split(value))
-                if not isinstance(value, (list, tuple)) or not all(isinstance(p, str) for p in _each(value)):
-                    raise ValueError("invalid collection patterns")
-                result[name] = tuple(value)
-            return result
-        except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, _Omitted, _FileFailed):
+            answer = collector(change.repo, checks, roots=roots, timeout_s=min(10, max(1, int(left))),
+                               **({"sources": sources} if sources else {}))
+            for check in checks:
+                if answer.get("status") == "available" and type(answer.get("nodes")) is list:
+                    path, separator, selection = check.partition("::")
+                    scope = PurePosixPath(path.replace("\\", "/")).as_posix() + separator + selection
+                    answers[check] = {"status": "available", "nodes": [
+                        node for node in answer["nodes"] if len(checks) == 1 or scope == "." or
+                        repo_tests.report_covers(scope, node)]}
+                else:
+                    answers[check] = {"status": "uncertain", "reason": answer.get("reason") or
+                                      "pytest collection result unavailable"}
+        except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
             raise
         except Exception as exc:
-            skipped.append(skip(f"change map: {shown_name(rel)}",
-                                f"pytest collection configuration unavailable ({type(exc).__name__})"))
-            return {name: () for name in defaults}
-    # A pyproject without pytest settings is pytest's fallback config.
-    return defaults
-
-
-def _class_methods(index, cls):
-    methods, attributes = {}, {}
-    for owner in _each(_mro(index, cls)):
-        with _file(owner.file):
-            scope = index.symbol_scopes[id(owner.node)]
-            for name, entries in _each(scope.names.items()):
-                if name in attributes:
-                    continue
-                attributes[name] = entries
-                symbol = index.symbols.get(f"{owner.binding}.{name}")
-                methods[name] = symbol if len(entries) == 1 and symbol is not None else None
-    entries = attributes.get("__test__", [])
-    disabled = len(entries) == 1 and isinstance(entries[0].value, ast.Constant) and entries[0].value.value is False
-    return methods, not disabled and "__init__" not in attributes and "__new__" not in attributes
-
-
-def _collectible_class(index, cls):
-    current, methods = cls, None
-    while current is not None:
-        _tick()
-        with _file(current.file):
-            if not _matches(current.node.name, index.python_classes):
-                return None
-            current_methods, collectible = _class_methods(index, current)
-            if not collectible:
-                return None
-            if methods is None:
-                methods = current_methods
-            parent = index.symbol_scopes[id(current.node)].parent
-            if parent.kind == "module":
-                return methods
-            if parent.kind != "class":
-                return None
-            current = index.classes.get(parent.binding)
-    return None
-
-
-def _selected(index, rel, selection):
-    # Pytest separates collectors with ::, and parameter ids belong to the
-    # final item. Remove that suffix before interpreting dots or :: inside it.
-    selected = selection.split("[", 1)[0].replace("::", ".")
-    result = []
-    if not selected:
-        result.extend(s for s in _each(index.symbols.values()) if s.file == rel and not s.owner
-                      and "." not in s.symbol and _matches(s.node.name, index.python_functions))
-    for cls in _each(list(index.classes.values())):
-        if cls is None or cls.file != rel or not _matches(cls.node.name, index.python_classes):
-            continue
-        class_name, _, method = selected.rpartition(".")
-        if not selected or selected == cls.symbol or cls.symbol.startswith(selected + "."):
-            method = ""
-        elif cls.symbol != class_name:
-            continue
-        methods = _collectible_class(index, cls)
-        if methods is None:
-            index.skipped.append(skip(cls.binding, "pytest does not collect this class"))
-            continue
-        result.extend(s for name, s in _each(methods.items()) if s is not None and _matches(name, index.python_functions)
-                      and (not method or method == name))
-    if selected and "." not in selected:
-        symbol = index.symbols.get(f"{index.modules.get(rel, '')}.{selected}")
-        if symbol and not symbol.owner and "." not in symbol.symbol and _matches(symbol.node.name, index.python_functions):
-            result.append(symbol)
-    return result
+            answers.update({check: {"status": "uncertain", "reason":
+                                   f"pytest collection unavailable ({type(exc).__name__})"} for check in checks})
+    return _plain(answers)
 
 
 def _exercised(targets: Sequence[dict], checks: Mapping[str, str], roots: Sequence[str], inventory=None,
-               collection_patterns=None):
+               collection=None, explicit=()):
     result = {t["binding"]: [] for t in _each(targets)}
-    skipped = []
+    skipped, uncertain = [], set()
     texts = dict(inventory or {})
     for check, source in _each(checks.items()):
-        texts[check.partition("::")[0]] = source
-    if not checks:
-        return result, skipped
-    index = _Index(texts, roots, skipped, "check")
-    patterns = collection_patterns if collection_patterns is not None else _collection_patterns(texts, skipped)
-    index.python_classes, index.python_functions = patterns["python_classes"], patterns["python_functions"]
-    # Constructors are data here: resolving C().method never constructs C.
-    for target in _each(targets):
-        if target.get("owner"):
-            owner = target["binding"].rpartition(".")[0]
-            index.classes.setdefault(owner, None)
+        rel = check.partition("::")[0]
+        if rel.endswith(".py"):
+            texts[rel] = source
+    index = _Index(texts, roots, skipped, "check") if checks else None
+    configured = any(path in PYTEST_CONFIGS or PurePosixPath(path).name == "conftest.py" for path in _each(texts))
+    static = set()
+    # External target owners can be resolved without loading their modules in
+    # the small caller-list API, just as they can in the full inventory.
+    if index is not None:
+        for target in _each(targets):
+            if target.get("owner"):
+                index.classes.setdefault(target["binding"].rpartition(".")[0], None)
     for check in _each(sorted(checks)):
-        rel, _, selection = check.partition("::")
-        if rel in index.invalid:
-            continue
-        with _file(rel):
-            for symbol in _each(_selected(index, rel, selection)):
+        answer = (collection or {}).get(check, (collection or {}).get(shown(check), {}))
+        if answer.get("status") != "available" or type(answer.get("nodes")) is not list:
+            rel, separator, selection = check.partition("::")
+            bodies = []
+            if (not configured and check in explicit and separator and selection and
+                    rel in index.modules and rel not in index.invalid):
+                with _file(rel):
+                    # A class/file selection is not a named body. Do not expand
+                    # one using guessed pytest naming or collection rules.
+                    try:
+                        bodies = _static_selected(index, rel, selection)
+                    except _FileOmitted:
+                        pass
+            if not bodies:
+                uncertain.add(check)
+                skipped.append(skip(check, answer.get("reason") or "pytest collection unavailable (not supplied)"))
+                continue
+            static.add(check)
+            nodes = [check]
+        else:
+            nodes = answer["nodes"]
+        # A definite negative needs every collected entry point resolved.
+        for node in _each(nodes):
+            rel, separator, selection = node.partition("::")
+            if not separator or rel in index.invalid or rel not in index.modules:
+                uncertain.add(check)
+                skipped.append(skip(check, "collected body source unavailable"))
+                continue
+            with _file(rel):
+                pending, seen = list(_selected(index, rel, selection)), set()
+            while pending:
+                _tick()
+                symbol = pending.pop()
+                if symbol.binding in seen:
+                    continue
+                seen.add(symbol.binding)
                 with _file(symbol.file):
                     for binding in _each(index.calls(symbol)):
                         if binding in result and check not in result[binding]:
                             result[binding].append(check)
-    return result, skipped
+                        callee = index.symbols.get(binding)
+                        if callee is not None:
+                            pending.append(callee)
+    return result, skipped, uncertain, static
 
 
-def exercised(targets: Sequence[dict], checks: Mapping[str, str], *, roots: Sequence[str] = ()) -> dict[str, list[str]]:
-    """Named calls in selected check bodies; deliberately no execution/coverage claim."""
-    result = _bounded(lambda: {"calls": _exercised(targets, checks, roots)[0]})
-    return result["calls"] if "calls" in result else {str(t["binding"]): [] for t in targets}
+def exercised(targets: Sequence[dict], checks: Mapping[str, str], *, roots: Sequence[str] = (),
+              collection=None) -> dict[str, list[str]]:
+    """Static calls from collected or explicitly named bodies; no coverage claim.
+
+    Unexpanded file/class selections supply no positive leads without collection.
+    ``build`` also reports the uncertainty a bare list of callers cannot express.
+    """
+    result = _bounded(lambda: {"calls": _exercised(targets, checks, roots, collection=collection, explicit=checks)[0]})
+    return result["calls"] if "calls" in result else {shown(t["binding"]): [] for t in targets}
 
 
 def _build(change: Change, base: Mapping[str, str], patch: Mapping[str, str], *, stated_checks: Sequence[str] = (),
-          proposed_checks: Sequence[Mapping[str, str]] = (), roots: Sequence[str] = (), collection_patterns=None) -> dict:
+          proposed_checks: Sequence[Mapping[str, str]] = (), roots: Sequence[str] = (), collection=None) -> dict:
     """One advisory neighbourhood; an ordinary body edit alone creates no target."""
     record = empty()
     if len(stated_checks) + len(proposed_checks) > MAX_CHECKS:
@@ -1252,22 +1302,22 @@ def _build(change: Change, base: Mapping[str, str], patch: Mapping[str, str], *,
         if rel in patch:
             checks[node] = patch[rel]
         else:
-            # Folder selections are bounded by the supplied text inventory.
-            # Split literally: case, backslashes, odd bytes and interior empty parts retain their meaning.
-            parts = rel.rstrip("/").split("/")
-            checks.update({p: text for p, text in _each(patch.items())
-                           if len(p.split("/")) > len(parts) and p.split("/")[:len(parts)] == parts})
+            # Keep the original selection: pytest owns folder expansion too.
+            checks[node] = ""
     for rel in _each(change.files):
         if rel in patch and _is_test(rel):
             checks[rel] = patch[rel]
     for proposed in _each(proposed_checks):
         node = proposed["file"] + ("::" + proposed["test"] if proposed.get("test") else "")
         checks[node] = proposed["source"]
-    called, check_skips = _exercised(neighbours, checks, roots, patch, collection_patterns)
+    called, check_skips, uncertain, static = _exercised(neighbours, checks, roots, patch, collection, stated_checks)
     skipped.extend(check_skips)
     for sibling in _each(neighbours):
-        sibling.update(exercised=bool(called[sibling["binding"]]), checks=called[sibling["binding"]])
-        if not sibling["exercised"]:
+        calls = called[sibling["binding"]]
+        # Missing collection cannot establish either presence or absence.
+        state = "uncertain" if uncertain else "not_required" if static else "available"
+        sibling.update(exercised="uncertain" if uncertain else bool(calls), checks=calls, collection=state)
+        if sibling["exercised"] is False:
             skipped.append(skip(sibling["symbol"], f"{sibling['symbol']} {sibling['reason']}; no check calls it"))
     targets = [*neighbours, *points]
     if len(targets) > MAX_TARGETS:
@@ -1281,9 +1331,12 @@ def _plain(value):
     """Reject non-JSON values before the advisory can reach job serialization."""
     _tick()
     if isinstance(value, str):
-        # Persisted path fields retain their exact bytes/spelling, including
-        # GitName. Display text is constructed only through shown_name.
-        return value
+        # Raw file identities stay inside analysis and git/disk operations.
+        # Every exported key and text field crosses the same display boundary.
+        text = shown(value)
+        if type(text) is str:
+            return text
+        raise TypeError("map text must be a plain string")
     if type(value) in (int, bool):
         return value
     if type(value) is list:
@@ -1358,8 +1411,11 @@ def json_record(record, *, deadline=None):
 
 def build(change: Change, base: Mapping[str, str], patch: Mapping[str, str], *, stated_checks: Sequence[str] = (),
           proposed_checks: Sequence[Mapping[str, str]] = (), roots: Sequence[str] = (), deadline=None,
-          collection_patterns=None) -> dict:
+          collection=None, collector=None) -> dict:
     """Keep file-local skips; omit the advisory on whole-run limits or failures."""
+    if collector is not None:
+        collection = collect_checks(change, stated_checks, proposed_checks, roots, collector=collector,
+                                    deadline=deadline if deadline is not None else time.monotonic() + 10)
     return _bounded(lambda: _build(change, base, patch, stated_checks=stated_checks,
                                   proposed_checks=proposed_checks, roots=roots,
-                                  collection_patterns=collection_patterns), deadline)
+                                  collection=collection), deadline)

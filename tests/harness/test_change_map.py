@@ -113,6 +113,11 @@ def test_exercised_by_name_from_each_check_source(channel):
         after["tests/test_bar.py"] = source
     else:
         kwargs["proposed_checks"] = [{"file": "tests/test_proposed.py", "source": source, "test": "test_update"}]
+    if channel != "stated":
+        # This fixture tests named-call resolution. File expansion is supplied
+        # explicitly rather than depending on a host collection backend.
+        rel = "tests/test_bar.py" if channel == "changed" else "tests/test_proposed.py"
+        kwargs["collector"] = lambda *a, **k: {"status": "available", "nodes": [rel + "::test_update"]}
     record = mapped(before, after, **kwargs)
     assert target(record, "ProgressBar.update")["exercised"] is True
     assert not any("ProgressBar.update" in s["check"] for s in record["skipped"])

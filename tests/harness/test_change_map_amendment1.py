@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from g6.core.git_name import GitName
+from g6.core.git_name import GitName, shown_name
 from g6.harness import change_map, patch_review
 from tests.harness.test_change_map import BAR, PATCHED_BAR, change, mapped, target
 
@@ -39,9 +39,10 @@ class TestFileIsolation:
         rel = GitName(b'odd\n\xff.py')
         source = API + "if flag:\n    alias = target\nelse:\n    alias = neighbour\n"
         record = mapped({rel: source}, {rel: source.replace("return 1", "return 2")})
-        assert target(record, "neighbour")["file"] == rel
+        # Exported records hold the name as display text, by the one rule (shown_name).
+        assert target(record, "neighbour")["file"] == shown_name(rel)
         candidate = next(s for s in record["skipped"] if "candidates" in s)
-        assert all(c["file"] == rel for c in candidate["candidates"])
+        assert all(c["file"] == shown_name(rel) for c in candidate["candidates"])
         assert '\n' not in candidate["check"] and '\udcff' not in candidate["check"]
         assert change_map.json_record(record)["targets"] == record["targets"]
         json.dumps(record, allow_nan=False)

@@ -26,7 +26,8 @@ def test_ambiguous_import_does_not_choose_either_file():
     before = {"api.py": API, "src/api.py": API,
               "test_api.py": "from api import neighbour\ndef test_call():\n    neighbour()\n"}
     record = mapped(before, {**before, "api.py": API.replace("return 1", "return 2")},
-                    stated_checks=("test_api.py",))
+                    stated_checks=("test_api.py",), collector=lambda *a, **k: {
+                        "status": "available", "nodes": ["test_api.py::test_call"]})
     assert target(record, "neighbour")["exercised"] is False
 
 
@@ -50,7 +51,8 @@ def test_failed_colliding_file_does_not_make_the_import_unambiguous(monkeypatch)
     before = {"api.py": API, "src/api.py": API,
               "test_api.py": "from api import neighbour\ndef test_call():\n    neighbour()\n"}
     record = mapped(before, {**before, "api.py": API.replace("return 1", "return 2")},
-                    stated_checks=("test_api.py",))
+                    stated_checks=("test_api.py",), collector=lambda *a, **k: {
+                        "status": "available", "nodes": ["test_api.py::test_call"]})
     assert target(record, "neighbour")["exercised"] is False
     assert any("src/api.py" in s["check"] and "RecursionError" in s["reason"] for s in record["skipped"])
 

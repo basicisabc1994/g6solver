@@ -1046,8 +1046,16 @@ def _stage(stopped: list[dict], what: str, run, *args, **kwargs):
         return None
 
 
-def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, deadline: float) -> dict:
-    """Read a bounded Python inventory through hardened git/held-file paths, then analyse text only.
+def _map_collection(change, stated_checks, proposed_checks, roots, *, deadline, collector):
+    """Optional pytest collection has no route into review evidence or outcomes."""
+    from g6.harness import change_map
+
+    proposed = [p.model_dump() if hasattr(p, "model_dump") else p for p in proposed_checks]
+    return change_map.collect_checks(change, stated_checks, proposed, roots, collector=collector, deadline=deadline)
+
+
+def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, deadline: float, collector=None) -> dict:
+    """Read a bounded inventory and connect calls only to pytest-collected bodies.
 
     This is the last search activity, after the decided fields and closing snapshots. It cannot
     consume another check's time or turn an analysis error into an evidence-stage reason.
@@ -1055,11 +1063,17 @@ def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, dead
     from g6.harness import change_map
 
     record = change_map.empty()
-    end = min(deadline, time.monotonic() + 2.0)
-    if end <= time.monotonic():
+    if deadline <= time.monotonic():
         record["skipped"].append(change_map.skip("change map", "the time budget is spent"))
         return record
     if not any(p.endswith(".py") for p in change.files):
+        return record
+    collection = _map_collection(change, stated_checks, proposed_checks, roots,
+                                 deadline=min(deadline - 2.0, time.monotonic() + 10.0),
+                                 collector=repo_tests.collect if collector is None else collector)
+    end = min(deadline, time.monotonic() + 2.0)
+    if end <= time.monotonic():
+        record["skipped"].append(change_map.skip("change map", "the time budget is spent"))
         return record
     skipped = []
 
@@ -1164,12 +1178,9 @@ def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, dead
             base.pop(rel, None)
             patch.pop(rel, None)
         proposed = [p.model_dump() if hasattr(p, "model_dump") else p for p in bounded(proposed_checks)]
-        patterns = change_map._collection_patterns(patch, skipped)
-        if unavailable.intersection(change_map.PYTEST_CONFIGS):
-            patterns = {"python_classes": (), "python_functions": ()}
         checkpoint()
         record = change_map.build(change, base, patch, stated_checks=stated_checks,
-                                  proposed_checks=proposed, roots=roots, deadline=end, collection_patterns=patterns)
+                                  proposed_checks=proposed, roots=roots, deadline=end, collection=collection)
         record["skipped"] = [*skipped, *record["skipped"]]
         return record
 
@@ -1184,7 +1195,7 @@ def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, dead
     if record is None or time.monotonic() >= end:
         record = change_map.empty()
         record["skipped"] = [*skipped, change_map.skip("change map", "the time budget is spent")]
-    return record
+    return change_map.json_record(record, deadline=end)
 
 
 def _python_source(raw: bytes) -> str:
@@ -1564,7 +1575,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     # and never feed the reasons, requirements or gate. Preserve operator/allowance interrupts.
     from g6.harness import change_map
     try:
-        analysis_deadline = min(deadline, time.monotonic() + 2.0)
+        analysis_deadline = min(deadline, time.monotonic() + 12.0)
         neighbourhood = _change_neighbourhood(change, ids, proposed, roots, deadline=analysis_deadline)
         neighbourhood = change_map.json_record(neighbourhood, deadline=analysis_deadline)
     except LETS_THROUGH:
