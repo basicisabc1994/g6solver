@@ -10,6 +10,7 @@ from __future__ import annotations
 from g6.core.guidance_builders import confine_refusal, confine_refused
 
 import ast
+import base64
 import concurrent.futures
 import hashlib
 import inspect
@@ -19,6 +20,7 @@ import stat
 import struct
 import sys
 import time
+import zlib
 from pathlib import Path, PurePosixPath
 
 from g6.core import component_process, confine
@@ -185,10 +187,99 @@ def probe_sha256() -> str:
 class CheckSetupError(TypeError):
     """A generated check could not prepare a call; the operation has not run."""
 
+    REASONS = ('import_or_binding', 'constructor', 'constructor_type', 'method_lookup', 'owner', 'binding',
+               'exception_type', 'exception_description', 'scenario_binding', 'setup')
+    # G6's own fixed wording for a reason; never text from the repository under check.
+    DESCRIPTIONS = {'constructor_type': 'constructor did not return the named class'}
+
+    @classmethod
+    def details(cls):
+        """Every exact detail G6's check writes: a reason alone, or with its fixed G6 description."""
+        return (tuple('G6_E_CHECK_SETUP: ' + reason for reason in cls.REASONS)
+                + tuple('G6_E_CHECK_SETUP: ' + reason + ': ' + text for reason, text in cls.DESCRIPTIONS.items()))
+
     def __init__(self, reason):
-        if type(reason) is not str:
-            reason = "exception_description: unavailable"
-        super().__init__(reason if reason.startswith("G6_E_") else "G6_E_CHECK_SETUP: " + reason)
+        # A direct instance of G6's own class retains its diagnostic, including nested refusals.
+        if type(reason) is str and reason.startswith('G6_E_'):
+            super().__init__(reason[:300])
+            return
+        phase = reason.partition(":")[0] if type(reason) is str else "exception_description"
+        if phase == 'module_import':
+            phase = 'import_or_binding'
+        phase = phase if phase in CheckSetupError.REASONS else 'setup'
+        described = CheckSetupError.DESCRIPTIONS.get(phase)
+        super().__init__("G6_E_CHECK_SETUP: " + phase + (": " + described if described else ""))
+
+
+CODE_CARRIERS = (
+    ('g6._context_engine._registry', 'Refused'), ('g6._context_engine._scope', 'ScopeDenied'),
+    ('g6.abstraction.server', 'FileRefused'), ('g6.action_logic.block', '_Refused'),
+    ('g6.agents._runtime.model', 'AgentRefusal'), ('g6.algebra.envelope', 'Refusal'),
+    ('g6.causal.envelope', 'Refusal'), ('g6.code._types', 'CodeRefused'),
+    ('g6.cogarch.cog_arch_actr.memory', 'Refused'), ('g6.cogarch.cog_arch_aixi.block', '_Refusal'),
+    ('g6.cogarch.cog_arch_gps.block', '_Refusal'), ('g6.cognitive_bridge.codes', 'NotPlainData'),
+    ('g6.core.http', 'HTTPError'), ('g6.core.keys', 'KeyMissing'), ('g6.core.outside', 'ServiceError'),
+    ('g6.csf.schema', 'CSFError'), ('g6.csf.schema', 'CSFInputError'),
+    ('g6.datalog.envelope', 'Refusal'), ('g6.formal.envelope', 'Refusal'),
+    ('g6.graph_reasoning.envelope', 'Refusal'), ('g6.harness.behaviour_question', 'CandidateRefused'),
+    ('g6.harness.workflow._store', 'RecordOff'), ('g6.harness.workflow._store', 'RecordUnreadable'),
+    ('g6.integrations.database.backends', 'BackendError'), ('g6.knowledge._index', 'IndexRefused'),
+    ('g6.knowledge.ctx_contexthub.hub', 'HubError'), ('g6.knowledge.ctx_elastic.elastic', 'ElasticError'),
+    ('g6.knowledge.ctx_elastic.writer', 'Held'), ('g6.knowledge.ctx_search.web', 'SearchRefused'),
+    ('g6.knowledge.knowledge_chunker.chunker', 'ChunkError'),
+    ('g6.knowledge.knowledge_fetcher.fetcher', 'FetchRefused'),
+    ('g6.knowledge.knowledge_manifest.manifest', 'StoreError'), ('g6.lean.envelope', 'Refusal'),
+    ('g6.learning.strategy', 'StrategyError'), ('g6.media._types', 'MediaError'),
+    ('g6.memory.ctx_ace.store', 'StoreError'), ('g6.memory.ctx_cognee.client', 'CogneeError'),
+    ('g6.ml._types', 'MLError'), ('g6.model_checking.envelope', 'Refusal'),
+    ('g6.optimisation.envelope', 'Refusal'), ('g6.prolog.envelope', 'Refusal'),
+    ('g6.self_maintenance.codes', 'SelfMaintenanceRefused'),
+    ('g6.sources.australian_legal_corpus.store', 'IndexProblem'), ('g6.sources.ctx_git.config', 'GitRefused'),
+    ('g6.sources.ctx_langextract.extract', 'ExtractStopped'), ('g6.sources.ctx_vision.block', '_Stop'),
+    ('g6.sources.ctx_vision.images', 'ImageRefused'), ('g6.sources.ctx_vision.ocr', 'OcrFailed'),
+    ('g6.workforce.repo_tests', 'RepoRefused'), ('g6.workspace._envelope', 'WorkspaceRefused'),
+)
+
+
+def code_carriers():
+    """Resolve fixed G6 exports already imported by the host; exception metadata grants no identity."""
+    return tuple(kind for module, name in CODE_CARRIERS
+                 if (loaded := sys.modules.get(module)) is not None
+                 and type(kind := vars(loaded).get(name)) is type)
+
+
+def typed_code(exc):
+    """Read raw code storage only after matching an imported G6 class object in the ancestry."""
+    own = type.__dict__
+    ancestry = own['__mro__'].__get__(type(exc))
+    carriers = globals().get('_SETUP_CODE_CARRIERS')
+    if carriers is None:
+        carriers = code_carriers()
+    if not any(base is carrier for base in ancestry for carrier in carriers):
+        return None
+    storage = BaseException.__dict__['__dict__'].__get__(exc)
+    namespaces = [own['__dict__'].__get__(kind) for kind in ancestry]
+    for items in (dict.items(storage), *(namespace.items() for namespace in namespaces)):
+        for key, value in items:
+            if (type(key) is str and key == 'code' and type(value) is str and value.startswith('G6_E_')
+                    and len(value) <= 80 and all(ch in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_' for ch in value)):
+                return value
+    return None
+
+
+def register_setup_error(template=None):
+    """Publish the actual generated class before repository code loads; names confer no custody."""
+    global _SETUP_CODE_CARRIERS
+    if template is not None:
+        _SETUP_CODE_CARRIERS = code_carriers()
+    if template is not None and '__name__' not in setup_call.__globals__:
+        # exec without a module still writes the same qualified diagnostic as a pytest-loaded check.
+        module = 'test_g6_' + template.partition('.')[0]
+        CheckSetupError.__module__ = module
+        CheckSetupError.__name__ = module + '.CheckSetupError'
+    registry = vars(sys).get('_g6_check_setup_types')
+    if type(registry) is list:
+        registry.append((CheckSetupError, 'G6_E_CHECK_SETUP'))
 
 
 def raised_during_setup(exc):
@@ -229,28 +320,18 @@ def exception_message(exc, fallback):
 
 
 def exception_detail(exc, fallback):
-    """Keep stable G6 codes from raw storage, never by executing an exception's hooks.
-
-    A G6 type (or its subclass) may carry its code in the instance dictionary or class namespace. Plain
-    exceptions retain a leading G6_E_ message from their built-in args slot. Only exact strings are read;
-    properties, overridden attribute access, formatting and string conversion are never needed.
-    """
-    own = type.__dict__
-    ancestry = own['__mro__'].__get__(type(exc))
-    namespaces = [own['__dict__'].__get__(kind) for kind in ancestry]
-    g6_type = any(type(module := own['__module__'].__get__(kind)) is str and module.startswith('g6.')
-                  for kind in ancestry)
-    if g6_type:
-        storage = BaseException.__dict__['__dict__'].__get__(exc)
-        for items in (dict.items(storage), *(namespace.items() for namespace in namespaces)):
-            # Even a hostile dictionary key must not participate in lookup or equality.
-            for key, value in items:
-                if type(key) is str and key == 'code' and type(value) is str and value.startswith('G6_E_'):
-                    return value + ': ' + fallback
-    args = BaseException.__dict__['args'].__get__(exc)
-    if args and type(args[0]) is str and args[0].startswith('G6_E_'):
-        return args[0]
-    return fallback
+    """Only actual G6 classes carry G6 codes; repository diagnostics are bounded data."""
+    if type(exc) is CheckSetupError:
+        return exception_message(exc, 'G6_E_CHECK_SETUP: setup')
+    code = typed_code(exc)
+    if code is not None:
+        return code + ': ' + fallback[:200]
+    try:
+        name = exception_name(type(exc))[:80]
+        message = exception_message(exc, '<unavailable>')[:200]
+        return fallback[:16] + ': ' + name + ': ' + message
+    except Exception:
+        raise CheckSetupError('exception_description') from None
 
 
 def setup_call(phase, function, *args, **kwargs):
@@ -265,14 +346,47 @@ def setup_call(phase, function, *args, **kwargs):
     except LETS_THROUGH:
         raise
     except Exception as exc:
-        raise CheckSetupError(exception_detail(exc, phase)) from exc
+        if call_absent(exc):
+            raise
+        if phase == 'module_import' and exception_matches(exc, ImportError):
+            raise
+        if phase == 'missing_callable' and exception_matches(exc, AttributeError):
+            raise
+        code = typed_code(exc)
+        if code is not None:
+            raise CheckSetupError(code + ': ' + phase) from exc
+        raise CheckSetupError(phase) from exc
+
+
+def call_absent(exc):
+    """Only G6's import or missing-name boundary can identify absence across nested preparation."""
+    if not (exception_matches(exc, AttributeError) or exception_matches(exc, ImportError)):
+        return False
+    trace = BaseException.__dict__['__traceback__'].__get__(exc)
+    while trace is not None and trace.tb_frame.f_globals is setup_call.__globals__:
+        if (trace.tb_frame.f_code is setup_call.__code__
+                and trace.tb_frame.f_locals.get('phase') in ('missing_callable', 'module_import')):
+            return True
+        trace = trace.tb_next
+    return False
+
+
+def target_attribute(owner, name):
+    """A statically absent name fails the call; an existing attribute's failing lookup is setup."""
+    try:
+        inspect.getattr_static(owner, name)
+    except AttributeError:
+        return setup_call('missing_callable', getattr, owner, name)
+    except Exception as exc:
+        raise CheckSetupError('method_lookup') from exc
+    return setup_call('method_lookup', getattr, owner, name)
 
 
 def runtime_method(state, cls, method_name):
     """Ordinary instance lookup, after construction and immediately before each invocation."""
     if type(state) is not cls:
         raise CheckSetupError("constructor_type: constructor did not return the named class")
-    method = setup_call("method_lookup", getattr, state, method_name)
+    method = target_attribute(state, method_name)
     if not callable(method):
         raise CheckSetupError("method_lookup: the instance attribute is not callable")
     return method
@@ -281,7 +395,7 @@ def runtime_method(state, cls, method_name):
 def bind_method(module, spec, load):
     """Fixed child code: construct once and look up the current instance method on every call."""
     class_name, method_name = spec[2].split(".")
-    cls = vars(module).get(class_name)
+    cls = target_attribute(module, class_name)
     if type(cls) is not type:
         raise CheckSetupError("owner: method owner is not an ordinary class")
     if spec[0] == "state_method":
@@ -324,15 +438,21 @@ def _import_roots(spec, roots=None):
     return roots
 
 # Loaded before any repository module. There is no site initialisation, PYTHONPATH, pytest, plugin or ini reader.
-BOOTSTRAP = (inspect.getsource(observable_exception) + '\n' + inspect.getsource(_fingerprint) + '\n'
+CODE_CARRIER_HELPERS = ('CODE_CARRIERS = ' + ascii(CODE_CARRIERS) + '\n'
+                        + inspect.getsource(code_carriers) + '\n' + inspect.getsource(typed_code) + '\n')
+
+BOOTSTRAP = (CODE_CARRIER_HELPERS + inspect.getsource(observable_exception) + '\n' + inspect.getsource(_fingerprint) + '\n'
              + inspect.getsource(raised_during_setup) + '\n' + inspect.getsource(exception_name) + '\n'
              + inspect.getsource(exception_matches) + '\n' + inspect.getsource(exception_detail) + '\n'
              + inspect.getsource(exception_message) + '\n'
              + inspect.getsource(_exception_observation) + '\n' + inspect.getsource(CheckSetupError) + '\n'
              + inspect.getsource(setup_call) + '\n' + inspect.getsource(runtime_method) + '\n'
+             + inspect.getsource(call_absent) + '\n'
+             + inspect.getsource(target_attribute) + '\n'
              + inspect.getsource(bind_method) + '\n'
              + inspect.getsource(_import_roots)) + r'''
-import builtins, collections.abc, concurrent.futures, copy, hashlib, importlib, importlib.machinery, json, os, re, struct, sys
+import builtins, collections.abc, concurrent.futures, copy, hashlib, importlib, importlib.machinery, inspect, json, os, re, struct, sys
+_SETUP_CODE_CARRIERS = ()
 def _name(kind):
     return setup_call("exception_description", exception_name, kind)
 
@@ -415,7 +535,7 @@ def load_target(spec):
     if kind == "builtin":
         return getattr(builtins, attribute)
     if len(spec) not in (4, 5):
-        raise RuntimeError("entry point has no resolved repository file")
+        raise CheckSetupError("import_or_binding")
     wanted = os.path.realpath(os.path.join(root, *spec[3].split("/")))
     if len(spec) == 5 and kind == "module":
         stem = module.replace(".", "/")
@@ -423,12 +543,12 @@ def load_target(spec):
                    for prefix in _import_roots(spec) for suffix in ("/__init__.py", ".py")]
         resolved = next((os.path.realpath(path) for path in choices if os.path.isfile(path)), None)
         if resolved is None or os.path.normcase(resolved) != os.path.normcase(wanted):
-            raise RuntimeError("G6_E_OBSERVATION_UNAVAILABLE: the confirmed repository path does not match")
-    found = importlib.import_module(module)
+            raise CheckSetupError("import_or_binding")
+    found = setup_call('module_import', importlib.import_module, module)
     where = os.path.realpath(getattr(found, "__file__", ""))
     if os.path.normcase(where) != os.path.normcase(wanted):
-        raise RuntimeError("G6_E_OBSERVATION_UNAVAILABLE: entry point resolved outside its copied file")
-    target = bind_method(found, spec, load) if kind in ("method", "state_method") else getattr(found, attribute)
+        raise CheckSetupError("import_or_binding")
+    target = bind_method(found, spec, load) if kind in ("method", "state_method") else target_attribute(found, attribute)
     if not callable(target):
         raise CheckSetupError("binding: target is not callable")
     return target
@@ -493,10 +613,23 @@ def setup_failed(exc):
     sink.close()
     raise SystemExit(0)
 
+def call_failed(exc):
+    try:
+        detail = exception_detail(exc, 'call failed')
+    except CheckSetupError as unavailable:
+        setup_failed(unavailable)
+    payload = dumps({'version': 'call_failure.v1', 'detail': detail},
+                    sort_keys=True, allow_nan=False).encode('utf-8')
+    write(b'G6R1\n' + pack('>I', len(payload)) + payload)
+    sink.close()
+    raise SystemExit(0)
+
 try:
     function = load(data["function"])
 except CheckSetupError as exc:
     setup_failed(exc)
+except (AttributeError, ImportError) as exc:
+    call_failed(exc)
 errors, outcomes, alive = {}, [], []
 for call in data["calls"]:
     args, kwargs = copy.deepcopy(call["args"]), copy.deepcopy(call.get("kwargs", {}))
@@ -505,8 +638,10 @@ for call in data["calls"]:
     except CheckSetupError as exc:
         setup_failed(exc)
     except BaseException as exc:
-        if raised_during_setup(exc):
+        if raised_during_setup(exc) and not call_absent(exc):
             raise
+        if call_absent(exc):
+            call_failed(exc)
         alive.append(exc)
         errors = resolved()
         outcomes.append(_exception_observation(exc, errors, data['probe']))
@@ -552,7 +687,11 @@ def read_frame(raw: bytes) -> dict | None:
                            parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite")))
         if isinstance(value, dict) and value.get("version") == "check_setup.v1":
             return value if (set(value) == {"version", "detail"} and isinstance(value["detail"], str)
-                             and value["detail"].startswith("G6_E_")) else None
+                             and len(value['detail']) <= 300
+                             and value['detail'] in CheckSetupError.details()) else None
+        if isinstance(value, dict) and value.get('version') == 'call_failure.v1':
+            return value if (set(value) == {'version', 'detail'} and type(value['detail']) is str
+                             and len(value['detail']) <= 300 and value['detail'].startswith('call failed: ')) else None
         if (not isinstance(value, dict) or set(value) != {"version", "outcomes", "errors"}
                 or value["version"] not in {"observation.v1", "observation.v2"}
                 or not isinstance(value["outcomes"], list)
@@ -623,7 +762,9 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
     observed = read_frame(raw) if code == 0 else None
     calls = data.get("cases", data.get("calls", []))
     if observed is not None and observed["version"] == "check_setup.v1":
-        return {"result": "error", "detail": observed["detail"]}
+        return {"result": "error", "detail": observed["detail"], 'reason_code': 'G6_E_CHECK_SETUP'}
+    if observed is not None and observed['version'] == 'call_failure.v1':
+        return {'result': 'failed', 'detail': observed['detail']}
     if observed is None or len(observed["outcomes"]) != len(calls) or not calls:
         return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: no single completed observation"}
     expected_errors = {_encoded(spec) for spec in data.get("errors", [
@@ -725,21 +866,35 @@ def request(data: dict) -> dict:
             **({'import_roots': data['import_roots']} if 'import_roots' in data else {})}
 
 
+def _portable_source(function) -> str:
+    """Keep helper semantics while omitting documentation from the portable byte budget."""
+    tree = ast.parse(inspect.getsource(function))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and type(first.value.value) is str:
+                node.body.pop(0)
+    return ast.unparse(tree)
+
+
 def example_text(slot: str) -> str:
     """Portable examples use the same fresh interpreter and comparison as product enforcement.
 
     Pytest is only a convenience for displaying a reproduction. Product evidence comes from ``run`` and its
     host-owned result channel, never from collection, plugins or the wrapper's pytest status.
     """
-    helpers = "\n\n".join(inspect.getsource(one) for one in (
+    helpers = "\n\n".join(_portable_source(one) for one in (
         CheckSetupError, raised_during_setup, exception_name, exception_matches, exception_detail, exception_message,
-        setup_call,
+        setup_call, call_absent, register_setup_error,
         _unique, _encoded, _fingerprint, _valid_encoding, _matches_encoding, read_frame, finish,
         _import_roots, located, request))
-    return ("import concurrent.futures, hashlib, json, struct, subprocess, tempfile, sys, os\nfrom pathlib import Path\n"
+    bootstrap = base64.b85encode(zlib.compress((confine.CHILD_PRELUDE + BOOTSTRAP).encode('utf-8'), 9)).decode('ascii')
+    return ("import base64, zlib, concurrent.futures, hashlib, json, struct, subprocess, tempfile, sys, os\nfrom pathlib import Path\n"
             "TEMPLATE = 'example.v1'\nBINDINGS = " + slot
             + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = "
-            + ascii(confine.CHILD_PRELUDE + BOOTSTRAP) + "\n" + helpers + '''
+            + 'str(zlib.decompress(base64.b85decode(' + ascii(bootstrap) + ")), 'utf-8')\n"
+            + CODE_CARRIER_HELPERS + helpers + '''
+register_setup_error(TEMPLATE)
 def _check_example():
     data = located(Path.cwd(), BINDINGS)
     with tempfile.TemporaryDirectory() as own:
@@ -754,8 +909,8 @@ def _check_example():
         with open(channel, 'rb') as handle:
             raw = handle.read(MAX_FRAME + len(MAGIC) + 5)
     reading = finish(ran.returncode, raw, data)
-    if reading['result'] == 'error':
-        raise CheckSetupError(reading['detail'])
+    if reading.get('reason_code') == 'G6_E_CHECK_SETUP':
+        raise CheckSetupError(reading['detail'].partition(': ')[2])
     if reading['result'] != 'passed':
         raise AssertionError(reading['detail'])
 

@@ -576,6 +576,19 @@ def _failure(ran: dict, node: str) -> str:
     return ""
 
 
+def _setup_failure_line(how: str, node: str) -> bool:
+    """Legacy records admit only the compiled check's exact qualified type and fixed reason."""
+    from g6.harness.behaviour_runner import CheckSetupError
+
+    modules = ('example', 'relation', 'access_rule', 'differential', 'state_invariant')
+    stem = node.partition('::')[0].replace('\\', '/').rsplit('/', 1)[-1].removesuffix('.py')
+    known = tuple('test_g6_' + one for one in modules)
+    # A node in a template's own generated file admits only that template's class; any other node, any template's.
+    allowed = (stem,) if stem in known else known
+    return any(how == module + '.CheckSetupError: ' + detail
+               for module in allowed for detail in CheckSetupError.details())
+
+
 def _refused_access(ran: dict, node: str) -> bool:
     """Whether the failure is an operating-system error, or was raised from or during one (a refusal a client library
     wraps): inside the boundary a refused access (a file outside the copy, the network, a name lookup) raises one, so
@@ -611,6 +624,7 @@ def reading(ran: dict, node: str) -> dict:
                 'execution_artifact': ran.get('execution_artifact'),
                 'bootstrap_sha256': ran.get('bootstrap_sha256', ''),
                 "observations": reading.get("observations"), "owned_probe": reading.get("owned_probe", False)}
+    structured_setup = 'check_errors' in ran
     report = repo_tests.read_report(ran)
     ran = report.wire()
     verdict = report.verdict
@@ -621,11 +635,15 @@ def reading(ran: dict, node: str) -> dict:
         return {**found, "result": "error", "detail": why}
 
     def failed(how: str, **extra) -> dict:
+        if any(reason == 'G6_E_CHECK_SETUP' and (_covers(node, report.full(named))
+                or report.full(named) == node.partition('::')[0])
+               for named, reason in report.data.get('check_errors', {}).items()):
+            return error('G6_E_CHECK_SETUP: the generated check could not prepare its call')
+        if not structured_setup and _setup_failure_line(how, node):
+            return error(how)
         if not how:   # the repository's options hid it (--tb=no -rN, say): a refused access cannot be ruled out
             return error("it failed, and nothing it recorded says how, so G6 cannot tell a failure of the code from "
                          "an access the boundary refused")
-        if re.match(r"(?:[\w.]+\.)?CheckSetupError: G6_E_[A-Z0-9_]+:", how):
-            return error(how)
         if _refused_access(ran, node):
             return error("it failed on an operating-system error, which is how a boundary refuses an access (a file "
                          f"outside its copy, the network, a name lookup), or on such a refusal: {how}")

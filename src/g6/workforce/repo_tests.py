@@ -409,10 +409,12 @@ REPORT_FIELDS["isolation"] = ReportField(_ISOLATION, {"backend": "recorded"}, "e
 for _name in ("failure_messages", "messages"):
     REPORT_FIELDS[_name] = ReportField({str: str}, {}, "failure annotations by identity",
                                       "failed phase, or an uncollected collection failure; never omitted")
+REPORT_FIELDS['check_errors'] = ReportField({str: str}, {}, 'G6 preparation reason by failed identity',
+    'recorded from the generated setup exception class by object identity, never its display text')
 #: An observation's result, and the verdict its record gives it (``behaviour_runner.run``).
 OBSERVED_VERDICTS = {"passed": "passed", "failed": "failed", "error": "not_run"}
 REPORT_FIELDS["g6_observation"] = ReportField(
-    {"result": str, "detail": str, "observed": dict, "owned_probe": bool, "observations": list},
+    {"result": str, "detail": str, "observed": dict, "owned_probe": bool, "observations": list, 'reason_code': str},
     {"result": "passed", "detail": "G6 observed the calls in its isolated runner"},
     "G6's own observation of a confirmed check or probe", "a known result and its detail; observations are "
     "input/output pairs", required_members=("result", "detail"),
@@ -718,6 +720,8 @@ def read_report(raw: object) -> RunReport:
         consistent &= all(type(node) is str and node in phase_failures or
                           (type(node) is str and node in messages)
                           for node in value["os_errors"]) if typed else False
+    if 'check_errors' in value and type(value['check_errors']) is dict:
+        consistent &= all(node in phase_failures or node in messages for node in value['check_errors']) if typed else False
     # The run's own record of what happened to it is one fact with its verdict, read here with the rest of the
     # report and never left to a consumer. The producer names changed files only under the verdict that says so; it
     # marks no pass degraded or not completed, and no failure completed (``completed``: pytest's exit was 0 or 5 and
@@ -2027,6 +2031,9 @@ _RETURN_HEAD, _RETURN_TAIL = 2048, 6144
 #: run fail. Modules of a subprocess or a forked child are not seen. Written for Python 3.8 and later.
 _BOOT = r'''
 import json, os, socket, sys
+# Generated checks register their exact class before importing the repository under test.
+# Like the existing exception-object annotations, this does not authenticate against interpreter-state tampering.
+sys._g6_check_setup_types = []
 sys.path[:] = [p for p in sys.path if p not in ("", os.getcwd())]
 with open(sys.argv[6], encoding="utf-8") as _g6_env:
     os.environ.update(json.load(_g6_env))
@@ -2097,6 +2104,7 @@ class _Counted:
         self.rootdir = ""
         self.messages = {}
         self.os_errors = set()
+        self.check_errors = {}
         self.missing_modules, self.not_found_ids = set(), set()
         self.session = None
         self.collection_stopped = None
@@ -2104,6 +2112,10 @@ class _Counted:
         self.session = session
     def pytest_exception_interact(self, node, call, report):
         error, seen = getattr(getattr(call, "excinfo", None), "value", None), set()
+        for kind, reason in vars(sys).get('_g6_check_setup_types', ()):
+            if type(error) is kind:
+                self.check_errors[report.nodeid] = reason
+                break
         while error is not None and id(error) not in seen:
             seen.add(id(error))
             if isinstance(error, ModuleNotFoundError) and type(error.name) is str:
@@ -2164,6 +2176,7 @@ class _Counted:
                            "collected_ids": sorted(self.collected_ids), "omitted_ids": sorted(self.omitted_ids),
                            "rootdir": self.rootdir, "messages": self.messages,
                            "os_errors": sorted(self.os_errors), "missing_modules": sorted(self.missing_modules),
+                           "check_errors": self.check_errors,
                            "not_found_ids": sorted(self.not_found_ids),
                            "collection_stopped": self.collection_stopped}, handle)
 class _Capture:
@@ -2835,6 +2848,7 @@ def _progress(counts: dict[str, int], counted: Path) -> dict:
             "failed_ids": found.get("failed_ids", []), "setup_errors": found.get("setup_errors", {}),
             "rootdir": found.get("rootdir", ""), "failure_messages": found.get("messages", {}),
             "os_errors": found.get("os_errors", []),
+            "check_errors": found.get("check_errors", {}),
             "missing_modules": found.get("missing_modules", []), "not_found_ids": found.get("not_found_ids", []),
             "collection_stopped": found.get("collection_stopped"),
             "passed": max(0, counts.get("passed", 0) - max(0, started - finished))}
@@ -3098,6 +3112,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "source_before": ledger.digest(before), "rootdir": _root(repo, tally.get("rootdir") or ""),
                 "failure_messages": tally.get("failure_messages") or {},
                 "os_errors": list(tally.get("os_errors") or []),
+                "check_errors": dict(tally.get("check_errors") or {}),
                 "missing_modules": list(tally.get("missing_modules") or []),
                 "not_found_ids": list(tally.get("not_found_ids") or []),
                 "probe_observations": probe_observations(output),

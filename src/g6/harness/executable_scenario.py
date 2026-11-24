@@ -137,7 +137,7 @@ class Scenario:
             runner.CheckSetupError,
             runner.raised_during_setup, runner.exception_name, runner.exception_matches, runner.exception_detail,
             runner.exception_message,
-            runner.setup_call,
+            runner.setup_call, runner.call_absent, runner.register_setup_error,
             _comparison,
             runner._unique, runner._encoded, runner._fingerprint, runner._valid_encoding,
             runner._matches_encoding, runner.read_frame, runner.finish))
@@ -147,7 +147,8 @@ class Scenario:
                 + "\nBINDINGS['option'] = " + ascii(option)
                 + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = " + ascii(prefix)
                 + " + ascii(BINDINGS['scenario']) + " + ascii(suffix)
-                + "\n" + helpers + '''
+                + "\n" + runner.CODE_CARRIER_HELPERS + helpers + '''
+register_setup_error(TEMPLATE)
 def _check_example():
     data = setup_call('scenario_binding', _comparison, BINDINGS['scenario'], BINDINGS['option'])
     with tempfile.TemporaryDirectory() as own:
@@ -162,8 +163,8 @@ def _check_example():
         with open(channel, 'rb') as handle:
             raw = handle.read(MAX_FRAME + len(MAGIC) + 5)
     reading = finish(ran.returncode, raw, data)
-    if reading['result'] == 'error':
-        raise CheckSetupError(reading['detail'])
+    if reading.get('reason_code') == 'G6_E_CHECK_SETUP':
+        raise CheckSetupError(reading['detail'].partition(': ')[2])
     if reading['result'] != 'passed':
         raise AssertionError(reading['detail'])
 

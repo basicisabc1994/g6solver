@@ -96,6 +96,7 @@ from g6.harness import verification_search as vs
 from g6.harness.behaviour_runner import (
     CheckSetupError, bind_method, example_text, runtime_method, setup_call,
     raised_during_setup, exception_name, exception_matches, exception_detail, exception_message,
+    target_attribute, call_absent, register_setup_error, CODE_CARRIER_HELPERS,
 )
 from g6.workforce import repo_tests
 
@@ -1144,9 +1145,15 @@ def _bounded(value):
     return {"sha256": hashlib.sha256(bytes(text, "utf-8")).hexdigest(), "start": text[:200]}
 
 
+_function = None
+
+
 def _outcome(call):
+    global _function
     try:
-        function = _load(BINDINGS["function"])
+        if _function is None:
+            _function = _load(BINDINGS["function"])
+        function = _function
     except BaseException as exc:
         if (exception_matches(exc, KeyboardInterrupt) or exception_matches(exc, CheckSetupError)
                 or raised_during_setup(exc)):
@@ -1171,6 +1178,8 @@ def _outcome(call):
 
 
 def test_differential(capsys):
+    global _function
+    _function = None
     # what the code prints itself stays captured; each observation reaches the run's output
     for call in BINDINGS["calls"]:
         line = json.dumps({"input": call, "output": _outcome(call)}, sort_keys=True)
@@ -1316,6 +1325,7 @@ _LEGACY_HEADER = """\
 # Python literal; nothing else here comes from the caller. Run it with pytest from the top folder of a copy of the
 # repository: it imports the repository's code by the names BINDINGS holds.
 import builtins
+import inspect
 import collections.abc
 import concurrent.futures
 import copy
@@ -1329,10 +1339,12 @@ import sys
 import pytest
 """
 
-_LEGACY_COMMON = ("\n" + inspect.getsource(CheckSetupError) + "\n" + inspect.getsource(raised_during_setup)
+_LEGACY_COMMON = ("\n" + CODE_CARRIER_HELPERS + inspect.getsource(CheckSetupError) + "\n" + inspect.getsource(raised_during_setup)
                   + "\n" + inspect.getsource(exception_name) + "\n" + inspect.getsource(exception_matches)
                   + "\n" + inspect.getsource(exception_detail) + "\n" + inspect.getsource(setup_call)
                   + "\n" + inspect.getsource(exception_message)
+                  + "\n" + inspect.getsource(call_absent) + "\n" + inspect.getsource(target_attribute)
+                  + "\n" + inspect.getsource(register_setup_error) + "\nregister_setup_error(TEMPLATE)\n"
                   + "\n" + inspect.getsource(runtime_method) + "\n" + inspect.getsource(bind_method)) + """
 
 def _load(spec):
@@ -1344,13 +1356,13 @@ def _load_target(spec):
     kind, module, attribute = spec[:3]
     if kind == "builtin":
         return getattr(builtins, attribute)
-    found = importlib.import_module(module)
+    found = setup_call('module_import', importlib.import_module, module)
     if len(spec) >= 4:
         wanted = os.path.realpath(os.path.join(os.getcwd(), *spec[3].split("/")))
         where = os.path.realpath(getattr(found, "__file__", ""))
         if os.path.normcase(where) != os.path.normcase(wanted):
-            raise RuntimeError("entry point resolved outside its copied file")
-    target = bind_method(found, spec, _load) if kind in ("method", "state_method") else getattr(found, attribute)
+            raise CheckSetupError("import_or_binding")
+    target = bind_method(found, spec, _load) if kind in ("method", "state_method") else target_attribute(found, attribute)
     if not callable(target):
         raise CheckSetupError("binding: target is not callable")
     return target
@@ -1378,8 +1390,7 @@ def _shown(value, limit=200):
 def _raised(exc):
     # an exception, its type at the start of a line, so a refusal by the run's boundary reads as one
     message = setup_call("exception_description", exception_message, exc, "<unavailable>")
-    said = setup_call("exception_description", exception_detail, exc, message)
-    return _name(type(exc)) + ": " + _shown(said)
+    return _name(type(exc)) + ": " + _shown(message[:200])
 
 
 def _json(value):
