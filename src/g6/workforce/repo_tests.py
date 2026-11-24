@@ -2216,6 +2216,14 @@ sys.exit(pytest.main(args, plugins=[_Counted(), _Capture(), _Loaded()]))
 '''.replace("NETWORK_OFF", repr(SAID["network_off"]))
 _BOOT = confine.CHILD_PRELUDE + _BOOT
 
+# Ordinary execution keeps its original bootstrap and progress schema. Only
+# the isolated collect-only child writes this separate advisory report.
+_COLLECTION_BOOT = _BOOT.replace('        status = getattr(session, "exitstatus", None)\n', '''        status = getattr(session, "exitstatus", None)
+        with open(counted + ".collection.json", "w", encoding="utf-8") as handle:
+            json.dump({"nodes": [item.nodeid for item in session.items], "root": self.rootdir,
+                       "exit": int(status) if status is not None else None}, handle)
+''')
+
 
 def _untracked(repo: Path) -> list[str]:
     """The files git lists as untracked and not ignored (a nested repository as its folder)."""
@@ -3023,6 +3031,66 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
                 require_isolation=require_isolation)
 
 
+def collect(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), timeout_s: int = 10,
+            sources: dict[str, str] | None = None) -> dict:
+    """Advisory collection only, always confined, with the repository's config and hooks.
+
+    No receipt or test verdict is produced. Interpreter and environment preflight
+    refuse exactly as ``run`` does, before copying or entering the work window.
+    Collection failure and missing isolation leave collection uncertain, and
+    never authorise a fallback without isolation.
+    """
+    root = checked_repo(repo)
+    python = interpreter(root)
+    _repo_env()
+
+    def run_collection():
+        if sources:
+            deadline = time.monotonic() + timeout_s
+            with repository_copy(root, deadline=deadline, before=sources) as copy:
+                return _run(copy, tests, roots=roots, timeout_s=timeout_s, network=False,
+                            python=python, require_isolation=True, collect_only=True, copied=True,
+                            scratch_dir=copy.parent, deadline=deadline)
+        return _run(root, tests, roots=roots, timeout_s=timeout_s, network=False,
+                    python=python, require_isolation=True, collect_only=True)
+
+    try:
+        found = within(timeout_s, run_collection)
+        return found if found is not None else {"status": "uncertain", "reason": "pytest collection timed out"}
+    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+        raise
+    except RepoRefused as exc:
+        return {"status": "uncertain", "reason": f"pytest collection refused ({exc.code})"}
+    except Exception as exc:
+        return {"status": "uncertain", "reason": f"pytest collection unavailable ({type(exc).__name__})"}
+
+
+def _read_collection(counted: Path, code: int | None, repo: Path) -> dict:
+    """Read structured selected ids, never terminal output or a partial collection."""
+    if code not in (0, 5):
+        reason = "timed out" if code is None else f"errors (exit {code})"
+        return {"status": "uncertain", "reason": f"pytest collection {reason}"}
+    try:
+        if counted.stat().st_size > 2_000_000:
+            raise ValueError("collection report size limit")
+        raw = json.loads(counted.read_text(encoding="utf-8"), object_pairs_hook=_report_object)
+        nodes, rootdir = raw["nodes"], raw["root"]
+        if (type(raw.get("exit")) is not int or raw["exit"] != code or
+                type(nodes) is not list or len(nodes) > 10_000 or not isinstance(rootdir, str) or
+                not rootdir or not _within(repo.resolve(), Path(rootdir).resolve())):
+            raise ValueError("incomplete collection report")
+        prefix = _root(repo, rootdir)
+        result = []
+        for node in nodes:
+            if (not isinstance(node, str) or shape_problem(node, "collected node") or
+                    "::" not in node or ".." in node.partition("::")[0].split("/")):
+                raise ValueError("invalid collected node")
+            result.append(f"{prefix}/{node}" if prefix else node)
+        return {"status": "available", "nodes": sorted(set(result))}
+    except (OSError, ValueError, TypeError, KeyError, RecursionError):
+        return {"status": "uncertain", "reason": "pytest collection report unavailable or incomplete"}
+
+
 def _test_id(repo: Path, test: str, what: str = "test") -> str:
     """A test (or, ``what``, a module) as pytest, which opens it, is given it: a file git listed (``GitName``) as the system
     is given it (``_on_disk``), its shape judged on the name and inside by ``_within``, the one containment rule (repair 3,
@@ -3041,7 +3109,8 @@ def _test_id(repo: Path, test: str, what: str = "test") -> str:
 def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int, network: bool,
          mutant: tuple[str, str] | None = None, copied: bool = False, python: str = "",
          scratch_dir: Path | None = None, deadline: float | None = None, receipt: bool = False,
-         require_isolation: bool = False, links: dict | None = None, observation: dict | None = None) -> dict:
+         require_isolation: bool = False, links: dict | None = None, observation: dict | None = None,
+         collect_only: bool = False) -> dict:
     """The shared execution path; only old-test replay uses a copy without git metadata. ``require_isolation``: a run
     no backend confines is refused (``G6_E_ISOLATION_UNAVAILABLE``) before it starts, even where the person allowed
     unconfined runs (verification search's proposed checks). ``links``: what the copy (``repository_copy``'s
@@ -3055,6 +3124,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
             raise RepoRefused("G6_E_INPUT_VALIDATION", "an observation needs one copied, isolated, offline run")
         return behaviour_runner.run(repo, observation, tests[0], timeout_s=timeout_s,
                                     deadline=deadline if deadline is not None else time.monotonic() + timeout_s)
+    if collect_only and (not require_isolation or receipt or mutant is not None):
+        raise ValueError("collection requires isolation and cannot produce test evidence")
     if not tests:
         raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["no_tests"])
     ids = [_test_id(repo, test) for test in tests]
@@ -3133,11 +3204,14 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         # the run's own log file, empty (truth.no_null_device): with none named, pytest's is the null device, which an
         # AppContainer may be refused; one the repository names could not be written into a repository in place
         own_config[:] = _config_args(repo, ids, own)
-        cmd = [python, "-I", "-B", "-X", "utf8", "-c", _BOOT, json.dumps(entries), "1" if network else "0",
+        cmd = [python, "-I", "-B", "-X", "utf8", "-c", _COLLECTION_BOOT if collect_only else _BOOT,
+               json.dumps(entries), "1" if network else "0",
                target, source, str(counted), str(variables), str(own / "loaded.json"), str(LOADED_LIMIT), *ids, "-q",
                "-p", "no:cacheprovider",
                f"--junitxml={report}", *own_config, f"--log-file={own / 'pytest.log'}",
                "--log-file-level=100"]
+        if collect_only:
+            cmd.append("--collect-only")
         mine = confine.owned(repo)
         reads = confine.interpreter_paths(python)
         environment = tuple(path for path in _environment_of(python) if not any(
@@ -3160,6 +3234,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
             raise
         except OSError as exc:
+            if collect_only:
+                return {"status": "uncertain", "reason": f"pytest collection could not start ({type(exc).__name__})"}
             if isinstance(exc, confine.NotStarted):
                 isolation = confine_not_started(isolation, exc)
             found = result("could_not_start", None, "", [])
@@ -3169,6 +3245,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
             if left:
                 isolation = {**isolation, "cleanup": left}
         output, counts = _output(log), _counts(report, repo, tuple(Path(entry) for entry in entries))
+        collection = _read_collection(Path(str(counted) + ".collection.json"), code, repo) if collect_only else None
         progress = _progress(counts or {}, counted)
         seen[:] = _loaded(own / "loaded.json")
         if counts is not None:
@@ -3176,12 +3253,22 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
     try:
         after = take_snapshot()
     except CopyNotRun as exc:
+        if collect_only:
+            return {"status": "uncertain", "reason": "pytest collection snapshot timed out"}
         return {**result("timed_out", progress, output, []), "said": str(exc)}
     except RepoRefused:  # git cannot read the repository after the run (review I5): nothing the tests said is believed
+        if collect_only:
+            return {"status": "uncertain", "reason": "pytest collection could not read closing snapshot"}
         moved = [SAID["git_unreadable_name"]]
         return {**result(CHANGED, counts, output, moved), "said": SAID["git_unreadable"]}
     moved = _moved(before, after)
     component_process.checkpoint()
+    if collect_only:
+        if moved:
+            return {"status": "uncertain", "reason": "pytest collection changed tracked files"}
+        if not isolation.get("backend"):
+            return {"status": "uncertain", "reason": "pytest collection has no isolation"}
+        return collection
     verdict = _judge(code, counts, output, moved)
     found = {**result(verdict, progress, output, moved),
              "completed": code in (0, 5) and progress.get("expected") is not None
