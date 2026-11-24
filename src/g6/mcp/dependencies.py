@@ -261,9 +261,14 @@ def _refresh_path_ownership() -> set[str]:
             except Exception:
                 current_path = None
                 uncertain.add(record)
-        if ((resolved is not None and current_path is not None and current_path != resolved)
-                or (device is not None and status is not None
-                    and (status.st_dev, status.st_ino) != (device, inode))):
+        # A comparable stat identity decides whether this is still the same
+        # file. Its resolved spelling may change, for example via a junction
+        # retargeted to a hardlink. Otherwise keep the existing-path fallback.
+        if device is not None and status is not None:
+            replaced = (status.st_dev, status.st_ino) != (device, inode)
+        else:
+            replaced = resolved is not None and current_path is not None and current_path != resolved
+        if replaced:
             stale.add(record)
         # Fill previously unavailable fields without losing a known value to
         # absence or uncertainty. Later replacements can retire the fuller fact.

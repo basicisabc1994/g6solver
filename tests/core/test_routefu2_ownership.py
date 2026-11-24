@@ -472,3 +472,140 @@ def test_unresolved_advertised_alias_keeps_history_through_stat_uncertainty(owne
     finally:
         if os.path.lexists(junction):
             os.rmdir(junction)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction ownership")
+@pytest.mark.parametrize("advertised", (False, True), ids=("unloaded", "required-advertised"))
+@pytest.mark.parametrize("same_file", (True, False), ids=("same-inode", "independent-file-control"))
+def test_junction_retarget_uses_stat_identity(ownership, tmp_path, same_file, advertised):
+    import _winapi
+
+    dependencies, specs = ownership
+    target = tmp_path / "target"
+    replacement = tmp_path / "replacement"
+    target.mkdir()
+    replacement.mkdir()
+    original = target / "shared.py"
+    other = replacement / "shared.py"
+    original.write_text("value = 73\n", encoding="utf-8")
+    if same_file:
+        os.link(original, other)
+    else:
+        other.write_text("value = 'independent optional'\n", encoding="utf-8")
+    junction = tmp_path / "site"
+    _winapi.CreateJunction(str(target), str(junction))
+    try:
+        source = junction / "shared.py"
+        for root in (REQUIRED, OPTIONAL):
+            specs[root] = util.spec_from_file_location(root, source)
+        assert _roots(dependencies, SCOPES[0]) == frozenset()
+        before = source.stat()
+        previous_path = os.path.realpath(source, strict=True)
+        specs.pop(OPTIONAL)
+        if not advertised:
+            specs.clear()
+        os.rmdir(junction)
+        _winapi.CreateJunction(str(replacement), str(junction))
+        after = source.stat()
+        assert os.path.realpath(source, strict=True) != previous_path
+        assert ((before.st_dev, before.st_ino) == (after.st_dev, after.st_ino)) is same_file
+        invalidate_caches()
+        assert _roots(dependencies, SCOPES[1]) == (frozenset() if same_file else {OPTIONAL})
+        specs.clear()
+        os.rmdir(junction)
+        failure = ModuleNotFoundError("retargeted required alias is unavailable", name=OPTIONAL)
+        assert dependencies.optional_dependency_missing("abstraction", failure) is (not same_file)
+    finally:
+        if os.path.lexists(junction):
+            os.rmdir(junction)
+        other.unlink(missing_ok=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction ownership")
+def test_same_inode_retarget_records_new_path_spelling(ownership, tmp_path, monkeypatch):
+    import _winapi
+
+    dependencies, specs = ownership
+    target = tmp_path / "target"
+    replacement = tmp_path / "replacement"
+    target.mkdir()
+    replacement.mkdir()
+    original = target / "shared.py"
+    other = replacement / "shared.py"
+    original.write_text("value = 73\n", encoding="utf-8")
+    os.link(original, other)
+    junction = tmp_path / "site"
+    _winapi.CreateJunction(str(target), str(junction))
+    try:
+        source = junction / "shared.py"
+        specs[REQUIRED] = util.spec_from_file_location(REQUIRED, source)
+        assert _roots(dependencies, SCOPES[0]) == {OPTIONAL}
+        specs.clear()
+        os.rmdir(junction)
+        _winapi.CreateJunction(str(replacement), str(junction))
+        assert os.path.samefile(source, original)
+        # Refresh with no live root, then remove the source of that observation.
+        assert _roots(dependencies, SCOPES[1]) == {OPTIONAL}
+        os.rmdir(junction)
+        specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, other)
+        stat = os.stat
+
+        def transient_stat(path, *args, **kwargs):
+            if os.fspath(path) == str(other):
+                raise OSError("only the new resolved spelling is available")
+            return stat(path, *args, **kwargs)
+
+        with monkeypatch.context() as transient:
+            transient.setattr(os, "stat", transient_stat)
+            assert _roots(dependencies, SCOPES[1]) == frozenset()
+        specs.clear()
+        other.unlink()
+        failure = ModuleNotFoundError("newly spelled required alias is unavailable", name=OPTIONAL)
+        assert not dependencies.optional_dependency_missing("abstraction", failure)
+    finally:
+        if os.path.lexists(junction):
+            os.rmdir(junction)
+        other.unlink(missing_ok=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction ownership")
+def test_path_only_history_retires_on_existing_retarget(ownership, tmp_path, monkeypatch):
+    import _winapi
+
+    dependencies, specs = ownership
+    target = tmp_path / "target"
+    replacement = tmp_path / "replacement"
+    target.mkdir()
+    replacement.mkdir()
+    original = target / "shared.py"
+    other = replacement / "shared.py"
+    original.write_text("value = 73\n", encoding="utf-8")
+    os.link(original, other)
+    junction = tmp_path / "site"
+    _winapi.CreateJunction(str(target), str(junction))
+    try:
+        source = junction / "shared.py"
+        for root in (REQUIRED, OPTIONAL):
+            specs[root] = util.spec_from_file_location(root, source)
+        stat = os.stat
+
+        def transient_stat(path, *args, **kwargs):
+            if os.fspath(path) == str(source):
+                raise OSError("no initial stat identity")
+            return stat(path, *args, **kwargs)
+
+        with monkeypatch.context() as transient:
+            transient.setattr(os, "stat", transient_stat)
+            assert _roots(dependencies, SCOPES[0]) == frozenset()
+        specs.clear()
+        os.rmdir(junction)
+        _winapi.CreateJunction(str(replacement), str(junction))
+        assert os.path.samefile(source, original)
+        # There is no retained stat identity to compare with the current one.
+        assert _roots(dependencies, SCOPES[1]) == {OPTIONAL}
+        os.rmdir(junction)
+        assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+    finally:
+        if os.path.lexists(junction):
+            os.rmdir(junction)
+        other.unlink(missing_ok=True)
