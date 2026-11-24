@@ -204,10 +204,14 @@ class Coordination:
             checked = plain_file(bookkeeping_path(folder, "mutex"))
             if (opened.st_dev, opened.st_ino) != (checked.st_dev, checked.st_ino):
                 raise WorkspaceRefused(BUSY, "the workspace mutex was replaced while waiting")
-            yield
+            try:
+                yield
+            except PathRefused as exc:
+                # Only the protected operation owns this path refusal.
+                raise WorkspaceRefused(OUTSIDE_ROOT, exc.reason) from None
         except PathRefused as exc:
-            # Refusals from the protected body are not lock contention.
-            raise WorkspaceRefused(OUTSIDE_ROOT, exc.reason) from None
+            # The mutex's own checks retain their original contention code.
+            raise WorkspaceRefused(BUSY, exc.reason) from None
         finally:
             try:
                 if locked:
