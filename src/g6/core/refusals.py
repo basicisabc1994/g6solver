@@ -652,6 +652,7 @@ LAYERS: dict[str, tuple[str, ...]] = {
         "No Python file changed against the base, so nothing was tested and no loop began: make the change, or name "
         "the right base, then call again."),
     "G6_E_NO_TESTS": ("none", "bundles"),
+    "G6_E_CHECK_SETUP": ("person", "harness"),
     "G6_E_OBSERVATION_UNAVAILABLE": ("person", "harness"),
     "G6_E_OPERATOR_APPROVAL_MISMATCH": ("person", "operator"),
     "G6_E_OPERATOR_APPROVAL_REQUIRED": ("person", "operator", "wait"),
