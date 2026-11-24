@@ -45,6 +45,18 @@ _FUNCTION = (ast.FunctionDef, ast.AsyncFunctionDef)
 PYTEST_CONFIGS = ("pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg")
 
 
+def pytest_context_paths(paths, test_file=None):
+    """Configuration inventory shared by the reader and static admission.
+
+    Without a test path, retain every possible ancestor configuration. With
+    one, only its directory and ancestors inside the repository apply.
+    """
+    directory = PurePosixPath(test_file).parent if test_file is not None else None
+    return tuple(path for path in _each(paths)
+                 if PurePosixPath(path).name in (*PYTEST_CONFIGS, "conftest.py") and
+                 (directory is None or directory.is_relative_to(PurePosixPath(path).parent)))
+
+
 class _Omitted(Exception):
     def __init__(self, check: str, reason: str):
         self.check, self.reason = check, reason
@@ -1123,6 +1135,7 @@ def _static_selected(index, rel, selection):
     This is a conservative guard, not a replacement for collection. Configured
     class patterns and custom collectors need an available collection result.
     """
+    _static_test_writes(index.trees[rel])
     parts = selection.split("[", 1)[0].replace("::", ".").split(".")
     module = index.modules[rel]
     for end in _each(range(1, len(parts))):
@@ -1165,11 +1178,84 @@ def _static_selected(index, rel, selection):
     return _selected(index, rel, selection)
 
 
+def _static_test_writes(tree):
+    """Only literal, direct class-local __test__ bindings are statically read.
+
+    Scan every scope: a helper or conditional can mutate collection attributes.
+    Computed attribute names and subscript stores cannot establish a safe target.
+    """
+    lexical = {id(statement) for node in _walk(tree) if isinstance(node, ast.ClassDef)
+               for statement in _each(node.body)}
+    local_names = {id(target) for node in _walk(tree) if id(node) in lexical
+                   and isinstance(node, (ast.Assign, ast.AnnAssign))
+                   for target in _each(node.targets if isinstance(node, ast.Assign) else [node.target])
+                   if isinstance(target, ast.Name)}
+    setters, aliases = {"setattr", "delattr", "builtins.setattr", "builtins.delattr"}, []
+    for node in _walk(tree):
+        if (isinstance(node, ast.Name) and node.id == "__test__" and
+                isinstance(node.ctx, (ast.Store, ast.Del)) and id(node) not in local_names):
+            raise _FileOmitted("explicit body has a non-lexical collection attribute binding")
+        if isinstance(node, ast.ImportFrom) and node.module == "builtins":
+            setters.update(alias.asname or alias.name for alias in _each(node.names)
+                           if alias.name in ("setattr", "delattr"))
+        elif isinstance(node, ast.Assign):
+            aliases.extend((target.id, _name(node.value)) for target in _each(node.targets)
+                           if isinstance(target, ast.Name))
+    while True:
+        added = {name for name, value in _each(aliases) if value in setters} - setters
+        if not added:
+            break
+        setters.update(added)
+    for node in _walk(tree):
+        if isinstance(node, (ast.Global, ast.Nonlocal)) and "__test__" in node.names:
+            raise _FileOmitted("explicit body has a redirected collection attribute binding")
+        if isinstance(node, ast.Call) and (
+                any(keyword.arg == "__test__" for keyword in _each(node.keywords)) or
+                any(isinstance(part, ast.Constant) and part.value == "__test__"
+                    for argument in _each([*node.args, *(keyword.value for keyword in node.keywords)])
+                    for part in _walk(argument))):
+            raise _FileOmitted("explicit body passes a collection attribute to an unreadable call")
+        if isinstance(node, ast.Call) and (_name(node.func) in setters or
+                _name(node.func).split(".")[-1] in ("setattr", "delattr")):
+            name = node.args[1] if len(node.args) > 1 else None
+            if not isinstance(name, ast.Constant) or name.value == "__test__":
+                raise _FileOmitted("explicit body has an external or dynamic collection attribute write")
+        if (isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)) and
+                (not isinstance(node.slice, ast.Constant) or node.slice.value == "__test__")):
+            raise _FileOmitted("explicit body has an unreadable subscript assignment")
+        if isinstance(node, ast.Attribute) and node.attr == "__test__" and isinstance(node.ctx, (ast.Store, ast.Del)):
+            raise _FileOmitted("explicit body has an external collection attribute write")
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr, ast.Delete)):
+            targets = node.targets if isinstance(node, (ast.Assign, ast.Delete)) else [node.target]
+            writes = any(isinstance(part, ast.Name) and part.id == "__test__"
+                         for target in _each(targets) for part in _walk(target))
+            if writes:
+                if (id(node) not in lexical or not isinstance(node, (ast.Assign, ast.AnnAssign)) or
+                        any(not isinstance(target, ast.Name) for target in targets)):
+                    raise _FileOmitted("explicit body has a non-lexical collection attribute write")
+                try:
+                    ast.literal_eval(node.value)
+                except (ValueError, TypeError):
+                    raise _FileOmitted("explicit body has an unreadable collection attribute write") from None
+
+
+def _collected_selected(index, rel, selection, body):
+    """A selected check names no AST body until its callable location agrees."""
+    symbols = _selected(index, rel, selection)
+    if not isinstance(body, dict) or type(body.get("line")) is not int:
+        raise _FileOmitted("collected callable identity unavailable")
+    for symbol in _each(symbols):
+        first = min([symbol.node.lineno, *(node.lineno for node in _each(symbol.node.decorator_list))])
+        if body.get("file") != symbol.file or body["line"] != first:
+            raise _FileOmitted("collected callable does not match the source body")
+    return symbols
+
+
 def collect_checks(change, stated_checks, proposed_checks, roots, *, collector, deadline):
     """Expand selections through an injected collector, retaining each named failure.
 
     The review supplies the confined runner. Text-only callers can supply fixture
-    node ids here without importing repository code or changing global defaults.
+    node ids and callable locations without importing repository code here.
     """
     from g6.workforce import repo_tests
 
@@ -1200,6 +1286,9 @@ def collect_checks(change, stated_checks, proposed_checks, roots, *, collector, 
                     answers[check] = {"status": "available", "nodes": [
                         node for node in answer["nodes"] if len(checks) == 1 or scope == "." or
                         repo_tests.report_covers(scope, node)]}
+                    if isinstance(answer.get("bodies"), dict):
+                        answers[check]["bodies"] = {node: answer["bodies"][node]
+                                                    for node in answers[check]["nodes"] if node in answer["bodies"]}
                 else:
                     answers[check] = {"status": "uncertain", "reason": answer.get("reason") or
                                       "pytest collection result unavailable"}
@@ -1221,7 +1310,6 @@ def _exercised(targets: Sequence[dict], checks: Mapping[str, str], roots: Sequen
         if rel.endswith(".py"):
             texts[rel] = source
     index = _Index(texts, roots, skipped, "check") if checks else None
-    configured = any(path in PYTEST_CONFIGS or PurePosixPath(path).name == "conftest.py" for path in _each(texts))
     static = set()
     # External target owners can be resolved without loading their modules in
     # the small caller-list API, just as they can in the full inventory.
@@ -1234,7 +1322,7 @@ def _exercised(targets: Sequence[dict], checks: Mapping[str, str], roots: Sequen
         if answer.get("status") != "available" or type(answer.get("nodes")) is not list:
             rel, separator, selection = check.partition("::")
             bodies = []
-            if (not configured and check in explicit and separator and selection and
+            if (not pytest_context_paths(texts, rel) and check in explicit and separator and selection and
                     rel in index.modules and rel not in index.invalid):
                 with _file(rel):
                     # A class/file selection is not a named body. Do not expand
@@ -1259,7 +1347,16 @@ def _exercised(targets: Sequence[dict], checks: Mapping[str, str], roots: Sequen
                 skipped.append(skip(check, "collected body source unavailable"))
                 continue
             with _file(rel):
-                pending, seen = list(_selected(index, rel, selection)), set()
+                try:
+                    identities = answer.get("bodies")
+                    body = identities.get(node) if isinstance(identities, dict) else None
+                    bodies = (_selected(index, rel, selection) if check in static else
+                              _collected_selected(index, rel, selection, body))
+                except _FileOmitted as exc:
+                    uncertain.add(check)
+                    skipped.append(skip(check, exc.args[0]))
+                    continue
+                pending, seen = list(bodies), set()
             while pending:
                 _tick()
                 symbol = pending.pop()

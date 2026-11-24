@@ -1102,7 +1102,7 @@ def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, dead
                 omitted = change_map.empty()
                 omitted["skipped"].append(change_map.skip("change map inventory", "file limit reached"))
                 return omitted
-        paths.update(p for p in bounded((*base_names, *patch_names)) if p in change_map.PYTEST_CONFIGS)
+        paths.update(change_map.pytest_context_paths(bounded((*base_names, *patch_names))))
         inventory = sorted(paths,
                            key=lambda p: (p not in change.files, p not in checks, p))
         entries = repo_tests._listed_at(change.repo, change.base_commit, inventory)
@@ -1124,7 +1124,7 @@ def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, dead
                         skipped.append(change_map.skip(f"change map: {shown_name(rel)}", "file byte limit reached"))
                         unavailable.add(rel)
                         continue
-                    text = raw.decode("utf-8-sig") if rel in change_map.PYTEST_CONFIGS else _python_source(raw)
+                    text = (_python_source(raw) if rel.endswith(".py") else raw.decode("utf-8-sig"))
                     if len(text) > change_map.MAX_FILE_CHARS:
                         skipped.append(change_map.skip(f"change map: {shown_name(rel)}", "file text limit reached"))
                         unavailable.add(rel)
@@ -1149,7 +1149,7 @@ def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, dead
                             skipped.append(change_map.skip(f"change map: base {shown_name(rel)}", "file byte limit reached"))
                             unavailable.add(rel)
                             continue
-                        text = raw.decode("utf-8-sig") if rel in change_map.PYTEST_CONFIGS else _python_source(raw)
+                        text = (_python_source(raw) if rel.endswith(".py") else raw.decode("utf-8-sig"))
                         if len(text) > change_map.MAX_FILE_CHARS:
                             skipped.append(change_map.skip(f"change map: base {shown_name(rel)}", "file text limit reached"))
                             unavailable.add(rel)
@@ -1177,6 +1177,9 @@ def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, dead
         for rel in bounded(unavailable):
             base.pop(rel, None)
             patch.pop(rel, None)
+        # Its contents are unavailable, but its name still prevents static
+        # admission. Never turn a failed configuration read into no config.
+        patch.update(dict.fromkeys(change_map.pytest_context_paths(unavailable), ""))
         proposed = [p.model_dump() if hasattr(p, "model_dump") else p for p in bounded(proposed_checks)]
         checkpoint()
         record = change_map.build(change, base, patch, stated_checks=stated_checks,

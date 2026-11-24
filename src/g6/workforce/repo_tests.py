@@ -2218,10 +2218,58 @@ _BOOT = confine.CHILD_PRELUDE + _BOOT
 
 # Ordinary execution keeps its original bootstrap and progress schema. Only
 # the isolated collect-only child writes this separate advisory report.
-_COLLECTION_BOOT = _BOOT.replace('        status = getattr(session, "exitstatus", None)\n', '''        status = getattr(session, "exitstatus", None)
+_COLLECTION_BOOT = _BOOT.replace('args = sys.argv[9:]\n', '''_g6_collection_repo = sys.argv.pop(9)
+args = sys.argv[9:]
+''').replace('        status = getattr(session, "exitstatus", None)\n', '''        status = getattr(session, "exitstatus", None)
+        import os, types, pytest
+        from _pytest.unittest import TestCaseFunction
+        # The parent supplies the reviewed repository explicitly. pytest may
+        # choose an ancestor root, and hooks may change the working directory.
+        repository = globals().get("_g6_collection_repo")
+        report_root = repository or self.rootdir
+        names = {}
+        for item in session.items:
+            node = item.nodeid
+            if repository:
+                path, separator, selection = node.partition("::")
+                path = os.path.relpath(os.path.realpath(os.path.join(self.rootdir, path)),
+                                       repository).replace(os.sep, "/")
+                if path == ".." or path.startswith("../") or os.path.isabs(path):
+                    report_root = ""  # an unreadable selection cannot establish absence
+                node = path + separator + selection
+            names[item.nodeid] = node
+        bodies = {}
+        for item in session.items:
+            try:
+                if type(item) not in (pytest.Function, TestCaseFunction):
+                    continue
+                obj = getattr(item, "obj", None)
+                if type(obj) is types.MethodType:
+                    obj = obj.__func__
+                if type(obj) is not types.FunctionType:
+                    continue
+                # No unwrapping: __wrapped__ may name a body pytest never calls.
+                if obj.__name__ != getattr(item, "originalname", None):
+                    continue
+                code = obj.__code__
+                if not os.path.isabs(code.co_filename):
+                    continue
+                file = os.path.realpath(code.co_filename)
+                if repository:
+                    file = os.path.relpath(file, repository).replace(os.sep, "/")
+                    if file == ".." or file.startswith("../") or os.path.isabs(file):
+                        continue
+                # A standalone producer can retain an absolute identity; only
+                # the reader, given the reviewed root, may make it relative.
+                bodies[names[item.nodeid]] = {"file": file, "line": code.co_firstlineno}
+            except Exception:
+                pass
+        report = {"nodes": list(names.values()), "root": report_root,
+                  "exit": int(status) if status is not None else None}
+        if bodies:
+            report["bodies"] = bodies
         with open(counted + ".collection.json", "w", encoding="utf-8") as handle:
-            json.dump({"nodes": [item.nodeid for item in session.items], "root": self.rootdir,
-                       "exit": int(status) if status is not None else None}, handle)
+            json.dump(report, handle)
 ''')
 
 
@@ -3086,7 +3134,32 @@ def _read_collection(counted: Path, code: int | None, repo: Path) -> dict:
                     "::" not in node or ".." in node.partition("::")[0].split("/")):
                 raise ValueError("invalid collected node")
             result.append(f"{prefix}/{node}" if prefix else node)
-        return {"status": "available", "nodes": sorted(set(result))}
+        answer = {"status": "available", "nodes": sorted(set(result))}
+        if "bodies" in raw:
+            bodies = raw["bodies"]
+            selected = set(nodes)
+            if type(bodies) is not dict or any(node not in selected for node in bodies):
+                raise ValueError("invalid collected callable identities")
+            mapped = {}
+            for node, body in bodies.items():
+                if type(body) is not dict or set(body) != {"file", "line"}:
+                    raise ValueError("invalid collected callable identity")
+                file, line = body["file"], body["line"]
+                if (not isinstance(file, str) or _control(file) or
+                        (not Path(file).is_absolute() and shape_problem(file, "collected callable file")) or
+                        ".." in file.replace("\\", "/").split("/") or
+                        type(line) is not int or line < 1):
+                    raise ValueError("invalid collected callable location")
+                location = (repo / file).resolve()
+                if not _within(repo.resolve(), location):
+                    raise ValueError("invalid collected callable location")
+                file = location.relative_to(repo.resolve()).as_posix()
+                if shape_problem(file, "collected callable file"):
+                    raise ValueError("invalid collected callable location")
+                mapped[f"{prefix}/{node}" if prefix else node] = {"file": file, "line": line}
+            if mapped:
+                answer["bodies"] = mapped
+        return answer
     except (OSError, ValueError, TypeError, KeyError, RecursionError):
         return {"status": "uncertain", "reason": "pytest collection report unavailable or incomplete"}
 
@@ -3206,7 +3279,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         own_config[:] = _config_args(repo, ids, own)
         cmd = [python, "-I", "-B", "-X", "utf8", "-c", _COLLECTION_BOOT if collect_only else _BOOT,
                json.dumps(entries), "1" if network else "0",
-               target, source, str(counted), str(variables), str(own / "loaded.json"), str(LOADED_LIMIT), *ids, "-q",
+               target, source, str(counted), str(variables), str(own / "loaded.json"), str(LOADED_LIMIT),
+               *([str(repo)] if collect_only else []), *ids, "-q",
                "-p", "no:cacheprovider",
                f"--junitxml={report}", *own_config, f"--log-file={own / 'pytest.log'}",
                "--log-file-level=100"]
