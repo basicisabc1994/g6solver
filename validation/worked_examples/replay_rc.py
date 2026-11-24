@@ -878,7 +878,8 @@ def _json_equal(left: Any, right: Any) -> bool:
     if type(left) is list:
         return len(left) == len(right) and all(_json_equal(a, b) for a, b in zip(left, right))
     if type(left) is float:
-        return math.isfinite(left) and math.isfinite(right) and left == right
+        return (math.isfinite(left) and math.isfinite(right) and left == right
+                and math.copysign(1.0, left) == math.copysign(1.0, right))
     return type(left) in (bool, int, str, type(None)) and left == right
 
 
@@ -1246,18 +1247,37 @@ def _well_formed_case(case: Any) -> bool:
             and all(isinstance(origin, dict) for origin in case["origins"]))
 
 
-def _unique_origin_digests(cases: list[Case]) -> bool:
+def _origin_run_identity(run: Any, source: Path | None = None) -> Path | None:
+    """Use archive-resolved folder names, or lexical names without a source."""
+    if not _relative_evidence_name(run):
+        return None
+    try:
+        if source is None:
+            # Current batches retain relative names, never a source root. Do
+            # not open a folder named by saved data just to compare its name.
+            return _path_key(Path(run))
+        archive = Source(source)
+        with _open_handle(archive.path(run), root=archive.root, missing=True) as opened:
+            if opened.mode is not None and not stat.S_ISDIR(opened.mode):
+                return None
+            return _path_key(opened.path)
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _unique_origin_digests(cases: list[Case], *, source: Path | None = None) -> bool:
     """An archived run supplies one final.patch across all bugs and cases."""
     digests = {}
     for case in cases:
         for origin in case.origins:
-            run = origin.get("run")
-            if not isinstance(run, str) or not run or digests.setdefault(run, case.digest) != case.digest:
+            run = _origin_run_identity(origin.get("run"), source)
+            if run is None or digests.setdefault(run, case.digest) != case.digest:
                 return False
     return True
 
 
-def _current_evaluation(saved: dict, registration: Registration, start: dict | Path | None) -> dict | None:
+def _current_evaluation(saved: dict, registration: Registration, start: dict | Path | None,
+                        *, source: Path | None = None) -> dict | None:
     if isinstance(start, Path):
         start = _batch_start(start)
     plan = saved["plan"]
@@ -1281,7 +1301,7 @@ def _current_evaluation(saved: dict, registration: Registration, start: dict | P
             if key in cases:
                 return None
             cases[key] = Case(**{**row, "patch": Path(row["patch"]), "source": Path()})
-        if not _unique_origin_digests(list(cases.values())):
+        if not _unique_origin_digests(list(cases.values()), source=source):
             return None
         # Reconstruct exactly what the writer sent, including the image's repo
         # and base substitutions and each agent call's own archived arguments.
@@ -1336,7 +1356,7 @@ def score_saved(saved: dict, registration: Registration | None = None, *, source
     version = saved.get("evidence_rule_version")
     newer = type(version) is int and version > EVIDENCE_RULE_VERSION
     if type(version) is int and version == EVIDENCE_RULE_VERSION:
-        result = _current_evaluation(saved, registration, start)
+        result = _current_evaluation(saved, registration, start, source=source)
         if result is not None:
             return _score_result(result, version, "batch"), 0
 
@@ -1353,7 +1373,7 @@ def score_saved(saved: dict, registration: Registration | None = None, *, source
             cases, excluded = enumerate_cases(source, tasks, require_index=True, source_snapshot=fresh_snapshot)
             if not _json_equal(fresh_snapshot, snapshot):
                 raise ValueError("source identity, selection or evidence bytes changed")
-            if not _unique_origin_digests(cases):
+            if not _unique_origin_digests(cases, source=source):
                 raise ValueError("one origin run names different final patch digests")
             # Labels come exclusively from the current source. Reuse only a
             # response to the same patch and review arguments in a current case.
