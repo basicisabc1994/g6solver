@@ -12,6 +12,7 @@ log level, over this ``stdio_server``. ``tests/core/test_mcp_delivery_review2.py
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import threading
@@ -117,9 +118,31 @@ class _InputFile(FileIO):
     def release(self):
         self._released = True
 
+    def fileno(self):
+        if self._released:
+            raise ValueError("stdin descriptor ownership was released")
+        return super().fileno()
+
     def close(self):
         if not self._released:
-            super().close()
+            try:
+                super().close()
+            finally:
+                # A failed OS close may already have consumed the number. Never retry it or publish it.
+                self.release()
+
+
+def _input_cleanup(close, resource):
+    """Report cleanup faults without replacing a startup refusal or preventing the reader's EOF signal."""
+    try:
+        close()
+    except BaseException:  # noqa: BLE001 - cleanup must also finish during interrupted setup or reader shutdown
+        with suppress(BaseException):
+            logging.getLogger(__name__).warning(
+                "[G6_E_STDIN_HANDOFF] stdin %s cleanup failed", resource, exc_info=True,
+            )
+        return False
+    return True
 
 
 class _InputDescriptor:
@@ -137,14 +160,23 @@ class _InputDescriptor:
             os.fstat(fd)                 # validate the borrowed source before an allocation can reuse its number
             # A null-device identity also matches another owner's newly opened null device. A private,
             # unique file makes the placeholder distinguishable even when the target number is reused.
-            self.placeholder = TemporaryDirectory(prefix="g6-stdin-")
-            self.file = _InputFile(os.path.join(self.placeholder.name, "slot"), "xb+")
+            unique = False
+            try:
+                self.placeholder = TemporaryDirectory(prefix="g6-stdin-")
+                self.file = _InputFile(os.path.join(self.placeholder.name, "slot"), "xb+")
+            except OSError:
+                # A healthy stdin must not depend on writable temporary storage. The null-device fallback
+                # keeps the parent's identity comparison, with its weaker distinction between null opens.
+                self._cleanup_placeholder()
+                self.file = _InputFile(os.devnull, "rb")
+            else:
+                unique = True
             if self.file.fileno() == fd:
                 # The external owner closed stdin after validation; this slot now owns only the placeholder.
                 self.close()
                 raise OSError("stdin closed during descriptor handoff")
             placeholder = os.stat(self.file.fileno())
-            if not placeholder.st_ino:
+            if unique and not placeholder.st_ino:
                 raise OSError("stdin placeholder has no file identity")
             try:
                 os.dup2(fd, self.file.fileno(), inheritable=False)
@@ -156,8 +188,11 @@ class _InputDescriptor:
                 else:
                     if (target.st_dev, target.st_ino) != (placeholder.st_dev, placeholder.st_ino):
                         self.file.release()  # replaced: the native call or another owner has the closing claim
-                    # The unique placeholder survived: normal cleanup still owes exactly one close.
+                    # The placeholder identity survived: normal cleanup still owes exactly one close.
                 raise
+            # dup2 has closed the unique slot's native handle. Remove its name and directory before a
+            # reader is published, so a terminated server leaves no per-session placeholder behind.
+            self._cleanup_placeholder()
             if os.get_inheritable(self.file.fileno()) is not False:
                 raise OSError("stdin duplicate inheritance state is unknown or inheritable")
         except (OSError, ValueError, TypeError, OverflowError, NotImplementedError) as exc:
@@ -173,14 +208,16 @@ class _InputDescriptor:
     def close(self, *, reader=False):
         with self.lock:
             if self.claimed == reader:
-                try:
-                    if self.file is not None:
-                        self.file.close()
-                        self.file = None
-                finally:
-                    if self.placeholder is not None:
-                        self.placeholder.cleanup()
-                        self.placeholder = None
+                # The factory returns a file object, not necessarily G6's native owner. Retire our
+                # closing claim first; the file's close owns its own bookkeeping, including on failure.
+                file, self.file = self.file, None
+                if file is not None:
+                    _input_cleanup(file.close, "descriptor")
+                self._cleanup_placeholder()
+
+    def _cleanup_placeholder(self):
+        if self.placeholder is not None and _input_cleanup(self.placeholder.cleanup, "placeholder"):
+            self.placeholder = None
 
 
 def _read_lines(descriptor, lines, token, stopped, cached, console=None) -> None:
@@ -202,7 +239,9 @@ def _read_lines(descriptor, lines, token, stopped, cached, console=None) -> None
     except BaseException:  # noqa: BLE001 - a read error, or the connection or its event loop ended: input ends here
         pass
     finally:
-        descriptor.close(reader=True)  # only its claiming thread closes it, after any blocked read ends
+        # Only its claiming thread closes it, after any blocked read ends. Even an unexpected close fault
+        # must not prevent the parser seeing EOF.
+        _input_cleanup(lambda: descriptor.close(reader=True), "reader descriptor")
         with suppress(BaseException):
             anyio.from_thread.run_sync(lines.close, token=token)
 
@@ -274,13 +313,14 @@ async def _lines(stdin):
         with receiver:
             yield receiver
     except BaseException:
-        descriptor.close()              # reclaim only an unclaimed duplicate; never close a live reader's fd
+        # Reclaim only an unclaimed duplicate; cleanup must preserve the original exception.
+        _input_cleanup(descriptor.close, "startup descriptor")
         if stopped is not None:
             stopped.set()
         if sender is not None:
-            sender.close()
+            _input_cleanup(sender.close, "sender")
         if receiver is not None:
-            receiver.close()
+            _input_cleanup(receiver.close, "receiver")
         raise
     finally:
         if stopped is not None:
