@@ -3141,134 +3141,70 @@ def collect(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), 
 _COLLECTION_INVENTORIES = ContextVar("collection_copy_inventories", default={})
 
 
+class _CollectionSources(dict):
+    """Source bytes plus omissions carried to the collection answer."""
+    def __init__(self):
+        super().__init__()
+        self.not_read = []
+
+
 def _collection_source_passive(tree, modules):
-    """Read collection effects on ordinary code, within the same-process limit.
+    """Compatibility entry for a single module's visible collection effects."""
+    from g6.workforce._collection_effects import CollectionEffects
 
-    Installed imports, constructors and function bodies are ordinary Python.
-    Hooks/plugins, imported attribute writes and import-time repository calls
-    disable collected identity. This is not a hostile-code boundary.
-    """
-    nodes, pending = [], deque([tree])
-    while pending:
-        component_process.checkpoint()
-        node = pending.popleft()
-        nodes.append(node)
-        pending.extend(ast.iter_child_nodes(node))
-    aliases, definitions = {"setattr": "builtins.setattr", "delattr": "builtins.delattr"}, set()
-    for node in nodes:
-        component_process.checkpoint()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            definitions.add(node.name)
-        if isinstance(node, ast.Import):
-            aliases.update({alias.asname or alias.name.split(".")[0]: alias.name for alias in node.names})
-        elif isinstance(node, ast.ImportFrom):
-            aliases.update({alias.asname or alias.name: f"{node.module or ''}.{alias.name}" for alias in node.names})
-        if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("pytest_") or
-                isinstance(node, ast.Name) and node.id == "pytest_plugins"):
+    return CollectionEffects({"__entry__.py": tree}, modules=modules).passive("__entry__.py")
+
+
+def _collection_config_passive(path):
+    """Only parsed options that cannot select or replace collected bodies."""
+    from g6.harness.change_map import MAX_FILE_BYTES
+
+    if _linked(path) or path.stat().st_size > MAX_FILE_BYTES:
+        return False
+    text = path.read_text(encoding="utf-8-sig")
+    try:
+        if path.suffix == ".toml":
+            data = tomllib.loads(text)
+            data = data.get("tool", {}).get("pytest", {}) if path.name == "pyproject.toml" else data.get("pytest", {})
+            values = data.get("ini_options", data)
+        else:
+            parser = configparser.ConfigParser(interpolation=None)
+            parser.read_string(text)
+            section = "tool:pytest" if path.name == "setup.cfg" else "pytest"
+            values = dict(parser[section]) if parser.has_section(section) else {}
+        if not isinstance(values, dict):
             return False
-    imported = set(aliases)
-    assignments = [node for node in nodes if isinstance(node, ast.Assign)]
-    # Follow simple aliases to repository callables and imported objects. This
-    # preserves the existing refusal of import-time calls/writes through aliases.
-    while True:
-        added = False
-        for node in assignments:
+        allowed = {"minversion", "markers", "filterwarnings", "xfail_strict", "console_output_style", "required_plugins"}
+        for key, value in values.items():
             component_process.checkpoint()
-            if not isinstance(node.value, (ast.Name, ast.Attribute)):
-                continue
-            name = ast.unparse(node.value)
-            head = name.split(".")[0]
-            if head not in aliases and head not in definitions:
-                continue
-            resolved = aliases.get(head, head) + name[len(head):]
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id not in aliases and target.id != head:
-                    aliases[target.id] = resolved
-                    if head in imported:
-                        imported.add(target.id)
-                    added = True
-        if not added:
-            break
-    inert = set()
-    for definition in tree.body:
-        if (isinstance(definition, ast.FunctionDef) and not definition.decorator_list and
-                len(definition.body) == 1 and isinstance(definition.body[0], ast.Return)):
-            value = definition.body[0].value
-            arguments = {argument.arg for argument in (*definition.args.posonlyargs, *definition.args.args)}
-            if (isinstance(value, ast.Name) and value.id in arguments or
-                    isinstance(value, ast.Lambda) and not any(isinstance(part, ast.Call) for part in ast.walk(value))):
-                inert.add(definition.name)
-
-    def repository_call(function):
-        name = ast.unparse(function)
-        head = name.split(".")[0]
-        resolved = aliases.get(head, head)
-        # Retain the existing spelling-based decorator exceptions. Repository
-        # code shadowing these names is part of the owner's stated limit.
-        if (resolved + name[len(head):]).startswith("pytest.mark.") or name in ("staticmethod", "classmethod"):
-            return False
-        return head in definitions or resolved.split(".")[0] in modules | definitions or resolved.startswith(".")
-
-    def imported_object(node):
-        while isinstance(node, (ast.Attribute, ast.Subscript)):
-            node = node.value
-        return isinstance(node, ast.Name) and node.id in imported
-
-    # Visit only expressions evaluated at import: bodies of functions and
-    # __main__ guards do not execute then. Class bodies and headers do.
-    pending = list(tree.body)
-    while pending:
-        component_process.checkpoint()
-        node = pending.pop()
-        if isinstance(node, ast.If) and ast.unparse(node.test) in (
-                "__name__ == '__main__'", "'__main__' == __name__"):
-            pending.extend(node.orelse)
-            continue
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            for decorator in node.decorator_list:
-                function = decorator.func if isinstance(decorator, ast.Call) else decorator
-                if repository_call(function) and not (isinstance(function, ast.Name) and function.id in inert):
-                    return False
-                if isinstance(decorator, ast.Call):
-                    pending.extend([*decorator.args, *(keyword.value for keyword in decorator.keywords)])
-            if isinstance(node, ast.ClassDef):
-                pending.extend([*node.bases, *(keyword.value for keyword in node.keywords), *node.body])
-            else:
-                pending.extend([node.args, *([node.returns] if node.returns else [])])
-            continue
-        if isinstance(node, ast.Lambda):
-            pending.append(node.args)
-            continue
-        if (isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)) and
-                imported_object(node.value)):
-            return False
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and
-                aliases.get(node.func.id, node.func.id) in ("setattr", "delattr", "builtins.setattr", "builtins.delattr") and
-                node.args and imported_object(node.args[0])):
-            return False
-        if isinstance(node, ast.Call) and repository_call(node.func):
-            return False
-        pending.extend(ast.iter_child_nodes(node))
-    return True
+            if key not in allowed and not key.startswith(("log_", "junit_")):
+                return False
+            if not (isinstance(value, (str, bool, int, float)) or
+                    isinstance(value, list) and all(isinstance(item, str) for item in value)):
+                return False
+            if key == "xfail_strict" and not (isinstance(value, bool) or
+                    isinstance(value, str) and value.lower() in ("true", "false", "yes", "no", "1", "0")):
+                return False
+        return True
+    except (ValueError, TypeError, AttributeError, configparser.Error):
+        return False
 
 
-def _collection_evidence(repo: Path, *, roots=()):
+def _collection_evidence(repo: Path, *, roots=(), selections=()):
     """Bounded pre-launch source read for honest collection, not hostile authority."""
     from g6.harness import change_map
+    from g6.workforce._collection_effects import CollectionEffects, module_names
 
-    sources = {}
+    sources = _CollectionSources()
     try:
         paths = _COLLECTION_INVENTORIES.get().get(repo.resolve())
         if paths is None:
             paths = _paths(_git(repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z"))
-        if any(path == "conftest.py" or path.endswith("/conftest.py")
-               for path in change_map.pytest_context_paths(paths)):
-            return sources, False
-        files = sorted({file for file in paths if file.endswith(".py")})
+        files = {file for file in paths if file.endswith(".py")}
         if len(files) > change_map.MAX_FILES:
             return sources, False
         directories = {repo}
-        for file in files:
+        for file in sorted(files):
             component_process.checkpoint()
             path = _disk(repo, file)
             if path is None:
@@ -3280,36 +3216,79 @@ def _collection_evidence(repo: Path, *, roots=()):
                     return sources, False
                 directories.add(directory)
                 directory = directory.parent
-        # Ignoring a configuration in git does not stop pytest loading it.
-        if any(_configures_pytest(directory) or os.path.lexists(directory / "conftest.py") for directory in directories):
+        # Ignoring context in git does not stop pytest reading it. Conftest
+        # bytes use the same path, link, size and effect checks as listed files.
+        for directory in sorted(directories):
+            component_process.checkpoint()
+            config = _config_file(directory)
+            if config is not None and not _collection_config_passive(config):
+                return sources, False
+            if os.path.lexists(directory / "conftest.py"):
+                files.add((directory / "conftest.py").relative_to(repo).as_posix())
+        if len(files) > change_map.MAX_FILES:
             return sources, False
         total = 0
-        for file in files:
+        trees, invalid = {}, set()
+        for file in sorted(files):
             component_process.checkpoint()
             path = repo / _test_id(repo, file, "collection source")
             if _linked(path) or not path.is_file() or path.stat().st_size > change_map.MAX_FILE_BYTES:
-                return {}, False
+                return sources, False
             data = path.read_bytes()
             total += len(data)
             if len(data) > change_map.MAX_FILE_BYTES or total > change_map.MAX_TOTAL_CHARS:
-                return {}, False
-            # compile accepts Python's declared source encoding; no import or exec.
+                return sources, False
             sources[file] = data
-        modules = {file.removesuffix(".py").replace("/", ".").removeprefix("src.").split(".")[0]
-                   for file in sources}
-        for root in roots:
-            prefix = root.replace("\\", "/").rstrip("/") + "/"
-            modules.update(file.removeprefix(prefix).removesuffix(".py").replace("/", ".").split(".")[0]
-                           for file in sources if file.startswith(prefix))
-        for data in sources.values():
+            try:
+                trees[file] = ast.parse(data)
+            except (SyntaxError, ValueError):
+                invalid.add(file)
+        reader = CollectionEffects.from_trees(trees, roots=roots)
+        imported = set()
+        for file, tree in trees.items():
+            pending = deque([tree])
+            while pending:
+                component_process.checkpoint()
+                node = pending.popleft()
+                if isinstance(node, ast.Import):
+                    imported.update(alias.name for alias in node.names)
+                elif isinstance(node, ast.ImportFrom):
+                    module = reader.import_module(file, node)
+                    imported.add(module)
+                    imported.update(f"{module}.{alias.name}" for alias in node.names)
+                pending.extend(ast.iter_child_nodes(node))
+        imported_modules = {".".join(parts[:end]) for dependency in imported for parts in [dependency.split(".")]
+                            for end in range(1, len(parts) + 1)}
+        explicit = {selection.partition("::")[0] for selection in selections}
+        collection_files = {file for file in files if file in explicit or PurePosixPath(file).name == "conftest.py" or
+                            any(fnmatch.fnmatch(PurePosixPath(file).name, pattern) for pattern in ("test_*.py", "*_test.py"))}
+        for file in sorted(invalid):
             component_process.checkpoint()
-            if not _collection_source_passive(ast.parse(data), modules):
+            names = module_names(file, roots)
+            # Collection-changing naming configuration was already refused;
+            # only pytest's defaults can reach this point.
+            package = _disk(repo, file)
+            if package is None:
+                return sources, False
+            package = package.parent
+            loaded = (file in collection_files or
+                      PurePosixPath(file).name == "__init__.py" and any(
+                          (candidate_path := _disk(repo, candidate)) is not None and _within(package, candidate_path)
+                          for candidate in collection_files) or
+                      bool(names & imported_modules))
+            if loaded:
+                return sources, False
+            del sources[file]
+            sources.not_read.append({"file": file, "reason": "source does not parse and is not loaded by collection"})
+        for file in trees:
+            component_process.checkpoint()
+            if not reader.passive(file):
                 return sources, False
         return sources, True
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
     except (OSError, ValueError, SyntaxError, TypeError, RecursionError, RepoRefused):
-        return {}, False
+        return sources, False
 
 
 def _compile_collection_sources(repo, sources, runtime, python=None):
@@ -3381,6 +3360,10 @@ def _read_collection(counted: Path, code: int | None, repo: Path, *, evidence=No
                 raise ValueError("invalid collected node")
             result.append(f"{prefix}/{node}" if prefix else node)
         answer = {"status": "available", "nodes": sorted(set(result))}
+        source_evidence = _collection_evidence(repo) if evidence is None else evidence
+        not_read = getattr(source_evidence[0], "not_read", ())
+        if not_read:
+            answer["not_read"] = list(not_read)
         if "bodies" in raw:
             bodies = raw["bodies"]
             selected = set(nodes)
@@ -3406,7 +3389,7 @@ def _read_collection(counted: Path, code: int | None, repo: Path, *, evidence=No
                 mapped[f"{prefix}/{node}" if prefix else node] = {"file": file, "line": line}
             if mapped:
                 answer["bodies"] = mapped
-                sources, authoritative = _collection_evidence(repo) if evidence is None else evidence
+                sources, authoritative = source_evidence
                 codes, unresolved, admitted_codes = raw.get("codes", {}), [], {}
                 wanted = {body["file"] for body in mapped.values() if body["file"] in sources}
                 compiled = {}
@@ -3447,7 +3430,7 @@ def _read_collection(counted: Path, code: int | None, repo: Path, *, evidence=No
                     answer["codes"] = admitted_codes
                     answer["compilations"] = compiled
         if not nodes:
-            _, authoritative = _collection_evidence(repo) if evidence is None else evidence
+            _, authoritative = source_evidence
             if not authoritative:
                 return {"status": "uncertain", "reason": "pytest collection producer authority unavailable"}
         return answer
@@ -3547,7 +3530,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
     # tests collected, the output, the mutant's source and an empty config.
     # Both in one folder G6 makes, so a confined run can see where its report goes (pytest creates the report's folder,
     # and checks each folder above it, before writing).
-    collection_evidence = _collection_evidence(repo, roots=roots) if collect_only else None
+    collection_evidence = _collection_evidence(repo, roots=roots, selections=ids) if collect_only else None
     scratch_dir = outside_temp(repo, scratch_dir)
     with confine.run_folder(prefix="g6_repo_run_", dir=scratch_dir, ignore_cleanup_errors=True) as top:
         work, own = Path(top) / "home", Path(top) / "report"
