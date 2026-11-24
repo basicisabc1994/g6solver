@@ -13,6 +13,7 @@ import codecs
 import gc
 import io
 from contextlib import ExitStack, contextmanager
+from functools import lru_cache
 
 
 @contextmanager
@@ -45,42 +46,135 @@ def _decoder(source):
     raise ValueError("[G6_E_STDIN_HANDOFF] stdin has no accessible text decoder")
 
 
-def _pending_cr(source):
-    """Move the real decoder's pending newline without trying to complete potentially invalid UTF-8.
+class _TextBoundary(Exception):
+    """Stop before the wrapper feeds any more bytes to its decoder, including a synthetic EOF."""
 
-    CPython's text wrapper visits its decoder for GC. Use the decoder's state API, not native memory offsets:
-    the failed decode's error already owns every original byte, including the incremental byte buffer. Clear
-    that buffer and finalize just the newline state. The raw line framer now owns both states.
+
+@lru_cache(maxsize=256)
+def _ambiguous_characters(encoding):
+    """Find noncanonical byte aliases in character maps and native one/two-byte codecs.
+
+    A Unicode round trip alone cannot distinguish CP932's two spellings of some characters. For longer
+    native multibyte codecs there is no bounded inverse here: report uncertainty rather than guess bytes.
+    """
+    codec = codecs.lookup(encoding)
+    multibyte = any(base.__module__ == "_multibytecodec" for base in codec.incrementaldecoder.__mro__)
+    signature = "".encode(encoding)
+    ambiguous = set()
+    longer = False
+    candidates = (bytes((byte,)) for byte in range(256))
+    if multibyte:
+        candidates = (number.to_bytes(size, "big") for size in (1, 2) for number in range(256 ** size))
+    for candidate in candidates:
+        try:
+            char = candidate.decode(encoding)
+        except UnicodeError:
+            if multibyte and len(candidate) == 2 and not longer:
+                decoder = codec.incrementaldecoder("strict")
+                try:
+                    decoder.decode(candidate, final=False)
+                except UnicodeError:
+                    continue
+                longer = len(decoder.getstate()[0]) == 2
+            continue
+        if char:
+            try:
+                canonical = char.encode(encoding)
+            except UnicodeError:
+                ambiguous.add(char)
+                continue
+            if signature and canonical.startswith(signature):
+                canonical = canonical[len(signature):]
+            if canonical != candidate:
+                ambiguous.add(char)
+    return frozenset(ambiguous), longer
+
+
+def _check_codec_inverse(encoding, text):
+    if codecs.lookup(encoding).name in ("mbcs", "oem"):
+        raise ValueError("runtime code page has no fixed byte inverse")
+    # Textual escape/shift encodings can spell the same character as plain bytes or escaped ASCII. Their
+    # decoder state does not retain the original spelling, even when a re-encoded string decodes identically.
+    for sample in ("\u00e9", "\u4e00", "\U0001f600"):
+        try:
+            encoder = codecs.getincrementalencoder(encoding)("strict")
+            encoder.encode("", final=False)
+            encoded = encoder.encode(sample, final=False)
+        except UnicodeError:
+            continue
+        if len(encoded) > 1 and all(32 <= byte < 127 for byte in encoded):
+            raise ValueError("text codec has ambiguous ASCII escape spellings")
+    ambiguous, longer = _ambiguous_characters(encoding)
+    if longer or any(spelling in text for spelling in ambiguous):
+        raise ValueError("text codec has no unique bounded byte inverse for this cache")
+
+
+def _text_cache(source, buffer, raw, method):
+    """Take decoded characters separately from original decoder bytes and buffered wire input.
+
+    read(1) consumes only an existing character; the first attempt to refill raises at the binary boundary.
+    Unlike EOF, this neither finalizes a codec nor flushes its partial byte/newline state. It also distinguishes
+    an exhausted last chunk from pending characters, without changing the wrapper's configuration.
     """
     decoder = _decoder(source)
-    _, flags = decoder.getstate()
-    decoder.setstate((b"", flags))
-    newline = decoder.decode(b"", final=True)
-    return b"\r" if newline else b""
+    buffered, flags = decoder.getstate()
+    newline = isinstance(decoder, io.IncrementalNewlineDecoder)
+    pending_cr = newline and flags & 1
+    clean_flags = flags & ~1 if newline else flags
 
+    metadata = (source.encoding, source.errors)
+    chunks = [ref for ref in gc.get_referents(source)
+              if isinstance(ref, str) and ref and all(ref is not item for item in metadata)]
+    if source.errors not in ("strict", "surrogateescape", "surrogatepass"):
+        # A lossy decoded chunk has no recoverable byte provenance. CPython visits that string for GC,
+        # including an exhausted last chunk; keep the standing refusal before consuming any of it.
+        if buffered or pending_cr or chunks:
+            raise ValueError("[G6_E_STDIN_HANDOFF] stdin has unrecoverable lossy text")
+    if chunks:
+        # With an opaque inverse, a pipe's consumed cursor cannot be inspected without consuming caller text.
+        # Refuse before that destructive probe, even if its last decoded chunk might already be exhausted.
+        try:
+            _check_codec_inverse(source.encoding, "".join(chunks))
+        except (UnicodeError, LookupError, TypeError, ValueError) as exc:
+            raise ValueError("[G6_E_STDIN_HANDOFF] stdin has no inspectable lossless text cache") from exc
 
-def _cache_encoding(source):
-    """Recover known reversible text caches; bypass every untouched text decoder.
+    def boundary(*args):
+        raise _TextBoundary
 
-    Reconfiguration with the SAME settings is CPython's public check for text already read: it refuses once
-    decoded characters exist. Check incremental bytes/newlines first so reconfiguration cannot discard them.
-    Unknown codecs and lossy error modes are safe only on that untouched path. Binary prefetch is independent
-    of this check and is always transferred as bytes.
-    """
-    encoding = codecs.lookup(source.encoding).name
-    if encoding in ("utf-8", "utf-8-sig", "cp1252", "iso8859-1") and source.errors in (
-        "strict", "surrogateescape", "surrogatepass",
-    ):
-        # An earlier utf-8-sig read already handled its one initial signature; never insert another one.
-        return "utf-8" if encoding == "utf-8-sig" else encoding
-    decoder = _decoder(source)
-    initial = codecs.getincrementaldecoder(source.encoding)(source.errors)
-    if isinstance(decoder, io.IncrementalNewlineDecoder):
-        initial = io.IncrementalNewlineDecoder(initial, translate=True)
-    if decoder.getstate() != initial.getstate():
-        raise ValueError("[G6_E_STDIN_HANDOFF] stdin has unrecoverable text decoder state")
-    io.TextIOWrapper.reconfigure(source, encoding=source.encoding, errors=source.errors)
-    return None                         # no text read: neither decode nor consume the binary cache as text
+    chars = []
+    with ExitStack() as stack:
+        stack.enter_context(_method(raw, method, boundary))
+        if type(buffer) is io.BufferedReader:
+            stack.enter_context(_method(buffer, "read1", boundary))
+        try:
+            while char := source.read(1):
+                chars.append(char)
+        except _TextBoundary:
+            pass
+    text = "".join(chars)
+    pending = b""
+    if text or pending_cr:
+        try:
+            _check_codec_inverse(source.encoding, text + ("\r" if pending_cr else ""))
+            encoder = codecs.getincrementalencoder(source.encoding)(source.errors)
+            encoder.encode("", final=False)  # consume only an encoder's initial signature, never insert a new one
+            initial_encoder_state = encoder.getstate()
+            pending = encoder.encode(text, final=False)
+            check = codecs.getincrementaldecoder(source.encoding)(source.errors)
+            if newline:
+                check = io.IncrementalNewlineDecoder(check, translate=False)
+            check.setstate((b"", clean_flags))
+            if (check.decode(pending, final=False) != text or check.getstate() != (b"", clean_flags)
+                    or encoder.getstate() != initial_encoder_state):
+                raise ValueError("text codec does not round-trip in its current state")
+            if pending_cr:
+                pending += encoder.encode("\r", final=False)
+        except (UnicodeError, LookupError, TypeError, ValueError) as exc:
+            raise ValueError("[G6_E_STDIN_HANDOFF] stdin has unrecoverable text decoder state") from exc
+    # Decoder bytes have never been decoded by this handoff. They follow decoded text (and any held CR),
+    # ahead of the byte buffer. An empty decoded cache needs no encoder or initial decoder-state assumption.
+    decoder.setstate((b"", clean_flags))
+    return pending + buffered
 
 
 def cache_reader(source):
@@ -101,44 +195,14 @@ def cache_reader(source):
     for stream in (source, buffer, raw):
         if any(name in vars(stream) for name in ("read", "read1", "readinto", "readline")):
             raise TypeError("stdin descriptor has custom read methods")
-    encoding = _cache_encoding(source) if text else None
+    # Validate/recover before acquiring a duplicate, so an unrecoverable codec gets the stable startup refusal.
+    prefix = _text_cache(source, buffer, raw, method) if text else b""
 
     def drain():
-        boundary = 0
-
         def eof(*args):
-            nonlocal boundary
-            boundary += 1
             return b"" if method == "read" else 0
 
-        def text_eof(*args):
-            nonlocal boundary
-            boundary += 1
-            return b""
-
         with _method(raw, method, eof):
-            if encoding is None:
-                return _binary_cache(buffer)
-            pending = bytearray()
-            with ExitStack() as stack:
-                if type(buffer) is io.BufferedReader:
-                    # Drain only text already decoded. Fresh/buffered wire bytes must never pass through the
-                    # wrapper's codec (or its BOM stripping / lossy error handler).
-                    stack.enter_context(_method(buffer, "read1", text_eof))
-                while True:
-                    before = boundary
-                    try:
-                        char = source.read(1)
-                    except UnicodeDecodeError as exc:
-                        pending.extend(_pending_cr(source))
-                        pending.extend(exc.object)
-                        break
-                    if not char:
-                        break
-                    if boundary != before and char == "\n":
-                        char = "\r"     # EOF flushed a pending CR: the next raw byte may still be its LF
-                    pending.extend(char.encode(encoding, errors=source.errors))
-            pending.extend(_binary_cache(buffer))
-            return bytes(pending)
+            return prefix + _binary_cache(buffer)
 
     return drain, raw if type(raw) is console_type else None
