@@ -207,9 +207,27 @@ def _import_error_message(exc: ImportError) -> str:
     return "g6-mcp could not import a server dependency. See the chained ImportError for details."
 
 
+def _check_cached_import_parents(module: str) -> None:
+    """A cached child cannot establish that its current parents are still packages."""
+    import sys
+
+    if sys.modules.get(module) is None:
+        return  # An uncached import still checks its own parents.
+    parent = module.rpartition(".")[0]
+    while parent:
+        loaded = sys.modules.get(parent)
+        if loaded is None or getattr(loaded, "__path__", None) is None:
+            raise ModuleNotFoundError(
+                f"Cached module '{module}' has no live package parent '{parent}'", name=module)
+        parent = parent.rpartition(".")[0]
+
+
 def build_server(surface: Any = None) -> Any:
     try:
         _quiet()
+        # FastMCP can already be loaded: its cached MCP server import must not
+        # conceal a parent that was removed or replaced by a non-package alias.
+        _check_cached_import_parents("mcp.server")
         from fastmcp import Context, FastMCP
     except ImportError as exc:
         raise SystemExit(_import_error_message(exc)) from exc
