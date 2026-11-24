@@ -635,6 +635,17 @@ def reading(ran: dict, node: str) -> dict:
         return {**found, "result": "error", "detail": why}
 
     def failed(how: str, **extra) -> dict:
+        if any(reason == 'G6_E_OBSERVATION_UNAVAILABLE' and (_covers(node, report.full(named))
+                or report.full(named) == node.partition('::')[0])
+               for named, reason in report.data.get('check_errors', {}).items()):
+            from g6.harness.behaviour_runner import ObservationUnavailable
+
+            for line in how.splitlines():
+                _, found_detail, name = line.partition(ObservationUnavailable.DETAIL + ': ')
+                detail = found_detail + name
+                if found_detail and ObservationUnavailable.valid_detail(detail):
+                    return error(detail)
+            return error(ObservationUnavailable.DETAIL)
         if any(reason == 'G6_E_CHECK_SETUP' and (_covers(node, report.full(named))
                 or report.full(named) == node.partition('::')[0])
                for named, reason in report.data.get('check_errors', {}).items()):

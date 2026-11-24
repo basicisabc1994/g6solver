@@ -211,6 +211,29 @@ class CheckSetupError(TypeError):
         super().__init__("G6_E_CHECK_SETUP: " + phase + (": " + described if described else ""))
 
 
+class ObservationUnavailable(CheckSetupError):
+    """Import preparation yielded no observation of the repository callable."""
+
+    DETAIL = 'G6_E_OBSERVATION_UNAVAILABLE: import or lazy lookup did not complete'
+
+    @classmethod
+    def valid_detail(cls, detail):
+        if type(detail) is not str:
+            return False
+        if detail == cls.DETAIL:
+            return True
+        prefix = cls.DETAIL + ': '
+        name = detail[len(prefix):]
+        return (detail.startswith(prefix) and 0 < len(name) <= 200
+                and all((part.isidentifier() or part in ('<locals>', '<unavailable>'))
+                        and not part.startswith('G6_E_') for part in name.split('.')))
+
+    def __init__(self, kind=None, *, detail=None):
+        if detail is None:
+            detail = self.DETAIL + (': ' + exception_name(kind, qualified=True) if kind is not None else '')
+        TypeError.__init__(self, detail if self.valid_detail(detail) else self.DETAIL)
+
+
 CODE_CARRIERS = (
     ('g6._context_engine._registry', 'Refused'), ('g6._context_engine._scope', 'ScopeDenied'),
     ('g6.abstraction.server', 'FileRefused'), ('g6.action_logic.block', '_Refused'),
@@ -280,9 +303,12 @@ def register_setup_error(template=None):
     registry = vars(sys).get('_g6_check_setup_types')
     if type(registry) is list:
         registry.append((CheckSetupError, 'G6_E_CHECK_SETUP'))
+        unavailable = globals().get('ObservationUnavailable')
+        if unavailable is not None:
+            registry.append((unavailable, 'G6_E_OBSERVATION_UNAVAILABLE'))
 
 
-def raised_during_setup(exc):
+def raised_during_setup(exc, phase=None):
     """Identify preparation by G6's actual frame, without reading repository exception attributes.
 
     Method wrappers prepare immediately before invocation. Their operation handlers surround both phases, so
@@ -292,20 +318,39 @@ def raised_during_setup(exc):
     """
     trace = BaseException.__dict__['__traceback__'].__get__(exc)
     while trace is not None and trace.tb_frame.f_globals is setup_call.__globals__:
-        if trace.tb_frame.f_code is setup_call.__code__:
+        if (trace.tb_frame.f_code is setup_call.__code__
+                and (phase is None or trace.tb_frame.f_locals.get('phase') == phase)):
             return True
         trace = trace.tb_next
     return False
 
 
-def exception_name(kind):
-    """Read type metadata without instance or metaclass lookup or display hooks."""
+def execution_control(exc):
+    """Only keyboard interruption and G6's loaded controls bypass outcome recording."""
+    if exception_matches(exc, KeyboardInterrupt):
+        return True
+    controls = sys.modules.get('g6.core.component_process')
+    return controls is not None and any(exception_matches(exc, kind) for kind in (
+        controls.ExecutionInterrupted, controls.ContainmentFailure))
+
+
+def exception_name(kind, qualified=False):
+    """Bounded type metadata; missing or non-name fields retain a fixed placeholder."""
     own = type.__dict__
-    module = own['__module__'].__get__(kind)
-    name = own['__qualname__'].__get__(kind)
-    module = module if type(module) is str else '<unavailable>'
-    name = name if type(name) is str else '<unavailable>'
-    return name if module == 'builtins' else module + '.' + name
+
+    def field(key):
+        try:
+            value = own[key].__get__(kind)
+            if type(value) is str and all((part.isidentifier() or part == '<locals>') and not part.startswith('G6_E_')
+                                          for part in value.split('.')):
+                return value
+        except Exception:
+            pass
+        return '<unavailable>'
+
+    module, name = field('__module__'), field('__qualname__')
+    full = name if module == 'builtins' and not qualified else module + '.' + name
+    return full if len(full) <= 200 else '<unavailable>'
 
 
 def exception_matches(exc, kind):
@@ -320,18 +365,37 @@ def exception_message(exc, fallback):
 
 
 def exception_detail(exc, fallback):
-    """Only actual G6 classes carry G6 codes; repository diagnostics are bounded data."""
+    """Only actual G6 classes carry codes; repository messages never enter G6 detail."""
+    if type(exc) is ObservationUnavailable:
+        return exception_message(exc, ObservationUnavailable.DETAIL)
     if type(exc) is CheckSetupError:
         return exception_message(exc, 'G6_E_CHECK_SETUP: setup')
     code = typed_code(exc)
     if code is not None:
         return code + ': ' + fallback[:200]
-    try:
-        name = exception_name(type(exc))[:80]
-        message = exception_message(exc, '<unavailable>')[:200]
-        return fallback[:16] + ': ' + name + ': ' + message
-    except Exception:
-        raise CheckSetupError('exception_description') from None
+    return fallback[:16] + ': ' + exception_name(type(exc), qualified=True)
+
+
+def own_import_absent(exc, args):
+    """A missing bound module or submodule of a held package, never an external dependency."""
+    if not exception_matches(exc, ModuleNotFoundError):
+        return False
+    name = ImportError.__dict__['name'].__get__(exc)
+    if type(name) is not str or not all(part.isidentifier() for part in name.split('.')):
+        return False
+    if args and type(args[0]) is str and (name == args[0] or args[0].startswith(name + '.')):
+        return True
+    tree = os.path.normcase(os.path.realpath(globals().get('root', os.getcwd())))
+    top = name.partition('.')[0]
+    for prefix in sys.path:
+        folder = os.path.normcase(os.path.realpath(prefix or os.getcwd()))
+        if os.path.splitdrive(folder)[0] != os.path.splitdrive(tree)[0] or os.path.commonpath((tree, folder)) != tree:
+            continue
+        package = os.path.join(folder, top)
+        if os.path.isfile(package + '.py') or os.path.isfile(os.path.join(package, '__init__.py')) or (
+                os.path.isdir(package) and any(one.endswith('.py') for one in os.listdir(package))):
+            return True
+    return False
 
 
 def setup_call(phase, function, *args, **kwargs):
@@ -346,12 +410,14 @@ def setup_call(phase, function, *args, **kwargs):
     except LETS_THROUGH:
         raise
     except Exception as exc:
-        if call_absent(exc):
-            raise
-        if phase == 'module_import' and exception_matches(exc, ImportError):
-            raise
-        if phase == 'missing_callable' and exception_matches(exc, AttributeError):
-            raise
+        if call_absent(exc) or phase == 'missing_callable' and exception_matches(exc, AttributeError):
+            kind = (ModuleNotFoundError if exception_matches(exc, ModuleNotFoundError) else
+                    ImportError if exception_matches(exc, ImportError) else AttributeError)
+            metadata = {'name': ImportError.__dict__['name'].__get__(exc)} if kind is ModuleNotFoundError else {}
+            clean = kind('call failed: ' + exception_name(kind, qualified=True), **metadata)
+            raise clean from None
+        if phase == 'module_import' and (exception_matches(exc, ImportError) or exception_matches(exc, AttributeError)):
+            raise ObservationUnavailable(type(exc)) from None
         code = typed_code(exc)
         if code is not None:
             raise CheckSetupError(code + ': ' + phase) from exc
@@ -364,9 +430,14 @@ def call_absent(exc):
         return False
     trace = BaseException.__dict__['__traceback__'].__get__(exc)
     while trace is not None and trace.tb_frame.f_globals is setup_call.__globals__:
-        if (trace.tb_frame.f_code is setup_call.__code__
-                and trace.tb_frame.f_locals.get('phase') in ('missing_callable', 'module_import')):
-            return True
+        if trace.tb_frame.f_code is setup_call.__code__:
+            # The exact replacement raised by this G6 frame keeps its absence origin across outer setup calls.
+            if trace.tb_frame.f_locals.get('clean') is exc:
+                return True
+            phase = trace.tb_frame.f_locals.get('phase')
+            if (phase == 'missing_callable' or phase == 'module_import'
+                    and own_import_absent(exc, trace.tb_frame.f_locals.get('args', ()))):
+                return True
         trace = trace.tb_next
     return False
 
@@ -376,6 +447,8 @@ def target_attribute(owner, name):
     try:
         inspect.getattr_static(owner, name)
     except AttributeError:
+        if type(owner) is type(sys) and '__getattr__' in vars(owner):
+            return setup_call('module_import', getattr, owner, name)
         return setup_call('missing_callable', getattr, owner, name)
     except Exception as exc:
         raise CheckSetupError('method_lookup') from exc
@@ -442,10 +515,12 @@ CODE_CARRIER_HELPERS = ('CODE_CARRIERS = ' + ascii(CODE_CARRIERS) + '\n'
                         + inspect.getsource(code_carriers) + '\n' + inspect.getsource(typed_code) + '\n')
 
 BOOTSTRAP = (CODE_CARRIER_HELPERS + inspect.getsource(observable_exception) + '\n' + inspect.getsource(_fingerprint) + '\n'
-             + inspect.getsource(raised_during_setup) + '\n' + inspect.getsource(exception_name) + '\n'
+             + inspect.getsource(raised_during_setup) + '\n' + inspect.getsource(execution_control) + '\n'
+             + inspect.getsource(exception_name) + '\n'
              + inspect.getsource(exception_matches) + '\n' + inspect.getsource(exception_detail) + '\n'
              + inspect.getsource(exception_message) + '\n'
              + inspect.getsource(_exception_observation) + '\n' + inspect.getsource(CheckSetupError) + '\n'
+             + inspect.getsource(ObservationUnavailable) + '\n' + inspect.getsource(own_import_absent) + '\n'
              + inspect.getsource(setup_call) + '\n' + inspect.getsource(runtime_method) + '\n'
              + inspect.getsource(call_absent) + '\n'
              + inspect.getsource(target_attribute) + '\n'
@@ -600,12 +675,13 @@ def resolved():
         found[key] = None if error is None else identity(error)
     return found
 
-def setup_failed(exc):
+def setup_failed(exc, *, constructor=False):
     # Examples and executable scenarios carry preparation refusals separately from completed observations.
     # Differential probes retain their existing unavailable-observation contract on bootstrap failure.
-    if data["probe"]:
+    if data["probe"] and not constructor and type(exc) is not ObservationUnavailable:
         raise exc
-    payload = dumps({"version": "check_setup.v1", "detail": exception_detail(exc, "setup")},
+    version = 'observation_unavailable.v1' if type(exc) is ObservationUnavailable else 'check_setup.v1'
+    payload = dumps({"version": version, "detail": exception_detail(exc, "setup")},
                     sort_keys=True, allow_nan=False).encode("utf-8")
     if len(payload) > 1048576:
         raise RuntimeError("setup error too large")
@@ -630,6 +706,10 @@ except CheckSetupError as exc:
     setup_failed(exc)
 except (AttributeError, ImportError) as exc:
     call_failed(exc)
+except BaseException as exc:
+    if not raised_during_setup(exc, 'constructor') or execution_control(exc):
+        raise
+    setup_failed(CheckSetupError('constructor'), constructor=True)
 errors, outcomes, alive = {}, [], []
 for call in data["calls"]:
     args, kwargs = copy.deepcopy(call["args"]), copy.deepcopy(call.get("kwargs", {}))
@@ -638,8 +718,11 @@ for call in data["calls"]:
     except CheckSetupError as exc:
         setup_failed(exc)
     except BaseException as exc:
-        if raised_during_setup(exc) and not call_absent(exc):
+        if (raised_during_setup(exc) and not call_absent(exc)
+                and (not raised_during_setup(exc, 'constructor') or execution_control(exc))):
             raise
+        if raised_during_setup(exc, 'constructor') and not call_absent(exc):
+            setup_failed(CheckSetupError('constructor'), constructor=True)
         if call_absent(exc):
             call_failed(exc)
         alive.append(exc)
@@ -689,9 +772,14 @@ def read_frame(raw: bytes) -> dict | None:
             return value if (set(value) == {"version", "detail"} and isinstance(value["detail"], str)
                              and len(value['detail']) <= 300
                              and value['detail'] in CheckSetupError.details()) else None
+        if isinstance(value, dict) and value.get('version') == 'observation_unavailable.v1':
+            return value if (set(value) == {'version', 'detail'}
+                             and ObservationUnavailable.valid_detail(value['detail'])) else None
         if isinstance(value, dict) and value.get('version') == 'call_failure.v1':
             return value if (set(value) == {'version', 'detail'} and type(value['detail']) is str
-                             and len(value['detail']) <= 300 and value['detail'].startswith('call failed: ')) else None
+                             and value['detail'] in ('call failed: builtins.AttributeError',
+                                                     'call failed: builtins.ImportError',
+                                                     'call failed: builtins.ModuleNotFoundError')) else None
         if (not isinstance(value, dict) or set(value) != {"version", "outcomes", "errors"}
                 or value["version"] not in {"observation.v1", "observation.v2"}
                 or not isinstance(value["outcomes"], list)
@@ -763,6 +851,8 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
     calls = data.get("cases", data.get("calls", []))
     if observed is not None and observed["version"] == "check_setup.v1":
         return {"result": "error", "detail": observed["detail"], 'reason_code': 'G6_E_CHECK_SETUP'}
+    if observed is not None and observed['version'] == 'observation_unavailable.v1':
+        return {'result': 'error', 'detail': observed['detail'], 'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE'}
     if observed is not None and observed['version'] == 'call_failure.v1':
         return {'result': 'failed', 'detail': observed['detail']}
     if observed is None or len(observed["outcomes"]) != len(calls) or not calls:
@@ -867,14 +957,15 @@ def request(data: dict) -> dict:
 
 
 def _portable_source(function) -> str:
-    """Keep helper semantics while omitting documentation from the portable byte budget."""
+    """Keep helper semantics while omitting documentation and compacting fixed-code indentation."""
     tree = ast.parse(inspect.getsource(function))
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.body:
             first = node.body[0]
             if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and type(first.value.value) is str:
                 node.body.pop(0)
-    return ast.unparse(tree)
+    return '\n'.join(' ' * ((len(line) - len(line.lstrip(' '))) // 4) + line.lstrip(' ')
+                     for line in ast.unparse(tree).splitlines())
 
 
 def example_text(slot: str) -> str:
@@ -884,16 +975,18 @@ def example_text(slot: str) -> str:
     host-owned result channel, never from collection, plugins or the wrapper's pytest status.
     """
     helpers = "\n\n".join(_portable_source(one) for one in (
-        CheckSetupError, raised_during_setup, exception_name, exception_matches, exception_detail, exception_message,
+        CheckSetupError, ObservationUnavailable, raised_during_setup, exception_name, exception_matches,
+        exception_detail, exception_message, own_import_absent,
         setup_call, call_absent, register_setup_error,
         _unique, _encoded, _fingerprint, _valid_encoding, _matches_encoding, read_frame, finish,
         _import_roots, located, request))
     bootstrap = base64.b85encode(zlib.compress((confine.CHILD_PRELUDE + BOOTSTRAP).encode('utf-8'), 9)).decode('ascii')
+    carriers = base64.b85encode(zlib.compress(CODE_CARRIER_HELPERS.encode('utf-8'), 9)).decode('ascii')
     return ("import base64, zlib, concurrent.futures, hashlib, json, struct, subprocess, tempfile, sys, os\nfrom pathlib import Path\n"
             "TEMPLATE = 'example.v1'\nBINDINGS = " + slot
             + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = "
             + 'str(zlib.decompress(base64.b85decode(' + ascii(bootstrap) + ")), 'utf-8')\n"
-            + CODE_CARRIER_HELPERS + helpers + '''
+            + 'exec(zlib.decompress(base64.b85decode(' + ascii(carriers) + ')))\n' + helpers + '''
 register_setup_error(TEMPLATE)
 def _check_example():
     data = located(Path.cwd(), BINDINGS)
@@ -911,6 +1004,8 @@ def _check_example():
     reading = finish(ran.returncode, raw, data)
     if reading.get('reason_code') == 'G6_E_CHECK_SETUP':
         raise CheckSetupError(reading['detail'].partition(': ')[2])
+    if reading.get('reason_code') == 'G6_E_OBSERVATION_UNAVAILABLE':
+        raise ObservationUnavailable(detail=reading['detail'])
     if reading['result'] != 'passed':
         raise AssertionError(reading['detail'])
 

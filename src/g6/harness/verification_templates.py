@@ -96,7 +96,8 @@ from g6.harness import verification_search as vs
 from g6.harness.behaviour_runner import (
     CheckSetupError, bind_method, example_text, runtime_method, setup_call,
     raised_during_setup, exception_name, exception_matches, exception_detail, exception_message,
-    target_attribute, call_absent, register_setup_error, CODE_CARRIER_HELPERS,
+    target_attribute, call_absent, register_setup_error, CODE_CARRIER_HELPERS, ObservationUnavailable, own_import_absent,
+    execution_control,
 )
 from g6.workforce import repo_tests
 
@@ -1269,7 +1270,13 @@ def _not_replayable(why, exc=None):
 
 
 def _replay(trace):
-    state = setup_call("constructor", _call, BINDINGS["constructor"])
+    try:
+        state = setup_call("constructor", _call, BINDINGS["constructor"])
+    except BaseException as exc:
+        if (not raised_during_setup(exc, 'constructor') or execution_control(exc)
+                or exception_matches(exc, CheckSetupError) or call_absent(exc)):
+            raise
+        raise CheckSetupError('constructor') from exc
     for step, value in enumerate(trace["actions"]):
         try:
             _call(BINDINGS["actions"][str(value)], state)
@@ -1340,6 +1347,8 @@ import pytest
 """
 
 _LEGACY_COMMON = ("\n" + CODE_CARRIER_HELPERS + inspect.getsource(CheckSetupError) + "\n" + inspect.getsource(raised_during_setup)
+                  + "\n" + inspect.getsource(execution_control)
+                  + "\n" + inspect.getsource(ObservationUnavailable) + "\n" + inspect.getsource(own_import_absent)
                   + "\n" + inspect.getsource(exception_name) + "\n" + inspect.getsource(exception_matches)
                   + "\n" + inspect.getsource(exception_detail) + "\n" + inspect.getsource(setup_call)
                   + "\n" + inspect.getsource(exception_message)
@@ -1348,7 +1357,13 @@ _LEGACY_COMMON = ("\n" + CODE_CARRIER_HELPERS + inspect.getsource(CheckSetupErro
                   + "\n" + inspect.getsource(runtime_method) + "\n" + inspect.getsource(bind_method)) + """
 
 def _load(spec):
-    return setup_call("import_or_binding", _load_target, spec)
+    try:
+        return setup_call("import_or_binding", _load_target, spec)
+    except BaseException as exc:
+        if (not raised_during_setup(exc, 'constructor') or execution_control(exc)
+                or exception_matches(exc, CheckSetupError) or call_absent(exc)):
+            raise
+        raise CheckSetupError('constructor') from exc
 
 
 def _load_target(spec):
@@ -1376,7 +1391,7 @@ def _error(spec):
 
 
 def _name(kind):
-    return setup_call("exception_description", exception_name, kind)
+    return exception_name(kind)
 
 
 def _shown(value, limit=200):
@@ -1388,9 +1403,8 @@ def _shown(value, limit=200):
 
 
 def _raised(exc):
-    # an exception, its type at the start of a line, so a refusal by the run's boundary reads as one
-    message = setup_call("exception_description", exception_message, exc, "<unavailable>")
-    return _name(type(exc)) + ": " + _shown(message[:200])
+    # Repository messages never become G6's failure detail.
+    return "operation refused " + exception_name(type(exc), qualified=True)
 
 
 def _json(value):

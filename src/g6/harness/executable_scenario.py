@@ -130,11 +130,12 @@ class Scenario:
 
     def _wrapper(self, option: str) -> str:
         """A portable reproduction wrapper; G6 itself executes program, without loading this pytest wrapper."""
-        import inspect
+        import base64
+        import zlib
         from g6.harness import behaviour_runner as runner
 
-        helpers = "\n\n".join(inspect.getsource(one) for one in (
-            runner.CheckSetupError,
+        helpers = "\n\n".join(runner._portable_source(one) for one in (
+            runner.CheckSetupError, runner.ObservationUnavailable, runner.own_import_absent,
             runner.raised_during_setup, runner.exception_name, runner.exception_matches, runner.exception_detail,
             runner.exception_message,
             runner.setup_call, runner.call_absent, runner.register_setup_error,
@@ -142,12 +143,16 @@ class Scenario:
             runner._unique, runner._encoded, runner._fingerprint, runner._valid_encoding,
             runner._matches_encoding, runner.read_frame, runner.finish))
         prefix, suffix = _program_parts()
-        return ("import concurrent.futures, hashlib, json, struct, subprocess, tempfile, sys, os\n"
+        packed = [base64.b85encode(zlib.compress(text.encode('utf-8'), 9)).decode('ascii')
+                  for text in (prefix, suffix, runner.CODE_CARRIER_HELPERS)]
+        return ("import base64, zlib, concurrent.futures, hashlib, json, struct, subprocess, tempfile, sys, os\n"
                 "TEMPLATE = 'example.v1'\nBINDINGS = " + ascii({"scenario": self.record.decode("ascii")})
                 + "\nBINDINGS['option'] = " + ascii(option)
-                + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = " + ascii(prefix)
-                + " + ascii(BINDINGS['scenario']) + " + ascii(suffix)
-                + "\n" + runner.CODE_CARRIER_HELPERS + helpers + '''
+                + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = "
+                + "zlib.decompress(base64.b85decode(" + ascii(packed[0]) + ")).decode('utf-8')"
+                + " + ascii(BINDINGS['scenario']) + zlib.decompress(base64.b85decode("
+                + ascii(packed[1]) + ")).decode('utf-8')\n"
+                + "exec(zlib.decompress(base64.b85decode(" + ascii(packed[2]) + ")))\n" + helpers + '''
 register_setup_error(TEMPLATE)
 def _check_example():
     data = setup_call('scenario_binding', _comparison, BINDINGS['scenario'], BINDINGS['option'])
@@ -165,6 +170,8 @@ def _check_example():
     reading = finish(ran.returncode, raw, data)
     if reading.get('reason_code') == 'G6_E_CHECK_SETUP':
         raise CheckSetupError(reading['detail'].partition(': ')[2])
+    if reading.get('reason_code') == 'G6_E_OBSERVATION_UNAVAILABLE':
+        raise ObservationUnavailable(detail=reading['detail'])
     if reading['result'] != 'passed':
         raise AssertionError(reading['detail'])
 
