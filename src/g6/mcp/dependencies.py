@@ -144,6 +144,26 @@ def _root_identities(root: str) -> tuple[set[tuple], bool]:
             established = False
             return None
 
+    def path_identity(path, kind="file"):
+        if not path:
+            return
+        lookup(lambda: identities.add((kind, os.path.realpath(path))))
+
+        def inode_identity():
+            try:
+                status = os.stat(path)
+            except FileNotFoundError:
+                return  # Known absence retains resolved path ownership.
+            if status.st_ino:
+                identities.add(("inode", status.st_dev, status.st_ino))
+
+        lookup(inode_identity)
+
+    def namespace_identities(locations):
+        if locations is not None:
+            for path in locations:
+                path_identity(path, "namespace")
+
     try:
         lookup(lambda: identities.add(name_identity(root)))
         loaded = sys.modules.get(root)
@@ -156,34 +176,33 @@ def _root_identities(root: str) -> tuple[set[tuple], bool]:
         if resolved_name:
             lookup(lambda: identities.add(name_identity(resolved_name)))
         origin = lookup(lambda: getattr(spec, "origin", None) if getattr(spec, "has_location", False) else None)
-        origin = origin or lookup(lambda: getattr(loaded, "__file__", None))
-        if origin:
-            lookup(lambda: identities.add(("file", os.path.realpath(origin))))
-
-            def inode_identity():
-                try:
-                    status = os.stat(origin)
-                except FileNotFoundError:
-                    return  # Known absence retains resolved path ownership.
-                if status.st_ino:
-                    identities.add(("inode", status.st_dev, status.st_ino))
-
-            lookup(inode_identity)
+        # Spec and loaded-module attributes are independent evidence. A failed
+        # source must not hide a known alias from any other source.
+        for path in (origin, lookup(lambda: getattr(loaded, "__file__", None)),
+                     lookup(lambda: getattr(spec, "cached", None)),
+                     lookup(lambda: getattr(loaded, "__cached__", None))):
+            lookup(lambda: path_identity(path))
         locations = lookup(lambda: getattr(spec, "submodule_search_locations", None))
-        if not origin and locations:
-            identities.add(("namespace", tuple(sorted(os.path.realpath(path) for path in locations))))
+        lookup(lambda: namespace_identities(locations))
+        loaded_locations = lookup(lambda: getattr(loaded, "__path__", None))
+        lookup(lambda: namespace_identities(loaded_locations))
     except Exception:
         # Lookup uncertainty is possibly required; keep aliases found before it.
         return identities, False
     return identities, established
 
 
-def _without_required_aliases(optional: set[str], required: set[str]) -> frozenset[str]:
+def _without_required_aliases(optional: set[str], required: set[str], known_paths: dict) -> frozenset[str]:
     identities = {}
     aliases = {}
     blocked = set(required)
     for root in optional | required:
         identities[root], established = _root_identities(root)
+        # Ownership already established for a file/location survives its removal.
+        # Never retain live object IDs, name-matching policy or lookup uncertainty.
+        paths = known_paths.setdefault(root, set())
+        paths.update(identity for identity in identities[root] if identity[0] in {"file", "inode", "namespace"})
+        identities[root].update(paths)
         if not established:
             blocked.add(root)
         for identity in identities[root]:
@@ -323,8 +342,8 @@ def _requirement_closure(requirements, requires):
 
 
 @cache
-def optional_import_roots(extras: str, required_extras: str = "mcp") -> frozenset[str]:
-    """Declared optional closure minus core and the caller's required extra closure."""
+def _optional_root_declarations(extras: str, required_extras: str):
+    """Cache metadata declarations and established path ownership, never a live verdict."""
     from packaging.requirements import Requirement
 
     imports = _import_roots()
@@ -334,7 +353,17 @@ def optional_import_roots(extras: str, required_extras: str = "mcp") -> frozense
     # Missing required metadata is an invalid base install, never an empty closure.
     required = _requirement_closure(pending, metadata.requires)
     base = {module for name in required for module in _distribution_roots(name, imports)}
-    return _without_required_aliases(_declared_roots(extras, imports), base)
+    return _declared_roots(extras, imports), base, {}
+
+
+def optional_import_roots(extras: str, required_extras: str = "mcp") -> frozenset[str]:
+    """Declared optional closure minus required ownership, refreshed for each discovery."""
+    optional, required, known_paths = _optional_root_declarations(extras, required_extras)
+    return _without_required_aliases(optional, required, known_paths)
+
+
+# Keep the existing metadata invalidation API, including its path-ownership scope.
+optional_import_roots.cache_clear = _optional_root_declarations.cache_clear
 
 
 def absent_module_roots(exc: BaseException, *, mcp_startup: bool = False) -> frozenset[str]:
