@@ -78,21 +78,23 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
     from g6.core.reliability_envelope import envelope_fields, warning_card
     from g6.harness import completion_hook, completion_loop as loop
     from g6.workforce import repo_tests
-    from g6.workspace._envelope import WorkspaceRefused
+    from g6.workspace._envelope import OUTSIDE_ROOT, WorkspaceRefused
 
     if not task.strip() or not session.strip():
         return {**blocked_reply("[G6_E_INPUT_VALIDATION] a task and a session are needed: name one session for one task"),
                 "code": "G6_E_INPUT_VALIDATION", "missing": [key for key, value in (("task", task), ("session", session)) if not value.strip()]}
-    folder = completion_hook.folder(f"mcp:{session}")
-    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     request_id = uuid.uuid4().hex[:12]
     try:
+        folder = completion_hook.folder(f"mcp:{session}")
+        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
         with loop._held(folder):
             asked = _asked(repo, task, base, folder)
         done = loop.advance(asked["repo"], asked["task"], asked["base"], folder, said=reason, answered=bool(reason.strip()))
     except repo_tests.RepoRefused as exc:
         return {**blocked_reply(f"[{exc.code}] {exc}", request_id=request_id), "code": exc.code}
-    except WorkspaceRefused:
+    except WorkspaceRefused as exc:
+        if exc.code == OUTSIDE_ROOT:
+            return {**blocked_reply(str(exc), request_id=request_id), "action": loop.WAIT, "code": exc.code}
         done = loop.Step(loop.WAIT, loop.ALREADY_RUNNING, loop.BUSY)
     if done.action == loop.WAIT:      # the step that is running owns the state, so nothing of it is read here
         return {**blocked_reply(f"[{done.code}] {done.text}", request_id=request_id), "run_id": folder.name,
@@ -107,7 +109,10 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
                 done = loop.Step(loop.STOP, code=state.get("code", ""), note=done.note,
                                  ending=state.get("ending", ""))
             text = state.get("reply_text", "") if done.action == loop.CONTINUE else loop.read_report(folder, state)
-    except WorkspaceRefused:
+    except WorkspaceRefused as exc:
+        if exc.code == OUTSIDE_ROOT:
+            return {**blocked_reply(str(exc), request_id=request_id), "run_id": folder.name,
+                    "action": loop.WAIT, "code": exc.code}
         return {**blocked_reply(f"[{loop.BUSY}] {loop.ALREADY_RUNNING}", request_id=request_id),
                 "run_id": folder.name, "action": loop.WAIT, "code": loop.BUSY}
     evidence = _evidence(state, asked["base"])

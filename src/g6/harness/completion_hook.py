@@ -37,7 +37,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from g6.core.storage import state_path
+from g6.core.storage import g6_home
+from g6.workspace._coordination import bookkeeping_path
 from g6.core import cloud_consent as cloud
 
 #: Set in a scout's session.
@@ -55,7 +56,8 @@ HINTS_LINE = "G6_HINTS"
 
 def folder(session_id: str) -> Path:
     """A session's state folder."""
-    return state_path("completion_loop", hashlib.sha256(str(session_id).encode("utf-8")).hexdigest()[:32])
+    # Check the original run and parent components before state_path can resolve them.
+    return bookkeeping_path(g6_home() / "completion_loop", hashlib.sha256(str(session_id).encode("utf-8")).hexdigest()[:32])
 
 
 def current(session_id: str, asked: dict) -> Path:

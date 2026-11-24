@@ -74,15 +74,15 @@ from g6.core.llm import LLMCaller, LLMError, _start_model_call
 from g6.core.model_calls import counting
 from g6.core import cloud_consent as cloud, consent_callers as consent
 from g6.core.consent_callers import provider_from_env
-from g6.core.storage import state_path
+from g6.core.storage import g6_home, state_path
 from g6.harness import patch_report
 from g6.harness.completion_hook import CHILD
 from g6.harness import verification_proposer as proposer
 from g6.harness import verification_search as vs
 from g6.harness.patch_review import _loaded_elsewhere, review_patch
 from g6.workforce import repo_tests
-from g6.workspace._coordination import Coordination
-from g6.workspace._envelope import WorkspaceRefused
+from g6.workspace._coordination import Coordination, bookkeeping_path
+from g6.workspace._envelope import OUTSIDE_ROOT, WorkspaceRefused
 
 HARNESS = Path(__file__).with_name("data") / "completion_harness.json"
 #: The parts of the loop harness training can add to: never the sets, the scoring, the reply forms or the stop rule.
@@ -1091,7 +1091,7 @@ def _read_version(session: Path) -> str:
 
 
 def _load(session: Path) -> dict:
-    session = Path(session).resolve()
+    session = bookkeeping_path(Path(session))
     path = session / "state.json"
     if not path.is_file():
         return {}
@@ -1175,8 +1175,8 @@ _WRITER: contextvars.ContextVar[_Writer | None] = contextvars.ContextVar("g6_run
 
 @contextmanager
 def _writing(session: Path):
-    """Hold the step lock for an operation. Child send boundaries share its serialization guard."""
-    session = Path(session).resolve()
+    """Check the given run before resolution, then pin it for this operation and its send observers."""
+    session = bookkeeping_path(Path(session))
     with _held(session):
         owner = _Writer(session)
         token = _WRITER.set(owner)
@@ -1190,7 +1190,7 @@ def _writing(session: Path):
 
 @contextmanager
 def _state_write(session: Path):
-    session = Path(session).resolve()
+    session = bookkeeping_path(Path(session))
     owner = _WRITER.get()
     if owner is not None and owner.session == session:
         with owner.guard:
@@ -1207,7 +1207,7 @@ class _RunCount:
 
     def __init__(self, session: Path, state: dict) -> None:
         # The observer may run after a callback or another thread changes cwd.
-        self.session, self.state = Path(session).resolve(), state
+        self.session, self.state = bookkeeping_path(Path(session)), state
         self.guard = threading.RLock()
         self.active = True
 
@@ -1270,7 +1270,7 @@ _RESERVATION: contextvars.ContextVar[tuple[Path, dict] | None] = contextvars.Con
 
 def _reserve_request(session: Path, state: dict) -> None:
     """Enter the reservation transaction through the unchanged state-save seam."""
-    session = Path(session).resolve()
+    session = bookkeeping_path(Path(session))
     token = _RESERVATION.set((session, state))
     try:
         _save(session, state)
@@ -1311,7 +1311,7 @@ def _save_reservation(session: Path, state: dict, *, sources=None) -> None:
 
 
 def _save(session: Path, state: dict, *, sources=None) -> None:
-    session = Path(session).resolve()
+    session = bookkeeping_path(Path(session))
     reservation = _RESERVATION.get()
     if reservation is not None and reservation[0] == session and reservation[1] is state:
         _save_reservation(session, state, sources=sources)
@@ -1635,7 +1635,7 @@ def prepare(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     did not happen. Nothing is spent on a repository with no Python, or where the review-until-clean loop will run."""
     if not _before_fix() or (critic_host() is not None and not _scouts_chosen()):
         return ""
-    session = Path(session).resolve()
+    session = bookkeeping_path(Path(session))
     root = repo_tests.checked_repo(repo)
     python = any(rel.endswith(".py") for rel in repo_tests._paths(repo_tests._git(root, "ls-files", "-z")))
     if not python or proposer.boundary(root):
@@ -1683,11 +1683,16 @@ def settle() -> None:
     call again, so what is owed is found by its mark, and any call of any session tries it. A run with a step going on is
     passed over, as that step has its row in hand, and so is one that cannot be read, which holds up no other. A row the log
     keeps out stays owed and ends the round: the rest would only wait for the same lock in turn."""
-    owing = state_path(*OWING)
+    try:
+        # Keep the configured words: state_path would resolve a linked parent first.
+        owing = bookkeeping_path(g6_home() / OWING[0], OWING[1])
+    except WorkspaceRefused:
+        return
     for mark in sorted(owing.iterdir()) if owing.is_dir() else ():
         run = owing.parent / mark.name
         try:
-            with _writing(run):
+            with _writing(run) as owner:
+                run = owner.session
                 state = _load(run)
                 if "row_due" not in state:
                     mark.unlink(missing_ok=True)
@@ -1714,19 +1719,21 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
 
     A step reads its round from the state and then writes that round's files, so two at once would undo each other: a call
     that finds another running does nothing, and says ``WAIT``."""
-    session = Path(session).resolve()
-    session.mkdir(parents=True, exist_ok=True, mode=0o700)
-    settle()
     try:
+        session = bookkeeping_path(Path(session))
+        session.mkdir(parents=True, exist_ok=True, mode=0o700)
+        settle()
         with _writing(session):
             return _advance(repo, task, base, session, scout, critic, said, answered, agent)
-    except WorkspaceRefused:
+    except WorkspaceRefused as exc:
+        if exc.code == OUTSIDE_ROOT:
+            return Step(WAIT, exc.reason, exc.code)
         return Step(WAIT, ALREADY_RUNNING, BUSY)
 
 
 def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host | None, critic: LLMCaller | None,
              said: str, answered: bool, agent: str) -> Step:
-    session = Path(session).resolve()
+    session = bookkeeping_path(Path(session))
     # Direct callers need the same live operation lease as the public entry.
     # Otherwise a reservation supersedes their snapshot before refusal is saved.
     owner = _WRITER.get()
