@@ -18,6 +18,7 @@ repeats what either file holds. No argument confirms a deletion or carries a cor
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
@@ -141,9 +142,17 @@ def stepped(step: Any, repo: str, task: str, session: str, base: str = "HEAD", r
     result = step(repo, task, session, base, reason)
     if not policy.enabled()[0] or not isinstance(result, dict) or "action" not in result:
         return result
-    from g6.harness import completion_hook
+    from g6.harness import _completion_storage as store
 
-    note = adapters.observe_step(repo, task, completion_hook.folder(f"mcp:{session}"), _Step(result))
+    # A refused folder has no run identity. Never derive it again after the
+    # step has already returned its coded refusal.
+    run_id = result.get("run_id")
+    if not isinstance(run_id, str) or not re.fullmatch(r"[0-9a-f]{32}", run_id):
+        return result
+    try:
+        note = adapters.observe_step(repo, task, store.home_path("completion_loop", run_id), _Step(result))
+    except Exception:  # noqa: BLE001 - an optional record cannot discard the step's answer
+        return result
     if result.get("action") == "stop":
         result = _viewed(result, repo, task, ("report",), loop=result)
     return _noted(result, note)
