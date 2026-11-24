@@ -34,6 +34,9 @@ AGENT_ARMS = {"B", "C", "D", "E", "F", "G", "G1", "H", "H1"}
 NEIGHBOURS = ("black-5634", "starlette-3718", "pydantic-14052", "click-3769")
 OUTCOMES = {"supported_within_scope", "insufficient_evidence", "defect_detected", "test_integrity_compromised"}
 REGISTRATION = Path(__file__).with_name("REPLAY_RC.md")
+# Code-owned, independent of registration/image pins. Raise this whenever case
+# eligibility, labels, exclusions or review evidence interpretation changes.
+EVIDENCE_RULE_VERSION = 1
 # Archive.start writers: run.py, loop.py, evolve.py and this module. None marks
 # replay content/labels; every other value is its index-row exclusion reason.
 # test_we_replay_writer_inventory walks all package writers to keep this closed.
@@ -262,7 +265,10 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict:
 class Source:
     """Allowlisted relative reads, with no write API and no recursive discovery."""
 
-    def __init__(self, root: Path, *, required: bool = False):
+    def __init__(self, root: Path, *, required: bool = False,
+                 evidence_files: dict | None = None, evidence_prefix: str = ""):
+        self.evidence_files = evidence_files
+        self.evidence_prefix = evidence_prefix
         self.index_present = False
         self.index_excluded: list[dict] = []
         self.row_locations: dict[int, dict] = {}
@@ -302,7 +308,21 @@ class Source:
         # dispatches to this instance's open(), which never reopens a pathname.
         path = _HandlePath(self.path(rel))
         path.source_root = self.root
-        return path.read_bytes()
+        try:
+            content = path.read_bytes()
+        except FileNotFoundError:
+            self._remember(path, None)
+            raise
+        if self.evidence_files is not None:
+            self._remember(path, hashlib.sha256(content).hexdigest())
+        return content
+
+    def _remember(self, path: Path, digest: str | None) -> None:
+        if self.evidence_files is not None:
+            rel = self.evidence_prefix + path.relative_to(self.root).as_posix()
+            if rel in self.evidence_files and self.evidence_files[rel] != digest:
+                raise ValueError(f"source changed during enumeration: {rel}")
+            self.evidence_files[rel] = digest
 
     def is_file(self, rel: str | Path) -> bool:
         with _open_handle(self.path(rel), root=self.root, missing=True) as opened:
@@ -434,19 +454,23 @@ def _writer_round_label(label: Any) -> bool:
 
 def enumerate_cases(root: Path, tasks: list[we.Task], *,
                     index_excluded: list[dict] | None = None, source_inventory: list[dict] | None = None,
-                    require_index: bool = False) -> tuple[list[Case], list[dict]]:
+                    require_index: bool = False, source_snapshot: dict | None = None) -> tuple[list[Case], list[dict]]:
     """Refuse unsafe paths before candidate reads; optionally report metadata rows.
 
     Index exclusions are separate from missing patch evidence: distillation and
     dry runs must not add expected reviews to prediction denominators.
     """
     root = Source(root, required=True).root
+    evidence_files = {} if source_snapshot is not None else None
+    if source_snapshot is not None:
+        source_snapshot.update(root=str(root), tasks=sorted(t.id for t in tasks), files=evidence_files)
     index_excluded = [] if index_excluded is None else index_excluded
     source_inventory = [] if source_inventory is None else source_inventory
     task_ids = {t.id for t in tasks}
     found: dict[tuple[str, str], Case] = {}
     excluded = Exclusions(index_excluded, source_inventory)
-    sources = [(number, part, Source(root / part))
+    sources = [(number, part, Source(root / part, evidence_files=evidence_files,
+                                    evidence_prefix=part + "/" if part else ""))
                for number, part in enumerate(("", "round2", "round3"), 1)]
     # Preflight every index destination before reading even the first index.
     for _, _, source in sources:
@@ -691,6 +715,8 @@ def enumerate_cases(root: Path, tasks: list[we.Task], *,
                     previous.origins = candidate.origins
                     continue
             found[key] = candidate
+    if source_snapshot is not None:
+        source_snapshot["inventory"] = list(source_inventory)
     return sorted(found.values(), key=lambda x: (x.digest, x.bug)), excluded
 
 
@@ -1112,6 +1138,70 @@ def make_plan(cases: list[Case], excluded: list[dict], tasks: list[we.Task], com
             "cases": [case.saved() for case in cases]}
 
 
+def score_saved(saved: dict, registration: Registration) -> tuple[dict, int]:
+    """Use saved evidence only under the rule that produced it.
+
+    An older batch can supply review responses, but its labels and exclusions
+    must come from a fresh enumeration of the same allowlisted source reads.
+    No source is guessed from patch names, and no manifest path is opened.
+    """
+    plan = saved["plan"]
+    version = saved.get("evidence_rule_version")
+    if type(version) is int and version == EVIDENCE_RULE_VERSION:
+        return evaluate(saved["records"], plan["cases"], modes=plan["modes"], s0=saved["s0"],
+                        excluded=plan.get("excluded", []), index_excluded=plan.get("index_excluded", []),
+                        registration=registration), 0
+
+    snapshot = plan.get("source_snapshot")
+    unavailable = "no saved source identity and read manifest"
+    if (isinstance(snapshot, dict) and isinstance(snapshot.get("root"), str)
+            and Path(snapshot["root"]).is_absolute() and isinstance(snapshot.get("tasks"), list)
+            and all(isinstance(task, str) for task in snapshot["tasks"])
+            and isinstance(snapshot.get("files"), dict) and isinstance(snapshot.get("inventory"), list)):
+        try:
+            tasks = we.load_tasks()
+            fresh_snapshot = {}
+            cases, excluded = enumerate_cases(Path(snapshot["root"]), tasks, require_index=True,
+                                              source_snapshot=fresh_snapshot)
+            if fresh_snapshot != snapshot:
+                raise ValueError("source identity, selection or evidence bytes changed")
+        except (OSError, RuntimeError, ValueError) as exc:
+            unavailable = str(exc)
+        else:
+            # Labels come exclusively from the current source. Reuse only a
+            # response to the same patch and review arguments in a current case.
+            by_id = {task.id: task for task in tasks}
+            views = {}
+            for case in cases:
+                for mode in plan["modes"]:
+                    for view in agent_views(case) if mode == "agent" else [case]:
+                        origin = view.origins[0]["run"] if mode == "agent" else None
+                        views[case.bug, case.digest, mode, origin] = view
+            records = []
+            for record in saved["records"]:
+                mode = record["mode"]
+                key = record["bug"], record["digest"], mode, record.get("origin_run") if mode == "agent" else None
+                view = views.get(key)
+                if view is None or record.get("arguments") != review_arguments(view, by_id[view.bug], mode):
+                    excluded.index_excluded.append({"bug": record["bug"], "digest": record["digest"],
+                        "reason": "saved review no longer matches current evidence", "modes": [mode],
+                        "affects_denominator": True})
+                    continue
+                records.append({**record, "label": view.label})
+            return evaluate(records, cases, modes=plan["modes"], s0=saved["s0"], excluded=excluded,
+                            registration=registration), 0
+
+    # Saved labels, omission flags and review outcomes have no authority here.
+    # A global gap covers every enabled prediction, including observed kills.
+    gap = {"reason": "saved under an older evidence rule", "affects_denominator": True,
+           "saved_evidence_rule_version": version, "current_evidence_rule_version": EVIDENCE_RULE_VERSION,
+           "source_unavailable": unavailable}
+    result = evaluate([], [], modes=plan["modes"], s0=saved["s0"], index_excluded=[gap], registration=registration)
+    for prediction in result["predictions"].values():
+        prediction["kill"] = None
+    return result, 2
+
+
 def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path)
@@ -1132,11 +1222,9 @@ def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
             registration = load_registration()
             if saved.get("registration_sha256") != registration.sha256:
                 raise ValueError("saved registration digest differs from committed registration")
-            print(json.dumps(evaluate(saved["records"], saved["plan"]["cases"], modes=saved["plan"]["modes"],
-                                      s0=saved["s0"], excluded=saved["plan"].get("excluded", []),
-                                      index_excluded=saved["plan"].get("index_excluded", []),
-                                      registration=registration), indent=2))
-            return 0
+            result, status = score_saved(saved, registration)
+            print(json.dumps(result, indent=2))
+            return status
         if options.source is None or not re.fullmatch(r"[0-9a-f]{40}", options.registered_commit or ""):
             raise ValueError("--source and a full --registered-commit are required")
         if not re.fullmatch(r"[a-z0-9-]*", options.variant):
@@ -1147,11 +1235,14 @@ def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
         tasks = we.load_tasks()
         index_excluded = []
         source_inventory = []
+        source_snapshot = {}
         cases, excluded = enumerate_cases(options.source, tasks, index_excluded=index_excluded,
-                                          source_inventory=source_inventory, require_index=True)
+                                          source_inventory=source_inventory, require_index=True,
+                                          source_snapshot=source_snapshot)
         plan = make_plan(cases, excluded, tasks, options.registered_commit, modes, options.variant)
         plan["index_excluded"] = index_excluded
         plan["source_inventory"] = source_inventory
+        plan["source_snapshot"] = source_snapshot
         if options.dry:
             plan["evaluation"] = evaluate([], cases, modes=modes, s0=options.s0, excluded=excluded,
                                           index_excluded=index_excluded)
@@ -1163,9 +1254,11 @@ def main(argv: list[str] | None = None, *, docker: Any = None) -> int:
         archive = output_archive(options.source, Path(target))
         registration = load_registration()
         archive.root.mkdir(parents=True, exist_ok=False)
-        batch = archive.start("replay-rc-batch", "development", g6_commit=options.registered_commit)
+        batch = archive.start("replay-rc-batch", "development", g6_commit=options.registered_commit,
+                              evidence_rule_version=EVIDENCE_RULE_VERSION)
         records = []
-        body = {"plan": plan, "s0": options.s0, "registration_sha256": registration.sha256, "records": records}
+        body = {"plan": plan, "s0": options.s0, "registration_sha256": registration.sha256, "records": records,
+                "evidence_rule_version": EVIDENCE_RULE_VERSION}
         try:
             docker = docker if docker is not None else we.Docker()
             pinned = inspect_images(docker, plan["images"], options.registered_commit)
