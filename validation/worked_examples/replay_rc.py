@@ -676,7 +676,7 @@ def enumerate_cases(root: Path, tasks: list[we.Task], *,
                         if not isinstance(captured, dict):
                             raise ValueError(f"invalid captured review input: {input_rel}")
                         captured = captured.get("tool_input", captured)
-                        if args is not None and captured != args:
+                        if args is not None and not _json_equal(captured, args):
                             raise ValueError(f"archived review arguments disagree: {input_rel}")
                         args = captured
                     if isinstance(args, dict):
@@ -868,6 +868,20 @@ def review_arguments(case: Case, task: we.Task, mode: str) -> dict:
     raise ValueError(f"mode unavailable for {case.bug}/{case.digest}: {mode}")
 
 
+def _json_equal(left: Any, right: Any) -> bool:
+    """Compare JSON values without Python's bool/int/float coercions."""
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        return (all(type(key) is str for key in left) and all(type(key) is str for key in right)
+                and left.keys() == right.keys() and all(_json_equal(value, right[key]) for key, value in left.items()))
+    if type(left) is list:
+        return len(left) == len(right) and all(_json_equal(a, b) for a, b in zip(left, right))
+    if type(left) is float:
+        return math.isfinite(left) and math.isfinite(right) and left == right
+    return type(left) in (bool, int, str, type(None)) and left == right
+
+
 def agent_views(case: Case) -> list[Case]:
     """Each eligible run keeps its own final-patch arguments; the patch is still counted once."""
     return [replace(case, arguments=origin["arguments"], arm=origin["arm"], round=origin["round"],
@@ -895,7 +909,7 @@ def replay_case(case: Case, task: we.Task, mode: str, archive: c.Archive, docker
             "g6_commit": commit, "image_id": image_id, "origins": case.origins,
             "arguments": args, "cost_usd": 0, "result": "no review", "seconds": None}
     if mode == "agent":
-        body["origin_run"] = next(o["run"] for o in case.origins if o.get("arguments") == case.arguments)
+        body["origin_run"] = case.origins[0].get("run") if len(case.origins) == 1 else None
     name = f"g6we-replay-rc-{uuid.uuid4().hex[:12]}"
     status = "failed"
     attempted = False
@@ -1232,6 +1246,17 @@ def _well_formed_case(case: Any) -> bool:
             and all(isinstance(origin, dict) for origin in case["origins"]))
 
 
+def _unique_origin_digests(cases: list[Case]) -> bool:
+    """An archived run supplies one final.patch across all bugs and cases."""
+    digests = {}
+    for case in cases:
+        for origin in case.origins:
+            run = origin.get("run")
+            if not isinstance(run, str) or not run or digests.setdefault(run, case.digest) != case.digest:
+                return False
+    return True
+
+
 def _current_evaluation(saved: dict, registration: Registration, start: dict | Path | None) -> dict | None:
     if isinstance(start, Path):
         start = _batch_start(start)
@@ -1246,7 +1271,7 @@ def _current_evaluation(saved: dict, registration: Registration, start: dict | P
             or any(mode not in ("agent", "hook") for mode in plan["modes"])
             or len(set(plan["modes"])) != len(plan["modes"])
             or any(not isinstance(plan.get(key), list) for key in ("cases", "excluded", "index_excluded"))
-            or plan.get("source_inventory") != plan["source_snapshot"]["inventory"]
+            or not _json_equal(plan.get("source_inventory"), plan["source_snapshot"]["inventory"])
             or not all(_well_formed_case(case) for case in plan["cases"])):
         return None
     try:
@@ -1256,6 +1281,8 @@ def _current_evaluation(saved: dict, registration: Registration, start: dict | P
             if key in cases:
                 return None
             cases[key] = Case(**{**row, "patch": Path(row["patch"]), "source": Path()})
+        if not _unique_origin_digests(list(cases.values())):
+            return None
         # Reconstruct exactly what the writer sent, including the image's repo
         # and base substitutions and each agent call's own archived arguments.
         by_id = {task.id: task for task in we.load_tasks()} if saved["records"] else {}
@@ -1267,13 +1294,11 @@ def _current_evaluation(saved: dict, registration: Registration, start: dict | P
                 if len(views) != 1:
                     return None
                 case = views[0]
-            if record.get("arguments") != review_arguments(case, by_id[case.bug], mode):
+            if not _json_equal(record.get("arguments"), review_arguments(case, by_id[case.bug], mode)):
                 return None
         result = evaluate(saved["records"], plan["cases"], modes=plan["modes"], s0=saved["s0"],
                           excluded=plan["excluded"], index_excluded=plan["index_excluded"], registration=registration)
-        # JSON equality also distinguishes true from 1 and rejects non-finite numbers.
-        if json.dumps(result, sort_keys=True, allow_nan=False) != json.dumps(
-                saved.get("evaluation"), sort_keys=True, allow_nan=False):
+        if not _json_equal(result, saved.get("evaluation")):
             return None
         return result
     except (OSError, RuntimeError, KeyError, TypeError, ValueError):
@@ -1326,8 +1351,10 @@ def score_saved(saved: dict, registration: Registration | None = None, *, source
             tasks = we.load_tasks()
             fresh_snapshot = {}
             cases, excluded = enumerate_cases(source, tasks, require_index=True, source_snapshot=fresh_snapshot)
-            if fresh_snapshot != snapshot:
+            if not _json_equal(fresh_snapshot, snapshot):
                 raise ValueError("source identity, selection or evidence bytes changed")
+            if not _unique_origin_digests(cases):
+                raise ValueError("one origin run names different final patch digests")
             # Labels come exclusively from the current source. Reuse only a
             # response to the same patch and review arguments in a current case.
             if (any(mode not in ("agent", "hook") for mode in plan["modes"])
@@ -1345,7 +1372,7 @@ def score_saved(saved: dict, registration: Registration | None = None, *, source
                 mode = record["mode"]
                 key = record["bug"], record["digest"], mode, record.get("origin_run") if mode == "agent" else None
                 view = views.get(key)
-                if view is None or record.get("arguments") != review_arguments(view, by_id[view.bug], mode):
+                if view is None or not _json_equal(record.get("arguments"), review_arguments(view, by_id[view.bug], mode)):
                     excluded.index_excluded.append({"bug": record["bug"], "digest": record["digest"],
                         "reason": "saved review no longer matches current evidence", "modes": [mode],
                         "affects_denominator": True})

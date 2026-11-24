@@ -366,28 +366,99 @@ def test_archive_json_preserves_surrogate_text(tmp_path):
 
 # Hash the rule's own syntax, not its line numbers, comments or unrelated CLI.
 # A rule edit must add a new version/digest pair, retaining earlier pairs.
-RULE_DIGESTS = {1: "5bcf663681ff8f52c20bfae17522f74ed382009709e5fcd449d147647c67d6cd"}
+RULE_DIGESTS = {1: "f6e33fb832e80e29d2fd725c365ac4d12690b8c083d8a1cc2e57fb9cecda6116"}
 
 
 def test_evidence_rule_code_requires_a_version_change():
-    tree = ast.parse(Path(rc.__file__).read_text(encoding="utf-8"))
-    definitions = {}
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
-            definitions[node.name] = node
-        elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    definitions[target.id] = node
-    names = {"enumerate_cases", "evaluate", "review_arguments", "agent_views", "score_saved"}
-    pending = list(names)
+    import sys
+    from inspect import getclosurevars
+    from types import FunctionType, ModuleType
+
+    package = Path(__file__).parents[2] / "validation/worked_examples"
+    sources, reached, pending = {}, set(), []
+
+    def local_module(value):
+        origin = getattr(getattr(value, "__spec__", None), "origin", None)
+        return isinstance(value, ModuleType) and origin and Path(origin).is_relative_to(package)
+
+    def add_source(module, variant="", path=None):
+        key = module.__name__, variant
+        if key not in sources:
+            tree = ast.parse(Path(path or module.__file__).read_text(encoding="utf-8"))
+            definitions = {}
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    definitions[node.name] = node
+                elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    for target in targets:
+                        if isinstance(target, ast.Name):
+                            definitions[target.id] = node
+            sources[key] = module, tree, definitions
+        return key
+
+    def enqueue(key, name):
+        if name in sources[key][2] and (key, name) not in reached:
+            reached.add((key, name))
+            pending.append((key, name))
+
+    def qualified(module, name):
+        enqueue(add_source(module), name)
+        # Source definitions remain stable under simple fixture stubs. A wrapper
+        # may instead delegate to another source implementation, including one
+        # held in a closure/dictionary. Follow those code references, never call
+        # the wrapper. Keep both sources covered rather than replacing either.
+        value = getattr(module, name, None)
+        wrappers, visited = [value], set()
+        while wrappers:
+            value = wrappers.pop()
+            if id(value) in visited:
+                continue
+            visited.add(id(value))
+            if isinstance(value, dict):
+                wrappers.extend(value.values())
+            elif isinstance(value, FunctionType):
+                if value.__name__ == name:
+                    if value is not getattr(module, name, None):
+                        path = Path(value.__code__.co_filename)
+                        if path.is_file():
+                            enqueue(add_source(module, f"wrapped:{name}", path), name)
+                    continue
+                references = getclosurevars(value)
+                wrappers.extend(references.globals.values())
+                wrappers.extend(references.nonlocals.values())
+
+    def resolve(module, node):
+        if isinstance(node, ast.Name):
+            return vars(module).get(node.id)
+        if isinstance(node, ast.Attribute):
+            owner = resolve(module, node.value)
+            if isinstance(owner, ModuleType):
+                return vars(owner).get(node.attr)
+        return None
+
+    root = add_source(rc)
+    for name in ("enumerate_cases", "evaluate", "review_arguments", "agent_views", "score_saved"):
+        enqueue(root, name)
     while pending:
-        for node in ast.walk(definitions[pending.pop()]):
-            if isinstance(node, ast.Name) and node.id in definitions and node.id not in names:
-                names.add(node.id)
-                pending.append(node.id)
-    identities = {id(definitions[name]) for name in names}
-    nodes = [node for node in tree.body if id(node) in identities]
-    digest = hashlib.sha256(ast.dump(ast.Module(body=nodes, type_ignores=[]),
-                                     include_attributes=False).encode()).hexdigest()
+        key, name = pending.pop()
+        module, _, definitions = sources[key]
+        for node in ast.walk(definitions[name]):
+            if isinstance(node, ast.Name):
+                enqueue(key, node.id)
+                value = vars(module).get(node.id)
+                owner = sys.modules.get(getattr(value, "__module__", ""))
+                if node.id not in definitions and local_module(owner):
+                    qualified(owner, getattr(value, "__name__", node.id))
+            elif isinstance(node, ast.Attribute):
+                owner = resolve(module, node.value)
+                if local_module(owner):
+                    qualified(owner, node.attr)
+    syntax = []
+    for key, (_, tree, definitions) in sorted(sources.items()):
+        identities = {id(definitions[name]) for source, name in reached if source == key}
+        nodes = [node for node in tree.body if id(node) in identities]
+        if nodes:
+            syntax.append((key, ast.dump(ast.Module(body=nodes, type_ignores=[]), include_attributes=False)))
+    digest = hashlib.sha256(json.dumps(syntax, ensure_ascii=True).encode()).hexdigest()
     assert digest == RULE_DIGESTS[rc.EVIDENCE_RULE_VERSION], "evidence rule changed without a new version/digest pair"
