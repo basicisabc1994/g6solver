@@ -17,6 +17,7 @@ import sys
 import threading
 from contextlib import asynccontextmanager, suppress
 from io import FileIO, TextIOWrapper, UnsupportedOperation
+from tempfile import TemporaryDirectory
 
 import anyio
 import anyio.lowlevel
@@ -128,22 +129,34 @@ class _InputDescriptor:
         self.lock = threading.Lock()
         self.file = None
         self.claimed = False
+        self.placeholder = None
 
     def duplicate(self, fd):
         # Setup has not published this owner to a reader yet. Its outer handler covers every return/opcode.
         try:
             os.fstat(fd)                 # validate the borrowed source before an allocation can reuse its number
-            self.file = _InputFile(os.devnull, "rb")
+            # A null-device identity also matches another owner's newly opened null device. A private,
+            # unique file makes the placeholder distinguishable even when the target number is reused.
+            self.placeholder = TemporaryDirectory(prefix="g6-stdin-")
+            self.file = _InputFile(os.path.join(self.placeholder.name, "slot"), "xb+")
             if self.file.fileno() == fd:
                 # The external owner closed stdin after validation; this slot now owns only the placeholder.
                 self.close()
                 raise OSError("stdin closed during descriptor handoff")
+            placeholder = os.stat(self.file.fileno())
+            if not placeholder.st_ino:
+                raise OSError("stdin placeholder has no file identity")
             try:
                 os.dup2(fd, self.file.fileno(), inheritable=False)
             except OSError:
-                # CPython may close fd2 after copying it, then raise on its inheritance flag. Neither a
-                # successful fstat nor an open number establishes that this slot still owns that number.
-                self.file.release()
+                try:
+                    target = os.stat(self.file.fileno())
+                except OSError:
+                    self.file.release()  # consumed, or no longer identifiable: never close that number again
+                else:
+                    if (target.st_dev, target.st_ino) != (placeholder.st_dev, placeholder.st_ino):
+                        self.file.release()  # replaced: the native call or another owner has the closing claim
+                    # The unique placeholder survived: normal cleanup still owes exactly one close.
                 raise
             if os.get_inheritable(self.file.fileno()) is not False:
                 raise OSError("stdin duplicate inheritance state is unknown or inheritable")
@@ -159,9 +172,15 @@ class _InputDescriptor:
 
     def close(self, *, reader=False):
         with self.lock:
-            if self.file is not None and self.claimed == reader:
-                self.file.close()
-                self.file = None
+            if self.claimed == reader:
+                try:
+                    if self.file is not None:
+                        self.file.close()
+                        self.file = None
+                finally:
+                    if self.placeholder is not None:
+                        self.placeholder.cleanup()
+                        self.placeholder = None
 
 
 def _read_lines(descriptor, lines, token, stopped, cached, console=None) -> None:
