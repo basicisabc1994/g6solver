@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 from functools import cache
 from importlib import _bootstrap_external, machinery, metadata, util
+from itertools import count
 import os
 from pathlib import PurePosixPath
 import sys
@@ -17,6 +18,8 @@ _known_paths: dict[str, set[tuple]] = {}
 _required_paths: set[tuple] = set()
 _ownership_generation = 0
 _declaration_epoch = 0
+_evidence_order = count()
+_retirement_evidence: dict[str, tuple] = {}
 
 
 class _ExceptionWork:
@@ -204,6 +207,7 @@ def _root_identities(root: str, paths: set | None = None,
             except FileNotFoundError:
                 return None, True  # Absence cannot replace an established identity.
 
+        order = next(_evidence_order)
         result = lookup(inode_identity)
         status, absent = result if result is not None else (None, False)
         device = inode = None
@@ -223,7 +227,7 @@ def _root_identities(root: str, paths: set | None = None,
             record = (kind, source, path, resolved, device, inode)
             records.add(record)
             if ordered_paths is not None:
-                ordered_paths.append(record)
+                ordered_paths.append((order, record))
 
     def namespace_identities(locations, source):
         if locations is not None:
@@ -302,6 +306,7 @@ def _path_refresh_observations(paths):
         except Exception:
             current_path = None
             uncertain = True
+        order = next(_evidence_order)
         try:
             status = _stat_identity(source)
         except FileNotFoundError:
@@ -319,12 +324,18 @@ def _path_refresh_observations(paths):
                 uncertain = True
         if record[4] is not None and status is None and current_path is not None:
             try:
+                order = next(_evidence_order)
                 status = _stat_identity(current_path)
+                after = _existing_realpath(source)
+                if after is None or _plain_text(after) != current_path:
+                    current_path = status = None
+                    uncertain = True
             except FileNotFoundError:
-                pass
+                status = None
             except Exception:
+                status = None
                 uncertain = True
-        probes[record] = current_path, status, uncertain
+        probes[record] = current_path, status, uncertain, order
     return probes
 
 
@@ -333,7 +344,7 @@ def _refresh_path_ownership(probes) -> set[str]:
     stale = set()
     uncertain = set()
     refreshed = {}
-    for record, (current_path, status, failed) in probes.items():
+    for record, (current_path, status, failed, order) in probes.items():
         _, _, source, resolved, device, inode = record
         if failed:
             uncertain.add(record)
@@ -346,6 +357,11 @@ def _refresh_path_ownership(probes) -> set[str]:
             replaced = resolved is not None and current_path is not None and current_path != resolved
         if replaced:
             stale.add(record)
+            # Removal must leave its evidence available to older startup
+            # observations, even if the replacement disappears before retry.
+            previous = _retirement_evidence.get(source)
+            if previous is None or previous[0] < order:
+                _retirement_evidence[source] = order, source, current_path, status
         # Fill previously unavailable fields without losing a known value to
         # absence or uncertainty. Later replacements can retire the fuller fact.
         refreshed[record] = (*record[:3], current_path if current_path is not None else resolved,
@@ -377,19 +393,29 @@ def _root_observations(roots: set[str]) -> dict:
 
 def _reconcile_observations(observations: dict, refresh: dict, *, loaded: bool = False):
     """Return reconciled plain evidence in probe order without changing ownership."""
-    refreshed = [(record[2], resolved, status) for record, (resolved, status, _) in refresh.items()]
-    observed = [(record[2], record[3], record[4:] if record[4] is not None else None)
-                for values in observations.values() for record in values[5]]
+    refreshed = [(order, record[2], resolved, status)
+                 for record, (resolved, status, _, order) in refresh.items()]
+    observed = [(order, record[2], record[3], record[4:] if record[4] is not None else None)
+                for values in observations.values() for order, record in values[5]]
+    records = set(refresh)
+    for values in observations.values():
+        records.update(values[2] | values[3] | values[4])
+    spellings = {}
+    for record in records:
+        # Each recorded source has its own key. Its recorded resolution is
+        # another spelling to probe, never a global path-equivalence class.
+        for spelling in {record[2], record[3]} - {None}:
+            spellings.setdefault(spelling, set()).add(record)
     latest = {}
-    # Startup probes its copied loaded locations before refreshing history;
-    # discovery refreshes history before probing its live roots.
-    for source, resolved, status in (*observed, *refreshed) if loaded else (*refreshed, *observed):
-        previous = latest.get(source)
-        if status is not None or previous is None or (previous[1] is None and resolved is not None):
-            latest[source] = resolved, status
+    committed = tuple(_retirement_evidence.values()) if loaded else ()
+    for order, source, resolved, status in sorted((*observed, *refreshed, *committed), key=lambda value: value[0]):
+        for record in spellings.get(source, ()):
+            previous = latest.get(record)
+            if status is not None or previous is None or (previous[1] is None and resolved is not None):
+                latest[record] = resolved, status, order
 
     def current(record):
-        resolved, status = latest.get(record[2], (None, None))
+        resolved, status, _ = latest.get(record, (None, None, None))
         if status is not None:
             if record[4] is not None:
                 if record[4:] != status:
@@ -403,7 +429,8 @@ def _reconcile_observations(observations: dict, refresh: dict, *, loaded: bool =
 
     # A later live stat also refreshes an earlier retained owner at that spelling.
     # Conversely, a later refresh can exclude an obsolete startup observation.
-    combined = {record: (*latest[record[2]], failed) for record, (_, _, failed) in refresh.items()}
+    combined = {record: (latest[record][0], latest[record][1], failed, latest[record][2])
+                for record, (_, _, failed, _) in refresh.items()}
     reconciled = {}
     for root, (identity, established, paths, absent, live, _) in observations.items():
         paths, absent, live = ({value for record in records if (value := current(record)) is not None}
@@ -711,8 +738,8 @@ def record_loaded_required_imports(required_extras: str = "mcp") -> None:
         generation, current_epoch, paths = _ownership_snapshot()
         if epoch != current_epoch:
             return
-    # Under sustained unrelated contention, adding loaded ownership retires
-    # nothing. Do not replay a stale refresh or reacquire any module object.
+    # Under sustained contention, reconcile loaded evidence with committed
+    # retirements. Do not replay a stale refresh or reacquire any module object.
     with _ownership_lock:
         if epoch == _declaration_epoch:
             before = _ownership_state()
@@ -762,6 +789,7 @@ def _clear_optional_roots():
         _optional_root_declarations.cache_clear()
         _known_paths.clear()
         _required_paths.clear()
+        _retirement_evidence.clear()
 
 
 # Explicit clearing resets declarations and process-wide file ownership together.

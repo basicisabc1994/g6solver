@@ -148,7 +148,7 @@ def _unavailable(server_id: str) -> dict[str, Any]:
 def inventory(family: str | None = None) -> list[dict[str, Any]]:
     """Registered members, plus declared tools whose own server cannot load; unrelated servers stay unloaded."""
     from g6.mcp import registrations
-    from g6.mcp.dependencies import optional_dependency_missing
+    from g6.mcp.dependencies import optional_dependency_missing, optional_import_roots
     from g6.skills import corpus, routing
 
     rows = []
@@ -181,6 +181,10 @@ def inventory(family: str | None = None) -> list[dict[str, Any]]:
                              "summary": "This tool's MCP server is unavailable.", "call": call,
                              **_unavailable(server_id)})
             continue
+        if extra := registrations.EXTRAS.get(server_id):
+            # Healthy imports establish the same file aliases as failure-time
+            # probes, before a later inventory can observe those files missing.
+            optional_import_roots(extra)
         for name, tool in listed.items():
             identity = f"mcp:{server_id}/{name}"
             member_family = family_for({"id": identity, "kind": "mcp"})
