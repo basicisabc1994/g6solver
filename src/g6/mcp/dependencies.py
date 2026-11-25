@@ -167,7 +167,7 @@ def _stat_identity(path):
 
 def _root_identities(root: str, paths: set | None = None,
                      absent_paths: set | None = None, *, locations: tuple | None = None,
-                     live_paths: set | None = None) -> tuple[set[tuple], bool]:
+                     live_paths: set | None = None, ordered_paths: list | None = None) -> tuple[set[tuple], bool]:
     """Retain established aliases and whether the lookup completed, without imports."""
     # Use the interpreter's actual FileFinder matching policy, including
     # PYTHONCASEOK and ignore-environment mode, rather than filesystem casing.
@@ -190,7 +190,7 @@ def _root_identities(root: str, paths: set | None = None,
         if path is None:
             return
         path = _location_text(path)
-        if not path or path in {"built-in", "frozen"}:
+        if not path or (source == "origin" and path in {"built-in", "frozen"}):
             return
         if kind == "namespace":
             source = (source, path)
@@ -220,7 +220,10 @@ def _root_identities(root: str, paths: set | None = None,
         # Each successful probe contributes even when its companion failed.
         records = absent_paths if absent else paths
         if records is not None and (absent or resolved is not None or status is not None):
-            records.add((kind, source, path, resolved, device, inode))
+            record = (kind, source, path, resolved, device, inode)
+            records.add(record)
+            if ordered_paths is not None:
+                ordered_paths.append(record)
 
     def namespace_identities(locations, source):
         if locations is not None:
@@ -314,6 +317,13 @@ def _path_refresh_observations(paths):
             except Exception:
                 current_path = None
                 uncertain = True
+        if record[4] is not None and status is None and current_path is not None:
+            try:
+                status = _stat_identity(current_path)
+            except FileNotFoundError:
+                pass
+            except Exception:
+                uncertain = True
         probes[record] = current_path, status, uncertain
     return probes
 
@@ -330,8 +340,8 @@ def _refresh_path_ownership(probes) -> set[str]:
         # A comparable stat identity decides whether this is still the same
         # file. Its resolved spelling may change, for example via a junction
         # retargeted to a hardlink. Otherwise keep the existing-path fallback.
-        if device is not None and status is not None:
-            replaced = status != (device, inode)
+        if device is not None:
+            replaced = status is not None and status != (device, inode)
         else:
             replaced = resolved is not None and current_path is not None and current_path != resolved
         if replaced:
@@ -359,9 +369,49 @@ def _root_observations(roots: set[str]) -> dict:
     observations = {}
     for root in roots:
         observed, absent, live = set(), set(), set()
-        identities, established = _root_identities(root, observed, absent, live_paths=live)
-        observations[root] = identities, established, observed, absent, live
+        ordered = []
+        identities, established = _root_identities(root, observed, absent, live_paths=live, ordered_paths=ordered)
+        observations[root] = identities, established, observed, absent, live, ordered
     return observations
+
+
+def _reconcile_observations(observations: dict, refresh: dict, *, loaded: bool = False):
+    """Return reconciled plain evidence in probe order without changing ownership."""
+    refreshed = [(record[2], resolved, status) for record, (resolved, status, _) in refresh.items()]
+    observed = [(record[2], record[3], record[4:] if record[4] is not None else None)
+                for values in observations.values() for record in values[5]]
+    latest = {}
+    # Startup probes its copied loaded locations before refreshing history;
+    # discovery refreshes history before probing its live roots.
+    for source, resolved, status in (*observed, *refreshed) if loaded else (*refreshed, *observed):
+        previous = latest.get(source)
+        if status is not None or previous is None or (previous[1] is None and resolved is not None):
+            latest[source] = resolved, status
+
+    def current(record):
+        resolved, status = latest.get(record[2], (None, None))
+        if status is not None:
+            if record[4] is not None:
+                if record[4:] != status:
+                    return None
+            elif record[3] is not None and resolved is not None and record[3] != resolved:
+                return None
+        elif record[4] is None and record[3] is not None and resolved is not None and record[3] != resolved:
+            return None
+        return (*record[:3], resolved if resolved is not None else record[3],
+                *(status if status is not None else record[4:]))
+
+    # A later live stat also refreshes an earlier retained owner at that spelling.
+    # Conversely, a later refresh can exclude an obsolete startup observation.
+    combined = {record: (*latest[record[2]], failed) for record, (_, _, failed) in refresh.items()}
+    reconciled = {}
+    for root, (identity, established, paths, absent, live, _) in observations.items():
+        paths, absent, live = ({value for record in records if (value := current(record)) is not None}
+                               for records in (paths, absent, live))
+        identity = {value for value in identity if value[0] not in {"file", "namespace", "inode"}}
+        identity.update(_path_aliases(live))
+        reconciled[root] = identity, established, paths, absent, live
+    return reconciled, combined
 
 
 def _without_required_aliases(optional: set[str], required: set[str] | dict[str, set[tuple]]) -> frozenset[str]:
@@ -381,6 +431,7 @@ def _without_observed_aliases(optional: set[str] | frozenset[str], required: set
     identities = {}
     live_paths = {}
     aliases = {}
+    observations, refresh = _reconcile_observations(observations, refresh)
     blocked = required | _refresh_path_ownership(refresh)
     for root, (identity, established, observed, absent, live) in observations.items():
         identities[root] = identity
@@ -641,17 +692,33 @@ def record_loaded_required_imports(required_extras: str = "mcp") -> None:
     locations = {root: _loaded_locations(module) for root, module in loaded.items()}
     observations = {}
     for root, copied in locations.items():
-        observed = set()
-        _root_identities(root, observed, locations=copied)
-        observations[root] = observed
-    refresh = _path_refresh_observations(paths)
+        observed, absent, live, ordered = set(), set(), set(), []
+        identity, established = _root_identities(root, observed, absent, locations=copied,
+                                                live_paths=live, ordered_paths=ordered)
+        observations[root] = identity, established, observed, absent, live, ordered
+    for _ in range(2):
+        refresh = _path_refresh_observations(paths)
+        with _ownership_lock:
+            if epoch != _declaration_epoch:
+                return  # Only an explicit clear supersedes startup's copied evidence.
+            if generation == _ownership_generation:
+                before = _ownership_state()
+                reconciled, refresh = _reconcile_observations(observations, refresh, loaded=True)
+                _refresh_path_ownership(refresh)
+                _without_required_aliases(set(), {root: values[2] for root, values in reconciled.items()})
+                _advance_ownership_generation(before)
+                return
+        generation, current_epoch, paths = _ownership_snapshot()
+        if epoch != current_epoch:
+            return
+    # Under sustained unrelated contention, adding loaded ownership retires
+    # nothing. Do not replay a stale refresh or reacquire any module object.
     with _ownership_lock:
-        if generation != _ownership_generation:
-            return  # Never replay a superseded startup snapshot or reacquire modules.
-        before = _ownership_state()
-        _refresh_path_ownership(refresh)
-        _without_required_aliases(set(), observations)
-        _advance_ownership_generation(before)
+        if epoch == _declaration_epoch:
+            before = _ownership_state()
+            reconciled, _ = _reconcile_observations(observations, {}, loaded=True)
+            _without_required_aliases(set(), {root: values[2] for root, values in reconciled.items()})
+            _advance_ownership_generation(before)
 
 
 def _loaded_locations(module) -> tuple:
@@ -667,7 +734,7 @@ def _loaded_locations(module) -> tuple:
     def location(path, source, kind):
         try:
             spelling = _location_text(path)
-            if spelling and spelling not in {"built-in", "frozen"}:
+            if spelling and not (source == "origin" and spelling in {"built-in", "frozen"}):
                 locations.append((spelling, source, kind))
         except Exception:
             pass  # One rejected location must not suppress independent evidence.

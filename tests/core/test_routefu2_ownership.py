@@ -1212,3 +1212,220 @@ def test_discovery_namespace_rejects_each_invalid_entry_independently(ownership,
     shared.rmdir()
     failure = ModuleNotFoundError("required namespace disappeared", name=OPTIONAL)
     assert not dependencies.optional_dependency_missing("abstraction", failure)
+
+
+@pytest.mark.parametrize("interleaving", ("unrelated", "sustained", "clear", "serial"))
+def test_startup_loaded_owner_survives_unrelated_generation_changes(ownership, tmp_path, monkeypatch, interleaving):
+    dependencies, specs = ownership
+    _repair3_extra_required_metadata(dependencies, monkeypatch)
+    shared = tmp_path / "shared.py"
+    shared.write_text("value = 73\n", encoding="utf-8")
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, shared)
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(shared)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    refresh = dependencies._path_refresh_observations
+    refreshes = 0
+
+    def interleave(paths):
+        nonlocal refreshes
+        result = refresh(paths)
+        refreshes += 1
+        if interleaving == "clear" and refreshes == 1:
+            dependencies.optional_import_roots.cache_clear()
+        elif interleaving == "sustained" or (interleaving == "unrelated" and refreshes == 1):
+            # A completed discovery that cannot see the loaded required root.
+            other = f"rfu4build_other_{refreshes}"
+            with monkeypatch.context() as transaction:
+                transaction.setattr(dependencies, "_path_refresh_observations", refresh)
+                transaction.setattr(dependencies, "_optional_root_declarations", lambda *args: ({other}, set()))
+                assert dependencies.optional_import_roots("other", required_extras="") == {other}
+        return result
+
+    with monkeypatch.context() as recording:
+        recording.setattr(dependencies, "_path_refresh_observations", interleave)
+        dependencies.record_loaded_required_imports()
+    assert refreshes <= 2
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    specs.clear()
+    shared.unlink()
+    expected = {OPTIONAL} if interleaving == "clear" else frozenset()
+    assert _roots(dependencies, SCOPES[2]) == expected
+
+
+@pytest.mark.parametrize("entry", ("discovery", "startup"))
+def test_transaction_later_stat_retires_earlier_required_owner(ownership, tmp_path, monkeypatch, entry):
+    dependencies, specs = ownership
+    _repair3_extra_required_metadata(dependencies, monkeypatch)
+    required, retired, optional = (tmp_path / name for name in ("required.py", "retired.py", "optional.py"))
+    required.write_text("value = 73\n", encoding="utf-8")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(required)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    dependencies.record_loaded_required_imports()
+
+    def replace():
+        required.rename(retired)
+        required.write_text("value = 'replacement'\n", encoding="utf-8")
+        assert required.stat().st_ino != retired.stat().st_ino
+        os.link(retired, optional)
+        specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, optional)
+
+    seam = "_root_observations" if entry == "discovery" else "_path_refresh_observations"
+    observe = getattr(dependencies, seam)
+
+    def replace_between_probes(paths):
+        replace()
+        return observe(paths)
+
+    with monkeypatch.context() as transaction:
+        transaction.setattr(dependencies, seam, replace_between_probes)
+        if entry == "discovery":
+            _roots(dependencies, SCOPES[1])
+        else:
+            dependencies.record_loaded_required_imports()
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    required.unlink()
+    # No successful probe of the replacement may be needed to repair history.
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+    specs.clear()
+    optional.unlink()
+    retired.unlink()
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction ownership")
+@pytest.mark.parametrize("target_kind", ("same", "different"))
+@pytest.mark.parametrize("failure", ("primary", "both", "healthy"))
+def test_resolved_stat_decides_retargeted_owner(ownership, tmp_path, monkeypatch, target_kind, failure):
+    import _winapi
+
+    dependencies, specs = ownership
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    original, alias = first / "shared.py", second / "shared.py"
+    original.write_text("value = 73\n", encoding="utf-8")
+    if target_kind == "same":
+        os.link(original, alias)
+    else:
+        alias.write_text("value = 'replacement'\n", encoding="utf-8")
+    junction = tmp_path / "site"
+    _winapi.CreateJunction(str(first), str(junction))
+    try:
+        source = junction / "shared.py"
+        for root in (REQUIRED, OPTIONAL):
+            specs[root] = util.spec_from_file_location(root, source)
+        assert _roots(dependencies, SCOPES[0]) == frozenset()
+        specs.clear()
+        os.rmdir(junction)
+        _winapi.CreateJunction(str(second), str(junction))
+        stat = os.stat
+
+        def unavailable_stat(path, *args, **kwargs):
+            spelling = os.fspath(path)
+            if failure != "healthy" and (spelling == str(source) or (failure == "both" and spelling == str(alias))):
+                raise OSError("transient stat failure")
+            return stat(path, *args, **kwargs)
+
+        expected = {OPTIONAL} if target_kind == "different" and failure != "both" else frozenset()
+        with monkeypatch.context() as probing:
+            probing.setattr(os, "stat", unavailable_stat)
+            _roots(dependencies, SCOPES[1])  # Current uncertainty alone cannot decide the retained result.
+        os.rmdir(junction)
+        assert _roots(dependencies, SCOPES[2]) == expected
+    finally:
+        if os.path.lexists(junction):
+            os.rmdir(junction)
+
+
+@pytest.mark.parametrize("entry", ("startup", "discovery"))
+@pytest.mark.parametrize("location", ("namespace", "file", "origin"))
+@pytest.mark.parametrize("spelling", ("frozen", "built-in"))
+def test_sentinels_belong_only_to_spec_origin(ownership, tmp_path, monkeypatch, entry, location, spelling):
+    dependencies, specs = ownership
+    monkeypatch.chdir(tmp_path)
+    shared = tmp_path / spelling
+    if location == "namespace":
+        shared.mkdir()
+    else:
+        shared.write_text("value = 73\n", encoding="utf-8")
+    optional = machinery.ModuleSpec(OPTIONAL, loader=None, is_package=True)
+    if location == "namespace":
+        optional.submodule_search_locations = [str(shared)]
+    else:
+        optional = util.spec_from_file_location(OPTIONAL, str(shared), loader=machinery.SourceFileLoader(OPTIONAL, str(shared)))
+    specs[OPTIONAL] = optional
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+    required = ModuleType(REQUIRED)
+    required.__spec__ = machinery.ModuleSpec(REQUIRED, loader=None, origin=spelling, is_package=True)
+    required.__spec__.has_location = True
+    if location == "namespace":
+        required.__path__ = [spelling]
+        required.__spec__.submodule_search_locations = [spelling]
+    elif location == "file":
+        required.__file__ = spelling
+    monkeypatch.setitem(sys.modules, REQUIRED, required)
+    if entry == "startup":
+        dependencies.record_loaded_required_imports()
+    else:
+        _roots(dependencies, SCOPES[1])
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    specs.clear()
+    if location == "namespace":
+        shared.rmdir()
+    else:
+        shared.unlink()
+    expected = {OPTIONAL} if location == "origin" else frozenset()
+    assert _roots(dependencies, SCOPES[2]) == expected
+
+
+def test_startup_contention_fallback_reconciles_its_loaded_probes(ownership, tmp_path, monkeypatch):
+    dependencies, specs = ownership
+    _repair3_extra_required_metadata(dependencies, monkeypatch)
+    shared, retired, optional = (tmp_path / name for name in ("shared.py", "retired.py", "optional.py"))
+    shared.write_text("value = 73\n", encoding="utf-8")
+    os.link(shared, optional)
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, optional)
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+    loaded = ModuleType(REQUIRED)
+    loaded.__spec__ = util.spec_from_file_location(REQUIRED, shared)
+    loaded.__file__ = str(shared)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    stat, refresh = dependencies._stat_identity, dependencies._path_refresh_observations
+    replaced, refreshes = False, 0
+
+    def replace_after_first_stat(path):
+        nonlocal replaced
+        identity = stat(path)
+        if path == str(shared) and not replaced:
+            replaced = True
+            shared.rename(retired)
+            shared.write_text("value = 'replacement'\n", encoding="utf-8")
+            assert identity != stat(str(shared))
+        return identity
+
+    def supersede_every_refresh(paths):
+        nonlocal refreshes
+        result = refresh(paths)
+        refreshes += 1
+        other = f"rfu4build_fallback_{refreshes}"
+        with monkeypatch.context() as transaction:
+            transaction.setattr(dependencies, "_path_refresh_observations", refresh)
+            transaction.setattr(dependencies, "_optional_root_declarations", lambda *args: ({other}, set()))
+            assert dependencies.optional_import_roots("other", required_extras="") == {other}
+        return result
+
+    with monkeypatch.context() as recording:
+        recording.setattr(dependencies, "_stat_identity", replace_after_first_stat)
+        recording.setattr(dependencies, "_path_refresh_observations", supersede_every_refresh)
+        dependencies.record_loaded_required_imports()
+    assert replaced and 1 <= refreshes <= 2
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    shared.unlink()  # A later discovery cannot repair a stale fallback by statting the replacement.
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+    specs.clear()
+    optional.unlink()
+    retired.unlink()
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
