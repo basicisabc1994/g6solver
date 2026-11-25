@@ -1,7 +1,7 @@
 {
   "name": "g6",
   "version": "0.3.0",
-  "description": "When Claude Code says a Python task is finished, G6 tests the work with checks the agent never saw, sends failures back, and says what was tested and what remains unknown.",
+  "description": "Once you approve a reviewer, G6 tests the work when Claude Code says a Python task is finished, sends reproduced failures back, and shows a card saying what was tested and what remains unknown.",
   "author": {
     "name": "The G6 authors"
   },

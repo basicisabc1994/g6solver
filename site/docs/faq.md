@@ -110,8 +110,8 @@ No. There are two ways in that need no programming.
   plain words, and G6 checks the agent's work before it tells you a task is done. Set it up once with the few commands
   on [Get started](install.md); after that you only talk to your agent, for example: "Add a page where customers can
   reset their password. Review the change with G6 before you tell me it's done." The agent writes the code; G6 runs
-  your project's tests in a sandbox, checks that no test was weakened, and gives the agent a short report to show you:
-  what it found, what it could not check, and what still needs your decision. G6 does not make the agent's work
+  your project's tests in a sandbox, checks for signs of weakened tests, and gives the agent a report with a five-line card to show you:
+  what ran, reproduced findings, repairs observed, what was not checked, and what needs you. G6 does not make the agent's work
   correct, and it merges nothing: that stays your call. It reviews Python projects for now.
 - **With a worked example.** Download one and it opens a private page in your browser for one problem, such as
   checking a draft against your sources. See [Worked examples](bundles/index.md).

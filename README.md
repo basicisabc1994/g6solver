@@ -8,10 +8,12 @@ writable scope. Components and workflow tools are available today; benefits for 
 **Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.**
 
 The first use is a check on a coding agent's work. Before your agent (Claude Code or Codex) says a Python change is
-done, it calls `g6_review_patch`: G6 runs the tests that check each requirement inside an operating-system boundary,
+done, the skill tells it to call `g6_review_patch`: G6 runs the tests that check each requirement inside an operating-system boundary,
 looks for signs that the tests were weakened, and returns a report your agent shows you as it is. Your agent fixes
 what G6 reproduces and asks again. Merging stays your decision. Patch review makes no model call unless the caller
 turns one on.
+G6 keeps a local record of observed review events by default; `G6_WORKFLOW_RECORD=off` turns it off,
+and `g6_workflow_export` writes a readable `RECORD.md` beside `inspection.json`.
 
 Results of G6's checks and work tools returned over G6's MCP server carry one of three labels, and G6 never upgrades a label it did not earn.
 These replies carry `completion_state`; discovery replies such as `g6_components` and `g6_find` do not.

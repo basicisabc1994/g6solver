@@ -3,7 +3,7 @@
 Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.
 
 Coding agents say a task is finished when the code handles the example they were given. This plugin tests that claim. When
-Claude Code finishes a Python task, a reviewer from another model family reads the patch and must show a failure, not just
+Claude Code finishes a Python task, once you approve a reviewer, a second model, Codex, reads the patch and must show a failure, not just
 name one. G6 sends what it shows back to the agent, has the repair read again until a review reproduces nothing or the stop
 rule fires, and then tells you what was found, what was fixed and what stayed open.
 
@@ -46,7 +46,7 @@ below runs instead. With neither, nothing is tested, and the report says which l
 
 1. What you ask before G6 first tests the work is the task, and the commit you are on at your first prompt is the base.
    Uncommitted work you had then counts as part of the change.
-2. When the agent finishes and Python files have changed, a reviewer from another model family reads the task, the patch and
+2. When the agent finishes and Python files have changed, a second model, Codex, reads the task, the patch and
    the files it touches, as they were at the base. It sees none of the agent's reasoning. It must state a rule, its reasons
    and a test, and it may find nothing.
 3. G6 runs that test on the patch, inside an operating-system boundary, with no network. A test that will not run goes back

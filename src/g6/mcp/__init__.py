@@ -420,12 +420,12 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     @server.tool()
     def g6_review_until_clean(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
         """One step of G6's completion loop, for an agent the plugin's Stop hook cannot reach: call it when you finish a
-        Python task, in repo, the repository's folder. Another model family reads your patch without your reasoning, and
+        Python task, in repo, the repository's folder. A second model, Codex, reads your patch without your reasoning, and
         must state a rule, reasons and a test. G6 runs that test, confined, with no network. Returns a job: poll
         metaharness_job. Its result has action "continue" and text, the reviewer's words: a finding you may reject. Check
         it against the task, then repair the cause and call again, or leave the code as it was and call again with reason,
         one line saying why. Only a reason rejects a finding: a call with the code unchanged and no reason gets the same
-        finding back and spends nothing, so a retry is safe. A fresh review reads each repair, at most 3 repairs and so 4
+        finding back and spends nothing. A fresh review reads each repair, at most 3 repairs and so 4
         reviews. Earlier reviewers' tests stay and keep running. Or action "stop" and report: show it to the person as it
         is, with ending, one of clean, fixed, contested, open or untested. The loop stops when a review reproduces nothing,
         when you leave the code as it was, when the repairs run out, or when a review fails. A stop
