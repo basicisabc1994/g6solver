@@ -74,6 +74,13 @@ def _within(path: Path, root: Path) -> bool:
     return _path_key(path).is_relative_to(_path_key(root))
 
 
+def _reserved_device_component(part: str) -> bool:
+    """One host-aware rule for recorded names and all Windows path walks."""
+    return os.name == "nt" and re.fullmatch(
+        r"(?:con|prn|aux|nul|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])",
+        part.split(".", 1)[0].rstrip(" ").casefold()) is not None
+
+
 def _check_names(path: PurePath) -> None:
     # Pure paths let the name rules be checked independently of the host OS.
     windows = isinstance(path, PureWindowsPath)
@@ -84,7 +91,8 @@ def _check_names(path: PurePath) -> None:
         for part in re.split(r"[\\/]", component):
             name = (part.split(":", 1)[0].rstrip(" .") if windows else part).casefold()
             if (name == "sealed" or re.fullmatch(r"final-.*\.json", name)
-                    or windows and (":" in part or part.endswith((".", " "))) or "\x00" in part):
+                    or windows and (":" in part or part.endswith((".", " "))
+                                    or _reserved_device_component(part)) or "\x00" in part):
                 raise ValueError(f"forbidden archive path: {path}")
 
 
@@ -401,6 +409,7 @@ class Source:
         raw = str(rel).replace("\\", "/")
         if raw.startswith("/") or re.match(r"^[A-Za-z]:", raw) or ".." in raw.split("/"):
             raise ValueError(f"archive path must stay relative: {rel}")
+        _check_names(Path(raw))
         if self._pins is not None:
             return self._pins.path(raw)
         path = canonical_path(self.root / raw)
@@ -516,6 +525,8 @@ def _index_paths(source: Source, row: dict) -> None:
             continue
         rel = row[key]
         if not isinstance(rel, str):
+            raise ValueError(f"invalid {key} path: {rel}")
+        if any(_reserved_device_component(part) for part in re.split(r"[\\/]", rel)):
             raise ValueError(f"invalid {key} path: {rel}")
         # Name refusals keep their existing message, ahead of structural refusal.
         _absolute_path(source.root / rel.replace("\\", "/"))
@@ -1271,11 +1282,6 @@ def _relative_evidence_name(value: Any) -> bool:
             and not any(char in value for char in ("\\", ":", "\x00")))
     if not relative:
         return False
-    if os.name == "nt" and any(
-            re.fullmatch(r"(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])",
-                         part.split(".", 1)[0].rstrip(" ").casefold())
-            for part in value.split("/")):
-        return False
     try:
         _check_names(PureWindowsPath(value))
     except ValueError:
@@ -1390,6 +1396,7 @@ class _OriginPins:
         return self.archive
 
     def path(self, raw: str) -> Path:
+        _check_names(Path(raw))
         path = _absolute_path(self.root.path / raw)
         if not _within(path, self.root.path):
             raise ValueError(f"archive path escapes source: {raw}")
@@ -1656,7 +1663,20 @@ def score_saved(saved: dict, registration: Registration | None = None, *, source
         try:
             tasks = we.load_tasks()
             fresh_snapshot = {}
-            cases, excluded = enumerate_cases(source, tasks, require_index=True, source_snapshot=fresh_snapshot)
+            try:
+                cases, excluded = enumerate_cases(source, tasks, require_index=True, source_snapshot=fresh_snapshot)
+            except (OSError, RuntimeError, ValueError):
+                # Enumeration rebuilds its round Sources after the initial
+                # root check. If that root disappeared or became a file, an
+                # absent index or containment refusal must not hide its cause.
+                try:
+                    with _open_handle(source, directory=True):
+                        pass
+                except OSError:
+                    raise
+                except (RuntimeError, ValueError):
+                    pass  # Keep the enumeration refusal for a non-OS failure.
+                raise
             if not _json_equal(fresh_snapshot, snapshot):
                 raise ValueError("source identity, selection or evidence bytes changed")
             if not _unique_origin_digests(cases, source=source, failure=origin_failure):
