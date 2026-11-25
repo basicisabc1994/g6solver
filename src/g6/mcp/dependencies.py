@@ -15,6 +15,8 @@ _EXCEPTION_WORK_LIMIT = 100_000
 _ownership_lock = RLock()
 _known_paths: dict[str, set[tuple]] = {}
 _required_paths: set[tuple] = set()
+_ownership_generation = 0
+_declaration_epoch = 0
 
 
 class _ExceptionWork:
@@ -138,6 +140,31 @@ def _existing_realpath(path):
         return None
 
 
+def _plain_text(value):
+    """Copy string storage without dispatching a subclass's conversion hooks."""
+    if not isinstance(value, str):
+        raise TypeError("expected a string")
+    value = str.__str__(value)
+    if type(value) is not str:
+        raise TypeError("expected an exact string")
+    return value
+
+
+def _location_text(value):
+    value = os.fspath(value)
+    if isinstance(value, bytes):
+        value = os.fsdecode(bytes.__bytes__(value))
+    return _plain_text(value)
+
+
+def _stat_identity(path):
+    status = os.stat(path)
+    device, inode = status.st_dev, status.st_ino
+    if type(device) is not int or type(inode) is not int:
+        raise TypeError("expected exact integer stat identity")
+    return device, inode
+
+
 def _root_identities(root: str, paths: set | None = None,
                      absent_paths: set | None = None, *, locations: tuple | None = None,
                      live_paths: set | None = None) -> tuple[set[tuple], bool]:
@@ -145,6 +172,7 @@ def _root_identities(root: str, paths: set | None = None,
     # Use the interpreter's actual FileFinder matching policy, including
     # PYTHONCASEOK and ignore-environment mode, rather than filesystem casing.
     def name_identity(name):
+        name = _plain_text(name)
         return ("name", name.lower() if _bootstrap_external._relax_case() else name)
 
     identities = set()
@@ -159,15 +187,20 @@ def _root_identities(root: str, paths: set | None = None,
             return None
 
     def path_identity(path, source, kind="file"):
-        if not path:
+        if path is None:
             return
-        resolved = lookup(lambda: os.path.realpath(path))
+        path = _location_text(path)
+        if not path or path in {"built-in", "frozen"}:
+            return
+        if kind == "namespace":
+            source = (source, path)
+        resolved = lookup(lambda: _plain_text(os.path.realpath(path)))
         if resolved is not None:
             identities.add((kind, resolved))
 
         def inode_identity():
             try:
-                return os.stat(path), False
+                return _stat_identity(path), False
             except FileNotFoundError:
                 return None, True  # Absence cannot replace an established identity.
 
@@ -175,24 +208,24 @@ def _root_identities(root: str, paths: set | None = None,
         status, absent = result if result is not None else (None, False)
         device = inode = None
         if status is not None:
-            device, inode = status.st_dev, status.st_ino
-            if status.st_ino:
-                identities.add(("inode", status.st_dev, status.st_ino))
+            device, inode = status
+            if inode:
+                identities.add(("inode", device, inode))
         if live_paths is not None and (resolved is not None or status is not None):
-            live_paths.add((kind, source, os.fspath(path), resolved, device, inode))
+            live_paths.add((kind, source, path, resolved, device, inode))
         if status is None and resolved is not None:
             # Keep live path matches independent, but never update ownership
             # from non-strict realpath's fallback for a missing/broken path.
-            resolved = lookup(lambda: _existing_realpath(path))
+            resolved = lookup(lambda: _plain_text(value) if (value := _existing_realpath(path)) is not None else None)
         # Each successful probe contributes even when its companion failed.
         records = absent_paths if absent else paths
         if records is not None and (absent or resolved is not None or status is not None):
-            records.add((kind, source, os.fspath(path), resolved, device, inode))
+            records.add((kind, source, path, resolved, device, inode))
 
     def namespace_identities(locations, source):
         if locations is not None:
             for path in locations:
-                path_identity(path, (source, os.fspath(path)), "namespace")
+                lookup(lambda: path_identity(path, source, "namespace"))
 
     if locations is not None:
         # Startup supplies copied locations, never root names to rediscover or
@@ -255,37 +288,50 @@ def _compatible_paths(previous, current):
         old is None or new is None or old == new for old, new in zip(previous[3:], current[3:]))
 
 
-def _refresh_path_ownership() -> set[str]:
-    """Retire replaced identities everywhere; missing files retain established facts."""
-    stale = set()
-    uncertain = set()
-    refreshed = {}
-    paths = _required_paths.union(*_known_paths.values())
+def _path_refresh_observations(paths):
+    """Probe a versioned copy of stored paths without holding the store lock."""
+    probes = {}
     for record in paths:
-        _, _, source, resolved, device, inode = record
+        source = record[2]
+        uncertain = False
         try:
-            current_path = os.path.realpath(source)
+            current_path = _plain_text(os.path.realpath(source))
         except Exception:
             current_path = None
-            uncertain.add(record)
+            uncertain = True
         try:
-            status = os.stat(source)
+            status = _stat_identity(source)
         except FileNotFoundError:
             status = None
         except Exception:
             status = None
-            uncertain.add(record)
+            uncertain = True
         if status is None and current_path is not None:
             try:
                 current_path = _existing_realpath(source)
+                if current_path is not None:
+                    current_path = _plain_text(current_path)
             except Exception:
                 current_path = None
-                uncertain.add(record)
+                uncertain = True
+        probes[record] = current_path, status, uncertain
+    return probes
+
+
+def _refresh_path_ownership(probes) -> set[str]:
+    """Apply current-generation probes; missing files retain established facts."""
+    stale = set()
+    uncertain = set()
+    refreshed = {}
+    for record, (current_path, status, failed) in probes.items():
+        _, _, source, resolved, device, inode = record
+        if failed:
+            uncertain.add(record)
         # A comparable stat identity decides whether this is still the same
         # file. Its resolved spelling may change, for example via a junction
         # retargeted to a hardlink. Otherwise keep the existing-path fallback.
         if device is not None and status is not None:
-            replaced = (status.st_dev, status.st_ino) != (device, inode)
+            replaced = status != (device, inode)
         else:
             replaced = resolved is not None and current_path is not None and current_path != resolved
         if replaced:
@@ -293,8 +339,8 @@ def _refresh_path_ownership() -> set[str]:
         # Fill previously unavailable fields without losing a known value to
         # absence or uncertainty. Later replacements can retire the fuller fact.
         refreshed[record] = (*record[:3], current_path if current_path is not None else resolved,
-                             status.st_dev if status is not None else device,
-                             status.st_ino if status is not None else inode)
+                             status[0] if status is not None else device,
+                             status[1] if status is not None else inode)
     retained = {refreshed[record] for record in _required_paths - stale}
     _required_paths.clear()
     _required_paths.update(retained)
@@ -318,14 +364,11 @@ def _root_observations(roots: set[str]) -> dict:
     return observations
 
 
-def _without_required_aliases(optional: set[str], required: set[str] | dict[str, tuple]) -> frozenset[str]:
+def _without_required_aliases(optional: set[str], required: set[str] | dict[str, set[tuple]]) -> frozenset[str]:
     if isinstance(required, dict):
-        # Loaded-module snapshots contain only their own copied locations.
-        # Use the same store and probes without claiming a root's prior files.
-        _refresh_path_ownership()
-        for root, locations in required.items():
-            observed = set()
-            _root_identities(root, observed, locations=locations)
+        # Startup supplies only file records probed from its copied locations,
+        # never root-name history or objects that can execute import code.
+        for observed in required.values():
             _required_paths.update(observed)
         return frozenset()
 
@@ -333,12 +376,12 @@ def _without_required_aliases(optional: set[str], required: set[str] | dict[str,
 
 
 def _without_observed_aliases(optional: set[str] | frozenset[str], required: set[str],
-                             observations: dict) -> frozenset[str]:
+                             observations: dict, refresh: dict) -> frozenset[str]:
     """Merge already-probed discovery evidence while the ownership lock is held."""
     identities = {}
     live_paths = {}
     aliases = {}
-    blocked = required | _refresh_path_ownership()
+    blocked = required | _refresh_path_ownership(refresh)
     for root, (identity, established, observed, absent, live) in observations.items():
         identities[root] = identity
         live_paths[root] = live
@@ -517,8 +560,9 @@ def _requirement_closure(requirements, requires):
 
 
 @cache
-def _optional_root_declarations(extras: str, required_extras: str):
+def _optional_root_declarations(extras: str, required_extras: str, epoch: int = 0):
     """Cache metadata declarations, never file ownership or a live verdict."""
+    # The epoch key isolates an old computation that finishes after cache_clear.
     from packaging.requirements import Requirement
 
     imports = _import_roots()
@@ -528,30 +572,86 @@ def _optional_root_declarations(extras: str, required_extras: str):
     # Missing required metadata is an invalid base install, never an empty closure.
     required = _requirement_closure(pending, metadata.requires)
     base = {module for name in required for module in _distribution_roots(name, imports)}
-    return _declared_roots(extras, imports), base
+    return ({_plain_text(root) for root in _declared_roots(extras, imports)},
+            {_plain_text(root) for root in base})
+
+
+def _ownership_snapshot():
+    with _ownership_lock:
+        return (_ownership_generation, _declaration_epoch,
+                _required_paths.union(*_known_paths.values()))
+
+
+def _ownership_state():
+    return _required_paths.copy(), {root: history.copy() for root, history in _known_paths.items()}
+
+
+def _advance_ownership_generation(before):
+    global _ownership_generation
+    # One atomic merge may add, retire and transfer ownership. Any observable
+    # store change invalidates all observations that preceded that transaction.
+    if before != (_required_paths, _known_paths):
+        _ownership_generation += 1
 
 
 def optional_import_roots(extras: str, required_extras: str = "mcp") -> frozenset[str]:
     """Declared optional closure minus required ownership, refreshed for each discovery."""
     # Metadata, finders and module/spec attributes can execute import code.
     # None may run while another importer waits for our ownership store.
-    optional, required = _optional_root_declarations(extras, required_extras)
-    observations = _root_observations(optional | required)
-    with _ownership_lock:
-        # Only startup recording enters the seam with an empty optional side.
-        if optional:
-            optional = _without_required_aliases(optional, required)
-        return _without_observed_aliases(optional, required, observations)
+    extras, required_extras = _plain_text(extras), _plain_text(required_extras)
+    for _ in range(2):
+        generation, epoch, paths = _ownership_snapshot()
+        optional, required = _optional_root_declarations(extras, required_extras, epoch)
+        try:
+            optional = {_plain_text(root) for root in optional}
+            required = {_plain_text(root) for root in required}
+        except Exception:
+            return frozenset()  # An unusable declaration cannot establish optionality.
+        refresh = _path_refresh_observations(paths)
+        observations = _root_observations(optional | required)
+        with _ownership_lock:
+            if generation != _ownership_generation:
+                continue  # Retry once, including declarations invalidated by a clear.
+            before = _ownership_state()
+            # Only startup recording enters the seam with an empty optional side.
+            if optional:
+                optional = _without_required_aliases(optional, required)
+            result = _without_observed_aliases(optional, required, observations, refresh)
+            _advance_ownership_generation(before)
+            return result
+    # Sustained contention supplies no safe optional verdict and writes no history.
+    return frozenset()
 
 
 def record_loaded_required_imports(required_extras: str = "mcp") -> None:
     """Record successful startup's loaded required files in the shared ownership store."""
-    _, required = _optional_root_declarations("", required_extras)
-    loaded = {root: module for root, module in sys.modules.copy().items()
-              if root in required and module is not None}
+    required_extras = _plain_text(required_extras)
+    generation, epoch, paths = _ownership_snapshot()
+    _, required = _optional_root_declarations("", required_extras, epoch)
+    try:
+        required = {_plain_text(root) for root in required}
+    except Exception:
+        return
+    loaded = {}
+    for name, module in sys.modules.copy().items():
+        if isinstance(name, str):
+            root = _plain_text(name)
+            if root in required and module is not None:
+                loaded[root] = module
     locations = {root: _loaded_locations(module) for root, module in loaded.items()}
+    observations = {}
+    for root, copied in locations.items():
+        observed = set()
+        _root_identities(root, observed, locations=copied)
+        observations[root] = observed
+    refresh = _path_refresh_observations(paths)
     with _ownership_lock:
-        _without_required_aliases(set(), locations)
+        if generation != _ownership_generation:
+            return  # Never replay a superseded startup snapshot or reacquire modules.
+        before = _ownership_state()
+        _refresh_path_ownership(refresh)
+        _without_required_aliases(set(), observations)
+        _advance_ownership_generation(before)
 
 
 def _loaded_locations(module) -> tuple:
@@ -566,10 +666,8 @@ def _loaded_locations(module) -> tuple:
 
     def location(path, source, kind):
         try:
-            spelling = os.fspath(path)
+            spelling = _location_text(path)
             if spelling and spelling not in {"built-in", "frozen"}:
-                if kind == "namespace":
-                    source = (source, spelling)
                 locations.append((spelling, source, kind))
         except Exception:
             pass  # One rejected location must not suppress independent evidence.
@@ -590,7 +688,10 @@ def _loaded_locations(module) -> tuple:
 
 
 def _clear_optional_roots():
+    global _ownership_generation, _declaration_epoch
     with _ownership_lock:
+        _ownership_generation += 1
+        _declaration_epoch += 1
         _optional_root_declarations.cache_clear()
         _known_paths.clear()
         _required_paths.clear()

@@ -1040,3 +1040,175 @@ def test_ownership_seam_keeps_two_positional_arguments(ownership, tmp_path, monk
     dependencies.optional_import_roots.cache_clear()
     assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
     assert calls == [True, True, False, True, True]
+
+
+@pytest.mark.parametrize("entry", ("startup", "discovery"))
+def test_plain_location_boundary_excludes_foreign_string_hooks(ownership, tmp_path, monkeypatch, entry):
+    dependencies, specs = ownership
+    shared = tmp_path / "shared.py"
+    shared.write_text("value = 73\n", encoding="utf-8")
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, shared)
+    events = []
+
+    class Location(str):
+        def __hash__(self):
+            events.append(("hash", dependencies._ownership_lock._is_owned()))
+            return str.__hash__(self)
+
+        def __eq__(self, other):
+            events.append(("eq", dependencies._ownership_lock._is_owned()))
+            return str.__eq__(self, other)
+
+        def __str__(self):
+            raise AssertionError("location coercion must not call a foreign __str__")
+
+    if entry == "startup":
+        # Startup reads only loaded required modules, so the optional root's own file history
+        # must be observed first, as the plain-location startup controls in this file do.
+        assert _roots(dependencies, SCOPES[0]) == {OPTIONAL}
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = Location(str(shared))
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    if entry == "startup":
+        dependencies.record_loaded_required_imports()
+    else:
+        assert _roots(dependencies, SCOPES[1]) == frozenset()
+    assert not [event for event in events if event[1]], events
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    specs.clear()
+    shared.unlink()
+    assert _roots(dependencies, SCOPES[2]) == frozenset()
+
+
+def _repair3_extra_required_metadata(dependencies, monkeypatch):
+    needs = {"g6": ['rfu2build-base; extra == "mcp"', 'rfu2build-extra; extra == "abstraction"'],
+             "rfu2build-base": [], "rfu2build-extra": []}
+    monkeypatch.setattr(dependencies.metadata, "requires", lambda name: needs[name])
+    return needs
+
+
+def test_stale_optional_observation_keeps_new_required_alias(ownership, tmp_path, monkeypatch):
+    dependencies, specs = ownership
+    _repair3_extra_required_metadata(dependencies, monkeypatch)
+    optional = tmp_path / "optional.py"
+    required = tmp_path / "required.py"
+    old = tmp_path / "old.py"
+    optional.write_text("value = 'optional'\n", encoding="utf-8")
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, optional)
+    observe = dependencies._root_observations
+    pending = True
+
+    def supersede(roots):
+        nonlocal pending
+        result = observe(roots)
+        if pending:
+            pending = False
+            optional.rename(old)
+            optional.write_text("value = 'required'\n", encoding="utf-8")
+            os.link(optional, required)
+            loaded = ModuleType(REQUIRED)
+            loaded.__file__ = str(required)
+            monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+            dependencies.record_loaded_required_imports()
+            assert _roots(dependencies, SCOPES[2]) == frozenset()
+            monkeypatch.delitem(sys.modules, REQUIRED)
+            specs.clear()
+            required.unlink()
+            optional.unlink()
+            old.unlink()
+        return result
+
+    monkeypatch.setattr(dependencies, "_root_observations", supersede)
+    _roots(dependencies, SCOPES[1])
+    failure = ModuleNotFoundError("required alias disappeared", name=OPTIONAL)
+    assert not dependencies.optional_dependency_missing("abstraction", failure)
+
+
+def test_stale_observation_does_not_restore_retired_identity(ownership, tmp_path, monkeypatch):
+    dependencies, specs = ownership
+    _repair3_extra_required_metadata(dependencies, monkeypatch)
+    required = tmp_path / "required.py"
+    retired = tmp_path / "retired.py"
+    optional = tmp_path / "optional.py"
+    required.write_text("value = 73\n", encoding="utf-8")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(required)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    dependencies.record_loaded_required_imports()
+    observe = dependencies._root_observations
+    pending = True
+
+    def supersede(roots):
+        nonlocal pending
+        result = observe(roots)
+        if pending:
+            pending = False
+            monkeypatch.delitem(sys.modules, REQUIRED)
+            required.rename(retired)
+            required.write_text("value = 'replacement'\n", encoding="utf-8")
+            assert required.stat().st_ino != retired.stat().st_ino
+            os.link(retired, optional)
+            specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, optional)
+            assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+            required.unlink()
+        return result
+
+    monkeypatch.setattr(dependencies, "_root_observations", supersede)
+    _roots(dependencies, SCOPES[1])
+    specs.clear()
+    optional.unlink()
+    retired.unlink()
+    failure = ModuleNotFoundError("optional old file disappeared", name=OPTIONAL)
+    assert dependencies.optional_dependency_missing("abstraction", failure)
+
+
+def test_clear_during_observation_discards_preclear_required_owner(ownership, tmp_path, monkeypatch):
+    dependencies, specs = ownership
+    needs = _repair3_extra_required_metadata(dependencies, monkeypatch)
+    shared = tmp_path / "shared.py"
+    shared.write_text("value = 73\n", encoding="utf-8")
+    for root in (REQUIRED, OPTIONAL):
+        specs[root] = util.spec_from_file_location(root, shared)
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+    observe = dependencies._root_observations
+    pending = True
+
+    def clear_after_probe(roots):
+        nonlocal pending
+        result = observe(roots)
+        if pending:
+            pending = False
+            needs["g6"] = ['rfu2build-extra; extra == "abstraction"']
+            specs.pop(REQUIRED)
+            dependencies.optional_import_roots.cache_clear()
+        return result
+
+    monkeypatch.setattr(dependencies, "_root_observations", clear_after_probe)
+    _roots(dependencies, SCOPES[1])
+    specs.clear()
+    shared.unlink()
+    failure = ModuleNotFoundError("now optional file disappeared", name=OPTIONAL)
+    assert dependencies.optional_dependency_missing("abstraction", failure)
+
+
+@pytest.mark.parametrize("invalid", ("raises", "non-string"))
+def test_discovery_namespace_rejects_each_invalid_entry_independently(ownership, tmp_path, invalid):
+    dependencies, specs = ownership
+    shared = tmp_path / "shared"
+    shared.mkdir()
+
+    class Invalid(os.PathLike):
+        def __fspath__(self):
+            if invalid == "raises":
+                raise ValueError("bad namespace entry")
+            return 73
+
+    for root, locations in ((REQUIRED, [Invalid(), str(shared)]), (OPTIONAL, [str(shared)])):
+        spec = machinery.ModuleSpec(root, loader=None, is_package=True)
+        spec.submodule_search_locations = locations
+        specs[root] = spec
+    assert _roots(dependencies, SCOPES[1]) == frozenset()
+    specs.clear()
+    shared.rmdir()
+    failure = ModuleNotFoundError("required namespace disappeared", name=OPTIONAL)
+    assert not dependencies.optional_dependency_missing("abstraction", failure)
