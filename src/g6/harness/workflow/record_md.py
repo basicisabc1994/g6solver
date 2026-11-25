@@ -40,9 +40,11 @@ def counts(events: Iterable[Event]) -> dict:
             "loops": len(ended),
             "unchecked": len(unchecked), "review_calls": len(reviews),
             "reproduced": sum(e.data.get("reproduced", 0) for e in [*ended, *reviews]),
-            "repaired": sum(len(repairs(by_run[e.run])) for e in ended) + len(repairs(reviews)),
-            "open": sum(len(open_checks(by_run[e.run])) if e.data.get("reviews") else e.data.get("open", 0)
-                        for e in ended) + len(open_checks(reviews)),
+            "repaired": sum(evidence.check_counts(by_run[e.run])["repaired"] for e in ended)
+                        + evidence.check_counts(reviews)["repaired"],
+            "open": sum(evidence.check_counts(by_run[e.run])["open"] if e.data.get("reviews") else e.data.get("open", 0)
+                        for e in ended) + evidence.check_counts(reviews)["open"],
+            "identities_incomplete": evidence.check_counts(rows)["identities_incomplete"],
             "left_by_agent": sum(e.data.get("left_by_agent", 0) for e in ended),
             "not_established": sum(e.data.get("not_established", 0) for e in [*ended, *reviews]),
             "skipped": sum(e.data.get("checks_skipped", 0) for e in [*ended, *reviews]),
@@ -95,6 +97,8 @@ def render(events: Iterable[Event], *, recording: bool = True, self_lines: list[
              "", "## What the checks found",
              f"- {c['reproduced']} reproduced findings (tests failed); {c['repaired']} repaired; "
              f"{c['open']} open at loop stops; {c['left_by_agent']} left by the agent."]
+    if c["identities_incomplete"]:
+        lines.append("- Check identities are incomplete; open counts are lower bounds. Omitted findings remain unresolved.")
     if not rows:
         lines.append("- No recorded events. Nothing here establishes that work was checked.")
     lines += ["", "## Findings (newest first)"]
@@ -105,7 +109,8 @@ def render(events: Iterable[Event], *, recording: bool = True, self_lines: list[
         state = evidence.check_state(relevant)
         failed = state["reproduced"] if e.kind == "loop_ended" else {
             (e.task, check) for check in e.data.get("failed_sha256") or []}
-        repaired = bool(failed) and failed <= state["repaired"] and not failed & state["open"]
+        repaired = (bool(failed) and failed <= state["repaired"] and not failed & state["open"]
+                    and not evidence.check_counts(relevant)["identities_incomplete"])
         labels = evidence.finding_labels(rows, [e.event_id, *[row.event_id for row in relevant
                                                           if e.kind == "loop_ended" and row.data.get("failed_sha256")]])
         state = "repaired in a recorded review" if repaired else "open at the stop"

@@ -6,6 +6,7 @@ can be resolved from the inspection file without trusting report wording.
 """
 from __future__ import annotations
 
+import ast
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 import re
@@ -37,14 +38,114 @@ def source_digests(root, checks: Iterable[str]) -> dict[str, str]:
     return found
 
 
+def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
+    """Before execution, bind collectors and statically named repository test modules.
+
+    Never import repository code. A missing/unreadable test dependency makes the
+    identity explicitly incomplete, rather than lending it the collector's hash.
+    The collector-only API remains available for legacy captures.
+    """
+    top = Path(root).resolve()
+    checks = list(checks)
+    cache = {}
+
+    def read(path):
+        path = Path(path)
+        if path in cache:
+            return cache[path]
+        if len(cache) >= 128:
+            return None
+        cache[path] = None
+        try:
+            if not path.resolve().is_relative_to(top) or any(p.is_symlink() for p in (path, *path.parents)
+                                                           if p.is_relative_to(top)):
+                return None
+            raw = path.read_bytes()
+            cache[path] = (sha256(raw), ast.parse(raw))
+        except (OSError, SyntaxError, ValueError):
+            pass
+        return cache[path]
+
+    def module(path, node):
+        name = (node.module or "") if isinstance(node, ast.ImportFrom) else node
+        level = node.level if isinstance(node, ast.ImportFrom) else 0
+        bases = [path.parent.parents[level - 1]] if level > 1 and level <= len(path.parent.parents) else (
+            [path.parent] if level == 1 else [top, top / "src", path.parent])
+        for base in bases:
+            stem = base.joinpath(*name.split(".")) if name else base
+            for candidate in (stem.with_suffix(".py"), stem / "__init__.py"):
+                if candidate.is_file():
+                    return candidate
+        return None
+
+    def identity(file):
+        pending, files, complete = [top / file], {}, True
+        while pending:
+            path = pending.pop()
+            if path in files:
+                continue
+            parsed = read(path)
+            if parsed is None:
+                complete = False
+                continue
+            files[path] = parsed[0]
+            for node in ast.walk(parsed[1]):
+                if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    if any(isinstance(t, ast.Name) and t.id.startswith("test_") for t in targets):
+                        complete = False  # generated/aliased bodies have no statically established file set
+                if isinstance(node, ast.Call) and (isinstance(node.func, ast.Name) and node.func.id in (
+                        "exec", "eval", "__import__") or isinstance(node.func, ast.Attribute)
+                        and node.func.attr in ("import_module", "exec_module")):
+                    complete = False
+                if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                    continue
+                if isinstance(node, ast.ImportFrom) and node.module is None:
+                    complete = False  # package attributes may name submodules rather than this __init__
+                names = [a.name for a in node.names]
+                symbols = [a.asname or a.name for a in node.names]
+                candidates = [(module(path, node), symbols)] if isinstance(node, ast.ImportFrom) else [
+                    (module(path, name), []) for name in names]
+                for imported, symbols in candidates:
+                    wants_test = any(n.startswith("test_") for n in symbols)
+                    if imported is None:
+                        complete &= not wants_test
+                        continue
+                    other = read(imported)
+                    if other is None:
+                        complete = False
+                        continue
+                    is_test = "tests" in imported.relative_to(top).parts or imported.name.startswith(
+                        "test_") or imported.stem.endswith("_test") or any(
+                        isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test_")
+                        for n in ast.walk(other[1]))
+                    if is_test or wants_test:
+                        pending.append(imported)
+        if not complete or not files:
+            return ""
+        if len(files) == 1:
+            return next(iter(files.values()))
+        return digest(sorted((p.relative_to(top).as_posix(), sha) for p, sha in files.items()))
+
+    by_file = {n.partition("::")[0]: None for n in checks}
+    by_file = {file: identity(file) for file in by_file}
+    return {n: by_file[n.partition("::")[0]] for n in checks}
+
+
 def outcome_sources(statuses: Mapping, sources: Mapping) -> dict:
     """Flat bounded pairs fit the record's data-only scalar/list schema."""
     names = sorted(n for n, v in statuses.items() if v in ("passed", "failed"))[:50]
-    return {"check_sources_sha256": [sha256(n) + ":" + sources[n] for n in names if sources.get(n)]}
+    return {"check_sources_sha256": [sha256(n) + ":" + sources[n] for n in names if sources.get(n)],
+            "source_incomplete_sha256": [sha256(n) for n in names if n in sources and not sources[n]],
+            "identities_incomplete": len(statuses) > len(names),
+            "identities_omitted": len(statuses) - len(names),
+            "failed_identities_omitted": sum(statuses[n] == "failed" for n in sorted(statuses)[50:])}
 
 
 def executed(run: Mapping) -> int:
     """Actual terminal outcomes, never the number of selected files or node ids."""
+    if run.get("loaded_complete") is False:
+        return 0
     if "executed_tests" in run:
         return max(0, int(run["executed_tests"]))
     if "passed" in run or "failed" in run:
@@ -57,6 +158,7 @@ def executed(run: Mapping) -> int:
 def repair_blocked(assessment: Mapping) -> bool:
     """An integrity problem or a weakening detection cannot supply a repair pass."""
     return bool(assessment.get("outcome") == "test_integrity_compromised" or assessment.get("integrity_reasons")
+                or assessment.get("loaded_complete") is False
                 or any(r.get("stage") == "integrity" or "weaken" in str(r.get("code", ""))
                        for r in assessment.get("reasons") or []))
 
@@ -68,13 +170,35 @@ def review_data(assessment: Mapping, repo=None) -> dict:
     defects = completion.get("defects_reproduced") or {}
     runs = [r for r in scope.get("checks_run") or [] if r.get("check") != "stated checks at the base commit"]
     requirements = assessment.get("requirements") or []
+    from g6.workforce.repo_tests import report_covers
+
+    loading_rejected = {str(check["id"]) for req in requirements for check in req.get("checks") or []
+                        if isinstance(check, dict) and check.get("id") and check.get("verdict") == "changed_code_not_loaded"}
+    loading_unknown = any(r.get("loaded_complete") is False for r in runs) or any(
+        r.get("code") == "changed_code_not_loaded" for r in assessment.get("reasons") or [])
+    # A file's withheld loading evidence also withholds its expanded node passes.
+    # Work on detached run copies: the producer's decided reply stays untouched.
+    if loading_rejected or loading_unknown:
+        kept = []
+        for run in runs:
+            outcomes = {n: v for n, v in (run.get("executed_outcomes") or {}).items()
+                        if v != "passed" or not (loading_unknown or any(report_covers(c, n) for c in loading_rejected))}
+            withheld = loading_unknown or any(report_covers(c, n) or report_covers(n, c)
+                                              for c in loading_rejected for n in run.get("tests") or [])
+            kept.append({**run, "executed_outcomes": outcomes,
+                         "executed_tests": len(outcomes) if "executed_outcomes" in run else 0 if withheld else executed(run)})
+        runs = kept
     # Only the stated checks' own terminal status counts. Base runs and a skipped,
     # absent or renamed check cannot supply the pass for an earlier failure.
     statuses = {}
     for requirement in requirements:
         for check in requirement.get("checks") or []:
             if isinstance(check, dict) and check.get("id") and check.get("observation") is None:
-                statuses.setdefault(str(check["id"]), []).append(check.get("verdict"))
+                verdict = check.get("verdict")
+                if verdict == "passed" and (loading_unknown or any(
+                        report_covers(c, str(check["id"])) for c in loading_rejected)):
+                    verdict = "changed_code_not_loaded"
+                statuses.setdefault(str(check["id"]), []).append(verdict)
     sources, captured, executed_names = {}, set(), set()
     for run in runs:
         sources.update(run.get("check_sources") or {})
@@ -84,23 +208,16 @@ def review_data(assessment: Mapping, repo=None) -> dict:
             statuses.setdefault(name, []).append(verdict)
             executed_names.add(name)
     # A file/class selection is not an additional test beside its observed nodes.
-    from g6.workforce.repo_tests import report_covers
-
     statuses = {name: values for name, values in statuses.items() if name in executed_names
                 or not any(report_covers(name, node) for node in executed_names)}
     terminal = {n: "failed" if "failed" in v else "passed" if v and all(x == "passed" for x in v) else "unknown"
                 for n, v in statuses.items()}
     terminal = {n: terminal[n] for n in sorted(terminal) if terminal[n] in ("passed", "failed")}
-    terminal = dict(list(terminal.items())[:50])
     if any(n not in sources and any(report_covers(c, n) for c in captured) for n in terminal):
         raise ValueError("executed check source identity was not captured")
-    # Direct adapter callers also record observations (including imported assessments).
-    # A runner's earlier capture always wins over this fallback read.
-    if repo is not None:
-        fallback = [n for n in terminal if not any(report_covers(c, n) for c in captured)]
-        sources = {**source_digests(repo, fallback), **sources}
-    failed = sorted(sha256(n) for n, v in terminal.items() if v == "failed")
-    passed = sorted(sha256(n) for n, v in terminal.items() if v == "passed")
+    retained = dict(list(terminal.items())[:50])
+    failed = sorted(sha256(n) for n, v in retained.items() if v == "failed")
+    passed = sorted(sha256(n) for n, v in retained.items() if v == "passed")
     activities = completion.get("activities") or []
     proposer = next((str(a["model"])[:100] for a in activities if a.get("model") and a.get("model_calls")), "")
     data = {"requirements": len(requirements),
@@ -119,7 +236,10 @@ def review_data(assessment: Mapping, repo=None) -> dict:
     data["repair_blocked"] = repair_blocked(assessment)
     data["review_returned"] = any(a.get("model_calls") and a.get("result") == "replied" for a in activities)
     if not data["checks_run"] and not data["review_returned"]:
-        data["unchecked_reason"] = next((str(r.get("verdict")) for r in runs if r.get("verdict")), "check_not_recorded")[:100]
+        data["unchecked_reason"] = (
+            "changed_code_not_loaded: loading of changed code was not established"
+            if loading_unknown or loading_rejected else
+            next((str(r.get("verdict")) for r in runs if r.get("verdict")), "check_not_recorded")[:100])
     for tier, name in ((1, "stated_checks"), (2, "repository_checks"), (3, "deeper_checks")):
         data[name] = sum(executed(r) for r in runs if r.get("tier") == tier)
     return data
@@ -215,6 +335,8 @@ def check_state(events: Iterable[Event]) -> dict[str, set[tuple[str, str]]]:
         return bool(failed.artifact_sha256 and passed.artifact_sha256
                     and failed.artifact_sha256 != passed.artifact_sha256 and later(failed, passed)
                     and same_source and not passed.data.get("repair_blocked")
+                    and check not in (failed.data.get("source_incomplete_sha256") or [])
+                    and check not in (passed.data.get("source_incomplete_sha256") or [])
                     and passed.data.get("outcome") != "test_integrity_compromised"
                     and not passed.data.get("integrity_reasons"))
 
@@ -223,6 +345,28 @@ def check_state(events: Iterable[Event]) -> dict[str, set[tuple[str, str]]]:
     still = {key for key, failed in failures.items()
              if any(not any(resolved(f, p, key[1]) for p in passes.get(key, ())) for f in failed)}
     return {"reproduced": set(failures), "repaired": repaired, "open": still}
+
+
+def check_counts(events: Iterable[Event]) -> dict:
+    """Retained identities plus unresolved omitted failures; never invent a pass.
+
+    Omitted identities cannot be matched across observations. Counts are lower
+    bounds: a later retained identity may overlap an earlier omitted one.
+    """
+    rows = list(events)
+    state = check_state(rows)
+    totals = {key: len(state[key]) for key in ("reproduced", "repaired", "open")}
+    for task in {e.task for e in rows}:
+        missing = [e for e in rows if e.task == task and e.kind in ("review_finished", "loop_round")
+                   and e.data.get("failed_identities_omitted", 0)]
+        if not missing:
+            continue
+        known = {key: sum(t == task for t, _ in state[key]) for key in totals}
+        observed = max(len(e.data.get("failed_sha256") or []) + e.data["failed_identities_omitted"] for e in missing)
+        totals["reproduced"] += max(0, observed - known["reproduced"])
+        totals["open"] += max(known["open"], observed - known["repaired"], 1) - known["open"]
+    return {**totals,
+            "identities_incomplete": any(e.data.get("identities_incomplete") for e in rows)}
 
 
 def finding_labels(events: Iterable[Event], targets: Iterable[str]) -> list[dict]:

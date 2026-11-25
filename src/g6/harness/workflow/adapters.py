@@ -174,15 +174,13 @@ def observe_loop(repo: str | os.PathLike, task: str, session: Path, state: Mappi
     for number, review in enumerate(reviews, 1):
         failing = (rounds[number - 1].get("failing") or []) if number <= len(rounds) else None
         results = review.get("results") if isinstance(review.get("results"), Mapping) else None
-        outcomes = dict(sorted((n, v) for n, v in (results or {}).items() if v in ("passed", "failed"))[:50])
-        still_open = sorted(sha256(str(name)) for name, verdict in outcomes.items() if verdict == "failed")
+        outcomes = dict(sorted((n, v) for n, v in (results or {}).items() if v in ("passed", "failed")))
+        retained = dict(list(outcomes.items())[:50])
+        still_open = sorted(sha256(str(name)) for name, verdict in retained.items() if verdict == "failed")
         sources = review.get("check_sources")
-        if sources is not None and any(not sources.get(n) for n in outcomes):
+        if sources is not None and any(n not in sources for n in outcomes):
             raise ValueError("executed check source identity was not captured")
-        if sources is None:
-            sources = {**evidence.source_digests(repo, results or {}),
-                       **evidence.source_digests(Path(session) / "sets" / "critic", results or {})}
-        identity = evidence.outcome_sources(outcomes, sources)
+        identity = evidence.outcome_sources(outcomes, sources or {})
         run.write("loop_round", str(number), at=at, artifact=review.get("patch") or "",
                   data={"round": number, "verdict": str(review.get("verdict") or "")[:40] or None,
                         **identity,
@@ -190,7 +188,7 @@ def observe_loop(repo: str | os.PathLike, task: str, session: Path, state: Mappi
                         "results_sha256": digest(results) if results is not None else None,
                         "checked": int(evidence.check_ran(review)),
                         "failed_sha256": still_open,
-                        "passed_sha256": sorted(sha256(str(name)) for name, verdict in outcomes.items()
+                        "passed_sha256": sorted(sha256(str(name)) for name, verdict in retained.items()
                                                 if verdict == "passed"),
                         "open": len(still_open) if results is not None else None, "open_sha256": still_open or None,
                         "failing": len(failing) if failing is not None else None,
@@ -203,10 +201,9 @@ def observe_loop(repo: str | os.PathLike, task: str, session: Path, state: Mappi
         last = reviews[-1].get("patch") if reviews else ""
         native = digest([len(reviews), ending, code])
         held = run.record.events(task=run.task, run=run.run)
-        checks = evidence.check_state(held)
-        extra = {"reproduced": len(checks["reproduced"]), "repaired": len(checks["repaired"]),
-                 "open": len(checks["open"]), "checked": int(evidence.checked(held)),
-                 "left_by_agent": len(checks["open"]) if state.get("left") else 0,
+        checks = evidence.check_counts(held)
+        extra = {**checks, "checked": int(evidence.checked(held)),
+                 "left_by_agent": checks["open"] if state.get("left") else 0,
                  "reviewer": next((str(r["reviewer"])[:100] for r in reversed(reviews) if r.get("reviewer")), ""),
                  "agent": str(state.get("agent") or "")[:100], "hook_present": int(_HOOK.get()),
                  "isolation": next((str(r["boundary"])[:100] for r in reversed(reviews) if r.get("boundary")), "")}

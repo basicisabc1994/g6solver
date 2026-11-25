@@ -963,9 +963,9 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     said = run_critic(change, task, critic, shipped.critic, where, n, patch=read, whole=True, system_sources=shipped.sources)
 
     def run(name: str) -> None:
-        from g6.harness.workflow.evidence import source_digests
+        from g6.harness.workflow.evidence import capture_sources
 
-        sources.update(source_digests(where, [name]))
+        sources.update(capture_sources(where, [name]))
         got, diagnostics[name] = _snapshot_probe(run_set(change, where, at_base=False, deadline=deadline, only=name))
         cloud.record_sources(diagnostics[name])
         found = failures_of([("critic", got, None)])[0] if got.usable else set()    # one that will not run says nothing

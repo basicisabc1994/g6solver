@@ -212,7 +212,11 @@ def workflow_justification(missions, mission_id: str, standard: dict) -> dict:
             project = held["events"][0]["project"]
             cloud.record_sources((cloud.Source.text(workflow_source(project), "certificate-task-events",
                                                     json.dumps(refs, sort_keys=True)),))
-        return {"events": refs, **({"note": "no recorded events for this task"} if not refs else {})}
+        incomplete = evidence.check_counts([evidence.Event.from_body(e) for e in evidence.matched(held)])[
+            "identities_incomplete"]
+        return {"events": refs, **({"note": "no recorded events for this task"} if not refs else {}),
+                **({"identities_incomplete": True,
+                    "note": "check identities are incomplete; omitted findings remain unresolved"} if incomplete else {})}
     except Exception:  # noqa: BLE001 - absent record custody never becomes a certificate observation
         return {"events": [], "note": "no recorded events for this task"}
 

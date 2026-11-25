@@ -668,6 +668,7 @@ def card(assessment: dict, loop: dict | None = None) -> dict:
 
         rows = [Event.from_body(e) for e in events if kind == "loop_ended" or e["kind"] == "review_finished"]
         checks = evidence.check_state(rows)
+        check_counts = evidence.check_counts(rows)
         if not evidence.checked(rows if kind == "loop_ended" else [Event.from_body(one)]):
             unchecked_reason = data.get("unchecked_reason") or data.get("code") or "No test ran and no reviewer returned."
     status = held.get("status", "unavailable")
@@ -697,12 +698,12 @@ def card(assessment: dict, loop: dict | None = None) -> dict:
     repaired = None
     if known:
         if kind == "loop_ended" and data.get("reviews") or kind == "review_finished" and len(observed) > 1:
-            repaired = len(checks["repaired"])
+            repaired = check_counts["repaired"]
     open_count = data.get("open", reproduced) if known else None
     if known and kind == "loop_ended" and data.get("reviews"):
-        reproduced, open_count = len(checks["reproduced"]), len(checks["open"])
+        reproduced, open_count = check_counts["reproduced"], check_counts["open"]
     if known and kind == "review_finished" and len(observed) > 1:
-        open_count = max(open_count or 0, len(checks["open"]))
+        open_count = max(open_count or 0, check_counts["open"])
     labels = evidence.finding_labels([evidence.Event.from_body(e) for e in events],
         [e["event_id"] for e in events if e["kind"] in ("review_finished", "loop_ended", "loop_round")
          and ((e.get("data") or {}).get("reproduced") or (e.get("data") or {}).get("failed_sha256"))])
@@ -729,6 +730,7 @@ def card(assessment: dict, loop: dict | None = None) -> dict:
             "caught": {"reproduced": reproduced, "integrity": data.get("integrity_reasons") if known else None,
                        "unconfirmed": data.get("unconfirmed") if known else None},
             "repaired": repaired, "open": open_count, "labels": labels, "unlabelled_open": unlabelled,
+            "identities_incomplete": bool(known and check_counts["identities_incomplete"]),
             "left_by_agent": data.get("left_by_agent", 0) if known else None,
             "agent_reason": loop.get("left", "") if known and data.get("left_by_agent") else "",
             "not_checked": {"not_established": data.get("not_established") if known else None,
@@ -744,7 +746,9 @@ def card_lines(value: dict) -> list[str]:
     """Render one card identically on every report route, with repository text inert."""
     checked = value["checked"]
     if checked.get("unchecked"):
-        return ["- **Checked:** nothing this turn. " + checked["reason"]]
+        return ["- **Checked:** nothing this turn. " + checked["reason"]
+                + (" Check identities are incomplete; omitted findings remain unresolved."
+                   if value.get("identities_incomplete") else "")]
     if checked.get("reason"):
         status = checked.get("record_status")
         note = ("No record is kept. G6_WORKFLOW_RECORD=on where the server is registered turns it on." if status == "off" else
@@ -775,6 +779,8 @@ def card_lines(value: dict) -> list[str]:
             f"- **Caught:** {count(caught['reproduced'])} reproduced findings (tests failed on the patch); "
             f"{count(caught['integrity'])} signs of weakened tests; {count(caught['unconfirmed'])} unconfirmed.",
             f"- **Repaired:** {repaired}. Open: {count(value['open'])}. Left by the agent: {count(value['left_by_agent'])}."
+            + (" Check identities are incomplete; open counts are lower bounds and omitted findings remain unresolved."
+               if value.get("identities_incomplete") else "")
             + (f" Its reason: {code(value['agent_reason'])}." if value['agent_reason'] else "")
             + ((" " + " ".join(f"Person label by {code(label['by'])}: {code(label['note'])} "
                                  f"(event {code(label['event_id'])})." for label in value.get("labels") or []))

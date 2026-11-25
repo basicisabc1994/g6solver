@@ -241,11 +241,12 @@ def test_producer_inventory_records_test_file_digests(home, tmp_path):
     statuses = dict(zip(nodes, ("failed", "passed"), strict=True))
     value = assessment()
     value["requirements"] = [{"id": "R1", "checks": [{"id": n, "verdict": v} for n, v in statuses.items()]}]
+    sources = evidence.source_digests(repo, nodes)
     value["scope"]["checks_run"] = [patch_review._record(1, "stated checks and extra tests", nodes,
-                                                       {"verdict": "failed", "passed": 1, "failed": 1})]
+                                                       {"verdict": "failed", "passed": 1, "failed": 1}, sources=sources)]
     assert adapters.observe_review(repo, "inventory", "job", {"assessment": value},
                                    started_at=at(), finished_at=at(1)) == ""
-    state = {"reviews": [{"patch": sha("patch"), "results": statuses, "verdict": "defect"}]}
+    state = {"reviews": [{"patch": sha("patch"), "results": statuses, "verdict": "defect", "check_sources": sources}]}
     assert adapters.observe_loop(repo, "inventory", tmp_path / "session", state, Step("stop", "clean"), at=at()) == ""
     held = evidence.read(repo, "inventory")
     outcomes = [e["data"] for e in held["events"] if e["kind"] in ("review_finished", "loop_round")]
@@ -271,8 +272,9 @@ def test_review_repairs_bind_source_and_integrity(home, tmp_path):
             value = assessment()
             value["requirements"] = [{"id": "R1", "checks": [{"id": node, "verdict": verdict}]}]
             value["scope"]["artifact_digest"] = sha(str(number))
+            sources = evidence.source_digests(repo, [node])
             value["scope"]["checks_run"] = [patch_review._record(1, "stated checks and extra tests", [node],
-                {"verdict": verdict, "passed": number, "failed": 1 - number})]
+                {"verdict": verdict, "passed": number, "failed": 1 - number}, sources=sources)]
             if number and mode == "compromised":
                 value["outcome"] = "test_integrity_compromised"
             if number and mode == "weakened":
@@ -530,3 +532,199 @@ def test_review_check_source_capture_preserves_grounding_source_names(home, tmp_
         if claim:
             assert grounding["completion_state"] == "blocked-escalated"
     assert sources == {"spec": "Refunds take 14 days."}
+
+
+# Review 3: written first; runtime execution belongs to the lead's lane.
+def test_imported_check_identity_includes_its_body_before_execution(home, tmp_path):
+    from g6.harness import patch_review
+    from tests.harness.test_patch_review import result
+
+    repo = make_repo(tmp_path / "repo")
+    node = "test_case.py::test_case"
+    (repo / "test_case.py").write_text("from checks_impl import test_case\n", encoding="utf-8")
+    body = repo / "checks_impl.py"
+    body.write_text("def test_case():\n    assert False\n", encoding="utf-8")
+    collector = evidence.source_digests(repo, [node])
+    before = evidence.capture_sources(repo, [node])
+    first = patch_review._record(1, "checks", [node], result(failed=[node]), sources=before)
+    body.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    assert evidence.source_digests(repo, [node]) == collector
+    assert evidence.capture_sources(repo, [node]) != before
+    # The earlier capture survives a later edit; an unchanged capture is stable.
+    assert first["check_sources"][node] == before[node]
+    assert evidence.capture_sources(repo, [node]) == evidence.capture_sources(repo, [node])
+
+
+def test_unknown_loading_is_not_an_executed_repair_pass(home, tmp_path):
+    from g6.harness import patch_review
+    from tests.harness.test_patch_review import result
+
+    repo = make_repo(tmp_path / "repo")
+    node = "test_case.py::test_case"
+    (repo / "test_case.py").write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    sources = evidence.source_digests(repo, [node])
+    for known in (False, True):
+        ran = result(passed=[node])
+        ran.update(loaded_complete=known, loaded_outside={})
+        run = patch_review._record(1, "checks", ["test_case.py"], ran, sources=sources)
+        assert run["executed_outcomes"] == ({node: "passed"} if known else {})
+        value = assessment()
+        value["requirements"] = [{"id": "R1", "checks": [{"id": "test_case.py",
+            "verdict": "passed" if known else "changed_code_not_loaded"}]}]
+        value["requirements_without_adequate_check"] = [] if known else ["R1"]
+        value["scope"]["checks_run"] = [run]
+        data = evidence.review_data(value, repo)
+        assert data["passed_sha256"] == ([sha(node)] if known else [])
+        assert data["stated_checks"] == int(known)
+        assert data["not_established"] == int(not known)
+        if not known:
+            assert "changed_code_not_loaded" in data["unchecked_reason"]
+
+
+def test_finished_adapters_never_capture_replacement_source(home, tmp_path, monkeypatch):
+    from g6.harness import patch_review
+
+    repo = make_repo(tmp_path / "repo")
+    node = "test_case.py::test_case"
+    (repo / "test_case.py").write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    def forbidden(*args, **kwargs):
+        raise AssertionError("post-run source read")
+    monkeypatch.setattr(evidence, "source_digests", forbidden)
+    value = assessment()
+    value["requirements"] = [{"id": "R1", "checks": [{"id": node, "verdict": "failed"}]}]
+    value["scope"]["checks_run"] = [patch_review._record(1, "checks", [node],
+        {"verdict": "failed", "passed": 0, "failed": 1})]
+    assert evidence.review_data(value, repo)["check_sources_sha256"] == []
+    assert adapters.observe_loop(repo, "task", tmp_path / "session", {"reviews": [
+        {"patch": sha("A"), "results": {node: "failed"}, "verdict": "defect"}]},
+        Step("stop", "open"), at=at()) == ""
+    row = next(e for e in evidence.read(repo, "task")["events"] if e["kind"] == "loop_round")
+    assert row["data"]["check_sources_sha256"] == []
+
+
+def test_truncated_findings_stay_incomplete_on_every_projection(home, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from g6.harness import patch_review
+    from g6.harness.workflow import record_md
+    from g6.workforce import coding_certificate
+
+    repo = make_repo(tmp_path / "repo")
+    monkeypatch.setattr(coding_certificate.bench, "_repo", lambda *a: repo)
+    for number in (50, 51):
+        nodes = [f"test_case.py::test_case[{i:03}]" for i in range(number)]
+        for turn in range(2):
+            statuses = dict.fromkeys(nodes if turn == 0 else nodes[:50], "failed" if turn == 0 else "passed")
+            value = assessment()
+            value["requirements"] = [{"id": "R1", "checks": [{"id": n, "verdict": v} for n, v in statuses.items()]}]
+            value["scope"]["artifact_digest"] = sha(str(turn))
+            value["scope"]["checks_run"] = [patch_review._record(1, "checks", nodes,
+                {"verdict": "failed" if turn == 0 else "passed", "passed": 50 if turn else 0,
+                 "failed": number if not turn else 0})]
+            value["completion"]["defects_reproduced"]["stated_and_repository_checks"] = (
+                [{"check": n} for n in nodes] if not turn else [])
+            assert adapters.observe_review(repo, str(number), str(turn), {"assessment": value},
+                started_at=at(turn * 2), finished_at=at(turn * 2 + 1)) == ""
+        held = evidence.read(repo, str(number), origin_kind="review_job", origin_id="1")
+        rows = [evidence.Event.from_body(e) for e in held["events"]]
+        card = patch_report.card({"workflow_evidence": held})
+        assert card["open"] == number - 50
+        assert card.get("identities_incomplete", False) == (number > 50)
+        assert record_md.counts(rows)["open"] == number - 50
+        text = record_md.render(rows)
+        assert ("incomplete" in text) == (number > 50)
+        assert ("repaired in a recorded review" in text) == (number == 50)
+        missions = SimpleNamespace(get=lambda _: {"venture_id": "fixture", "objective": str(number)})
+        cited = coding_certificate.workflow_justification(missions, "mission", {"repository": "repo"})
+        assert cited.get("identities_incomplete", False) == (number > 50)
+
+
+def test_missing_or_dynamic_test_body_identity_never_repairs(home, tmp_path):
+    from g6.harness import patch_review
+    from g6.harness.workflow import record_md
+    from tests.harness.test_patch_review import result
+
+    repo = make_repo(tmp_path / "repo")
+    node = "test_case.py::test_case"
+    for source in ("from missing_impl import test_case\n",
+                   "import importlib\ntest_case = importlib.import_module('body').test_case\n"):
+        (repo / "test_case.py").write_text(source, encoding="utf-8")
+        sources = evidence.capture_sources(repo, [node])
+        assert sources == {node: ""}
+        for turn in range(2):
+            value = assessment()
+            verdict = "failed" if turn == 0 else "passed"
+            value["requirements"] = [{"id": "R1", "checks": [{"id": node, "verdict": verdict}]}]
+            value["scope"]["artifact_digest"] = sha(str(turn))
+            ran = result(failed=[node]) if turn == 0 else result(passed=[node])
+            value["scope"]["checks_run"] = [patch_review._record(1, "checks", [node], ran, sources=sources)]
+            assert adapters.observe_review(repo, source, str(turn), {"assessment": value},
+                started_at=at(turn * 2), finished_at=at(turn * 2 + 1)) == ""
+        rows = [evidence.Event.from_body(e) for e in evidence.read(repo, source)["events"]]
+        assert record_md.counts(rows)["repaired"] == 0
+
+
+def test_imported_test_alias_and_relative_body_are_captured(home, tmp_path):
+    repo = make_repo(tmp_path / "repo")
+    package = repo / "cases"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "test_case.py").write_text("from .body import case as test_case\n", encoding="utf-8")
+    body = package / "body.py"
+    body.write_text("def case():\n    assert False\n", encoding="utf-8")
+    node = "cases/test_case.py::test_case"
+    before = evidence.capture_sources(repo, [node])
+    body.write_text("def case():\n    assert True\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, [node]) != before
+
+
+def test_loop_identity_cap_retains_unresolved_count_and_marker(home, tmp_path):
+    from g6.harness.workflow import record_md
+
+    repo = make_repo(tmp_path / "repo")
+    for number in (50, 51):
+        names = [f"case-{i:03}" for i in range(number)]
+        reviews = [{"patch": sha("before"), "verdict": "defect", "results": dict.fromkeys(names, "failed")},
+                   {"patch": sha("after"), "verdict": "none", "results": dict.fromkeys(names[:50], "passed")}]
+        state = {"reviews": reviews}
+        assert adapters.observe_loop(repo, str(number), tmp_path / str(number), state, Step("stop", "open"), at=at()) == ""
+        held = evidence.read(repo, str(number))
+        card = patch_report.card({}, {**state, "workflow_evidence": held})
+        assert card["open"] == number - 50
+        assert card.get("identities_incomplete", False) == (number > 50)
+        rows = [evidence.Event.from_body(e) for e in held["events"]]
+        ending = next(e for e in rows if e.kind == "loop_ended")
+        assert ending.data["open"] == record_md.counts(rows)["open"] == number - 50
+
+
+def test_omitted_identities_are_not_added_again_when_later_retained():
+    from dataclasses import replace
+
+    from tests.workflow.kit import event
+
+    first = replace(event("a" * 32, "review_finished", data={
+        "failed_sha256": [sha("known")], "identities_incomplete": True, "failed_identities_omitted": 1}),
+        artifact_sha256=sha("first"))
+    later = replace(event("b" * 32, "review_finished", seconds=1,
+        data={"failed_sha256": [sha("previously omitted")]}), artifact_sha256=sha("later"))
+    counts = evidence.check_counts([first, later])
+    assert counts["reproduced"] == counts["open"] == 2
+
+
+def test_loading_rejected_requirement_cannot_be_overridden_by_node_phases(home, tmp_path):
+    from g6.harness import patch_review
+    from tests.harness.test_patch_review import result
+
+    repo = make_repo(tmp_path / "repo")
+    node = "test_case.py::test_case"
+    (repo / "test_case.py").write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    sources = evidence.source_digests(repo, [node])
+    for known in (True, False):
+        value = assessment()
+        value["requirements"] = [{"id": "R1", "checks": [{"id": "test_case.py",
+            "verdict": "passed" if known else "changed_code_not_loaded"}]}]
+        value["scope"]["checks_run"] = [patch_review._record(1, "checks", ["test_case.py"],
+            result(passed=[node]), sources=sources)]
+        data = evidence.review_data(value, repo)
+        assert data["passed_sha256"] == ([sha(node)] if known else [])
+        assert data["stated_checks"] == int(known)

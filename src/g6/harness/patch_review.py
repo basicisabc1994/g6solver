@@ -785,8 +785,8 @@ def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", 
         by_file = {n.partition("::")[0]: sha for n, sha in sources.items()}
         found["check_sources"] = {n: by_file[n.partition("::")[0]] for n in [*ids, *report.phases]
                                   if n.partition("::")[0] in by_file}
-        found["executed_outcomes"] = {node: body_of(phases) for node, phases in report.phases.items()
-                                      if body_of(phases) in ("passed", "failed")}
+        found["executed_outcomes"] = {node: report.body_result(node) for node in report.phases
+                                      if report.body_result(node) in ("passed", "failed")}
         found["executed_tests"] = len(found["executed_outcomes"])
     found.update({key: ran[key] for key in _SEEN_KEYS if ran.get(key)})
     if ran.get("loaded_complete") is False:
@@ -1139,9 +1139,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                 if i not in present}
     first: dict = {}
     if present:
-        from g6.harness.workflow.evidence import source_digests
+        from g6.harness.workflow.evidence import capture_sources
 
-        check_sources = source_digests(root, present)
+        check_sources = capture_sources(root, present)
         first = _confined(_execute(root, present, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
         runs.append(_record(1, "stated checks and extra tests", present, first, sources=check_sources))
         verdicts.update(_verdicts(present, first))
@@ -1230,9 +1230,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             skipped.append({"tier": 2, "check": "tests that touch the changed modules",
                             "reason": "no other test file names a changed module"})
         else:
-            from g6.harness.workflow.evidence import source_digests
+            from g6.harness.workflow.evidence import capture_sources
 
-            check_sources = source_digests(root, derived)
+            check_sources = capture_sources(root, derived)
             second = _confined(_execute(root, derived, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
             runs.append(_record(2, "tests that touch the changed modules", derived, second, provenance=DERIVED,
                                 sources=check_sources))
@@ -1548,9 +1548,9 @@ def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, u
         unknowns.append("whether the stated checks pass against the base commit's code too was not checked: the "
                         "time budget was spent")
         return []
-    from g6.harness.workflow.evidence import source_digests
+    from g6.harness.workflow.evidence import capture_sources
 
-    sources = source_digests(change.repo, passing) if getattr(change, "repo", None) is not None else None
+    sources = capture_sources(change.repo, passing) if getattr(change, "repo", None) is not None else None
     ran = _confined(_execute_at_base(change, passing, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
     if "isolation" in ran:   # it ran, in a copy
         runs.append(_record(2, AT_BASE, passing, ran, command=f"pytest {' '.join(passing)} against the base "
@@ -1608,9 +1608,9 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, ro
         for rel in failing:
             uncompared(f"{shown(rel)} fails on the patch; the time budget was spent before it ran at the base commit")
         return
-    from g6.harness.workflow.evidence import source_digests
+    from g6.harness.workflow.evidence import capture_sources
 
-    sources = source_digests(root, failing)
+    sources = capture_sources(root, failing)
     replays = _execute(root, failing, timeout_s=max(1, _left(deadline)), change=change, **_rooted(roots))
     for rel in failing:
         out = _confined(replays.get(rel) or {"verdict": "not_run", "said": "not replayed"})
