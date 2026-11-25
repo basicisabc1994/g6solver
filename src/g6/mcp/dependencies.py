@@ -19,7 +19,7 @@ _required_paths: set[tuple] = set()
 _ownership_generation = 0
 _declaration_epoch = 0
 _evidence_order = count()
-_retirement_evidence: dict[str, tuple] = {}
+_ownership_observations: dict[str, tuple] = {}
 
 
 class _ExceptionWork:
@@ -307,10 +307,13 @@ def _path_refresh_observations(paths):
             current_path = None
             uncertain = True
         order = next(_evidence_order)
+        absent = False
+        direct = True
         try:
             status = _stat_identity(source)
         except FileNotFoundError:
             status = None
+            absent = True
         except Exception:
             status = None
             uncertain = True
@@ -325,18 +328,42 @@ def _path_refresh_observations(paths):
         if record[4] is not None and status is None and current_path is not None:
             try:
                 order = next(_evidence_order)
-                status = _stat_identity(current_path)
+                secondary = _stat_identity(current_path)
                 after = _existing_realpath(source)
                 if after is None or _plain_text(after) != current_path:
                     current_path = status = None
                     uncertain = True
+                elif absent or secondary == record[4:]:
+                    # A secondary observation may confirm an unreadable source,
+                    # but cannot retire it. Direct absence is independent evidence.
+                    status = secondary
+                    direct = absent
             except FileNotFoundError:
                 status = None
             except Exception:
                 status = None
                 uncertain = True
-        probes[record] = current_path, status, uncertain, order
+        probes[record] = current_path, status, uncertain, order, direct, absent
     return probes
+
+
+def _observe_current_sources(refresh, observations):
+    """Recheck the recorded source when discovery contradicts its current resolution."""
+    discovered = {record[2]: record[4:] for values in observations.values()
+                  for _, record in values[5] if record[4] is not None}
+    recheck = {record for record, (resolved, status, _, _, _, _) in refresh.items()
+               if record[2] != resolved and resolved in discovered and discovered[resolved] != status}
+    # A discovery through another spelling cannot retire this record. Obtain
+    # direct evidence instead, outside the lock, from the recorded source itself.
+    if recheck:
+        for record, event in _path_refresh_observations(recheck).items():
+            resolved, status, failed, order, direct, absent = event
+            previous = refresh[record]
+            if status is None and previous[1] is not None:
+                # A failed recheck does not erase the earlier successful probe
+                # in this transaction. Keep its decision at the newer order.
+                resolved, status, direct = previous[0], previous[1], previous[4]
+            refresh[record] = resolved, status, failed, order, direct, absent
 
 
 def _refresh_path_ownership(probes) -> set[str]:
@@ -357,11 +384,6 @@ def _refresh_path_ownership(probes) -> set[str]:
             replaced = resolved is not None and current_path is not None and current_path != resolved
         if replaced:
             stale.add(record)
-            # Removal must leave its evidence available to older startup
-            # observations, even if the replacement disappears before retry.
-            previous = _retirement_evidence.get(source)
-            if previous is None or previous[0] < order:
-                _retirement_evidence[source] = order, source, current_path, status
         # Fill previously unavailable fields without losing a known value to
         # absence or uncertainty. Later replacements can retire the fuller fact.
         refreshed[record] = (*record[:3], current_path if current_path is not None else resolved,
@@ -392,30 +414,40 @@ def _root_observations(roots: set[str]) -> dict:
 
 
 def _reconcile_observations(observations: dict, refresh: dict, *, loaded: bool = False):
-    """Return reconciled plain evidence in probe order without changing ownership."""
-    refreshed = [(order, record[2], resolved, status)
-                 for record, (resolved, status, _, order) in refresh.items()]
-    observed = [(order, record[2], record[3], record[4:] if record[4] is not None else None)
+    """Retain accepted evidence and return ownership inputs in observation order."""
+    refreshed = [(order, record[2], resolved, status, direct, absent)
+                 for record, (resolved, status, _, order, direct, absent) in refresh.items()]
+    observed = [(order, record[2], record[3], record[4:] if record[4] is not None else None,
+                 True, record in values[3])
                 for values in observations.values() for order, record in values[5]]
     records = set(refresh)
     for values in observations.values():
         records.update(values[2] | values[3] | values[4])
-    spellings = {}
-    for record in records:
-        # Each recorded source has its own key. Its recorded resolution is
-        # another spelling to probe, never a global path-equivalence class.
-        for spelling in {record[2], record[3]} - {None}:
-            spellings.setdefault(spelling, set()).add(record)
-    latest = {}
-    committed = tuple(_retirement_evidence.values()) if loaded else ()
-    for order, source, resolved, status in sorted((*observed, *refreshed, *committed), key=lambda value: value[0]):
-        for record in spellings.get(source, ()):
-            previous = latest.get(record)
-            if status is not None or previous is None or (previous[1] is None and resolved is not None):
-                latest[record] = resolved, status, order
+    # Keep one ordered observation per recorded source, including discoveries
+    # made before startup first commits ownership. Absence/failed probes retain
+    # the last identity decision; they cannot resurrect a retired identity.
+    for event in sorted((*observed, *refreshed), key=lambda value: value[0]):
+        order, source, resolved, status, direct, absent = event
+        previous = _ownership_observations.get(source)
+        if previous is not None:
+            if previous[0] >= order:
+                continue
+            if status is None and (previous[3] is not None or resolved is None):
+                resolved, status, direct = previous[2:5]
+        _ownership_observations[source] = order, source, resolved, status, direct, absent
+
+    latest = {record: _ownership_observations[record[2]] for record in records
+              if record[2] in _ownership_observations}
+
+    def decision(record):
+        order, _, resolved, status, direct, _ = latest.get(record, (None, None, None, None, True, False))
+        if not direct and status != record[4:]:
+            # Confirmation belongs only to the identity the secondary probe saw.
+            resolved, status = None, None
+        return resolved, status, order
 
     def current(record):
-        resolved, status, _ = latest.get(record, (None, None, None))
+        resolved, status, _ = decision(record)
         if status is not None:
             if record[4] is not None:
                 if record[4:] != status:
@@ -429,8 +461,8 @@ def _reconcile_observations(observations: dict, refresh: dict, *, loaded: bool =
 
     # A later live stat also refreshes an earlier retained owner at that spelling.
     # Conversely, a later refresh can exclude an obsolete startup observation.
-    combined = {record: (latest[record][0], latest[record][1], failed, latest[record][2])
-                for record, (_, _, failed, _) in refresh.items()}
+    combined = {record: (decision(record)[0], decision(record)[1], failed, decision(record)[2])
+                for record, (_, _, failed, _, _, _) in refresh.items()}
     reconciled = {}
     for root, (identity, established, paths, absent, live, _) in observations.items():
         paths, absent, live = ({value for record in records if (value := current(record)) is not None}
@@ -661,14 +693,17 @@ def _ownership_snapshot():
 
 
 def _ownership_state():
-    return _required_paths.copy(), {root: history.copy() for root, history in _known_paths.items()}
+    return (_required_paths.copy(), {root: history.copy() for root, history in _known_paths.items()},
+            {source: event[2:] for source, event in _ownership_observations.items()})
 
 
 def _advance_ownership_generation(before):
     global _ownership_generation
     # One atomic merge may add, retire and transfer ownership. Any observable
     # store change invalidates all observations that preceded that transaction.
-    if before != (_required_paths, _known_paths):
+    # Advancing an unchanged observation's ticket alone is not an ownership
+    # transaction. Reconciliation still reads that latest ticket under the lock.
+    if before != _ownership_state():
         _ownership_generation += 1
 
 
@@ -687,6 +722,7 @@ def optional_import_roots(extras: str, required_extras: str = "mcp") -> frozense
             return frozenset()  # An unusable declaration cannot establish optionality.
         refresh = _path_refresh_observations(paths)
         observations = _root_observations(optional | required)
+        _observe_current_sources(refresh, observations)
         with _ownership_lock:
             if generation != _ownership_generation:
                 continue  # Retry once, including declarations invalidated by a clear.
@@ -739,7 +775,7 @@ def record_loaded_required_imports(required_extras: str = "mcp") -> None:
         if epoch != current_epoch:
             return
     # Under sustained contention, reconcile loaded evidence with committed
-    # retirements. Do not replay a stale refresh or reacquire any module object.
+    # observations. Do not replay a stale refresh or reacquire any module object.
     with _ownership_lock:
         if epoch == _declaration_epoch:
             before = _ownership_state()
@@ -789,7 +825,7 @@ def _clear_optional_roots():
         _optional_root_declarations.cache_clear()
         _known_paths.clear()
         _required_paths.clear()
-        _retirement_evidence.clear()
+        _ownership_observations.clear()
 
 
 # Explicit clearing resets declarations and process-wide file ownership together.
