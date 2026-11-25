@@ -131,12 +131,17 @@ def _record_loaded_server(server_id: str, *, cached_describe: bool = False) -> N
     previous = _RECORDED_SERVERS.pop(server_id, None)
     if extra := EXTRAS.get(server_id):
         extra = dependencies._plain_text(extra)
+        rejected = []
         if (cached_describe and previous is not None and previous[0] == extra
-                and dependencies._loaded_required_recording_current(previous[1])):
+                and dependencies._loaded_required_recording_current(previous[1], _rejected=rejected)):
             _RECORDED_SERVERS[server_id] = previous
             return
-        recording_key = dependencies.record_loaded_required_imports()
-        dependencies.optional_import_roots(extra, _recording_key=recording_key)
+        recording_key = (dependencies.record_loaded_required_imports(_reuse_evidence=rejected[0]) if rejected
+                         else dependencies.record_loaded_required_imports())
+        if rejected:
+            dependencies.optional_import_roots(extra, _recording_key=recording_key, _reuse_evidence=rejected[0])
+        else:
+            dependencies.optional_import_roots(extra, _recording_key=recording_key)
         with dependencies._ownership_lock:
             completed = dependencies._loaded_optional_recordings.get((extra, "mcp"))
             if (recording_key is not None and completed is not None

@@ -2111,7 +2111,7 @@ def test_different_tool_describes_reuse_only_owned_required_file_stats(
         if cache_state == "never-owned":
             assert len(recordings) == 1
             assert set(stats) <= files
-            assert all(count <= 1 for count in stats.values())
+            assert all(count <= 2 for count in stats.values())
     assert len(recordings) == (1 if cache_state == "never-owned" else len(names))
     if cache_state == "never-owned":
         assert set(dict(families._RECORDED_SERVERS["abstraction"][1][3])) == files
@@ -2228,3 +2228,155 @@ def test_loaded_cache_only_hint_is_covered_without_owning_optional_file(
     monkeypatch.delitem(sys.modules, REQUIRED)
     specs.clear()
     assert OPTIONAL in _roots(dependencies, SCOPES[2])
+
+
+def _rfu6_transfer_required_file(dependencies, specs, source, tmp_path):
+    """Exercise alias ownership, then its retained missing-file classification."""
+    alias = tmp_path / "transferred.py"
+    source.rename(alias)
+    specs.clear()
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, alias)
+    assert _roots(dependencies, SCOPES[2]) == frozenset(), "required file received optional recovery"
+    specs.clear()
+    alias.unlink()
+    assert _roots(dependencies, SCOPES[2]) == frozenset(), "missing required alias received optional recovery"
+
+
+def test_rejected_describe_reuse_keeps_observed_replacement(
+        _rfu5_r2_describe_server, tmp_path, monkeypatch):
+    dependencies, specs, families = _rfu5_r2_describe_server
+    source, retired, replacement = (tmp_path / name for name in
+                                    ("required.py", "retired.py", "replacement.py"))
+    source.write_text("value = 73\n", encoding="utf-8")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(source)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    assert families.describe("load_state")["available"] is True
+    source.rename(retired)
+    source.write_text("value = 74\n", encoding="utf-8")
+    identity = dependencies._stat_identity(source)
+    assert identity != dependencies._stat_identity(retired)
+    stat, observed = dependencies._stat_identity, []
+
+    def move_observed_replacement(path):
+        assert not dependencies._ownership_lock._is_owned()
+        result = stat(path)
+        if os.fspath(path) == str(source) and not observed:
+            assert result == identity
+            observed.append(result)
+            source.rename(replacement)
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(dependencies, "_stat_identity", move_observed_replacement)
+        assert families.describe("load_state")["available"] is True
+    assert observed == [identity] and not source.exists()
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    _rfu6_transfer_required_file(dependencies, specs, replacement, tmp_path)
+
+
+def test_describe_records_child_loaded_during_validation_stats(
+        _rfu5_r2_describe_server, tmp_path, monkeypatch):
+    dependencies, specs, families = _rfu5_r2_describe_server
+    source, child_file = tmp_path / "required.py", tmp_path / "child.py"
+    source.write_text("value = 73\n", encoding="utf-8")
+    child_file.write_text("value = 74\n", encoding="utf-8")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(source)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    assert families.describe("load_state")["available"] is True
+    stat, children = dependencies._stat_identity, []
+
+    def import_child_after_stat(path):
+        assert not dependencies._ownership_lock._is_owned()
+        result = stat(path)
+        if os.fspath(path) == str(source) and not children:
+            spec = util.spec_from_file_location(REQUIRED + ".child", child_file)
+            child = util.module_from_spec(spec)
+            monkeypatch.setitem(sys.modules, child.__name__, child)
+            spec.loader.exec_module(child)
+            child.__spec__.cached = child.__cached__ = None
+            assert child.value == 74
+            children.append(child)
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(dependencies, "_stat_identity", import_child_after_stat)
+        assert families.describe("load_state")["available"] is True
+    assert len(children) == 1
+    monkeypatch.delitem(sys.modules, children[0].__name__)
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    _rfu6_transfer_required_file(dependencies, specs, child_file, tmp_path)
+
+
+def test_describe_records_replacement_after_validation_stat(
+        _rfu5_r2_describe_server, tmp_path, monkeypatch):
+    dependencies, specs, families = _rfu5_r2_describe_server
+    source, retired = tmp_path / "required.py", tmp_path / "retired.py"
+    source.write_text("value = 73\n", encoding="utf-8")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(source)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    assert families.describe("load_state")["available"] is True
+    stat, replaced = dependencies._stat_identity, []
+
+    def replace_after_stat(path):
+        assert not dependencies._ownership_lock._is_owned()
+        result = stat(path)
+        if os.fspath(path) == str(source) and not replaced:
+            source.rename(retired)
+            source.write_text("value = 74\n", encoding="utf-8")
+            old = retired.stat()
+            os.utime(source, ns=(old.st_atime_ns, old.st_mtime_ns))
+            assert source.stat().st_size == old.st_size
+            assert source.stat().st_mtime_ns == old.st_mtime_ns
+            assert stat(source) != result
+            replaced.append(True)
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(dependencies, "_stat_identity", replace_after_stat)
+        assert families.describe("load_state")["available"] is True
+    assert replaced == [True]
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    _rfu6_transfer_required_file(dependencies, specs, source, tmp_path)
+
+
+@pytest.mark.parametrize("hint", ("root", "child", "clear-root"))
+def test_rejected_reuse_preserves_discovery_cache_evidence_without_promoting_child_hint(
+        _rfu5_r2_describe_server, tmp_path, monkeypatch, hint):
+    dependencies, specs, families = _rfu5_r2_describe_server
+    source, cache_file, saved = (tmp_path / name for name in ("required.py", "required.pyc", "saved.pyc"))
+    source.write_text("value = 73\n", encoding="utf-8")
+    name = REQUIRED + ".child" if hint == "child" else REQUIRED
+    loaded = ModuleType(name)
+    loaded.__file__ = str(source)
+    loaded.__spec__ = util.spec_from_file_location(name, source)
+    loaded.__spec__.cached = loaded.__cached__ = str(cache_file)
+    monkeypatch.setitem(sys.modules, name, loaded)
+    assert families.describe("load_state")["available"] is True
+    assert not cache_file.exists()
+    cache_file.write_bytes(b"observed cache identity")
+    stat, observed = dependencies._stat_identity, []
+
+    def move_observed_cache(path):
+        assert not dependencies._ownership_lock._is_owned()
+        result = stat(path)
+        if os.fspath(path) == str(cache_file) and not observed:
+            observed.append(result)
+            cache_file.rename(saved)
+            if hint == "clear-root":
+                dependencies.optional_import_roots.cache_clear()
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(dependencies, "_stat_identity", move_observed_cache)
+        assert families.describe("load_state")["available"] is True
+    assert len(observed) == 1 and not cache_file.exists()
+    monkeypatch.delitem(sys.modules, name)
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, saved)
+    expected = frozenset() if hint == "root" else {OPTIONAL}
+    assert _roots(dependencies, SCOPES[2]) == expected, "reuse evidence changed cache ownership eligibility"
+    specs.clear()
+    saved.unlink()
+    assert _roots(dependencies, SCOPES[2]) == expected

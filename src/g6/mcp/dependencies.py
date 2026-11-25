@@ -754,7 +754,8 @@ def _advance_ownership_generation(before):
 
 
 def optional_import_roots(extras: str, required_extras: str = "mcp", *,
-                          _recording_key: tuple | None = None) -> frozenset[str]:
+                          _recording_key: tuple | None = None,
+                          _reuse_evidence: tuple | None = None) -> frozenset[str]:
     """Refresh optional ownership on every call, optionally tracking its completion."""
     # Metadata, finders and module/spec attributes can execute import code.
     # None may run while another importer waits for our ownership store.
@@ -776,6 +777,10 @@ def optional_import_roots(extras: str, required_extras: str = "mcp", *,
             required = {_plain_text(root) for root in required}
         except Exception:
             return frozenset()  # An unusable declaration cannot establish optionality.
+        if not attempts and _reuse_evidence is not None and _reuse_evidence[0] == epoch:
+            # Root discovery owns cache observations independently of startup.
+            # Reuse has already taken these stats; retain their original tickets.
+            attempts.append(_reuse_probe_observations(*_reuse_evidence[1:], cache_roots=required))
         refresh = _path_refresh_observations(paths)
         observations = _root_observations(optional | required)
         _observe_current_sources(refresh, observations)
@@ -925,18 +930,21 @@ def _recorded_required_files(observations, *, previous=(), owned=(), refresh=Non
     return tuple(sorted(files.items()))
 
 
-def _recording_spellings_current(files):
+def _recording_spellings_current(files, *, probes=None):
     """One direct stat per covered spelling; a known absence is a captured state."""
-    try:
-        for source, expected in files:
-            try:
-                status = _stat_identity(source)
-            except FileNotFoundError:
-                status = None
-            if status != expected:
-                return False
-    except Exception:
-        return False
+    for source, expected in files:
+        order = next(_evidence_order) if probes is not None else None
+        uncertain = absent = False
+        try:
+            status = _stat_identity(source)
+        except FileNotFoundError:
+            status, absent = None, True
+        except Exception:
+            status, uncertain = None, True
+        if probes is not None:
+            probes.append((order, source, status, uncertain, absent))
+        if uncertain or status != expected:
+            return False
     return True
 
 
@@ -968,19 +976,77 @@ def _loaded_required_recording_key(required_extras: str = "mcp") -> tuple | None
     return None
 
 
-def _loaded_required_recording_current(key: tuple, required_extras: str = "mcp") -> bool:
+def _loaded_required_recording_current(key: tuple, required_extras: str = "mcp", *,
+                                      _rejected: list | None = None) -> bool:
     """Check captured file identities outside the lock immediately before reuse."""
     required_extras = _plain_text(required_extras)
     if key[:3] != _loaded_required_recording_key(required_extras):
         return False
-    if not _recording_spellings_current(key[3]):
-        return False
     with _ownership_lock:
-        return (key[:2] == (_declaration_epoch, _ownership_generation)
-                and _loaded_required_recordings.get(required_extras) == key)
+        if (key[:2] != (_declaration_epoch, _ownership_generation)
+                or _loaded_required_recordings.get(required_extras) != key):
+            return False
+        paths = _required_paths.union(*_known_paths.values()) if _rejected is not None else ()
+    probes = []
+    # Capture all inputs before probing. Recheck only the same fingerprint and
+    # store guards afterward; no ownership collection or extra stat is hidden
+    # in those comparisons. A second pass is necessary: the first stat can
+    # return the old identity after a replacement has already taken its place.
+    for _ in range(2):
+        current = _recording_spellings_current(key[3], probes=probes)
+        if current:
+            current = key[:3] == _loaded_required_recording_key(required_extras)
+        if current:
+            with _ownership_lock:
+                current = (key[:2] == (_declaration_epoch, _ownership_generation)
+                           and _loaded_required_recordings.get(required_extras) == key)
+        if not current:
+            if _rejected is not None:
+                # Deliver every probe, including earlier matching identities and
+                # coverage-only hints. Only an explicit clear may supersede it.
+                _rejected.append((key[0], key[2], paths, probes))
+            return False
+    return True
 
 
-def record_loaded_required_imports(required_extras: str = "mcp") -> tuple | None:
+def _reuse_probe_observations(fingerprint, paths, probes, *, cache_roots=None):
+    """Turn captured stats into ordinary ordered evidence, without probing again."""
+    by_source = {}
+    for order, source, status, uncertain, absent in probes:
+        by_source.setdefault(source, []).append((order, status, uncertain, absent))
+    refresh = {record: [(None, status, uncertain, order, True, absent)
+                        for order, status, uncertain, absent in by_source[record[2]]]
+               for record in paths if record[2] in by_source}
+    observations = {}
+    for root, _, file, origin, spec_cache, module_cache, module_paths, spec_paths in fingerprint:
+        if cache_roots is None:
+            locations = [(file, "loaded-file", "file"), (origin, "origin", "file")]
+            locations.extend((path, (source, path), "namespace")
+                             for source, values in (("loaded-locations", module_paths), ("spec-locations", spec_paths))
+                             for path in values or ())
+        elif root in cache_roots:
+            locations = [(spec_cache, "spec-cache", "file"), (module_cache, "loaded-cache", "file")]
+        else:
+            continue
+        observed, missing, ordered = set(), set(), []
+        for spelling, source, kind in locations:
+            if not spelling or (source == "origin" and spelling in {"built-in", "frozen"}):
+                continue
+            for order, status, uncertain, absent in by_source.get(spelling, ()):
+                if uncertain:
+                    continue
+                record = kind, source, spelling, None, *(status if status is not None else (None, None))
+                (missing if absent else observed).add(record)
+                ordered.append((order, record))
+        observations[root] = set(), False, observed, missing, set(), ordered
+    # Descendant cache-only and resolved-only coverage never manufacture loaded
+    # ownership. Every probe invalidates completion; direct stats of stored
+    # sources join refresh above. Only root discovery consumes root cache hints.
+    return observations, refresh
+
+
+def record_loaded_required_imports(required_extras: str = "mcp", *,
+                                  _reuse_evidence: tuple | None = None) -> tuple | None:
     """Fully refresh a load's required modules and descendants on every direct call."""
     required_extras = _plain_text(required_extras)
     with _ownership_lock:
@@ -1003,6 +1069,8 @@ def record_loaded_required_imports(required_extras: str = "mcp") -> tuple | None
                                                 live_paths=live, ordered_paths=ordered)
         observations[root] = identity, established, observed, absent, live, ordered
     attempts = []
+    if _reuse_evidence is not None and _reuse_evidence[0] == epoch:
+        attempts.append(_reuse_probe_observations(*_reuse_evidence[1:]))
     for _ in range(2):
         refresh = _path_refresh_observations(paths)
         recording_refresh = refresh
