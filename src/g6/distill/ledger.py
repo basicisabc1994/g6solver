@@ -11,7 +11,7 @@ from contextlib import contextmanager
 import base64
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import threading
 
 from pydantic import ValidationError
@@ -26,19 +26,30 @@ _FAILURE_LOCAL = threading.local()
 _UNPLANNED = object()
 
 
+class JournalTargetRefused(LedgerError):
+    """A durable undo journal accepts only contained state files."""
+    code = 'G6_E_DISTILL_JOURNAL_TARGET'
+
+    def __init__(self):
+        super().__init__(self.code + ': journal target must be a file inside the state home')
+
+
 class PartialAuthorityWrite(OSError):
     """Recovery failed; expose only freshly read state names, never diagnostics."""
     code = 'G6_E_DISTILL_PARTIAL_WRITE'
 
-    def __init__(self, paths):
-        self.durable_state = durable_state(paths)
-        super().__init__(self.code + ': recovery incomplete; durable state: ' + '; '.join(self.durable_state))
+    def __init__(self, paths, *, committed=False, recovering=False):
+        self.committed = committed
+        self.recovering = recovering
+        self.durable_state = durable_state(tuple(dict.fromkeys((*paths, _intent_path()))))
+        state = 'publication committed; intent cleanup pending' if committed else 'recovery incomplete'
+        super().__init__(self.code + ': ' + state + '; durable state: ' + '; '.join(self.durable_state))
 
 
 def durable_state(paths):
     states = []
-    library = state_path('distill', 'library.jsonl')
     try:
+        library = state_path('distill', 'library.jsonl')
         latest = {}
         for row in ChainLedger(library).entries():
             body = row['body']
@@ -68,6 +79,35 @@ def _intent_path():
     return state_path('distill', 'authority_intent.json')
 
 
+def _intent_target(name):
+    # Writers remain home-relative. Read absolute targets only under this home,
+    # then apply the same state_path checks without normalizing malformed names.
+    if not isinstance(name, str):
+        raise ValueError('invalid intent target')
+    if Path(name).is_absolute():
+        _, tail = os.path.splitdrive(name)
+        names = (tail.replace('\\', '/') if os.name == 'nt' else tail)[1:].split('/')
+        if set(names) & {'', '.', '..'}:
+            raise ValueError('invalid intent target')
+        name = Path(name).relative_to(state_path()).as_posix()
+    elif PureWindowsPath(name).anchor:
+        raise ValueError('invalid intent target')
+    target = state_path(name)
+    path = _intent_path()
+    if target in {path, path.with_suffix('.pending')}:
+        raise ValueError('invalid intent target')
+    return target
+
+
+def _intent_name(path):
+    try:
+        name = Path(path).absolute().relative_to(state_path()).as_posix()
+        _intent_target(name)
+        return name
+    except (OSError, ValueError, TypeError):
+        raise JournalTargetRefused() from None
+
+
 def _sync_parent(path):
     # Windows fsync flushes the file; directory handles are not openable this way.
     if os.name != 'nt':
@@ -83,7 +123,7 @@ def _save_intent(*, committed=False):
     rows = []
     for path, content in _FAILURE_LOCAL.before.items():
         after = _FAILURE_LOCAL.after.get(path, _UNPLANNED)
-        rows.append({'path': str(path.absolute()),
+        rows.append({'path': _intent_name(path),
                      'before': None if content is None else base64.b64encode(content).decode('ascii'),
                      'operation': 'replace' if after is not _UNPLANNED else 'retain',
                      'after': None if after is _UNPLANNED or after is None else
@@ -109,15 +149,17 @@ def _read_intent():
             raise ValueError('invalid intent')
         writes = {}
         for row in body['writes']:
-            target = Path(row['path'])
-            if not target.is_absolute() or target in writes or target in {path, path.with_suffix('.pending')}:
+            target = _intent_target(row['path'])
+            if target in writes or row['operation'] not in {'replace', 'retain'}:
                 raise ValueError('invalid intent target')
+            if row['after'] is not None:
+                base64.b64decode(row['after'], validate=True)
             writes[target] = None if row['before'] is None else base64.b64decode(row['before'], validate=True)
         return body['committed'], writes
     except FileNotFoundError:
         return None
     except (OSError, ValueError, KeyError, TypeError):
-        raise PartialAuthorityWrite((path,)) from None
+        raise PartialAuthorityWrite((path,), recovering=True) from None
 
 
 def _retire_intent():
@@ -137,8 +179,8 @@ def _recover_intent():
             for target, content in reversed(tuple(writes.items())):
                 _restore(target, content)
         _retire_intent()
-    except OSError:
-        raise PartialAuthorityWrite(tuple(writes)) from None
+    except (OSError, ValueError):
+        raise PartialAuthorityWrite(tuple(writes), committed=committed, recovering=True) from None
 
 
 def retain_before_write(path, *, recover=None, after=_UNPLANNED):
@@ -150,9 +192,9 @@ def retain_before_write(path, *, recover=None, after=_UNPLANNED):
     """
     if path is None:   # an in-memory ledger keeps nothing on disk to restore
         return
+    path = _intent_target(_intent_name(path))
     before = getattr(_FAILURE_LOCAL, 'before', None)
     if before is not None:
-        path = Path(path).absolute()
         if path not in before:
             before[path] = path.read_bytes() if path.exists() else None
         if after is not _UNPLANNED:
@@ -176,6 +218,7 @@ def append_retained(chain, kind, ident, body, *, recover=None):
 
 
 def _restore(path, content):
+    path = _intent_target(_intent_name(path))
     if content is None:
         path.unlink(missing_ok=True)
     else:
@@ -199,6 +242,8 @@ def failure_writer(*, reading=False):
     with _FAILURE_MUTEX:
         path = state_path('distill', 'failure_records.lock')
         if getattr(_FAILURE_LOCAL, 'path', None) == path:
+            # The outer entry recovered under the same lock. Other writers
+            # cannot publish an intent until it exits; our own intent must stay.
             yield True
             return
         if reading and not path.parent.exists():
@@ -234,7 +279,7 @@ def failure_writer(*, reading=False):
                 for target, content in reversed(tuple(_FAILURE_LOCAL.before.items())):
                     try:
                         _restore(target, content)
-                    except OSError:
+                    except (OSError, ValueError):
                         failed.append(target)
                 for target, recover in _FAILURE_LOCAL.recover:
                     try:
@@ -253,7 +298,7 @@ def failure_writer(*, reading=False):
                     try:
                         _retire_intent()
                     except OSError:
-                        raise PartialAuthorityWrite(tuple(_FAILURE_LOCAL.before)) from None
+                        raise PartialAuthorityWrite(tuple(_FAILURE_LOCAL.before), committed=True) from None
             finally:
                 _FAILURE_LOCAL.path = None
                 _FAILURE_LOCAL.before = None

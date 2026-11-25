@@ -2,7 +2,7 @@
 """Read-only views of the latest gate-supplied library snapshots."""
 from __future__ import annotations
 
-from .ledger import Stores
+from .ledger import Stores, failure_writer
 from .records import Concept, FailureRecord, LibraryEntry, MethodContract, Status, VerifierCandidate
 
 _PRIVATE_DECISION = '<private decision>'
@@ -79,14 +79,16 @@ class Library:
                                  ('contracts', contracts))}}
 
     def list(self) -> list[LibraryEntry]:
-        current = {}
-        for entry in Stores().for_model(LibraryEntry).list():
-            old = current.get(entry.candidate_id)
-            if old is not None and entry.version <= old.version:
-                from g6.core.ledger import LedgerCorrupt
-                raise LedgerCorrupt("library versions must increase")
-            current[entry.candidate_id] = entry
-        return list(current.values())
+        # Store construction and all reference reads share one recovery check.
+        with failure_writer(reading=True):
+            current = {}
+            for entry in Stores().for_model(LibraryEntry).list():
+                old = current.get(entry.candidate_id)
+                if old is not None and entry.version <= old.version:
+                    from g6.core.ledger import LedgerCorrupt
+                    raise LedgerCorrupt("library versions must increase")
+                current[entry.candidate_id] = entry
+            return list(current.values())
 
     def get(self, entry_id: str) -> LibraryEntry | None:
         return next((entry for entry in self.list() if entry.entry_id == entry_id), None)

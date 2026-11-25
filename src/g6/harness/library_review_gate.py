@@ -48,28 +48,56 @@ def record_fire(found: dict, before: dict, after: dict, snapshot) -> None:
             "authority": found["authority"], "label": "unlabelled", "source": "review"}
     ident = digest(body)
     path = state_path("distill", "field_fires_ledger.jsonl")
-    with _FIRE_MUTEX, failure_writer():
-        require_current(snapshot)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        lock = path.with_suffix(".lock")
-        # The sentinel is also undone if the process dies before its finally.
-        # An existing sentinel remains a refusal and is never taken over.
-        if not lock.exists():
-            retain_before_write(lock, after=None)
-        try:
-            stream = lock.open("x", encoding="utf-8", newline="\n")
-        except FileExistsError:
-            raise LedgerError("field writer busy or recovery required") from None
-        try:
-            with stream:
-                ledger = ChainLedger(path)
-                if not any(row["id"] == ident for row in ledger.entries()):
-                    append_retained(ledger, "field_fire", ident, body)
-        finally:
-            lock.unlink()
+    recorded = False
+    try:
+        with _FIRE_MUTEX, failure_writer():
+            require_current(snapshot)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            lock = path.with_suffix(".lock")
+            # The sentinel is also undone if the process dies before its finally.
+            # An existing sentinel remains a refusal and is never taken over.
+            if not lock.exists():
+                retain_before_write(lock, after=None)
+            try:
+                stream = lock.open("x", encoding="utf-8", newline="\n")
+            except FileExistsError:
+                raise LedgerError("field writer busy or recovery required") from None
+            try:
+                with stream:
+                    ledger = ChainLedger(path)
+                    if not any(row["id"] == ident for row in ledger.entries()):
+                        append_retained(ledger, "field_fire", ident, body)
+            finally:
+                lock.unlink()
+            # Capture only this fire, after its status recheck and write, before
+            # transaction cleanup. Entry recovery cannot supply this result.
+            recorded = True
+    except PartialAuthorityWrite as error:
+        if not error.committed or not recorded:
+            raise
+        found.update(field_recorded=True, publication_committed=True, code=error.code,
+                     durable_state=error.durable_state,
+                     field_note='Field fire committed; intent cleanup pending at publication.')
+
+
+def _unavailable(error: PartialAuthorityWrite) -> dict:
+    return {'library_unavailable': True, 'code': error.code, 'durable_state': error.durable_state,
+            'authority': 'A0', 'verdict': 'abstain', 'outcome': 'insufficient_evidence',
+            'field_recorded': False,
+            'reason': 'Library unavailable; pending undo or intent cleanup in authority_intent.json; ' +
+                      '; '.join(error.durable_state)}
 
 
 def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", tests=()) -> list[dict]:
+    try:
+        return _check(before, after, entry_id=entry_id, tests=tests)
+    except PartialAuthorityWrite as error:
+        # Every read can attempt recovery. Discard all observations from this
+        # review if any read cannot establish a usable library.
+        return [_unavailable(error)]
+
+
+def _check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", tests=()) -> list[dict]:
     from g6.distill.acceptance_gate import _InactiveMethod, _run
     from g6.distill.facts import source_mapping
     from g6.workforce.repo_tests import is_test_related
@@ -142,6 +170,8 @@ def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", 
                     found.update(authority='A0', verdict='abstain', outcome='insufficient_evidence',
                                  code=error.code, reason=str(error), field_recorded=False)
                 except PartialAuthorityWrite as error:
+                    if error.committed or error.recovering:
+                        raise
                     found.update(field_recorded=False, code=error.code,
                                  durable_state=error.durable_state,
                                  field_note='Field retention recovery incomplete; inspect the named durable state.')
@@ -150,28 +180,18 @@ def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", 
                     found["field_recorded"] = False
                     found["field_note"] = "The unlabelled field fire could not be retained; no field evidence was added."
             findings.append(found)
-    try:
-        with failure_writer(reading=True):
-            try:
-                require_current(entries)
-            except StatusChanged as error:
-                for found in findings:
-                    found.update(authority='A0', verdict='abstain', outcome='insufficient_evidence',
-                                 code=error.code, reason=str(error))
-    except PartialAuthorityWrite as error:
-        # The last read retries recovery too. Preserve the incomplete-retention
-        # reply if that undo still fails, and serve no authority from the intent.
-        for found in findings:
-            found.update(authority='A0', verdict='abstain', outcome='insufficient_evidence',
-                         field_recorded=False, code=error.code, durable_state=error.durable_state,
-                         reason='Field retention recovery incomplete; inspect the named durable state.',
-                         field_note='Field retention recovery incomplete; inspect the named durable state.')
-    else:
-        for found in retention_failed:
-            if found.get('code') == PartialAuthorityWrite.code:
-                found.pop('code', None)
-            found.pop('durable_state', None)
-            found['field_note'] = 'The unlabelled field fire could not be retained; no field evidence was added.'
+    with failure_writer(reading=True):
+        try:
+            require_current(entries)
+        except StatusChanged as error:
+            for found in findings:
+                found.update(authority='A0', verdict='abstain', outcome='insufficient_evidence',
+                             code=error.code, reason=str(error))
+    for found in retention_failed:
+        if found.get('code') == PartialAuthorityWrite.code:
+            found.pop('code', None)
+        found.pop('durable_state', None)
+        found['field_note'] = 'The unlabelled field fire could not be retained; no field evidence was added.'
     return findings
 
 
@@ -180,9 +200,16 @@ def apply_review(before: dict, after: dict, reasons: list, runs: list) -> None:
         # The review's related_texts already established these are test inputs,
         # including nonstandard filenames explicitly named by the repository's tests.
         findings = check(before, after, tests=tuple(before.keys() | after.keys()))
+    except PartialAuthorityWrite as error:
+        findings = [_unavailable(error)]
     except (ValueError, KeyError, LedgerError):
         reasons.append({"stage": "evidence", "code": "library_unavailable", "detail": "Library records could not be checked.",
                         "provenance": "library"})
+        return
+    unavailable = next((found for found in findings if found.get('library_unavailable')), None)
+    if unavailable:
+        reasons.append({'stage': 'evidence', 'code': 'library_unavailable', 'detail': unavailable['reason'],
+                        'provenance': 'library'})
         return
     for found in findings:
         runs.append({"tier": 2, "check": "library method", "tests": [], "seconds": found.get("seconds", 0.0),
@@ -202,6 +229,7 @@ def check_learned(params: dict, *, venture: str | None = None) -> dict:
     scope = params["regression"]["learned"]
     entry_id = scope.get("entry_id", scope.get("guard_id", "")) if isinstance(scope, dict) else ""
     findings = []
+    unavailable = None
     try:
         if entry_id:
             # Reuse the bench's repository boundary and file validation. Read only named paths,
@@ -222,9 +250,26 @@ def check_learned(params: dict, *, venture: str | None = None) -> dict:
                 except FileNotFoundError:
                     before[name] = ""
             findings = check(before, after, entry_id=entry_id)
+            unavailable = next((found for found in findings if found.get('library_unavailable')), None)
+            if unavailable:
+                findings = []
+    except PartialAuthorityWrite as error:
+        unavailable = _unavailable(error)
+        findings = []
     except (ValueError, KeyError, LedgerError, UnicodeError):
         findings = []
+    if not findings and unavailable is None:
+        # Validation can prevent check() from reaching any library read. An
+        # unavailable library must still be named by the learned probe.
+        try:
+            status_snapshot()
+        except PartialAuthorityWrite as error:
+            unavailable = _unavailable(error)
+        except (ValueError, KeyError, LedgerError, UnicodeError):
+            pass
     defects = [f for f in findings if f["outcome"] == "defect_detected"]
     return {"status": "fail" if defects else "not_run", "authority": "A2" if defects else "A0",
-            "reason": "; ".join(f["reason"] for f in findings) or "No in-scope library method ran; not a pass.",
-            "library": findings, "counterexamples": defects, "functions": [], "guard_id": entry_id}
+            "reason": unavailable['reason'] if unavailable else (
+                "; ".join(f["reason"] for f in findings) or "No in-scope library method ran; not a pass."),
+            "library": findings, "counterexamples": defects, "functions": [], "guard_id": entry_id,
+            **({'code': 'library_unavailable'} if unavailable else {})}

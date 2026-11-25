@@ -22,8 +22,11 @@ def _refusal(exc):
     from g6.core.door import blocked_reply
     from g6.distill.ledger import PartialAuthorityWrite
     if isinstance(exc, PartialAuthorityWrite):
-        return {**blocked_reply(f'[{exc.code}] Recovery incomplete; durable state: ' +
-                                '; '.join(exc.durable_state)), 'durable_state': exc.durable_state}
+        state = 'Publication committed; intent cleanup pending' if exc.committed else 'Recovery incomplete'
+        return {**blocked_reply(f'[{exc.code}] {state}; durable state: ' + '; '.join(exc.durable_state)),
+                'durable_state': exc.durable_state, 'publication_committed': exc.committed,
+                'rollback_or_containment': ('The publication committed; its intent still needs cleanup.' if exc.committed
+                                            else 'Undo is incomplete; inspect the named durable state before retrying.')}
     code = getattr(exc, 'code', '')
     if isinstance(code, str) and code.startswith('G6_E_'):
         return blocked_reply(f'[{code}] Backend refused the operation; read the current durable state.')
@@ -38,6 +41,32 @@ def _call(fn, *args, **kwargs) -> dict:
     except (*_INPUT_ERRORS, LedgerError) as exc:
         # RecursionError: a decoder's depth limit on deeply nested input is an input refusal like any other.
         return _refusal(exc)
+
+
+def _owner_decision(fn, *args, **kwargs):
+    """Capture the result before the short owner transaction's cleanup can fail."""
+    from g6.distill.ledger import PartialAuthorityWrite, failure_writer
+
+    class Refused(Exception):
+        pass
+
+    result, cleanup = None, {}
+    try:
+        with failure_writer():
+            result = asdict(fn(*args, **kwargs))
+            if result['verdict'] in {'refuse', 'block'}:
+                # The gate catches validation errors outside its own nested
+                # context. Carry that refusal through this outer rollback too.
+                raise Refused
+    except Refused:
+        pass
+    except PartialAuthorityWrite as error:
+        if not error.committed or result is None:
+            raise
+        cleanup = {'publication_committed': True, 'cleanup_pending': True,
+                   'cleanup_note': 'Decision committed; authority_intent.json cleanup pending.',
+                   'durable_state': error.durable_state}
+    return result, cleanup
 
 
 def _envelope(fn):
@@ -111,13 +140,15 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
         if state != "accept" or not isinstance(content, dict) or content.get("confirm") != "change" \
                 or not isinstance(content.get("name"), str) or not content["name"].strip():
             return blocked_reply("[G6_E_DISTILL_DIALOG] No library decision was authorized in the client's dialog.")
+        cleanup = {}
         if action == 'restore' and entry['status'] == 'held':
-            result = asdict(gate.lift_hold(entry_id, Library(), reason=reason, person=content["name"].strip()))
+            result, cleanup = _owner_decision(gate.lift_hold, entry_id, Library(), reason=reason,
+                                              person=content["name"].strip())
         elif action == 'restore':
             result = _call(backend.restore, entry_id)
         else:
-            result = asdict(getattr(gate, action)(entry_id, Library(), reason=reason,
-                                                person=content["name"].strip()))
+            result, cleanup = _owner_decision(getattr(gate, action), entry_id, Library(), reason=reason,
+                                              person=content["name"].strip())
         # Includes both restore paths and the nested refusal envelope. Raw owner
         # text remains in the local gate decision, never in the MCP reply.
         if 'verdict' in result:
@@ -125,7 +156,7 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
         if result.get('verdict') in {'refuse', 'block'}:
             return {**blocked_reply("[G6_E_DISTILL_DECISION] The acceptance gate refused the decision."),
                     'decision': result}
-        return result
+        return result | cleanup
 
     def g6_self_model(section: str = "", detail: str = "compact") -> dict:
         """Read G6's self-model; missing or stale measured observations remain unknown."""
