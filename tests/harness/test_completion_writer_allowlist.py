@@ -77,6 +77,7 @@ class _Declarations(ast.NodeVisitor):
     def __init__(self):
         self.bindings = {}
         self.import_lines = {}
+        self.stars = []
         self.globals = set()
         self.nonlocals = set()
 
@@ -95,6 +96,8 @@ class _Declarations(ast.NodeVisitor):
 
     def visit_ImportFrom(self, node):
         for alias in node.names:
+            if alias.name == '*' and (node.level or node.module != 'g6.harness._completion_storage'):
+                self.stars.append(node.lineno)
             name = alias.asname or alias.name
             self.bind(name, f'{node.module}.{alias.name}' if not node.level else None)
             self.import_lines[name] = min(node.lineno, self.import_lines.get(name, node.lineno))
@@ -143,6 +146,80 @@ class _Declarations(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+class _GateFlow:
+    """Gate imports established on every path reaching a load in one scope."""
+
+    def __init__(self, nodes):
+        self.before = {}
+        self.final = self.block(nodes, set()) or set()
+
+    @staticmethod
+    def join(paths):
+        reaching = [path for path in paths if path is not None]
+        return set.intersection(*reaching) if reaching else None
+
+    def block(self, nodes, incoming):
+        state = incoming
+        for node in nodes:
+            outgoing = self.statement(node, state if state is not None else set())
+            if state is not None:
+                state = outgoing
+        return state
+
+    def statement(self, node, state):
+        # Also retain the enclosing state for eager loads in nested scopes.
+        # Their own bodies are analysed separately, without exporting imports.
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name):
+                self.before[child] = state
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            imports = _Declarations()
+            imports.visit(node)
+            if imports.stars:
+                return set()
+            return state | {name for name, origins in imports.bindings.items()
+                            if any(origin and origin.startswith('g6.harness._completion_storage')
+                                   for origin in origins)}
+        if isinstance(node, ast.If):
+            return self.join([self.block(node.body, state), self.block(node.orelse, state)])
+        if isinstance(node, (ast.Try, ast.TryStar)):
+            normal = self.block(node.orelse, self.block(node.body, state))
+            # An exception may precede any import in the try body. No partial
+            # try-body binding is guaranteed at the start of a handler.
+            handled = [self.block(handler.body, state) for handler in node.handlers]
+            reaching = self.join([normal, *handled])
+            outgoing = self.block(node.finalbody, reaching)
+            # Finally also runs on exceptional exits that do not reach the
+            # following statement (including a failed import in a handler).
+            self.block(node.finalbody, self.join([state, reaching]))
+            return outgoing
+        if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+            # Include the first iteration and the zero-iteration path. A star
+            # on a back edge can invalidate a preceding iteration's imports.
+            writes = _Declarations()
+            for statement in node.body:
+                writes.visit(statement)
+            entry = set() if writes.stars else state
+            self.block(node.body, entry)
+            otherwise = self.block(node.orelse, entry)
+            # A possible break skips else. Nested-loop breaks conservatively
+            # keep the entry path too; they never grant an extra allowance.
+            breaks = any(isinstance(child, ast.Break) for statement in node.body for child in ast.walk(statement))
+            return self.join([entry, otherwise]) if breaks else otherwise
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            # A context manager can suppress an exception before an import.
+            return self.join([state, self.block(node.body, state)])
+        if isinstance(node, ast.Match):
+            paths = [self.block(case.body, state) for case in node.cases]
+            if not any(case.guard is None and isinstance(case.pattern, ast.MatchAs)
+                       and case.pattern.pattern is None for case in node.cases):
+                paths.append(state)
+            return self.join(paths)
+        if isinstance(node, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
+            return None
+        return state
+
+
 class _BindingScope:
     """Lexical import allowances; any other binding refuses every use in scope."""
 
@@ -156,6 +233,8 @@ class _BindingScope:
                     declarations.bind(arg.arg)
         self.kind, self.parent = kind, parent
         self.import_lines = declarations.import_lines
+        self.stars = declarations.stars
+        self.gates = _GateFlow(nodes)
         self.globals, self.nonlocals = declarations.globals, declarations.nonlocals
         self.local = declarations.bindings.keys() - self.globals - self.nonlocals
         self.stable = {name: next(iter(origins)) if len(origins) == 1 else None
@@ -173,29 +252,45 @@ class _BindingScope:
                         if name in self.stable:
                             self.stable[name] = None
 
-    def lookup(self, name, lineno):
+    def origin(self, name, node, *, deferred=False):
+        origin = self.stable.get(name)
+        imported = self.import_lines.get(name, 0)
+        if origin and origin.startswith('g6.harness._completion_storage'):
+            established = self.gates.final if deferred else self.gates.before.get(node, set())
+            # All reaching arms must bind the gate. Preserve the independent
+            # rule that a later star invalidates its exported names.
+            if name not in established or any(line >= imported and (deferred or line <= node.lineno)
+                                               for line in self.stars):
+                return None
+            return origin
+        return origin if deferred or imported <= node.lineno else None
+
+    def lookup(self, name, node, *, deferred=False):
         if name in self.globals:
             root = self
             while root.parent is not None:
                 root = root.parent
-            return root.stable.get(name) if root.import_lines.get(name, 0) <= lineno else None
+            return root.origin(name, node, deferred=deferred or self.kind == 'function')
         if name in self.nonlocals:
             outer = self.parent
             while outer is not None and (outer.kind == 'class' or name not in outer.local):
                 outer = outer.parent
-            return (outer.stable.get(name) if outer is not None and outer.import_lines.get(name, 0) <= lineno
-                    else None)
+            return outer.origin(name, node, deferred=True) if outer is not None else None
         if name in self.local:
-            return self.stable.get(name) if self.import_lines.get(name, 0) <= lineno else None
+            origin = self.origin(name, node, deferred=deferred and self.kind == 'module')
+            if self.kind != 'class' or origin is not None or self.stable.get(name) is None:
+                return origin
+            # Class loads without an established import fall through to the
+            # globals, never to an enclosing class's namespace.
         outer = self.parent
-        if self.kind in {'function', 'comprehension'}:
+        if self.kind in {'function', 'comprehension', 'class'}:
             while outer is not None and outer.kind == 'class':
                 outer = outer.parent
-        return outer.lookup(name, lineno) if outer is not None else None
+        return outer.lookup(name, node, deferred=deferred or self.kind in {'function', 'comprehension'}) if outer else None
 
 
 class _Bindings(ast.NodeVisitor):
-    """Locate lexical scopes without simulating control flow or call effects."""
+    """Locate lexical scopes and their guaranteed imports, without call effects."""
 
     def __init__(self, tree):
         self.scope = _BindingScope('module', None, tree.body)
@@ -204,7 +299,7 @@ class _Bindings(ast.NodeVisitor):
 
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load):
-            self.origins[node] = self.scope.lookup(node.id, node.lineno)
+            self.origins[node] = self.scope.lookup(node.id, node)
 
     def block(self, nodes):
         for node in nodes:
@@ -308,6 +403,9 @@ def unguarded_calls(source):
                 and isinstance(parent, ast.Call) and parent.func is node and len(parent.args) >= 2):
             return False
         root = node.value
+        if any(isinstance(child, ast.Name) and (child.id in imports or bindings.get(child) is not None)
+               for child in ast.walk(root)):
+            return False
         return (isinstance(root, (ast.Constant, ast.JoinedStr, ast.Subscript))
                 or isinstance(root, ast.Name) and root.id in {'text', 'data'}
                 or isinstance(root, ast.Call) and isinstance(root.func, ast.Attribute) and root.func.attr == 'replace')
@@ -349,6 +447,13 @@ def unguarded_calls(source):
         parent = parents.get(node)
         callee = isinstance(parent, ast.Call) and parent.func is node
         receiver = isinstance(parent, ast.Attribute) and parent.value is node
+        if isinstance(node, ast.Attribute) and node.attr in {'__dict__', '__globals__', '__builtins__', '__self__'}:
+            found.add((node.lineno, ast.unparse(node)))
+        key = (node.slice if isinstance(node, ast.Subscript) else
+               node.args[0] if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+               and node.func.attr == 'get' and node.args else None)
+        if isinstance(key, ast.Constant) and isinstance(key.value, str) and key.value in WRITERS | {'os', '__import__'}:
+            found.add((node.lineno, ast.unparse(node)))
         if (writer_reference(node) and (not callee or not gate_writer(node) and not text_replace(node, parent))):
             found.add((node.lineno, ast.unparse(node)))
         if not callee and (isinstance(node, ast.Attribute) and not receiver
@@ -366,11 +471,7 @@ def unguarded_calls(source):
                     found.add((node.lineno, name))
             elif (isinstance(node.func, ast.Attribute) and node.func.attr == 'replace' and len(node.args) >= 2
                   and not allowed(node.func)):
-                root = node.func.value
-                # Only a literal or known text variable can use str.replace.
-                if not (isinstance(root, (ast.Constant, ast.JoinedStr, ast.Subscript)) or
-                        isinstance(root, ast.Name) and root.id in {'text', 'data'} or
-                        isinstance(root, ast.Call) and isinstance(root.func, ast.Attribute) and root.func.attr == 'replace'):
+                if not text_replace(node.func, node):
                     found.add((node.lineno, name))
             elif not allowed(node.func):
                 found.add((node.lineno, name))
