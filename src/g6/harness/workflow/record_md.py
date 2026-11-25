@@ -106,7 +106,14 @@ def render(events: Iterable[Event], *, recording: bool = True, self_lines: list[
         failed = state["reproduced"] if e.kind == "loop_ended" else {
             (e.task, check) for check in e.data.get("failed_sha256") or []}
         repaired = bool(failed) and failed <= state["repaired"] and not failed & state["open"]
-        state = "repaired in a recorded review" if repaired else "open at the stop. Not labelled by you"
+        labels = evidence.finding_labels(rows, [e.event_id, *[row.event_id for row in relevant
+                                                          if e.kind == "loop_ended" and row.data.get("failed_sha256")]])
+        state = "repaired in a recorded review" if repaired else "open at the stop"
+        if labels:
+            state += ". " + " ".join(f"Person label by {code(label['by'])}: {code(label['note'])} "
+                                     f"(event {code(label['event_id'])})" for label in labels)
+        elif not repaired:
+            state += ". Not labelled by you"
         lines.append(f"- {code(e.at)}, task {code(e.task[:12])}: {state}; details no longer kept. "
                      f"Event {code(e.event_id)}.")
     if len(findings) > 10:

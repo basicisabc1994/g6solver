@@ -612,6 +612,8 @@ def with_card(report: str, value: dict) -> str:
     lines = body.split("\n")
     if len(lines) >= 5 and all(lines[i].startswith(f"- **{label}:**") for i, label in enumerate(labels)):
         body = "\n".join(lines[5:])
+    elif lines and lines[0].startswith("- **Checked:**"):
+        body = "\n".join(lines[1:])
     return headline + "\n" + "\n".join(card_lines(value)) + (separator + body if separator else "")
 
 
@@ -649,10 +651,15 @@ def card(assessment: dict, loop: dict | None = None) -> dict:
     if not one:
         events = []
     elif kind == "loop_ended":
-        events = [e for e in events if e["run"] == one["run"]]
+        targets = {e["event_id"] for e in events if e["run"] == one["run"]}
+        events = [e for e in events if e["run"] == one["run"] or e["kind"] == "annotation"
+                  and (e.get("data") or {}).get("target") in targets]
     else:
-        events = [e for e in events if e["run"] == one["run"]
-                  or e["kind"] == "review_finished" and e["at"] < one["at"]]
+        selected_events = [e for e in events if e["run"] == one["run"]
+                           or e["kind"] == "review_finished" and e["at"] < one["at"]]
+        targets = {e["event_id"] for e in selected_events}
+        events = [e for e in events if e in selected_events or e["kind"] == "annotation"
+                  and (e.get("data") or {}).get("target") in targets]
     observed = [e for e in events if e["kind"] == kind]
     data = one.get("data") or {}
     known = bool(one)
@@ -661,8 +668,8 @@ def card(assessment: dict, loop: dict | None = None) -> dict:
 
         rows = [Event.from_body(e) for e in events if kind == "loop_ended" or e["kind"] == "review_finished"]
         checks = evidence.check_state(rows)
-        if kind == "loop_ended" and not evidence.checked(rows):
-            unchecked_reason = data.get("code") or "No test ran and no reviewer returned."
+        if not evidence.checked(rows if kind == "loop_ended" else [Event.from_body(one)]):
+            unchecked_reason = data.get("unchecked_reason") or data.get("code") or "No test ran and no reviewer returned."
     status = held.get("status", "unavailable")
     runs, by = [], []
     isolation = data.get("isolation") or "not recorded"
@@ -696,6 +703,16 @@ def card(assessment: dict, loop: dict | None = None) -> dict:
         reproduced, open_count = len(checks["reproduced"]), len(checks["open"])
     if known and kind == "review_finished" and len(observed) > 1:
         open_count = max(open_count or 0, len(checks["open"]))
+    labels = evidence.finding_labels([evidence.Event.from_body(e) for e in events],
+        [e["event_id"] for e in events if e["kind"] in ("review_finished", "loop_ended", "loop_round")
+         and ((e.get("data") or {}).get("reproduced") or (e.get("data") or {}).get("failed_sha256"))])
+    labelled = {label["target"] for label in labels}
+    open_findings = [e for e in events if e["kind"] in ("review_finished", "loop_round")
+                     and (any((e["task"], c) in checks["open"] for c in (e.get("data") or {}).get("failed_sha256") or [])
+                          or not (e.get("data") or {}).get("failed_sha256") and (e.get("data") or {}).get("reproduced"))]
+    unlabelled = bool(open_count) and (not open_findings or any(e["event_id"] not in labelled for e in open_findings))
+    if kind == "loop_ended" and one.get("event_id") in labelled:
+        unlabelled = False
     reason = unchecked_reason
     if not known and not reason:
         reason = {"off": "off: No record is kept. G6_WORKFLOW_RECORD=on where the server is registered turns it on.",
@@ -711,7 +728,7 @@ def card(assessment: dict, loop: dict | None = None) -> dict:
                         "model_calls": data.get("model_calls") if known else None},
             "caught": {"reproduced": reproduced, "integrity": data.get("integrity_reasons") if known else None,
                        "unconfirmed": data.get("unconfirmed") if known else None},
-            "repaired": repaired, "open": open_count,
+            "repaired": repaired, "open": open_count, "labels": labels, "unlabelled_open": unlabelled,
             "left_by_agent": data.get("left_by_agent", 0) if known else None,
             "agent_reason": loop.get("left", "") if known and data.get("left_by_agent") else "",
             "not_checked": {"not_established": data.get("not_established") if known else None,
@@ -759,7 +776,10 @@ def card_lines(value: dict) -> list[str]:
             f"{count(caught['integrity'])} signs of weakened tests; {count(caught['unconfirmed'])} unconfirmed.",
             f"- **Repaired:** {repaired}. Open: {count(value['open'])}. Left by the agent: {count(value['left_by_agent'])}."
             + (f" Its reason: {code(value['agent_reason'])}." if value['agent_reason'] else "")
-            + (" Not labelled by you." if value['open'] else ""),
+            + ((" " + " ".join(f"Person label by {code(label['by'])}: {code(label['note'])} "
+                                 f"(event {code(label['event_id'])})." for label in value.get("labels") or []))
+               if value.get("labels") else "")
+            + (" Not labelled by you." if value.get("unlabelled_open", bool(value['open'])) else ""),
             f"- **Not checked:** {count(missing['not_established'])} requirements not established; "
             f"{count(missing['skipped'])} runs skipped; the standing list below.",
             f"- **Needs you:** merging; {count(needs['questions'])} questions; {count(needs['unknowns'])} unknowns. "

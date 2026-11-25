@@ -119,11 +119,19 @@ def finishing(finish: Any, repo: str, task: str, intent: Any = None) -> Any:
     """The compact step of a review job (``review_reply.finish``), followed by the record of that finished review and,
     after its whole report, the view of the task."""
     started_at, began = now(), time.monotonic()
+    notes = {}
+    contexts = {}
+    shapes = {}
 
-    def done(reply: Any, job_id: str) -> Any:
-        note = (adapters.observe_review(repo, task, job_id, reply, started_at=started_at, finished_at=now(),
-                                        seconds=time.monotonic() - began) if policy.enabled()[0] else "")
+    def refresh(reply: Any, job_id: str, *, include_view: bool = True, detail: str | None = None) -> Any:
+        note = notes.get(job_id, "")
         if isinstance(reply, dict) and isinstance(reply.get("assessment"), dict):
+            shape = shapes.get(job_id)
+            if detail == "full" and shape and shape["legacy"]:
+                # A rendered reply without a card predates this evidence surface.
+                # Its full form is the producer's reply, including its report bytes.
+                return reply
+            keep_evidence = "workflow_evidence" in reply["assessment"]
             from g6.harness import patch_report
             from g6.harness.workflow import evidence
 
@@ -135,7 +143,8 @@ def finishing(finish: Any, repo: str, task: str, intent: Any = None) -> Any:
             assessment = reply["assessment"]
             assessment["workflow_evidence"] = evidence.read(repo, task, note=note,
                                                            origin_kind="review_job", origin_id=job_id)
-            assessment["card"] = patch_report.card(assessment, None)
+            assessment["card"] = patch_report.card({**contexts.get(job_id, {}), **assessment,
+                "scope": {**contexts.get(job_id, {}).get("scope", {}), **(assessment.get("scope") or {})}}, None)
             old_report = assessment.get("report")
             assessment["report"] = (patch_report.with_card(old_report, assessment["card"]) if old_report else
                                     patch_report.safe_render(assessment))
@@ -145,15 +154,78 @@ def finishing(finish: Any, repo: str, task: str, intent: Any = None) -> Any:
                 project, _ = adapters.identities(repo, task)
                 extra = (cloud.Source.text(workflow_source(project), "card-events", json.dumps(
                     assessment["workflow_evidence"], sort_keys=True)),)
+            # Polling refreshes existing presentation fields. Source observations
+            # belong in the record, not in new keys on a rendered reply.
+            if detail is not None:
+                if detail == "full" and shape and shape["rendered"]:
+                    if "card" not in shape["reply"]:
+                        reply.pop("card", None)
+                    if "card" not in shape["assessment"]:
+                        reply["assessment"].pop("card", None)
+                    keep_evidence = "workflow_evidence" in shape["assessment"]
+                if not keep_evidence:
+                    reply["assessment"].pop("workflow_evidence", None)
             if refs is not None or extra:
                 reply = cloud.bind_output(reply, (*(refs if refs is not None else (cloud.UNKNOWN,)), *extra), metadata=metadata)
+            if include_view and policy.enabled()[0]:
+                reply = _viewed(reply, repo, task, ("assessment", "report"), assessment=assessment, intent=intent,
+                                job_id=job_id)
+        return reply
+
+    def prepare(reply: Any, job_id: str) -> Any:
+        if job_id not in notes:
+            assessment = reply.get("assessment") if isinstance(reply, dict) else None
+            if isinstance(assessment, dict):
+                rendered = isinstance(assessment.get("report"), str)
+                shapes[job_id] = {"reply": frozenset(reply), "assessment": frozenset(assessment),
+                                  "rendered": rendered,
+                                  "legacy": rendered and "card" not in assessment and "card" not in reply
+                                            and "workflow_evidence" not in assessment}
+                contexts[job_id] = {"scope": {"base_commit": (assessment.get("scope") or {}).get("base_commit", "")},
+                                    "not_checked": list(assessment.get("not_checked") or [])}
+            notes[job_id] = (adapters.observe_review(repo, task, job_id, reply, started_at=started_at, finished_at=now(),
+                                                    seconds=time.monotonic() - began) if policy.enabled()[0] else "")
+        if shapes.get(job_id, {}).get("legacy"):
+            return reply
+        return refresh(reply, job_id, include_view=False)
+
+    def strip(reply: Any) -> Any:
+        """Frozen job snapshots hold decisions, never the card's record evidence."""
+        if isinstance(reply, dict) and isinstance(reply.get("assessment"), dict):
+            reply.pop("card", None)
+            if isinstance(reply.get("workflow"), dict):
+                reply.pop("workflow", None)
+            assessment = reply["assessment"]
+            assessment.pop("card", None)
+            assessment.pop("workflow_evidence", None)
+            report = assessment.get("report")
+            if isinstance(report, str):
+                report = report.partition("\n\n" + view.HEADING)[0].partition("\n\n" + view.WITHHELD)[0]
+                lines = report.split("\n")
+                labels = ("Checked", "Caught", "Repaired", "Not checked", "Needs you")
+                if len(lines) >= 6 and all(lines[i + 1].startswith(f"- **{label}:**") for i, label in enumerate(labels)):
+                    del lines[1:6]
+                elif len(lines) > 1 and lines[1].startswith("- **Checked:**"):
+                    del lines[1]
+                assessment["report"] = "\n".join(lines)
+        return reply
+
+    def done(reply: Any, job_id: str) -> Any:
+        reply = prepare(reply, job_id)
         shown = finish(reply, job_id)
+        if shapes.get(job_id, {}).get("legacy"):
+            # Save the producer's full legacy reply before enriching its compact
+            # presentation; full polls must return those same original bytes.
+            shown = refresh(shown, job_id, include_view=False)
         if isinstance(reply, dict) and isinstance(reply.get("assessment"), dict) and policy.enabled()[0]:
             shown = _viewed(shown, repo, task, ("assessment", "report"), assessment=reply["assessment"], intent=intent,
                             job_id=job_id)
         # A refused call has no assessment to justify. Enabling local collection
         # cannot change that refusal's envelope because its repo was invalid.
-        return _noted(shown, note) if isinstance(reply, dict) and "assessment" in reply else shown
+        return _noted(shown, notes.get(job_id, "")) if isinstance(reply, dict) and "assessment" in reply else shown
+    done.prepare = prepare
+    done.refresh = refresh
+    done.strip = strip
     return done
 
 

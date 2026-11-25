@@ -348,7 +348,9 @@ def export(project: str, *, now: datetime | None = None, self_lines: list[str] |
     write_whole(path, json.dumps(body, indent=1) + "\n")
     from g6.harness.workflow import record_md
 
-    write_whole(record.root / policy.RECORD_MD, record_md.render(record.events(), recording=policy.enabled()[0],
+    retained = record.events()
+    labels = [label for task in {e.task for e in retained} for label in record.annotations(task)]
+    write_whole(record.root / policy.RECORD_MD, record_md.render([*retained, *labels], recording=policy.enabled()[0],
                                                                self_lines=self_lines))
     return path
 

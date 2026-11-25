@@ -953,6 +953,7 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     repair is spent: only where nothing else failed, as otherwise what failed goes back and a fresh review reads the repair.
     A review's ``unrun`` says why its test shows nothing on the latest run, so a later run updates it, or takes it away."""
     n, results, failed, failing, where = len(reviews) + 1, {}, {}, set(), session / "sets" / "critic"
+    sources = {}
     diagnostics = {}
     read, kept, mine = repo_tests.diff_read(change), session / "rounds" / f"round-{n}.patch", critic_file(n)
     patch = read.text
@@ -962,6 +963,9 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     said = run_critic(change, task, critic, shipped.critic, where, n, patch=read, whole=True, system_sources=shipped.sources)
 
     def run(name: str) -> None:
+        from g6.harness.workflow.evidence import source_digests
+
+        sources.update(source_digests(where, [name]))
         got, diagnostics[name] = _snapshot_probe(run_set(change, where, at_base=False, deadline=deadline, only=name))
         cloud.record_sources(diagnostics[name])
         found = failures_of([("critic", got, None)])[0] if got.usable else set()    # one that will not run says nothing
@@ -991,7 +995,7 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
             run(mine)
     if any(code in said.get("error", "") for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)):
         raise LLMError(said["error"])
-    said.update(n=n, patch=digest(patch), file=mine, results=results, failed=failed)
+    said.update(n=n, patch=digest(patch), file=mine, results=results, failed=failed, check_sources=sources)
     reviews.append(said)
     if said["verdict"] not in READ_VERDICTS or not failing:
         return set(), ""

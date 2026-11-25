@@ -144,7 +144,7 @@ def observe_review(repo: str | os.PathLike, task: str, job_id: str, reply: Any, 
     if assessment is not None:
         from g6.harness.workflow.evidence import review_data
 
-        data.update(review_data(assessment))
+        data.update(review_data(assessment, repo))
     missing = [name for name, absent in (("review_ref", assessment is not None and ref is None),
                                          ("model_calls", assessment is not None and data["model_calls"] is None),
                                          ("review_seconds", assessment is not None and data["review_seconds"] is None))
@@ -174,14 +174,24 @@ def observe_loop(repo: str | os.PathLike, task: str, session: Path, state: Mappi
     for number, review in enumerate(reviews, 1):
         failing = (rounds[number - 1].get("failing") or []) if number <= len(rounds) else None
         results = review.get("results") if isinstance(review.get("results"), Mapping) else None
-        still_open = sorted(sha256(str(name)) for name, verdict in (results or {}).items() if verdict == "failed")[:50]
+        outcomes = dict(sorted((n, v) for n, v in (results or {}).items() if v in ("passed", "failed"))[:50])
+        still_open = sorted(sha256(str(name)) for name, verdict in outcomes.items() if verdict == "failed")
+        sources = review.get("check_sources")
+        if sources is not None and any(not sources.get(n) for n in outcomes):
+            raise ValueError("executed check source identity was not captured")
+        if sources is None:
+            sources = {**evidence.source_digests(repo, results or {}),
+                       **evidence.source_digests(Path(session) / "sets" / "critic", results or {})}
+        identity = evidence.outcome_sources(outcomes, sources)
         run.write("loop_round", str(number), at=at, artifact=review.get("patch") or "",
                   data={"round": number, "verdict": str(review.get("verdict") or "")[:40] or None,
+                        **identity,
+                        "repair_blocked": evidence.repair_blocked(review),
                         "results_sha256": digest(results) if results is not None else None,
                         "checked": int(evidence.check_ran(review)),
                         "failed_sha256": still_open,
-                        "passed_sha256": sorted(sha256(str(name)) for name, verdict in (results or {}).items()
-                                                if verdict == "passed")[:50],
+                        "passed_sha256": sorted(sha256(str(name)) for name, verdict in outcomes.items()
+                                                if verdict == "passed"),
                         "open": len(still_open) if results is not None else None, "open_sha256": still_open or None,
                         "failing": len(failing) if failing is not None else None,
                         "failing_sha256": sorted(sha256(str(name)) for name in failing)[:50] if failing else None,
