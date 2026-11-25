@@ -14,6 +14,7 @@ The working theory is published in full:
   — how a system can learn when it cannot always tell whether it has succeeded.
 - [*CSIR–ECHA research protocol*](https://github.com/basicisabc1994/g6solver/blob/main/docs/theory/CSIR_ECHA_RESEARCH_PROTOCOL.md)
   — the four pre-specified hypotheses and their falsifiers.
+- [*Theory implementation*](https://github.com/basicisabc1994/g6solver/blob/main/docs/theory/G6_Theory_Implementation.md) — a static audit at commit 458262ad, dated 22 November 2026, recording where practice differs from the six historical documents.
 
 ## Status of claims
 
