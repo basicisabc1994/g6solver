@@ -1429,3 +1429,225 @@ def test_startup_contention_fallback_reconciles_its_loaded_probes(ownership, tmp
     optional.unlink()
     retired.unlink()
     assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+
+
+@pytest.mark.parametrize("entry", ("startup", "discovery"))
+@pytest.mark.parametrize("contention", ("retry", "sustained"))
+@pytest.mark.parametrize("later", ("absent", "unreadable", "direct-restored"))
+def test_retry_retains_completed_refresh_stat(ownership, tmp_path, monkeypatch, entry, contention, later):
+    dependencies, specs = ownership
+    _repair3_extra_required_metadata(dependencies, monkeypatch)
+    source, retired, replacement = (tmp_path / name for name in ("source.py", "retired.py", "replacement.py"))
+    source.write_text("value = 'required'\n", encoding="utf-8")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(source)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    dependencies.record_loaded_required_imports()
+    if entry == "discovery":
+        monkeypatch.delitem(sys.modules, REQUIRED)
+    refresh = dependencies._path_refresh_observations
+    stat = dependencies._stat_identity
+    calls = 0
+
+    def probe(path):
+        if calls > 1 and later == "unreadable" and path == str(source):
+            raise OSError("recorded source unreadable")
+        return stat(path)
+
+    def interrupt(paths):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            source.rename(retired)
+            source.write_text("value = 'replacement'\n", encoding="utf-8")
+        result = refresh(paths)
+        if calls == 1:
+            source.rename(replacement)
+            monkeypatch.delitem(sys.modules, REQUIRED, raising=False)
+            if later == "direct-restored":
+                retired.rename(source)
+        if calls == 1 or contention == "sustained":
+            with monkeypatch.context() as nested:
+                nested.setattr(dependencies, "_path_refresh_observations", refresh)
+                other = f"rfu5build_other_{calls}"
+                nested.setattr(dependencies, "_optional_root_declarations", lambda *args: ({other}, set()))
+                before = dependencies._ownership_generation
+                dependencies.optional_import_roots("other", "")
+                assert dependencies._ownership_generation > before
+        return result
+
+    with monkeypatch.context() as transaction:
+        transaction.setattr(dependencies, "_path_refresh_observations", interrupt)
+        transaction.setattr(dependencies, "_stat_identity", probe)
+        if entry == "startup":
+            dependencies.record_loaded_required_imports()
+        else:
+            result = _roots(dependencies, SCOPES[2])
+            if contention == "sustained":
+                assert result == frozenset()
+    assert calls == 2
+    old = source if later == "direct-restored" else retired
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, old)
+    expected = frozenset() if later == "direct-restored" else {OPTIONAL}
+    assert _roots(dependencies, SCOPES[2]) == expected
+    specs.clear()
+    old.unlink()
+    replacement.unlink()
+    assert _roots(dependencies, SCOPES[2]) == expected
+
+
+@pytest.mark.parametrize("contention", ("retry", "sustained", "clear-control"))
+def test_discovery_retry_retains_completed_required_root(ownership, tmp_path, monkeypatch, contention):
+    dependencies, specs = ownership
+    _repair3_extra_required_metadata(dependencies, monkeypatch)
+    source, removed = tmp_path / "shared.py", tmp_path / "removed.py"
+    source.write_text("value = 'new required file'\n", encoding="utf-8")
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, source)
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(source)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    observe = dependencies._root_observations
+    calls = 0
+
+    def interrupt(roots):
+        nonlocal calls
+        result = observe(roots)
+        calls += 1
+        if calls == 1:
+            monkeypatch.delitem(sys.modules, REQUIRED)
+            specs.clear()
+            source.rename(removed)
+        if calls == 1 or contention == "sustained":
+            with monkeypatch.context() as nested:
+                nested.setattr(dependencies, "_root_observations", observe)
+                if contention == "clear-control":
+                    dependencies.optional_import_roots.cache_clear()
+                else:
+                    other = f"rfu5build_other_{calls}"
+                    nested.setattr(dependencies, "_optional_root_declarations", lambda *args: ({other}, set()))
+                    before = dependencies._ownership_generation
+                    dependencies.optional_import_roots("other", "")
+                    assert dependencies._ownership_generation > before
+        return result
+
+    with monkeypatch.context() as transaction:
+        transaction.setattr(dependencies, "_root_observations", interrupt)
+        result = _roots(dependencies, SCOPES[1])
+        if contention == "sustained":
+            assert result == frozenset()
+    assert calls == 2
+    removed.unlink()
+    expected = {OPTIONAL} if contention == "clear-control" else frozenset()
+    assert _roots(dependencies, SCOPES[2]) == expected
+
+
+@pytest.fixture
+def _rfu5_tool_ownership(monkeypatch):
+    from g6.mcp import dependencies
+
+    _repair3_extra_required_metadata(dependencies, monkeypatch)
+    monkeypatch.setattr(dependencies.metadata, "packages_distributions",
+                        lambda: {REQUIRED: ["rfu2build-base"], OPTIONAL: ["rfu2build-extra"]})
+    monkeypatch.setattr(dependencies.metadata, "distributions", lambda: ())
+    for root in (REQUIRED, OPTIONAL):
+        monkeypatch.delitem(sys.modules, root, raising=False)
+    # Inventory also locates shipped skills. Keep the real import lookup for
+    # this load/removal test instead of the ownership fixture's global stub.
+    dependencies.optional_import_roots.cache_clear()
+    yield dependencies
+    dependencies.optional_import_roots.cache_clear()
+    sys.modules.pop(OPTIONAL, None)
+
+
+@pytest.mark.parametrize("entry", ("describe", "inventory-control"))
+def test_tool_description_records_required_file_before_removal(_rfu5_tool_ownership, tmp_path, monkeypatch, entry):
+    from importlib import import_module
+
+    from g6.mcp import families, registrations
+
+    dependencies = _rfu5_tool_ownership
+    source = tmp_path / f"{OPTIONAL}.py"
+    source.write_text(
+        "from types import SimpleNamespace\n"
+        "def get_tools():\n"
+        "    return {'load_state': SimpleNamespace(description='Load state.', parameters={})}\n",
+        encoding="utf-8")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(source)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    dependencies.record_loaded_required_imports()
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    server = ModuleType("rfu5build_server")
+    failures = []
+
+    def build():
+        try:
+            return import_module(OPTIONAL)
+        except ModuleNotFoundError as exc:
+            failures.append(exc)
+            raise
+
+    server.build = build
+    monkeypatch.setitem(sys.modules, server.__name__, server)
+    monkeypatch.setattr(registrations, "SERVERS", {"abstraction": f"{server.__name__}:build"})
+    monkeypatch.setattr(families, "_DETAILS", {})
+    family = families.family_for({"id": "mcp:abstraction/load_state", "kind": "mcp"})
+    if entry == "describe":
+        assert families.describe("load_state")["available"] is True
+    else:
+        rows = families.inventory(family)
+        assert next(row for row in rows if row["id"] == "mcp:abstraction/load_state")["available"] is True
+    monkeypatch.delitem(sys.modules, OPTIONAL)
+    source.unlink()
+    invalidate_caches()
+    with pytest.raises(ModuleNotFoundError) as stopped:
+        families.inventory(family)
+    assert stopped.value is failures[-1]
+
+
+@pytest.mark.parametrize("confirmation", ("secondary", "later-direct-control"))
+def test_secondary_confirmation_preserves_direct_replacement_decision(ownership, tmp_path, monkeypatch, confirmation):
+    dependencies, specs = ownership
+    _repair3_extra_required_metadata(dependencies, monkeypatch)
+    source, retired, replacement = (tmp_path / name for name in ("source.py", "retired.py", "replacement.py"))
+    source.write_text("value = 'required'\n", encoding="utf-8")
+    spelling = str(source.parent) + os.sep + "." + os.sep + source.name
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = spelling
+    loaded.__spec__ = machinery.ModuleSpec(REQUIRED, loader=None, origin=spelling)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    dependencies.record_loaded_required_imports()
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    source.rename(retired)
+    source.write_text("value = 'replacement'\n", encoding="utf-8")
+    stat = dependencies._stat_identity
+    direct = 0
+
+    def probe(path):
+        nonlocal direct
+        assert not dependencies._ownership_lock._is_owned()
+        if path == spelling:
+            direct += 1
+            if direct == 1:
+                result = stat(path)
+                source.rename(replacement)
+                retired.rename(source)
+                return result
+            if confirmation == "secondary":
+                raise OSError("recorded source unreadable")
+        return stat(path)
+
+    with monkeypatch.context() as transaction:
+        transaction.setattr(dependencies, "_stat_identity", probe)
+        _roots(dependencies, SCOPES[2])
+    assert direct == 2
+    source.rename(retired)
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, retired)
+    expected = {OPTIONAL} if confirmation == "secondary" else frozenset()
+    assert _roots(dependencies, SCOPES[2]) == expected
+    specs.clear()
+    retired.unlink()
+    replacement.unlink()
+    assert _roots(dependencies, SCOPES[2]) == expected

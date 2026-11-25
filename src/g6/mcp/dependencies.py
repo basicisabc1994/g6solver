@@ -416,14 +416,26 @@ def _root_observations(roots: set[str]) -> dict:
     return observations
 
 
-def _reconcile_observations(observations: dict, refresh: dict, *, loaded: bool = False):
+def _reconcile_observations(observations: dict, refresh: dict, *, loaded: bool = False, previous=()):
     """Retain accepted evidence and return ownership inputs in observation order."""
+    # Attempts are snapshots, not replacement evidence. Keep every original
+    # event, including its absence flag, before combining root histories. Only
+    # the latest attempt supplies live object/name aliases and lookup certainty.
+    batches = (*previous, (observations, refresh))
     refreshed = [(order, record[2], resolved, status, direct, absent)
-                 for record, events in refresh.items()
+                 for _, probes in batches for record, events in probes.items()
                  for resolved, status, _, order, direct, absent in events]
     observed = [(order, record[2], record[3], record[4:] if record[4] is not None else None,
                  True, record in values[3])
-                for values in observations.values() for order, record in values[5]]
+                for roots, _ in batches for values in roots.values() for order, record in values[5]]
+    roots, probes = {}, {}
+    for attempt, refresh in batches:
+        for root, (identity, established, paths, absent, live, _) in attempt.items():
+            old = roots.get(root)
+            roots[root] = (identity, established, paths | old[2] if old else paths,
+                           absent | old[3] if old else absent, live)
+        for record, events in refresh.items():
+            probes.setdefault(record, []).extend(events)
     # Keep bounded, independent evidence slots. A later failure/absence belongs
     # only in the latest-event slot; an older, uncommitted success can still
     # update the stat slot. Copy whole original events, never re-stamp a fact.
@@ -442,12 +454,16 @@ def _reconcile_observations(observations: dict, refresh: dict, *, loaded: bool =
 
     def decision(record):
         history = _ownership_observations.get(record[2], {})
-        candidates = [event for slot, event in history.items()
-                      if slot == "direct"
-                      or (slot == "confirmation" and event[3] == record[4:])
-                      or (slot == "spelling" and record[4] is None)]
-        _, _, resolved, status, _, _ = max(
-            candidates, key=lambda event: event[0], default=(None, None, None, None, True, False))
+        # Only another successful direct stat can supersede a direct stat.
+        # Confirmation through another record's resolution has no such power.
+        event = history.get("direct")
+        if event is None:
+            candidates = [event for slot, event in history.items()
+                          if (slot == "confirmation" and event[3] == record[4:])
+                          or (slot == "spelling" and record[4] is None)]
+            event = max(candidates, key=lambda event: event[0],
+                        default=(None, None, None, None, True, False))
+        _, _, resolved, status, _, _ = event
         return resolved, status
 
     def current(record):
@@ -465,10 +481,14 @@ def _reconcile_observations(observations: dict, refresh: dict, *, loaded: bool =
 
     # A later live stat also refreshes an earlier retained owner at that spelling.
     # Conversely, a later refresh can exclude an obsolete startup observation.
-    combined = {record: (*decision(record), any(event[2] for event in events))
-                for record, events in refresh.items()}
+    # Fallback may commit after another transaction added records that were not
+    # in any snapshot. Project those current records through the same evidence;
+    # never probe them or reacquire import objects while holding the lock.
+    records = _required_paths.union(*_known_paths.values(), probes)
+    combined = {record: (*decision(record), any(event[2] for event in probes.get(record, ())))
+                for record in records}
     reconciled = {}
-    for root, (identity, established, paths, absent, live, _) in observations.items():
+    for root, (identity, established, paths, absent, live) in roots.items():
         paths, absent, live = ({value for record in records if (value := current(record)) is not None}
                                for records in (paths, absent, live))
         identity = {value for value in identity if value[0] not in {"file", "namespace", "inode"}}
@@ -489,12 +509,12 @@ def _without_required_aliases(optional: set[str], required: set[str] | dict[str,
 
 
 def _without_observed_aliases(optional: set[str] | frozenset[str], required: set[str],
-                             observations: dict, refresh: dict) -> frozenset[str]:
+                             observations: dict, refresh: dict, *, previous=()) -> frozenset[str]:
     """Merge already-probed discovery evidence while the ownership lock is held."""
     identities = {}
     live_paths = {}
     aliases = {}
-    observations, refresh = _reconcile_observations(observations, refresh)
+    observations, refresh = _reconcile_observations(observations, refresh, previous=previous)
     blocked = required | _refresh_path_ownership(refresh)
     for root, (identity, established, observed, absent, live) in observations.items():
         identities[root] = identity
@@ -705,7 +725,7 @@ def _ownership_state():
 def _advance_ownership_generation(before):
     global _ownership_generation
     # One atomic merge may add, retire and transfer ownership. Any observable
-    # store change invalidates all observations that preceded that transaction.
+    # store change requires a fresh snapshot, without discarding observations.
     # Advancing an unchanged observation's ticket alone is not an ownership
     # transaction. Reconciliation still reads that latest ticket under the lock.
     if before != _ownership_state():
@@ -717,8 +737,13 @@ def optional_import_roots(extras: str, required_extras: str = "mcp") -> frozense
     # Metadata, finders and module/spec attributes can execute import code.
     # None may run while another importer waits for our ownership store.
     extras, required_extras = _plain_text(extras), _plain_text(required_extras)
+    attempts = []
+    attempt_epoch = None
     for _ in range(2):
         generation, epoch, paths = _ownership_snapshot()
+        if epoch != attempt_epoch:
+            attempts.clear()  # Only an explicit clear supersedes gathered facts.
+            attempt_epoch = epoch
         optional, required = _optional_root_declarations(extras, required_extras, epoch)
         try:
             optional = {_plain_text(root) for root in optional}
@@ -728,6 +753,7 @@ def optional_import_roots(extras: str, required_extras: str = "mcp") -> frozense
         refresh = _path_refresh_observations(paths)
         observations = _root_observations(optional | required)
         _observe_current_sources(refresh, observations)
+        attempts.append((observations, refresh))
         with _ownership_lock:
             if generation != _ownership_generation:
                 continue  # Retry once, including declarations invalidated by a clear.
@@ -735,10 +761,18 @@ def optional_import_roots(extras: str, required_extras: str = "mcp") -> frozense
             # Only startup recording enters the seam with an empty optional side.
             if optional:
                 optional = _without_required_aliases(optional, required)
-            result = _without_observed_aliases(optional, required, observations, refresh)
+            result = _without_observed_aliases(optional, required, observations, refresh, previous=attempts[:-1])
             _advance_ownership_generation(before)
             return result
-    # Sustained contention supplies no safe optional verdict and writes no history.
+    # Sustained contention supplies no safe optional verdict. The observations
+    # already taken still join current evidence unless an explicit clear won.
+    with _ownership_lock:
+        if epoch == _declaration_epoch:
+            before = _ownership_state()
+            if optional:
+                optional = _without_required_aliases(optional, required)
+            _without_observed_aliases(optional, required, observations, refresh, previous=attempts[:-1])
+            _advance_ownership_generation(before)
     return frozenset()
 
 
@@ -764,6 +798,7 @@ def record_loaded_required_imports(required_extras: str = "mcp") -> None:
         identity, established = _root_identities(root, observed, absent, locations=copied,
                                                 live_paths=live, ordered_paths=ordered)
         observations[root] = identity, established, observed, absent, live, ordered
+    attempts = []
     for _ in range(2):
         refresh = _path_refresh_observations(paths)
         with _ownership_lock:
@@ -771,20 +806,22 @@ def record_loaded_required_imports(required_extras: str = "mcp") -> None:
                 return  # Only an explicit clear supersedes startup's copied evidence.
             if generation == _ownership_generation:
                 before = _ownership_state()
-                reconciled, refresh = _reconcile_observations(observations, refresh, loaded=True)
+                reconciled, refresh = _reconcile_observations(observations, refresh, loaded=True, previous=attempts)
                 _refresh_path_ownership(refresh)
                 _without_required_aliases(set(), {root: values[2] for root, values in reconciled.items()})
                 _advance_ownership_generation(before)
                 return
+        attempts.append(({}, refresh))
         generation, current_epoch, paths = _ownership_snapshot()
         if epoch != current_epoch:
             return
-    # Under sustained contention, reconcile loaded evidence with committed
-    # observations. Do not replay a stale refresh or reacquire any module object.
+    # Under sustained contention, reconcile loaded and refresh evidence with
+    # current observations, keeping original tickets and copied locations.
     with _ownership_lock:
         if epoch == _declaration_epoch:
             before = _ownership_state()
-            reconciled, _ = _reconcile_observations(observations, {}, loaded=True)
+            reconciled, refresh = _reconcile_observations(observations, {}, loaded=True, previous=attempts)
+            _refresh_path_ownership(refresh)
             _without_required_aliases(set(), {root: values[2] for root, values in reconciled.items()})
             _advance_ownership_generation(before)
 

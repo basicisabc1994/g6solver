@@ -114,6 +114,15 @@ def compact_server(server: Any, server_id: str) -> None:
     _DETAILS[server_id] = details
 
 
+def _record_loaded_server(server_id: str) -> None:
+    """Use the shared identity probe after successfully loading a server's tools."""
+    from g6.mcp.dependencies import optional_import_roots
+    from g6.mcp.registrations import EXTRAS
+
+    if extra := EXTRAS.get(server_id):
+        optional_import_roots(extra)
+
+
 def _server_details(server_id: str, *, listed: list[tuple[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
     """Read full guidance from the server that owns it, including unshortened SDK servers."""
     if server_id not in _DETAILS:
@@ -122,6 +131,7 @@ def _server_details(server_id: str, *, listed: list[tuple[str, Any]] | None = No
             server = _load(SERVERS[server_id])
             if server_id not in _DETAILS:
                 listed = _listed(server)
+            _record_loaded_server(server_id)
         if server_id not in _DETAILS:
             _DETAILS[server_id] = {
                 name: {"guidance": tool.description or "",
@@ -148,7 +158,7 @@ def _unavailable(server_id: str) -> dict[str, Any]:
 def inventory(family: str | None = None) -> list[dict[str, Any]]:
     """Registered members, plus declared tools whose own server cannot load; unrelated servers stay unloaded."""
     from g6.mcp import registrations
-    from g6.mcp.dependencies import optional_dependency_missing, optional_import_roots
+    from g6.mcp.dependencies import optional_dependency_missing
     from g6.skills import corpus, routing
 
     rows = []
@@ -181,10 +191,7 @@ def inventory(family: str | None = None) -> list[dict[str, Any]]:
                              "summary": "This tool's MCP server is unavailable.", "call": call,
                              **_unavailable(server_id)})
             continue
-        if extra := registrations.EXTRAS.get(server_id):
-            # Healthy imports establish the same file aliases as failure-time
-            # probes, before a later inventory can observe those files missing.
-            optional_import_roots(extra)
+        _record_loaded_server(server_id)
         for name, tool in listed.items():
             identity = f"mcp:{server_id}/{name}"
             member_family = family_for({"id": identity, "kind": "mcp"})
@@ -243,6 +250,7 @@ def describe(name: str) -> dict[str, Any] | None:
             if details is not None and "schema" not in details:
                 server = registrations._load(registrations.SERVERS[server_id])
                 details = {**details, "schema": registrations._tools(server)[tool_name]}
+                _record_loaded_server(server_id)
         except (Exception, SystemExit) as exc:
             if not optional_dependency_missing(server_id, exc):
                 raise
