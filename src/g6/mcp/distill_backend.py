@@ -365,14 +365,26 @@ class Service:
         return self.jobs.start(lambda: self._extend(request, repo)) if self.jobs is not None else self._extend(request, repo)
 
     def _extend(self, request, repo):
+        from g6.distill.ledger import PartialAuthorityWrite
         from g6.distill.surface import failure_record
         from g6.distill.rectify_gate import Rectifier
-        result = failure_record('user_request', 'capability_extension', json.dumps({'repo': repo}), request)
-        extension = CapabilityExtension(kind='user_requested', requested_by='person', gap_record=result['record_id'],
-            summary=request, artefact_ref='', evidence_ref=digest({'request': request}), certificate_ref='0' * 64,
-            status='requested', scope='local')
-        # Requested records grant no authority and never claim completed adaptation.
-        return Rectifier().extend(extension).model_dump(mode='json')
+        recorded = None
+        try:
+            with failure_writer():
+                result = failure_record('user_request', 'capability_extension', json.dumps({'repo': repo}), request)
+                if 'record_id' not in result:
+                    return result
+                extension = CapabilityExtension(kind='user_requested', requested_by='person', gap_record=result['record_id'],
+                    summary=request, artefact_ref='', evidence_ref=digest({'request': request}), certificate_ref='0' * 64,
+                    status='requested', scope='local')
+                # The gap and its request publish together and grant no authority.
+                recorded = Rectifier().extend(extension)
+        except PartialAuthorityWrite as error:
+            if error.publication_committed and recorded is not None:
+                error.committed_steps = [('gap record', result['record_id']),
+                                         ('capability request', recorded.content_id)]
+            raise
+        return recorded.model_dump(mode='json')
 
     def _runner(self, folder):
         return self.runners.get(folder)

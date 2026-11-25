@@ -40,7 +40,7 @@ from g6.safety_engine import weakening
 from .detectors import SEED_TEMPLATES
 from .facts import _extract_facts
 from .judging import JUDGING_PATHS
-from .ledger import PartialAuthorityWrite, Stores, append_retained, failure_writer, retain_before_write
+from .ledger import PartialAuthorityWrite, Stores, append_retained, durable_state, failure_writer, retain_before_write
 from .library import Library
 from .records import (AcceptanceEvidence, Cost, DecidedBy, FieldEvidence,
                       Interval, LibraryEntry, MethodContract, Model, RegressionCase, Sha256,
@@ -53,6 +53,21 @@ POLICY_PATH = ROOT / "validation/distill/held_out/policy.json"
 VERSION = "distill-acceptance-v1"
 _MUTEX = threading.RLock()
 _RESTORING = ContextVar('distill_restoring', default='')
+_PUBLICATIONS = ContextVar('distill_publications', default=None)
+_PUBLISHED_DECISIONS = ContextVar('distill_published_decisions', default=None)
+
+
+def _published(kind, ident):
+    steps = _PUBLICATIONS.get()
+    if steps is not None and (kind, ident) not in steps:
+        steps.append((kind, ident))
+
+
+def _published_activation(answer):
+    _published('activation', answer.entry_id)
+    decisions = _PUBLISHED_DECISIONS.get()
+    if decisions is not None:
+        decisions.append(asdict(answer))
 
 
 @contextmanager
@@ -726,12 +741,28 @@ def _spend(registration, candidate, *, snapshot):
     except PartialAuthorityWrite as error:
         if error.publication_committed:
             error.reservation = reservation
+            _published('reservation', reservation)
         raise
+    _published('reservation', reservation)
     return index, reservation
 
 
-@failure_writer()
 def _record(answer, reservation="", *, snapshot=None):
+    recorded, appended = None, False
+    try:
+        with failure_writer():
+            answer, recorded, appended = _record_decision(answer, reservation, snapshot=snapshot)
+    except PartialAuthorityWrite as error:
+        if error.publication_committed and appended:
+            error.reservation = reservation
+            _published('evaluation receipt' if answer.verdict == 'evaluated' else 'decision receipt', recorded)
+        raise
+    if appended:
+        _published('evaluation receipt' if answer.verdict == 'evaluated' else 'decision receipt', recorded)
+    return answer
+
+
+def _record_decision(answer, reservation, *, snapshot):
     if snapshot is not None:
         expected = snapshot
         if answer.verdict == 'admit_probation' and answer.entry_id:
@@ -747,27 +778,60 @@ def _record(answer, reservation="", *, snapshot=None):
     body = asdict(answer) | {"reservation": reservation, "gate_version": VERSION}
     # Admission already published this exact receipt atomically with its entry.
     # The outward call still rechecks status at its own transaction boundary.
-    if not (answer.verdict == 'admit_probation' and any(
-            row['kind'] == 'decision' and canonical(row['body']) == canonical(body) for row in journal.entries())):
-        _append(journal, "decision", body)
-    return answer
+    existing = next((row['id'] for row in journal.entries() if answer.verdict == 'admit_probation'
+                     and row['kind'] == 'decision' and canonical(row['body']) == canonical(body)), None)
+    ident = existing or _append(journal, "decision", body)
+    return answer, ident, existing is None
 
 
-@failure_writer()
-def _close_interrupted_reservation(candidate, reservation):
+def _close_interrupted_reservation(candidate, reservation, interrupted):
     """Close this live attempt only; an unrelated unfinished reserve stays open."""
-    if not any(row['kind'] == 'decision' and row['body'].get('reservation') == reservation
-               for row in _journal().entries()):
-        _record(AcceptanceDecision('refuse', (
-            'evaluation interrupted; no admission decision; method unchanged',), candidate.candidate_id), reservation)
+    def close():
+        if not any(row['kind'] == 'decision' and row['body'].get('reservation') == reservation
+                   for row in _journal().entries()):
+            _record(AcceptanceDecision('refuse', (
+                'evaluation interrupted; no admission decision; method unchanged',), candidate.candidate_id), reservation)
+
+    entered = False
+    steps = _PUBLICATIONS.get()
+    checkpoint = len(steps) if steps is not None else 0
+    try:
+        with failure_writer():
+            entered = True
+            close()
+    except PartialAuthorityWrite as error:
+        if entered and not error.publication_committed and steps is not None:
+            del steps[checkpoint:]
+        if entered or not interrupted.publication_committed or not interrupted.cleanup_intent:
+            raise
+        # No authority reader gets this bypass. It is bound to the exact
+        # committed intent from this live request, under the same store lock.
+        try:
+            with failure_writer(finish_committed=interrupted):
+                close()
+        except PartialAuthorityWrite as closing:
+            if not closing.publication_committed and steps is not None:
+                del steps[checkpoint:]
+            raise
 
 
-@failure_writer()
 def _save_report(data, *, snapshot, provisional=False):
-    require_current(snapshot)
-    if provisional:
-        data = data | {'authority': 'A0', 'publication': 'provisional'}
-    return _write_report(data)
+    ident, created = None, False
+    kind = 'provisional certificate' if provisional else 'acceptance report'
+    try:
+        with failure_writer():
+            require_current(snapshot)
+            if provisional:
+                data = data | {'authority': 'A0', 'publication': 'provisional'}
+            created = not state_path('distill', 'acceptance_gate_reports', f'{digest(data)}.json').exists()
+            ident = _write_report(data)
+    except PartialAuthorityWrite as error:
+        if error.publication_committed and ident and created:
+            _published(kind, ident)
+        raise
+    if created:
+        _published(kind, ident)
+    return ident
 
 
 def _write_report(data):
@@ -840,7 +904,9 @@ def _persist(candidate, answer, evidence, own, frozen, data, library, *, snapsho
     except PartialAuthorityWrite as error:
         if error.publication_committed and published is not None:
             error.decision = asdict(published)
+            _published_activation(published)
         raise
+    _published_activation(published)
     return published
 
 
@@ -1101,113 +1167,136 @@ def _restoring(entry_id):
         _RESTORING.reset(token)
 
 
+@contextmanager
+def _publication_context():
+    steps, decisions = [], []
+    token = _PUBLICATIONS.set(steps)
+    decision_token = _PUBLISHED_DECISIONS.set(decisions)
+    try:
+        yield
+    except PartialAuthorityWrite as error:
+        error.committed_steps = list(steps)
+        # Only this request's activation published the requested method change.
+        error.publication_committed = any(kind == 'activation' for kind, _ in steps)
+        if error.decision is None and len(decisions) == 1:
+            error.decision = decisions[0]
+        if steps:
+            error.earlier_publication_committed = False
+        error.durable_state = durable_state(error.paths)
+        raise
+    finally:
+        _PUBLICATIONS.reset(token)
+        _PUBLISHED_DECISIONS.reset(decision_token)
+
+
 def _decide_batch(candidates, library, registration, *, restoring=''):
-    originals = tuple(candidates)
-    try:
-        if any(type(c) is not VerifierCandidate for c in originals):
-            raise ValueError("typed candidates required")
-        candidates = tuple(VerifierCandidate.model_validate(c.model_dump(mode="json")) for c in originals)
-    except (ValueError, TypeError):
-        return tuple(AcceptanceDecision("block", ("invalid candidate identity or contract",)) for _ in originals)
-    if not candidates or len({c.candidate_id for c in candidates}) != len(candidates):
-        raise ValueError("nonempty batch of distinct candidates required")
-    try:
-        _registration(registration)
-        if type(library) is not Library:
-            raise ValueError('gate requires persisted library')
-        with _writer(), _restoring(restoring):
-            if stop.engaged() is not None:
-                return tuple(_record(AcceptanceDecision("block", ("stop engaged",), c.candidate_id)) for c in candidates)
-            if restoring:
-                entry = _snapshot(library, restoring)
-                if (len(candidates) != 1 or entry.candidate_id != candidates[0].candidate_id
-                        or entry.status not in {'withdrawn', 'demoted'}):
-                    raise ValueError('restore requires a current withdrawn or demoted entry')
-            results, evaluated = {}, {}
-            # No evidence-bearing callback, configurable runner or external report.
-            for candidate in candidates:
-                reservation = ""
-                try:
-                    if candidate.form == 'reuse':
-                        raise ValueError('reuse is a reuse row, never an admission candidate')
-                    snapshot = status_snapshot()
-                    _check_inactive(candidate, library, restoring=restoring)
-                    _look_available(registration)  # A spent split never reaches the oracle again.
-                    require_current(snapshot)
-                    _check_inactive(candidate, library, restoring=restoring)
-                    require_current(snapshot)
-                    frozen = _load(registration, candidate, library)
-                    require_current(snapshot)
-                    if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:
-                        raise ValueError("candidate differs from persisted proposal")
-                    index, reservation = _spend(registration, candidate, snapshot=snapshot)
-                    answer, evidence, own, data = _assess(candidate, snapshot, frozen, index)
-                    require_current(snapshot)
-                    evaluated[candidate.candidate_id] = (answer, evidence, own, frozen, data)
-                except PartialAuthorityWrite as error:
-                    # A completed reservation can fail during cleanup before
-                    # _spend returns its id. Close only this live attempt, never
-                    # a reserve left by a genuinely unfinished evaluation.
-                    reservation = reservation or error.reservation
-                    if reservation:
-                        _close_interrupted_reservation(candidate, reservation)
-                    raise
-                except (ValueError, KeyError, FileNotFoundError) as error:
-                    # Do not echo corpus bodies, subprocess stderr or model output.
-                    reason = str(error) if isinstance(error, ValueError) else "registered input missing"
-                    verdict = "refuse" if reservation or "split spent" in reason else "block"
-                    answer = AcceptanceDecision(verdict, (reason,), candidate.candidate_id)
-                results[candidate.candidate_id] = (answer, reservation)
-                # Close the reservation before spending the next look. A later
-                # activation is a separate append-only decision row.
-                try:
-                    recorded = _record(
-                        replace(answer, verdict="evaluated") if answer.verdict == "admit_probation" else answer,
-                        reservation, snapshot=snapshot if answer.verdict == 'admit_probation' else None)
-                except PartialAuthorityWrite:
-                    if reservation:
-                        _close_interrupted_reservation(candidate, reservation)
-                    raise
-                if answer.verdict == 'admit_probation' and recorded.verdict != 'evaluated':
-                    evaluated.pop(candidate.candidate_id, None)
-                    results[candidate.candidate_id] = (recorded, reservation)
-            accepted = _bh(((v[0].p_value, ident) for ident, v in evaluated.items()), len(candidates))
-            for candidate in sorted(candidates, key=lambda c: c.candidate_id):
-                ident = candidate.candidate_id
-                if ident not in evaluated:
-                    continue
-                answer, evidence, own, frozen, data = evaluated[ident]
-                try:
-                    if ident not in accepted:
-                        raise ValueError("batch Benjamini-Hochberg bar not met")
-                    # Earlier members of this batch may already have changed L_t.
-                    snapshot = status_snapshot()
-                    _check_inactive(candidate, library, restoring=restoring)
-                    answer, evidence, own, data = _assess(candidate, snapshot, frozen, evidence.reuse_index)
-                    if answer.p_value > .05 * len(accepted) / len(candidates):
-                        raise ValueError("batch bar not met after library changed")
-                    answer = _persist(candidate, answer, evidence, own, frozen, data, library, snapshot=snapshot)
-                except ValueError as error:
-                    answer = replace(answer, verdict="refuse", reasons=(str(error),), entry_id='', report_sha256='')
-                answer = _record(answer, snapshot=snapshot if answer.verdict == 'admit_probation' else None)
-                results[ident] = (answer, "")
-            with failure_writer(reading=True):
-                current = {entry.candidate_id: entry for entry in library.list()}
-                for ident, (answer, reservation) in results.items():
-                    if answer.verdict != 'admit_probation' or not answer.entry_id:
+    with _publication_context():
+        originals = tuple(candidates)
+        try:
+            if any(type(c) is not VerifierCandidate for c in originals):
+                raise ValueError("typed candidates required")
+            candidates = tuple(VerifierCandidate.model_validate(c.model_dump(mode="json")) for c in originals)
+        except (ValueError, TypeError):
+            return tuple(AcceptanceDecision("block", ("invalid candidate identity or contract",)) for _ in originals)
+        if not candidates or len({c.candidate_id for c in candidates}) != len(candidates):
+            raise ValueError("nonempty batch of distinct candidates required")
+        try:
+            _registration(registration)
+            if type(library) is not Library:
+                raise ValueError('gate requires persisted library')
+            with _writer(), _restoring(restoring):
+                if stop.engaged() is not None:
+                    return tuple(_record(AcceptanceDecision("block", ("stop engaged",), c.candidate_id)) for c in candidates)
+                if restoring:
+                    entry = _snapshot(library, restoring)
+                    if (len(candidates) != 1 or entry.candidate_id != candidates[0].candidate_id
+                            or entry.status not in {'withdrawn', 'demoted'}):
+                        raise ValueError('restore requires a current withdrawn or demoted entry')
+                results, evaluated = {}, {}
+                # No evidence-bearing callback, configurable runner or external report.
+                for candidate in candidates:
+                    reservation = ""
+                    try:
+                        if candidate.form == 'reuse':
+                            raise ValueError('reuse is a reuse row, never an admission candidate')
+                        snapshot = status_snapshot()
+                        _check_inactive(candidate, library, restoring=restoring)
+                        _look_available(registration)  # A spent split never reaches the oracle again.
+                        require_current(snapshot)
+                        _check_inactive(candidate, library, restoring=restoring)
+                        require_current(snapshot)
+                        frozen = _load(registration, candidate, library)
+                        require_current(snapshot)
+                        if Stores().for_model(VerifierCandidate).get(candidate.candidate_id) != candidate:
+                            raise ValueError("candidate differs from persisted proposal")
+                        index, reservation = _spend(registration, candidate, snapshot=snapshot)
+                        answer, evidence, own, data = _assess(candidate, snapshot, frozen, index)
+                        require_current(snapshot)
+                        evaluated[candidate.candidate_id] = (answer, evidence, own, frozen, data)
+                    except PartialAuthorityWrite as error:
+                        # A completed reservation can fail during cleanup before
+                        # _spend returns its id. Close only this live attempt, never
+                        # a reserve left by a genuinely unfinished evaluation.
+                        reservation = reservation or error.reservation
+                        if reservation:
+                            _close_interrupted_reservation(candidate, reservation, error)
+                        raise
+                    except (ValueError, KeyError, FileNotFoundError) as error:
+                        # Do not echo corpus bodies, subprocess stderr or model output.
+                        reason = str(error) if isinstance(error, ValueError) else "registered input missing"
+                        verdict = "refuse" if reservation or "split spent" in reason else "block"
+                        answer = AcceptanceDecision(verdict, (reason,), candidate.candidate_id)
+                    results[candidate.candidate_id] = (answer, reservation)
+                    # Close the reservation before spending the next look. A later
+                    # activation is a separate append-only decision row.
+                    try:
+                        recorded = _record(
+                            replace(answer, verdict="evaluated") if answer.verdict == "admit_probation" else answer,
+                            reservation, snapshot=snapshot if answer.verdict == 'admit_probation' else None)
+                    except PartialAuthorityWrite as error:
+                        if reservation:
+                            _close_interrupted_reservation(candidate, reservation, error)
+                        raise
+                    if answer.verdict == 'admit_probation' and recorded.verdict != 'evaluated':
+                        evaluated.pop(candidate.candidate_id, None)
+                        results[candidate.candidate_id] = (recorded, reservation)
+                accepted = _bh(((v[0].p_value, ident) for ident, v in evaluated.items()), len(candidates))
+                for candidate in sorted(candidates, key=lambda c: c.candidate_id):
+                    ident = candidate.candidate_id
+                    if ident not in evaluated:
                         continue
-                    entry = current.get(ident)
-                    if entry is None or entry.entry_id != answer.entry_id:
-                        status = entry.status if entry and entry.status in {'held', 'withdrawn'} else None
-                        code = (f'G6_E_DISTILL_METHOD_{status.upper()}_DURING_RUN' if status else
-                                'G6_E_DISTILL_STATUS_CHANGED_DURING_RUN')
-                        answer = replace(answer, verdict='refuse', reasons=(code,), entry_id='', report_sha256='')
-                        results[ident] = (answer, reservation)
-                        _record(answer)
-                return tuple(results[c.candidate_id][0] for c in candidates)
-    except (ValueError, KeyError, FileNotFoundError) as error:
-        reason = str(error) if isinstance(error, ValueError) else "evaluator input unavailable"
-        return tuple(AcceptanceDecision("block", (reason,), c.candidate_id) for c in candidates)
+                    answer, evidence, own, frozen, data = evaluated[ident]
+                    try:
+                        if ident not in accepted:
+                            raise ValueError("batch Benjamini-Hochberg bar not met")
+                        # Earlier members of this batch may already have changed L_t.
+                        snapshot = status_snapshot()
+                        _check_inactive(candidate, library, restoring=restoring)
+                        answer, evidence, own, data = _assess(candidate, snapshot, frozen, evidence.reuse_index)
+                        if answer.p_value > .05 * len(accepted) / len(candidates):
+                            raise ValueError("batch bar not met after library changed")
+                        answer = _persist(candidate, answer, evidence, own, frozen, data, library, snapshot=snapshot)
+                    except ValueError as error:
+                        answer = replace(answer, verdict="refuse", reasons=(str(error),), entry_id='', report_sha256='')
+                    answer = _record(answer, snapshot=snapshot if answer.verdict == 'admit_probation' else None)
+                    results[ident] = (answer, "")
+                with failure_writer(reading=True):
+                    current = {entry.candidate_id: entry for entry in library.list()}
+                    for ident, (answer, reservation) in results.items():
+                        if answer.verdict != 'admit_probation' or not answer.entry_id:
+                            continue
+                        entry = current.get(ident)
+                        if entry is None or entry.entry_id != answer.entry_id:
+                            status = entry.status if entry and entry.status in {'held', 'withdrawn'} else None
+                            code = (f'G6_E_DISTILL_METHOD_{status.upper()}_DURING_RUN' if status else
+                                    'G6_E_DISTILL_STATUS_CHANGED_DURING_RUN')
+                            answer = replace(answer, verdict='refuse', reasons=(code,), entry_id='', report_sha256='')
+                            results[ident] = (answer, reservation)
+                            _record(answer)
+                    return tuple(results[c.candidate_id][0] for c in candidates)
+        except (ValueError, KeyError, FileNotFoundError) as error:
+            reason = str(error) if isinstance(error, ValueError) else "evaluator input unavailable"
+            return tuple(AcceptanceDecision("block", (reason,), c.candidate_id) for c in candidates)
 
 
 def _field(candidate_id):

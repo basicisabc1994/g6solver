@@ -12,7 +12,9 @@ import base64
 import json
 import os
 from pathlib import Path, PureWindowsPath
-import tempfile
+import re
+import secrets
+import stat
 import threading
 
 from pydantic import ValidationError
@@ -40,13 +42,16 @@ class PartialAuthorityWrite(OSError):
     code = 'G6_E_DISTILL_PARTIAL_WRITE'
 
     def __init__(self, paths, *, committed=False, recovering=False):
+        self.paths = tuple(dict.fromkeys((*paths, _intent_path())))
         self.committed = committed
         self.recovering = recovering
         self.publication_committed = committed and not recovering
         self.earlier_publication_committed = committed and recovering
         self.decision = None
         self.reservation = ''
-        self.durable_state = durable_state(tuple(dict.fromkeys((*paths, _intent_path()))))
+        self.committed_steps = []
+        self.cleanup_intent = None
+        self.durable_state = durable_state(self.paths)
         state = ('earlier publication committed; cleanup incomplete; this request made no change'
                  if self.earlier_publication_committed else
                  'publication committed; intent cleanup pending' if committed else 'recovery incomplete')
@@ -136,10 +141,19 @@ def _save_intent(*, committed=False):
                      'after': None if after is _UNPLANNED or after is None else
                      base64.b64encode(after).decode('ascii')})
     body = {'version': 1, 'committed': committed, 'writes': rows}
+    _write_intent(body)
+
+
+def _write_intent(body):
+    _replace_intent((canonical({'body': body, 'sha256': digest(body)}) + '\n').encode('utf-8'))
+
+
+def _replace_intent(content):
+    """Publish intent bytes atomically, including an exact prior undo intent."""
     path = _intent_path()
     staging = path.with_suffix('.pending')
     with staging.open('wb') as stream:
-        stream.write((canonical({'body': body, 'sha256': digest(body)}) + '\n').encode('utf-8'))
+        stream.write(content)
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(staging, path)
@@ -162,7 +176,16 @@ def _read_intent():
             if row['after'] is not None:
                 base64.b64decode(row['after'], validate=True)
             writes[target] = None if row['before'] is None else base64.b64decode(row['before'], validate=True)
-        return body['committed'], writes
+        staging = {}
+        for row in body.get('undo_staging', []):
+            target, copy = _intent_target(row['target']), _intent_target(row['path'])
+            if (target not in writes or writes[target] is None or copy.parent != target.parent
+                    or copy != state_path() / row['path']
+                    or re.fullmatch(r'\.authority-undo-[0-9a-f]{32}', copy.name) is None
+                    or copy in staging or copy in writes):
+                raise ValueError('invalid undo staging target')
+            staging[copy] = writes[target]
+        return body['committed'], writes, staging
     except FileNotFoundError:
         return None
     except Exception:
@@ -182,14 +205,50 @@ def _recover_intent():
     intent = _read_intent()
     if intent is None:
         return
-    committed, writes = intent
+    committed, writes, staging = intent
     try:
+        _remove_undo_staging(staging)
         if not committed:
             for target, content in reversed(tuple(writes.items())):
                 _restore(target, content)
         _retire_intent()
     except (OSError, ValueError):
         raise PartialAuthorityWrite(tuple(writes), committed=committed, recovering=True) from None
+
+
+def _remove_undo_staging(staging):
+    """Remove only intent-owned undo copies with the expected name and bytes."""
+    for path, content in staging.items():
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            continue
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+            continue
+        if path.read_bytes() == content:
+            path.unlink()
+            _sync_parent(path)
+
+
+def _plan_undo_staging(target):
+    # Declare the exclusive new name durably before creating any copy. A name
+    # and matching bytes alone do not establish that an unrelated file is ours.
+    if _read_intent() is None:
+        # The first intent publication can fail before any target write. The
+        # in-memory rollback snapshot still needs durable staging ownership.
+        _save_intent()
+    pending = _intent_path().read_bytes()
+    body = json.loads(pending)['body']
+    while True:
+        staging = target.parent / ('.authority-undo-' + secrets.token_hex(16))
+        try:
+            staging.lstat()
+        except FileNotFoundError:
+            break
+    body.setdefault('undo_staging', []).append({'path': _intent_name(staging), 'target': _intent_name(target)})
+    _write_intent(body)
+    return staging, pending
 
 
 def retain_before_write(path, *, recover=None, after=_UNPLANNED):
@@ -233,27 +292,36 @@ def _restore(path, content):
     else:
         # Never truncate an existing inode: a backup or another home may have
         # a hard link to it. Publish new undo bytes under this name only.
-        descriptor, name = tempfile.mkstemp(prefix='.authority-undo-', dir=path.parent)
-        staging = Path(name)
+        staging, pending = _plan_undo_staging(path)
+        descriptor = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_BINARY', 0), 0o600)
         try:
             with os.fdopen(descriptor, 'wb') as stream:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(staging, path)
-        finally:
+        except BaseException:
+            # Drop this declaration only after its copy is durably gone. If
+            # cleanup fails, keep ownership so the next recovery can remove it.
+            staging.unlink(missing_ok=True)
+            _sync_parent(staging)
+            _replace_intent(pending)
+            raise
+        else:
             staging.unlink(missing_ok=True)
     _sync_parent(path)
 
 
 @contextmanager
-def failure_writer(*, reading=False):
+def failure_writer(*, reading=False, finish_committed=None):
     """Short shared transaction for failure intake and library status reads/writes.
 
     Reentrant within a thread; the same file lock excludes other server processes.
     Method execution and recorded comparison must run outside this transaction.
     Registered writes have durable undo intent. Recovery precedes every trusted
     read/write; a process death leaves either the committed set or the prior set.
+    A live reservation close may continue its exact own committed intent without
+    repeating cleanup; this never bypasses an uncommitted undo.
     """
     from g6.core.repair_log import _process_lock
     with _FAILURE_MUTEX:
@@ -268,7 +336,17 @@ def failure_writer(*, reading=False):
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         with _process_lock(path):
-            _recover_intent()
+            if finish_committed is None:
+                _recover_intent()
+            else:
+                # A live caller may close its own interrupted reservation even
+                # while removal of that exact committed intent remains blocked.
+                # Never bypass undo or an unrelated caller's pending intent.
+                intent = _read_intent()
+                if (not finish_committed.committed or finish_committed.recovering
+                        or finish_committed.cleanup_intent is None or intent is None or not intent[0]
+                        or _intent_path().read_bytes() != finish_committed.cleanup_intent):
+                    raise PartialAuthorityWrite((_intent_path(),), recovering=True)
             _FAILURE_LOCAL.path = path
             _FAILURE_LOCAL.before = {}
             _FAILURE_LOCAL.after = {}
@@ -315,7 +393,12 @@ def failure_writer(*, reading=False):
                     try:
                         _retire_intent()
                     except OSError:
-                        raise PartialAuthorityWrite(tuple(_FAILURE_LOCAL.before), committed=True) from None
+                        error = PartialAuthorityWrite(tuple(_FAILURE_LOCAL.before), committed=True)
+                        try:
+                            error.cleanup_intent = _intent_path().read_bytes()
+                        except OSError:
+                            pass
+                        raise error from None
             finally:
                 _FAILURE_LOCAL.path = None
                 _FAILURE_LOCAL.before = None
