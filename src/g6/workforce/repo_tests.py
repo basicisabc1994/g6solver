@@ -3243,7 +3243,10 @@ def _collection_evidence(repo: Path, *, roots=(), selections=()):
                 trees[file] = ast.parse(data)
             except (SyntaxError, ValueError):
                 invalid.add(file)
-        reader = CollectionEffects.from_trees(trees, roots=roots, files=files)
+        explicit = {selection.partition("::")[0] for selection in selections}
+        collection_files = {file for file in files if file in explicit or PurePosixPath(file).name == "conftest.py" or
+                            any(fnmatch.fnmatch(PurePosixPath(file).name, pattern) for pattern in ("test_*.py", "*_test.py"))}
+        reader = CollectionEffects.from_trees(trees, roots=roots, files=files, collection_files=collection_files)
         imported = set()
         for file, tree in trees.items():
             pending = deque([tree])
@@ -3259,9 +3262,6 @@ def _collection_evidence(repo: Path, *, roots=(), selections=()):
                 pending.extend(ast.iter_child_nodes(node))
         imported_modules = {".".join(parts[:end]) for dependency in imported for parts in [dependency.split(".")]
                             for end in range(1, len(parts) + 1)}
-        explicit = {selection.partition("::")[0] for selection in selections}
-        collection_files = {file for file in files if file in explicit or PurePosixPath(file).name == "conftest.py" or
-                            any(fnmatch.fnmatch(PurePosixPath(file).name, pattern) for pattern in ("test_*.py", "*_test.py"))}
         for file in sorted(invalid):
             component_process.checkpoint()
             names = module_names(file, roots)
