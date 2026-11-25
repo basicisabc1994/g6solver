@@ -1134,6 +1134,13 @@ def _load(session: Path) -> dict:
 
 def _read_publication(session: Path) -> dict:
     """Use the same bytes for the receipt check and decoding, including without a lock."""
+    # Only pending recovery needs a mutex here. Its sharing refusal must escape
+    # the ordinary unreadable-publication conversion below (also on fallback).
+    with store.task_publication(store.path(session, 'state.json')):
+        return _read_publication_bytes(session)
+
+
+def _read_publication_bytes(session: Path) -> dict:
     session = store.path(session)
     path = store.path(session, "state.json")
     receipt = store.path(session, 'state.sha256')

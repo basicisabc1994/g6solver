@@ -23,6 +23,7 @@ from typing import Any
 from g6.core.refusals import code_of
 from g6.harness import _completion_storage as store
 from g6.harness.completion_loop import CHANGED as CHANGED
+from g6.harness.completion_loop import RESERVATION_UNSAVED
 from g6.invariants import ERROR_CODE_PATTERN
 
 
@@ -48,7 +49,9 @@ def _asked(repo: str, task: str, base: str, session: Path) -> dict:
             asked = store.read_task(session / 'task.json')
             if not isinstance(asked, dict) or set(asked) != {'repo', 'task', 'base'}:
                 raise ValueError('malformed retained task')
-        except (OSError, TypeError, ValueError, RecursionError, MemoryError):
+        except (OSError, TypeError, ValueError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, PermissionError) and code_of(exc) == RESERVATION_UNSAVED:
+                raise
             raise repo_tests.RepoRefused(store.TASK_UNREADABLE, store.UNREADABLE_TASK) from None
         if asked["repo"] != str(root):
             raise repo_tests.RepoRefused("G6_E_INPUT_VALIDATION", "this session belongs to another repository")
@@ -91,6 +94,11 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
     except repo_tests.RepoRefused as exc:
         return {**blocked_reply(f"[{exc.code}] {exc}", request_id=request_id), "code": exc.code,
                 **({'recovery': loop.NEW_SESSION} if exc.code == store.TASK_UNREADABLE else {})}
+    except PermissionError as exc:
+        if code_of(exc) != RESERVATION_UNSAVED:
+            raise
+        return {**blocked_reply(str(exc), request_id=request_id), 'code': RESERVATION_UNSAVED,
+                'action': loop.STOP}
     except WorkspaceRefused as exc:
         if exc.code not in (WORKSPACE_BUSY, loop.BUSY):
             return {**blocked_reply(str(exc), request_id=request_id), "action": loop.STOP, "code": exc.code}
@@ -108,6 +116,11 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
             report_reader=lambda run, state, *, code: loop.read_report(run, state, code=code))
         total = loop.attempted(state)
         text = done.text
+    except PermissionError as exc:
+        if code_of(exc) != RESERVATION_UNSAVED:
+            raise
+        return {**blocked_reply(str(exc), request_id=request_id), 'code': RESERVATION_UNSAVED,
+                'run_id': folder.name, 'action': loop.STOP}
     except WorkspaceRefused as exc:
         if exc.code in (WORKSPACE_BUSY, loop.BUSY):
             return {**blocked_reply(f'[{loop.BUSY}] The retained reply is waiting for its writer. Retry this call; '
