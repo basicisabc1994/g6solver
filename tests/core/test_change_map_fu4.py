@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Expression identity and repository-wide collection decision regressions.
+
+Written before the repair; execution belongs to the lead's test lane.
+"""
+import ast
+
+import pytest
+
+from g6.core.git_name import GitName
+from g6.workforce._collection_effects import CollectionEffects
+from tests.core.test_change_map_fu2_effects import inventory
+
+
+def settings(effect):
+    return ("import os\nclass Settings:\n" + (
+        "    def __getattribute__(self, name):\n"
+        "        os.environ['PATH'] = 'collection-follow-up'\n"
+        "        return object.__getattribute__(self, name)\n" if effect else "    pass\n"
+    ) + "    def test_call(self): pass\n")
+
+
+@pytest.mark.parametrize("route", ["list", "dict"])
+@pytest.mark.parametrize("effect", [False, True], ids=["inert-control", "effect"])
+def test_nested_projection_keeps_collecting_class(tmp_path, monkeypatch, route, effect):
+    projection = {
+        "list": "classes = [[Settings]]\nTestSettings = classes[0][0]\n",
+        "dict": "classes = {'group': [Settings]}\nTestSettings = classes['group'][0]\n",
+    }[route]
+    _, certain = inventory(tmp_path, monkeypatch, {"test_api.py": settings(effect) + projection})
+    assert certain is (not effect)
+
+
+@pytest.mark.parametrize("mutated", [False, True], ids=["inert-control", "mutated-effect"])
+def test_later_module_write_precedes_collection_decision(tmp_path, monkeypatch, mutated):
+    helper = settings(mutated) + ("classes = [None]\nclasses[0] = Settings\n" if mutated else
+                                  "classes = [None]\n")
+    _, certain = inventory(tmp_path, monkeypatch, {
+        "test_api.py": "from zhelper import classes\nTestSettings = classes[0]\n",
+        "zhelper.py": helper,
+    })
+    assert certain is (not mutated)
+
+
+@pytest.mark.parametrize("effect", [False, True], ids=["inert-class", "effect"])
+@pytest.mark.parametrize("mutated", [False, True], ids=["unchanged-control", "mutated"])
+def test_helper_rename_does_not_change_collection_answer(tmp_path, monkeypatch, effect, mutated):
+    answers = []
+    for module in ("ahelper", "zhelper"):
+        helper = settings(effect) + ("classes = [None]\nclasses[0] = Settings\n" if mutated else
+                                     "classes = [Settings]\n" if effect else "classes = [None]\n")
+        _, certain = inventory(tmp_path / module, monkeypatch, {
+            module + ".py": helper,
+            "test_api.py": "from " + module + " import classes\nTestSettings = classes[0]\n",
+        })
+        answers.append(certain)
+    assert answers[0] is answers[1]
+    # Mutated projections have no exact result model, including an inert RHS.
+    assert answers == ([False, False] if mutated or effect else [True, True])
+
+
+@pytest.mark.parametrize("source", [
+    "classes[0][0]", "classes['group'][0]", "build()()", "build().method()",
+    "build(build())", "build(*build(), option=build())",
+    "[[value for value in (1,)] for other in (1,)]", "(lambda: (lambda: 1))",
+    "((1,),)", "(value := classes[0])",
+])
+def test_expression_registries_retain_each_original_node(source):
+    file = GitName(b"test_api.py")
+    expression = ast.parse(source, mode="eval").body
+    reader = CollectionEffects.from_trees({file: ast.parse("")})
+    scope = reader.scopes[file]
+    # Resolving children must never replace the model of an outer expression.
+    resolved = [(node, scope.resolve(node)) for node in ast.walk(expression)
+                if isinstance(node, (ast.Call, ast.Subscript, ast.NamedExpr, ast.Lambda,
+                                     ast.List, ast.Tuple, ast.ListComp))]
+    keys = [key for _, key in resolved]
+    assert len(keys) == len(set(keys))
+    registries = {**reader.calls, **reader.expressions, **reader.lambdas, **reader.literal_values}
+    assert all(registries[key][1] is node for node, key in resolved)
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
+@pytest.mark.parametrize("effect", [False, True], ids=["inert-control", "effect"])
+def test_module_read_order_does_not_change_collection_answer(reverse, effect):
+    caller, helper = GitName(b"test_api.py"), GitName(b"helper.py")
+    trees = [(caller, ast.parse("from helper import classes\nTestSettings = classes[0]\n")),
+             (helper, ast.parse(settings(effect) + "classes = [None]\nclasses[0] = Settings\n"))]
+    reader = CollectionEffects.from_trees(dict(reversed(trees) if reverse else trees))
+    assert reader.passive_all() is False

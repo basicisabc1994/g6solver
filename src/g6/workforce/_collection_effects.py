@@ -1238,7 +1238,7 @@ class _Scope:
 
         for node in self.nodes:
             if isinstance(node, (*_FUNCTIONS, ast.ClassDef)):
-                key = ("@", file, (node.lineno, self), ())
+                key = self.key("@", node)
                 bind(node.name, key)
                 reader.definitions[key] = (self, node)
             elif isinstance(node, ast.Import):
@@ -1333,8 +1333,13 @@ class _Scope:
             owner.bindings[target.id] = merged
             self.reader.revision += 1
 
+    def key(self, kind, node):
+        # Nested expressions can start at the same source position. Retain
+        # the actual node and its evaluation scope in every registered model.
+        return kind, self.file, (node, self), ()
+
     def literal(self, node):
-        key = (_LITERALS[type(node)], self.file, (node.lineno, node.col_offset, self), ())
+        key = self.key(_LITERALS[type(node)], node)
         self.reader.literal_values[key] = (self, node)
         return key
 
@@ -1366,7 +1371,7 @@ class _Scope:
             parent = self
             while parent.class_body:
                 parent = parent.parent
-            key = ("?lambda", self.file, (node.lineno, node.col_offset, parent), ())
+            key = self.key("?lambda", node)
             self.reader.lambdas[key] = (parent, node)
             return key
         if isinstance(node, ast.Attribute):
@@ -1380,11 +1385,11 @@ class _Scope:
                     if _external(name) or not all(_internal(candidate) or candidate.startswith("builtins.")
                                                   for candidate in _candidates(name)):
                         external = True
-            key = ("?external-call" if external else "?call", self.file, (node.lineno, node.col_offset, self), ())
+            key = self.key("?external-call" if external else "?call", node)
             self.reader.calls[key] = (self, node)
             return key
         if isinstance(node, (ast.Subscript, ast.NamedExpr, ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.IfExp, ast.For)):
-            key = ("?expression", self.file, (node.lineno, node.col_offset, self), ())
+            key = self.key("?expression", node)
             self.reader.expressions[key] = (self, node)
             return key
         if type(node) in _LITERALS:
@@ -1854,7 +1859,7 @@ class CollectionEffects:
         owner = parent if parent.class_body else None
         while parent.class_body:
             parent = parent.parent
-        key = (parent, node.lineno, method, values, receiver)
+        key = (declaration, node, method, values, receiver)
         if key not in self.function_scopes:
             args = []
             if isinstance(node, _FUNCTIONS):
@@ -1925,7 +1930,7 @@ class CollectionEffects:
         if type(value) in _LITERALS:
             return scope.literal(value)
         if isinstance(value, ast.Lambda):
-            key = ("?lambda", scope.file, (value.lineno, value.col_offset, scope), ())
+            key = scope.key("?lambda", value)
             self.lambdas[key] = (scope, value)
             return key
         if isinstance(value, ast.Call):
@@ -2637,6 +2642,25 @@ class CollectionEffects:
                     return False
         return True
 
+    def passive_all(self):
+        """A certain collection decision requires stable repository-wide inputs.
+
+        Each pass follows every module and all reached calls/holder protocols.
+        Later writes invalidate every earlier decision, including writes made
+        during holder auditing itself. A changing or bounded read never grants
+        certainty. Parsing and cached node walks remain shared across passes.
+        """
+        for _ in range(MAX_CALL_DEPTH):
+            component_process.checkpoint()
+            revision, dirty = self.revision, set(self.dirty_containers)
+            for file in self.trees:
+                component_process.checkpoint()
+                if not self.passive(file):
+                    return False
+            if self.revision == revision and self.dirty_containers == dirty:
+                return True
+        return False
+
     def passive(self, file):
         # Hooks and declarations are refused even when nested, matching the
         # existing read. Function bodies otherwise matter only when called.
@@ -2809,10 +2833,10 @@ class CollectionEffects:
                 owner, value = self.literal_values[candidate]
                 if isinstance(value, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
                     children = [value.elt]
-                    owner = self.comprehension_scopes.get(value)
+                    owner = self.comprehension_scopes.get((owner, value))
                 elif isinstance(value, ast.DictComp):
                     children = [value.key, value.value]
-                    owner = self.comprehension_scopes.get(value)
+                    owner = self.comprehension_scopes.get((owner, value))
                 else:
                     children = value.elts if isinstance(value, (ast.Tuple, ast.List, ast.Set)) else [*value.keys, *value.values]
                 if owner is None or not all(child is not None and self._pytest_value(owner.resolve(child), depth + 1, (*seen, candidate))
@@ -2969,7 +2993,7 @@ class CollectionEffects:
                 pending.extend(reversed(node.orelse))
                 continue
             if isinstance(node, (*_FUNCTIONS, ast.ClassDef)):
-                binding = ("@", scope.file, (node.lineno, scope), ())
+                binding = scope.key("@", node)
                 if "?unresolved" in _candidates(self._decorated(binding, depth)):
                     return False
                 for decorator in node.decorator_list:
@@ -3211,7 +3235,11 @@ class CollectionEffects:
             parent = parent.parent
         targets = [part.id for generator in node.generators for part in ast.walk(generator.target)
                    if isinstance(part, ast.Name)]
-        inner = _Scope(self, scope.file, [], parent, targets, values=("?value",) * len(targets))
+        key = (scope, node)
+        inner = self.comprehension_scopes.get(key)
+        if inner is None:
+            inner = _Scope(self, scope.file, [], parent, targets, values=("?value",) * len(targets))
+            self.comprehension_scopes[key] = inner
         expressions = []
         for index, generator in enumerate(node.generators):
             owner = scope if index == 0 else inner
@@ -3219,7 +3247,6 @@ class CollectionEffects:
                 return False
             expressions.extend(generator.ifs)
         expressions.extend([node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt])
-        self.comprehension_scopes[node] = inner
         return self._scan(expressions, inner, depth + 1, strict=True) and (
             not isinstance(node, (ast.SetComp, ast.DictComp)) or
             self._plain(node.key if isinstance(node, ast.DictComp) else node.elt, inner))

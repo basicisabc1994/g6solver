@@ -3280,11 +3280,7 @@ def _collection_evidence(repo: Path, *, roots=(), selections=()):
                 return sources, False
             del sources[file]
             sources.not_read.append({"file": file, "reason": "source does not parse and is not loaded by collection"})
-        for file in trees:
-            component_process.checkpoint()
-            if not reader.passive(file):
-                return sources, False
-        return sources, True
+        return sources, reader.passive_all()
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
     except (OSError, ValueError, SyntaxError, TypeError, RecursionError, RepoRefused):
