@@ -316,3 +316,72 @@ def test_pin_failure_exclusion_names_the_actual_rule_and_cause(batch, monkeypatc
     else:
         assert gap["reason"] != "saved under an older evidence rule"
         assert gap["reason"] == reason
+
+
+@pytest.fixture
+def windows_open_calls(monkeypatch):
+    if os.name != "nt":
+        pytest.skip("Windows handle access recording")
+    calls = []
+    real_open = rc._WindowsAPI.open
+    real_directory = rc._WindowsAPI.open_directory
+
+    def open_file(self, path, readable):
+        calls.append(("open", rc._path_key(path), readable))
+        return real_open(self, path, readable)
+
+    def open_directory(self, path):
+        calls.append(("directory", rc._path_key(path), None))
+        return real_directory(self, path)
+
+    monkeypatch.setattr(rc._WindowsAPI, "open", open_file)
+    monkeypatch.setattr(rc._WindowsAPI, "open_directory", open_directory)
+    return calls
+
+
+def test_directory_pin_lists_only_its_last_component(tmp_path, windows_open_calls):
+    folder = tmp_path / "ancestor" / "source"
+    folder.mkdir(parents=True)
+    with rc._open_handle(folder, directory=True, identify=True) as opened:
+        assert opened.identity is not None
+        assert rc._path_key(opened.path) == rc._path_key(folder)
+    expected = [("open", rc._path_key(parent), False) for parent in reversed(folder.parents)]
+    expected.append(("directory", rc._path_key(folder), None))
+    assert windows_open_calls == expected
+
+
+def test_source_score_lists_only_pinned_folders(batch, capsys, windows_open_calls):
+    windows_open_calls.clear()
+    status, result = trust.score(batch, capsys, True)
+    assert status == 0 and result["evidence_source"] == "batch"
+    assert result["predictions"] == batch.live["predictions"]
+    source = rc._path_key(batch.source)
+    pinned = {source}
+    for planned in batch.saved["plan"]["cases"]:
+        for origin in planned["origins"]:
+            folder = rc._path_key(source / origin["run"])
+            pinned.add(folder)
+            pinned.update(parent for parent in folder.parents if parent.is_relative_to(source))
+    directory_calls = {path for route, path, _ in windows_open_calls if route == "directory"}
+    assert directory_calls == pinned
+    for ancestor in source.parents:
+        assert ("open", ancestor, False) in windows_open_calls
+        assert all(route == "open" and readable is False
+                   for route, path, readable in windows_open_calls if path == ancestor)
+
+
+def test_file_read_requests_readable_access_only_for_its_last_component(tmp_path, windows_open_calls):
+    folder = tmp_path / "ancestor" / "source"
+    folder.mkdir(parents=True)
+    content = b"synthetic content"
+    target = folder / "payload.txt"
+    target.write_bytes(content)
+    source = rc.Source(folder)
+    windows_open_calls.clear()
+    assert source.read_bytes("payload.txt") == content
+    assert [(path, readable) for route, path, readable in windows_open_calls if readable] == [
+        (rc._path_key(target), True)]
+    assert all(route == "open" and (readable is False or path == rc._path_key(target))
+               for route, path, readable in windows_open_calls)
+    for ancestor in target.parents:
+        assert ("open", rc._path_key(ancestor), False) in windows_open_calls

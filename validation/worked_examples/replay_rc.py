@@ -268,7 +268,9 @@ def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False,
             parent_fd = handles[-1] if handles else None
             try:
                 if windows:
-                    handle = windows.open_directory(current) if directory else windows.open(current, readable and last)
+                    # Only the pinned folder needs listing; ancestors need attributes.
+                    handle = (windows.open_directory(current) if directory and last
+                              else windows.open(current, readable and last))
                     handles.append(handle)
                     previous = actual
                     actual, mode = windows.describe(handle, current)
