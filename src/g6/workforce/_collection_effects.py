@@ -20,11 +20,32 @@ _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 _VALUE_BUILTINS = frozenset("bool bytes complex dict float frozenset int len list range set str tuple".split())
 _LITERALS = {ast.List: "?list", ast.Dict: "?dict", ast.Tuple: "?tuple", ast.Set: "?set"}
 
+# Exact external callees and their argument policy. No package-wide fallback:
+# an unlisted dependency may call a callback, load a module or consume a protocol.
+MODELLED_EXTERNAL_CALLS = {
+    **dict.fromkeys(("builtins." + name for name in _VALUE_BUILTINS),
+                    "plain: conversion/iteration only over modeled builtin values"),
+    "builtins.sorted": "sorted: plain iterable and a modeled builtin key only",
+    "builtins.type": "type: one-argument type inspection runs no object hook",
+    "builtins.object": "allocate: bare builtin object allocation runs no caller code",
+    "builtins.object.__new__": "allocate: allocation without caller hooks",
+    "logging.getLogger": "logger: literal/module name only; no caller-supplied code",
+    "contextlib.nullcontext": "hold: stores its argument without invoking it",
+    "dataclasses.dataclass": "dataclass: class creation/defaults and generated hooks followed by _class",
+    "dataclasses.field": "field: stores defaults; descriptor defaults and factories followed by _class",
+    "functools.wraps": "wraps: resolvable function metadata only, checked by _decoration",
+    "pytest.fixture": "fixture: defer body; autouse and declarations checked by _scan/passive",
+    "builtins.staticmethod": "hold: stores function without invoking it",
+    "builtins.classmethod": "hold: stores function without invoking it",
+    "builtins.property": "hold: stores accessors; descriptor access is unavailable",
+}
+_PLAIN_EXTERNAL_VALUES = frozenset(("sys.platform", "sys.version", "sys.version_info", "sys.maxsize", "os.name"))
+
 # Executable admission table: absence means unavailable, including future AST
 # kinds. Conditional handlers below constrain the operations, not just the kind.
 MODELLED_OPERATIONS = {
     **dict.fromkeys((ast.Expr, ast.Assign, ast.AnnAssign, ast.NamedExpr, ast.Return),
-                    "Follow every evaluated value and assignment target."),
+                    "Follow evaluated values/targets; postponed annotations are names/strings, not executed."),
     **dict.fromkeys((ast.Pass, ast.Break, ast.Continue, ast.Load, ast.Store, ast.Del),
                     "Syntax or control transfer; no repository call."),
     ast.Constant: "Literal value; no repository call.",
@@ -32,13 +53,13 @@ MODELLED_OPERATIONS = {
     **dict.fromkeys((ast.List, ast.Tuple, ast.Set, ast.Dict),
                     "Build values; elements are followed and hash operands must be plain."),
     **dict.fromkeys((ast.FunctionDef, ast.AsyncFunctionDef),
-                    "Follow defaults, annotations and decorator results; defer bodies until called."),
-    ast.ClassDef: "Follow base/metaclass/descriptor and generated dataclass hooks; external bases: object, type, NamedTuple, TestCase creation only.",
+                    "Follow defaults and decorator results; follow annotations only without the future import; bind modeled defaults on calls."),
+    ast.ClassDef: "Follow bases/metaclasses, set_name and generated dataclass hooks; refuse unmodeled descriptor defaults. External bases: object, type, NamedTuple, TestCase creation only.",
     **dict.fromkeys((ast.arguments, ast.arg, ast.keyword, ast.alias),
                     "Syntax wrapper; evaluated children are followed."),
     ast.Lambda: "Defer body; follow defaults, or follow body when used as a modeled factory/decorator.",
-    ast.Call: "Follow every repository callee; retain ordinary installed-dependency and owner mark rules.",
-    ast.Attribute: "Module lookup or plain class method only; repository object access otherwise unavailable.",
+    ast.Call: "Follow repository callees with arguments/defaults; external calls only by MODELLED_EXTERNAL_CALLS, environment/list policies and owner mark rules.",
+    ast.Attribute: "Module lookup or plain class method after checking every inherited metaclass; other repository object access unavailable.",
     ast.Subscript: "Plain builtin values or classified environment writes only; repository hooks unavailable.",
     ast.Import: "Repository modules are read separately; namespace portions must be unique and inside roots.",
     ast.ImportFrom: "Resolve relative levels; refuse stars, lazy module lookup and ambiguous namespace portions.",
@@ -271,7 +292,7 @@ class _Scope:
             if self.parent:
                 return self.parent.resolve(node)
             return f"builtins.{node.id}" if node.id in _VALUE_BUILTINS | {
-                "object", "type", "staticmethod", "classmethod", "setattr", "delattr", "property"} else "?unresolved"
+                "object", "type", "sorted", "staticmethod", "classmethod", "setattr", "delattr", "property"} else "?unresolved"
         if isinstance(node, ast.Attribute):
             return _attributes(self.resolve(node.value), (node.attr,))
         if isinstance(node, ast.Call):
@@ -317,6 +338,9 @@ class CollectionEffects:
         self.decorating, self.returning, self.lambdas = set(), set(), {}
         self.function_scopes, self.active = {}, set()
         self.module_nodes, self.mark_aliases = {}, {}
+        self.postponed_annotations = {file for file, tree in trees.items() if any(
+            isinstance(node, ast.ImportFrom) and node.module == "__future__" and
+            any(alias.name == "annotations" for alias in node.names) for node in tree.body)}
         for file in files:
             component_process.checkpoint()
             path = PurePosixPath(file)
@@ -496,31 +520,85 @@ class CollectionEffects:
 
         return isinstance(node, ast.Constant) and isinstance(node.value, str) and not _runner_name(node.value)
 
-    def _call(self, function, scope, depth, strict):
+    def _call(self, function, scope, depth, strict, *, call=None):
         if not isinstance(function, (ast.Name, ast.Attribute)):
             return False
         name = self.follow(scope.resolve(function))
-        return all(self._call_binding(candidate, function, scope, depth, strict) for candidate in _candidates(name))
+        return all(self._call_binding(candidate, function, scope, depth, strict, call=call)
+                   for candidate in _candidates(name))
 
-    def _call_binding(self, name, function, scope, depth, strict):
+    def _call_binding(self, name, function, scope, depth, strict, *, call=None):
         # Preserve the owner's same-process exceptions; do not tighten the gate
         # against repository code deliberately shadowing these bindings.
         if (isinstance(name, str) and name.startswith("pytest.mark.") or self._legacy_mark(function, scope.file) or
-                isinstance(function, ast.Name) and function.id in ("staticmethod", "classmethod")):
+                isinstance(function, ast.Name) and function.id in ("staticmethod", "classmethod") and
+                name not in ("builtins.staticmethod", "builtins.classmethod")):
             return True
         if name in self.definitions:
-            return self._callee(name, depth + 1)
+            return self._callee(name, depth + 1, call=call, caller=scope)
         if _internal(name):
             if isinstance(function, ast.Attribute):
                 owner = self.follow(scope.resolve(function.value))
                 if _owned_container(owner, scope.file, ("?list",)) and function.attr in ("append", "extend", "insert"):
-                    return True
+                    if call is None or call.keywords:
+                        return False
+                    if function.attr == "extend":
+                        return len(call.args) == 1 and self._plain(call.args[0], scope)
+                    if function.attr == "insert":
+                        return len(call.args) == 2 and self._plain(call.args[0], scope)
+                    return len(call.args) == 1
             return False
         if name.split(".")[0] in self.modules:
             return False
-        if strict:
-            return name in {*("builtins." + item for item in _VALUE_BUILTINS), "builtins.object.__new__", "builtins.type"}
-        return True   # installed dependencies retain the previous ordinary-code rule
+        policy = MODELLED_EXTERNAL_CALLS.get(name, "").partition(":")[0]
+        if not policy:
+            return False
+        if call is None:
+            return policy in ("plain", "type", "allocate", "hold", "dataclass", "fixture", "wraps")
+        values = [*call.args, *(keyword.value for keyword in call.keywords)]
+        if any(isinstance(arg, ast.Starred) for arg in call.args) or any(k.arg is None for k in call.keywords):
+            return False
+        if policy == "plain":
+            return all(self._plain(value, scope) for value in values)
+        if policy == "sorted":
+            if len(call.args) != 1 or not self._plain(call.args[0], scope):
+                return False
+            for keyword in call.keywords:
+                if keyword.arg == "key":
+                    if not (isinstance(keyword.value, ast.Constant) and keyword.value.value is None):
+                        keys = _candidates(self.follow(scope.resolve(keyword.value)))
+                        if not all(key in {"builtins." + item for item in _VALUE_BUILTINS} for key in keys):
+                            return False
+                elif keyword.arg != "reverse" or not self._plain(keyword.value, scope):
+                    return False
+            return True
+        if policy == "type":
+            return len(call.args) == 1 and not call.keywords
+        if policy == "allocate":
+            return len(call.args) == (0 if name == "builtins.object" else 1) and not call.keywords
+        if policy == "logger":
+            return len(call.args) <= 1 and not call.keywords and all(
+                isinstance(value, ast.Name) and value.id == "__name__" or self._plain(value, scope)
+                for value in values)
+        if policy == "hold":
+            if name == "contextlib.nullcontext":
+                return len(call.args) <= 1 and all(k.arg == "enter_result" for k in call.keywords)
+            if name == "builtins.property":
+                if len(call.args) > 4 or any(k.arg not in ("fget", "fset", "fdel", "doc") for k in call.keywords):
+                    return False
+                accessors = [*call.args[:3], *(k.value for k in call.keywords if k.arg != "doc")]
+                docs = [*call.args[3:], *(k.value for k in call.keywords if k.arg == "doc")]
+                return all(self._function_value(value, scope, allow_none=True) for value in accessors) and all(
+                    self._plain(value, scope) for value in docs)
+            return len(call.args) == 1 and not call.keywords and self._function_value(call.args[0], scope)
+        if policy == "field":
+            return not call.args and all(keyword.arg in {
+                "default", "default_factory", "init", "repr", "hash", "compare", "metadata", "kw_only", "doc"}
+                and (keyword.arg in ("default", "default_factory") or self._plain(keyword.value, scope))
+                for keyword in call.keywords)
+        # Decorator factories are handled only at their application site, where
+        # both the input and the returned function/class are known.
+        return False
 
     def _all_nodes(self, file):
         if file not in self.module_nodes:
@@ -529,7 +607,12 @@ class CollectionEffects:
                 component_process.checkpoint()
                 node = pending.popleft()
                 nodes.append(node)
-                pending.extend(ast.iter_child_nodes(node))
+                children = ast.iter_child_nodes(node)
+                if file in self.postponed_annotations and isinstance(node, (ast.arg, ast.AnnAssign)):
+                    children = (child for child in children if child is not node.annotation)
+                elif file in self.postponed_annotations and isinstance(node, _FUNCTIONS):
+                    children = (child for child in children if child is not node.returns)
+                pending.extend(children)
             self.module_nodes[file] = nodes
         return self.module_nodes[file]
 
@@ -549,7 +632,7 @@ class CollectionEffects:
         head = name.split(".")[0]
         return (self.mark_aliases[file].get(head, head) + name[len(head):]).startswith("pytest.mark.")
 
-    def _callee(self, name, depth, *, method=False):
+    def _callee(self, name, depth, *, method=False, call=None, caller=None):
         if depth > MAX_CALL_DEPTH or name in self.active:
             return False
         self.active.add(name)
@@ -560,11 +643,44 @@ class CollectionEffects:
             elif isinstance(node, ast.ClassDef):
                 result = self._class(parent, node, depth, instantiate=True)
             else:
-                scope = self._function_scope(parent, node, method=method)
+                values = self._arguments(parent, node, call, caller) if call is not None else ()
+                if values is None:
+                    return False
+                scope = self._function_scope(parent, node, method=method, values=values)
                 result = self._scan(node.body, scope, depth, strict=True)
             return result
         finally:
             self.active.remove(name)
+
+    def _arguments(self, parent, node, call, caller):
+        """Bind explicit arguments; unsupported unpacking stays unavailable."""
+        if any(isinstance(arg, ast.Starred) for arg in call.args) or any(k.arg is None for k in call.keywords):
+            return None
+        positional = [*node.args.posonlyargs, *node.args.args]
+        arguments = [*positional, *node.args.kwonlyargs]
+        values = dict(zip((arg.arg for arg in positional), (self._value_binding(caller, arg) for arg in call.args)))
+        if len(call.args) > len(positional) and node.args.vararg is None:
+            return None
+        for keyword in call.keywords:
+            if keyword.arg in values or keyword.arg in {arg.arg for arg in node.args.posonlyargs}:
+                return None
+            if keyword.arg not in {arg.arg for arg in arguments}:
+                if node.args.kwarg is None:
+                    return None
+                continue
+            values[keyword.arg] = self._value_binding(caller, keyword.value)
+        defaults = self._defaults(parent, node)
+        return tuple(values.get(arg.arg, defaults.get(arg.arg, "?argument")) for arg in arguments)
+
+    def _value_binding(self, scope, value):
+        binding = scope.resolve(value)
+        return "?value" if binding == "?unresolved" and self._plain(value, scope) else binding
+
+    def _defaults(self, parent, node):
+        positional = [*node.args.posonlyargs, *node.args.args]
+        pairs = [*zip(positional[len(positional) - len(node.args.defaults):], node.args.defaults),
+                 *zip(node.args.kwonlyargs, node.args.kw_defaults)]
+        return {arg.arg: self._value_binding(parent, value) for arg, value in pairs if value is not None}
 
     def _function_scope(self, parent, node, *, method=False, values=()):
         owner = parent if parent.class_body else None
@@ -577,6 +693,11 @@ class CollectionEffects:
             if isinstance(node, _FUNCTIONS):
                 args = [arg.arg for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)]
                 args.extend(arg.arg for arg in (node.args.vararg, node.args.kwarg) if arg)
+                # Implicit class hooks receive protocol/constructor arguments
+                # whose bindings are not modeled here. Do not mistake those
+                # unknown supplied arguments for an omitted default.
+                defaults = {} if method else self._defaults(owner or parent, node)
+                values = (*values, *(defaults.get(arg, "?argument") for arg in args[len(values):]))
             self.function_scopes[key] = _Scope(self, parent.file, node.body, parent, args,
                                               args[0] if method and args else None,
                                               class_body=isinstance(node, ast.ClassDef), values=values)
@@ -647,8 +768,18 @@ class CollectionEffects:
         function = decorator.func if isinstance(decorator, ast.Call) else decorator
         name = self.follow(scope.resolve(function))
         results = []
+        is_function = value in self.definitions and isinstance(self.definitions[value][1], _FUNCTIONS)
         for candidate in _candidates(name):
-            if candidate in self.definitions or candidate in self.lambdas:
+            if candidate == "functools.wraps":
+                originals = _candidates(self.follow(scope.resolve(decorator.args[0]))) if (
+                    isinstance(decorator, ast.Call) and len(decorator.args) == 1 and not decorator.keywords) else ()
+                if (originals and all(original in self.definitions and isinstance(
+                        self.definitions[original][1], _FUNCTIONS) for original in originals) and
+                        value in self.definitions and isinstance(self.definitions[value][1], _FUNCTIONS)):
+                    results.append(value)
+                else:
+                    results.append("?unresolved")
+            elif candidate in self.definitions or candidate in self.lambdas:
                 if isinstance(decorator, ast.Call):
                     if decorator.keywords or any(isinstance(arg, ast.Starred) for arg in decorator.args):
                         results.append("?unresolved")
@@ -662,11 +793,36 @@ class CollectionEffects:
                   isinstance(candidate, str) and candidate.startswith("pytest.mark.") or
                   self._legacy_mark(function, scope.file) or
                   isinstance(function, ast.Name) and function.id in ("staticmethod", "classmethod")):
-                results.append(value)
+                # Only known decorator applications carry these deferred
+                # callbacks. Unknown keyword protocols do not get a free pass.
+                if isinstance(decorator, ast.Call) and candidate == "dataclasses.dataclass" and (
+                        decorator.args or any(keyword.arg not in {
+                            "init", "repr", "eq", "order", "unsafe_hash", "frozen", "match_args", "kw_only", "slots",
+                            "weakref_slot"} or not self._plain(keyword.value, scope) for keyword in decorator.keywords)):
+                    results.append("?unresolved")
+                elif isinstance(decorator, ast.Call) and candidate == "pytest.fixture" and (
+                        decorator.args or any(keyword.arg not in ("scope", "params", "autouse", "ids", "name") or
+                                              not self._plain(keyword.value, scope) for keyword in decorator.keywords)):
+                    results.append("?unresolved")
+                elif candidate in ("builtins.property", "pytest.fixture") and not is_function:
+                    results.append("?unresolved")
+                elif candidate in ("builtins.staticmethod", "builtins.classmethod") and not is_function:
+                    results.append("?unresolved")
+                elif candidate == "dataclasses.dataclass" and not (
+                        value in self.definitions and isinstance(self.definitions[value][1], ast.ClassDef)):
+                    results.append("?unresolved")
+                else:
+                    results.append(value)
             else:
                 results.append("?unresolved")
         return _merge(candidate if candidate in self.definitions or candidate in self.lambdas else "?unresolved"
                       for result in results for candidate in _candidates(result))
+
+    def _function_value(self, value, scope, *, allow_none=False):
+        if allow_none and isinstance(value, ast.Constant) and value.value is None:
+            return True
+        return all(candidate in self.definitions and isinstance(self.definitions[candidate][1], _FUNCTIONS)
+                   for candidate in _candidates(self.follow(scope.resolve(value))))
 
     def _decorated(self, name, depth):
         if depth > MAX_CALL_DEPTH or name in self.decorating:
@@ -740,7 +896,7 @@ class CollectionEffects:
                         return False
         return True
 
-    def _descriptor(self, value, depth):
+    def _descriptor(self, value, depth, *, dataclass=False):
         if depth > MAX_CALL_DEPTH:
             return False
         for candidate in _candidates(self.follow(value)):
@@ -748,15 +904,75 @@ class CollectionEffects:
             if call is None:
                 if candidate == "?unresolved":
                     return False
+                if candidate in self.definitions:
+                    owner, definition = self.definitions[candidate]
+                    if isinstance(definition, ast.ClassDef) and not self._class_value_descriptor(
+                            owner, definition, depth + 1, dataclass=dataclass):
+                        return False
                 continue
             scope, expression = call
             for constructor in _candidates(self.follow(scope.resolve(expression.func))):
+                if dataclass and constructor == "dataclasses.field":
+                    if any(keyword.arg == "default" and not self._descriptor(
+                            scope.resolve(keyword.value), depth + 1, dataclass=True) for keyword in expression.keywords):
+                        return False
                 if constructor in self.definitions:
                     owner, definition = self.definitions[constructor]
                     if not isinstance(definition, ast.ClassDef) or not self._class(
                             owner, definition, depth + 1, set_name=True):
                         return False
+                    if dataclass and not self._plain_descriptor_class(owner, definition, depth + 1):
+                        return False
                 elif _internal(constructor) or constructor.split(".")[0] in self.modules:
+                    return False
+        return True
+
+    def _class_value_descriptor(self, parent, node, depth, *, dataclass):
+        """A class used as a default is an instance of its effective metaclass."""
+        if depth > MAX_CALL_DEPTH:
+            return False
+        for keyword in node.keywords:
+            if keyword.arg != "metaclass":
+                return False
+            for candidate in _candidates(self.follow(parent.resolve(keyword.value))):
+                if candidate == "builtins.type":
+                    continue
+                if candidate not in self.definitions:
+                    return False
+                owner, definition = self.definitions[candidate]
+                if not isinstance(definition, ast.ClassDef) or not self._class(owner, definition, depth + 1, set_name=True):
+                    return False
+                if dataclass and not self._plain_descriptor_class(owner, definition, depth + 1):
+                    return False
+        for base in node.bases:
+            for candidate in _candidates(self.follow(parent.resolve(base))):
+                if candidate in ("builtins.object", "builtins.type", "typing.NamedTuple", "unittest.TestCase"):
+                    continue
+                if candidate not in self.definitions:
+                    return False
+                owner, definition = self.definitions[candidate]
+                if not isinstance(definition, ast.ClassDef) or not self._class_value_descriptor(
+                        owner, definition, depth + 1, dataclass=dataclass):
+                    return False
+        return True
+
+    def _plain_descriptor_class(self, parent, node, depth):
+        """Dataclass default extraction can read descriptors before __init__."""
+        if depth > MAX_CALL_DEPTH:
+            return False
+        scope = self._function_scope(parent, node)
+        if any(method in scope.bindings for method in ("__get__", "__set__", "__delete__", "__getattribute__", "__getattr__")):
+            return False
+        if not self._metaclass_lookup(parent, node, "__hash__"):
+            return False
+        for base in node.bases:
+            for candidate in _candidates(self.follow(parent.resolve(base))):
+                if candidate == "builtins.object":
+                    continue
+                if candidate not in self.definitions:
+                    return False
+                owner, definition = self.definitions[candidate]
+                if not isinstance(definition, ast.ClassDef) or not self._plain_descriptor_class(owner, definition, depth + 1):
                     return False
         return True
 
@@ -765,13 +981,17 @@ class CollectionEffects:
         if depth > MAX_CALL_DEPTH:
             return False
         scope = self._function_scope(parent, node)
+        dataclass = self._dataclass(parent, node, depth)
+        if dataclass and not all(self._metaclass_lookup(parent, node, attribute) for attribute in
+                                 ("__dict__", "__annotations__", "__mro__", "__hash__")):
+            return False
         if instantiate:
             post_init = post_init or self._dataclass(parent, node, depth)
         if not self._scan(node.body, scope, depth, strict=False):
             return False
         for binding in scope.bindings.values():
             component_process.checkpoint()
-            if not self._descriptor(binding, depth):
+            if not self._descriptor(binding, depth, dataclass=dataclass):
                 return False
         for keyword in node.keywords:
             if keyword.arg != "metaclass" or not self._call(keyword.value, parent, depth, True):
@@ -845,7 +1065,12 @@ class CollectionEffects:
                     return False
                 for decorator in node.decorator_list:
                     function = decorator.func if isinstance(decorator, ast.Call) else decorator
-                    if not self._call(function, scope, depth, strict):
+                    # _decorated already followed repository decorators with
+                    # the actual original binding. Re-entering without that
+                    # binding would discard a nested wraps(function) input.
+                    names = _candidates(self.follow(scope.resolve(function)))
+                    if not all(name in self.definitions or name in self.lambdas or
+                               self._call_binding(name, function, scope, depth, strict) for name in names):
                         return False
                     if isinstance(decorator, ast.Call):
                         callee = self.follow(scope.resolve(function))
@@ -860,7 +1085,13 @@ class CollectionEffects:
                         return False
                     pending.extend([*node.bases, *(keyword.value for keyword in node.keywords)])
                 else:
-                    pending.extend([node.args, *([node.returns] if node.returns else [])])
+                    pending.append(node.args)
+                    if node.returns and scope.file not in self.postponed_annotations:
+                        pending.append(node.returns)
+                continue
+            if isinstance(node, ast.arg):
+                if node.annotation and scope.file not in self.postponed_annotations:
+                    pending.append(node.annotation)
                 continue
             if isinstance(node, ast.Lambda):
                 pending.append(node.args)
@@ -869,6 +1100,8 @@ class CollectionEffects:
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 for target in targets:
                     scope.assign(target, node.value)
+                    if self._environment(target, scope) is True and (node.value is None or not self._plain(node.value, scope)):
+                        return False
             if isinstance(node, (ast.Import, ast.ImportFrom)) and not self._import_allowed(node, scope):
                 return False
             environment = self._environment(node, scope)
@@ -914,11 +1147,19 @@ class CollectionEffects:
                     if (not _internal(origin) or strict or any(candidate in self.definitions or candidate in self.calls
                                                               for candidate in _candidates(origin))):
                         return False
-                if environment is not True and not self._call(node.func, scope, depth, strict):
+                if environment is True and not all(self._plain(value, scope) for value in
+                                                   [*node.args, *(keyword.value for keyword in node.keywords)]):
+                    return False
+                if environment is not True and not self._call(node.func, scope, depth, strict, call=node):
                     return False
             if strict and isinstance(node, (ast.Await, ast.Yield, ast.YieldFrom, ast.With, ast.AsyncWith)):
                 return False
-            pending.extend(reversed(list(ast.iter_child_nodes(node))))
+            children = list(ast.iter_child_nodes(node))
+            if isinstance(node, ast.AnnAssign) and scope.file in self.postponed_annotations:
+                # Dataclasses inspect field names/strings, without executing
+                # calls embedded in postponed annotations. Defaults still run.
+                children = [child for child in children if child is not node.annotation]
+            pending.extend(reversed(children))
         # A followed call may add global/nonlocal candidates after an earlier
         # use in this body. Re-read against that enlarged candidate set.
         return self.revision == revision or self._scan(body, scope, depth + 1, strict=strict)
@@ -962,7 +1203,8 @@ class CollectionEffects:
         if isinstance(node, ast.Call):
             names = _candidates(self.follow(scope.resolve(node.func)))
             return all(isinstance(name, str) and name in {"builtins." + item for item in _VALUE_BUILTINS}
-                       for name in names) and all(self._plain(arg, scope, seen) for arg in node.args)
+                       for name in names) and all(self._plain(arg, scope, seen) for arg in
+                                                 [*node.args, *(keyword.value for keyword in node.keywords)])
         binding = self.follow(scope.resolve(node))
         for candidate in _candidates(binding):
             if candidate in self.literal_values:
@@ -971,8 +1213,14 @@ class CollectionEffects:
                 owner, literal = self.literal_values[candidate]
                 if not self._plain(literal, owner, (*seen, candidate)):
                     return False
-            elif not (candidate == "?value" or isinstance(candidate, str) and not _internal(candidate) and
-                      candidate.split(".")[0] not in self.modules):
+            elif candidate in self.calls:
+                if candidate in seen or len(seen) >= MAX_CALL_DEPTH:
+                    return False
+                owner, expression = self.calls[candidate]
+                if not self._plain(expression, owner, (*seen, candidate)):
+                    return False
+            elif not (candidate == "?value" or candidate in _PLAIN_EXTERNAL_VALUES or
+                      candidate in {"builtins." + item for item in _VALUE_BUILTINS}):
                 return False
         return True
 
@@ -984,7 +1232,8 @@ class CollectionEffects:
                     return False
             elif owner in self.definitions:
                 parent, definition = self.definitions[owner]
-                if not isinstance(definition, ast.ClassDef) or definition.keywords or not isinstance(node.ctx, ast.Load):
+                if (not isinstance(definition, ast.ClassDef) or not isinstance(node.ctx, ast.Load) or
+                        not self._metaclass_lookup(parent, definition, node.attr)):
                     return False
                 held = self._function_scope(parent, definition)
                 values = _candidates(self.follow(held.bindings.get(node.attr, "?unresolved")))
@@ -1008,6 +1257,53 @@ class CollectionEffects:
                     imported = self.scopes.get(file)
                     if imported and "__getattr__" in imported.bindings:
                         return False
+        return True
+
+    def _metaclass_lookup(self, parent, node, attribute, seen=()):
+        """Check metaclasses contributed by every base before class lookup."""
+        if node in seen or len(seen) >= MAX_CALL_DEPTH:
+            return False
+        for keyword in node.keywords:
+            if keyword.arg != "metaclass":
+                return False
+            for candidate in _candidates(self.follow(parent.resolve(keyword.value))):
+                if candidate == "builtins.type":
+                    continue
+                if candidate not in self.definitions:
+                    return False
+                owner, definition = self.definitions[candidate]
+                if not isinstance(definition, ast.ClassDef) or not self._metaclass_members(owner, definition, attribute):
+                    return False
+        for base in node.bases:
+            for candidate in _candidates(self.follow(parent.resolve(base))):
+                if candidate in ("builtins.object", "builtins.type"):
+                    continue
+                if candidate not in self.definitions:
+                    return False
+                owner, definition = self.definitions[candidate]
+                if not isinstance(definition, ast.ClassDef) or not self._metaclass_lookup(
+                        owner, definition, attribute, (*seen, node)):
+                    return False
+        return True
+
+    def _metaclass_members(self, parent, node, attribute, seen=()):
+        if node in seen or len(seen) >= MAX_CALL_DEPTH:
+            return False
+        scope = self._function_scope(parent, node)
+        if any(name in scope.bindings for name in ("__getattribute__", "__getattr__", attribute)):
+            # A member of the same name may itself be a descriptor. Until its
+            # lookup protocol is followed, the class lookup stays unavailable.
+            return False
+        for base in node.bases:
+            for candidate in _candidates(self.follow(parent.resolve(base))):
+                if candidate in ("builtins.type", "builtins.object"):
+                    continue
+                if candidate not in self.definitions:
+                    return False
+                owner, definition = self.definitions[candidate]
+                if not isinstance(definition, ast.ClassDef) or not self._metaclass_members(
+                        owner, definition, attribute, (*seen, node)):
+                    return False
         return True
 
     def _instance_store(self, scope, attribute, seen=()):
