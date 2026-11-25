@@ -702,8 +702,8 @@ def card(assessment: dict, loop: dict | None = None) -> dict:
     open_count = data.get("open", reproduced) if known else None
     if known and kind == "loop_ended" and data.get("reviews"):
         reproduced, open_count = check_counts["reproduced"], check_counts["open"]
-    if known and kind == "review_finished" and len(observed) > 1:
-        open_count = max(open_count or 0, check_counts["open"])
+    if known and kind == "review_finished":
+        open_count = check_counts["open"]
     labels = evidence.finding_labels([evidence.Event.from_body(e) for e in events],
         [e["event_id"] for e in events if e["kind"] in ("review_finished", "loop_ended", "loop_round")
          and ((e.get("data") or {}).get("reproduced") or (e.get("data") or {}).get("failed_sha256"))])

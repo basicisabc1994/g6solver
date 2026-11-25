@@ -728,3 +728,201 @@ def test_loading_rejected_requirement_cannot_be_overridden_by_node_phases(home, 
         data = evidence.review_data(value, repo)
         assert data["passed_sha256"] == ([sha(node)] if known else [])
         assert data["stated_checks"] == int(known)
+
+# Build 1 amendment 1: written before the repair; the lead runs these.
+def test_machinery_identity_tracks_roles_and_preserves_product_repairs(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    node = "test_case.py::test_case"
+    collectors = (
+        "from oracle import checked\nfrom module import VALUE\n@checked\ndef test_case():\n    assert VALUE > 0\n",
+        "from oracle import observed\ndef test_case(observed):\n    assert observed == 2\n",
+        "import pytest\nfrom oracle import cases\n@pytest.mark.parametrize('value', cases())\n"
+        "def test_case(value):\n    assert value == 2\n",
+        "from forwarding import case as test_case\n",
+    )
+    oracle = ("import pytest\nfrom module import VALUE\n"
+              "def checked(fn):\n    return fn\n@pytest.fixture\ndef observed():\n    return VALUE\n"
+              "def cases():\n    return [VALUE]\ndef case():\n    assert VALUE == 2\n")
+    (repo / "forwarding.py").write_text("from oracle import case\n", encoding="utf-8")
+    for collector in collectors:
+        (repo / "test_case.py").write_text(collector, encoding="utf-8")
+        (repo / "oracle.py").write_text(oracle, encoding="utf-8")
+        (repo / "module.py").write_text("VALUE = 3\n", encoding="utf-8")
+        before = evidence.capture_sources(repo, [node])
+        assert before[node]
+        (repo / "module.py").write_text("VALUE = 2\n", encoding="utf-8")
+        assert evidence.capture_sources(repo, [node]) == before
+        (repo / "oracle.py").write_text(oracle + "# changed machinery\n", encoding="utf-8")
+        assert evidence.capture_sources(repo, [node]) != before
+
+
+def test_relative_machinery_identity_uses_package_and_rejects_escape(tmp_path):
+    repo = tmp_path / "repo"
+    package = repo / "pkg" / "sub"
+    package.mkdir(parents=True)
+    for folder in (package, package.parent):
+        (folder / "__init__.py").write_text("", encoding="utf-8")
+    collector = package / "test_case.py"
+    collector.write_text("from ..checks_impl import case as test_case\n", encoding="utf-8")
+    body = package.parent / "checks_impl.py"
+    body.write_text("def case():\n    assert False\n", encoding="utf-8")
+    shadow = repo / "checks_impl.py"
+    shadow.write_text("def case():\n    assert True\n", encoding="utf-8")
+    node = "pkg/sub/test_case.py::test_case"
+    before = evidence.capture_sources(repo, [node])
+    assert before[node]
+    shadow.write_text("# changed shadow\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, [node]) == before
+    body.write_text("def case():\n    assert True\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, [node]) != before
+    collector.write_text("from ....checks_impl import case as test_case\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, [node]) == {node: ""}
+
+
+def test_first_review_card_uses_executed_identity_counts():
+    from g6.harness.workflow import record_md
+    from tests.workflow.kit import event
+
+    row = event("a" * 32, "review_finished", data={
+        "reproduced": 1, "failed_sha256": [sha("case[0]"), sha("case[1]")], "stated_checks": 2})
+    card = patch_report.card({"workflow_evidence": evidence.bundle([row])})
+    assert card["open"] == evidence.check_counts([row])["open"] == record_md.counts([row])["open"] == 2
+
+
+def test_conftest_and_transitive_machinery_are_in_identity(tmp_path):
+    repo = tmp_path / "repo"
+    cases = repo / "cases"
+    cases.mkdir(parents=True)
+    (cases / "test_case.py").write_text("def test_case(observed):\n    assert observed == 2\n", encoding="utf-8")
+    (repo / "conftest.py").write_text("from forwarding import observed\n", encoding="utf-8")
+    (repo / "forwarding.py").write_text("from oracle import observed\n", encoding="utf-8")
+    (repo / "oracle.py").write_text("import pytest\nfrom decorators import checked\n"
+        "@pytest.fixture\n@checked\ndef observed():\n    return 2\n", encoding="utf-8")
+    helper = repo / "decorators.py"
+    helper.write_text("def checked(fn):\n    return fn\n", encoding="utf-8")
+    node = "cases/test_case.py::test_case"
+    before = evidence.capture_sources(repo, [node])
+    assert before[node]
+    helper.write_text("def checked(fn):\n    return fn\n# changed\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, [node]) != before
+    before = evidence.capture_sources(repo, [node])
+    (repo / "conftest.py").write_text("from forwarding import observed\n# changed\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, [node]) != before
+
+
+def test_unresolved_machinery_is_incomplete_but_body_imports_are_excluded(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    node = "test_case.py::test_case"
+    for source in (
+        "import oracle\n@getattr(oracle, 'checked')\ndef test_case():\n    pass\n",
+        "import importlib\nchecked = importlib.import_module('oracle').checked\n"
+        "@checked\ndef test_case():\n    pass\n",
+        "from missing import checked\n@checked\ndef test_case():\n    pass\n",
+        "if True:\n    from oracle import checked\n@checked\ndef test_case():\n    pass\n",
+    ):
+        (repo / "test_case.py").write_text(source, encoding="utf-8")
+        assert evidence.capture_sources(repo, [node]) == {node: ""}
+    (repo / "test_case.py").write_text("from module import VALUE\ndef test_case():\n    assert VALUE == 2\n",
+                                       encoding="utf-8")
+    before = evidence.capture_sources(repo, [node])
+    assert before[node]
+    (repo / "module.py").write_text("VALUE = 2\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, [node]) == before
+
+
+def test_parametrize_aliases_values_indirect_and_fixture_chains(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "from pytest import mark, param\nimport oracle as o\nfrom forwarding import observed\n"
+        "@mark.parametrize('observed', [param(o.VALUE)], indirect=True)\n"
+        "def test_case(observed):\n    assert observed == 2\n", encoding="utf-8")
+    (repo / "forwarding.py").write_text("from fixtures import observed\n", encoding="utf-8")
+    (repo / "fixtures.py").write_text("import pytest\nfrom dependencies import seed\n"
+        "@pytest.fixture\ndef observed(request, seed):\n    return request.param\n", encoding="utf-8")
+    (repo / "dependencies.py").write_text("import pytest\n@pytest.fixture\ndef seed():\n    return 1\n",
+                                          encoding="utf-8")
+    (repo / "oracle.py").write_text("VALUE = 2\n", encoding="utf-8")
+    node = "test_case.py::test_case"
+    before = evidence.capture_sources(repo, [node])
+    assert before[node]
+    for relative in ("oracle.py", "dependencies.py", "forwarding.py"):
+        path = repo / relative
+        original = path.read_text(encoding="utf-8")
+        path.write_text(original + "# changed\n", encoding="utf-8")
+        assert evidence.capture_sources(repo, [node]) != before
+        path.write_text(original, encoding="utf-8")
+
+
+
+def test_shared_open_counts_retain_aggregate_only_findings():
+    from g6.harness.workflow import record_md
+    from tests.workflow.kit import event
+
+    row = event("a" * 32, "review_finished", data={"reproduced": 1})
+    counts = evidence.check_counts([row])
+    card = patch_report.card({"workflow_evidence": evidence.bundle([row])})
+    assert counts["open"] == record_md.counts([row])["open"] == card["open"] == 1
+    assert counts["repaired"] == 0
+
+
+def test_imported_class_and_aliased_parametrize_are_static_machinery(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text("from oracle import Cases as TestCases\n", encoding="utf-8")
+    (repo / "oracle.py").write_text(
+        "from pytest import mark\ncases = mark.parametrize\nfrom data import VALUES\n"
+        "@cases('value', VALUES)\nclass Cases:\n"
+        "    def test_case(self, value):\n        assert value == 2\n", encoding="utf-8")
+    data = repo / "data.py"
+    data.write_text("VALUES = [2]\n", encoding="utf-8")
+    node = "test_case.py::TestCases::test_case"
+    before = evidence.capture_sources(repo, [node])
+    assert before[node]
+    data.write_text("VALUES = [3]\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, [node]) != before
+
+
+def test_runtime_collection_and_wildcard_machinery_are_incomplete(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    node = "test_case.py::test_case"
+    for source in ("from oracle import *\n", "exec('def test_case(): pass')\n",
+                   "from importlib import import_module as load\nload('oracle')\n",
+                   "from oracle import checked\nchecked = checked()\n@checked\ndef test_case(): pass\n"):
+        (repo / "test_case.py").write_text(source, encoding="utf-8")
+        assert evidence.capture_sources(repo, [node]) == {node: ""}
+    (repo / "test_case.py").write_text("def test_case(): pass\n", encoding="utf-8")
+    (repo / "conftest.py").write_text("pytest_plugins = ['oracle']\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, [node]) == {node: ""}
+
+
+def test_imported_autouse_and_named_fixtures_are_machinery(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text("def test_case(observed):\n    assert observed == 2\n", encoding="utf-8")
+    (repo / "conftest.py").write_text("from fixtures import automatic, named\n", encoding="utf-8")
+    (repo / "fixtures.py").write_text(
+        "import pytest\nfrom oracle import seed\n@pytest.fixture(autouse=True)\n"
+        "def automatic(seed):\n    assert seed == 2\n@pytest.fixture(name='observed')\n"
+        "def named():\n    return 2\n", encoding="utf-8")
+    helper = repo / "oracle.py"
+    helper.write_text("import pytest\n@pytest.fixture\ndef seed():\n    return 2\n", encoding="utf-8")
+    node = "test_case.py::test_case"
+    before = evidence.capture_sources(repo, [node])
+    assert before[node]
+    helper.write_text("import pytest\n@pytest.fixture\ndef seed():\n    return 3\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, [node]) != before
+
+
+def test_ambiguous_absolute_machinery_cannot_lend_a_shadow_digest(tmp_path):
+    repo = tmp_path / "repo"
+    cases = repo / "cases"
+    cases.mkdir(parents=True)
+    (cases / "test_case.py").write_text("from oracle import case as test_case\n", encoding="utf-8")
+    for path in (repo / "oracle.py", cases / "oracle.py"):
+        path.write_text("def case():\n    assert True\n", encoding="utf-8")
+    node = "cases/test_case.py::test_case"
+    assert evidence.capture_sources(repo, [node]) == {node: ""}

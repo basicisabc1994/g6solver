@@ -39,93 +39,316 @@ def source_digests(root, checks: Iterable[str]) -> dict[str, str]:
 
 
 def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
-    """Before execution, bind collectors and statically named repository test modules.
+    """Bind test machinery before execution, without importing repository code.
 
-    Never import repository code. A missing/unreadable test dependency makes the
-    identity explicitly incomplete, rather than lending it the collector's hash.
-    The collector-only API remains available for legacy captures.
+    Follow definitions, decorators, requested fixtures and parametrization sources.
+    Imports used only in bodies are product dependencies, not check identity. Whole
+    files (including conftests and re-export chains) are hashed; unresolved machinery
+    withholds identity. Oracle calls hidden in product bodies remain outside scope.
     """
     top = Path(root).resolve()
     checks = list(checks)
     cache = {}
 
     def read(path):
-        path = Path(path)
-        if path in cache:
-            return cache[path]
-        if len(cache) >= 128:
-            return None
-        cache[path] = None
-        try:
-            if not path.resolve().is_relative_to(top) or any(p.is_symlink() for p in (path, *path.parents)
-                                                           if p.is_relative_to(top)):
-                return None
+        if path not in cache:
+            if len(cache) >= 128:
+                raise ValueError("source limit")
+            if not path.resolve().is_relative_to(top) or any(
+                    p.is_symlink() for p in (path, *path.parents) if p.is_relative_to(top)):
+                raise ValueError("source outside regular repository files")
             raw = path.read_bytes()
-            cache[path] = (sha256(raw), ast.parse(raw))
-        except (OSError, SyntaxError, ValueError):
-            pass
+            tree = ast.parse(raw)
+            bindings = {}
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    pairs = [(node.name, ("definition", node))]
+                elif isinstance(node, ast.ImportFrom):
+                    pairs = [(a.asname or a.name, ("from", (node, a.name))) for a in node.names]
+                elif isinstance(node, ast.Import):
+                    pairs = [(a.asname or a.name.split(".")[0], ("import", a.name if a.asname
+                              else a.name.split(".")[0])) for a in node.names]
+                elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    pairs = [(t.id, ("value", node.value)) for t in targets if isinstance(t, ast.Name)]
+                else:
+                    # Conditional/runtime bindings are deliberately not evaluated.
+                    pairs = [(n.id, ("unknown", None)) for n in ast.walk(node)
+                             if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)]
+                    pairs += [(a.asname or a.name.split(".")[0], ("unknown", None))
+                              for n in ast.walk(node) if isinstance(n, (ast.Import, ast.ImportFrom))
+                              for a in n.names]
+                    pairs += [(n.name, ("unknown", None)) for n in ast.walk(node)
+                              if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+                for name, binding in pairs:
+                    # Rebinding is runtime-dependent even when an earlier binding is static.
+                    bindings[name] = ("unknown", None) if name in bindings else binding
+            cache[path] = sha256(raw), tree, bindings
         return cache[path]
 
-    def module(path, node):
-        name = (node.module or "") if isinstance(node, ast.ImportFrom) else node
-        level = node.level if isinstance(node, ast.ImportFrom) else 0
-        bases = [path.parent.parents[level - 1]] if level > 1 and level <= len(path.parent.parents) else (
-            [path.parent] if level == 1 else [top, top / "src", path.parent])
+    def module(path, name, level=0):
+        if level:
+            base = path.parent
+            # importlib level 1 is the containing package; each extra level goes up once.
+            for _ in range(level - 1):
+                if base == top or not (base / "__init__.py").is_file():
+                    raise ValueError("relative import above package")
+                base = base.parent
+            if not base.is_relative_to(top) or not (base / "__init__.py").is_file():
+                raise ValueError("relative import above repository package")
+            bases = [base]
+        else:
+            bases = [top, top / "src", path.parent]
+        found = set()
         for base in bases:
             stem = base.joinpath(*name.split(".")) if name else base
-            for candidate in (stem.with_suffix(".py"), stem / "__init__.py"):
+            # Python prefers a regular package over a same-named module.
+            for candidate in (stem / "__init__.py", stem.with_suffix(".py")):
                 if candidate.is_file():
-                    return candidate
-        return None
+                    found.add(candidate)
+                    break
+        if len(found) > 1:
+            raise ValueError("ambiguous repository import roots")
+        return next(iter(found), None)
 
     def identity(file):
-        pending, files, complete = [top / file], {}, True
-        while pending:
-            path = pending.pop()
-            if path in files:
-                continue
+        files, scanned, active, done = {}, set(), set(), set()
+        collector = top / file
+        conftests = []
+        for folder in reversed((collector.parent, *collector.parent.parents)):
+            if folder.is_relative_to(top) and (folder / "conftest.py").is_file():
+                conftests.append(folder / "conftest.py")
+
+        def include(path):
             parsed = read(path)
-            if parsed is None:
-                complete = False
-                continue
             files[path] = parsed[0]
-            for node in ast.walk(parsed[1]):
-                if isinstance(node, (ast.Assign, ast.AnnAssign)):
-                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                    if any(isinstance(t, ast.Name) and t.id.startswith("test_") for t in targets):
-                        complete = False  # generated/aliased bodies have no statically established file set
-                if isinstance(node, ast.Call) and (isinstance(node.func, ast.Name) and node.func.id in (
-                        "exec", "eval", "__import__") or isinstance(node.func, ast.Attribute)
-                        and node.func.attr in ("import_module", "exec_module")):
-                    complete = False
-                if not isinstance(node, (ast.Import, ast.ImportFrom)):
-                    continue
-                if isinstance(node, ast.ImportFrom) and node.module is None:
-                    complete = False  # package attributes may name submodules rather than this __init__
-                names = [a.name for a in node.names]
-                symbols = [a.asname or a.name for a in node.names]
-                candidates = [(module(path, node), symbols)] if isinstance(node, ast.ImportFrom) else [
-                    (module(path, name), []) for name in names]
-                for imported, symbols in candidates:
-                    wants_test = any(n.startswith("test_") for n in symbols)
-                    if imported is None:
-                        complete &= not wants_test
-                        continue
-                    other = read(imported)
-                    if other is None:
-                        complete = False
-                        continue
-                    is_test = "tests" in imported.relative_to(top).parts or imported.name.startswith(
-                        "test_") or imported.stem.endswith("_test") or any(
-                        isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test_")
-                        for n in ast.walk(other[1]))
-                    if is_test or wants_test:
-                        pending.append(imported)
-        if not complete or not files:
+            if path in scanned:
+                return
+            scanned.add(path)
+            if "*" in parsed[2] or "pytest_plugins" in parsed[2] or any(
+                    name.startswith("pytest_") and name != "pytestmark" for name in parsed[2]):
+                raise ValueError("runtime collection machinery")
+            for statement in parsed[1].body:
+                if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    continue  # body-only imports do not establish machinery dependencies
+                for node in ast.walk(statement):
+                    if isinstance(node, ast.Call) and (
+                            isinstance(node.func, ast.Name) and node.func.id in {"exec", "eval", "__import__"}
+                            or isinstance(node.func, ast.Attribute) and node.func.attr in {"import_module", "exec_module"}
+                            or qualified(path, node.func) in {"importlib.import_module", "builtins.exec",
+                                                              "builtins.eval", "builtins.__import__"}):
+                        raise ValueError("dynamic collection machinery")
+            # Package initializers execute on the import chain too.
+            for folder in path.parents:
+                if folder == top or not folder.is_relative_to(top):
+                    break
+                initializer = folder / "__init__.py"
+                if initializer.is_file() and initializer != path:
+                    include(initializer)
+            for name in parsed[2]:
+                if name.startswith("test_") or name.startswith("Test"):
+                    resolve(path, (name,), "test")
+                elif name == "pytestmark":
+                    resolve(path, (name,), "value")
+                elif fixture_options(path, name).get("autouse"):
+                    resolve(path, (name,), "fixture")
+
+        def external(name):
+            # Known pytest machinery needs no in-repository defining module.
+            if name == "pytest" or name.startswith("pytest."):
+                return
+            raise ValueError("unresolved machinery import")
+
+        def fixture(path, name):
+            for scope in dict.fromkeys((path, collector, *reversed(conftests))):
+                if name in read(scope)[2]:
+                    resolve(scope, (name,), "fixture")
+                    return
+                for binding in read(scope)[2]:
+                    if fixture_options(scope, binding).get("name") == name:
+                        resolve(scope, (binding,), "fixture")
+                        return
+            if name not in {"request", "tmp_path", "tmp_path_factory", "tmpdir", "tmpdir_factory",
+                            "monkeypatch", "capsys", "capsysbinary", "capfd", "capfdbinary", "caplog",
+                            "cache", "pytestconfig", "record_property", "record_testsuite_property",
+                            "record_xml_attribute", "doctest_namespace", "recwarn"}:
+                raise ValueError("unresolved fixture")
+
+        def expression(path, node, role="value", locals_=frozenset()):
+            if node is None:
+                raise ValueError("runtime machinery binding")
+            if isinstance(node, ast.Name):
+                if node.id not in locals_:
+                    if node.id in read(path)[2]:
+                        resolve(path, (node.id,), role)
+                    elif node.id not in {"True", "False", "None", "range", "list", "tuple", "dict", "set",
+                                         "str", "int", "float", "bool", "len", "enumerate", "zip"}:
+                        raise ValueError("unresolved machinery name")
+                return
+            if isinstance(node, ast.Attribute):
+                parts, current = [], node
+                while isinstance(current, ast.Attribute):
+                    parts.insert(0, current.attr)
+                    current = current.value
+                if not isinstance(current, ast.Name):
+                    raise ValueError("runtime machinery attribute")
+                resolve(path, (current.id, *parts), role)
+                return
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name) and node.func.id in {"getattr", "__import__", "eval", "exec"}:
+                    raise ValueError("dynamic machinery")
+                if isinstance(node.func, ast.Attribute) and node.func.attr in {"import_module", "exec_module"}:
+                    raise ValueError("dynamic machinery import")
+            if isinstance(node, ast.Lambda):
+                names = {a.arg for a in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)}
+                expression(path, node.body, locals_=locals_ | names)
+                return
+            for child in ast.iter_child_nodes(node):
+                expression(path, child, locals_=locals_)
+
+        def strings(node):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                return [part.strip() for part in node.value.split(",") if part.strip()]
+            if isinstance(node, (ast.List, ast.Tuple)):
+                return [s for item in node.elts for s in strings(item)]
+            raise ValueError("runtime fixture or parameter names")
+
+        def qualified(path, node, seen=frozenset()):
+            """Recognize pytest decorator aliases without evaluating them."""
+            if isinstance(node, ast.Attribute):
+                return qualified(path, node.value, seen) + "." + node.attr
+            if isinstance(node, ast.Name) and node.id not in seen:
+                binding = read(path)[2].get(node.id)
+                if binding and binding[0] == "import":
+                    return binding[1]
+                if binding and binding[0] == "from" and not binding[1][0].level:
+                    source, name = binding[1]
+                    return (source.module or "") + "." + name
+                if binding and binding[0] == "value":
+                    return qualified(path, binding[1], seen | {node.id})
             return ""
-        if len(files) == 1:
-            return next(iter(files.values()))
-        return digest(sorted((p.relative_to(top).as_posix(), sha) for p, sha in files.items()))
+
+        def fixture_options(path, name, seen=frozenset()):
+            """Discover explicit fixture registration through static re-exports."""
+            if (path, name) in seen:
+                return {}
+            seen = seen | {(path, name)}
+            binding = read(path)[2].get(name)
+            if not binding:
+                return {}
+            kind, value = binding
+            if kind == "from":
+                source, symbol = value
+                imported = module(path, source.module or "", source.level)
+                return fixture_options(imported, symbol, seen) if imported else {}
+            if kind == "value" and isinstance(value, ast.Name):
+                return fixture_options(path, value.id, seen)
+            if kind == "definition" and isinstance(value, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for decorator in value.decorator_list:
+                    if isinstance(decorator, ast.Call) and qualified(path, decorator.func) == "pytest.fixture":
+                        options = {}
+                        for keyword in decorator.keywords:
+                            if keyword.arg in {"name", "autouse"}:
+                                if not isinstance(keyword.value, ast.Constant):
+                                    raise ValueError("runtime fixture registration")
+                                options[keyword.arg] = keyword.value.value
+                        return options
+            return {}
+
+        def definition(path, node, role, inherited=frozenset()):
+            direct = set(inherited)
+            for decorator in node.decorator_list:
+                expression(path, decorator)
+                if not isinstance(decorator, ast.Call):
+                    continue
+                name = qualified(path, decorator.func)
+                if name == "pytest.mark.parametrize":
+                    if len(decorator.args) < 2:
+                        raise ValueError("unresolved parametrization")
+                    names = set(strings(decorator.args[0]))
+                    indirect = next((k.value for k in decorator.keywords if k.arg == "indirect"), ast.Constant(False))
+                    if isinstance(indirect, ast.Constant) and isinstance(indirect.value, bool):
+                        requested = names if indirect.value else set()
+                    else:
+                        requested = set(strings(indirect))
+                    direct.update(names - requested)
+                    for name in requested:
+                        fixture(path, name)
+                elif name == "pytest.mark.usefixtures":
+                    for argument in decorator.args:
+                        for name in strings(argument):
+                            fixture(path, name)
+            if isinstance(node, ast.ClassDef):
+                for base in node.bases:
+                    expression(path, base, "test")
+                for member in node.body:
+                    if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)) and member.name.startswith("test_"):
+                        definition(path, member, "test", direct)
+                return
+            if role in {"test", "fixture"}:
+                for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs):
+                    if arg.arg not in direct | {"self", "cls"}:
+                        fixture(path, arg.arg)
+
+        def resolve(path, parts, role):
+            key = path, parts, role
+            if key in active:
+                raise ValueError("cyclic machinery binding")
+            if key in done:
+                return
+            active.add(key)
+            binding = read(path)[2].get(parts[0])
+            if binding is None:
+                raise ValueError("missing machinery definition")
+            kind, value = binding
+            if kind in {"from", "import"}:
+                if kind == "from":
+                    node, symbol = value
+                    name, level = node.module or "", node.level
+                    tail = (symbol, *parts[1:])
+                else:
+                    name, level, tail = value, 0, parts[1:]
+                imported = module(path, name, level)
+                if imported is None:
+                    if level:
+                        raise ValueError("missing relative machinery")
+                    external(name)
+                else:
+                    include(imported)
+                    if tail:
+                        if tail[0] not in read(imported)[2] and imported.name == "__init__.py":
+                            child = module(imported, tail[0], 1)
+                            if child is None:
+                                raise ValueError("missing package machinery")
+                            include(child)
+                            if len(tail) > 1:
+                                resolve(child, tail[1:], role)
+                        else:
+                            resolve(imported, tail, role)
+                    elif role in {"test", "fixture"}:
+                        raise ValueError("module is not a test or fixture definition")
+            elif kind == "definition" and len(parts) == 1:
+                definition(path, value, role)
+            elif kind == "value" and len(parts) == 1:
+                if value is None or any(isinstance(n, (ast.Call, ast.Await, ast.NamedExpr)) for n in ast.walk(value)):
+                    raise ValueError("runtime machinery value")
+                if role in {"test", "fixture"} and not isinstance(value, (ast.Name, ast.Attribute)):
+                    raise ValueError("runtime test or fixture")
+                expression(path, value, role)
+            else:
+                raise ValueError("runtime machinery binding")
+            active.remove(key)
+            done.add(key)
+
+        try:
+            include(collector)
+            for path in conftests:
+                include(path)
+            if len(files) == 1:
+                return next(iter(files.values()))
+            return digest(sorted((p.relative_to(top).as_posix(), sha) for p, sha in files.items()))
+        except (OSError, SyntaxError, ValueError, RecursionError):
+            return ""
 
     by_file = {n.partition("::")[0]: None for n in checks}
     by_file = {file: identity(file) for file in by_file}
@@ -357,11 +580,21 @@ def check_counts(events: Iterable[Event]) -> dict:
     state = check_state(rows)
     totals = {key: len(state[key]) for key in ("reproduced", "repaired", "open")}
     for task in {e.task for e in rows}:
+        # Legacy aggregate observations have no check to match with a later pass.
+        # Retain their open lower bound here, so every projection uses this rule.
+        anonymous = max((e.data.get("reproduced", 0) for e in rows if e.task == task
+                         and e.kind in ("review_finished", "loop_round")
+                         and not (e.data.get("failed_sha256", e.data.get("open_sha256")) or [])
+                         and not e.data.get("passed_sha256")), default=0)
+        known = {key: sum(t == task for t, _ in state[key]) for key in totals}
+        for key in ("reproduced", "open"):
+            totals[key] += max(0, anonymous - known[key])
         missing = [e for e in rows if e.task == task and e.kind in ("review_finished", "loop_round")
                    and e.data.get("failed_identities_omitted", 0)]
         if not missing:
             continue
-        known = {key: sum(t == task for t, _ in state[key]) for key in totals}
+        known = {key: max(known[key], anonymous) if key in ("reproduced", "open") else known[key]
+                 for key in totals}
         observed = max(len(e.data.get("failed_sha256") or []) + e.data["failed_identities_omitted"] for e in missing)
         totals["reproduced"] += max(0, observed - known["reproduced"])
         totals["open"] += max(known["open"], observed - known["repaired"], 1) - known["open"]
