@@ -2,6 +2,7 @@
 """Distillation routes; consent declarations are issued separately in H1."""
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import asdict
 from functools import wraps
 from inspect import iscoroutinefunction
@@ -22,11 +23,18 @@ def _refusal(exc):
     from g6.core.door import blocked_reply
     from g6.distill.ledger import PartialAuthorityWrite
     if isinstance(exc, PartialAuthorityWrite):
-        state = 'Publication committed; intent cleanup pending' if exc.committed else 'Recovery incomplete'
+        earlier = exc.earlier_publication_committed
+        state = ('Earlier publication committed; its cleanup is incomplete; this request made no change' if earlier
+                 else 'Publication committed; intent cleanup pending' if exc.publication_committed
+                 else 'Recovery incomplete')
         return {**blocked_reply(f'[{exc.code}] {state}; durable state: ' + '; '.join(exc.durable_state)),
-                'durable_state': exc.durable_state, 'publication_committed': exc.committed,
-                'rollback_or_containment': ('The publication committed; its intent still needs cleanup.' if exc.committed
-                                            else 'Undo is incomplete; inspect the named durable state before retrying.')}
+                'durable_state': exc.durable_state, 'publication_committed': exc.publication_committed,
+                **({'earlier_publication_committed': True} if earlier else {}),
+                'rollback_or_containment': (state + '.' if earlier else
+                    'The evaluation reservation committed; no admission decision was made; the method is unchanged.'
+                    if exc.reservation else
+                    'The publication committed; its intent still needs cleanup.' if exc.publication_committed else
+                    'Undo is incomplete; inspect the named durable state before retrying.')}
     code = getattr(exc, 'code', '')
     if isinstance(code, str) and code.startswith('G6_E_'):
         return blocked_reply(f'[{code}] Backend refused the operation; read the current durable state.')
@@ -43,7 +51,7 @@ def _call(fn, *args, **kwargs) -> dict:
         return _refusal(exc)
 
 
-def _owner_decision(fn, *args, **kwargs):
+def _owner_decision(fn, *args, short_transaction=True, **kwargs):
     """Capture the result before the short owner transaction's cleanup can fail."""
     from g6.distill.ledger import PartialAuthorityWrite, failure_writer
 
@@ -52,8 +60,11 @@ def _owner_decision(fn, *args, **kwargs):
 
     result, cleanup = None, {}
     try:
-        with failure_writer():
-            result = asdict(fn(*args, **kwargs))
+        # Restore evaluates outside the store lock and publishes in its own
+        # short transactions. Its activation captures a decision before cleanup.
+        with failure_writer() if short_transaction else nullcontext():
+            answer = fn(*args, **kwargs)
+            result = answer if isinstance(answer, dict) else asdict(answer)
             if result['verdict'] in {'refuse', 'block'}:
                 # The gate catches validation errors outside its own nested
                 # context. Carry that refusal through this outer rollback too.
@@ -61,7 +72,9 @@ def _owner_decision(fn, *args, **kwargs):
     except Refused:
         pass
     except PartialAuthorityWrite as error:
-        if not error.committed or result is None:
+        if result is None:
+            result = error.decision
+        if not error.publication_committed or result is None:
             raise
         cleanup = {'publication_committed': True, 'cleanup_pending': True,
                    'cleanup_note': 'Decision committed; authority_intent.json cleanup pending.',
@@ -145,7 +158,7 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
             result, cleanup = _owner_decision(gate.lift_hold, entry_id, Library(), reason=reason,
                                               person=content["name"].strip())
         elif action == 'restore':
-            result = _call(backend.restore, entry_id)
+            result, cleanup = _owner_decision(backend.restore, entry_id, short_transaction=False)
         else:
             result, cleanup = _owner_decision(getattr(gate, action), entry_id, Library(), reason=reason,
                                               person=content["name"].strip())

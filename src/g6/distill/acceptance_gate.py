@@ -40,7 +40,7 @@ from g6.safety_engine import weakening
 from .detectors import SEED_TEMPLATES
 from .facts import _extract_facts
 from .judging import JUDGING_PATHS
-from .ledger import Stores, append_retained, failure_writer, retain_before_write
+from .ledger import PartialAuthorityWrite, Stores, append_retained, failure_writer, retain_before_write
 from .library import Library
 from .records import (AcceptanceEvidence, Cost, DecidedBy, FieldEvidence,
                       Interval, LibraryEntry, MethodContract, Model, RegressionCase, Sha256,
@@ -715,12 +715,18 @@ def _look_available(registration):
     return journal, index
 
 
-@failure_writer()
 def _spend(registration, candidate, *, snapshot):
-    require_current(snapshot)
-    journal, index = _look_available(registration)
-    reservation = _append(journal, "reserve", {"registration": registration, "candidate_id": candidate.candidate_id,
-                                              "reuse_index": index})
+    reservation = ''
+    try:
+        with failure_writer():
+            require_current(snapshot)
+            journal, index = _look_available(registration)
+            reservation = _append(journal, "reserve", {
+                "registration": registration, "candidate_id": candidate.candidate_id, "reuse_index": index})
+    except PartialAuthorityWrite as error:
+        if error.publication_committed:
+            error.reservation = reservation
+        raise
     return index, reservation
 
 
@@ -745,6 +751,15 @@ def _record(answer, reservation="", *, snapshot=None):
             row['kind'] == 'decision' and canonical(row['body']) == canonical(body) for row in journal.entries())):
         _append(journal, "decision", body)
     return answer
+
+
+@failure_writer()
+def _close_interrupted_reservation(candidate, reservation):
+    """Close this live attempt only; an unrelated unfinished reserve stays open."""
+    if not any(row['kind'] == 'decision' and row['body'].get('reservation') == reservation
+               for row in _journal().entries()):
+        _record(AcceptanceDecision('refuse', (
+            'evaluation interrupted; no admission decision; method unchanged',), candidate.candidate_id), reservation)
 
 
 @failure_writer()
@@ -817,9 +832,16 @@ def _persist(candidate, answer, evidence, own, frozen, data, library, *, snapsho
                    "authority": "A1", "scope": "checked on the registered held-out cases; not proof"}
     # Staging can be interrupted by withdrawal. It never carries authority.
     _save_report(certificate, snapshot=snapshot, provisional=True)
-    with failure_writer():
-        require_current(snapshot)
-        return _activate(candidate, answer, evidence, own, frozen, certificate, previous, now)
+    published = None
+    try:
+        with failure_writer():
+            require_current(snapshot)
+            published = _activate(candidate, answer, evidence, own, frozen, certificate, previous, now)
+    except PartialAuthorityWrite as error:
+        if error.publication_committed and published is not None:
+            error.decision = asdict(published)
+        raise
+    return published
 
 
 def _activate(candidate, answer, evidence, own, frozen, certificate, previous, now):
@@ -1122,6 +1144,14 @@ def _decide_batch(candidates, library, registration, *, restoring=''):
                     answer, evidence, own, data = _assess(candidate, snapshot, frozen, index)
                     require_current(snapshot)
                     evaluated[candidate.candidate_id] = (answer, evidence, own, frozen, data)
+                except PartialAuthorityWrite as error:
+                    # A completed reservation can fail during cleanup before
+                    # _spend returns its id. Close only this live attempt, never
+                    # a reserve left by a genuinely unfinished evaluation.
+                    reservation = reservation or error.reservation
+                    if reservation:
+                        _close_interrupted_reservation(candidate, reservation)
+                    raise
                 except (ValueError, KeyError, FileNotFoundError) as error:
                     # Do not echo corpus bodies, subprocess stderr or model output.
                     reason = str(error) if isinstance(error, ValueError) else "registered input missing"
@@ -1130,8 +1160,14 @@ def _decide_batch(candidates, library, registration, *, restoring=''):
                 results[candidate.candidate_id] = (answer, reservation)
                 # Close the reservation before spending the next look. A later
                 # activation is a separate append-only decision row.
-                recorded = _record(replace(answer, verdict="evaluated") if answer.verdict == "admit_probation" else answer,
-                                   reservation, snapshot=snapshot if answer.verdict == 'admit_probation' else None)
+                try:
+                    recorded = _record(
+                        replace(answer, verdict="evaluated") if answer.verdict == "admit_probation" else answer,
+                        reservation, snapshot=snapshot if answer.verdict == 'admit_probation' else None)
+                except PartialAuthorityWrite:
+                    if reservation:
+                        _close_interrupted_reservation(candidate, reservation)
+                    raise
                 if answer.verdict == 'admit_probation' and recorded.verdict != 'evaluated':
                     evaluated.pop(candidate.candidate_id, None)
                     results[candidate.candidate_id] = (recorded, reservation)
