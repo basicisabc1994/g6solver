@@ -82,7 +82,8 @@ PYTEST_COLLECTION_LOOKUPS = {
     "policies": {
         'receiver': 'Follow receiver hooks and descriptors; dynamic names audit every binding; native metadata is inert.',
         'source-pin': 'Inventory superset, including internal reads; not evidence that a receiver route executes.',
-        'holder': 'dir only on the collected module/class or instance holder; never on a merely bound helper.',
+        'holder': 'dir only on the collected module/class or instance holder; classes become holders only through bound names, never container traversal.',
+        'unresolved-value': 'Every value needs an explicit lookup-result model; unknown bindings, candidates and results are unavailable.',
         'external-result': 'Nonrepository module/call result with no repository argument has inert lookup; executed calls still require admission.',
         'test-flag': 'Unknown effective metaclass __test__ replacement is unavailable, even after following an inert hook.',
     },
@@ -1108,6 +1109,7 @@ MODELLED_OPERATIONS = {
                     "Syntax or control transfer; no repository call."),
     ast.Constant: "Literal value; no repository call.",
     ast.Name: "Resolve all binding candidates; reads alone do not call them.",
+    ast.NamedExpr: "Bind and retain the resolved value; an unknown result stays unavailable.",
     **dict.fromkeys((ast.List, ast.Tuple, ast.Set, ast.Dict),
                     "Build values; elements are followed and hash operands must be plain."),
     **dict.fromkeys((ast.FunctionDef, ast.AsyncFunctionDef),
@@ -1118,7 +1120,7 @@ MODELLED_OPERATIONS = {
     ast.Lambda: "Defer body; follow defaults and called/factory/decorator bodies in lexical scopes that skip classes.",
     ast.Call: "Follow repository callees with arguments/defaults; external calls only by MODELLED_EXTERNAL_CALLS, environment/list policies and owner mark rules.",
     ast.Attribute: "Follow module missing-name hooks and class/instance method lookup on checked receivers/metaclasses; unknown descriptors/results unavailable.",
-    ast.Subscript: "Plain builtin values, installed typing annotations with installed arguments, or classified environment writes; repository hooks unavailable.",
+    ast.Subscript: "Resolve literal list/tuple/dict indexing with constant keys on unchanged containers; plain builtin/typing operations and classified environment writes retain their guards; unknown results unavailable.",
     ast.Import: "Repository modules are read separately; namespace portions must be unique and inside roots.",
     ast.ImportFrom: "Resolve relative levels; refuse stars, lazy module lookup and ambiguous namespace portions.",
     **dict.fromkeys((ast.Global, ast.Nonlocal),
@@ -1127,7 +1129,7 @@ MODELLED_OPERATIONS = {
     **dict.fromkeys((ast.For, ast.While), "Plain iteration/predicate; re-read until bindings and mutated-container sets stop changing."),
     **dict.fromkeys((ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp, ast.comprehension),
                     "Plain iterables and operands; comprehension names skip enclosing classes; re-read mutations."),
-    ast.With: "Installed contextlib.nullcontext; follow body/arguments and require plain values for tuple/list targets.",
+    ast.With: "Installed contextlib.nullcontext; bind its actual enter_result, follow body/arguments and require plain values for tuple/list targets.",
     ast.withitem: "Follow the modeled context expression and binding target.",
     **dict.fromkeys((ast.Try, ast.ExceptHandler), "Follow every body and exception expression."),
     ast.Match: "Plain subject and literal/name patterns only; follow every case.",
@@ -1259,11 +1261,19 @@ class _Scope:
                 assignment(node.target, node.value)
             elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
                 bind(node.target.id, "?unresolved")
-            elif isinstance(node, (ast.For, ast.AsyncFor, ast.withitem)):
-                target = node.optional_vars if isinstance(node, ast.withitem) else node.target
+            elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+                value = self.context_value(node.context_expr)
+                if value is not None:
+                    assignment(node.optional_vars, value)
+                else:
+                    for part in ast.walk(node.optional_vars):
+                        if isinstance(part, ast.Name):
+                            bind(part.id, "?unresolved")
+            elif isinstance(node, (ast.For, ast.AsyncFor)):
+                target = node.target
                 for part in ast.walk(target) if target is not None else ():
                     if isinstance(part, ast.Name):
-                        bind(part.id, "?unresolved")
+                        bind(part.id, self.resolve(node) if isinstance(node, ast.For) else "?unresolved")
             elif isinstance(node, ast.ExceptHandler) and node.name:
                 bind(node.name, "?unresolved")
             elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
@@ -1276,14 +1286,7 @@ class _Scope:
             changed = False
             for name, slot, value in assignments:
                 component_process.checkpoint()
-                if type(value) in _LITERALS:
-                    resolved = self.literal(value)
-                elif isinstance(value, (ast.Name, ast.Attribute, ast.Call, ast.Lambda)):
-                    resolved = self.resolve(value)
-                elif isinstance(value, ast.Constant):
-                    resolved = "?value"
-                else:
-                    resolved = "?unresolved"
+                resolved = self.resolve(value)
                 if slots[name][slot] != resolved:
                     slots[name][slot], changed = resolved, True
                     self.bindings[name] = _merge(slots[name])
@@ -1324,14 +1327,7 @@ class _Scope:
         owner = self.redirect(target.id) if self.parent and target.id in self.globals | self.nonlocals else self
         if owner is None:
             return
-        if type(value) in _LITERALS:
-            binding = self.literal(value)
-        elif isinstance(value, (ast.Name, ast.Attribute, ast.Call, ast.Lambda)):
-            binding = self.resolve(value)
-        elif isinstance(value, ast.Constant):
-            binding = "?value"
-        else:
-            binding = "?unresolved"
+        binding = self.resolve(value)
         merged = _merge((owner.bindings.get(target.id, binding), binding))
         if owner.bindings.get(target.id) != merged:
             owner.bindings[target.id] = merged
@@ -1342,6 +1338,17 @@ class _Scope:
         self.reader.literal_values[key] = (self, node)
         return key
 
+    def context_value(self, expression):
+        """The exact value nullcontext.__enter__ returns; no context fallback."""
+        if (not isinstance(expression, ast.Call) or
+                self.reader.follow(self.resolve(expression.func)) != "contextlib.nullcontext" or
+                len(expression.args) > 1 or any(isinstance(arg, ast.Starred) for arg in expression.args) or
+                any(keyword.arg != "enter_result" for keyword in expression.keywords) or
+                len(expression.args) + len(expression.keywords) > 1):
+            return None
+        return (expression.args[0] if expression.args else expression.keywords[0].value if expression.keywords
+                else ast.Constant(value=None))
+
     def resolve(self, node):
         if isinstance(node, ast.Name):
             if node.id in self.globals | self.nonlocals and self.parent:
@@ -1351,6 +1358,8 @@ class _Scope:
                 return self.bindings[node.id]
             if self.parent:
                 return self.parent.resolve(node)
+            if node.id in ("__file__", "__name__"):
+                return "?value"  # Native module strings, unless explicitly rebound above.
             return f"builtins.{node.id}" if node.id in _VALUE_BUILTINS | {
                 "object", "type", "sorted", "staticmethod", "classmethod", "setattr", "delattr", "property"} else "?unresolved"
         if isinstance(node, ast.Lambda):
@@ -1373,6 +1382,10 @@ class _Scope:
                         external = True
             key = ("?external-call" if external else "?call", self.file, (node.lineno, node.col_offset, self), ())
             self.reader.calls[key] = (self, node)
+            return key
+        if isinstance(node, (ast.Subscript, ast.NamedExpr, ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.IfExp, ast.For)):
+            key = ("?expression", self.file, (node.lineno, node.col_offset, self), ())
+            self.reader.expressions[key] = (self, node)
             return key
         if type(node) in _LITERALS:
             return self.literal(node)
@@ -1404,6 +1417,8 @@ class CollectionEffects:
         self.names = {file: module_names(file, roots) for file in files}
         self.packages = {PurePosixPath(file).parent for file in files if PurePosixPath(file).name == "__init__.py"}
         self.calls = {}
+        self.expressions, self.resolving_values, self.comprehension_scopes = {}, set(), {}
+        self.container_additions, self.mutated_containers = {}, set()
         self.literal_values, self.dirty_containers = {}, set()
         self.decorating, self.returning, self.lambdas = set(), set(), {}
         self.function_scopes, self.active, self.protocol_active = {}, set(), set()
@@ -1517,6 +1532,15 @@ class CollectionEffects:
             return _merge(self.follow(candidate, seen) for candidate in name)
         if name in seen or len(seen) >= MAX_CALL_DEPTH:
             return "?unresolved"
+        if name in self.expressions:
+            if name in self.resolving_values:
+                return "?unresolved"
+            self.resolving_values.add(name)
+            try:
+                owner, expression = self.expressions[name]
+                return self.follow(self._expression_value(owner, expression, (*seen, name)), (*seen, name))
+            finally:
+                self.resolving_values.remove(name)
         if name in self.definitions:
             if name[0] == "?original":
                 return name
@@ -1537,8 +1561,8 @@ class CollectionEffects:
                 if scope is None or not attributes:
                     return "?unresolved"
                 reference = (kind, file, line, (attributes[0],))
-                bindings = [candidate for candidate in _candidates(scope.bindings.get(attributes[0], "?unresolved"))
-                            if candidate != reference and candidate != "?unresolved"]
+                bindings = [candidate for candidate in _candidates(scope.bindings[attributes[0]])
+                            if candidate != reference] if attributes[0] in scope.bindings else []
                 if attributes[0] in self.paths:
                     bindings.append(attributes[0])
                 return self.follow(_attributes(_merge(bindings), attributes[1:]), (*seen, name))
@@ -1571,6 +1595,39 @@ class CollectionEffects:
                                           ("?value",), len(seen) + 1)
             return self.follow(_attributes(resolved, parts[end + 1:]), (*seen, name))
         return name
+
+    def _expression_value(self, scope, node, seen):
+        """Resolve supported expressions, never turn a missing value into data."""
+        if isinstance(node, ast.NamedExpr):
+            return scope.resolve(node.value)
+        if isinstance(node, ast.For):
+            return "?value" if self._plain(node.iter, scope) else "?unresolved"
+        if isinstance(node, ast.Subscript):
+            if self._typing_subscript(node, scope):
+                return "?value"  # An installed typing object with installed arguments.
+            results = []
+            for candidate in _candidates(self.follow(scope.resolve(node.value), seen)):
+                if candidate not in self.literal_values or candidate in self.dirty_containers or candidate in self.mutated_containers:
+                    return "?unresolved"
+                owner, literal = self.literal_values[candidate]
+                key = node.slice
+                if isinstance(literal, (ast.List, ast.Tuple)) and isinstance(key, ast.Constant) and type(key.value) is int:
+                    if not -len(literal.elts) <= key.value < len(literal.elts):
+                        return "?unresolved"
+                    results.append(owner.resolve(literal.elts[key.value]))
+                elif isinstance(literal, ast.Dict) and isinstance(key, ast.Constant):
+                    if not all(isinstance(held, ast.Constant) for held in literal.keys):
+                        return "?unresolved"
+                    matches = [value for held, value in zip(literal.keys, literal.values) if held.value == key.value]
+                    if not matches:
+                        return "?unresolved"
+                    results.extend(owner.resolve(value) for value in matches)
+                else:
+                    return "?unresolved"
+            return _merge(results)
+        # These operations have a modeled builtin result only after every
+        # operand has been resolved as plain. This is no unknown-value fallback.
+        return "?value" if self._plain(node, scope) else "?unresolved"
 
     def _environment(self, node, scope):
         """None means another object; bool is the result for an environ write."""
@@ -1784,8 +1841,7 @@ class CollectionEffects:
             values.get(arg.arg, defaults.get(arg.arg, "?argument")) for arg in arguments)
 
     def _value_binding(self, scope, value):
-        binding = scope.resolve(value)
-        return "?value" if binding == "?unresolved" and self._plain(value, scope) else binding
+        return scope.resolve(value)
 
     def _defaults(self, parent, node):
         positional = [*node.args.posonlyargs, *node.args.args]
@@ -1879,7 +1935,8 @@ class CollectionEffects:
                 return "?unresolved"
             return self._returned(self.follow(scope.resolve(value.func)),
                                   tuple(scope.resolve(arg) for arg in value.args), depth + 1)
-        if isinstance(value, (ast.Name, ast.Attribute)):
+        if isinstance(value, (ast.Name, ast.Attribute, ast.Subscript, ast.NamedExpr,
+                              ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.IfExp)):
             binding = scope.resolve(value)
             # A decorator returning its input must retain the undecorated
             # identity; following that same definition would recurse here.
@@ -1980,9 +2037,9 @@ class CollectionEffects:
                     return "?unresolved"
                 parent, node = self.definitions[candidate]
                 inherited = self._members(self._function_scope(parent, node), name, (*seen, scope))
-                if inherited != "?unresolved":
+                if inherited != "?absent":
                     members.append(inherited)
-        return _merge(members)
+        return _merge(members) if members else "?absent"
 
     def _bound_receiver(self, function, caller, binding):
         parent, node = self.definitions[binding]
@@ -2052,7 +2109,7 @@ class CollectionEffects:
                     for constructor in _candidates(self.follow(caller.resolve(expression.func))):
                         if constructor in self.definitions and isinstance(self.definitions[constructor][1], ast.ClassDef):
                             parent, node = self.definitions[constructor]
-                            if self._members(self._function_scope(parent, node), "__getattribute__") != "?unresolved":
+                            if self._members(self._function_scope(parent, node), "__getattribute__") != "?absent":
                                 return False
                 elif candidate in self.definitions and isinstance(self.definitions[candidate][1], ast.ClassDef):
                     parent, node = self.definitions[candidate]
@@ -2070,7 +2127,7 @@ class CollectionEffects:
                 if candidate not in self.definitions or not isinstance(self.definitions[candidate][1], ast.ClassDef):
                     return True
                 parent, node = self.definitions[candidate]
-                if self._members(self._function_scope(parent, node), "__getattribute__") != "?unresolved":
+                if self._members(self._function_scope(parent, node), "__getattribute__") != "?absent":
                     return True
         for base in scope.class_node.bases:
             for candidate in _candidates(self.follow(scope.declaration_scope.resolve(base))):
@@ -2200,7 +2257,7 @@ class CollectionEffects:
         for candidate in _candidates(self.follow(value)):
             call = self.calls.get(candidate)
             if call is None:
-                if candidate == "?unresolved":
+                if not self._known_value(candidate):
                     return False
                 if candidate in self.definitions:
                     owner, definition = self.definitions[candidate]
@@ -2231,6 +2288,11 @@ class CollectionEffects:
                     if any(keyword.arg == "default" and not self._descriptor(
                             scope.resolve(keyword.value), depth + 1, dataclass=dataclass) for keyword in expression.keywords):
                         return False
+                    continue
+                if constructor == "contextlib.nullcontext":
+                    if scope.context_value(expression) is None:
+                        return False
+                    continue
                 if constructor == "builtins.object.__new__":
                     if len(expression.args) != 1 or expression.keywords:
                         return False
@@ -2242,6 +2304,7 @@ class CollectionEffects:
                             return False
                         if dataclass and not self._plain_descriptor_class(owner, definition, depth + 1):
                             return False
+                    continue
                 if constructor in self.definitions:
                     owner, definition = self.definitions[constructor]
                     if not isinstance(definition, ast.ClassDef) or not self._class(
@@ -2249,8 +2312,7 @@ class CollectionEffects:
                         return False
                     if dataclass and not self._plain_descriptor_class(owner, definition, depth + 1):
                         return False
-                elif (_internal(constructor) or constructor.split(".")[0] in self.modules or
-                      constructor not in MODELLED_EXTERNAL_CALLS):
+                else:
                     return False
         return True
 
@@ -2420,7 +2482,7 @@ class CollectionEffects:
                         part.value.id == owner):
                     continue
                 member = self._members(receiver, part.attr)
-                if member == "?unresolved":
+                if member == "?absent":
                     if not follow_method(part.attr, (*seen, method)):
                         return False
                     continue
@@ -2447,9 +2509,10 @@ class CollectionEffects:
         receiver = receiver or scope
         if not self._class_metaprotocols(scope, depth):
             return False
-        if instantiate and not self._protocols(scope, depth, receiver=receiver,
-                                               metaclass=self._is_metaclass(scope)):
-            return False
+        if instantiate:
+            is_metaclass = self._is_metaclass(scope)
+            if is_metaclass is None or not self._protocols(scope, depth, receiver=receiver, metaclass=is_metaclass):
+                return False
         dataclass = self._dataclass(parent, node, depth)
         if dataclass and not all(self._metaclass_lookup(parent, node, attribute) for attribute in
                                  ("__dict__", "__annotations__", "__mro__", "__hash__")):
@@ -2517,7 +2580,7 @@ class CollectionEffects:
         for part in scope.nodes:
             if isinstance(part, ast.AnnAssign) and isinstance(part.target, ast.Name):
                 default = self._members(scope, part.target.id)
-                if default != "?unresolved" and not self._descriptor(default, depth + 1, dataclass=True):
+                if default != "?absent" and not self._descriptor(default, depth + 1, dataclass=True):
                     return False
                 if scope.file not in self.postponed_annotations and not self._pytest_value(scope.resolve(part.annotation), depth + 1):
                     return False
@@ -2527,19 +2590,26 @@ class CollectionEffects:
                     parent, node = self.definitions[candidate]
                     if not self._class_fields(self._function_scope(parent, node), depth + 1, (*seen, scope)):
                         return False
+                elif candidate not in MODELLED_EXTERNAL_BASES:
+                    return False
         return True
 
     def _is_metaclass(self, scope, seen=()):
         if scope in seen or len(seen) >= MAX_CALL_DEPTH:
-            return False
+            return None
         for base in scope.class_node.bases:
             for candidate in _candidates(self.follow(scope.declaration_scope.resolve(base))):
                 if candidate == "builtins.type":
                     return True
                 if candidate in self.definitions and isinstance(self.definitions[candidate][1], ast.ClassDef):
                     parent, node = self.definitions[candidate]
-                    if self._is_metaclass(self._function_scope(parent, node), (*seen, scope)):
+                    inherited = self._is_metaclass(self._function_scope(parent, node), (*seen, scope))
+                    if inherited is None:
+                        return None
+                    if inherited:
                         return True
+                elif candidate not in MODELLED_EXTERNAL_BASES:
+                    return None
         return False
 
     def _class_metaprotocols(self, scope, depth, seen=()):
@@ -2643,19 +2713,45 @@ class CollectionEffects:
                 return False
         return True
 
+    def _known_value(self, candidate):
+        """Identities with a model, rather than an arbitrary unresolved token."""
+        return (candidate == "?value" or candidate in self.definitions or candidate in self.lambdas or
+                candidate in self.calls or candidate in self.literal_values or
+                isinstance(candidate, str) and not _internal(candidate) and (
+                    candidate in self.paths or candidate.split(".")[0] not in self.modules))
+
+    def _container_mutation(self, binding, value=None):
+        for candidate in _candidates(binding):
+            if candidate not in self.literal_values:
+                continue  # The operation's receiver guard refuses unknowns.
+            if candidate not in self.mutated_containers:
+                self.mutated_containers.add(candidate)
+                self.revision += 1
+            if value is not None:
+                additions = self.container_additions.setdefault(candidate, set())
+                if value not in additions:
+                    additions.add(value)
+                    self.revision += 1
+
     def _pytest_value(self, binding, depth, seen=(), *, binding_name=None):
         if depth > MAX_CALL_DEPTH:
             return False
-        for candidate in _candidates(self.follow(binding)):
-            if candidate in seen:
-                continue
+        candidates = _candidates(self.follow(binding))
+        if not candidates:
+            return False
+        for candidate in candidates:
+            if candidate in seen or not self._known_value(candidate):
+                return False
             if candidate in self.definitions:
                 parent, node = self.definitions[candidate]
                 if isinstance(node, ast.ClassDef):
                     scope = self._function_scope(parent, node)
                     if not self._class_metaprotocols(scope, depth):
                         return False
-                    collected = self._test_class(scope, depth, binding_name=binding_name)
+                    # Only objects bound by name in PyCollector's __dict__
+                    # iteration are collection candidates. Container contents
+                    # retain protocol checks, never become collection holders.
+                    collected = self._test_class(scope, depth, binding_name=binding_name) if binding_name is not None else False
                     if collected is None:
                         return False
                     if collected:
@@ -2693,18 +2789,37 @@ class CollectionEffects:
                         if (len(expression.args) != 1 or expression.keywords or
                                 not self._function_value(expression.args[0], owner)):
                             return False
-                    elif constructor in ("builtins.property", "builtins.type") or constructor not in MODELLED_EXTERNAL_CALLS:
+                    elif constructor == "contextlib.nullcontext":
+                        if owner.context_value(expression) is None:
+                            return False
+                    elif constructor == "builtins.object.__new__":
+                        if len(expression.args) != 1 or expression.keywords:
+                            return False
+                        for allocated in _candidates(self.follow(owner.resolve(expression.args[0]))):
+                            if allocated not in self.definitions or not isinstance(self.definitions[allocated][1], ast.ClassDef):
+                                return False
+                            parent, node = self.definitions[allocated]
+                            if not self._protocols(self._function_scope(parent, node), depth + 1):
+                                return False
+                    else:
+                        # Executing a listed call and understanding the later
+                        # lookup behavior of its result are different models.
                         return False
             elif candidate in self.literal_values:
                 owner, value = self.literal_values[candidate]
                 if isinstance(value, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
                     children = [value.elt]
+                    owner = self.comprehension_scopes.get(value)
                 elif isinstance(value, ast.DictComp):
                     children = [value.key, value.value]
+                    owner = self.comprehension_scopes.get(value)
                 else:
                     children = value.elts if isinstance(value, (ast.Tuple, ast.List, ast.Set)) else [*value.keys, *value.values]
-                if not all(child is not None and self._pytest_value(owner.resolve(child), depth + 1, (*seen, candidate))
+                if owner is None or not all(child is not None and self._pytest_value(owner.resolve(child), depth + 1, (*seen, candidate))
                            for child in children):
+                    return False
+                if not all(self._pytest_value(added, depth + 1, (*seen, candidate))
+                           for added in self.container_additions.get(candidate, ())):
                     return False
             elif isinstance(candidate, str) and candidate in self.paths:
                 files = self.paths[candidate]
@@ -2775,7 +2890,7 @@ class CollectionEffects:
                     return True
                 parent, node = self.definitions[candidate]
                 meta = self._function_scope(parent, node)
-                if any(self._members(meta, name) != "?unresolved" for name in
+                if any(self._members(meta, name) != "?absent" for name in
                        ("__getattribute__", "__getattr__", "__test__")):
                     return True
         for base in scope.class_node.bases:
@@ -2899,13 +3014,12 @@ class CollectionEffects:
             if isinstance(node, ast.For):
                 if not self._plain(node.iter, scope):
                     return False
-                for part in ast.walk(node.target):
-                    if isinstance(part, ast.Name):
-                        scope.bindings[part.id] = "?value"
             if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 for target in targets:
                     scope.assign(target, node.value)
+                    if isinstance(target, ast.Subscript) and node.value is not None and self._environment(target, scope) is not True:
+                        self._container_mutation(self.follow(scope.resolve(target.value)), scope.resolve(node.value))
                     if self._environment(target, scope) is True and (node.value is None or not self._plain(node.value, scope)):
                         return False
             if isinstance(node, (ast.Import, ast.ImportFrom)) and not self._import_allowed(node, scope):
@@ -2922,6 +3036,7 @@ class CollectionEffects:
                                    not self._plain(node.slice, scope)):
                     return False
                 if isinstance(node.ctx, (ast.Store, ast.Del)):
+                    self._container_mutation(owner)
                     self.dirty_containers.update(_candidates(owner))
             if not self._operands_allowed(node, scope):
                 return False
@@ -2938,6 +3053,9 @@ class CollectionEffects:
             if isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Attribute):
                     owner = self.follow(scope.resolve(node.func.value))
+                    if (_owned_container(owner, scope.file, ("?list",)) and
+                            node.func.attr in ("append", "extend", "insert") and node.args):
+                        self._container_mutation(owner, scope.resolve(node.args[-1]))
                     if _owned_container(owner, scope.file) and not all(self._plain(value, scope) for value in
                             [*node.args, *(keyword.value for keyword in node.keywords)]):
                         self.dirty_containers.update(_candidates(owner))
@@ -3060,8 +3178,6 @@ class CollectionEffects:
                     all(self._installed_argument(value, scope, seen) for value in
                         [*node.args, *(keyword.value for keyword in node.keywords)]))
         binding = self.follow(scope.resolve(node))
-        if (isinstance(node, ast.Name) and node.id in ("__file__", "__name__") and binding == "?unresolved"):
-            return True
         constants = _PLAIN_EXTERNAL_VALUES | _INSTALLED_TYPES | {
             "typing.Any", "typing.NoReturn", "typing.Never", "typing.LiteralString",
             "re.ASCII", "re.IGNORECASE", "re.LOCALE", "re.MULTILINE", "re.DOTALL", "re.UNICODE", "re.VERBOSE",
@@ -3103,6 +3219,7 @@ class CollectionEffects:
                 return False
             expressions.extend(generator.ifs)
         expressions.extend([node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt])
+        self.comprehension_scopes[node] = inner
         return self._scan(expressions, inner, depth + 1, strict=True) and (
             not isinstance(node, (ast.SetComp, ast.DictComp)) or
             self._plain(node.key if isinstance(node, ast.DictComp) else node.elt, inner))
