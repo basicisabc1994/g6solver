@@ -2444,3 +2444,119 @@ def test_rejected_reuse_evidence_survives_callback_interruption(
     assert families.describe("load_state")["available"] is True
     monkeypatch.delitem(sys.modules, REQUIRED)
     _rfu6_transfer_required_file(dependencies, specs, saved, tmp_path)
+
+
+@pytest.mark.parametrize("entry", ("discovery", "failed-describe", "failed-inventory"))
+@pytest.mark.parametrize("hint", ("file", "origin", "namespace", "root-cache", "child-cache"))
+def test_pending_required_evidence_precedes_failed_load_classification(
+        tmp_path, monkeypatch, request, entry, hint):
+    from g6.mcp import registrations
+
+    # Capture the real finder before ownership replaces importlib.util.find_spec
+    # globally; inventory must still discover the installed vendored skills.
+    real_find_spec = util.find_spec
+    dependencies, specs, families = request.getfixturevalue("_rfu5_r2_describe_server")
+
+    def find_spec(name):
+        if name.split(".", 1)[0] in (REQUIRED, OPTIONAL):
+            return specs.get(name)
+        return real_find_spec(name)
+
+    monkeypatch.setattr(dependencies.util, "find_spec", find_spec)
+    assert dependencies.util.find_spec("g6.skills") is not None
+    _repair3_extra_required_metadata(dependencies, monkeypatch)
+    source, saved = tmp_path / "observed.py", tmp_path / "saved.py"
+    namespace = hint == "namespace"
+
+    def create():
+        if namespace:
+            source.mkdir()
+        else:
+            source.write_text("value = 74\n", encoding="utf-8")
+
+    name = REQUIRED if hint == "root-cache" else REQUIRED + ".pending"
+    loaded = ModuleType(name)
+    loaded.__spec__ = machinery.ModuleSpec(name, loader=None, origin="frozen")
+    if hint == "file":
+        loaded.__file__ = str(source)
+    elif hint == "origin":
+        loaded.__spec__.origin = str(source)
+    elif namespace:
+        loaded.__path__ = [str(source)]
+        loaded.__spec__.submodule_search_locations = [str(source)]
+    else:
+        loaded.__spec__.cached = loaded.__cached__ = str(source)
+    monkeypatch.setitem(sys.modules, name, loaded)
+    if "cache" not in hint:
+        create()
+    assert families.describe("load_state")["available"] is True
+    if source.exists():
+        source.rename(tmp_path / "retired")
+    create()
+    stat, observed = dependencies._stat_identity, []
+    guard = ModuleType(REQUIRED + ".guard")
+
+    def interrupt(attribute):
+        if attribute == "__path__":
+            raise SystemExit("pending recording interrupted")
+        raise AttributeError(attribute)
+
+    guard.__getattr__ = interrupt
+
+    def move_after_probe(path):
+        assert not dependencies._ownership_lock._is_owned()
+        result = stat(path)
+        if os.fspath(path) == str(source) and not observed:
+            observed.append(result)
+            source.rename(saved)
+            monkeypatch.setitem(sys.modules, guard.__name__, guard)
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(dependencies, "_stat_identity", move_after_probe)
+        with pytest.raises(SystemExit, match="pending recording interrupted"):
+            families.describe("load_state")
+    assert observed == [stat(saved)]
+    assert dependencies._pending_reuse_evidence
+    monkeypatch.delitem(sys.modules, guard.__name__)
+    monkeypatch.delitem(sys.modules, name)
+    if namespace:
+        spec = machinery.ModuleSpec(OPTIONAL, loader=None, is_package=True)
+        spec.submodule_search_locations = [str(saved)]
+    else:
+        spec = util.spec_from_file_location(OPTIONAL, saved)
+    specs[OPTIONAL] = spec
+    failure = ModuleNotFoundError("failed before recording", name=OPTIONAL)
+
+    def failed_load(target):
+        assert not dependencies._ownership_lock._is_owned()
+        raise failure
+
+    monkeypatch.setattr(registrations, "_load", failed_load)
+    family = families.family_for({"id": "mcp:abstraction/load_state", "kind": "mcp"})
+
+    def classify():
+        if entry == "discovery":
+            # Ownership is process-wide even when this scope has no required extras.
+            return OPTIONAL in _roots(dependencies, SCOPES[2])
+        try:
+            result = (families.describe("load_state") if entry == "failed-describe"
+                      else families.inventory(family))
+        except ModuleNotFoundError as exc:
+            assert exc is failure
+            return False
+        if entry == "failed-describe":
+            assert result["available"] is False and "install" in result
+        else:
+            row = next(row for row in result if row["id"] == "mcp:abstraction/load_state")
+            assert row["available"] is False and "install" in row
+        return True
+
+    if entry == "discovery":
+        assert classify() is (hint == "child-cache"), "pending required evidence bypassed discovery"
+    else:
+        # The alias exists, so even an optional installed-module failure is a defect.
+        assert classify() is False
+    specs.clear()
+    saved.rmdir() if namespace else saved.unlink()
+    assert classify() is (hint == "child-cache"), "pending required evidence received optional recovery"
