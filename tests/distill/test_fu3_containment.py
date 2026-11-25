@@ -643,3 +643,265 @@ def test_unreadable_intent_reply_survives_refused_library_diagnostic(home, monke
     assert 'library unreadable/authority unknown' in reply['durable_state']
     assert 'authority_intent.json' in str(reply['durable_state'])
     assert ledger._intent_path().read_bytes() == pending
+
+
+@pytest.mark.parametrize('sibling', ['inside', 'outside'])
+def test_repair1_undo_replaces_only_the_target_name(home, tmp_path, sibling):
+    other = (home if sibling == 'inside' else tmp_path) / 'other.dat'
+    other.write_bytes(b'keep the other name')
+    target = state_path('distill', 'retained.dat')
+    os.link(other, target)
+    try:
+        plant([undo('distill/retained.dat', b'undo bytes')])
+        assert distill._call(surface.library) == {'entries': []}
+        assert target.read_bytes() == b'undo bytes'
+        assert other.read_bytes() == b'keep the other name'
+        assert not os.path.samefile(target, other)
+        assert not ledger._intent_path().exists()
+    finally:
+        target.unlink(missing_ok=True)
+
+
+def test_repair1_failed_undo_replace_keeps_intent_and_target(home, monkeypatch):
+    target = state_path('distill', 'retained.dat')
+    target.write_bytes(b'half-published')
+    plant([undo('distill/retained.dat', b'before')])
+    pending = ledger._intent_path().read_bytes()
+    replace, attempts = os.replace, []
+
+    def refuse(source, destination):
+        if Path(destination) == target:
+            attempts.append(True)
+            assert Path(source).parent == target.parent
+            assert Path(source).read_bytes() == b'before'
+            raise PermissionError('undo replacement refused')
+        return replace(source, destination)
+
+    monkeypatch.setattr(os, 'replace', refuse)
+    reply = distill._call(surface.library)
+    assert reply['warning_card']['code'] == ledger.PartialAuthorityWrite.code
+    assert attempts == [True]
+    assert target.read_bytes() == b'half-published'
+    assert ledger._intent_path().read_bytes() == pending
+    assert {p.name for p in target.parent.iterdir()} == {
+        'retained.dat', 'authority_intent.json', 'failure_records.lock'}
+
+
+@pytest.mark.parametrize('door', ['owner', 'failure_record', 'library'])
+def test_repair1_earlier_cleanup_never_claims_this_request_committed(home, monkeypatch, door):
+    target = state_path('distill', 'retained.dat')
+    target.write_bytes(b'committed')
+    plant([undo('distill/retained.dat', b'before')], committed=True)
+    pending = ledger._intent_path().read_bytes()
+    fail_cleanup(monkeypatch)
+    reached = []
+    if door == 'owner':
+        reply = distill._call(distill._owner_decision, lambda: reached.append(True))
+    elif door == 'failure_record':
+        reply = handlers(monkeypatch)['g6_failure_record']('missed_defect', 'test_weakening', '{}', 'reported')
+    else:
+        reply = distill._call(surface.library)
+    assert reply['publication_committed'] is False
+    assert reply['earlier_publication_committed'] is True
+    assert reply['completion_state'] == 'blocked-escalated'
+    assert reply['warning_card']['code'] == ledger.PartialAuthorityWrite.code
+    words = reply['rollback_or_containment'].lower()
+    assert 'earlier publication committed' in words and 'cleanup' in words
+    assert 'this request made no change' in words
+    assert not reached and 'verdict' not in reply
+    assert target.read_bytes() == b'committed'
+    assert ledger._intent_path().read_bytes() == pending
+    assert not state_path('distill', 'failure_records.jsonl').exists()
+
+
+def repair1_cleanup_failures(monkeypatch, *, times=1, target=None):
+    unlink, failed = Path.unlink, []
+
+    def remove(path, *args, **kwargs):
+        if path == ledger._intent_path() and path.exists() and len(failed) < times:
+            body = json.loads(path.read_text(encoding='utf-8'))['body']
+            names = [row['path'] for row in body['writes']]
+            if body['committed'] and (target is None or target in names):
+                failed.append(names)
+                raise PermissionError('private cleanup diagnostic')
+        return unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'unlink', remove)
+    return failed
+
+
+@pytest.mark.parametrize('boundary', ['activation', 'reservation'])
+def test_repair1_restore_reply_and_reservation_retry(tmp_path, monkeypatch, boundary):
+    from g6.distill import records as r
+    from g6.mcp import consent
+    from g6.mcp.distill_backend import Service
+    from tests.distill import test_acceptance_gate as acceptance
+    from tests.distill.test_records import bodies
+
+    _, candidate, _, frozen, _ = acceptance.rig.__wrapped__(monkeypatch, tmp_path)
+    withdrawn = r.LibraryEntry(**(bodies()[4][1] | {
+        'candidate_id': candidate.candidate_id, 'status': 'withdrawn', 'authority': 'A0',
+        'regression_suite': [{'case_ref': frozen.acceptance[0].case.case_id, 'verdict': 'concern'}]}))
+    ledger.Stores().for_model(r.LibraryEntry).put(withdrawn)
+    tools = {}
+
+    class Server:
+        def tool(self):
+            return lambda fn: tools.setdefault(fn.__name__, fn)
+
+    async def accept(*args):
+        return 'accept', {'confirm': 'change', 'name': 'Owner'}, ''
+
+    monkeypatch.setattr(consent, 'elicit', accept)
+    distill.register(Server(), object, None, backend=Service(registration=frozen.registration_sha256))
+    failed = repair1_cleanup_failures(monkeypatch, target=(
+        'distill/library.jsonl' if boundary == 'activation' else 'distill/acceptance_gate.jsonl'))
+    reply = asyncio.run(tools['g6_library_decide'](withdrawn.entry_id, 'restore', 'restore it', object()))
+    assert len(failed) == 1
+    if boundary == 'activation':
+        assert reply['verdict'] == 'admit_probation'
+        assert reply['publication_committed'] is True and reply['cleanup_pending'] is True
+        assert (Library().list()[0].status, Library().list()[0].authority) == ('probation', 'A1')
+    else:
+        assert Library().list() == [withdrawn]
+        rows = gate._journal().entries()
+        pending = {row['id'] for row in rows if row['kind'] == 'reserve'}
+        pending -= {row['body']['reservation'] for row in rows if row['kind'] == 'decision'}
+        assert pending == set()
+        retry = asyncio.run(tools['g6_library_decide'](withdrawn.entry_id, 'restore', 'restore it', object()))
+        assert retry['verdict'] == 'admit_probation'
+        assert Library().list()[0].status == 'probation'
+
+
+def test_repair1_real_unfinished_evaluation_still_requires_owner_recovery(home):
+    with ledger.failure_writer():
+        gate._append(gate._journal(), 'reserve', {'registration': 'a' * 64, 'candidate_id': 'b' * 64})
+    with pytest.raises(ValueError, match='unfinished evaluation requires owner recovery'):
+        gate._look_available('a' * 64)
+
+
+@pytest.mark.parametrize('door', ['check', 'apply_review'])
+def test_repair1_committed_fire_survives_unavailable_final_read(tmp_path, monkeypatch, door):
+    frozen = runtime.disk.__wrapped__(monkeypatch, tmp_path)
+    runtime.admit(runtime.method(), frozen)
+    failed = repair1_cleanup_failures(monkeypatch, times=2)
+    if door == 'check':
+        [found] = review.check(runtime.BEFORE, runtime.AFTER)
+    else:
+        reasons, runs = [], []
+        review.apply_review(runtime.BEFORE, runtime.AFTER, reasons, runs)
+        assert len(runs) == 1
+        found = runs[0]['library']
+        assert any(reason['code'] == 'library_unavailable' for reason in reasons)
+    assert len(failed) == 2
+    assert found['field_recorded'] is True and found['publication_committed'] is True
+    assert 'cleanup' in found['field_note'].lower()
+    assert found['authority'] == 'A0' and found['verdict'] == 'abstain'
+    assert len(ChainLedger(state_path('distill', 'field_fires_ledger.jsonl')).entries()) == 1
+
+
+@pytest.mark.parametrize('door', ['apply_review', 'learned'])
+def test_repair1_deep_intent_is_unavailable_without_ending_review(home, door):
+    ledger._intent_path().write_text('[' * 200_000, encoding='utf-8')
+    if door == 'apply_review':
+        reasons, runs = [], []
+        review.apply_review(runtime.BEFORE, runtime.AFTER, reasons, runs)
+        assert runs == []
+        assert [reason['code'] for reason in reasons] == ['library_unavailable']
+        assert 'authority_intent.json' in reasons[0]['detail']
+    else:
+        reply = review.check_learned({'repo': 'invalid/name', 'files': {},
+                                      'regression': {'learned': {'entry_id': ''}}})
+        assert (reply['status'], reply['authority'], reply['library']) == ('not_run', 'A0', [])
+        assert reply['code'] == 'library_unavailable'
+        assert 'authority_intent.json' in reply['reason']
+
+
+def test_repair1_atomic_undo_keeps_commit_marker_error_recovery(home, monkeypatch):
+    target = state_path('distill', 'retained.dat')
+    target.write_bytes(b'before')
+    replace, marked = os.replace, []
+
+    def fail_marker(source, destination):
+        marker = (Path(destination) == ledger._intent_path()
+                  and json.loads(Path(source).read_text(encoding='utf-8'))['body']['committed'])
+        replace(source, destination)
+        if marker and not marked:
+            marked.append(True)
+            raise OSError('commit marker changed before error')
+
+    monkeypatch.setattr(os, 'replace', fail_marker)
+    with pytest.raises(OSError, match='commit marker changed before error'):
+        with ledger.failure_writer():
+            ledger.retain_before_write(target, after=b'after')
+            target.write_bytes(b'after')
+    assert marked == [True]
+    assert target.read_bytes() == b'before'
+    assert not ledger._intent_path().exists()
+
+
+@pytest.mark.parametrize('boundary', ['assessment', 'receipt'])
+def test_repair1_interrupted_evaluation_closes_its_own_reserve(tmp_path, monkeypatch, boundary):
+    from tests.distill import test_acceptance_gate as acceptance
+
+    _, candidate, _, frozen, _ = acceptance.rig.__wrapped__(monkeypatch, tmp_path)
+    name = '_assess' if boundary == 'assessment' else '_record'
+    original, interrupted = getattr(gate, name), []
+
+    def fail_once(*args, **kwargs):
+        if not interrupted:
+            interrupted.append(True)
+            raise ledger.PartialAuthorityWrite((state_path('distill', 'acceptance_gate.jsonl'),))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(gate, name, fail_once)
+    with pytest.raises(ledger.PartialAuthorityWrite):
+        gate.decide(candidate, Library(), frozen.registration_sha256)
+    rows = gate._journal().entries()
+    [reservation] = [row['id'] for row in rows if row['kind'] == 'reserve']
+    assert any(row['kind'] == 'decision' and row['body']['reservation'] == reservation
+               and row['body']['verdict'] == 'refuse' for row in rows)
+    assert Library().list() == []
+    assert gate.decide(candidate, Library(), frozen.registration_sha256).verdict == 'admit_probation'
+
+
+def test_repair1_failed_atomic_recovery_stops_later_library_methods(tmp_path, monkeypatch):
+    frozen = runtime.disk.__wrapped__(monkeypatch, tmp_path)
+    runtime.admit(runtime.method(), frozen)
+    runtime.admit(runtime.method(template='weakening.v1'), frozen)
+    target = state_path('distill', 'retained.dat')
+    target.write_bytes(b'half-published')
+    writer, replace, run = review.failure_writer, os.replace, gate._run
+    attempts, ran, pending = [], [], []
+
+    def pending_before_lock(*, reading=False):
+        if not reading and not pending:
+            plant([undo('distill/retained.dat', b'before')])
+            pending.append(ledger._intent_path().read_bytes())
+        return writer(reading=reading)
+
+    def fail_once(source, destination):
+        if Path(destination) == target and not attempts:
+            attempts.append(True)
+            raise PermissionError('transient undo replacement failure')
+        return replace(source, destination)
+
+    def execute(*args, **kwargs):
+        ran.append(args[0].candidate_id)
+        return run(*args, **kwargs)
+
+    monkeypatch.setattr(review, 'failure_writer', pending_before_lock)
+    monkeypatch.setattr(os, 'replace', fail_once)
+    monkeypatch.setattr(gate, '_run', execute)
+    reasons, runs = [], []
+    review.apply_review(runtime.BEFORE, runtime.AFTER, reasons, runs)
+    assert runs == []
+    assert [reason['code'] for reason in reasons] == ['library_unavailable']
+    assert 'authority_intent.json' in reasons[0]['detail']
+    assert attempts == [True] and len(ran) == 1
+    assert ledger._intent_path().read_bytes() == pending[0]
+    assert target.read_bytes() == b'half-published'
+    assert not ChainLedger(state_path('distill', 'field_fires_ledger.jsonl')).entries()
+    assert Library().list()
+    assert target.read_bytes() == b'before'
+    assert not ledger._intent_path().exists()
