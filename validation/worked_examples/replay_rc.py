@@ -18,7 +18,8 @@ import subprocess
 import sys
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePath, PureWindowsPath
 from statistics import median
@@ -210,8 +211,8 @@ def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False,
                         raise ValueError(f"archive path escapes source: {path}")
                 else:
                     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
-                    if not last or not readable:
-                        flags |= os.O_DIRECTORY if not last else 0
+                    if not last or directory:
+                        flags |= os.O_DIRECTORY
                     handle = os.open(component if component is not None else path.anchor,
                                      flags, dir_fd=handles[-1] if handles else None)
                     handles.append(handle)
@@ -1270,6 +1271,19 @@ def _well_formed_case(case: Any) -> bool:
             and all(isinstance(origin, dict) for origin in case["origins"]))
 
 
+@dataclass
+class _OriginPins:
+    source: Path | None
+    handles: ExitStack = field(default_factory=ExitStack)
+    identities: dict[str, tuple[int, int] | None] = field(default_factory=dict)
+    folders: list[tuple[Path, Path, _Opened]] = field(default_factory=list)
+
+
+# Lookup hooks keep their two-argument interface. Each comparison owns its
+# handles independently, including nested comparisons and concurrent threads.
+_ORIGIN_PINS: ContextVar[_OriginPins | None] = ContextVar("origin_pins", default=None)
+
+
 def _origin_run_identity(run: Any, source: Path | None = None) -> str | tuple[int, int] | None:
     """Read a retained folder handle's identity, or keep an unchecked name exact."""
     if not _relative_evidence_name(run):
@@ -1279,8 +1293,18 @@ def _origin_run_identity(run: Any, source: Path | None = None) -> str | tuple[in
             # Current batches retain relative names, never a source root. Do
             # not open a folder named by saved data just to compare its name.
             return run
+        pins = _ORIGIN_PINS.get()
+        if pins is not None and pins.source == source and run in pins.identities:
+            return pins.identities[run]
         archive = Source(source)
-        with _open_handle(archive.path(run), root=archive.root, directory=True, identify=True) as opened:
+        path = archive.path(run)
+        walk = _open_handle(path, root=archive.root, directory=True, identify=True)
+        if pins is not None and pins.source == source:
+            opened = pins.handles.enter_context(walk)
+            pins.folders.append((path, archive.root, opened))
+            pins.identities[run] = opened.identity
+            return opened.identity
+        with walk as opened:
             return opened.identity
     except (OSError, RuntimeError, ValueError):
         return None
@@ -1307,29 +1331,39 @@ def _unique_origin_digests(cases: list[Case], *, source: Path | None = None) -> 
     """An archived run supplies one final.patch across all bugs and cases."""
     digests = {}
     names = {}
-    for case in cases:
-        for origin in case.origins:
-            name = origin.get("run")
-            run = _origin_run_identity(name, source)
-            if run is None:
+    pins = _OriginPins(source)
+    token = _ORIGIN_PINS.set(pins)
+    try:
+        for case in cases:
+            for origin in case.origins:
+                name = origin.get("run")
+                run = _origin_run_identity(name, source)
+                if run is None:
+                    return False
+                # A pinned exact name and its identity each bind one digest.
+                if names.setdefault(name, case.digest) != case.digest:
+                    return False
+                if source is None and run not in digests and any(
+                        _origin_names_may_alias(run, other) for other in digests):
+                    return False
+                if digests.setdefault(run, case.digest) != case.digest:
+                    return False
+        if source is not None and os.name != "nt":
+            # POSIX permits renaming open directories. Keep the original fds
+            # held while checking that every no-follow name still reaches them.
+            try:
+                for path, root, held in pins.folders:
+                    with _open_handle(path, root=root, directory=True, identify=True) as current:
+                        if current.identity != held.identity:
+                            return False
+            except (OSError, RuntimeError, ValueError):
                 return False
-            # Look up every occurrence as before, then also bind its exact name.
-            # A replacement between lookups must not let that name bind twice.
-            if names.setdefault(name, case.digest) != case.digest:
-                return False
-            if source is None and run not in digests and any(
-                    _origin_names_may_alias(run, other) for other in digests):
-                return False
-            if digests.setdefault(run, case.digest) != case.digest:
-                return False
-    if source is not None:
-        for name, digest in names.items():
-            run = _origin_run_identity(name, source)
-            # The name joins every identity it has taken on, including this
-            # final read. Each identity in that group must share its digest.
-            if run is None or digests.setdefault(run, digest) != digest:
-                return False
-    return True
+        return True
+    finally:
+        try:
+            pins.handles.close()
+        finally:
+            _ORIGIN_PINS.reset(token)
 
 
 def _current_evaluation(saved: dict, registration: Registration, start: dict | Path | None,

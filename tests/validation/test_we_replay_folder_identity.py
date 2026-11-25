@@ -373,3 +373,219 @@ def test_source_second_lookup_failure_scores_incomplete(batch, monkeypatch, caps
     assert (status, result["evidence_source"], result["predictions"]["P2"]["status"]) == (
         2, "unavailable", "incomplete")
     assert len(reads) >= 2 and reads[0] is not None and reads[1] is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows rename sharing")
+@pytest.mark.parametrize("level", ["origin", "parent"])
+@pytest.mark.parametrize("conflict", [False, True], ids=["equal-digests", "different-digests"])
+def test_source_pins_origin_and_parent_for_whole_comparison(tmp_path, monkeypatch, level, conflict):
+    name, alias = "run/synthetic/Origin", "run/synthetic/origin"
+    folder = tmp_path / name
+    folder.mkdir(parents=True)
+    if not (tmp_path / alias).exists():
+        pytest.skip("requires case aliases; no directory flags changed")
+    assert folder.samefile(tmp_path / alias)
+    moved = folder if level == "origin" else folder.parent
+    original = rc._origin_run_identity
+    reads = []
+
+    def identify(run, source=None):
+        identity = original(run, source)
+        reads.append((run, identity))
+        # The lookup has returned, but its whole walk must still be held.
+        with pytest.raises(PermissionError):
+            moved.rename(tmp_path / "during-comparison")
+        return identity
+
+    monkeypatch.setattr(rc, "_origin_run_identity", identify)
+    cases = [SimpleNamespace(origins=[{"run": run}], digest=digest)
+             for run, digest in [(name, "a" * 64), (alias, "b" * 64 if conflict else "a" * 64)]]
+    assert rc._unique_origin_digests(cases, source=tmp_path) is (not conflict)
+    assert [run for run, _ in reads] == [name, alias]
+    assert reads[0][1] is not None and reads[0][1] == reads[1][1]
+    moved.rename(tmp_path / "after-comparison")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows handle identities")
+@pytest.mark.parametrize("size,conflict", [(2, True), (3, True), (3, False)],
+                         ids=["two-name-conflict", "three-name-conflict", "three-name-equal"])
+def test_pinned_names_share_one_digest_per_identity(tmp_path, monkeypatch, size, conflict):
+    names = [f"run/synthetic/origin-{number}" for number in range(size)]
+    for name in names:
+        (tmp_path / name).mkdir(parents=True)
+    real = rc._WindowsAPI.file_identity
+    identities = []
+
+    def shared_identity(api, handle):
+        identity = real(api, handle)
+        if identities:
+            # The previous name remains pinned while this name is queried.
+            with pytest.raises(PermissionError):
+                (tmp_path / names[0]).rename(tmp_path / "during-comparison")
+        identities.append(identity)
+        # Model several real pinned names reporting one filesystem identity.
+        return identities[0]
+
+    monkeypatch.setattr(rc._WindowsAPI, "file_identity", shared_identity)
+    cases = [SimpleNamespace(origins=[{"run": name}],
+                             digest="b" * 64 if conflict and number == size - 1 else "a" * 64)
+             for number, name in enumerate(names)]
+    assert rc._unique_origin_digests(cases, source=tmp_path) is (not conflict)
+    assert len(identities) == size
+    for number, name in enumerate(names):
+        (tmp_path / name).rename(tmp_path / f"closed-{number}")
+
+
+@pytest.fixture
+def process_handle_count():
+    if os.name != "nt":
+        pytest.skip("Windows process handle counts")
+    import ctypes
+    from ctypes import wintypes as w
+
+    kernel = rc._WindowsAPI().kernel
+    kernel.GetCurrentProcess.restype = w.HANDLE
+    kernel.GetProcessHandleCount.argtypes = [w.HANDLE, ctypes.POINTER(w.DWORD)]
+    kernel.GetProcessHandleCount.restype = w.BOOL
+
+    def count():
+        result = w.DWORD()
+        assert kernel.GetProcessHandleCount(kernel.GetCurrentProcess(), ctypes.byref(result))
+        return result.value
+
+    return count
+
+
+@pytest.mark.parametrize("outcome", ["normal", "unbound", "exception"])
+def test_pinned_comparison_closes_all_process_handles(
+        tmp_path, monkeypatch, process_handle_count, outcome):
+    names = [f"run/synthetic/{number}" for number in range(5)]
+    for name in names:
+        (tmp_path / name).mkdir(parents=True)
+    cases = [SimpleNamespace(origins=[{"run": name}], digest="a" * 64) for name in names]
+    assert rc._unique_origin_digests(cases, source=tmp_path)  # load DLLs before the baseline
+    real = rc._WindowsAPI.file_identity
+    queries = []
+
+    def file_identity(api, handle):
+        queries.append(real(api, handle))
+        if len(queries) > 1:
+            with pytest.raises(PermissionError):
+                (tmp_path / names[0]).rename(tmp_path / "during-comparison")
+        if len(queries) == 3:
+            if outcome == "unbound":
+                raise OSError("synthetic pinned identity failure")
+            if outcome == "exception":
+                raise LookupError("synthetic comparison interruption")
+        return queries[-1]
+
+    monkeypatch.setattr(rc._WindowsAPI, "file_identity", file_identity)
+    baseline = process_handle_count()
+    for _ in range(10):
+        queries.clear()
+        if outcome == "exception":
+            with pytest.raises(LookupError, match="synthetic comparison interruption"):
+                rc._unique_origin_digests(cases, source=tmp_path)
+        else:
+            assert rc._unique_origin_digests(cases, source=tmp_path) is (outcome == "normal")
+        assert len(queries) == (5 if outcome == "normal" else 3)
+        assert len(set(queries)) == len(queries)  # no name is queried twice
+        assert process_handle_count() == baseline
+    for number, name in enumerate(names):
+        (tmp_path / name).rename(tmp_path / f"closed-{number}")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows retained ancestor handles")
+@pytest.mark.parametrize("kind", ["missing", "file"])
+def test_pinned_comparison_open_failure_closes_prior_names(
+        tmp_path, monkeypatch, process_handle_count, kind):
+    first, unavailable = "run/synthetic/first", "run/synthetic/unavailable"
+    folder = tmp_path / first
+    folder.mkdir(parents=True)
+    if kind == "file":
+        (tmp_path / unavailable).write_bytes(b"not a directory")
+    original = rc._origin_run_identity
+    assert original(first, tmp_path) is not None
+
+    def identify(run, source=None):
+        if run == unavailable:
+            with pytest.raises(PermissionError):
+                folder.rename(tmp_path / "during-comparison")
+        return original(run, source)
+
+    monkeypatch.setattr(rc, "_origin_run_identity", identify)
+    cases = [SimpleNamespace(origins=[{"run": name}], digest="a" * 64)
+             for name in [first, unavailable]]
+    baseline = process_handle_count()
+    assert not rc._unique_origin_digests(cases, source=tmp_path)
+    assert process_handle_count() == baseline
+    folder.rename(tmp_path / "after-comparison")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows pinned identity query count")
+def test_repeated_source_name_is_opened_and_identified_once(tmp_path, monkeypatch):
+    name = "run/synthetic/origin"
+    (tmp_path / name).mkdir(parents=True)
+    real = rc._WindowsAPI.file_identity
+    queries = []
+
+    def file_identity(api, handle):
+        queries.append(real(api, handle))
+        return queries[-1]
+
+    monkeypatch.setattr(rc._WindowsAPI, "file_identity", file_identity)
+    case = SimpleNamespace(origins=[{"run": name}, {"run": name}], digest="a" * 64)
+    assert rc._unique_origin_digests([case, case], source=tmp_path)
+    assert len(queries) == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX held directory descriptors")
+@pytest.mark.parametrize("change", ["none", "origin", "parent", "missing", "exception"])
+def test_posix_comparison_holds_descriptors_and_rechecks_names(tmp_path, monkeypatch, change):
+    first, second = "run/synthetic/first", "run/synthetic/second"
+    for name in [first, second]:
+        (tmp_path / name).mkdir(parents=True)
+    folder = tmp_path / first
+    info = folder.stat()
+    original = rc._origin_run_identity
+    real_open, real_close, real_fstat = rc.os.open, rc.os.close, rc.os.fstat
+    active, reads = set(), []
+
+    def open_fd(*args, **kwargs):
+        fd = real_open(*args, **kwargs)
+        active.add(fd)
+        return fd
+
+    def close_fd(fd):
+        real_close(fd)
+        active.remove(fd)
+
+    def identify(run, source=None):
+        identity = original(run, source)
+        reads.append(run)
+        assert any((real_fstat(fd).st_dev, real_fstat(fd).st_ino) == (info.st_dev, info.st_ino)
+                   for fd in active), "first origin descriptor was closed during comparison"
+        if len(reads) == 2:
+            if change == "exception":
+                raise LookupError("synthetic comparison interruption")
+            if change == "parent":
+                folder.parent.rename(tmp_path / "retained-parent")
+                for name in [first, second]:
+                    (tmp_path / name).mkdir(parents=True)
+            elif change in {"origin", "missing"}:
+                folder.rename(tmp_path / "retained-origin")
+                if change == "origin":
+                    folder.mkdir()
+        return identity
+
+    monkeypatch.setattr(rc.os, "open", open_fd)
+    monkeypatch.setattr(rc.os, "close", close_fd)
+    monkeypatch.setattr(rc, "_origin_run_identity", identify)
+    cases = [SimpleNamespace(origins=[{"run": name}], digest="a" * 64) for name in [first, second]]
+    if change == "exception":
+        with pytest.raises(LookupError, match="synthetic comparison interruption"):
+            rc._unique_origin_digests(cases, source=tmp_path)
+    else:
+        assert rc._unique_origin_digests(cases, source=tmp_path) is (change == "none")
+    assert reads == [first, second]
+    assert not active
