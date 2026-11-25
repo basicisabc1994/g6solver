@@ -634,7 +634,7 @@ def card(assessment: dict, loop: dict | None = None) -> dict:
     With no recorded observations, numerical observations are unknown. The
     existing report below still carries every decided field and its limits.
     """
-    from g6.harness.workflow import evidence, record_md
+    from g6.harness.workflow import evidence
 
     loop = loop or {}
     unchecked_reason = assessment.get("unchecked_reason") or loop.get("unchecked_reason") or ""
@@ -642,18 +642,37 @@ def card(assessment: dict, loop: dict | None = None) -> dict:
     events = evidence.matched(held)
     kind = "loop_ended" if loop and any(e["kind"] == "loop_ended" for e in events) else "review_finished"
     observed = [e for e in events if e["kind"] == kind] if not unchecked_reason else []
-    one = observed[-1] if observed else {}
+    selected = [e for e in observed if e["run"] == held["selected_run"]] if "selected_run" in held else observed
+    if "selected_run" not in held and len({e["run"] for e in observed}) > 1:
+        selected = []  # no call identity: task run ordering cannot select a review
+    one = selected[-1] if selected else {}
+    if not one:
+        events = []
+    elif kind == "loop_ended":
+        events = [e for e in events if e["run"] == one["run"]]
+    else:
+        events = [e for e in events if e["run"] == one["run"]
+                  or e["kind"] == "review_finished" and e["at"] < one["at"]]
+    observed = [e for e in events if e["kind"] == kind]
     data = one.get("data") or {}
     known = bool(one)
+    if known:
+        from g6.harness.workflow.record import Event
+
+        rows = [Event.from_body(e) for e in events if kind == "loop_ended" or e["kind"] == "review_finished"]
+        checks = evidence.check_state(rows)
+        if kind == "loop_ended" and not evidence.checked(rows):
+            unchecked_reason = data.get("code") or "No test ran and no reviewer returned."
     status = held.get("status", "unavailable")
     runs, by = [], []
     isolation = data.get("isolation") or "not recorded"
-    if known and kind == "loop_ended":
+    if known and kind == "loop_ended" and not unchecked_reason:
         model = data.get("reviewer") or "not recorded"
         by = ["reviewer:" + model] if data.get("reviews") else ["proposer:not recorded"]
         runs = [{"what": "reviews" if data.get("reviews") else "model probes",
-                 "count": data.get("reviews") or data.get("probes", 0), "by": by[0], "isolation": isolation}]
-    elif known:
+                 "count": sum(e.data.get("checked", 0) for e in rows if e.kind == "loop_round")
+                 if data.get("reviews") else data.get("probes", 0), "by": by[0], "isolation": isolation}]
+    elif known and kind == "review_finished":
         for key, what in (("stated_checks", "stated checks"), ("repository_checks", "tests that touch the changed code"),
                           ("deeper_checks", "deeper checks")):
             if data.get(key):
@@ -668,16 +687,15 @@ def card(assessment: dict, loop: dict | None = None) -> dict:
     raw_base = scope.get("base_commit") or loop.get("base") or ""
     base = raw_base if raw_base and evidence.sha256(raw_base) == one.get("baseline_sha256") else ""
     reproduced = data.get("reproduced") if known else None
-    repaired = data.get("repaired") if kind == "loop_ended" and known else None
-    if known and kind == "review_finished" and len(observed) > 1:
-        from g6.harness.workflow.record import Event
-
-        reviews = [Event.from_body(e) for e in observed]
-        unresolved = record_md.open_checks(reviews)
-        repaired = len(record_md.repairs(reviews) - unresolved)
+    repaired = None
+    if known:
+        if kind == "loop_ended" and data.get("reviews") or kind == "review_finished" and len(observed) > 1:
+            repaired = len(checks["repaired"])
     open_count = data.get("open", reproduced) if known else None
+    if known and kind == "loop_ended" and data.get("reviews"):
+        reproduced, open_count = len(checks["reproduced"]), len(checks["open"])
     if known and kind == "review_finished" and len(observed) > 1:
-        open_count = max(open_count or 0, len(unresolved))
+        open_count = max(open_count or 0, len(checks["open"]))
     reason = unchecked_reason
     if not known and not reason:
         reason = {"off": "off: No record is kept. G6_WORKFLOW_RECORD=on where the server is registered turns it on.",

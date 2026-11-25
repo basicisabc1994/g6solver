@@ -60,7 +60,7 @@ def bundle(events: Iterable[Event], *, status: str = "kept") -> dict:
             "justification": [{"event_id": e.event_id, "kind": e.kind, "sha256": digest(e.to_body())} for e in rows]}
 
 
-def read(repo, task: str, *, note: str = "") -> dict:
+def read(repo, task: str, *, note: str = "", origin_kind: str = "", origin_id: str = "") -> dict:
     """Read only this task's stored events; off and failed writes cite nothing."""
     if not policy.enabled()[0]:
         return bundle([], status="off")
@@ -80,7 +80,14 @@ def read(repo, task: str, *, note: str = "") -> dict:
             return bundle([], status="withheld")
 
         project, task_id = identities(repo, task)
-        return bundle(ProjectRecord(project).events(task=task_id))
+        record = ProjectRecord(project)
+        rows = record.events(task=task_id)
+        held = bundle([*rows, *record.annotations(task_id)])
+        if origin_kind or origin_id:
+            runs = {e.run for e in rows if e.kind == "run_started" and e.data.get("origin_kind") == origin_kind
+                    and e.data.get("origin_sha256") == sha256(origin_id)}
+            held["selected_run"] = next(iter(runs)) if len(runs) == 1 else ""
+        return held
     except Exception:  # noqa: BLE001 - missing custody never manufactures evidence
         return bundle([], status="unavailable")
 
@@ -90,3 +97,49 @@ def matched(held: Mapping) -> list[dict]:
     refs = {(r.get("event_id"), r.get("kind"), r.get("sha256")) for r in held.get("justification") or []}
     return [body for body in held.get("events") or []
             if (body.get("event_id"), body.get("kind"), digest(body)) in refs]
+
+
+def check_ran(review: Mapping) -> bool:
+    """A test result or a returned reviewer, never an attempted pre-call refusal."""
+    return (any(value in ("passed", "failed") for value in (review.get("results") or {}).values())
+            or bool(review.get("review_returned"))
+            or "review_returned" not in review and review.get("verdict") in ("none", "defect", "clean"))
+
+
+def checked(events: Iterable[Event]) -> bool:
+    """The common coverage rule; aggregate review attempts alone establish nothing."""
+    return any((e.kind == "loop_round" and bool(e.data.get("checked")))
+               or (e.kind == "loop_ended" and e.data.get("probes", 0) > 0)
+               or (e.kind == "review_finished" and (e.data.get("checks_run", 0) > 0
+                                                   or e.data.get("model_calls", 0) > 0)) for e in events)
+
+
+def check_state(events: Iterable[Event]) -> dict[str, set[tuple[str, str]]]:
+    """Same task/check, failed then passed on different bytes. No report-ending inference.
+
+    Explicit loop round numbers establish order even within one wall-clock second.
+    Separate review jobs need strictly ordered finish times; run-start order is irrelevant.
+    """
+    rows = [e for e in events if e.kind in ("loop_round", "review_finished")]
+    failures: dict[tuple[str, str], list[Event]] = {}
+    passes: dict[tuple[str, str], list[Event]] = {}
+    for e in rows:
+        for name in e.data.get("failed_sha256", e.data.get("open_sha256")) or []:
+            failures.setdefault((e.task, name), []).append(e)
+        for name in e.data.get("passed_sha256") or []:
+            passes.setdefault((e.task, name), []).append(e)
+
+    def later(failed: Event, passed: Event) -> bool:
+        if failed.kind == passed.kind == "loop_round" and failed.run == passed.run:
+            return 0 < failed.data.get("round", 0) < passed.data.get("round", 0)
+        return failed.at < passed.at
+
+    def resolved(failed: Event, passed: Event) -> bool:
+        return bool(failed.artifact_sha256 and passed.artifact_sha256
+                    and failed.artifact_sha256 != passed.artifact_sha256 and later(failed, passed))
+
+    repaired = {key for key, failed in failures.items()
+                if any(resolved(f, p) for f in failed for p in passes.get(key, ()))}
+    still = {key for key, failed in failures.items()
+             if any(not any(resolved(f, p) for p in passes.get(key, ())) for f in failed)}
+    return {"reproduced": set(failures), "repaired": repaired, "open": still}

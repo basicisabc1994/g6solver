@@ -133,7 +133,8 @@ def finishing(finish: Any, repo: str, task: str, intent: Any = None) -> Any:
             custody = getattr(reply, "custody", None)
             reply = custody(json.loads(body)) if callable(custody) else json.loads(body)
             assessment = reply["assessment"]
-            assessment["workflow_evidence"] = evidence.read(repo, task, note=note)
+            assessment["workflow_evidence"] = evidence.read(repo, task, note=note,
+                                                           origin_kind="review_job", origin_id=job_id)
             assessment["card"] = patch_report.card(assessment, None)
             old_report = assessment.get("report")
             assessment["report"] = (patch_report.with_card(old_report, assessment["card"]) if old_report else

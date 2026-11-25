@@ -6,59 +6,48 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 
 from g6.core.ledger import digest
+from g6.harness.workflow import evidence
 from g6.harness.workflow.record import Event
 
 
 def repairs(events: Iterable[Event]) -> set[tuple[str, str]]:
     """A pass resolves a failed digest only on a later, different artifact of that task."""
-    failures: dict[tuple[str, str], set[tuple[str, str]]] = {}
-    repaired = set()
-    for event in events:
-        if event.kind != "review_finished" or not event.artifact_sha256:
-            continue
-        for check in event.data.get("passed_sha256") or []:
-            key = event.task, check
-            if any(artifact != event.artifact_sha256 and at < event.at for artifact, at in failures.get(key, ())):
-                repaired.add(key)
-        for check in event.data.get("failed_sha256") or []:
-            failures.setdefault((event.task, check), set()).add((event.artifact_sha256, event.at))
-    return repaired
+    return evidence.check_state(events)["repaired"]
 
 
 def open_checks(events: Iterable[Event]) -> set[tuple[str, str]]:
-    failed: dict[tuple[str, str], tuple[str, str]] = {}
-    for e in events:
-        if e.kind != "review_finished" or not e.artifact_sha256:
-            continue
-        for check in e.data.get("passed_sha256") or []:
-            key = e.task, check
-            if key in failed and failed[key][0] != e.artifact_sha256 and failed[key][1] < e.at:
-                del failed[key]
-        for check in e.data.get("failed_sha256") or []:
-            failed[e.task, check] = e.artifact_sha256, e.at
-    return set(failed)
+    return evidence.check_state(events)["open"]
 
 
 def counts(events: Iterable[Event]) -> dict:
     rows = list(events)
     # Only the hook observes ended turns. MCP reviews are calls, never invented turns.
-    ended = list({e.run: e for e in rows if e.kind == "loop_ended"
-                  and (e.data.get("reviews", 0) > 0 or e.data.get("probes", 0) > 0)}.values())
-    unchecked = [e for e in rows if e.kind == "turn_unchecked"]
+    all_ended = list({e.run: e for e in rows if e.kind == "loop_ended"}.values())
+    ended = [e for e in all_ended if e.data.get("reviews", 0) > 0 or e.data.get("probes", 0) > 0]
+    by_run = {e.run: [row for row in rows if row.run == e.run] for e in all_ended}
+    unchecked = {e.run: e for e in rows if e.kind == "turn_unchecked"}
     reviews = [e for e in rows if e.kind == "review_finished"]
     # Repeated reports of one ended run count once, with its latest ending.
-    hook_checked = [e for e in ended if e.data.get("hook_present") == 1]
+    hook_checked = [e for e in all_ended if e.data.get("hook_present") == 1 and evidence.checked(by_run[e.run])]
+    # Old aggregate-only entries cannot establish that a reviewer returned.
+    # They still observe an ended hook turn, with no check established.
+    for e in all_ended:
+        if e.data.get("hook_present") == 1 and not evidence.checked(by_run[e.run]):
+            unchecked.setdefault(e.run, e)
+    for e in hook_checked:
+        unchecked.pop(e.run, None)
     return {"events": len(rows), "turns": len(hook_checked) + len(unchecked), "checked": len(hook_checked),
             "loops": len(ended),
             "unchecked": len(unchecked), "review_calls": len(reviews),
             "reproduced": sum(e.data.get("reproduced", 0) for e in [*ended, *reviews]),
-            "repaired": sum(e.data.get("repaired", 0) for e in ended) + len(repairs(reviews)),
-            "open": sum(e.data.get("open", 0) for e in ended) + len(open_checks(reviews)),
+            "repaired": sum(len(repairs(by_run[e.run])) for e in ended) + len(repairs(reviews)),
+            "open": sum(len(open_checks(by_run[e.run])) if e.data.get("reviews") else e.data.get("open", 0)
+                        for e in ended) + len(open_checks(reviews)),
             "left_by_agent": sum(e.data.get("left_by_agent", 0) for e in ended),
             "not_established": sum(e.data.get("not_established", 0) for e in [*ended, *reviews]),
             "skipped": sum(e.data.get("checks_skipped", 0) for e in [*ended, *reviews]),
             "endings": dict(Counter(e.data.get("ending", "unrecorded") for e in ended)),
-            "unchecked_reasons": dict(Counter(e.data.get("reason", "unrecorded") for e in unchecked))}
+            "unchecked_reasons": dict(Counter(e.data.get("reason", "check_not_recorded") for e in unchecked.values()))}
 
 
 def self_changes(lineage: Mapping | None, stats: Mapping, *, source: str = "", library=()) -> list[str]:
@@ -111,8 +100,12 @@ def render(events: Iterable[Event], *, recording: bool = True, self_lines: list[
     lines += ["", "## Findings (newest first)"]
     findings = [e for e in rows if e.kind in ("loop_ended", "review_finished") and e.data.get("reproduced")]
     for e in reversed(findings[-10:]):
-        repaired = bool(e.data.get("repaired")) or bool(e.data.get("failed_sha256")) and all(
-            (e.task, check) in repairs(rows) for check in e.data.get("failed_sha256") or [])
+        relevant = [row for row in rows if row.run == e.run] if e.kind == "loop_ended" else [
+            row for row in rows if row.kind == "review_finished"]
+        state = evidence.check_state(relevant)
+        failed = state["reproduced"] if e.kind == "loop_ended" else {
+            (e.task, check) for check in e.data.get("failed_sha256") or []}
+        repaired = bool(failed) and failed <= state["repaired"] and not failed & state["open"]
         state = "repaired in a recorded review" if repaired else "open at the stop. Not labelled by you"
         lines.append(f"- {code(e.at)}, task {code(e.task[:12])}: {state}; details no longer kept. "
                      f"Event {code(e.event_id)}.")

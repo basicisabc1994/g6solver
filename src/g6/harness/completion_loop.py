@@ -898,6 +898,7 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
     pack = _pack(change, shown, task, proof)
     sent, hidden = _masked_pack(change, shown, task, proof)
     masked = max(sent.count(MASK) - pack.count(MASK), 1) if sent != pack else 0
+    returned = False
     try:
         refs = tuple(cloud.Source.text(cloud.repository_source(change.repo), rel, sent)
                      for rel in (*change.sources, "candidate.patch"))
@@ -906,8 +907,9 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
         if told:
             refs += told_sources or (cloud.UNKNOWN,)
         with cloud.request_sources(refs):
-            found = critic_report(consent.guard(caller).complete(
-                system, sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), proof=proof)
+            response = consent.guard(caller).complete(system, sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told)
+            returned = True
+            found = critic_report(response, proof=proof)
     except (LLMError, OSError) as exc:
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
     if hidden and found["verdict"] == "none":
@@ -915,7 +917,7 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
     if found["test"]:
         where.mkdir(parents=True, exist_ok=True)
         (where / critic_file(n)).write_text(found["test"] + "\n", encoding="utf-8")
-    return {**found, "reviewer": _named(caller), **({"masked": masked} if masked else {})}
+    return {**found, "reviewer": _named(caller), "review_returned": returned, **({"masked": masked} if masked else {})}
 
 
 def _read_whole(patch: str, task: str) -> bool:
@@ -1163,7 +1165,8 @@ def _record_report(root: Path, task: str, base: str, session: Path, state: dict,
 
     state["final_assessment"] = getattr(review, "assessment", {})
     note = adapters.observe_loop(root, task, session, state, step, at=recorded_now(), base=base)
-    state["workflow_evidence"] = workflow_evidence.read(root, task, note=note)
+    state["workflow_evidence"] = workflow_evidence.read(root, task, note=note,
+                                                       origin_kind="loop_session", origin_id=session.name)
     if state["workflow_evidence"]["justification"]:
         project, _ = adapters.identities(root, task)
         cloud.record_sources((cloud.Source.text(workflow_source(project), "card-events", json.dumps(

@@ -167,6 +167,8 @@ def observe_loop(repo: str | os.PathLike, task: str, session: Path, state: Mappi
     if getattr(step, "action", "") == "wait":          # another step owns the state; this one did nothing
         return ""
     run = _Run(repo, task, "loop_session", Path(session).name, at=at, base=base)
+    from g6.harness.workflow import evidence
+
     reviews = [one for one in state.get("reviews") or [] if isinstance(one, dict)]
     rounds = [one for one in state.get("rounds") or [] if isinstance(one, dict)]
     for number, review in enumerate(reviews, 1):
@@ -176,6 +178,8 @@ def observe_loop(repo: str | os.PathLike, task: str, session: Path, state: Mappi
         run.write("loop_round", str(number), at=at, artifact=review.get("patch") or "",
                   data={"round": number, "verdict": str(review.get("verdict") or "")[:40] or None,
                         "results_sha256": digest(results) if results is not None else None,
+                        "checked": int(evidence.check_ran(review)),
+                        "failed_sha256": still_open,
                         "passed_sha256": sorted(sha256(str(name)) for name, verdict in (results or {}).items()
                                                 if verdict == "passed")[:50],
                         "open": len(still_open) if results is not None else None, "open_sha256": still_open or None,
@@ -188,11 +192,11 @@ def observe_loop(repo: str | os.PathLike, task: str, session: Path, state: Mappi
         code = str(getattr(step, "code", "") or state.get("code") or "")[:80]
         last = reviews[-1].get("patch") if reviews else ""
         native = digest([len(reviews), ending, code])
-        from g6.harness.patch_report import findings
-
-        fixed, still = findings(reviews)
-        extra = {"reproduced": len(fixed) + len(still), "repaired": len(fixed), "open": len(still),
-                 "left_by_agent": len(still) if state.get("left") else 0,
+        held = run.record.events(task=run.task, run=run.run)
+        checks = evidence.check_state(held)
+        extra = {"reproduced": len(checks["reproduced"]), "repaired": len(checks["repaired"]),
+                 "open": len(checks["open"]), "checked": int(evidence.checked(held)),
+                 "left_by_agent": len(checks["open"]) if state.get("left") else 0,
                  "reviewer": next((str(r["reviewer"])[:100] for r in reversed(reviews) if r.get("reviewer")), ""),
                  "agent": str(state.get("agent") or "")[:100], "hook_present": int(_HOOK.get()),
                  "isolation": next((str(r["boundary"])[:100] for r in reversed(reviews) if r.get("boundary")), "")}
@@ -212,6 +216,9 @@ def observe_loop(repo: str | os.PathLike, task: str, session: Path, state: Mappi
                                                "integrity_reasons", "unconfirmed")})
         run.write("loop_ended", native, at=at, artifact=last or "",
                   data={"ending": ending or None, "code": code or None, "reviews": len(reviews), **extra})
+        if _HOOK.get() and not evidence.checked(run.record.events(task=run.task, run=run.run)):
+            reason = code or ("review_not_run" if reviews else "no_review")
+            run.write("turn_unchecked", reason, at=at, data={"reason": reason})
         seconds = run.seconds()
         run.write("report_returned", native, at=at, artifact=last or "", data={"run_seconds": seconds},
                   refs=_report_ref(session), missing=() if seconds is not None else ("run_seconds",))
