@@ -1651,3 +1651,261 @@ def test_secondary_confirmation_preserves_direct_replacement_decision(ownership,
     retired.unlink()
     replacement.unlink()
     assert _roots(dependencies, SCOPES[2]) == expected
+
+
+@pytest.mark.parametrize("entry", ("failed-load", "cached-loaded", "clear-cache"))
+def test_describe_requires_successful_current_recording(_rfu5_tool_ownership, tmp_path, monkeypatch, entry):
+    from importlib import import_module
+    from packaging.requirements import InvalidRequirement
+
+    from g6.mcp import families, registrations
+
+    dependencies = _rfu5_tool_ownership
+    monkeypatch.setattr(families, "_DETAILS", {})
+    if entry == "failed-load":
+        needs = _repair3_extra_required_metadata(dependencies, monkeypatch)
+        valid = needs["g6"]
+        needs["g6"] = [">>>broken<<<"]
+        monkeypatch.setattr(registrations, "SERVERS", {"g6": "g6.mcp:build_server"})
+        for _ in range(2):
+            with pytest.raises(InvalidRequirement):
+                families.describe("g6_help")
+        needs["g6"] = valid
+        assert families.describe("g6_help")["available"] is True
+        return
+
+    source = tmp_path / f"{OPTIONAL}.py"
+    source.write_text(
+        "from types import SimpleNamespace\n"
+        "GUIDANCE = 'Load state.'\n"
+        "def get_tools():\n"
+        "    return {'load_state': SimpleNamespace(description=GUIDANCE, parameters={})}\n",
+        encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    server = ModuleType("rfu5repair_server")
+    builds = []
+
+    def build():
+        builds.append(True)
+        return import_module(OPTIONAL)
+
+    server.build = build
+    monkeypatch.setitem(sys.modules, server.__name__, server)
+    monkeypatch.setattr(registrations, "SERVERS", {"abstraction": f"{server.__name__}:build"})
+    assert families.describe("load_state")["available"] is True
+    if entry == "clear-cache":
+        dependencies.optional_import_roots.cache_clear()
+        monkeypatch.setattr(sys.modules[OPTIONAL], "GUIDANCE", "Reloaded state.")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(source)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    reply = families.describe("load_state")
+    assert reply["available"] is True
+    assert len(builds) == (2 if entry == "clear-cache" else 1)
+    assert reply["guidance"] == ("Reloaded state." if entry == "clear-cache" else "Load state.")
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    monkeypatch.delitem(sys.modules, OPTIONAL)
+    source.unlink()
+    invalidate_caches()
+    assert _roots(dependencies, SCOPES[2]) == frozenset()
+
+
+def test_startup_records_each_loaded_required_descendant(ownership, tmp_path, monkeypatch):
+    dependencies, specs = ownership
+    _repair3_extra_required_metadata(dependencies, monkeypatch)
+    package = tmp_path / "required"
+    package.mkdir()
+    parent_file, child_file = package / "__init__.py", package / "child.py"
+    parent_file.write_text("value = 'parent'\n", encoding="utf-8")
+    child_file.write_text("value = 'child'\n", encoding="utf-8")
+    parent = ModuleType(REQUIRED)
+    parent.__file__ = str(parent_file)
+    parent.__path__ = [str(package)]
+    child = ModuleType(REQUIRED + ".child")
+    child.__file__ = str(child_file)
+    monkeypatch.setitem(sys.modules, REQUIRED, parent)
+    monkeypatch.setitem(sys.modules, child.__name__, child)
+    dependencies.record_loaded_required_imports()
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    monkeypatch.delitem(sys.modules, child.__name__)
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, child_file)
+    assert _roots(dependencies, SCOPES[2]) == frozenset()
+    specs.clear()
+    child_file.unlink()
+    assert _roots(dependencies, SCOPES[2]) == frozenset()
+
+
+def test_standalone_records_required_files_before_run(_rfu5_tool_ownership, tmp_path, monkeypatch):
+    from g6.abstraction import server
+
+    dependencies = _rfu5_tool_ownership
+    source = tmp_path / "standalone-required.py"
+    source.write_text("value = 73\n", encoding="utf-8")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(source)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    monkeypatch.delenv("ABSTRACTION_MCP_STATE", raising=False)
+    calls = []
+
+    def run():
+        monkeypatch.delitem(sys.modules, REQUIRED)
+        # Establish the optional spelling while the loaded file still exists.
+        with monkeypatch.context() as probe:
+            probe.setattr(dependencies.util, "find_spec",
+                          lambda name: util.spec_from_file_location(OPTIONAL, source) if name == OPTIONAL else None)
+            assert _roots(dependencies, SCOPES[2]) == frozenset()
+        source.unlink()
+        calls.append(True)
+
+    monkeypatch.setattr(server.mcp, "run", run)
+    server.main()
+    assert calls == [True]
+    invalidate_caches()
+    assert _roots(dependencies, SCOPES[2]) == frozenset()
+
+
+def test_describe_reuses_recording_until_required_modules_change(ownership, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from g6.mcp import families, registrations
+
+    dependencies, _ = ownership
+    source = tmp_path / "describe-required.py"
+    source.write_text("value = 73\n", encoding="utf-8")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(source)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    tools = {name: SimpleNamespace(description=name, parameters={})
+             for name in ("load_state", "save_state", "describe_domain")}
+    server = ModuleType("rfu5am1_server")
+    server.get_tools = lambda: tools
+    server.mcp = server
+    monkeypatch.setitem(sys.modules, server.__name__, server)
+    monkeypatch.setattr(registrations, "SERVERS", {"abstraction": server.__name__ + ":mcp"})
+    monkeypatch.setattr(families, "_DETAILS", {})
+    monkeypatch.setattr(families, "_VALIDATED_DETAILS", {})
+    copy_locations = dependencies._loaded_locations
+    observe_roots = dependencies._root_observations
+    walks, discoveries = [], []
+
+    def count_walk(module):
+        # This persistent required module is copied once in each full walk.
+        assert not dependencies._ownership_lock._is_owned()
+        if module is loaded:
+            walks.append(True)
+        return copy_locations(module)
+
+    def count_discovery(roots):
+        assert not dependencies._ownership_lock._is_owned()
+        discoveries.append(True)
+        return observe_roots(roots)
+
+    monkeypatch.setattr(dependencies, "_loaded_locations", count_walk)
+    monkeypatch.setattr(dependencies, "_root_observations", count_discovery)
+    for name in tools:
+        assert families.describe(name)["available"] is True
+    assert len(walks) == 1
+    assert len(discoveries) == 1
+
+    child = ModuleType(REQUIRED + ".child")
+    child.__file__ = str(source)
+    monkeypatch.setitem(sys.modules, child.__name__, child)
+    for name in tools:
+        assert families.describe(name)["available"] is True
+    assert len(walks) == 2
+    assert len(discoveries) == 2
+
+    # A changed file value and a replaced object each invalidate the fingerprint.
+    child.__file__ = str(tmp_path / "changed-required.py")
+    for name in tools:
+        assert families.describe(name)["available"] is True
+    assert len(walks) == 3
+    assert len(discoveries) == 3
+    replacement = ModuleType(child.__name__)
+    replacement.__file__ = child.__file__
+    monkeypatch.setitem(sys.modules, child.__name__, replacement)
+    for name in tools:
+        assert families.describe(name)["available"] is True
+    assert len(walks) == 4
+    assert len(discoveries) == 4
+
+    # An independent ownership transaction invalidates both caches even though
+    # no loaded required object has changed. Include that discovery separately.
+    generation = dependencies._ownership_generation
+    with monkeypatch.context() as transaction:
+        transaction.setattr(dependencies, "_optional_root_declarations",
+                            lambda *args: ({"rfu5am1_other"}, set()))
+        dependencies.optional_import_roots("other", "")
+    assert dependencies._ownership_generation > generation
+    assert len(discoveries) == 5
+    for name in tools:
+        assert families.describe(name)["available"] is True
+    assert len(walks) == 5
+    assert len(discoveries) == 6
+
+    dependencies.optional_import_roots.cache_clear()
+    for name in tools:
+        assert families.describe(name)["available"] is True
+    assert len(walks) == 6
+    assert len(discoveries) == 7
+
+
+@pytest.mark.parametrize("entry", (
+    "direct-recording", "direct-optional", "first-load", "listed-reload", "failed-load",
+))
+def test_only_cached_describe_may_skip_disk_refresh(ownership, tmp_path, monkeypatch, entry):
+    from types import SimpleNamespace
+
+    from g6.mcp import families, registrations
+
+    dependencies, specs = ownership
+    _repair3_extra_required_metadata(dependencies, monkeypatch)
+    source, retired = tmp_path / "source.py", tmp_path / "retired.py"
+    source.write_text("value = 'original required'\n", encoding="utf-8")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(source)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    tools = {"load_state": SimpleNamespace(description="Load state.", parameters={})}
+    server = ModuleType("rfu5am2_server")
+    server.get_tools = lambda: tools
+    server.mcp = server
+    monkeypatch.setitem(sys.modules, server.__name__, server)
+    monkeypatch.setattr(registrations, "SERVERS", {"abstraction": server.__name__ + ":mcp"})
+    monkeypatch.setattr(families, "_DETAILS", {})
+    monkeypatch.setattr(families, "_VALIDATED_DETAILS", {})
+    assert families.describe("load_state")["available"] is True
+    assert families.describe("load_state")["available"] is True
+
+    # Keep every module name, object and __file__ unchanged. Only disk evidence
+    # changes, so an internal recorder shortcut would miss this retirement.
+    source.rename(retired)
+    source.write_text("value = 'replacement required'\n", encoding="utf-8")
+    assert (source.stat().st_dev, source.stat().st_ino) != (retired.stat().st_dev, retired.stat().st_ino)
+    if entry == "direct-recording":
+        dependencies.record_loaded_required_imports()
+    elif entry == "direct-optional":
+        key = dependencies._loaded_required_recordings["mcp"]
+        dependencies.optional_import_roots("abstraction", _recording_key=key)
+    elif entry == "listed-reload":
+        families._server_details("abstraction", listed=list(tools.items()))
+    else:
+        families._VALIDATED_DETAILS.clear()
+        if entry == "failed-load":
+            def broken():
+                raise RuntimeError("reload failed")
+
+            monkeypatch.setattr(server, "get_tools", broken)
+            with pytest.raises(RuntimeError, match="reload failed"):
+                families.describe("load_state")
+            monkeypatch.setattr(server, "get_tools", lambda: tools)
+        assert families.describe("load_state")["available"] is True
+
+    # Remove the replacement before discovery so a later stat cannot repair a
+    # missed refresh. The old identity must already have lost required ownership.
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    source.unlink()
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, retired)
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+    specs.clear()
+    retired.unlink()
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}

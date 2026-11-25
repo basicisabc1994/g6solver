@@ -657,6 +657,8 @@ def load_state(path: str) -> str:
 
 def main() -> None:
     _autoload()  # raises FileRefused, so the server does not start, when the state file is outside the directory
+    from g6.mcp.dependencies import record_loaded_required_imports
+    record_loaded_required_imports()
     mcp.run()
 
 

@@ -22,6 +22,10 @@ _evidence_order = count()
 # Fixed evidence slots per source: latest event, direct stat, secondary
 # confirmation and path-only observation. Every slot keeps the original event.
 _ownership_observations: dict[str, dict[str, tuple]] = {}
+# Completion tokens only: direct calls always refresh live ownership. Families
+# uses these to bind its describe-only shortcut to this boundary's own commits.
+_loaded_required_recordings: dict[str, tuple] = {}
+_loaded_optional_recordings: dict[tuple[str, str], tuple] = {}
 
 
 class _ExceptionWork:
@@ -716,6 +720,12 @@ def _ownership_snapshot():
                 _required_paths.union(*_known_paths.values()))
 
 
+def _ownership_epoch() -> int:
+    """Read the explicit-clear epoch without running any probes under the lock."""
+    with _ownership_lock:
+        return _declaration_epoch
+
+
 def _ownership_state():
     return (_required_paths.copy(), {root: history.copy() for root, history in _known_paths.items()},
             {source: {slot: event[2:] for slot, event in history.items()}
@@ -732,11 +742,16 @@ def _advance_ownership_generation(before):
         _ownership_generation += 1
 
 
-def optional_import_roots(extras: str, required_extras: str = "mcp") -> frozenset[str]:
-    """Declared optional closure minus required ownership, refreshed for each discovery."""
+def optional_import_roots(extras: str, required_extras: str = "mcp", *,
+                          _recording_key: tuple | None = None) -> frozenset[str]:
+    """Refresh optional ownership on every call, optionally tracking its completion."""
     # Metadata, finders and module/spec attributes can execute import code.
     # None may run while another importer waits for our ownership store.
     extras, required_extras = _plain_text(extras), _plain_text(required_extras)
+    with _ownership_lock:
+        # A rejected declaration or a contended pass cannot reuse an earlier
+        # completion token, even when no ownership state ultimately changed.
+        _loaded_optional_recordings.pop((extras, required_extras), None)
     attempts = []
     attempt_epoch = None
     for _ in range(2):
@@ -763,6 +778,15 @@ def optional_import_roots(extras: str, required_extras: str = "mcp") -> frozense
                 optional = _without_required_aliases(optional, required)
             result = _without_observed_aliases(optional, required, observations, refresh, previous=attempts[:-1])
             _advance_ownership_generation(before)
+            if (_recording_key is not None and len(attempts) == 1
+                    and _recording_key[:2] == (epoch, generation)
+                    and _loaded_required_recordings.get(required_extras) == _recording_key):
+                # This boundary's own optional merge may advance the generation.
+                # Bind completion to that committed generation, but never adopt
+                # a competing transaction's generation after a retry.
+                key = (epoch, _ownership_generation, _recording_key[2])
+                _loaded_required_recordings[required_extras] = key
+                _loaded_optional_recordings[extras, required_extras] = key
             return result
     # Sustained contention supplies no safe optional verdict. The observations
     # already taken still join current evidence unless an explicit clear won.
@@ -776,21 +800,74 @@ def optional_import_roots(extras: str, required_extras: str = "mcp") -> frozense
     return frozenset()
 
 
-def record_loaded_required_imports(required_extras: str = "mcp") -> None:
-    """Record successful startup's loaded required files in the shared ownership store."""
+def _loaded_required_modules(required: set[str]) -> tuple[dict, frozenset | None]:
+    """Copy names, identities and file values without filesystem or metadata probes."""
+    prefixes = tuple(root + "." for root in required)
+    loaded, fingerprint = {}, set()
+    cacheable = True
+    for name, module in sys.modules.copy().items():
+        if not isinstance(name, str):
+            continue
+        root = _plain_text(name)
+        if root not in required and not root.startswith(prefixes):
+            continue
+        if module is not None:
+            loaded[root] = module
+        try:
+            file = getattr(module, "__file__", None)
+            # Avoid equality/string hooks under the ownership lock. Exotic or
+            # unreadable file values retain full recording on every call.
+            if file is not None and type(file) is not str:
+                cacheable = False
+                continue
+            fingerprint.add((root, id(module), file))
+        except Exception:
+            cacheable = False
+    return loaded, frozenset(fingerprint) if cacheable else None
+
+
+def _remember_loaded_recording(required_extras, epoch, fingerprint):
+    """Publish only after reconciliation, while holding the ownership lock."""
+    if fingerprint is not None:
+        key = epoch, _ownership_generation, fingerprint
+        _loaded_required_recordings[required_extras] = key
+        return key
+    _loaded_required_recordings.pop(required_extras, None)
+    return None
+
+
+def _loaded_required_recording_key(required_extras: str = "mcp") -> tuple | None:
+    """Cheap candidate key for the validated-describe boundary; never a live verdict."""
     required_extras = _plain_text(required_extras)
-    generation, epoch, paths = _ownership_snapshot()
+    with _ownership_lock:
+        generation, epoch = _ownership_generation, _declaration_epoch
+    _, required = _optional_root_declarations("", required_extras, epoch)
+    try:
+        required = {_plain_text(root) for root in required}
+    except Exception:
+        return None
+    _, fingerprint = _loaded_required_modules(required)
+    with _ownership_lock:
+        if (fingerprint is not None and epoch == _declaration_epoch
+                and generation == _ownership_generation):
+            return epoch, generation, fingerprint
+    return None
+
+
+def record_loaded_required_imports(required_extras: str = "mcp") -> tuple | None:
+    """Fully refresh a load's required modules and descendants on every direct call."""
+    required_extras = _plain_text(required_extras)
+    with _ownership_lock:
+        epoch = _declaration_epoch
     _, required = _optional_root_declarations("", required_extras, epoch)
     try:
         required = {_plain_text(root) for root in required}
     except Exception:
         return
-    loaded = {}
-    for name, module in sys.modules.copy().items():
-        if isinstance(name, str):
-            root = _plain_text(name)
-            if root in required and module is not None:
-                loaded[root] = module
+    loaded, fingerprint = _loaded_required_modules(required)
+    generation, current_epoch, paths = _ownership_snapshot()
+    if epoch != current_epoch:
+        return  # An explicit clear supersedes the copied declaration/modules.
     locations = {root: _loaded_locations(module) for root, module in loaded.items()}
     observations = {}
     for root, copied in locations.items():
@@ -810,7 +887,7 @@ def record_loaded_required_imports(required_extras: str = "mcp") -> None:
                 _refresh_path_ownership(refresh)
                 _without_required_aliases(set(), {root: values[2] for root, values in reconciled.items()})
                 _advance_ownership_generation(before)
-                return
+                return _remember_loaded_recording(required_extras, epoch, fingerprint)
         attempts.append(({}, refresh))
         generation, current_epoch, paths = _ownership_snapshot()
         if epoch != current_epoch:
@@ -824,6 +901,9 @@ def record_loaded_required_imports(required_extras: str = "mcp") -> None:
             _refresh_path_ownership(refresh)
             _without_required_aliases(set(), {root: values[2] for root, values in reconciled.items()})
             _advance_ownership_generation(before)
+            # A fallback retained evidence but did not obtain a stable recording.
+            # Leave the next successful-load boundary eligible for a full pass.
+            _loaded_required_recordings.pop(required_extras, None)
 
 
 def _loaded_locations(module) -> tuple:
@@ -868,6 +948,8 @@ def _clear_optional_roots():
         _known_paths.clear()
         _required_paths.clear()
         _ownership_observations.clear()
+        _loaded_required_recordings.clear()
+        _loaded_optional_recordings.clear()
 
 
 # Explicit clearing resets declarations and process-wide file ownership together.

@@ -9,6 +9,14 @@ from typing import Any
 from g6.core.tool_guidance import _DETAILS, register_guidance as register_guidance, short_description
 
 
+# Guidance captured during registration is not evidence that loading succeeded.
+# Retain successful loads separately, bound to the explicit-clear epoch and the
+# actual guidance dictionary (registration may replace it during a failed load).
+_VALIDATED_DETAILS: dict[str, tuple[int, str | None, dict | None, dict]] = {}
+# Only a validated cached describe may reuse a full recording made here.
+_RECORDED_SERVERS: dict[str, tuple[str, tuple]] = {}
+
+
 @dataclass(frozen=True)
 class Family:
     purpose: str
@@ -114,31 +122,65 @@ def compact_server(server: Any, server_id: str) -> None:
     _DETAILS[server_id] = details
 
 
-def _record_loaded_server(server_id: str) -> None:
+def _record_loaded_server(server_id: str, *, cached_describe: bool = False) -> None:
     """Use the shared identity probe after successfully loading a server's tools."""
-    from g6.mcp.dependencies import optional_import_roots
+    from g6.mcp import dependencies
     from g6.mcp.registrations import EXTRAS
 
+    server_id = dependencies._plain_text(server_id)
+    previous = _RECORDED_SERVERS.pop(server_id, None)
     if extra := EXTRAS.get(server_id):
-        optional_import_roots(extra)
+        extra = dependencies._plain_text(extra)
+        if (cached_describe and previous is not None and previous[0] == extra
+                and previous[1] == dependencies._loaded_required_recording_key()):
+            _RECORDED_SERVERS[server_id] = previous
+            return
+        recording_key = dependencies.record_loaded_required_imports()
+        dependencies.optional_import_roots(extra, _recording_key=recording_key)
+        with dependencies._ownership_lock:
+            completed = dependencies._loaded_optional_recordings.get((extra, "mcp"))
+            if (recording_key is not None and completed is not None
+                    and completed[:2] == (dependencies._declaration_epoch, dependencies._ownership_generation)
+                    and completed[2] == recording_key[2]
+                    and dependencies._loaded_required_recordings.get("mcp") == completed):
+                _RECORDED_SERVERS[server_id] = extra, completed
 
 
 def _server_details(server_id: str, *, listed: list[tuple[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
     """Read full guidance from the server that owns it, including unshortened SDK servers."""
-    if server_id not in _DETAILS:
+    from g6.mcp.dependencies import _ownership_epoch
+    from g6.mcp.registrations import SERVERS, _listed, _load
+
+    epoch, target = _ownership_epoch(), SERVERS.get(server_id)
+    validated = _VALIDATED_DETAILS.get(server_id)
+    cached = (validated is not None and validated[:2] == (epoch, target)
+              and validated[2] is _DETAILS.get(server_id))
+    try:
         if listed is None:
-            from g6.mcp.registrations import SERVERS, _listed, _load
-            server = _load(SERVERS[server_id])
-            if server_id not in _DETAILS:
+            if cached:
+                details = validated[3]
+            elif target is None and server_id in _DETAILS:
+                # A directly compacted, unregistered server has no load target.
+                details = _DETAILS[server_id]
+            else:
+                server = _load(SERVERS[server_id])
                 listed = _listed(server)
-            _record_loaded_server(server_id)
-        if server_id not in _DETAILS:
-            _DETAILS[server_id] = {
-                name: {"guidance": tool.description or "",
+        if listed is not None:
+            captured = _DETAILS.get(server_id, {})
+            details = {
+                name: {"guidance": captured.get(name, {}).get("guidance", tool.description or ""),
                        "schema": deepcopy(getattr(tool, "parameters", None) or
                                           getattr(tool, "inputSchema", None) or {})}
                 for name, tool in listed}
-    return _DETAILS[server_id]
+        # Cached guidance also crosses the same recording boundary. Keep the
+        # starting epoch: a clear during loading invalidates this cache entry.
+        _record_loaded_server(server_id, cached_describe=cached and listed is None)
+        _VALIDATED_DETAILS[server_id] = epoch, target, _DETAILS.get(server_id), details
+    except (Exception, SystemExit):
+        _VALIDATED_DETAILS.pop(server_id, None)
+        _RECORDED_SERVERS.pop(server_id, None)
+        raise
+    return details
 
 
 def full_guidance(server_id: str, tool: str) -> str:
@@ -179,6 +221,8 @@ def inventory(family: str | None = None) -> list[dict[str, Any]]:
             listed = dict(registrations._listed(server))
             details = _server_details(server_id, listed=list(listed.items()))
         except (Exception, SystemExit) as exc:
+            _VALIDATED_DETAILS.pop(server_id, None)
+            _RECORDED_SERVERS.pop(server_id, None)
             if not optional_dependency_missing(server_id, exc):
                 raise
             # A missing optional server affects its declared members only. Keep
@@ -191,7 +235,6 @@ def inventory(family: str | None = None) -> list[dict[str, Any]]:
                              "summary": "This tool's MCP server is unavailable.", "call": call,
                              **_unavailable(server_id)})
             continue
-        _record_loaded_server(server_id)
         for name, tool in listed.items():
             identity = f"mcp:{server_id}/{name}"
             member_family = family_for({"id": identity, "kind": "mcp"})
@@ -252,6 +295,8 @@ def describe(name: str) -> dict[str, Any] | None:
                 details = {**details, "schema": registrations._tools(server)[tool_name]}
                 _record_loaded_server(server_id)
         except (Exception, SystemExit) as exc:
+            _VALIDATED_DETAILS.pop(server_id, None)
+            _RECORDED_SERVERS.pop(server_id, None)
             if not optional_dependency_missing(server_id, exc):
                 raise
             return {"name": name, **_unavailable(server_id)}
