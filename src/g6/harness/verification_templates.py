@@ -104,7 +104,7 @@ from g6.harness.behaviour_runner import (
     CheckSetupError, bind_method, example_text, runtime_method, setup_call,
     raised_during_setup, exception_name, exception_matches, exception_detail, exception_message,
     target_attribute, call_absent, register_setup_error, CODE_CARRIER_HELPERS, ObservationUnavailable, own_import_absent,
-    execution_control, setup_outcome, SHOWN_HELPER, _portable_source, path_key, path_inside,
+    execution_control, setup_outcome, SHOWN_HELPER, _portable_source, _fixed_source, path_key, path_inside,
 )
 from g6.workforce import repo_tests
 
@@ -838,9 +838,9 @@ def _located(target: Target) -> list[str]:
     return [*target.spec(), target.file] if target.kind == "module" else target.spec()
 
 
-def _archive_members(tree: Tree, paths: set[str]) -> set[str]:
+def _archive_members(tree: Tree, paths: set[str]) -> dict[str, set[str]]:
     """Read member names from held ZIP bytes on both sides, without extracting or importing them."""
-    members = set()
+    members = {}
     candidates = sorted(path for path in paths if not path.endswith('.py'))
     if not candidates:
         return members
@@ -875,7 +875,8 @@ def _archive_members(tree: Tree, paths: set[str]) -> set[str]:
                 except (OSError, zipfile.BadZipFile, ValueError) as exc:
                     raise Inapplicable('archive ownership could not be read') from exc
                 cached[key] = names
-            members.update(cached[key])
+            if cached[key]:
+                members.setdefault(rel, set()).update(cached[key])
     return members
 
 
@@ -890,12 +891,16 @@ def _own_modules(tree: Tree, target: Target, side: str) -> dict:
     modules = set()
     files = {}
     archive_members = _archive_members(tree, paths)
-    for member in archive_members:
-        if member.endswith('.py'):
-            module = member[:-12] if member.endswith('/__init__.py') else member[:-3]
-            parts = module.split('/')
-            if all(part.isidentifier() for part in parts):
-                modules.update('.'.join(parts[:end]) for end in range(1, len(parts) + 1))
+    by_path = {}
+    for archive, members in archive_members.items():
+        owned = by_path.setdefault(archive, set())
+        for member in members:
+            if member.endswith('.py'):
+                module = member[:-12] if member.endswith('/__init__.py') else member[:-3]
+                parts = module.split('/')
+                if all(part.isidentifier() for part in parts):
+                    owned.update('.'.join(parts[:end]) for end in range(1, len(parts) + 1))
+        modules.update(owned)
     for prefix in tree.folders():
         for path in paths:
             if not path.startswith(prefix):
@@ -907,8 +912,14 @@ def _own_modules(tree: Tree, target: Target, side: str) -> dict:
                 if not all(part.isidentifier() for part in parts):
                     continue
                 modules.update('.'.join(parts[:end]) for end in range(1, len(parts) + 1))
+                by_path.setdefault(prefix.rstrip('/') or '.', set()).update(
+                    '.'.join(parts[:end]) for end in range(1, len(parts) + 1))
                 files.setdefault('.'.join(parts), []).append(path)
-    full = {'own_modules': sorted(modules)} if modules else {}
+    # Keep the historical potential-name inventory, but do not grant archive names
+    # ownership until the child resolves the actual ordered path used by that run.
+    full = ({'own_modules': sorted(modules), **({'own_module_paths': {
+        prefix: sorted(names) for prefix, names in by_path.items() if names}} if archive_members else {})}
+            if modules else {})
     if len(json.dumps(sorted(modules))) > 8192 and not archive_members:
         wanted, visited, pending = set(), set(), [target.module]
         while pending:
@@ -955,7 +966,7 @@ def _own_modules(tree: Tree, target: Target, side: str) -> dict:
                     except (ValueError, SyntaxError):
                         return full
         modules.intersection_update(wanted)
-    return {'own_modules': sorted(modules)} if modules else {}
+    return {**full, 'own_modules': sorted(modules)} if modules else {}
 
 
 def _call_target(tree: Tree, dotted: str, side: str, constructor: MethodConstructor | None = None) -> Target:
@@ -1627,7 +1638,8 @@ _LEGACY_COMMON = _LEGACY_COMMON.replace('@G6_DISPLAY_HELPER@', SHOWN_HELPER)
 def _text(ident: str, body: str) -> str:
     """A template's fixed text: the header, its id, the shared helpers, the slot for the bindings, and its body."""
     header, common = _LEGACY_HEADER, _LEGACY_COMMON
-    text = f"{header}\nTEMPLATE = {ident!r}\n{common}\n\nBINDINGS = {SLOT}\n{body}"
+    text = (_fixed_source(f"{header}\nTEMPLATE = {ident!r}\n{common}")
+            + f"\nBINDINGS = {SLOT}\n" + _fixed_source(body))
     assert text.count(SLOT) == 1 and text.isascii()
     return text
 
@@ -1657,7 +1669,7 @@ def compile_text(definition: TemplateDefinition, data: dict, *, tree: Tree | Non
             return runner.ExecutableSource(compact, data)
         # The product runner receives the full inventory through request(data), independent of this literal.
         source = definition.text.replace(SLOT, ascii({key: value for key, value in data.items()
-                                                     if key != 'own_modules'}))
+                                                     if key not in ('own_modules', 'own_module_paths')}))
         return runner.ExecutableSource(source, data)
     return source
 

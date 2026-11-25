@@ -45,9 +45,11 @@ data = {'function': scenario['entrypoint'], 'calls': [scenario['input']],
         'probe': False, 'mode': 'outputs'}
 host = json.loads(raw)
 if 'own_modules' in host:
-    data['own_modules'] = host['own_modules']"""
+    data['own_modules'] = host['own_modules']
+if 'own_module_paths' in host:
+    data['own_module_paths'] = host['own_module_paths']"""
     return (confine.CHILD_PRELUDE + '\nSCENARIO = ',
-            '\n' + runner.BOOTSTRAP.replace('data = json.loads(raw)', request, 1))
+            '\n' + runner._fixed_source(runner.BOOTSTRAP).replace('data = json.loads(raw)', request, 1))
 
 
 @dataclass(frozen=True)

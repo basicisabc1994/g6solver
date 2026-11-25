@@ -800,9 +800,11 @@ def _stable(verdict: dict, first: dict, again: dict | None) -> dict:
 def _stabilized(verdict: dict, first: dict, again: dict | None) -> dict:
     """``verdict``'s differences, less each input the base commit observed differently on its second run (review I6):
     such an observation is unstable, listed as such and never a difference, so never a counterexample. With none left,
-    ``not_refuted``; when the second run could not be made to a pass, a check error."""
+    ``not_refuted``; when the second run could not be made to a pass, a check error.
+    A dependent repeat that matches retains the producing comparison without independent confirmation;
+    a dependent repeat that differs is incomparable, never instability evidence."""
     if again is not None:
-        first, again = _import_pair(first, again, repeat=True)
+        first, again = _import_pair(first, again)
     if again is None or again["result"] != "passed":
         why = OUT_OF_TIME if again is None else f"it gave {again['result']}: {again['detail']}"
         return {"result": CHECK_ERROR, "detail": NOT_REPEATED.format(why=why)}
@@ -844,7 +846,7 @@ def _stabilized(verdict: dict, first: dict, again: dict | None) -> dict:
     return found
 
 
-def _import_pair(left: dict, right: dict | None, *, repeat: bool = False) -> tuple[dict, dict | None]:
+def _import_pair(left: dict, right: dict | None) -> tuple[dict, dict | None]:
     """Compare missing imports on the outcomes being judged, then admit matching provisional readings."""
     if right is None:
         return left, right
@@ -852,6 +854,7 @@ def _import_pair(left: dict, right: dict | None, *, repeat: bool = False) -> tup
 
     evidence = [side.get('import_evidence', {}) for side in (left, right)]
     marks = [one.get('outcomes', []) for one in evidence]
+    requests = [one.get('requests', one.get('outcomes', [])) for one in evidence]
     unavailable = [set(one.get('unavailable', [])) for one in evidence]
     dependent = [set(one.get('dependent', [])) for one in evidence]
     if not any(marks) and not any(unavailable) and not any(dependent):
@@ -865,13 +868,17 @@ def _import_pair(left: dict, right: dict | None, *, repeat: bool = False) -> tup
         if not all(side.get('owned_probe') for side in candidates):
             return True
         before, after = (pairs.get(index) for pairs in probe_pairs)
+        # Equal readings produce no new difference. In a repeat they may retain
+        # the original independent comparison; the case evidence stays dependent.
         return before is None or after is None or _canonical(before) != _canonical(after)
 
     kept = [index for index in compared if
             not any(index in group for group in unavailable)
-            and (repeat or not needs_independence(index) or not any(index in group for group in dependent)) and
+            and (not needs_independence(index) or not any(index in group for group in dependent)) and
             (marks[0][index] if index < len(marks[0]) else []) ==
-            (marks[1][index] if index < len(marks[1]) else [])]
+            (marks[1][index] if index < len(marks[1]) else []) and
+            (requests[0][index] if index < len(requests[0]) else []) ==
+            (requests[1][index] if index < len(requests[1]) else [])]
 
     def admitted(side, held):
         if (side['result'] == 'error' and side.get('reason_code') != 'G6_E_OBSERVATION_UNAVAILABLE'):

@@ -427,6 +427,23 @@ def own_import_absent(exc, args):
     tree = path_key(globals().get('root', os.getcwd()))
     parts = name.split('.')
     owners = globals().get('data', {}).get('own_modules', ())
+    inventory = globals().get('data', {}).get('own_module_paths')
+    if inventory is not None:
+        # Potential names retain their import entry. An unused archive owns nothing;
+        # a later entry cannot claim a child of an earlier selected regular package.
+        entries = {path_key(os.path.join(tree, entry)): names for entry, names in inventory.items()}
+        owners = ()
+        for prefix in sys.path:
+            if type(prefix) is not str:
+                continue
+            folder = path_key(prefix or os.getcwd())
+            spec = importlib.machinery.PathFinder.find_spec(parts[0], [folder])
+            names = entries.get(folder, ())
+            if name in names:
+                owners = names
+                break
+            if spec is not None and spec.loader is not None:
+                break
     if missing_module and name in owners:
         return True
     if not missing_module:
@@ -497,7 +514,10 @@ def own_import_absent(exc, args):
         if type(prefix) is not str:
             continue
         folder = path_key(prefix or os.getcwd())
+        selected = importlib.machinery.PathFinder.find_spec(parts[0], [folder])
         if not path_inside(tree, folder):
+            if selected is not None and selected.loader is not None:
+                break
             continue
         locations = [folder]
         for end in range(1, len(parts)):
@@ -517,22 +537,66 @@ def own_import_absent(exc, args):
                 return not ((globals().get('_missing_preparation_imports') or globals().get('_missing_imports')
                              or globals().get('_pending_imports', lambda: False)())
                             and guarded_export(spec.loader.get_source(name)))
+        if selected is not None and selected.loader is not None:
+            break
     return False
 
 
 def track_imports():
-    """Install before repository loading; retain failed external imports even if a guard catches them."""
+    """Record actual failed finds and the outer request, before repository loading."""
+    import builtins
     import importlib._bootstrap
     import threading
 
     global _missing_preparation_imports, _missing_imports, _missing_import_requests, _pending_imports
+    global _missing_request_identities, _failed_import_finds
     _missing_preparation_imports, _missing_imports, _missing_import_requests = set(), [], set()
+    _missing_request_identities, _failed_import_finds = set(), []
     load = importlib._bootstrap._find_and_load
+    find = importlib._bootstrap._find_spec
+    unlocked = importlib._bootstrap._find_and_load_unlocked.__code__
+    importing, reloading = builtins.__import__, importlib.reload
     library_roots = tuple(path_key(prefix) for prefix in (sys.base_prefix, sys.prefix))
     machinery = path_key(os.path.dirname(importlib.__file__))
     active = threading.local()
+    wrapped = {}
+
     def _pending_imports():
         return any(getattr(active, 'stack', ()))
+
+    def requests():
+        if not hasattr(active, 'requests'):
+            active.requests = []
+        return active.requests
+
+    def failed_find(name, path, target=None):
+        spec = find(name, path, target)
+        if spec is None:
+            if not hasattr(active, 'finds'):
+                active.finds = []
+            active.finds.append(name)
+        return spec
+
+    def failed_cause(exc):
+        seen, pending = set(), [exc]
+        while pending and len(seen) < 1024:
+            one = pending.pop()
+            if id(one) in seen:
+                continue
+            seen.add(id(one))
+            if any(one is failed for failed in _failed_import_finds):
+                return True
+            pending.extend(error for error in (BaseException.__dict__['__cause__'].__get__(one),
+                                                BaseException.__dict__['__context__'].__get__(one))
+                           if error is not None)
+        return False
+
+    def retain(exc, name, identity):
+        _missing_imports.append(exc)
+        _missing_import_requests.add(name)
+        _missing_request_identities.add(identity)
+        if globals().get('_preparation_depth', 0):
+            _missing_preparation_imports.add(ImportError.__dict__['name'].__get__(exc))
 
     def requested_absent(name):
         # Only absence of the requested owned module is a code failure here. Never let the missing name
@@ -546,8 +610,7 @@ def track_imports():
             locations = spec.submodule_search_locations
         return False
 
-    def tracked(name, import_):
-        frame = sys._getframe(1)
+    def requester(frame):
         tree = path_key(globals().get('root', os.getcwd()))
         # None means no caller could be attributed (for example a library callback on a worker thread).
         requested_here = None
@@ -555,6 +618,9 @@ def track_imports():
         # Attribute library helpers to their nearest repository caller. An import made while a library module
         # itself is loading is that module's request, not an optional dependency requested by the repository.
         while frame is not None:
+            if frame.f_code in observer_codes:
+                frame = frame.f_back
+                continue
             filename = frame.f_code.co_filename
             # Frozen stdlib modules retain their installed file in the module namespace, not co_filename.
             if filename.startswith('<frozen ') and filename not in (
@@ -593,31 +659,118 @@ def track_imports():
                 break
             frame = frame.f_back
         del frame
+        return requested_here
+
+    def scoped(identity, module, function, *args, **kwargs):
+        boundary = requests()
+        boundary.append(identity)
+        try:
+            return function(*args, **kwargs)
+        except ImportError as exc:
+            # Reload and module attribute lookup can escape without an enclosing
+            # _find_and_load. A failed find is still required, including through
+            # a library's loader or a translated exception.
+            if (failed_cause(exc) and not requested_absent(module)
+                    and not any(exc is missing for missing in _missing_imports)):
+                item = (exc, module, boundary[0])
+                stack = getattr(active, 'stack', ())
+                if stack:
+                    stack[-1].append(item)
+                else:
+                    retain(*item)
+            raise
+        finally:
+            boundary.pop()
+
+    def wrap_lazy(module, name):
+        if type(module) is not type(sys):
+            return
+        namespace = type(sys).__dict__['__dict__'].__get__(module)
+        original = namespace.get('__getattr__')
+        if not callable(original) or wrapped.get(id(module)) is original:
+            return
+
+        def lazy(attribute):
+            return scoped('attribute:' + name + ':' + attribute, name, original, attribute)
+
+        observer_codes.add(lazy.__code__)
+        namespace['__getattr__'] = lazy
+        wrapped[id(module)] = lazy
+
+    def tracked_import(name, globals=None, locals=None, fromlist=(), level=0):
+        requested = requester(sys._getframe(1))
+        absolute = name
+        if level and type(globals) is dict:
+            package = globals.get('__package__')
+            if type(package) is str:
+                absolute = importlib._bootstrap._resolve_name(name, package, level)
+        if requested is False:
+            return importing(name, globals, locals, fromlist, level)
+        identity = 'import:' + absolute + (':' + ','.join(fromlist) if fromlist else '')
+        result = scoped(identity, absolute, importing, name, globals, locals, fromlist, level)
+        wrap_lazy(sys.modules.get(absolute), absolute)
+        return result
+
+    def tracked_reload(module):
+        namespace = type(sys).__dict__['__dict__'].__get__(module) if type(module) is type(sys) else {}
+        spec = namespace.get('__spec__')
+        name = getattr(spec, 'name', None) or namespace.get('__name__')
+        if type(name) is not str or requester(sys._getframe(1)) is False:
+            return reloading(module)
+        result = scoped('reload:' + name, name, reloading, module)
+        wrap_lazy(result, name)
+        return result
+
+    def tracked(name, import_):
+        requested_here = requester(sys._getframe(1))
         stack = getattr(active, 'stack', None)
         if stack is None:
             stack = active.stack = []
         pending = []
         stack.append(pending)
+        boundary = requests()
+        outer = requested_here is not False and not boundary
+        if outer:
+            boundary.append('import:' + name)
+        start = len(getattr(active, 'finds', ()))
         try:
-            return load(name, import_)
+            result = load(name, import_)
+            wrap_lazy(result, name)
+            return result
         except ImportError as exc:
-            if requested_here is not False and not requested_absent(name):
+            trace = BaseException.__dict__['__traceback__'].__get__(exc)
+            while trace is not None and trace.tb_next is not None:
+                trace = trace.tb_next
+            # A None spec is a failed find, not yet a failed import (find_spec
+            # queries may return None deliberately). Pair it with the import
+            # system's own escaping exception; repository metadata cannot supply it.
+            missing = ImportError.__dict__['name'].__get__(exc)
+            if (trace is not None and trace.tb_frame.f_code is unlocked
+                    and missing == name and name in getattr(active, 'finds', ())[start:]):
+                _failed_import_finds.append(exc)
+            if (requested_here is not False and failed_cause(exc)
+                    and not requested_absent(name)):
                 # An escaping dependency failure belongs to the outer repository request. A caught inner
                 # failure still survives if that outer import completes successfully.
-                pending[:] = [(exc, name)]
+                pending[:] = [(exc, name, boundary[0])]
             raise
         finally:
+            if outer:
+                boundary.pop()
             stack.pop()
             if stack:
                 stack[-1].extend(pending)
             else:
-                for exc, requested in pending:
-                    _missing_imports.append(exc)
-                    _missing_import_requests.add(requested)
-                    if globals().get('_preparation_depth', 0):
-                        _missing_preparation_imports.add(ImportError.__dict__['name'].__get__(exc))
+                for item in pending:
+                    retain(*item)
 
+    observer_codes = {scoped.__code__, tracked.__code__, tracked_import.__code__, tracked_reload.__code__}
+    importlib._bootstrap._find_spec = failed_find
     importlib._bootstrap._find_and_load = tracked
+    builtins.__import__ = tracked_import
+    importlib.reload = tracked_reload
+    for name, module in tuple(sys.modules.items()):
+        wrap_lazy(module, name)
 
 
 def setup_call(phase, function, *args, **kwargs):
@@ -784,6 +937,19 @@ def shown_value(value, limit=200):
 SHOWN_HELPER = inspect.getsource(shown_value).replace('def shown_value(', 'def _shown(', 1)
 
 
+def _fixed_source(source: str) -> str:
+    """Emit fixed code without carrying its comments or documentation into reproductions."""
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and type(first.value.value) is str:
+                node.body.pop(0)
+                if not node.body and not isinstance(node, ast.Module):
+                    node.body.append(ast.Pass())
+    return ast.unparse(tree) + '\n'
+
+
 BOOTSTRAP = (CODE_CARRIER_HELPERS + inspect.getsource(observable_exception) + '\n' + inspect.getsource(_fingerprint) + '\n'
              + inspect.getsource(raised_during_setup) + '\n' + inspect.getsource(execution_control) + '\n'
              + inspect.getsource(setup_outcome) + '\n'
@@ -813,13 +979,17 @@ def unavailable_import(exc):
         return True
     if own_import_absent(exc, ()):
         return False
-    # IMPORT_FROM can fail after loading a module. Metadata on an explicit raise is not import evidence.
+    # IMPORT_FROM can fail after __import__ returned. Require a failed import
+    # recorded for this module's requested child as well as the actual boundary.
     trace = BaseException.__dict__['__traceback__'].__get__(exc)
-    while trace is not None:
-        if trace.tb_frame.f_code.co_code[trace.tb_lasti] in _IMPORT_OPS:
-            return True
+    while trace is not None and trace.tb_next is not None:
         trace = trace.tb_next
-    return False
+    name = ImportError.__dict__['name'].__get__(exc)
+    return (trace is not None and trace.tb_frame.f_code.co_code[trace.tb_lasti] == dis.opmap['IMPORT_FROM']
+            and type(name) is str and any(
+                type(ImportError.__dict__['name'].__get__(failed)) is str
+                and ImportError.__dict__['name'].__get__(failed).startswith(name + '.')
+                for failed in _failed_import_finds))
 
 def import_mark():
     names = sorted(_missing_import_requests)
@@ -839,7 +1009,7 @@ def import_mark():
         pending.extend(one for one in (BaseException.__dict__['__cause__'].__get__(exc),
                                        BaseException.__dict__['__context__'].__get__(exc)) if one is not None)
     return {'missing_import': ObservationUnavailable.DETAIL, 'missing_imports': names,
-            'missing_import_details': sorted(details)}
+            'missing_import_details': sorted(details), 'import_requests': sorted(_missing_request_identities)}
 def _name(kind):
     return setup_call("exception_description", exception_name, kind)
 
@@ -1021,9 +1191,11 @@ def call_failed(exc):
 
 def observe(request):
     global data, _missing_preparation_imports, _missing_imports, _missing_import_requests
+    global _missing_request_identities, _failed_import_finds
     global errors, outcomes, alive
     data = request
     _missing_preparation_imports, _missing_imports, _missing_import_requests = set(), [], set()
+    _missing_request_identities, _failed_import_finds = set(), []
     errors, outcomes, alive = {}, [], []
     def repository_spec(name):
         # A preloaded library can shadow a held entry point (including importlib.py). Resolve what the
@@ -1058,6 +1230,7 @@ def observe(request):
 def observe_calls():
     global errors, outcomes, alive
     global _missing_imports, _missing_import_requests
+    global _missing_request_identities, _failed_import_finds
     try:
         function = load(data["function"])
     except CheckSetupError as exc:
@@ -1075,9 +1248,13 @@ def observe_calls():
     # Preparation affects every case; imports attempted by one call belong to that case alone.
     preparation_imports = list(_missing_imports)
     preparation_requests = set(_missing_import_requests)
+    preparation_identities = set(_missing_request_identities)
+    preparation_finds = list(_failed_import_finds)
     for call in data["calls"]:
         _missing_imports = list(preparation_imports)
         _missing_import_requests = set(preparation_requests)
+        _missing_request_identities = set(preparation_identities)
+        _failed_import_finds = list(preparation_finds)
         args, kwargs = copy.deepcopy(call["args"]), copy.deepcopy(call.get("kwargs", {}))
         try:
             result = function(*args, **kwargs)
@@ -1187,10 +1364,27 @@ def _unique(pairs):
 
 def read_frame(raw: bytes) -> dict | None:
     """Total reader: exactly one bounded, recognised frame, with no prefix or trailing bytes."""
+    def valid_request(identity):
+        if type(identity) is not str or len(identity) > 4096 or 'G6_E_' in identity:
+            return False
+        parts = identity.split(':')
+        if (len(parts) not in (2, 3) or parts[0] not in ('import', 'reload', 'attribute')
+                or not all(part.isidentifier() for part in parts[1].split('.'))):
+            return False
+        if parts[0] == 'reload':
+            return len(parts) == 2
+        if parts[0] == 'attribute':
+            return len(parts) == 3 and parts[2].isidentifier()
+        return len(parts) == 2 or all(name == '*' or all(part.isidentifier() for part in name.split('.'))
+                                      for name in parts[2].split(','))
+
     def valid_marks(one):
         names = one.get('missing_imports')
         details = one.get('missing_import_details', [])
-        return (type(details) is list and len(details) <= 1024
+        requests = one.get('import_requests', [])
+        return (type(requests) is list and len(requests) <= 1024 and all(valid_request(one) for one in requests)
+                and requests == sorted(set(requests))
+                and type(details) is list and len(details) <= 1024
                 and all(type(name) is str and len(name) <= 200 and 'G6_E_' not in name
                         and all(part.isidentifier() for part in name.split('.')) for name in details)
                 and details == sorted(set(details))
@@ -1217,7 +1411,9 @@ def read_frame(raw: bytes) -> dict | None:
         if isinstance(value, dict) and value.get('version') == 'call_failure.v1':
             marked = {'missing_import', 'missing_imports'}
             return value if (set(value) in ({'version', 'detail'}, {'version', 'detail', *marked},
-                                           {'version', 'detail', *marked, 'missing_import_details'})
+                                           {'version', 'detail', *marked, 'missing_import_details'},
+                                           {'version', 'detail', *marked, 'import_requests'},
+                                           {'version', 'detail', *marked, 'missing_import_details', 'import_requests'})
                              and (not marked.intersection(value) or valid_marks(value))
                              and type(value['detail']) is str
                              and value['detail'] in CheckSetupError.CALL_FAILURES) else None
@@ -1266,6 +1462,10 @@ def read_frame(raw: bytes) -> dict | None:
                 if not valid_marks(one):
                     return None
                 fields.remove('missing_import_details')
+            if 'import_requests' in fields:
+                if not valid_marks(one):
+                    return None
+                fields.remove('import_requests')
             if 'unavailable_import' in fields:
                 if (value['version'] != 'observation.v2' or 'raised' not in fields
                         or not ObservationUnavailable.valid_detail(one['unavailable_import'])
@@ -1348,6 +1548,8 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
         # only with matching per-outcome evidence from the other tree. Legacy marks have no comparable names.
         evidence = {'outcomes': marks, 'failures': failures, 'unavailable': unavailable, 'dependent': dependent,
                     'details': [one.get('missing_import_details', []) for one in outcomes],
+                    **({'requests': [one.get('import_requests', one.get('missing_imports', [])) for one in outcomes]}
+                       if any('import_requests' in one for one in outcomes) else {}),
                     'reading': {key: value for key, value in found.items() if key != 'observed'}}
         if affected:
             detail = (outcomes[unavailable[0]]['unavailable_import'] if unavailable else ObservationUnavailable.DETAIL)
@@ -1512,19 +1714,14 @@ def request(data: dict, *, budget_s: float = 10) -> dict:
             "errors": data.get("errors", [case["error"] for case in calls if case.get("expect") == "raises"]),
             "probe": "cases" not in data, "mode": data.get("mode", "outputs"), 'budget_s': budget_s,
             **({'own_modules': data['own_modules']} if 'own_modules' in data else {}),
+            **({'own_module_paths': data['own_module_paths']} if 'own_module_paths' in data else {}),
             **({'import_roots': data['import_roots']} if 'import_roots' in data else {})}
 
 
 def _portable_source(function) -> str:
     """Keep helper semantics while omitting documentation and compacting fixed-code indentation."""
-    tree = ast.parse(inspect.getsource(function))
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.body:
-            first = node.body[0]
-            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and type(first.value.value) is str:
-                node.body.pop(0)
     return '\n'.join(' ' * ((len(line) - len(line.lstrip(' '))) // 4) + line.lstrip(' ')
-                     for line in ast.unparse(tree).splitlines())
+                     for line in _fixed_source(inspect.getsource(function)).splitlines())
 
 
 def example_text(slot: str) -> str:
@@ -1533,7 +1730,8 @@ def example_text(slot: str) -> str:
     Pytest is only a convenience for displaying a reproduction. Product evidence comes from ``run`` and its
     host-owned result channel, never from collection, plugins or the wrapper's pytest status.
     """
-    bootstrap = base64.b85encode(zlib.compress((confine.CHILD_PRELUDE + BOOTSTRAP).encode('utf-8'), 9)).decode('ascii')
+    bootstrap = base64.b85encode(zlib.compress(
+        (confine.CHILD_PRELUDE + _fixed_source(BOOTSTRAP)).encode('utf-8'), 9)).decode('ascii')
     carriers = base64.b85encode(zlib.compress(CODE_CARRIER_HELPERS.encode('utf-8'), 9)).decode('ascii')
     preparation = '\n\n'.join(_portable_source(one) for one in (
         CheckSetupError, ObservationUnavailable, raised_during_setup, execution_control,
@@ -1701,7 +1899,7 @@ def run(copy: Path, data: dict, node: str, *, timeout_s: int, deadline: float) -
         remaining = min(timeout_s, deadline - time.monotonic())
         if remaining <= 0:
             return {"verdict": "not_run", "said": "G6_E_OBSERVATION_UNAVAILABLE: timeout before startup"}
-        program = data.get("_program", confine.CHILD_PRELUDE + BOOTSTRAP)
+        program = data.get("_program", confine.CHILD_PRELUDE + _fixed_source(BOOTSTRAP))
         boot.write_text(program, encoding="utf-8", newline="\n")
         with channel.open("xb") as handle:
             handle.write(_encoded(request(data, budget_s=remaining)).encode('utf-8'))
