@@ -47,7 +47,8 @@ def evidence_from_mechanism_record(rec: Mapping[str, Any], *, evidence_id: str, 
         independence_rationale="the workforce recorded this check as independent of the step it judges" if independent else "",
         result=result, scope=scope, known_limitations=(*known_limitations, ADAPTED_NOTE), source_ref=source_ref,
         standard_sha256=standard_sha256, negative_control_ref=negative_control_ref, purpose="check",
-        oracle_error_bound=None)
+        # Preserve a supplied number as a declaration. Workforce metadata cannot admit a premise receipt.
+        oracle_error_bound=rec.get("oracle_error_bound"))
 
 
 def known_unknowns(elicitation: Mapping[str, Any]) -> tuple[str, ...]:
