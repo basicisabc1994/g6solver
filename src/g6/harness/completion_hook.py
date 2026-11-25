@@ -306,6 +306,19 @@ def on_stop(event: dict) -> dict:
         return {'systemMessage': str(exc)}
     except PathRefused as exc:
         return {'systemMessage': f'[{OUTSIDE_ROOT}] {exc.reason}'}
+    except OSError as exc:
+        if code_of(exc) == 'G6_E_COMPLETION_RESERVATION_UNSAVED':
+            from g6.harness.completion_loop import refusal_reason
+            return {'systemMessage': f'[{code_of(exc)}] {refusal_reason(str(exc), code_of(exc))}'}
+        try:
+            state = dict(exc.state)
+        except AttributeError:
+            raise exc from None
+        from g6.harness.completion_loop import attempted
+        total = attempted(state)
+        count = (f' Up to {total} request(s) of this run may have gone out.' if total is not None else
+                 ' The send count of this run is unknown.')
+        return {'systemMessage': str(exc) + count}
     except Exception as exc:  # noqa: BLE001 - only coded G6 refusals become hook messages
         code = code_of(exc)
         if code == 'unknown':

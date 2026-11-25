@@ -61,7 +61,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from g6.core.refusals import current_watch, watching_consent
+from g6.core.refusals import code_of, current_watch, watching_consent
 
 from g6.cegis import InputDomain, SearchResult, cegis
 from g6.context.redact import MASK, mask_paths, secret_spans
@@ -565,9 +565,12 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
             with _base_copy(change, left) as copy:
                 with cloud.request_sources(origins if again else ()):
                     host(asked + again, copy, store.check_tree(where), left)
-        except _ReservationUnsaved:
+        except _ReservationFailure:
             raise
         except (LLMError, repo_tests.CopyNotRun, OSError) as exc:
+            if isinstance(exc, OSError):
+                run = _RUN_COUNT.get()
+                exc = _call_read_error(exc, run.pending if run is not None else None)
             failed = f"{type(exc).__name__}: {exc}"[:400]
         got, origins = _snapshot_probe(run_set(change, where / "probes", at_base=True, deadline=deadline))
         cloud.record_sources(origins)
@@ -914,9 +917,12 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
         with cloud.request_sources(refs):
             found = critic_report(consent.guard(caller).complete(
                 system, sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), proof=proof)
-    except _ReservationUnsaved:
+    except _ReservationFailure:
         raise
     except (LLMError, OSError) as exc:
+        if isinstance(exc, OSError):
+            run = _RUN_COUNT.get()
+            exc = _call_read_error(exc, run.pending if run is not None else None)
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
     if hidden and found["verdict"] == "none":
         found = {**found, "verdict": "failed", "error": HIDDEN}
@@ -1075,6 +1081,9 @@ class Step:
     call_ran: bool | None = None
     settled_here: bool = False
     refusal: bool = False
+    # Call-local accounting for refused reply reads; never serialized as a
+    # completion envelope field or persisted in the retained run mapping.
+    state: dict | None = None
 
     @property
     def ran(self) -> bool:
@@ -1093,7 +1102,11 @@ RESERVATION_UNSAVED = 'G6_E_COMPLETION_RESERVATION_UNSAVED'
 PUBLICATION_UNSAVED = 'G6_E_COMPLETION_PUBLICATION_UNSAVED'
 
 
-class _ReservationUnsaved(OSError):
+class _ReservationFailure(OSError):
+    """Persistence prevented the next dispatch; ordinary host handlers must not absorb it."""
+
+
+class _ReservationUnsaved(_ReservationFailure):
     """The observer prevented dispatch because persistence failed."""
     code = RESERVATION_UNSAVED
 
@@ -1185,17 +1198,18 @@ def read_report(session: Path, state: dict, *, code: str = "") -> str:
     A step's refusal code can describe a partial publication, but never supplies
     its count or report words. A retained ending takes precedence over it.
     """
-    retained_code = state.get('code') if state.get('done') else state.get('code') or code
-    if retained_code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND):
-        return _consent_stop(attempted(state))
-    path = store.path(session, 'report.md')
-    if not path.is_file() and not state.get('done'):
-        return ''
-    try:
-        return cloud.read_retained(path, state.get('report_sha256')).decode('utf-8')
-    except (OSError, TypeError, ValueError):
-        cloud.record_sources((cloud.UNKNOWN,))
-        return cloud.WITHHELD
+    with store.task_publication(store.path(session, 'report.md')):
+        retained_code = state.get('code') if state.get('done') else state.get('code') or code
+        if retained_code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE, CONSENT_STATE_AFTER_SEND):
+            return _consent_stop(attempted(state))
+        path = store.path(session, 'report.md')
+        if not path.is_file() and not state.get('done'):
+            return ''
+        try:
+            return cloud.read_retained(path, state.get('report_sha256')).decode('utf-8')
+        except (OSError, TypeError, ValueError):
+            cloud.record_sources((cloud.UNKNOWN,))
+            return cloud.WITHHELD
 
 
 def source_refs(state: dict) -> tuple[cloud.Source, ...]:
@@ -1232,6 +1246,22 @@ def refusal_reason(text: str, code: str) -> str:
 
 def reply_for(session: Path, step: Step, repo: str, base: str, *, hook: bool = False,
               report_reader: Callable[..., str] | None = None) -> tuple[Step, dict, str]:
+    try:
+        return _reply_for(session, step, repo, base, hook=hook, report_reader=report_reader)
+    except OSError as exc:
+        raise _call_read_error(exc, step.state) from None
+
+
+def _call_read_error(error: OSError, state: dict | None) -> OSError:
+    if state is not None and state.get('call_requests', 0):
+        if code_of(error) == RESERVATION_UNSAVED:
+            error = _ReservationFailure('The prior retained publication is waiting for a sharing refusal to clear.')
+        error.state = {ATTEMPTED: attempted(state)}
+    return error
+
+
+def _reply_for(session: Path, step: Step, repo: str, base: str, *, hook: bool = False,
+               report_reader: Callable[..., str] | None = None) -> tuple[Step, dict, str]:
     """Join one step with one checked retained snapshot for both public surfaces.
 
     An unretained refusal is about this call; a saved ending cannot erase it.
@@ -1240,6 +1270,13 @@ def reply_for(session: Path, step: Step, repo: str, base: str, *, hook: bool = F
     """
     try:
         state = reply_state(session)
+    except OSError:
+        if step.code != RESERVATION_UNSAVED:
+            raise
+        # The reservation itself prevented dispatch. Its own error survives a
+        # still-held restoration during the reply read.
+        text = f'[{step.code}] {step.text}' if hook else step.text
+        return Step(STOP, text, step.code, ending='untested', call_ran=step.ran, refusal=True), {}, step.text
     except WorkspaceRefused as exc:
         if exc.code not in (WORKSPACE_BUSY, BUSY):
             raise
@@ -1405,6 +1442,7 @@ class _RunCount:
         self.session, self.state = store.path(session), state
         self.guard = threading.RLock()
         self.active = True
+        self.pending = {ATTEMPTED: attempted(state), 'call_requests': 0}
 
     def total(self) -> int | None:
         return attempted(self.state)
@@ -1431,6 +1469,8 @@ class _RunCount:
             # Do not pre-edit a state that the retained reader may also return.
             # Reservation and the host's note describe the same request.
             _reserve_request(self.session, pending)
+            self.pending['call_requests'] += 1
+            self.pending[ATTEMPTED] = attempted(pending)
             # The storage transaction owns the lock, fresh read and durable flush.
             # Publish its total locally only after the transaction returns.
             for key in (ATTEMPTED, SENT):
@@ -1471,6 +1511,17 @@ def _reserve_request(session: Path, state: dict) -> None:
         try:
             _save(session, state)
         except OSError as exc:
+            run = _RUN_COUNT.get()
+            if run is not None and run.session == session and run.pending['call_requests']:
+                # A later reservation in the same call cannot describe the
+                # whole call as unsent. Preserve the original save failure.
+                run.into(state)
+                failure = _ReservationFailure(str(exc))
+                if code_of(exc) == RESERVATION_UNSAVED:
+                    failure = _ReservationFailure(
+                        'The prior retained publication is waiting for a sharing refusal to clear.')
+                failure.state = {ATTEMPTED: attempted(state)}
+                raise failure from None
             raise _ReservationUnsaved(f'The request reservation could not be saved: {exc}. '
                                       'This request was not sent. Retry this call.') from None
     finally:
@@ -1892,7 +1943,7 @@ def _prepare_locked(root: Path, task: str, base: str, session: Path, scout: Host
                                    cloud.Source.text(cloud.input_source(task), 'task', task)),
                                   carried=(*source_refs(state), *shipped.sources))
     state.setdefault("sets", {})
-    with cloud.collect_sources() as capture, cloud.request_sources(refs), _run_count(session, state, fresh=fresh):
+    with cloud.collect_sources() as capture, cloud.request_sources(refs), _run_count(session, state, fresh=fresh) as run:
         token = _SOURCE_STATE.set(capture)
         try:
             try:
@@ -1906,6 +1957,8 @@ def _prepare_locked(root: Path, task: str, base: str, session: Path, scout: Host
             told = _told(state, shipped)
             _save(session, state)
             return told
+        except OSError as exc:
+            raise _call_read_error(exc, run.pending) from None
         finally:
             _SOURCE_STATE.reset(token)
 
@@ -2001,45 +2054,71 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
     state = _load(session)
     ended_before = bool(state.get('done'))
     with _run_count(session, state, fresh=not state) as run:
+        step = _advance_counted(repo, task, base, session, scout, critic, said, answered, agent,
+                                state, ended_before, run)
+        if step.code == RESERVATION_UNSAVED and run.pending['call_requests']:
+            error = _ReservationFailure('The prior retained publication is waiting for a sharing refusal to clear.')
+            error.state = {ATTEMPTED: run.total()}
+            raise error
+        return Step(step.action, step.text, step.code, step.note, step.ending, step.call_ran,
+                    step.settled_here, step.refusal,
+                    run.pending)
+
+
+def _advance_counted(repo, task, base, session, scout, critic, said, answered, agent, state, ended_before, run):
+    try:
+        return _step(state, run, repo, task, base, session, scout, critic, said, answered, agent)
+    except _ReservationUnsaved as exc:
+        return Step(STOP, str(exc), RESERVATION_UNSAVED, ending='untested', call_ran=True, refusal=True)
+    except OSError as exc:
+        accounting = run.pending
+        exc = _call_read_error(exc, accounting)
         try:
-            return _step(state, run, repo, task, base, session, scout, critic, said, answered, agent)
-        except _ReservationUnsaved as exc:
-            return Step(STOP, str(exc), RESERVATION_UNSAVED, ending='untested', call_ran=True, refusal=True)
-        except OSError as exc:
             retained = _load(session)
-            if (not ended_before and retained.get('done')
-                    and not (isinstance(retained, _RetainedState) and not retained.readable)):
-                return Step(STOP, str(exc), PUBLICATION_UNSAVED, ending=retained.get('ending', 'untested'),
-                            call_ran=True, settled_here=True, refusal=True)
-            raise
-        except (WorkspaceRefused, PathRefused, repo_tests.RepoRefused) as exc:
-            code = OUTSIDE_ROOT if isinstance(exc, PathRefused) else exc.code
+        except OSError:
+            # A pending restore cannot replace the save's own exception.
+            # This count came from successful durable reservations in this
+            # operation, rather than from the currently refused bytes.
             run.into(state)
-            reason = exc.reason if isinstance(exc, (WorkspaceRefused, PathRefused)) else str(exc)
-            text = f"[{code}] The review stopped: {refusal_reason(reason, code)}"
-            try:
-                retained = _load(session)
-                if retained.get('done'):
-                    # This call's refusal is returned, but no settled bytes change.
-                    return Step(STOP, text, code, ending="untested", call_ran=not ended_before,
-                                settled_here=not ended_before, refusal=True)
-                if isinstance(exc, repo_tests.RepoRefused) and run.total() == 0:
-                    return Step(STOP, text, code, ending="untested", call_ran=False, refusal=True)
-                return _refused(session, state, task, base, Path(repo), text, code,
-                                "completion_body_refused", untested=True)
-            except (WorkspaceRefused, PathRefused, OSError, ValueError) as publication:
-                if not ended_before and state.get('done'):
-                    # The original ending is saved. Expose the publication's
-                    # own failure alongside it, including equal-code failures.
-                    publication_code = (OUTSIDE_ROOT if isinstance(publication, PathRefused) else
-                                        publication.code if isinstance(publication, WorkspaceRefused) else code)
-                    publication_reason = (publication.reason if isinstance(publication, (WorkspaceRefused, PathRefused))
-                                          else str(publication))
-                    return Step(STOP, publication_reason, publication_code, ending=state.get('ending', 'untested'),
-                                call_ran=True, settled_here=True, refusal=True)
-                # An unsaved ending cannot replace the original refusal.
+            exc.state = {ATTEMPTED: attempted(state)}
+            raise exc from None
+        if (not ended_before and retained.get('done')
+                and not (isinstance(retained, _RetainedState) and not retained.readable)):
+            return Step(STOP, str(exc), PUBLICATION_UNSAVED, ending=retained.get('ending', 'untested'),
+                        call_ran=True, settled_here=True, refusal=True)
+        if accounting['call_requests']:
+            exc.state = {ATTEMPTED: run.total()}
+        raise exc from None
+    except (WorkspaceRefused, PathRefused, repo_tests.RepoRefused) as exc:
+        code = OUTSIDE_ROOT if isinstance(exc, PathRefused) else exc.code
+        run.into(state)
+        reason = exc.reason if isinstance(exc, (WorkspaceRefused, PathRefused)) else str(exc)
+        text = f"[{code}] The review stopped: {refusal_reason(reason, code)}"
+        try:
+            retained = _load(session)
+            if retained.get('done'):
+                # This call's refusal is returned, but no settled bytes change.
                 return Step(STOP, text, code, ending="untested", call_ran=not ended_before,
-                            settled_here=not ended_before and bool(state.get('done')), refusal=True)
+                            settled_here=not ended_before, refusal=True)
+            if isinstance(exc, repo_tests.RepoRefused) and run.total() == 0:
+                return Step(STOP, text, code, ending="untested", call_ran=False, refusal=True)
+            return _refused(session, state, task, base, Path(repo), text, code,
+                            "completion_body_refused", untested=True)
+        except (WorkspaceRefused, PathRefused, OSError, ValueError) as publication:
+            if isinstance(publication, OSError):
+                publication = _call_read_error(publication, run.pending)
+            if not ended_before and state.get('done'):
+                # The original ending is saved. Expose the publication's
+                # own failure alongside it, including equal-code failures.
+                publication_code = (OUTSIDE_ROOT if isinstance(publication, PathRefused) else
+                                    publication.code if isinstance(publication, WorkspaceRefused) else code)
+                publication_reason = (publication.reason if isinstance(publication, (WorkspaceRefused, PathRefused))
+                                      else str(publication))
+                return Step(STOP, publication_reason, publication_code, ending=state.get('ending', 'untested'),
+                            call_ran=True, settled_here=True, refusal=True)
+            # An unsaved ending cannot replace the original refusal.
+            return Step(STOP, text, code, ending="untested", call_ran=not ended_before,
+                        settled_here=not ended_before and bool(state.get('done')), refusal=True)
 
 
 def _refused(session: Path, state: dict, task: str, base: str, root: Path,

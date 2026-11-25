@@ -86,22 +86,22 @@ def _locked(target: Path, *, sweep: bool = True) -> Iterator[None]:
 
 
 def _snapshot(target: Path) -> dict[Path, bytes | None]:
-    return {item: item.read_bytes() if item.is_file() else None for item in retained_paths(target)[:2]}
+    return {item: item.read_bytes() if item.is_file() else None for item in _retained_paths(target)[:2]}
 
 
 class _Publication:
-    def __init__(self, target: Path) -> None:
+    def __init__(self, target: Path, *, snapshot: bool = True) -> None:
         self.target = path(target)
-        self.previous = _snapshot(self.target)
+        self.previous = _snapshot(self.target) if snapshot else {}
         self.written = dict(self.previous)
         self.spares = {}
-        self.spare_paths = {item: item for item in retained_paths(self.target)[2:]}
+        self.spare_paths = {item: item for item in _retained_paths(self.target)[2:]}
         self.active = True
         self.thread = threading.get_ident()
 
     def includes(self, target: Path) -> bool:
         return (self.active and self.thread == threading.get_ident()
-                and (target in retained_paths(self.target) or target in self.spare_paths.values()))
+                and (target in _retained_paths(self.target) or target in self.spare_paths.values()))
 
     def wrote(self, target: Path, body: bytes) -> None:
         if target in self.written:
@@ -119,7 +119,7 @@ class _TaskWrite:
 
     def includes(self, target: Path) -> bool:
         return (self.active and self.thread == threading.get_ident()
-                and (target in retained_paths(self.target)
+                and (target in _retained_paths(self.target)
                      or self.attempt is not None and target in self.attempt.spare_paths.values()))
 
 
@@ -148,7 +148,8 @@ class TaskUnreadable(ValueError):
 class _RestorePending(PermissionError):
     code = 'G6_E_COMPLETION_RESERVATION_UNSAVED'
 
-    def __init__(self) -> None:
+    def __init__(self, refusal: OSError | None = None) -> None:
+        self.refusal = refusal
         super().__init__(errno.EACCES, 'The request reservation could not be saved: the prior retained publication '
                          'is waiting for a sharing refusal to clear. This request was not sent. Retry this call.')
 
@@ -156,6 +157,19 @@ class _RestorePending(PermissionError):
 def task_path(target: Path) -> Path:
     """The latest binding, including an interrupted recovery binding."""
     session = path(target.parent)
+    # Discover recovery families before choosing the latest binding. A first
+    # publication may disappear when its absent prior pair is restored.
+    targets = {path(target)}
+    if session.is_dir():
+        for child in session.iterdir():
+            # Include private restore records even if neither prior half nor
+            # an owned spare remains to announce the recovery family.
+            stem = child.name.removeprefix('.').split('.')[0]
+            if stem.startswith('task-') and stem[5:].isdigit():
+                targets.add(path(session, stem + '.json'))
+    for item in sorted(targets):
+        with _pending_access(item):
+            pass
     names = [child.name.removesuffix('.new') for child in session.iterdir()] if session.is_dir() else []
     numbers = [int(Path(name).stem[5:]) for name in names
                if name.startswith('task-') and Path(name).suffix in ('.json', '.sha256')
@@ -244,6 +258,11 @@ def touch(target: Path) -> None:
 
 
 def retained_paths(target: Path) -> tuple[Path, ...]:
+    with _pending_access(path(target)):
+        return _retained_paths(target)
+
+
+def _retained_paths(target: Path) -> tuple[Path, ...]:
     receipt = target.with_suffix('.sha256')
     return tuple(path(p) for p in (target, receipt, target.with_name(target.name + '.new'),
                                   receipt.with_name(receipt.name + '.new')))
@@ -294,7 +313,7 @@ def _clear_spare_cleanup(spare: Path) -> None:
         _STAGING_ERRORS.pop(spare, None)
 
 
-def _recover_spares(attempt: _Publication) -> None:
+def _recover_spares(attempt: _Publication, protected: set[Path] | None = None) -> None:
     """Only a destination mutex holder may adopt a leftover as orphaned.
 
     Inspect once before this attempt creates anything. A later replacement of
@@ -317,6 +336,8 @@ def _recover_spares(attempt: _Publication) -> None:
                     and all(char in '0123456789abcdef' for char in unique)):
                 candidates.add(path(fixed.parent, name))
         for spare in sorted(candidates):
+            if protected is not None and spare in protected:
+                continue
             if not spare.exists():
                 _clear_spare_cleanup(spare)
                 continue
@@ -332,10 +353,16 @@ def _recover_spares(attempt: _Publication) -> None:
 
 
 def _remove_spares(spares: dict) -> None:
+    refused = None
     for item, identity in spares.items():
         item = path(item)
-        if item.is_file() and _file_identity(item) == identity:
-            unlink(item)
+        try:
+            if item.is_file() and _file_identity(item) == identity:
+                unlink(item)
+        except OSError as exc:
+            refused = exc
+    if refused is not None:
+        raise refused
 
 
 def _sharing(error: OSError) -> bool:
@@ -357,7 +384,9 @@ def _sharing_retry(operation, deadline: float) -> None:
 def _restore_markers(target: Path) -> tuple[Path, ...]:
     # Restore records use the existing spare.cleanup namespace. The content
     # filename family carries the record for the whole pair, including absence.
-    return tuple(path(item) for item in target.parent.glob(target.name + '.*.new.cleanup'))
+    # New records are private metadata; still finish older, visible records.
+    return tuple(path(item) for prefix in (target.name, '.' + target.name)
+                 for item in target.parent.glob(prefix + '.*.new.cleanup'))
 
 
 class _RestoreFiles:
@@ -399,7 +428,7 @@ def _discard_restore_spares(owned: dict) -> None:
             _defer_staging(spare, exc)
 
 
-def _restore_record(target: Path, marker: Path) -> list | None:
+def _restore_record(target: Path, marker: Path) -> dict | None:
     """A marker grants authority only over this pair and its creation-owned backups."""
     try:
         record = json.loads(marker.read_text(encoding='utf-8'))
@@ -424,7 +453,28 @@ def _restore_record(target: Path, marker: Path) -> list | None:
                     or not isinstance(identity, list) or len(identity) != 2
                     or any(type(value) is not int or value < 0 for value in identity)):
                 return None
-        return entries
+        spares = record.get('spares', [])
+        if not isinstance(spares, list):
+            return None
+        for entry in spares:
+            if not isinstance(entry, dict):
+                return None
+            name, identity = entry.get('name'), entry.get('identity')
+            fixed = [item.name for item in _retained_paths(target)[2:]]
+            private = any(isinstance(name, str) and name.startswith(item.removesuffix('.new') + '.')
+                          and name.endswith('.new') and len(name) == len(item) + 33
+                          and all(char in '0123456789abcdef' for char in name[-36:-4]) for item in fixed)
+            if (name not in fixed and not private or not isinstance(identity, list) or len(identity) != 2
+                    or any(type(value) is not int or value < 0 for value in identity)):
+                return None
+        expected = record.get('expected')
+        if expected is not None and (not isinstance(expected, list) or not expected or any(
+                not isinstance(pair, list) or len(pair) != 2 or any(
+                    digest is not None and (not isinstance(digest, str) or len(digest) != 64
+                                            or any(char not in '0123456789abcdef' for char in digest))
+                    for digest in pair) for pair in expected)):
+            return None
+        return record
     except (FileNotFoundError, ValueError, KeyError, TypeError, RecursionError):
         return None
 
@@ -436,12 +486,13 @@ def _finish_restore(target: Path, marker: Path) -> None:
             _finish_restore_record(target, marker)
     except OSError as exc:
         if _sharing(exc):
-            raise _RestorePending() from None
+            raise _RestorePending(exc) from None
         raise
 
 
 def _finish_restore_record(target: Path, marker: Path) -> None:
-    entries = _restore_record(target, marker)
+    record = _restore_record(target, marker)
+    entries = record['entries'] if record is not None else None
     prior, backups = {}, {}
     if entries is not None:
         for entry in entries:
@@ -469,12 +520,23 @@ def _finish_restore_record(target: Path, marker: Path) -> None:
         # existing reader's refusal, and never remove a foreign replacement.
         unlink(marker, missing_ok=True)
         return
+    owned_spares = {path(target.parent, entry['name']): tuple(entry['identity'])
+                    for entry in record.get('spares', [])}
+    _RESTORE_FILES.get().paths.update(owned_spares)
+    current = _snapshot(target)
+    expected = record.get('expected')
+    if expected is not None and _pair_digest(current) not in expected:
+        # A later producer owns a different pair. The recorded attempt grants
+        # no authority over those bytes, even after a delayed restoration.
+        _remove_spares(owned_spares)
+        unlink(marker, missing_ok=True)
+        _discard_restore_spares(backups)
+        return
     installs = {}
     deadline = time.monotonic() + PUBLICATION_WAIT
     try:
         for item, body in prior.items():
-            current = item.read_bytes() if item.is_file() else None
-            if current == body:
+            if current[item] == body:
                 continue
             if body is None:
                 _sharing_retry(lambda: unlink(item, missing_ok=True), deadline)
@@ -484,6 +546,10 @@ def _finish_restore_record(target: Path, marker: Path) -> None:
         # Sources stay intact until BOTH halves are installed and flushed, so
         # a failed receipt restore can resume after a successful content restore.
         sync_state(target.parent, tuple(item.name for item, body in prior.items() if body is not None))
+        # A restored pair may still have a held attempt-owned spare. Keep the
+        # record (and backups) until its identities no longer need cleanup;
+        # a later read has no authority to adopt an unmarked spare as orphaned.
+        _remove_spares(owned_spares)
         unlink(marker)
     finally:
         _discard_restore_spares(installs)
@@ -494,6 +560,10 @@ def _finish_restore_record(target: Path, marker: Path) -> None:
 def _pending_access(target: Path) -> Iterator[None]:
     # The no-record path retains task preparation before the home-mutex wait,
     # and the existing read-only fallback while another writer owns a run.
+    attempt = _ATTEMPT.get()
+    if attempt is not None and attempt.includes(target):
+        yield
+        return
     if not _restore_markers(target):
         yield
         return
@@ -503,19 +573,19 @@ def _pending_access(target: Path) -> Iterator[None]:
         yield
 
 
+def _pair_digest(pair: dict[Path, bytes | None]) -> list[str | None]:
+    return [cloud.sha256(body) if body is not None else None for body in pair.values()]
+
+
 def _restore_retained(target: Path, previous: dict[Path, bytes | None], *,
                       written: dict[Path, bytes | None] | None = None,
-                      spares: dict | None = None, spare_paths: dict | None = None) -> None:
-    with _restoring(target):
+                      spares: dict | None = None, spare_paths: dict | None = None,
+                      alternatives: tuple[dict, ...] = ()) -> None:
+    with _restoring(target) as restore:
         target = path(target)
-        # Check the pair, including the unchanged half of a partial write.
-        # A later producer owns any different pair; it is never restored over.
-        current = _snapshot(target)
         owned_spares = dict(spares or {})
-        if written is not None and current != written:
-            _remove_spares(owned_spares)
-            return
-        if current != previous:
+        restore.paths.update(owned_spares)
+        try:
             backups, records, entries = {}, {}, []
             marker = None
             try:
@@ -525,7 +595,21 @@ def _restore_retained(target: Path, previous: dict[Path, bytes | None], *,
                                     'identity': backups[spare] if spare is not None else None})
                 # Use the existing spare.cleanup record namespace, including
                 # when both prior halves were absent and need only deletion.
-                marker = _restore_spare(target, json.dumps({'restore': target.name, 'entries': entries}).encode('utf-8'),
+                record = {'restore': target.name, 'entries': entries,
+                          'spares': [{'name': item.name, 'identity': identity}
+                                     for item, identity in owned_spares.items()]}
+                if written is not None:
+                    expected = []
+                    for candidate in (written, *alternatives):
+                        # Recovery can be interrupted after either half. Admit
+                        # only the attempt's known pair and its restoration prefixes.
+                        pair = dict(candidate)
+                        expected.append(_pair_digest(pair))
+                        for item, old in previous.items():
+                            pair[item] = old
+                            expected.append(_pair_digest(pair))
+                    record['expected'] = expected
+                marker = _restore_spare(target.with_name('.' + target.name), json.dumps(record).encode('utf-8'),
                                         records, suffix='.new.cleanup')
                 sync_state(target.parent, (marker.name,))
             except BaseException:
@@ -533,7 +617,15 @@ def _restore_retained(target: Path, previous: dict[Path, bytes | None], *,
                 _discard_restore_spares(records)
                 raise
             _finish_restore(target, marker)
-        _remove_spares(owned_spares)
+        finally:
+            # A held spare must not prevent cleanup of its siblings. The
+            # durable marker retains identities for anything still held.
+            try:
+                _remove_spares(owned_spares)
+            except OSError:
+                # The pending record keeps these identities even after both
+                # prior halves are restored. Only a writer may adopt orphans.
+                pass
 
 
 @contextmanager
@@ -555,11 +647,15 @@ def _task_publication(target: Path) -> Iterator[None]:
     token = _TASK_WRITE.set(task)
     try:
         yield
-    except OSError:
+    except OSError as exc:
         if task.attempt is not None and not _restore_markers(path(target)):
             attempt = task.attempt
-            _restore_retained(target, attempt.previous, written=attempt.written, spares=attempt.spares,
-                              spare_paths=attempt.spare_paths)
+            try:
+                _restore_retained(target, attempt.previous, written=attempt.written, spares=attempt.spares,
+                                  spare_paths=attempt.spare_paths)
+            except _RestorePending:
+                exc.pending = bool(_restore_markers(path(target)))
+                raise exc from None
         raise
     finally:
         task.active = False
@@ -569,7 +665,7 @@ def _task_publication(target: Path) -> Iterator[None]:
 
 def write_retained(target: Path, body: bytes) -> None:
     """Retry identified sharing errors and restore the prior publication on exhaustion."""
-    target, receipt, content_spare, receipt_spare = retained_paths(target)
+    target, receipt, content_spare, receipt_spare = _retained_paths(target)
     mkdir(target.parent, parents=True, exist_ok=True)
     # A task's preparation is private. Its destination is untouched until the
     # common mutex is held. State/report producers already share the run mutex.
@@ -589,7 +685,13 @@ def write_retained(target: Path, body: bytes) -> None:
         # their run mutex; a prompt can save its new run before staging a task.
         with _locked(target):
             for marker in _restore_markers(target):
-                _finish_restore(target, marker)
+                try:
+                    _finish_restore(target, marker)
+                except _RestorePending as pending:
+                    # This is a writer, so return the recovery operation's
+                    # own failure without the reader's retry statement.
+                    pending.refusal.pending = True
+                    raise pending.refusal from None
             attempt = _Publication(target)
             if task is not None and task.includes(target):
                 task.attempt = attempt
@@ -601,27 +703,26 @@ def write_retained(target: Path, body: bytes) -> None:
                 deadline = time.monotonic() + PUBLICATION_WAIT
                 while True:
                     try:
-                        retained_paths(target)
+                        _retained_paths(target)
                         cloud.write_retained(producer, body)
                         attempt.written = {target: body, receipt: cloud.sha256(body).encode('ascii')}
                         return
                     except OSError as exc:
-                        current = _snapshot(target)
                         completed = {target: body, receipt: cloud.sha256(body).encode('ascii')}
                         partial = {target: body, receipt: attempt.written[receipt]}
-                        owned = current in (attempt.written, partial, completed)
-                        if owned:
-                            attempt.written = current
-                        else:
-                            # Do not adopt another producer's bytes as ours.
-                            attempt.written = completed
                         sharing = _sharing(exc)
-                        if sharing and owned and time.monotonic() < deadline:
+                        if sharing and time.monotonic() < deadline:
                             time.sleep(0.01)
                             continue
                         if sharing or task is not None and task.includes(target):
-                            _restore_retained(target, attempt.previous, written=attempt.written, spares=attempt.spares,
-                                              spare_paths=attempt.spare_paths)
+                            try:
+                                _restore_retained(target, attempt.previous, written=attempt.written, spares=attempt.spares,
+                                                  spare_paths=attempt.spare_paths, alternatives=(partial, completed))
+                            except _RestorePending:
+                                # Rollback may be deferred; the save still owns
+                                # its original failure, never reservation wording.
+                                exc.pending = bool(_restore_markers(target))
+                                raise exc from None
                         # Unclassified state tears retain their unknown count.
                         raise
             finally:

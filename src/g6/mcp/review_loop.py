@@ -37,6 +37,10 @@ NOTHING = ("No Python changed against the base commit, so nothing was tested and
            "session has changed Python.")
 
 
+class _TaskReservationUnsaved(PermissionError):
+    code = RESERVATION_UNSAVED
+
+
 def _asked(repo: str, task: str, base: str, session: Path) -> dict:
     """What the session's first call gave, which later calls cannot move: ``repo_tests.change`` reads the base as a commit.
     Called with the session held, so one first call binds it. A call for another repository or task is refused, as its
@@ -60,8 +64,20 @@ def _asked(repo: str, task: str, base: str, session: Path) -> dict:
                                                                   "call's task as it was, or name a new session")
         return asked
     asked = {"repo": str(root), "task": task, "base": repo_tests.change(root, base).base_commit}
-    with store.task_publication(known):
-        store.write_retained(known, json.dumps(asked).encode('utf-8'))
+    try:
+        with store.task_publication(known):
+            store.write_retained(known, json.dumps(asked).encode('utf-8'))
+    except PermissionError as exc:
+        # Establishing the first task is also before every send of this call.
+        # Storage itself cannot know that a publication is a reservation.
+        try:
+            pending = exc.pending
+        except AttributeError:
+            raise exc from None
+        if not pending:
+            raise
+        raise _TaskReservationUnsaved(f'The request reservation could not be saved: {exc}. '
+                                     'This request was not sent. Retry this call.') from None
     return asked
 
 
@@ -94,11 +110,16 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
     except repo_tests.RepoRefused as exc:
         return {**blocked_reply(f"[{exc.code}] {exc}", request_id=request_id), "code": exc.code,
                 **({'recovery': loop.NEW_SESSION} if exc.code == store.TASK_UNREADABLE else {})}
-    except PermissionError as exc:
-        if code_of(exc) != RESERVATION_UNSAVED:
-            raise
-        return {**blocked_reply(str(exc), request_id=request_id), 'code': RESERVATION_UNSAVED,
-                'action': loop.STOP}
+    except OSError as exc:
+        if code_of(exc) == RESERVATION_UNSAVED:
+            return {**blocked_reply(str(exc), request_id=request_id), 'code': RESERVATION_UNSAVED,
+                    'action': loop.STOP}
+        try:
+            state = dict(exc.state)
+        except AttributeError:
+            raise exc from None
+        return {**blocked_reply(str(exc), request_id=request_id), 'action': loop.STOP,
+                'run_id': folder.name, 'requests_sent': loop.attempted(state)}
     except WorkspaceRefused as exc:
         if exc.code not in (WORKSPACE_BUSY, loop.BUSY):
             return {**blocked_reply(str(exc), request_id=request_id), "action": loop.STOP, "code": exc.code}
@@ -106,7 +127,7 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
     if done.action == loop.WAIT:      # the step that is running owns the state, so nothing of it is read here
         return {**blocked_reply(f"[{done.code}] {done.text}", request_id=request_id), "run_id": folder.name,
                 "action": done.action, "code": done.code}
-    total = None
+    total = loop.attempted(done.state or {})
     try:
         # A late worker can reserve after advance releases its lock. Read the
         # report and accounting together under that same writer serialization.
@@ -116,13 +137,24 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
             report_reader=lambda run, state, *, code: loop.read_report(run, state, code=code))
         total = loop.attempted(state)
         text = done.text
-    except PermissionError as exc:
-        if code_of(exc) != RESERVATION_UNSAVED:
-            raise
-        return {**blocked_reply(str(exc), request_id=request_id), 'code': RESERVATION_UNSAVED,
-                'run_id': folder.name, 'action': loop.STOP}
+    except OSError as exc:
+        if code_of(exc) == RESERVATION_UNSAVED:
+            return {**blocked_reply(str(exc), request_id=request_id), 'code': RESERVATION_UNSAVED,
+                    'run_id': folder.name, 'action': loop.STOP}
+        try:
+            total = loop.attempted(exc.state)
+        except AttributeError:
+            pass
+        return {**blocked_reply(str(exc), request_id=request_id),
+                'run_id': folder.name, 'action': loop.STOP,
+                **({'requests_sent': total} if total is not None or
+                   done.state is not None and done.state.get('call_requests', 0) else {})}
     except WorkspaceRefused as exc:
         if exc.code in (WORKSPACE_BUSY, loop.BUSY):
+            if done.state is not None and done.state.get('call_requests', 0):
+                return {**blocked_reply('The retained reply is waiting for its writer.', request_id=request_id),
+                        'run_id': folder.name, 'action': loop.STOP, 'code': loop.BUSY,
+                        'requests_sent': loop.attempted(done.state)}
             return {**blocked_reply(f'[{loop.BUSY}] The retained reply is waiting for its writer. Retry this call; '
                                    'the send count is unavailable while publication is in progress.', request_id=request_id),
                     'run_id': folder.name, 'action': loop.WAIT, 'code': loop.BUSY}

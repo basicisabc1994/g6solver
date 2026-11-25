@@ -244,3 +244,212 @@ def test_restore_backup_obeys_the_named_gate_refusal(tmp_path, monkeypatch, oper
         store.write_retained(target, b'{"kept":"next"}')
     assert not list(tmp_path.glob('state.json.*.new'))
     assert not list(tmp_path.glob('*.cleanup'))
+
+
+def test_repair1_post_send_restore_keeps_the_save_error_and_count(tmp_path, monkeypatch, key_file):
+    from g6.mcp import review_loop
+    from tests.harness.test_completion_fu3_repair2 import Session
+
+    world = Session(tmp_path, monkeypatch, key_file, 'mcp:repair1-after-send')
+    store.mkdir(world.folder, parents=True, exist_ok=True)
+    loop._save(world.folder, {loop.ATTEMPTED: 0})
+    real_scout, real_replace = loop._scout, os.replace
+    sent = []
+
+    def scout(*args):
+        result = real_scout(*args)
+        sent.append(True)
+        return result
+
+    def held(source, destination):
+        if sent and Path(destination) in (world.folder / 'state.json', world.folder / 'state.sha256'):
+            # Allow new content, but refuse both receipt publication and prior-content restoration.
+            if Path(destination).suffix == '.sha256' or len(Path(source).name) > len('state.json.new'):
+                raise PermissionError(errno.EACCES, 'post-send save refused')
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(loop, '_scout', scout)
+    monkeypatch.setattr(store, 'PUBLICATION_WAIT', 0)
+    with monkeypatch.context() as fault:
+        fault.setattr(os, 'replace', held)
+        reply = review_loop.step(str(world.repo), 'task', 'repair1-after-send', 'base')
+    assert 'post-send save refused' in reply['error']
+    assert 'This request was not sent' not in reply['error']
+    assert 'Retry this call' not in reply['error']
+    assert reply.get('code') != loop.RESERVATION_UNSAVED
+    assert reply['requests_sent'] == 1 and len(world.reviewed) == 1
+
+
+def test_repair1_refused_destination_read_cannot_prevent_a_restore_record(tmp_path, monkeypatch):
+    target, prior = tmp_path / 'state.json', b'{"kept":"prior"}'
+    store.write_retained(target, prior)
+    real_replace, real_read = os.replace, Path.read_bytes
+    replaced = []
+
+    def held(source, destination):
+        if Path(destination) == target.with_suffix('.sha256') or replaced and Path(destination) == target:
+            raise PermissionError(errno.EACCES, 'pair held')
+        result = real_replace(source, destination)
+        if Path(destination) == target:
+            replaced.append(True)
+        return result
+
+    def no_read(item):
+        if replaced and item == target:
+            raise PermissionError(errno.EACCES, 'content shares no reads')
+        return real_read(item)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(store, 'PUBLICATION_WAIT', 0)
+        fault.setattr(os, 'replace', held)
+        fault.setattr(Path, 'read_bytes', no_read)
+        with pytest.raises(PermissionError):
+            store.write_retained(target, b'{"kept":"next"}')
+        assert list(tmp_path.glob('*.cleanup')), 'recovery must be recorded without reading the refused destination'
+    assert loop._load(tmp_path)['kept'] == 'prior'
+
+
+@pytest.mark.parametrize('access', ['task_present', 'task_path', 'retained_paths', 'load'])
+def test_repair1_first_publication_recovers_before_presence_and_paths(tmp_path, monkeypatch, access):
+    target = tmp_path / ('state.json' if access == 'load' else 'task.json')
+    real_replace, real_unlink = os.replace, store.unlink
+
+    def held(source, destination):
+        if Path(destination) == target.with_suffix('.sha256'):
+            raise PermissionError(errno.EACCES, 'first receipt held')
+        return real_replace(source, destination)
+
+    def held_unlink(item, **kwargs):
+        if Path(item) in (target, target.with_suffix('.sha256').with_name(target.stem + '.sha256.new')):
+            raise PermissionError(errno.EACCES, 'first publication held')
+        return real_unlink(item, **kwargs)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(store, 'PUBLICATION_WAIT', 0)
+        fault.setattr(os, 'replace', held)
+        fault.setattr(store, 'unlink', held_unlink)
+        with pytest.raises(PermissionError):
+            store.write_retained(target, _task('first'))
+    if access == 'load':
+        assert loop._load(tmp_path) == {}
+    else:
+        if access == 'task_present':
+            assert not store.task_present(target)
+        elif access == 'task_path':
+            assert store.task_path(target) == target
+        else:
+            assert not any(item.exists() for item in store.retained_paths(target))
+        assert not target.exists(), 'path access must finish the absent-pair restore first'
+    assert not list(tmp_path.glob('*.new'))
+    assert not list(tmp_path.glob('*.cleanup'))
+
+
+def test_repair1_class_loop_cannot_borrow_the_modules_gate_binding():
+    assert unguarded_calls('from g6.harness import _completion_storage as store\n'
+                           'class Run:\n    for turn in range(2):\n        store.unlink(p)\n        import os as store\n')
+
+
+@pytest.mark.parametrize('binding', [
+    'text = os\ntext.replace(p, q)\n',
+    'mods = [os]\nmods[0].replace(p, q)\n',
+    'mods = []\nmods += [os]\nmods[0].replace(p, q)\n',
+    'def go(text=os):\n    text.replace(p, q)\n',
+    'for text in [os]:\n    text.replace(p, q)\n',
+    'text = [os][0]\ntext.replace(p, q)\n',
+])
+def test_repair1_module_values_cannot_use_the_text_replace_allowance(binding):
+    assert unguarded_calls('import os\n' + binding)
+
+
+@pytest.mark.parametrize('value', ['getattr', '__import__', 'exec', 'eval', 'compile', 'importlib.import_module'])
+def test_repair1_dynamic_operations_are_refused_as_values(value):
+    prefix = 'import importlib\n' if value.startswith('importlib.') else ''
+    assert unguarded_calls(prefix + f'make = {value}\n')
+
+
+@pytest.mark.parametrize('surface', ['mcp', 'stop'])
+@pytest.mark.parametrize('read_at', ['body', 'reply'])
+def test_repair1_amendment1_read_after_send_has_neutral_words_and_true_count(
+        tmp_path, monkeypatch, key_file, surface, read_at):
+    from g6.harness import completion_hook as hook
+    from g6.mcp import review_loop
+    from tests.harness.test_completion_fu3_repair2 import Session
+
+    world = Session(tmp_path, monkeypatch, key_file, ('mcp:' if surface == 'mcp' else '') + 'amendment1-read')
+    if surface == 'stop':
+        hook.on_prompt({**world.event, 'prompt': 'task'})
+    else:
+        store.mkdir(world.folder, parents=True, exist_ok=True)
+    loop._save(world.folder, {loop.ATTEMPTED: 0})
+    real_scout = loop._scout
+
+    def pending():
+        return store._RestorePending()
+
+    def scout(*args):
+        result = real_scout(*args)
+        if read_at == 'body':
+            raise pending()
+        return result
+
+    def reply_state(session):
+        assert world.reviewed
+        raise pending()
+
+    monkeypatch.setattr(loop, '_scout', scout)
+    if read_at == 'reply':
+        monkeypatch.setattr(loop, 'reply_state', reply_state)
+    reply = (review_loop.step(str(world.repo), 'task', 'amendment1-read', 'base') if surface == 'mcp'
+             else hook.on_stop(world.event))
+    text = reply['error'] if surface == 'mcp' else reply['systemMessage']
+    assert 'This request was not sent' not in text
+    assert 'Retry this call' not in text
+    assert loop.RESERVATION_UNSAVED not in text
+    assert reply.get('code') != loop.RESERVATION_UNSAVED
+    sent = len(world.reviewed)
+    assert sent >= 1
+    if surface == 'mcp':
+        assert reply['requests_sent'] == sent
+    else:
+        assert f'Up to {sent} request(s)' in text
+
+
+def test_repair1_amendment1_later_reservation_keeps_its_own_error(tmp_path, monkeypatch):
+    from g6.core.model_calls import note_model_call
+
+    loop._save(tmp_path, {loop.ATTEMPTED: 4})
+    with loop._run_count(tmp_path, loop._load(tmp_path), fresh=False):
+        note_model_call()
+
+        def refused(*args, **kwargs):
+            raise PermissionError(errno.EACCES, 'second reservation refused')
+
+        monkeypatch.setattr(loop, '_save', refused)
+        with pytest.raises(OSError, match='second reservation refused') as caught:
+            note_model_call()
+        assert getattr(caught.value, 'code', None) != loop.RESERVATION_UNSAVED
+        assert 'This request was not sent' not in str(caught.value)
+        assert 'Retry this call' not in str(caught.value)
+        assert caught.value.state[loop.ATTEMPTED] == 5
+
+
+@pytest.mark.parametrize('spare_name', ['state.json.new', 'state.sha256.new', 'task-1.json.new'])
+def test_repair1_amendment2_reads_preserve_spares_no_restore_marker_owns(tmp_path, spare_name):
+    spare = tmp_path / spare_name
+    body = b'interrupted first publication'
+    spare.write_bytes(body)
+    identity = spare.stat().st_dev, spare.stat().st_ino
+    target = tmp_path / ('task.json' if spare_name.startswith('task-') else 'state.json')
+    for _ in range(2):
+        if spare_name.startswith('state.'):
+            state = loop._load(tmp_path)
+            assert isinstance(state, loop._RetainedState) and not state.readable
+            assert state['code'] == loop.NO_CLEAN_REVIEW and loop.attempted(state) is None
+        else:
+            assert store.task_path(target) == tmp_path / 'task-1.json'
+            assert store.task_present(target)
+            with pytest.raises(store.TaskUnreadable):
+                store.read_task(target)
+        store.retained_paths(tmp_path / spare_name.removesuffix('.new'))
+        assert spare.read_bytes() == body
+        assert (spare.stat().st_dev, spare.stat().st_ino) == identity
