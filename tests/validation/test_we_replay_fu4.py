@@ -513,3 +513,165 @@ def test_in_use_recorded_origin_never_falls_through_to_refresh(batch, monkeypatc
     assert (status, result["evidence_source"]) == (2, "unavailable")
     assert result["index_excluded"][0]["source_unavailable"] == (
         "source folders could not be held: the origin folder is in use by another program")
+
+
+DEVICE_NAMES = ["CON", "PRN", "AUX", "NUL", *[f"COM{n}" for n in "0123456789¹²³"],
+                *[f"LPT{n}" for n in "0123456789¹²³"]]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows saved device-name gate")
+@pytest.mark.parametrize("device", DEVICE_NAMES)
+def test_saved_device_forms_refused_before_any_open(tmp_path, monkeypatch, device):
+    def unexpected(*args, **kwargs):
+        pytest.fail("saved device metadata reached an open")
+
+    monkeypatch.setattr(rc._WindowsAPI, "_open", unexpected)
+    for spelling in (device, device.lower(), device.title()):
+        for extension in ("", ".txt", ".tar.gz", " .txt"):
+            for tail in ("", ".", " ", ". ", "..  "):
+                component = spelling + extension + tail
+                for name in (component, f"run/{component}/origin", f"run/synthetic/{component}"):
+                    assert not rc._relative_evidence_name(name), name
+                    assert rc._origin_run_identity(name, tmp_path) is None, name
+                    assert not rc._unique_origin_digests([case(name)], source=tmp_path), name
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows saved device-name recovery")
+@pytest.mark.parametrize("device", DEVICE_NAMES)
+def test_saved_device_origin_refreshes_without_device_open(batch, monkeypatch, capsys, device):
+    batch.saved["plan"]["cases"][0]["origins"][0]["run"] = f"run/black-5634/{device}"
+    real = rc._WindowsAPI._open
+
+    def opening(api, path, access):
+        assert path.name.casefold() != device.casefold(), "saved device reached a native open"
+        return real(api, path, access)
+
+    monkeypatch.setattr(rc._WindowsAPI, "_open", opening)
+    status, result = trust.score(batch, capsys, True)
+    assert (status, result["evidence_source"]) == (0, "source")
+    for field in ("predictions", "by_bug", "excluded", "index_excluded"):
+        assert result[field] == batch.live[field]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX device names are ordinary folders")
+@pytest.mark.parametrize("device", DEVICE_NAMES)
+def test_posix_saved_device_names_remain_ordinary(tmp_path, device):
+    for component in (device, device.lower() + ".txt"):
+        name = f"run/synthetic/{component}"
+        (tmp_path / name).mkdir(parents=True)
+        assert rc._relative_evidence_name(name)
+        assert rc._origin_run_identity(name) == name
+        assert rc._unique_origin_digests([case(name)], source=tmp_path)
+
+
+@pytest.mark.parametrize("route", ["current", "invalid-origin", "older-rule"])
+@pytest.mark.parametrize("kind,code,reason", [
+    ("in-use", errno.EACCES, "the origin folder is in use by another program"),
+    ("access", errno.EACCES, "access denied"),
+    ("descriptors", errno.EMFILE, "too many open files"),
+    ("system-descriptors", errno.ENFILE, "too many open files"),
+    ("missing", errno.ENOENT, "a folder is missing"),
+    ("nonfolder", errno.ENOTDIR, "a path is not a folder"),
+    ("read", errno.EIO, "identity or directory read failed"),
+])
+def test_root_hold_score_reason_and_replay_refusal(batch, tmp_path, monkeypatch, capsys, route, kind, code, reason):
+    from contextlib import contextmanager
+
+    if route == "invalid-origin":
+        batch.saved["plan"]["cases"][0]["origins"][0]["run"] = None
+    elif route == "older-rule":
+        batch.saved["evidence_rule_version"] = 0
+    real = rc._open_handle
+    failure = OSError(code, "synthetic root hold failure", str(batch.source))
+    if kind == "in-use":
+        failure.winerror = 32
+    if kind == "missing":
+        batch.source = tmp_path / "missing-source"
+
+    @contextmanager
+    def opening(path, **kwargs):
+        if kind != "missing" and path == batch.source and kwargs.get("directory"):
+            raise failure
+        with real(path, **kwargs) as opened:
+            yield opened
+
+    monkeypatch.setattr(rc, "_open_handle", opening)
+    output = tmp_path / "refused-replay-output"
+    monkeypatch.setenv("G6_WE_ARCHIVE", str(output))
+    with pytest.raises(ValueError, match="^source root is missing or unreadable$") as caught:
+        rc.Source(batch.source, required=True)
+    assert isinstance(caught.value.__cause__, OSError)
+    assert caught.value.__cause__.errno == code
+    if kind == "in-use":
+        assert caught.value.__cause__.winerror == 32
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("unheld source reached a process")
+
+    assert rc.main(["--source", str(batch.source), "--registered-commit", trust.COMMIT], docker=unexpected) == 1
+    captured = capsys.readouterr()
+    assert captured.err == "replay_rc: source root is missing or unreadable\n"
+    assert captured.out == "" and not output.exists()
+    status, result = trust.score(batch, capsys, True)
+    assert (status, result["evidence_source"]) == (2, "unavailable")
+    gap, = result["index_excluded"]
+    assert gap["source_unavailable"] == "source folders could not be held: " + reason
+    assert gap["reason"] == ("saved under an older evidence rule" if route == "older-rule"
+                             else gap["source_unavailable"])
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("route", ["current", "invalid-origin", "older-rule"])
+def test_file_ancestor_keeps_replay_refusal_and_score_reason(batch, tmp_path, monkeypatch, capsys, route):
+    file = tmp_path / "file-ancestor"
+    file.write_bytes(b"regular file")
+    batch.source = file / "source"
+    if route == "invalid-origin":
+        batch.saved["plan"]["cases"][0]["origins"][0]["run"] = None
+    elif route == "older-rule":
+        batch.saved["evidence_rule_version"] = 0
+    with pytest.raises(NotADirectoryError) as caught:
+        with rc._open_handle(batch.source, directory=True):
+            pytest.fail("file ancestor was walked as a directory")
+    assert caught.value.errno == errno.ENOTDIR
+    assert caught.value.filename in (str(file), str(batch.source))
+    output = tmp_path / "refused-ancestor-output"
+    monkeypatch.setenv("G6_WE_ARCHIVE", str(output))
+    with pytest.raises(ValueError, match="^source root is missing or unreadable$"):
+        rc.Source(batch.source, required=True)
+    assert rc.main(["--source", str(batch.source), "--registered-commit", trust.COMMIT, "--dry"]) == 1
+    captured = capsys.readouterr()
+    assert captured.err == "replay_rc: source root is missing or unreadable\n"
+    assert captured.out == "" and not output.exists()
+    status, result = trust.score(batch, capsys, True)
+    assert (status, result["evidence_source"]) == (2, "unavailable")
+    assert result["index_excluded"][0]["source_unavailable"] == (
+        "source folders could not be held: a path is not a folder")
+    assert file.read_bytes() == b"regular file" and not output.exists()
+
+
+def test_recorded_origin_file_ancestor_scores_nonfolder(batch, capsys):
+    name = batch.saved["plan"]["cases"][0]["origins"][0]["run"]
+    ancestor = (batch.source / name).parent
+    moved = ancestor.with_name(ancestor.name + "-held")
+    ancestor.rename(moved)
+    try:
+        ancestor.write_bytes(b"regular file")
+        status, result = trust.score(batch, capsys, True)
+    finally:
+        if ancestor.is_file():
+            ancestor.unlink()
+        moved.rename(ancestor)
+    assert (status, result["evidence_source"]) == (2, "unavailable")
+    assert result["index_excluded"][0]["source_unavailable"] == (
+        "source folders could not be held: a path is not a folder")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows archive containment refusal")
+def test_archive_file_ancestor_keeps_forbidden_path_text(tmp_path):
+    file = tmp_path / "file-ancestor"
+    file.write_bytes(b"regular file")
+    with pytest.raises(ValueError, match="^forbidden archive path:"):
+        rc.canonical_path(file / "run.json")
+    with pytest.raises(ValueError, match="^forbidden archive path:"):
+        rc.Source(tmp_path).read_bytes("file-ancestor/payload.txt")

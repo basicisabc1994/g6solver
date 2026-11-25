@@ -300,6 +300,8 @@ def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False,
                     _directory_open_error(exc, path, component, parent_fd)
                 raise
             if not last and not stat.S_ISDIR(mode):
+                if directory:
+                    raise NotADirectoryError(errno.ENOTDIR, "source path is not a folder", str(current))
                 raise ValueError(f"forbidden archive path: {path}")
             if directory:
                 ancestors.append(_Opened(actual, handle, mode, None if windows else (info.st_dev, info.st_ino)))
@@ -1269,6 +1271,11 @@ def _relative_evidence_name(value: Any) -> bool:
             and not any(char in value for char in ("\\", ":", "\x00")))
     if not relative:
         return False
+    if os.name == "nt" and any(
+            re.fullmatch(r"(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])",
+                         part.split(".", 1)[0].rstrip(" ").casefold())
+            for part in value.split("/")):
+        return False
     try:
         _check_names(PureWindowsPath(value))
     except ValueError:
@@ -1681,6 +1688,9 @@ def score_saved(saved: dict, registration: Registration | None = None, *, source
                               registration=registration)
             return _score_result(result, version, "source"), 0
         except (OSError, RuntimeError, ValueError) as exc:
+            # Source preserves its replay refusal; scoring needs the hold cause.
+            if str(exc) == "source root is missing or unreadable" and isinstance(exc.__cause__, OSError):
+                exc = exc.__cause__
             unavailable = _source_hold_reason(exc) if isinstance(exc, OSError) else str(exc)
 
     # Saved labels, omission flags and review outcomes have no authority here.
