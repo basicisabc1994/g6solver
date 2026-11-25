@@ -30,7 +30,7 @@ MODELLED_EXTERNAL_CALLS = {
     **dict.fromkeys(("builtins." + name for name in _VALUE_BUILTINS),
                     "plain: conversion/iteration only over modeled builtin values"),
     "builtins.sorted": "sorted: plain iterable and a modeled builtin key only",
-    "builtins.type": "type: one-argument type inspection runs no object hook",
+    "builtins.type": "type: one-argument inspection runs no hook; a result with repository input needs a separately modeled identity",
     "builtins.object": "allocate: bare builtin object allocation runs no caller code",
     "builtins.object.__new__": "allocate: native allocation; audit the allocated class's later protocols",
     "logging.getLogger": "logger: literal/module name only; no caller-supplied code",
@@ -72,6 +72,1032 @@ MODELLED_EXTERNAL_BASES = {
     "typing.NamedTuple": "fields: generated record/default protocols are followed by _class_fields",
     "unittest.TestCase": "source: read installed lifecycle bodies on the repository receiver",
 }
+
+# Source-derived superset: internal lookups are retained so a new literal
+# lookup anywhere in these sources cannot silently escape the pin test.
+# '*' means every bound/member name, never permission for an unknown result.
+PYTEST_COLLECTION_LOOKUPS = {
+    "pytest_version": '9.2.0',
+    "python_version": (3, 12, 11),
+    "policies": {
+        'receiver': 'Follow receiver hooks and descriptors; dynamic names audit every binding; native metadata is inert.',
+        'source-pin': 'Inventory superset, including internal reads; not evidence that a receiver route executes.',
+        'holder': 'dir only on the collected module/class or instance holder; never on a merely bound helper.',
+        'external-result': 'Nonrepository module/call result with no repository argument has inert lookup; executed calls still require admission.',
+        'test-flag': 'Unknown effective metaclass __test__ replacement is unavailable, even after following an inert hook.',
+    },
+    "sources": (
+        ('pytest', '_pytest/python.py', '9553fbb38363c987f59b1de522142a9dc0e9f6191cd1f173a6bee21140d4c887'),
+        ('pytest', '_pytest/compat.py', '3b3f955b969c8d4794db70ae1b45f1ef525930ba4da86144fc7409bf394a806e'),
+        ('pytest', '_pytest/fixtures.py', '3847b9bbb05ba2408c3e9e270276ee86a70c1f0d1d420ad14b37b06093a9a330'),
+        ('pytest', '_pytest/unittest.py', '3bc68aac6f44cb15dee7131fd4902f2d14a1e54205c89a6e707e5416711a92dd'),
+        ('pytest', '_pytest/mark/structures.py', 'e8322e0b57aa8c8bb8150a563a3bc8b85983b3f30645773dcc7488b1db6e9755'),
+        ('pytest', '_pytest/config/__init__.py', 'd297eaeba8f6ecfeb73acaa8eef2092203aa49343eb7c77ffedb8ef95b5717ab'),
+        ('pluggy', 'pluggy/_manager.py', '95b8787e4ca8882afea9b97e1ef670febbd3eb411a94fc85ba43ad76a0272c1d'),
+    ),
+    "stdlib_sources": (
+        ('inspect.py', '5c54ebf0bfdc25397750e5d0f63800751650ee50e65325ff3ea4069c9bfa5f75'),
+        ('unittest/loader.py', '7f0af414bfa7fe8612a424b14cfcf8a3c34fcac999d976461beb738ef8b211b8'),
+    ),
+    "indirect": (
+        ('_pytest/python.py', '_get_first_non_fixture_func', 1, (760,), ((596, ('setUpModule', 'setup_module')), (599, ('tearDownModule', 'teardown_module')), (630, ('setup_function',)), (631, ('teardown_function',)), (702, ('setUpModule', 'setup_module')), (708, ('tearDownModule', 'teardown_module')), (815, ('setup_class',)), (816, ('teardown_class',)), (847, ('setup_method',)), (849, ('teardown_method',)))),
+        ('_pytest/config/__init__.py', '_get_legacy_hook_marks', 2, (472,), ((576, ('tryfirst', 'trylast', 'optionalhook', 'hookwrapper')), (587, ('firstresult', 'historic')))),
+        ('inspect.py', '_signature_get_user_defined_method', 1, (2036, 2038), ((2614, ('__call__',)), (2618, ('__new__',)), (2619, ('__init__',)))),
+    ),
+    "transitive": (
+        ('inspect.py', 'get_annotations', 176, 294),
+        ('inspect.py', 'ismodule', 298, 300),
+        ('inspect.py', 'isclass', 302, 304),
+        ('inspect.py', 'ismethod', 306, 308),
+        ('inspect.py', 'ismethoddescriptor', 310, 328),
+        ('inspect.py', 'isdatadescriptor', 330, 342),
+        ('inspect.py', 'isfunction', 378, 389),
+        ('inspect.py', '_has_code_flag', 391, 400),
+        ('inspect.py', 'isgeneratorfunction', 402, 407),
+        ('inspect.py', '_has_coroutine_mark', 412, 416),
+        ('inspect.py', 'iscoroutinefunction', 427, 433),
+        ('inspect.py', 'isasyncgenfunction', 435, 441),
+        ('inspect.py', 'isbuiltin', 524, 531),
+        ('inspect.py', 'ismethodwrapper', 533, 535),
+        ('inspect.py', 'isroutine', 537, 543),
+        ('inspect.py', 'isabstract', 545, 567),
+        ('inspect.py', 'unwrap', 754, 783),
+        ('inspect.py', '_check_instance', 1797, 1803),
+        ('inspect.py', '_check_class', 1806, 1810),
+        ('inspect.py', '_shadowed_dict_from_weakref_mro_tuple', 1814, 1829),
+        ('inspect.py', '_shadowed_dict', 1832, 1842),
+        ('inspect.py', 'getattr_static', 1845, 1892),
+        ('inspect.py', '_signature_get_user_defined_method', 2030, 2045),
+        ('inspect.py', '_signature_get_partial', 2048, 2121),
+        ('inspect.py', '_signature_bound_method', 2124, 2147),
+        ('inspect.py', '_signature_is_builtin', 2150, 2161),
+        ('inspect.py', '_signature_is_functionlike', 2164, 2186),
+        ('inspect.py', '_signature_strip_non_python_syntax', 2189, 2236),
+        ('inspect.py', '_signature_fromstr', 2239, 2378),
+        ('inspect.py', '_signature_from_builtin', 2381, 2394),
+        ('inspect.py', '_signature_from_function', 2397, 2489),
+        ('inspect.py', '_descriptor_get', 2492, 2498),
+        ('inspect.py', '_signature_from_callable', 2501, 2676),
+        ('inspect.py', 'signature', 3346, 3349),
+        ('inspect.py', '__init__', 1041, 1043),
+        ('inspect.py', '__init__', 1187, 1194),
+        ('inspect.py', '__new__', 1666, 1669),
+        ('inspect.py', '__new__', 1738, 1741),
+        ('inspect.py', 'parse_name', 2271, 2275),
+        ('inspect.py', 'wrap_value', 2277, 2288),
+        ('inspect.py', 'p', 2323, 2331),
+        ('inspect.py', '__new__', 2694, 2699),
+        ('inspect.py', '__init__', 2743, 2784),
+        ('inspect.py', 'name', 2797, 2798),
+        ('inspect.py', 'default', 2801, 2802),
+        ('inspect.py', 'annotation', 2805, 2806),
+        ('inspect.py', 'kind', 2809, 2810),
+        ('inspect.py', 'replace', 2812, 2828),
+        ('inspect.py', '__init__', 2888, 2890),
+        ('inspect.py', 'signature', 2893, 2894),
+        ('inspect.py', 'args', 2897, 2917),
+        ('inspect.py', 'kwargs', 2920, 2947),
+        ('inspect.py', '__init__', 3029, 3079),
+        ('inspect.py', 'from_callable', 3082, 3087),
+        ('inspect.py', 'parameters', 3090, 3091),
+        ('inspect.py', 'return_annotation', 3094, 3095),
+        ('inspect.py', 'replace', 3097, 3110),
+        ('inspect.py', '_bind', 3133, 3273),
+        ('inspect.py', 'bind_partial', 3282, 3287),
+        ('unittest/loader.py', 'getTestCaseNames', 468, 475),
+        ('unittest/loader.py', 'getTestCaseNames', 210, 227),
+    ),
+    "reads": (
+        ('_pytest/python.py', 188, 'module value class instance function',
+         ('__aiter__', '__await__'), 'receiver'),
+        ('_pytest/python.py', 250, 'module value class instance function',
+         ('__func__',), 'receiver'),
+        ('_pytest/python.py', 264, 'module value class instance function',
+         ('__test__',), 'receiver'),
+        ('_pytest/python.py', 308, 'module value class instance function',
+         ('_obj',), 'receiver'),
+        ('_pytest/python.py', 329, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/python.py', 361, 'inventory',
+         ('*', '__dir__'), 'source-pin'),
+        ('_pytest/python.py', 365, 'inventory',
+         ('*', '__dir__'), 'source-pin'),
+        ('_pytest/python.py', 367, 'inventory',
+         ('*', '__dir__'), 'source-pin'),
+        ('_pytest/python.py', 384, 'module value class instance function',
+         ('__test__',), 'receiver'),
+        ('_pytest/python.py', 393, 'module value class instance function',
+         ('__func__',), 'receiver'),
+        ('_pytest/python.py', 401, 'module value class instance function',
+         ('__abstractmethods__', '__isabstractmethod__'), 'receiver'),
+        ('_pytest/python.py', 421, 'module value class instance function',
+         ('__test__',), 'receiver'),
+        ('_pytest/python.py', 425, 'module value class instance function',
+         ('__dict__',), 'receiver'),
+        ('_pytest/python.py', 427, 'module value class instance function',
+         ('__mro__',), 'receiver'),
+        ('_pytest/python.py', 428, 'module value class instance function',
+         ('__dict__',), 'receiver'),
+        ('_pytest/python.py', 450, 'module value class instance function',
+         ('__module__', '__name__'), 'receiver'),
+        ('_pytest/python.py', 492, 'module value class instance function',
+         ('pytest_generate_tests',), 'receiver'),
+        ('_pytest/python.py', 494, 'module value class instance function',
+         ('pytest_generate_tests',), 'receiver'),
+        ('_pytest/python.py', 616, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/python.py', 652, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/python.py', 688, 'module value class instance function',
+         ('__init__',), 'receiver'),
+        ('_pytest/python.py', 746, 'module value class instance function',
+         ('__code__',), 'receiver'),
+        ('_pytest/python.py', 760, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/python.py', 778, 'module value class instance function',
+         ('__test__',), 'receiver'),
+        ('_pytest/python.py', 784, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/python.py', 793, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/python.py', 832, 'module value class instance function',
+         ('__qualname__',), 'receiver'),
+        ('_pytest/python.py', 857, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/python.py', 861, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/python.py', 866, 'module value class instance function',
+         ('__qualname__',), 'receiver'),
+        ('_pytest/python.py', 875, 'module value class instance function',
+         ('__init__',), 'receiver'),
+        ('_pytest/python.py', 877, 'module value class instance function',
+         ('__init__',), 'receiver'),
+        ('_pytest/python.py', 882, 'module value class instance function',
+         ('__new__',), 'receiver'),
+        ('_pytest/python.py', 884, 'module value class instance function',
+         ('__new__',), 'receiver'),
+        ('_pytest/python.py', 1116, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/python.py', 1118, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/python.py', 1244, 'module value class instance function',
+         ('__init__',), 'receiver'),
+        ('_pytest/python.py', 1413, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/python.py', 1432, 'module value class instance function',
+         ('__setattr__',), 'receiver'),
+        ('_pytest/python.py', 1709, 'module value class instance function',
+         ('__init__',), 'receiver'),
+        ('_pytest/python.py', 1713, 'module value class instance function',
+         ('__self__',), 'receiver'),
+        ('_pytest/python.py', 1737, 'module value class instance function',
+         ('__dict__',), 'receiver'),
+        ('_pytest/python.py', 1789, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/python.py', 1804, 'module value class instance function',
+         ('_obj',), 'receiver'),
+        ('_pytest/compat.py', 59, 'module value class instance function',
+         ('_is_coroutine',), 'receiver'),
+        ('_pytest/compat.py', 71, 'module value class instance function',
+         ('__annotations__', '__defaults__', '__kwdefaults__', '__signature__'), 'receiver'),
+        ('_pytest/compat.py', 72, 'module value class instance function',
+         ('__annotations__', '__defaults__', '__kwdefaults__', '__signature__'), 'receiver'),
+        ('_pytest/compat.py', 78, 'module value class instance function',
+         ('__code__',), 'receiver'),
+        ('_pytest/compat.py', 91, 'module value class instance function',
+         ('patchings',), 'receiver'),
+        ('_pytest/compat.py', 95, 'module value class instance function',
+         ('DEFAULT',), 'receiver'),
+        ('_pytest/compat.py', 96, 'module value class instance function',
+         ('DEFAULT',), 'receiver'),
+        ('_pytest/compat.py', 137, 'module value class instance function',
+         ('__annotations__', '__defaults__', '__kwdefaults__', '__signature__'), 'receiver'),
+        ('_pytest/compat.py', 156, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/compat.py', 167, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/compat.py', 172, 'module value class instance function',
+         ('__wrapped__',), 'receiver'),
+        ('_pytest/compat.py', 183, 'module value class instance function',
+         ('__annotations__', '__defaults__', '__kwdefaults__', '__signature__'), 'receiver'),
+        ('_pytest/compat.py', 223, 'module value class instance function',
+         ('__wrapped__',), 'receiver'),
+        ('_pytest/compat.py', 232, 'module value class instance function',
+         ('__func__',), 'receiver'),
+        ('_pytest/compat.py', 249, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/compat.py', 288, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/fixtures.py', 380, 'module value class instance function',
+         ('pypy_version_info',), 'receiver'),
+        ('_pytest/fixtures.py', 610, 'module value class instance function',
+         ('instance',), 'receiver'),
+        ('_pytest/fixtures.py', 807, 'module value class instance function',
+         ('nofuncargs',), 'receiver'),
+        ('_pytest/fixtures.py', 812, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/fixtures.py', 846, 'module value class instance function',
+         ('__init__',), 'receiver'),
+        ('_pytest/fixtures.py', 898, 'module value class instance function',
+         ('__init__',), 'receiver'),
+        ('_pytest/fixtures.py', 963, 'module value class instance function',
+         ('__annotations__', '__defaults__', '__kwdefaults__', '__signature__'), 'receiver'),
+        ('_pytest/fixtures.py', 964, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/fixtures.py', 1183, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/fixtures.py', 1311, 'module value class instance function',
+         ('param',), 'receiver'),
+        ('_pytest/fixtures.py', 1324, 'module value class instance function',
+         ('__init__',), 'receiver'),
+        ('_pytest/fixtures.py', 1357, 'module value class instance function',
+         ('__self__',), 'receiver'),
+        ('_pytest/fixtures.py', 1358, 'module value class instance function',
+         ('__self__',), 'receiver'),
+        ('_pytest/fixtures.py', 1373, 'module value class instance function',
+         ('__self__',), 'receiver'),
+        ('_pytest/fixtures.py', 1375, 'module value class instance function',
+         ('__class__', '__self__'), 'receiver'),
+        ('_pytest/fixtures.py', 1380, 'module value class instance function',
+         ('__get__',), 'receiver'),
+        ('_pytest/fixtures.py', 1414, 'module value class instance function',
+         ('__traceback__',), 'receiver'),
+        ('_pytest/fixtures.py', 1440, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/fixtures.py', 1443, 'module value class instance function',
+         ('pytestmark',), 'receiver'),
+        ('_pytest/fixtures.py', 1453, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/fixtures.py', 1475, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/fixtures.py', 1482, 'module value class instance function',
+         ('__get__',), 'receiver'),
+        ('_pytest/fixtures.py', 1728, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/fixtures.py', 1850, 'module value class instance function',
+         ('nofuncargs',), 'receiver'),
+        ('_pytest/fixtures.py', 2148, 'module value class instance function',
+         ('__dict__',), 'receiver'),
+        ('_pytest/fixtures.py', 2149, 'module value class instance function',
+         ('__mro__',), 'receiver'),
+        ('_pytest/fixtures.py', 2151, 'module value class instance function',
+         ('__dict__',), 'receiver'),
+        ('_pytest/fixtures.py', 2170, 'module value class instance function',
+         ('_mock_name',), 'receiver'),
+        ('_pytest/fixtures.py', 2178, 'module value class instance function',
+         ('__wrapped__',), 'receiver'),
+        ('_pytest/fixtures.py', 2212, 'module value class instance function',
+         ('__func__',), 'receiver'),
+        ('_pytest/fixtures.py', 2308, 'module class instance-type',
+         ('*', '__dir__'), 'holder'),
+        ('_pytest/fixtures.py', 2317, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/fixtures.py', 2334, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/fixtures.py', 2418, 'module value class instance function',
+         ('__file__',), 'receiver'),
+        ('_pytest/fixtures.py', 2444, 'module value class instance function',
+         ('_fixtureinfo',), 'receiver'),
+        ('_pytest/fixtures.py', 2529, 'module value class instance function',
+         ('__module__',), 'receiver'),
+        ('_pytest/unittest.py', 73, 'module value class instance function',
+         ('__abstractmethods__', '__isabstractmethod__'), 'receiver'),
+        ('_pytest/unittest.py', 96, 'module value class instance function',
+         ('__test__',), 'receiver'),
+        ('_pytest/unittest.py', 114, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/unittest.py', 115, 'module value class instance function',
+         ('__test__',), 'receiver'),
+        ('_pytest/unittest.py', 121, 'module value class instance function',
+         ('runTest',), 'receiver'),
+        ('_pytest/unittest.py', 130, 'module value class instance function',
+         ('setUpClass',), 'receiver'),
+        ('_pytest/unittest.py', 131, 'module value class instance function',
+         ('tearDownClass',), 'receiver'),
+        ('_pytest/unittest.py', 132, 'module value class instance function',
+         ('doClassCleanups',), 'receiver'),
+        ('_pytest/unittest.py', 137, 'module value class instance function',
+         ('tearDown_exceptions',), 'receiver'),
+        ('_pytest/unittest.py', 153, 'module value class instance function',
+         ('__unittest_skip_why__',), 'receiver'),
+        ('_pytest/unittest.py', 174, 'module value class instance function',
+         ('__qualname__',), 'receiver'),
+        ('_pytest/unittest.py', 186, 'module value class instance function',
+         ('__unittest_skip_why__',), 'receiver'),
+        ('_pytest/unittest.py', 190, 'module value class instance function',
+         ('__qualname__',), 'receiver'),
+        ('_pytest/unittest.py', 200, 'module value class instance function',
+         ('setup_method',), 'receiver'),
+        ('_pytest/unittest.py', 201, 'module value class instance function',
+         ('teardown_method',), 'receiver'),
+        ('_pytest/unittest.py', 210, 'module value class instance function',
+         ('__unittest_skip_why__',), 'receiver'),
+        ('_pytest/unittest.py', 220, 'module value class instance function',
+         ('__qualname__',), 'receiver'),
+        ('_pytest/unittest.py', 295, 'module value class instance function',
+         ('__dict__',), 'receiver'),
+        ('_pytest/unittest.py', 527, 'module value class instance function',
+         ('__unittest_skip__',), 'receiver'),
+        ('_pytest/unittest.py', 585, 'module value class instance function',
+         ('__init__',), 'receiver'),
+        ('_pytest/unittest.py', 631, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/unittest.py', 632, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/unittest.py', 642, 'module value class instance function',
+         ('__traceback__',), 'receiver'),
+        ('_pytest/mark/structures.py', 57, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/mark/structures.py', 77, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/mark/structures.py', 215, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/mark/structures.py', 236, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/mark/structures.py', 305, 'module value class instance function',
+         ('__setattr__',), 'receiver'),
+        ('_pytest/mark/structures.py', 306, 'module value class instance function',
+         ('__setattr__',), 'receiver'),
+        ('_pytest/mark/structures.py', 307, 'module value class instance function',
+         ('__setattr__',), 'receiver'),
+        ('_pytest/mark/structures.py', 308, 'module value class instance function',
+         ('__setattr__',), 'receiver'),
+        ('_pytest/mark/structures.py', 309, 'module value class instance function',
+         ('__setattr__',), 'receiver'),
+        ('_pytest/mark/structures.py', 440, 'module value class instance function',
+         ('__func__',), 'receiver'),
+        ('_pytest/mark/structures.py', 460, 'module value class instance function',
+         ('__dict__',), 'receiver'),
+        ('_pytest/mark/structures.py', 463, 'module value class instance function',
+         ('__dict__', '__mro__'), 'receiver'),
+        ('_pytest/mark/structures.py', 472, 'module value class instance function',
+         ('pytestmark',), 'receiver'),
+        ('_pytest/mark/structures.py', 502, 'module value class instance function',
+         ('mark',), 'receiver'),
+        ('_pytest/config/__init__.py', 145, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/config/__init__.py', 191, 'module value class instance function',
+         ('__cause__',), 'receiver'),
+        ('_pytest/config/__init__.py', 192, 'module value class instance function',
+         ('__cause__',), 'receiver'),
+        ('_pytest/config/__init__.py', 468, 'module value class instance function',
+         ('pytestmark',), 'receiver'),
+        ('_pytest/config/__init__.py', 472, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/config/__init__.py', 485, 'module value class instance function',
+         ('__qualname__',), 'receiver'),
+        ('_pytest/config/__init__.py', 506, 'module value class instance function',
+         ('__init__',), 'receiver'),
+        ('_pytest/config/__init__.py', 536, 'module value class instance function',
+         ('encoding',), 'receiver'),
+        ('_pytest/config/__init__.py', 571, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/config/__init__.py', 585, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/config/__init__.py', 758, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/config/__init__.py', 795, 'module value class instance function',
+         ('__traceback__',), 'receiver'),
+        ('_pytest/config/__init__.py', 808, 'module value class instance function',
+         ('__file__',), 'receiver'),
+        ('_pytest/config/__init__.py', 822, 'module value class instance function',
+         ('pytest_plugins',), 'receiver'),
+        ('_pytest/config/__init__.py', 908, 'module value class instance function',
+         ('pytest_plugins',), 'receiver'),
+        ('_pytest/config/__init__.py', 1039, 'module value class instance function',
+         ('read_text',), 'receiver'),
+        ('_pytest/config/__init__.py', 1195, 'module value class instance function',
+         ('__setattr__',), 'receiver'),
+        ('_pytest/config/__init__.py', 1196, 'module value class instance function',
+         ('__setattr__',), 'receiver'),
+        ('_pytest/config/__init__.py', 1197, 'module value class instance function',
+         ('__setattr__',), 'receiver'),
+        ('_pytest/config/__init__.py', 1402, 'module value class instance function',
+         ('version',), 'receiver'),
+        ('_pytest/config/__init__.py', 1409, 'module value class instance function',
+         ('help',), 'receiver'),
+        ('_pytest/config/__init__.py', 1425, 'module value class instance function',
+         ('fulltrace',), 'receiver'),
+        ('_pytest/config/__init__.py', 1430, 'module value class instance function',
+         ('showlocals',), 'receiver'),
+        ('_pytest/config/__init__.py', 1450, 'module value class instance function',
+         ('__dict__',), 'receiver'),
+        ('_pytest/config/__init__.py', 1457, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/config/__init__.py', 1494, 'module value class instance function',
+         ('assertmode',), 'receiver'),
+        ('_pytest/config/__init__.py', 1496, 'module value class instance function',
+         ('disable_plugin_autoload',), 'receiver'),
+        ('_pytest/config/__init__.py', 1629, 'module value class instance function',
+         ('__version__',), 'receiver'),
+        ('_pytest/config/__init__.py', 1631, 'module value class instance function',
+         ('__version__',), 'receiver'),
+        ('_pytest/config/__init__.py', 1811, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/config/__init__.py', 1969, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/config/__init__.py', 1990, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/config/__init__.py', 2088, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/config/__init__.py', 2098, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/config/__init__.py', 2118, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('_pytest/config/__init__.py', 2166, 'module value class instance function',
+         ('__file__',), 'receiver'),
+        ('_pytest/config/__init__.py', 2167, 'module value class instance function',
+         ('__file__',), 'receiver'),
+        ('_pytest/config/__init__.py', 2190, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('_pytest/config/__init__.py', 2473, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('pluggy/_manager.py', 47, 'module value class instance function',
+         ('__code__',), 'receiver'),
+        ('pluggy/_manager.py', 48, 'module value class instance function',
+         ('__code__',), 'receiver'),
+        ('pluggy/_manager.py', 58, 'module value class instance function',
+         ('__getattribute__',), 'receiver'),
+        ('pluggy/_manager.py', 86, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('pluggy/_manager.py', 90, 'module value class instance function',
+         ('__get__',), 'receiver'),
+        ('pluggy/_manager.py', 95, 'module value class instance function',
+         ('__func__',), 'receiver'),
+        ('pluggy/_manager.py', 100, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('pluggy/_manager.py', 102, 'module value class instance function',
+         ('__func__',), 'receiver'),
+        ('pluggy/_manager.py', 105, 'module value class instance function',
+         ('__get__',), 'receiver'),
+        ('pluggy/_manager.py', 107, 'module value class instance function',
+         ('__func__',), 'receiver'),
+        ('pluggy/_manager.py', 111, 'module value class instance function',
+         ('__get__',), 'receiver'),
+        ('pluggy/_manager.py', 117, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('pluggy/_manager.py', 120, 'module value class instance function',
+         ('__func__',), 'receiver'),
+        ('pluggy/_manager.py', 122, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('pluggy/_manager.py', 136, 'module value class instance function',
+         ('__init__',), 'receiver'),
+        ('pluggy/_manager.py', 223, 'inventory',
+         ('*', '__dir__'), 'source-pin'),
+        ('pluggy/_manager.py', 236, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('pluggy/_manager.py', 245, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('pluggy/_manager.py', 351, 'inventory',
+         ('*', '__dir__'), 'source-pin'),
+        ('pluggy/_manager.py', 354, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('pluggy/_manager.py', 412, 'module value class instance function',
+         ('__name__',), 'receiver'),
+        ('pluggy/_manager.py', 485, 'module value class instance function',
+         ('__dict__',), 'receiver'),
+        ('pluggy/_manager.py', 488, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('pluggy/_manager.py', 565, 'module value class instance function',
+         ('__dict__',), 'receiver'),
+        ('pluggy/_manager.py', 637, 'module value class instance function',
+         ('*',), 'receiver'),
+        ('pluggy/_manager.py', 652, 'module value class instance function',
+         ('__annotations__', '__defaults__', '__kwdefaults__', '__name__', '__signature__'), 'receiver'),
+        ('_pytest/python.py', 98, 'patterns',
+         ('python_files', 'test_*.py', '*_test.py'), 'default file globs; explicit files bypass them'),
+        ('_pytest/python.py', 105, 'patterns',
+         ('python_classes', 'Test'), 'default prefix/glob; use each bound name'),
+        ('_pytest/python.py', 111, 'patterns',
+         ('python_functions', 'test'), 'default prefix/glob; use each bound name'),
+        ('inspect.py', 223, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 224, 'inventory',
+         ('get',), 'source-pin'),
+        ('inspect.py', 232, 'inventory',
+         ('__module__',), 'source-pin'),
+        ('inspect.py', 236, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 241, 'inventory',
+         ('__annotations__',), 'source-pin'),
+        ('inspect.py', 242, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 249, 'inventory',
+         ('__annotations__',), 'source-pin'),
+        ('inspect.py', 250, 'inventory',
+         ('__globals__',), 'source-pin'),
+        ('inspect.py', 270, 'inventory',
+         ('__wrapped__',), 'source-pin'),
+        ('inspect.py', 271, 'inventory',
+         ('__wrapped__',), 'source-pin'),
+        ('inspect.py', 277, 'inventory',
+         ('__globals__',), 'source-pin'),
+        ('inspect.py', 278, 'inventory',
+         ('__globals__',), 'source-pin'),
+        ('inspect.py', 288, 'inventory',
+         ('__type_params__',), 'source-pin'),
+        ('inspect.py', 289, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('inspect.py', 328, 'inventory',
+         ('__get__', '__set__'), 'source-pin'),
+        ('inspect.py', 342, 'inventory',
+         ('__delete__', '__set__'), 'source-pin'),
+        ('inspect.py', 344, 'inventory',
+         ('MemberDescriptorType',), 'source-pin'),
+        ('inspect.py', 361, 'inventory',
+         ('GetSetDescriptorType',), 'source-pin'),
+        ('inspect.py', 396, 'inventory',
+         ('__func__',), 'source-pin'),
+        ('inspect.py', 400, 'inventory',
+         ('__code__',), 'source-pin'),
+        ('inspect.py', 414, 'inventory',
+         ('__func__',), 'source-pin'),
+        ('inspect.py', 416, 'inventory',
+         ('_is_coroutine_marker',), 'source-pin'),
+        ('inspect.py', 422, 'inventory',
+         ('__func__',), 'source-pin'),
+        ('inspect.py', 423, 'inventory',
+         ('__func__',), 'source-pin'),
+        ('inspect.py', 472, 'inventory',
+         ('gi_code',), 'source-pin'),
+        ('inspect.py', 549, 'inventory',
+         ('__flags__',), 'source-pin'),
+        ('inspect.py', 553, 'inventory',
+         ('__abstractmethods__',), 'source-pin'),
+        ('inspect.py', 559, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 560, 'inventory',
+         ('__isabstractmethod__',), 'source-pin'),
+        ('inspect.py', 562, 'inventory',
+         ('__bases__',), 'source-pin'),
+        ('inspect.py', 563, 'inventory',
+         ('__abstractmethods__',), 'source-pin'),
+        ('inspect.py', 564, 'inventory',
+         ('*',), 'source-pin'),
+        ('inspect.py', 565, 'inventory',
+         ('__isabstractmethod__',), 'source-pin'),
+        ('inspect.py', 572, 'inventory',
+         ('*', '__dir__'), 'source-pin'),
+        ('inspect.py', 579, 'inventory',
+         ('__bases__',), 'source-pin'),
+        ('inspect.py', 580, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 598, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 599, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 664, 'inventory',
+         ('*', '__dir__'), 'source-pin'),
+        ('inspect.py', 669, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 692, 'inventory',
+         ('*',), 'source-pin'),
+        ('inspect.py', 696, 'inventory',
+         ('__objclass__',), 'source-pin'),
+        ('inspect.py', 704, 'inventory',
+         ('*',), 'source-pin'),
+        ('inspect.py', 710, 'inventory',
+         ('__getattr__',), 'source-pin'),
+        ('inspect.py', 718, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 719, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 750, 'inventory',
+         ('__mro__',), 'source-pin'),
+        ('inspect.py', 775, 'inventory',
+         ('__wrapped__',), 'source-pin'),
+        ('inspect.py', 778, 'inventory',
+         ('__wrapped__',), 'source-pin'),
+        ('inspect.py', 792, 'inventory',
+         ('__module__',), 'source-pin'),
+        ('inspect.py', 795, 'inventory',
+         ('__qualname__',), 'source-pin'),
+        ('inspect.py', 796, 'inventory',
+         ('*',), 'source-pin'),
+        ('inspect.py', 803, 'inventory',
+         ('__mro__',), 'source-pin'),
+        ('inspect.py', 806, 'inventory',
+         ('__doc__',), 'source-pin'),
+        ('inspect.py', 814, 'inventory',
+         ('__func__', '__name__'), 'source-pin'),
+        ('inspect.py', 815, 'inventory',
+         ('__self__',), 'source-pin'),
+        ('inspect.py', 817, 'inventory',
+         ('*', '__func__'), 'source-pin'),
+        ('inspect.py', 821, 'inventory',
+         ('__class__',), 'source-pin'),
+        ('inspect.py', 823, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('inspect.py', 825, 'inventory',
+         ('*',), 'source-pin'),
+        ('inspect.py', 828, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('inspect.py', 829, 'inventory',
+         ('__self__',), 'source-pin'),
+        ('inspect.py', 831, 'inventory',
+         ('__qualname__',), 'source-pin'),
+        ('inspect.py', 835, 'inventory',
+         ('__class__',), 'source-pin'),
+        ('inspect.py', 838, 'inventory',
+         ('fget',), 'source-pin'),
+        ('inspect.py', 839, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('inspect.py', 841, 'inventory',
+         ('*',), 'source-pin'),
+        ('inspect.py', 844, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('inspect.py', 845, 'inventory',
+         ('__objclass__',), 'source-pin'),
+        ('inspect.py', 846, 'inventory',
+         ('*',), 'source-pin'),
+        ('inspect.py', 849, 'inventory',
+         ('__slots__',), 'source-pin'),
+        ('inspect.py', 854, 'inventory',
+         ('__mro__',), 'source-pin'),
+        ('inspect.py', 856, 'inventory',
+         ('*', '__doc__'), 'source-pin'),
+        ('inspect.py', 870, 'inventory',
+         ('__doc__',), 'source-pin'),
+        ('inspect.py', 914, 'inventory',
+         ('__file__',), 'source-pin'),
+        ('inspect.py', 915, 'inventory',
+         ('__file__',), 'source-pin'),
+        ('inspect.py', 918, 'inventory',
+         ('__module__',), 'source-pin'),
+        ('inspect.py', 919, 'inventory',
+         ('__module__',), 'source-pin'),
+        ('inspect.py', 920, 'inventory',
+         ('__file__',), 'source-pin'),
+        ('inspect.py', 921, 'inventory',
+         ('__file__',), 'source-pin'),
+        ('inspect.py', 922, 'inventory',
+         ('__module__',), 'source-pin'),
+        ('inspect.py', 926, 'inventory',
+         ('__func__',), 'source-pin'),
+        ('inspect.py', 928, 'inventory',
+         ('__code__',), 'source-pin'),
+        ('inspect.py', 930, 'inventory',
+         ('tb_frame',), 'source-pin'),
+        ('inspect.py', 932, 'inventory',
+         ('f_code',), 'source-pin'),
+        ('inspect.py', 934, 'inventory',
+         ('co_filename',), 'source-pin'),
+        ('inspect.py', 937, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('inspect.py', 971, 'inventory',
+         ('__loader__',), 'source-pin'),
+        ('inspect.py', 973, 'inventory',
+         ('__spec__', 'loader'), 'source-pin'),
+        ('inspect.py', 992, 'inventory',
+         ('__module__',), 'source-pin'),
+        ('inspect.py', 993, 'inventory',
+         ('__module__',), 'source-pin'),
+        ('inspect.py', 1007, 'inventory',
+         ('__file__',), 'source-pin'),
+        ('inspect.py', 1008, 'inventory',
+         ('__file__',), 'source-pin'),
+        ('inspect.py', 1016, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('inspect.py', 1021, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('inspect.py', 1023, 'inventory',
+         ('*', '__name__'), 'source-pin'),
+        ('inspect.py', 1024, 'inventory',
+         ('*', '__name__'), 'source-pin'),
+        ('inspect.py', 1029, 'inventory',
+         ('*', '__name__'), 'source-pin'),
+        ('inspect.py', 1030, 'inventory',
+         ('*', '__name__'), 'source-pin'),
+        ('inspect.py', 1092, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 1102, 'inventory',
+         ('__qualname__',), 'source-pin'),
+        ('inspect.py', 1115, 'inventory',
+         ('__func__',), 'source-pin'),
+        ('inspect.py', 1117, 'inventory',
+         ('__code__',), 'source-pin'),
+        ('inspect.py', 1119, 'inventory',
+         ('tb_frame',), 'source-pin'),
+        ('inspect.py', 1121, 'inventory',
+         ('f_code',), 'source-pin'),
+        ('inspect.py', 1123, 'inventory',
+         ('co_firstlineno',), 'source-pin'),
+        ('inspect.py', 1125, 'inventory',
+         ('co_firstlineno',), 'source-pin'),
+        ('inspect.py', 1243, 'inventory',
+         ('__next__',), 'source-pin'),
+        ('inspect.py', 1270, 'inventory',
+         ('tb_frame',), 'source-pin'),
+        ('inspect.py', 1274, 'inventory',
+         ('f_code',), 'source-pin'),
+        ('inspect.py', 1294, 'inventory',
+         ('__bases__',), 'source-pin'),
+        ('inspect.py', 1311, 'inventory',
+         ('__bases__',), 'source-pin'),
+        ('inspect.py', 1312, 'inventory',
+         ('__bases__',), 'source-pin'),
+        ('inspect.py', 1464, 'inventory',
+         ('__module__',), 'source-pin'),
+        ('inspect.py', 1472, 'inventory',
+         ('__module__',), 'source-pin'),
+        ('inspect.py', 1473, 'inventory',
+         ('__qualname__',), 'source-pin'),
+        ('inspect.py', 1474, 'inventory',
+         ('__module__', '__qualname__'), 'source-pin'),
+        ('inspect.py', 1478, 'inventory',
+         ('__module__',), 'source-pin'),
+        ('inspect.py', 1552, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('inspect.py', 1556, 'inventory',
+         ('__self__',), 'source-pin'),
+        ('inspect.py', 1558, 'inventory',
+         ('__self__',), 'source-pin'),
+        ('inspect.py', 1616, 'inventory',
+         ('__func__',), 'source-pin'),
+        ('inspect.py', 1621, 'inventory',
+         ('__code__',), 'source-pin'),
+        ('inspect.py', 1624, 'inventory',
+         ('__closure__',), 'source-pin'),
+        ('inspect.py', 1629, 'inventory',
+         ('__closure__',), 'source-pin'),
+        ('inspect.py', 1634, 'inventory',
+         ('__globals__',), 'source-pin'),
+        ('inspect.py', 1635, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 1637, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 1667, 'inventory',
+         ('__new__',), 'source-pin'),
+        ('inspect.py', 1739, 'inventory',
+         ('__new__',), 'source-pin'),
+        ('inspect.py', 1777, 'inventory',
+         ('_getframe',), 'source-pin'),
+        ('inspect.py', 1786, 'inventory',
+         ('__traceback__',), 'source-pin'),
+        ('inspect.py', 1793, 'inventory',
+         ('__dict__', '__get__'), 'source-pin'),
+        ('inspect.py', 1794, 'inventory',
+         ('__dict__', '__get__'), 'source-pin'),
+        ('inspect.py', 1800, 'inventory',
+         ('__getattribute__',), 'source-pin'),
+        ('inspect.py', 1808, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 1809, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 1826, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('inspect.py', 1827, 'inventory',
+         ('__objclass__',), 'source-pin'),
+        ('inspect.py', 1887, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 1889, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 1930, 'inventory',
+         ('gi_frame',), 'source-pin'),
+        ('inspect.py', 1968, 'inventory',
+         ('cr_frame',), 'source-pin'),
+        ('inspect.py', 2012, 'inventory',
+         ('ag_frame',), 'source-pin'),
+        ('inspect.py', 2036, 'inventory',
+         ('*',), 'source-pin'),
+        ('inspect.py', 2038, 'inventory',
+         ('*',), 'source-pin'),
+        ('inspect.py', 2176, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('inspect.py', 2177, 'inventory',
+         ('__code__',), 'source-pin'),
+        ('inspect.py', 2178, 'inventory',
+         ('__defaults__',), 'source-pin'),
+        ('inspect.py', 2179, 'inventory',
+         ('__kwdefaults__',), 'source-pin'),
+        ('inspect.py', 2180, 'inventory',
+         ('__annotations__',), 'source-pin'),
+        ('inspect.py', 2206, 'inventory',
+         ('__next__',), 'source-pin'),
+        ('inspect.py', 2243, 'inventory',
+         ('_parameter_cls',), 'source-pin'),
+        ('inspect.py', 2264, 'inventory',
+         ('__module__',), 'source-pin'),
+        ('inspect.py', 2268, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 2334, 'inventory',
+         ('args',), 'source-pin'),
+        ('inspect.py', 2335, 'inventory',
+         ('args',), 'source-pin'),
+        ('inspect.py', 2336, 'inventory',
+         ('args',), 'source-pin'),
+        ('inspect.py', 2339, 'inventory',
+         ('args',), 'source-pin'),
+        ('inspect.py', 2343, 'inventory',
+         ('args',), 'source-pin'),
+        ('inspect.py', 2347, 'inventory',
+         ('args',), 'source-pin'),
+        ('inspect.py', 2349, 'inventory',
+         ('args',), 'source-pin'),
+        ('inspect.py', 2353, 'inventory',
+         ('args',), 'source-pin'),
+        ('inspect.py', 2357, 'inventory',
+         ('args',), 'source-pin'),
+        ('inspect.py', 2359, 'inventory',
+         ('args',), 'source-pin'),
+        ('inspect.py', 2368, 'inventory',
+         ('__self__',), 'source-pin'),
+        ('inspect.py', 2378, 'inventory',
+         ('empty',), 'source-pin'),
+        ('inspect.py', 2390, 'inventory',
+         ('__text_signature__',), 'source-pin'),
+        ('inspect.py', 2410, 'inventory',
+         ('__text_signature__',), 'source-pin'),
+        ('inspect.py', 2414, 'inventory',
+         ('_parameter_cls',), 'source-pin'),
+        ('inspect.py', 2417, 'inventory',
+         ('__code__',), 'source-pin'),
+        ('inspect.py', 2425, 'inventory',
+         ('__defaults__',), 'source-pin'),
+        ('inspect.py', 2426, 'inventory',
+         ('__kwdefaults__',), 'source-pin'),
+        ('inspect.py', 2495, 'inventory',
+         ('__get__',), 'source-pin'),
+        ('inspect.py', 2527, 'inventory',
+         ('__func__',), 'source-pin'),
+        ('inspect.py', 2538, 'inventory',
+         ('__signature__',), 'source-pin'),
+        ('inspect.py', 2547, 'inventory',
+         ('__signature__',), 'source-pin'),
+        ('inspect.py', 2567, 'inventory',
+         ('_partialmethod',), 'source-pin'),
+        ('inspect.py', 2606, 'inventory',
+         ('func',), 'source-pin'),
+        ('inspect.py', 2623, 'inventory',
+         ('__mro__',), 'source-pin'),
+        ('inspect.py', 2625, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 2631, 'inventory',
+         ('__dict__',), 'source-pin'),
+        ('inspect.py', 2637, 'inventory',
+         ('__mro__',), 'source-pin'),
+        ('inspect.py', 2646, 'inventory',
+         ('__text_signature__',), 'source-pin'),
+        ('inspect.py', 2658, 'inventory',
+         ('__mro__',), 'source-pin'),
+        ('inspect.py', 2661, 'inventory',
+         ('__init__',), 'source-pin'),
+        ('inspect.py', 2662, 'inventory',
+         ('__new__',), 'source-pin'),
+        ('inspect.py', 2671, 'inventory',
+         ('__call__',), 'source-pin'),
+        ('inspect.py', 2695, 'inventory',
+         ('__members__',), 'source-pin'),
+        ('inspect.py', 2696, 'inventory',
+         ('__new__',), 'source-pin'),
+        ('inspect.py', 2760, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('inspect.py', 2853, 'inventory',
+         ('__class__', '__name__'), 'source-pin'),
+        ('inspect.py', 2996, 'inventory',
+         ('__class__', '__name__'), 'source-pin'),
+        ('inspect.py', 3298, 'inventory',
+         ('__class__', '__name__'), 'source-pin'),
+        ('inspect.py', 3396, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('inspect.py', 3405, 'inventory',
+         ('*',), 'source-pin'),
+        ('inspect.py', 3407, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('inspect.py', 3414, 'inventory',
+         ('__cached__',), 'source-pin'),
+        ('inspect.py', 3416, 'inventory',
+         ('__loader__',), 'source-pin'),
+        ('inspect.py', 3417, 'inventory',
+         ('__path__',), 'source-pin'),
+        ('inspect.py', 3418, 'inventory',
+         ('__path__',), 'source-pin'),
+        ('unittest/loader.py', 27, 'inventory',
+         ('__init__',), 'source-pin'),
+        ('unittest/loader.py', 31, 'inventory',
+         ('__getattr__',), 'source-pin'),
+        ('unittest/loader.py', 75, 'inventory',
+         ('__init__',), 'source-pin'),
+        ('unittest/loader.py', 92, 'inventory',
+         ('runTest',), 'source-pin'),
+        ('unittest/loader.py', 100, 'inventory',
+         ('*', '__dir__'), 'source-pin'),
+        ('unittest/loader.py', 101, 'inventory',
+         ('*',), 'source-pin'),
+        ('unittest/loader.py', 109, 'inventory',
+         ('load_tests',), 'source-pin'),
+        ('unittest/loader.py', 116, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('unittest/loader.py', 152, 'inventory',
+         ('*',), 'source-pin'),
+        ('unittest/loader.py', 155, 'inventory',
+         ('__path__',), 'source-pin'),
+        ('unittest/loader.py', 187, 'inventory',
+         ('*',), 'source-pin'),
+        ('unittest/loader.py', 216, 'inventory',
+         ('*',), 'source-pin'),
+        ('unittest/loader.py', 220, 'inventory',
+         ('__module__', '__qualname__'), 'source-pin'),
+        ('unittest/loader.py', 224, 'inventory',
+         ('*', '__dir__'), 'source-pin'),
+        ('unittest/loader.py', 292, 'inventory',
+         ('__file__',), 'source-pin'),
+        ('unittest/loader.py', 294, 'inventory',
+         ('__name__',), 'source-pin'),
+        ('unittest/loader.py', 316, 'inventory',
+         ('__file__',), 'source-pin'),
+        ('unittest/loader.py', 406, 'inventory',
+         ('__file__',), 'source-pin'),
+        ('unittest/loader.py', 438, 'inventory',
+         ('load_tests',), 'source-pin'),
+        ('_pytest/python.py', 596, 'module',
+         ('setUpModule', 'setup_module'), 'receiver: indirect names passed to _get_first_non_fixture_func; lookup lines (760,)'),
+        ('_pytest/python.py', 599, 'module',
+         ('tearDownModule', 'teardown_module'), 'receiver: indirect names passed to _get_first_non_fixture_func; lookup lines (760,)'),
+        ('_pytest/python.py', 630, 'module',
+         ('setup_function',), 'receiver: indirect names passed to _get_first_non_fixture_func; lookup lines (760,)'),
+        ('_pytest/python.py', 631, 'module',
+         ('teardown_function',), 'receiver: indirect names passed to _get_first_non_fixture_func; lookup lines (760,)'),
+        ('_pytest/python.py', 702, 'module',
+         ('setUpModule', 'setup_module'), 'receiver: indirect names passed to _get_first_non_fixture_func; lookup lines (760,)'),
+        ('_pytest/python.py', 708, 'module',
+         ('tearDownModule', 'teardown_module'), 'receiver: indirect names passed to _get_first_non_fixture_func; lookup lines (760,)'),
+        ('_pytest/python.py', 815, 'class',
+         ('setup_class',), 'receiver: indirect names passed to _get_first_non_fixture_func; lookup lines (760,)'),
+        ('_pytest/python.py', 816, 'class',
+         ('teardown_class',), 'receiver: indirect names passed to _get_first_non_fixture_func; lookup lines (760,)'),
+        ('_pytest/python.py', 847, 'class',
+         ('setup_method',), 'receiver: indirect names passed to _get_first_non_fixture_func; lookup lines (760,)'),
+        ('_pytest/python.py', 849, 'class',
+         ('teardown_method',), 'receiver: indirect names passed to _get_first_non_fixture_func; lookup lines (760,)'),
+        ('_pytest/config/__init__.py', 576, 'function',
+         ('tryfirst', 'trylast', 'optionalhook', 'hookwrapper'), 'receiver: indirect names passed to _get_legacy_hook_marks; lookup lines (472,)'),
+        ('_pytest/config/__init__.py', 587, 'function',
+         ('firstresult', 'historic'), 'receiver: indirect names passed to _get_legacy_hook_marks; lookup lines (472,)'),
+        ('inspect.py', 2614, 'class',
+         ('__call__',), 'receiver: indirect names passed to _signature_get_user_defined_method; lookup lines (2036, 2038)'),
+        ('inspect.py', 2618, 'class',
+         ('__new__',), 'receiver: indirect names passed to _signature_get_user_defined_method; lookup lines (2036, 2038)'),
+        ('inspect.py', 2619, 'class',
+         ('__init__',), 'receiver: indirect names passed to _signature_get_user_defined_method; lookup lines (2036, 2038)'),
+        ('pluggy/_manager.py', 278, 'function',
+         ('pytest_impl',), 'project: pytest from _pytest/config/__init__.py:506; _get_marker_opts reads at 117 and 122'),
+        ('pluggy/_manager.py', 393, 'function',
+         ('pytest_spec',), 'project: pytest from _pytest/config/__init__.py:506; _get_marker_opts reads at 117 and 122'),
+        ('inspect.py', 176, 'class value function',
+         ('__annotations__', '__dict__', '__globals__', '__module__', '__name__', '__type_params__', '__wrapped__', 'get'), 'receiver: transitive get_annotations; exact sites pinned below'),
+        ('inspect.py', 310, 'class value function',
+         ('__get__', '__set__'), 'receiver: transitive ismethoddescriptor; exact sites pinned below'),
+        ('inspect.py', 330, 'class value function',
+         ('__delete__', '__set__'), 'receiver: transitive isdatadescriptor; exact sites pinned below'),
+        ('inspect.py', 391, 'class value function',
+         ('__code__', '__func__'), 'receiver: transitive _has_code_flag; exact sites pinned below'),
+        ('inspect.py', 412, 'class value function',
+         ('__func__', '_is_coroutine_marker'), 'receiver: transitive _has_coroutine_mark; exact sites pinned below'),
+        ('inspect.py', 545, 'class',
+         ('*', '__abstractmethods__', '__bases__', '__dict__', '__flags__', '__isabstractmethod__'), 'receiver: transitive isabstract; exact sites pinned below'),
+        ('inspect.py', 754, 'class value function',
+         ('__wrapped__',), 'receiver: transitive unwrap; exact sites pinned below'),
+        ('inspect.py', 1797, 'class value function',
+         ('__getattribute__',), 'receiver: transitive _check_instance; exact sites pinned below'),
+        ('inspect.py', 1806, 'class value function',
+         ('__dict__',), 'receiver: transitive _check_class; exact sites pinned below'),
+        ('inspect.py', 1814, 'class value function',
+         ('__name__', '__objclass__'), 'receiver: transitive _shadowed_dict_from_weakref_mro_tuple; exact sites pinned below'),
+        ('inspect.py', 1845, 'class value function',
+         ('__dict__',), 'receiver: transitive getattr_static; exact sites pinned below'),
+        ('inspect.py', 2030, 'class value function',
+         ('*',), 'receiver: transitive _signature_get_user_defined_method; exact sites pinned below'),
+        ('inspect.py', 2164, 'class value function',
+         ('__annotations__', '__code__', '__defaults__', '__kwdefaults__', '__name__'), 'receiver: transitive _signature_is_functionlike; exact sites pinned below'),
+        ('inspect.py', 2189, 'class value function',
+         ('__next__',), 'receiver: transitive _signature_strip_non_python_syntax; exact sites pinned below'),
+        ('inspect.py', 2239, 'class value function',
+         ('__dict__', '__module__', '__self__', '_parameter_cls', 'args', 'empty'), 'receiver: transitive _signature_fromstr; exact sites pinned below'),
+        ('inspect.py', 2381, 'class value function',
+         ('__text_signature__',), 'receiver: transitive _signature_from_builtin; exact sites pinned below'),
+        ('inspect.py', 2397, 'class value function',
+         ('__code__', '__defaults__', '__kwdefaults__', '__text_signature__', '_parameter_cls'), 'receiver: transitive _signature_from_function; exact sites pinned below'),
+        ('inspect.py', 2492, 'class value function',
+         ('__get__',), 'receiver: transitive _descriptor_get; exact sites pinned below'),
+        ('inspect.py', 2501, 'class value function',
+         ('__call__', '__dict__', '__func__', '__init__', '__mro__', '__new__', '__signature__', '__text_signature__', '_partialmethod', 'func'), 'receiver: transitive _signature_from_callable; exact sites pinned below'),
+        ('inspect.py', 1666, 'class value function',
+         ('__new__',), 'receiver: transitive __new__; exact sites pinned below'),
+        ('inspect.py', 1738, 'class value function',
+         ('__new__',), 'receiver: transitive __new__; exact sites pinned below'),
+        ('inspect.py', 2694, 'class value function',
+         ('__members__', '__new__'), 'receiver: transitive __new__; exact sites pinned below'),
+        ('inspect.py', 2743, 'class value function',
+         ('__name__',), 'receiver: transitive __init__; exact sites pinned below'),
+        ('unittest/loader.py', 210, 'class',
+         ('*', '__dir__', '__module__', '__qualname__'), 'receiver: transitive getTestCaseNames; exact sites pinned below'),
+    ),
+}
+
+# The installed-source lookup inventory is below. A declaration name alone is
+# never collection evidence: all module bindings use the same lookup audit.
+
 
 # Executable admission table: absence means unavailable, including future AST
 # kinds. Conditional handlers below constrain the operations, not just the kind.
@@ -847,6 +1873,8 @@ class CollectionEffects:
             self.lambdas[key] = (scope, value)
             return key
         if isinstance(value, ast.Call):
+            if self._nonrepository_result(scope, value, depth + 1):
+                return scope.resolve(value)
             if value.keywords or any(isinstance(arg, ast.Starred) for arg in value.args):
                 return "?unresolved"
             return self._returned(self.follow(scope.resolve(value.func)),
@@ -1068,6 +2096,11 @@ class CollectionEffects:
         try:
             for name, binding in scope.bindings.items():
                 if not (name.startswith("__") and name.endswith("__")):
+                    # Fixture discovery reads raw members, unwraps them, and
+                    # looks them up on the class. Calls can produce descriptors
+                    # just as decorators do; audit their results on this route.
+                    if not self._descriptor(binding, depth + 1, dataclass=True):
+                        return False
                     for candidate in _candidates(self.follow(binding)):
                         if candidate in self.definitions:
                             parent, node = self.definitions[candidate]
@@ -1176,7 +2209,24 @@ class CollectionEffects:
                         return False
                 continue
             scope, expression = call
+            if self._nonrepository_result(scope, expression, depth + 1):
+                continue
             for constructor in _candidates(self.follow(scope.resolve(expression.func))):
+                if constructor == "builtins.type":
+                    return False
+                if constructor == "builtins.property":
+                    # Construction holds the accessors; a later class/default
+                    # lookup can execute them. That descriptor is not modeled.
+                    if dataclass:
+                        return False
+                    continue
+                if constructor in ("builtins.classmethod", "builtins.staticmethod"):
+                    # These wrappers are inert only around a resolved function;
+                    # classmethod can otherwise chain a caller's descriptor.
+                    if (len(expression.args) != 1 or expression.keywords or
+                            not self._function_value(expression.args[0], scope)):
+                        return False
+                    continue
                 if constructor == "dataclasses.field":
                     if any(keyword.arg == "default" and not self._descriptor(
                             scope.resolve(keyword.value), depth + 1, dataclass=dataclass) for keyword in expression.keywords):
@@ -1199,7 +2249,8 @@ class CollectionEffects:
                         return False
                     if dataclass and not self._plain_descriptor_class(owner, definition, depth + 1):
                         return False
-                elif _internal(constructor) or constructor.split(".")[0] in self.modules:
+                elif (_internal(constructor) or constructor.split(".")[0] in self.modules or
+                      constructor not in MODELLED_EXTERNAL_CALLS):
                     return False
         return True
 
@@ -1531,14 +2582,68 @@ class CollectionEffects:
         if not self._scan(self.trees[file].body, scope, 0, strict=False):
             return False
         if file in self.collection_files:
-            # Pytest/plugin discovery looks up attributes on the collected
-            # module itself. Importing a helper does not do those lookups.
-            if not all(self._hook(scope, name, 0) for name in ("__getattr__", "__dir__")):
+            if not self._pytest_module(scope, 0, collected=True):
                 return False
-            return all(self._pytest_value(binding, 0) for binding in list(scope.bindings.values()))
+            return all(self._pytest_value(binding, 0, binding_name=name)
+                       for name, binding in list(scope.bindings.items()))
         return True
 
-    def _pytest_value(self, binding, depth, seen=()):
+    @staticmethod
+    def _pytest_names(target):
+        return {name for _, _, targets, attributes, _ in PYTEST_COLLECTION_LOOKUPS["reads"]
+                if target in targets.split() for name in attributes}
+
+    def _pytest_module(self, scope, depth, *, collected=False):
+        # Every binding receives the __test__ probe (python.py:384). Only a
+        # collection holder receives dir() (fixtures.py:2308); a helper module
+        # bound in that holder is never itself passed to fixture discovery.
+        hooks = ("__getattr__", "__dir__") if collected else ("__getattr__",)
+        return all(self._hook(scope, name, depth) for name in hooks)
+
+    def _nonrepository_result(self, scope, expression, depth):
+        """Owner boundary: installed calls without repository arguments.
+
+        This classifies later lookup/descriptor behavior only. The executed
+        call still needs admission by _scan/_call; this never permits executing
+        an unlisted external call. Importing a repository object by a string
+        without receiving one remains the owner's same-process caveat.
+        """
+        if depth > MAX_CALL_DEPTH or not isinstance(expression, ast.Call):
+            return False
+        callees = _candidates(self.follow(scope.resolve(expression.func)))
+        if not all(isinstance(name, str) and not _internal(name) and
+                   name.split(".")[0] not in self.modules for name in callees):
+            return False
+        if any(isinstance(arg, ast.Starred) for arg in expression.args) or any(
+                keyword.arg is None for keyword in expression.keywords):
+            return False
+        return all(self._nonrepository_argument(value, scope, depth + 1) for value in
+                   [*expression.args, *(keyword.value for keyword in expression.keywords)])
+
+    def _nonrepository_argument(self, value, scope, depth):
+        if depth > MAX_CALL_DEPTH:
+            return False
+        if self._plain(value, scope):
+            return True
+        for candidate in _candidates(self.follow(scope.resolve(value))):
+            if candidate in self.calls:
+                owner, expression = self.calls[candidate]
+                if not self._nonrepository_result(owner, expression, depth + 1):
+                    return False
+            elif candidate in self.literal_values:
+                owner, literal = self.literal_values[candidate]
+                if not isinstance(literal, (ast.Tuple, ast.List, ast.Set, ast.Dict)):
+                    return False
+                children = [*literal.keys, *literal.values] if isinstance(literal, ast.Dict) else literal.elts
+                if not all(child is not None and self._nonrepository_argument(child, owner, depth + 1)
+                           for child in children):
+                    return False
+            elif not (isinstance(candidate, str) and not _internal(candidate) and
+                      candidate.split(".")[0] not in self.modules):
+                return False
+        return True
+
+    def _pytest_value(self, binding, depth, seen=(), *, binding_name=None):
         if depth > MAX_CALL_DEPTH:
             return False
         for candidate in _candidates(self.follow(binding)):
@@ -1550,10 +2655,20 @@ class CollectionEffects:
                     scope = self._function_scope(parent, node)
                     if not self._class_metaprotocols(scope, depth):
                         return False
-                    if self._test_class(scope, depth) and not self._class(parent, node, depth + 1, instantiate=True):
+                    collected = self._test_class(scope, depth, binding_name=binding_name)
+                    if collected is None:
                         return False
+                    if collected:
+                        if not self._class(parent, node, depth + 1, instantiate=True):
+                            return False
+                        # PyCollector and fixture discovery also visit nested
+                        # and inherited members, under each member's bound name.
+                        if not self._pytest_members(scope, depth + 1, (*seen, candidate)):
+                            return False
             elif candidate in self.calls:
                 owner, expression = self.calls[candidate]
+                if self._nonrepository_result(owner, expression, depth + 1):
+                    continue
                 for constructor in _candidates(self.follow(owner.resolve(expression.func))):
                     if constructor in self.definitions:
                         parent, node = self.definitions[constructor]
@@ -1565,7 +2680,8 @@ class CollectionEffects:
                             if values is None:
                                 return False
                             returned = self._returned(constructor, values, depth + 1)
-                            if returned == "?unresolved" or not self._pytest_value(returned, depth + 1, (*seen, candidate)):
+                            if returned == "?unresolved" or not self._pytest_value(
+                                    returned, depth + 1, (*seen, candidate), binding_name=binding_name):
                                 return False
                         else:
                             return False
@@ -1573,6 +2689,12 @@ class CollectionEffects:
                         if any(keyword.arg == "default" and not self._pytest_value(
                                 owner.resolve(keyword.value), depth + 1, (*seen, candidate)) for keyword in expression.keywords):
                             return False
+                    elif constructor in ("builtins.staticmethod", "builtins.classmethod"):
+                        if (len(expression.args) != 1 or expression.keywords or
+                                not self._function_value(expression.args[0], owner)):
+                            return False
+                    elif constructor in ("builtins.property", "builtins.type") or constructor not in MODELLED_EXTERNAL_CALLS:
+                        return False
             elif candidate in self.literal_values:
                 owner, value = self.literal_values[candidate]
                 if isinstance(value, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
@@ -1584,20 +2706,136 @@ class CollectionEffects:
                 if not all(child is not None and self._pytest_value(owner.resolve(child), depth + 1, (*seen, candidate))
                            for child in children):
                     return False
+            elif isinstance(candidate, str) and candidate in self.paths:
+                files = self.paths[candidate]
+                if len(files) != 1 or files[0] not in self.scopes or not self._pytest_module(self.scopes[files[0]], depth + 1):
+                    return False
         return True
 
-    def _test_class(self, scope, depth, seen=()):
+    def _pytest_members(self, scope, depth, seen, bases=()):
+        if depth > MAX_CALL_DEPTH or scope in bases:
+            return False
+        names = self._pytest_names("class") | self._pytest_names("instance")
+        for name, binding in list(scope.bindings.items()):
+            component_process.checkpoint()
+            if ("*" in names or name in names) and not self._pytest_value(
+                    binding, depth, seen, binding_name=name):
+                return False
+        for base in scope.class_node.bases:
+            for candidate in _candidates(self.follow(scope.declaration_scope.resolve(base))):
+                if candidate in MODELLED_EXTERNAL_BASES:
+                    continue
+                if candidate not in self.definitions or not isinstance(self.definitions[candidate][1], ast.ClassDef):
+                    return False
+                parent, node = self.definitions[candidate]
+                if not self._pytest_members(self._function_scope(parent, node), depth + 1, seen, (*bases, scope)):
+                    return False
+        return True
+
+    def _test_flag(self, scope, depth, seen=()):
+        """Literal truth on every visible __test__ assignment, including bases.
+
+        'absent' differs from an unresolved value (None). Unknown truth must not
+        let a non-Test declaration escape an instance collection route.
+        """
+        if depth > MAX_CALL_DEPTH or scope in seen:
+            return None
+        if self._dynamic_test_flag(scope, depth):
+            return None
+        if "__test__" in scope.bindings:
+            return self._assigned_truth(scope, "__test__", depth + 1)
+        flags = []
+        for base in scope.class_node.bases:
+            for candidate in _candidates(self.follow(scope.declaration_scope.resolve(base))):
+                if candidate in MODELLED_EXTERNAL_BASES:
+                    continue
+                if candidate not in self.definitions or not isinstance(self.definitions[candidate][1], ast.ClassDef):
+                    return None
+                parent, node = self.definitions[candidate]
+                flags.append(self._test_flag(self._function_scope(parent, node), depth + 1, (*seen, scope)))
+        if None in flags:
+            return None
+        present = [flag for flag in flags if flag != "absent"]
+        return any(present) if present else "absent"
+
+    def _dynamic_test_flag(self, scope, depth, seen=()):
+        # A hook's inert body does not establish the truth of the value it
+        # substitutes for __test__. Until that result is modeled, refuse even
+        # when the declaration name would otherwise avoid collection. A hook
+        # can also replace an explicitly declared flag through __getattribute__.
         if depth > MAX_CALL_DEPTH or scope in seen:
             return True
-        if scope.class_node.name.startswith("Test"):
+        for keyword in scope.class_node.keywords:
+            if keyword.arg != "metaclass":
+                return True
+            for candidate in _candidates(self.follow(scope.declaration_scope.resolve(keyword.value))):
+                if candidate == "builtins.type":
+                    continue
+                if candidate not in self.definitions or not isinstance(self.definitions[candidate][1], ast.ClassDef):
+                    return True
+                parent, node = self.definitions[candidate]
+                meta = self._function_scope(parent, node)
+                if any(self._members(meta, name) != "?unresolved" for name in
+                       ("__getattribute__", "__getattr__", "__test__")):
+                    return True
+        for base in scope.class_node.bases:
+            for candidate in _candidates(self.follow(scope.declaration_scope.resolve(base))):
+                if candidate in MODELLED_EXTERNAL_BASES:
+                    continue
+                if candidate not in self.definitions or not isinstance(self.definitions[candidate][1], ast.ClassDef):
+                    return True
+                parent, node = self.definitions[candidate]
+                if self._dynamic_test_flag(self._function_scope(parent, node), depth + 1, (*seen, scope)):
+                    return True
+        return False
+
+    def _assigned_truth(self, scope, name, depth, seen=()):
+        key = (scope, name)
+        if depth > MAX_CALL_DEPTH or key in seen:
+            return None
+        if name not in scope.bindings:
+            return self._assigned_truth(scope.parent, name, depth + 1, seen) if scope.parent else None
+        values = []
+        for part in scope.nodes:
+            component_process.checkpoint()
+            if not isinstance(part, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                continue
+            targets = part.targets if isinstance(part, ast.Assign) else [part.target]
+            if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+                value = part.value
+                if isinstance(value, ast.Constant):
+                    values.append(bool(value.value))
+                elif isinstance(value, ast.Name):
+                    values.append(self._assigned_truth(scope, value.id, depth + 1, (*seen, key)))
+                else:
+                    return None
+        return any(values) if values and None not in values else None
+
+    def _test_class(self, scope, depth, seen=(), *, binding_name=None):
+        if depth > MAX_CALL_DEPTH or scope in seen:
+            return None
+        flag = self._test_flag(scope, depth)
+        if flag is None or flag is False:
+            return flag
+        if flag is True:
+            return True
+        # Naming configuration outside this default table remains unavailable
+        # at _collection_config_passive; it is never guessed here.
+        patterns = next(attributes[1:] for _, _, targets, attributes, _ in PYTEST_COLLECTION_LOOKUPS["reads"]
+                        if targets == "patterns" and attributes[0] == "python_classes")
+        if binding_name is not None and any(binding_name.startswith(pattern) or fnmatch.fnmatch(binding_name, pattern)
+                                            for pattern in patterns):
             return True
         for base in scope.class_node.bases:
             for candidate in _candidates(self.follow(scope.declaration_scope.resolve(base))):
-                if candidate == "unittest.TestCase" and any(name.startswith("test") for name in scope.bindings):
+                if candidate == "unittest.TestCase":
                     return True
                 if candidate in self.definitions and isinstance(self.definitions[candidate][1], ast.ClassDef):
                     parent, node = self.definitions[candidate]
-                    if self._test_class(self._function_scope(parent, node), depth + 1, (*seen, scope)):
+                    inherited = self._test_class(self._function_scope(parent, node), depth + 1, (*seen, scope))
+                    if inherited is None:
+                        return None
+                    if inherited:
                         return True
         return False
 
