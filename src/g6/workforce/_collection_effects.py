@@ -33,6 +33,7 @@ MODELLED_EXTERNAL_CALLS = {
     "builtins.type": "type: one-argument inspection runs no hook; a result with repository input needs a separately modeled identity",
     "builtins.object": "allocate: bare builtin object allocation runs no caller code",
     "builtins.object.__new__": "allocate: native allocation; audit the allocated class's later protocols",
+    "builtins.object.__getattribute__": "native-lookup: forward a constructor-free receiver's lookup to fully audited class members",
     "logging.getLogger": "logger: literal/module name only; no caller-supplied code",
     "contextlib.nullcontext": "hold: stores its argument without invoking it",
     "dataclasses.dataclass": "dataclass: class creation/defaults and generated hooks followed by _class",
@@ -1215,6 +1216,8 @@ class _Scope:
         self.globals = {name for node in self.nodes if isinstance(node, ast.Global) for name in node.names}
         self.nonlocals = {name for node in self.nodes if isinstance(node, ast.Nonlocal) for name in node.names}
         slots = {name: [value] for name, value in self.bindings.items()}
+        self.slots, self.writes, self.write_values = slots, {}, {}
+        self.assignments, self.context_assignments = [], []
 
         def bind(name, value):
             held = slots.setdefault(name, [])
@@ -1222,7 +1225,7 @@ class _Scope:
             self.bindings[name] = _merge(held)
             return len(held) - 1
 
-        assignments = []
+        assignments = self.assignments
 
         def assignment(target, value):
             if isinstance(target, ast.Name):
@@ -1262,13 +1265,14 @@ class _Scope:
             elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
                 bind(node.target.id, "?unresolved")
             elif isinstance(node, ast.withitem) and node.optional_vars is not None:
-                value = self.context_value(node.context_expr)
-                if value is not None:
-                    assignment(node.optional_vars, value)
-                else:
-                    for part in ast.walk(node.optional_vars):
-                        if isinstance(part, ast.Name):
-                            bind(part.id, "?unresolved")
+                def context_target(target, path=()):
+                    if isinstance(target, ast.Name):
+                        self.context_assignments.append((target.id, bind(target.id, "?unresolved"),
+                                                         node.context_expr, path))
+                    elif isinstance(target, (ast.Tuple, ast.List)):
+                        for index, part in enumerate(target.elts):
+                            context_target(part, (*path, (index, len(target.elts))))
+                context_target(node.optional_vars)
             elif isinstance(node, (ast.For, ast.AsyncFor)):
                 target = node.target
                 for part in ast.walk(target) if target is not None else ():
@@ -1283,22 +1287,49 @@ class _Scope:
         # Resolve aliases using bindings, not the spelling of a callable. A
         # bounded fixed point leaves cycles and unavailable assignments unknown.
         for _ in range(MAX_CALL_DEPTH):
-            changed = False
-            for name, slot, value in assignments:
-                component_process.checkpoint()
-                resolved = self.resolve(value)
-                if slots[name][slot] != resolved:
-                    slots[name][slot], changed = resolved, True
-                    self.bindings[name] = _merge(slots[name])
-            if not changed:
+            if not self.refresh():
                 break
+
+    def refresh(self):
+        """Recompute construction-time resolutions without retaining stale unknowns."""
+        changed = False
+        assignments = list(self.assignments)
+        for name, slot, expression, path in self.context_assignments:
+            value = self.context_value(expression)
+            for index, size in path:
+                if not isinstance(value, (ast.Tuple, ast.List)) or len(value.elts) != size:
+                    value = None
+                    break
+                value = value.elts[index]
+            assignments.append((name, slot, value))
+        for name, slot, value in assignments:
+            component_process.checkpoint()
+            resolved = self.resolve(value) if value is not None else "?unresolved"
+            if self.slots[name][slot] != resolved:
+                self.slots[name][slot], changed = resolved, True
+                self.rebind(name)
         for name in self.globals | self.nonlocals:
             target = self.redirect(name)
             if target is not None and name in self.bindings:
-                value = _merge((target.bindings.get(name, self.bindings[name]), self.bindings[name]))
-                if target.bindings.get(name) != value:
-                    target.bindings[name] = value
-                    reader.revision += 1
+                target.write(name, self.bindings[name], (self, name))
+        return changed
+
+    def rebind(self, name):
+        binding = _merge((*self.slots.get(name, ()), *self.writes.get(name, {}).values()))
+        if self.bindings.get(name) != binding:
+            self.bindings[name] = binding
+            self.reader.revision += 1
+
+    def write(self, name, binding, source, value=None):
+        self.writes.setdefault(name, {})[source] = binding
+        if value is not None:
+            sources = self.write_values.setdefault(name, {})
+            if source not in sources:
+                sources[source] = value
+                # Constants share the plain-value model, but differing truth
+                # assignments must still invalidate collection decisions.
+                self.reader.revision += 1
+        self.rebind(name)
 
     def redirect(self, name):
         if not self.parent:
@@ -1322,16 +1353,24 @@ class _Scope:
                 for item, held in zip(target.elts, value.elts):
                     self.assign(item, held)
             return
+        if isinstance(target, ast.Attribute):
+            for candidate in _candidates(self.reader.follow(self.resolve(target.value))):
+                owner = None
+                if candidate == "?instance" and getattr(self, "class_receiver", False):
+                    owner = getattr(self, "method_owner", None)
+                elif candidate in self.reader.definitions:
+                    parent, node = self.reader.definitions[candidate]
+                    if isinstance(node, ast.ClassDef):
+                        owner = self.reader._function_scope(parent, node)
+                if owner is not None:
+                    owner.write(target.attr, self.resolve(value), (self, target), (self, value))
+            return
         if not isinstance(target, ast.Name):
             return
         owner = self.redirect(target.id) if self.parent and target.id in self.globals | self.nonlocals else self
         if owner is None:
             return
-        binding = self.resolve(value)
-        merged = _merge((owner.bindings.get(target.id, binding), binding))
-        if owner.bindings.get(target.id) != merged:
-            owner.bindings[target.id] = merged
-            self.reader.revision += 1
+        owner.write(target.id, self.resolve(value), (self, target), (self, value))
 
     def key(self, kind, node):
         # Nested expressions can start at the same source position. Retain
@@ -1427,6 +1466,7 @@ class CollectionEffects:
         self.literal_values, self.dirty_containers = {}, set()
         self.decorating, self.returning, self.lambdas = set(), set(), {}
         self.function_scopes, self.active, self.protocol_active = {}, set(), set()
+        self.lambda_scopes = {}
         self.module_nodes, self.mark_aliases = {}, {}
         self.installed_definitions = {}
         self.postponed_annotations = {file for file, tree in trees.items() if any(
@@ -1689,7 +1729,7 @@ class CollectionEffects:
             parent, expression = self.lambdas[name]
             if call is not None and (call.args or call.keywords):
                 return False
-            inner = _Scope(self, parent.file, [expression.body], parent)
+            inner = self._lambda_scope(parent, expression, site=(scope, call))
             return self._scan([expression.body], inner, depth + 1, strict=True)
         if _internal(name):
             if isinstance(function, ast.Attribute):
@@ -1717,6 +1757,8 @@ class CollectionEffects:
             return all(self._plain(value, scope) for value in values)
         if policy == "constant":
             return all(self._installed_argument(value, scope) for value in values)
+        if policy == "native-lookup":
+            return self._native_lookup(call, scope, depth + 1)
         if policy == "sorted":
             if len(call.args) != 1 or not self._plain(call.args[0], scope):
                 return False
@@ -1881,16 +1923,15 @@ class CollectionEffects:
             self.function_scopes[key].declaration_scope = declaration
         return self.function_scopes[key]
 
-    def _returned(self, name, values, depth):
+    def _returned(self, name, values, depth, *, site=None):
         """Follow a visible decorator call and determine its callable result."""
         if isinstance(name, frozenset):
-            return _merge(self._returned(candidate, values, depth) for candidate in name)
+            return _merge(self._returned(candidate, values, depth, site=site) for candidate in name)
         if depth > MAX_CALL_DEPTH or name in self.returning:
             return "?unresolved"
         if name in self.lambdas:
             parent, node = self.lambdas[name]
-            args = [arg.arg for arg in (*node.args.posonlyargs, *node.args.args)]
-            scope = _Scope(self, parent.file, [node.body], parent, args, values=values)
+            scope = self._lambda_scope(parent, node, values=values, site=site)
             return self._return_value(node.body, scope, depth + 1) if self._scan(
                 [node.body], scope, depth + 1, strict=True) else "?unresolved"
         if name not in self.definitions:
@@ -1913,6 +1954,16 @@ class CollectionEffects:
             return _merge(self._return_value(part.value, scope, depth + 1) for part in returns)
         finally:
             self.returning.remove(name)
+
+    def _lambda_scope(self, parent, node, *, values=(), site=None):
+        # The callee and caller AST nodes, plus their enclosing evaluations,
+        # distinguish call sites without allocating fresh identities per pass.
+        key = (parent, node, values, site)
+        if key not in self.lambda_scopes:
+            args = [arg.arg for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)]
+            args.extend(arg.arg for arg in (node.args.vararg, node.args.kwarg) if arg)
+            self.lambda_scopes[key] = _Scope(self, parent.file, [node.body], parent, args, values=values)
+        return self.lambda_scopes[key]
 
     @staticmethod
     def _always_returns(body):
@@ -1939,7 +1990,7 @@ class CollectionEffects:
             if value.keywords or any(isinstance(arg, ast.Starred) for arg in value.args):
                 return "?unresolved"
             return self._returned(self.follow(scope.resolve(value.func)),
-                                  tuple(scope.resolve(arg) for arg in value.args), depth + 1)
+                                  tuple(scope.resolve(arg) for arg in value.args), depth + 1, site=(scope, value))
         if isinstance(value, (ast.Name, ast.Attribute, ast.Subscript, ast.NamedExpr,
                               ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.IfExp)):
             binding = scope.resolve(value)
@@ -1971,10 +2022,11 @@ class CollectionEffects:
                     if decorator.keywords or any(isinstance(arg, ast.Starred) for arg in decorator.args):
                         results.append("?unresolved")
                         continue
-                    callee = self._returned(candidate, tuple(scope.resolve(arg) for arg in decorator.args), depth + 1)
+                    callee = self._returned(candidate, tuple(scope.resolve(arg) for arg in decorator.args), depth + 1,
+                                            site=(scope, decorator))
                 else:
                     callee = candidate
-                results.append(self._returned(callee, (value,), depth + 1))
+                results.append(self._returned(callee, (value,), depth + 1, site=(scope, decorator, value)))
             elif (candidate in ("dataclasses.dataclass", "pytest.fixture", "builtins.staticmethod",
                                 "builtins.classmethod", "builtins.property") or
                   isinstance(candidate, str) and candidate.startswith("pytest.mark.") or
@@ -2087,7 +2139,9 @@ class CollectionEffects:
                 if name in ("__getattribute__", "__getattr__", "__dir__", "__call__"):
                     parent, node = self.definitions[candidate]
                     held = self._function_scope(parent, node, method=method, receiver=receiver or scope, values=values or ())
-                    if not all(part.value is None or self._plain(part.value, held) for part in held.nodes
+                    if not all(part.value is None or self._plain(part.value, held) or
+                               name == "__getattribute__" and self._native_lookup(part.value, held, depth + 1)
+                               for part in held.nodes
                                if isinstance(part, ast.Return)):
                         # Lookup results may themselves carry protocols or be
                         # called by pytest. An undetermined result is not the
@@ -2095,6 +2149,51 @@ class CollectionEffects:
                         return False
             elif not self._call_binding(candidate, ast.Name(id=name), scope, depth, True):
                 return False
+        return True
+
+    def _native_lookup(self, expression, scope, depth):
+        """Exact native delegation preserves the receiver's audited member graph.
+
+        Do not classify the result as plain: it may be a bound method. The
+        collection holder's member audit still applies. Constructors, instance
+        fields, descriptors and metaclass receivers need a richer result model.
+        """
+        owner = getattr(scope, "method_owner", None)
+        if (depth > MAX_CALL_DEPTH or owner is None or not isinstance(expression, ast.Call) or
+                self.follow(scope.resolve(expression.func)) != "builtins.object.__getattribute__" or
+                len(expression.args) != 2 or expression.keywords or
+                scope.resolve(expression.args[0]) != "?instance" or
+                scope.resolve(expression.args[1]) != "?argument" or self._is_metaclass(owner) is not False):
+            return False
+        if any(isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)) and
+               "?instance" in _candidates(self.follow(scope.resolve(node.value))) for node in scope.nodes):
+            return False
+        return self._native_lookup_members(owner, depth + 1)
+
+    def _native_lookup_members(self, owner, depth, seen=()):
+        if depth > MAX_CALL_DEPTH or owner in seen:
+            return False
+        if any(name in owner.bindings for name in ("__init__", "__new__", "__slots__")):
+            return False
+        for binding in list(owner.bindings.values()):
+            if not self._descriptor(binding, depth + 1, dataclass=True):
+                return False
+            for candidate in _candidates(self.follow(binding)):
+                if candidate in self.definitions:
+                    parent, node = self.definitions[candidate]
+                    if isinstance(node, _FUNCTIONS) and any("builtins.property" in _candidates(self.follow(
+                            parent.resolve(decorator.func if isinstance(decorator, ast.Call) else decorator)))
+                            for decorator in node.decorator_list):
+                        return False
+        for base in owner.class_node.bases:
+            for candidate in _candidates(self.follow(owner.declaration_scope.resolve(base))):
+                if candidate == "builtins.object":
+                    continue
+                if candidate not in self.definitions or not isinstance(self.definitions[candidate][1], ast.ClassDef):
+                    return False
+                parent, node = self.definitions[candidate]
+                if not self._native_lookup_members(self._function_scope(parent, node), depth + 1, (*seen, owner)):
+                    return False
         return True
 
     def _callable_lookup(self, function, scope, depth):
@@ -2156,7 +2255,7 @@ class CollectionEffects:
             return False
         self.protocol_active.add(key)
         try:
-            for name, binding in scope.bindings.items():
+            for name, binding in list(scope.bindings.items()):
                 if not (name.startswith("__") and name.endswith("__")):
                     # Fixture discovery reads raw members, unwraps them, and
                     # looks them up on the class. Calls can produce descriptors
@@ -2229,16 +2328,14 @@ class CollectionEffects:
         if depth >= MAX_CALL_DEPTH:
             return False
         if isinstance(value, ast.Lambda):
-            args = [arg.arg for arg in (*value.args.posonlyargs, *value.args.args, *value.args.kwonlyargs)]
-            args.extend(arg.arg for arg in (value.args.vararg, value.args.kwarg) if arg)
             while scope.class_body:
                 scope = scope.parent
-            inner = _Scope(self, scope.file, [value.body], scope, args)
+            inner = self._lambda_scope(scope, value, site=(scope, value))
             return self._scan([value.body], inner, depth + 1, strict=True)
         return self._call(value, scope, depth, True)
 
     def _field_factories(self, scope, depth):
-        for binding in scope.bindings.values():
+        for binding in list(scope.bindings.values()):
             component_process.checkpoint()
             for candidate in _candidates(self.follow(binding)):
                 call = self.calls.get(candidate)
@@ -2528,7 +2625,7 @@ class CollectionEffects:
             return False
         if dataclass and not self._class_fields(scope, depth):
             return False
-        for binding in scope.bindings.values():
+        for binding in list(scope.bindings.values()):
             component_process.checkpoint()
             if not self._descriptor(binding, depth, dataclass=dataclass):
                 return False
@@ -2653,12 +2750,13 @@ class CollectionEffects:
         for _ in range(MAX_CALL_DEPTH):
             component_process.checkpoint()
             revision, dirty = self.revision, set(self.dirty_containers)
+            passive = True
             for file in self.trees:
                 component_process.checkpoint()
                 if not self.passive(file):
-                    return False
+                    passive = False
             if self.revision == revision and self.dirty_containers == dirty:
-                return True
+                return passive
         return False
 
     def passive(self, file):
@@ -2934,20 +3032,21 @@ class CollectionEffects:
             return None
         if name not in scope.bindings:
             return self._assigned_truth(scope.parent, name, depth + 1, seen) if scope.parent else None
-        values = []
+        values, assignments = [], list(scope.write_values.get(name, {}).values())
         for part in scope.nodes:
             component_process.checkpoint()
             if not isinstance(part, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
                 continue
             targets = part.targets if isinstance(part, ast.Assign) else [part.target]
             if any(isinstance(target, ast.Name) and target.id == name for target in targets):
-                value = part.value
-                if isinstance(value, ast.Constant):
-                    values.append(bool(value.value))
-                elif isinstance(value, ast.Name):
-                    values.append(self._assigned_truth(scope, value.id, depth + 1, (*seen, key)))
-                else:
-                    return None
+                assignments.append((scope, part.value))
+        for owner, value in assignments:
+            if isinstance(value, ast.Constant):
+                values.append(bool(value.value))
+            elif isinstance(value, ast.Name):
+                values.append(self._assigned_truth(owner, value.id, depth + 1, (*seen, key)))
+            else:
+                return None
         return any(values) if values and None not in values else None
 
     def _test_class(self, scope, depth, seen=(), *, binding_name=None):
@@ -2981,6 +3080,7 @@ class CollectionEffects:
     def _scan(self, body, scope, depth, *, strict):
         if depth > MAX_CALL_DEPTH:
             return False
+        scope.refresh()
         revision = self.revision
         dirty = set(self.dirty_containers)
         pending = list(reversed(body))
