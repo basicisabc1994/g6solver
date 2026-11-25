@@ -131,12 +131,13 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
                 if scenario.sha256 != held_scenario:
                     raise ValueError(executable_scenario.UNAVAILABLE + ': the scenario differs from the answered form')
                 check, placed, _ = verification_templates.compiled_check(root, one.instance,
-                    {"scenario": scenario.record.decode("ascii"), "option": one.option}, [])
+                    {"scenario": scenario.record.decode("ascii"), "option": one.option}, [],
+                    tree=getattr(prepared, 'tree', None))
                 prepared.placed[ident] = placed
                 result["scenario_sha256"] = scenario.sha256
             except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
                 raise
-            except (OSError, ValueError) as exc:
+            except (OSError, ValueError, verification_templates.Inapplicable) as exc:
                 record_error(result, "scenario", exc, [])
                 result["result"], result["detail"] = NOT_RUN, str(exc)
                 continue
@@ -181,6 +182,11 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
                 at_base = read(at_base=True)
                 result["runs"]["base"] = at_base
                 step = "control_reading"
+                if on_patch.get('import_evidence') or at_base.get('import_evidence'):
+                    on_patch, at_base = vs._import_pair(on_patch, at_base)
+                    on_the_patch[0] = on_patch
+                    result['runs'].update(patch=on_patch, base=at_base)
+                    result['result'], result['detail'] = _result(on_patch)
                 # the one rule for the control: the check ran to a failure at the base commit (a collection that
                 # failed outside the repository's own code is no failure of it); the issuer's adapter reads this
                 killed = result["killed"] = vs._to_a_result(at_base) and at_base["result"] == "failed"
@@ -188,6 +194,8 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
                 if result["result"] == PASSED and killed and deadline - vs._clock() >= vs.MIN_RUN_S:
                     step = "again"
                     again = read(at_base=False)
+                    if again.get('import_evidence') or at_base.get('import_evidence'):
+                        again, _ = vs._import_pair(again, at_base)
                     on_the_patch.append(again)
                     result["runs"]["again"] = again
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, repo_tests.RepoRefused):
@@ -195,6 +203,12 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
         except Exception as exc:
             record_error(result, step, exc, on_the_patch)
         result["result"], result["detail"] = patch_result(on_the_patch)
+        fallbacks = [one['fallback_observation'] for one in on_the_patch if one.get('fallback_observation')]
+        if fallbacks:
+            result['fallback_observation'] = {
+                'missing_imports': sorted({name for one in fallbacks for name in one['missing_imports']}),
+                'satisfied_import_path': 'not observed'}
+            result['detail'] += '; the fallback was taken; the path with the missing imports satisfied was not observed'
         failing = next((found for found in on_the_patch if _failed(found)), None)
         if failing is not None:
             result["reproduction"] = {"check": ident, "file": placed, "text": check.source,

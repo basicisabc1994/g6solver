@@ -7,6 +7,8 @@ The observation.v2 frame carries canonical value digests and byte sizes with bou
 observation.v1 frames keep their comparison semantics; neither format authenticates its producer inside the child.
 A tree folder sharing an installed package's name may load as an empty namespace package. If no import fails,
 the isolated runner has no missing-import evidence to distinguish its later attribute failure from the code's.
+An availability flag from find_spec returning None is not a failed import. Imports made by exec text without a
+tree filename may also leave no usable provenance; those fallback paths remain a limit of this observation.
 """
 from __future__ import annotations
 from g6.core.guidance_builders import confine_refusal, confine_refused
@@ -485,26 +487,35 @@ def track_imports():
     """Install before repository loading; retain failed external imports even if a guard catches them."""
     import importlib._bootstrap
 
-    global _missing_preparation_imports, _missing_imports
-    _missing_preparation_imports, _missing_imports = set(), []
+    global _missing_preparation_imports, _missing_imports, _missing_import_requests
+    _missing_preparation_imports, _missing_imports, _missing_import_requests = set(), [], set()
     load = importlib._bootstrap._find_and_load
 
     def tracked(name, import_):
         frame = sys._getframe(1)
-        while frame is not None and (frame.f_code.co_filename.startswith('<frozen importlib.')
-                                     or frame.f_globals.get('__name__') == 'importlib'):
-            frame = frame.f_back
-        filename = frame.f_code.co_filename if frame is not None else ''
-        file = os.path.normcase(os.path.realpath(filename)) if os.path.isabs(filename) else ''
         tree = os.path.normcase(os.path.realpath(globals().get('root', os.getcwd())))
-        requested_here = bool(file and os.path.splitdrive(file)[0] == os.path.splitdrive(tree)[0]
-                              and os.path.commonpath((tree, file)) == tree)
+        requested_here = False
+        # Attribute library helpers to their nearest repository caller. An import made while a library module
+        # itself is loading is that module's request, not an optional dependency requested by the repository.
+        while frame is not None:
+            filename = frame.f_code.co_filename
+            file = os.path.normcase(os.path.realpath(filename)) if os.path.isabs(filename) else ''
+            if (file and os.path.splitdrive(file)[0] == os.path.splitdrive(tree)[0]
+                    and os.path.commonpath((tree, file)) == tree):
+                requested_here = True
+                break
+            if frame.f_code.co_name == '<module>' and not filename.startswith('<frozen importlib.'):
+                break
+            frame = frame.f_back
         del frame
         try:
             return load(name, import_)
         except ModuleNotFoundError as exc:
-            if requested_here and ImportError.__dict__['name'].__get__(exc) == name and not own_import_absent(exc, ()):
+            missing = ImportError.__dict__['name'].__get__(exc)
+            if (requested_here and type(missing) is str and (missing == name or name.startswith(missing + '.'))
+                    and not own_import_absent(exc, ())):
                 _missing_imports.append(exc)
+                _missing_import_requests.add(name)
                 if globals().get('_preparation_depth', 0):
                     _missing_preparation_imports.add(ImportError.__dict__['name'].__get__(exc))
             raise
@@ -649,27 +660,22 @@ _SETUP_CONTROLS = ()
 _IMPORT_OPS = (dis.opmap['IMPORT_NAME'], dis.opmap['IMPORT_FROM'])
 
 def unavailable_import(exc):
-    pending, seen = [exc], set()
-    while pending:
-        one = pending.pop()
-        if id(one) in seen:
-            continue
-        seen.add(id(one))
-        for field in ('__cause__', '__context__'):
-            linked = BaseException.__dict__[field].__get__(one)
-            if linked is not None:
-                pending.append(linked)
-        if not exception_matches(one, ImportError) or own_import_absent(one, ()):
-            continue
-        if any(one is missing for missing in _missing_imports):
+    # A fallback's exception is an outcome even inside its handler. Its caught import remains a comparison mark.
+    if not exception_matches(exc, ImportError) or own_import_absent(exc, ()):
+        return False
+    if any(exc is missing for missing in _missing_imports):
+        return True
+    # IMPORT_FROM can fail after loading a module. Metadata on an explicit raise is not import evidence.
+    trace = BaseException.__dict__['__traceback__'].__get__(exc)
+    while trace is not None:
+        if trace.tb_frame.f_code.co_code[trace.tb_lasti] in _IMPORT_OPS:
             return True
-        # IMPORT_FROM can fail after loading a module. Metadata on an explicit raise is not import evidence.
-        trace = BaseException.__dict__['__traceback__'].__get__(one)
-        while trace is not None:
-            if trace.tb_frame.f_code.co_code[trace.tb_lasti] in _IMPORT_OPS:
-                return True
-            trace = trace.tb_next
+        trace = trace.tb_next
     return False
+
+def import_mark():
+    names = sorted(_missing_import_requests)
+    return {'missing_import': ObservationUnavailable.DETAIL, 'missing_imports': names} if names else {}
 def _name(kind):
     return setup_call("exception_description", exception_name, kind)
 
@@ -682,7 +688,8 @@ def _shown(value, limit=200):
         if execution_control(exc):
             raise
         text = "<a value whose repr raised " + _name(type(exc)) + ">"
-    text = re.sub(r" at 0x[0-9A-Fa-f]+", "", text)
+    if not isinstance(value, (str, bytes, bytearray)):
+        text = re.sub(r" at 0x[0-9A-Fa-f]+", "", text)
     text = ''.join(ch if ch.isprintable() else json.dumps(ch, ensure_ascii=True)[1:-1] for ch in text)
     text = text.replace(';', r'\u003b').replace('G6_E_', r'\u00476_E_')
     return text if len(text) <= limit else text[:limit - 3] + "..."
@@ -712,6 +719,8 @@ def _plain(value, depth=0):
         return {"deeper": _name(type(value))}
     if value is None or type(value) in (bool, int, str):
         return value
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return {"type": _name(type(value)), "bytes": bytes(value).hex()}
     if type(value) is float:
         return value if value == value and abs(value) != float("inf") else {"float": repr(value)}
     if isinstance(value, type):
@@ -726,7 +735,7 @@ def _plain(value, depth=0):
         return _sorted([_plain(key, depth + 1), _plain(item, depth + 1)] for key, item in value.items())
     found = _attributes(value)
     if found is None:
-        return {"type": _name(type(value)), "repr": _shown(value)}
+        return {"type": _name(type(value)), "repr": _shown(value, sys.maxsize)}
     return {"type": _name(type(value)), "attributes": {key: _plain(item, depth + 1) for key, item in found.items()}}
 
 def _bounded(value):
@@ -735,6 +744,13 @@ def _bounded(value):
         return value
     return {"sha256": hashlib.sha256(bytes(text, "utf-8")).hexdigest(), "start": text[:200]}
 root, channel, raw = sys.argv[1:]
+if raw == '@channel':
+    with open(channel, 'rb') as request_channel:
+        raw = request_channel.read(1048577).decode('utf-8')
+    if len(raw.encode('utf-8')) > 1048576:
+        raise ValueError('request too large')
+    with open(channel, 'wb'):
+        pass
 data = json.loads(raw)
 sink = open(channel, "ab", buffering=0)
 write, dumps, pack = sink.write, json.dumps, struct.pack
@@ -843,7 +859,10 @@ def call_failed(exc):
         detail = exception_detail(exc, 'call failed')
     except CheckSetupError as unavailable:
         setup_failed(unavailable)
-    payload = dumps({'version': 'call_failure.v1', 'detail': detail},
+    # Import absence already passed own_import_absent: a genuinely absent held export stays the code's failure.
+    # A missing callable can instead be a definition guarded by the recorded optional import.
+    payload = dumps({'version': 'call_failure.v1', 'detail': detail,
+                     **(import_mark() if exception_matches(exc, AttributeError) else {})},
                     sort_keys=True, allow_nan=False).encode('utf-8')
     write(b'G6R1\n' + pack('>I', len(payload)) + payload)
     sink.close()
@@ -896,9 +915,8 @@ for call in data["calls"]:
             one["probe"] = ({"raised": None} if data["mode"] == "exceptions" else
                             {"returned": _bounded(_plain(result))})
         outcomes.append(one)
-    if _missing_imports:
-        # The host alone knows whether a fallback matched. Keep provenance even when no exception escaped.
-        outcomes[-1]['missing_import'] = ObservationUnavailable.DETAIL
+    # Only this and later outcomes can have been affected. Never add a later mark to an earlier outcome.
+    outcomes[-1].update(import_mark())
 payload = dumps({"version": "observation.v2", "outcomes": outcomes, "errors": errors},
                 sort_keys=True, allow_nan=False).encode("utf-8")
 if len(payload) > 1048576:
@@ -924,6 +942,13 @@ def _unique(pairs):
 
 def read_frame(raw: bytes) -> dict | None:
     """Total reader: exactly one bounded, recognised frame, with no prefix or trailing bytes."""
+    def valid_marks(one):
+        names = one.get('missing_imports')
+        return (type(names) is list and bool(names) and len(names) <= 1024
+                and all(type(name) is str and len(name) <= 200 and 'G6_E_' not in name
+                        and all(part.isidentifier() for part in name.split('.')) for name in names)
+                and names == sorted(set(names)) and one.get('missing_import') == ObservationUnavailable.DETAIL)
+
     try:
         if not isinstance(raw, bytes) or not raw.startswith(MAGIC) or len(raw) < len(MAGIC) + 4:
             return None
@@ -940,7 +965,10 @@ def read_frame(raw: bytes) -> dict | None:
             return value if (set(value) == {'version', 'detail'}
                              and ObservationUnavailable.valid_detail(value['detail'])) else None
         if isinstance(value, dict) and value.get('version') == 'call_failure.v1':
-            return value if (set(value) == {'version', 'detail'} and type(value['detail']) is str
+            marked = {'missing_import', 'missing_imports'}
+            return value if (set(value) in ({'version', 'detail'}, {'version', 'detail', *marked})
+                             and (not marked.intersection(value) or valid_marks(value))
+                             and type(value['detail']) is str
                              and value['detail'] in CheckSetupError.CALL_FAILURES) else None
         if (not isinstance(value, dict) or set(value) != {"version", "outcomes", "errors"}
                 or value["version"] not in {"observation.v1", "observation.v2"}
@@ -958,6 +986,10 @@ def read_frame(raw: bytes) -> dict | None:
                 if value['version'] != 'observation.v2' or one['missing_import'] != ObservationUnavailable.DETAIL:
                     return None
                 fields.remove('missing_import')
+            if 'missing_imports' in fields:
+                if not valid_marks(one):
+                    return None
+                fields.remove('missing_imports')
             if 'unavailable_import' in fields:
                 if (value['version'] != 'observation.v2' or 'raised' not in fields
                         or not ObservationUnavailable.valid_detail(one['unavailable_import'])
@@ -1021,12 +1053,33 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
     """G6 compares the observation here, in its own process; child exit status supplies no support or failure."""
     observed = read_frame(raw) if code == 0 else None
     calls = data.get("cases", data.get("calls", []))
+
+    def marked(found, outcomes, failures):
+        marks = [one.get('missing_imports', []) for one in outcomes]
+        affected = any('missing_import' in outcomes[index] for index in failures)
+        if not any('missing_import' in one for one in outcomes):
+            return found
+        # Retain the provisional comparison without granting it authority in a single run. The host can use it
+        # only with matching per-outcome evidence from the other tree. Legacy marks have no comparable names.
+        evidence = {'outcomes': marks, 'failures': failures,
+                    'reading': {key: value for key, value in found.items() if key != 'observed'}}
+        if affected:
+            return {'result': 'error', 'detail': ObservationUnavailable.DETAIL,
+                    'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE',
+                    **({'owned_probe': True} if found.get('owned_probe') else {}),
+                    **({'import_evidence': evidence} if any(marks) else {})}
+        names = sorted({name for group in marks for name in group})
+        return {**found, 'import_evidence': evidence,
+                **({'fallback_observation': {'missing_imports': names, 'satisfied_import_path': 'not observed'}}
+                   if found['result'] == 'passed' and names else {})}
+
     if observed is not None and observed["version"] == "check_setup.v1":
         return {"result": "error", "detail": observed["detail"], 'reason_code': 'G6_E_CHECK_SETUP'}
     if observed is not None and observed['version'] == 'observation_unavailable.v1':
         return {'result': 'error', 'detail': observed['detail'], 'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE'}
     if observed is not None and observed['version'] == 'call_failure.v1':
-        return {'result': 'failed', 'detail': observed['detail']}
+        return marked({'result': 'failed', 'detail': observed['detail']}, [observed] * max(1, len(calls)),
+                      list(range(max(1, len(calls)))))
     if observed is None or len(observed["outcomes"]) != len(calls) or not calls:
         return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: no single completed observation"}
     expected_errors = {_encoded(spec) for spec in data.get("errors", [
@@ -1036,14 +1089,15 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
             for call, one in zip(calls, observed["outcomes"], strict=True)):
         return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: observation does not match the scenario"}
     if "cases" not in data:
-        if any('unavailable_import' in one or 'missing_import' in one for one in observed['outcomes']):
+        if any('unavailable_import' in one for one in observed['outcomes']):
             return {'result': 'error', 'detail': ObservationUnavailable.DETAIL,
                     'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE'}
         if any("probe" not in one for one in observed["outcomes"]):
             return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: missing probe observation"}
-        return {"result": "passed", "detail": "G6 observed the calls in its isolated runner", "observed": observed,
+        return marked({"result": "passed", "detail": "G6 observed the calls in its isolated runner", "observed": observed,
                 "owned_probe": True, "observations": [{"input": call, "output": one["probe"]}
-                    for call, one in zip(calls, observed["outcomes"], strict=True)]}
+                    for call, one in zip(calls, observed["outcomes"], strict=True)]},
+                      observed['outcomes'], list(range(len(calls))))
     failures = []
     for index, (case, outcome) in enumerate(zip(calls, observed["outcomes"], strict=True)):
         expected = case["expect"]
@@ -1070,12 +1124,10 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
             return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: unknown comparison"}
         if not matches:
             failures.append(index)
-    if failures and any('missing_import' in one for one in observed['outcomes']):
-        return {'result': 'error', 'detail': ObservationUnavailable.DETAIL,
-                'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE'}
-    return {"result": "failed" if failures else "passed", "observed": observed,
+    return marked({"result": "failed" if failures else "passed", "observed": observed,
             "detail": ("the confirmed outcome did not match the observed call(s): " + str(failures)) if failures
-                      else "the confirmed outcome matched what the entry point returned or raised in G6's runner"}
+                      else "the confirmed outcome matched what the entry point returned or raised in G6's runner"},
+                  observed['outcomes'], failures)
 
 
 def bindings(source: str) -> tuple[str, dict] | None:
@@ -1156,22 +1208,20 @@ def example_text(slot: str) -> str:
     Pytest is only a convenience for displaying a reproduction. Product evidence comes from ``run`` and its
     host-owned result channel, never from collection, plugins or the wrapper's pytest status.
     """
-    helpers = "\n\n".join(_portable_source(one) for one in (
-        CheckSetupError, ObservationUnavailable, raised_during_setup, execution_control,
-        exception_name, exception_matches,
-        exception_detail, exception_message,
-        setup_call, call_absent, register_setup_error,
-        _unique, _encoded, _fingerprint, _valid_encoding, _matches_encoding,
-        _import_roots, located, request))
     bootstrap = base64.b85encode(zlib.compress((confine.CHILD_PRELUDE + BOOTSTRAP).encode('utf-8'), 9)).decode('ascii')
     carriers = base64.b85encode(zlib.compress(CODE_CARRIER_HELPERS.encode('utf-8'), 9)).decode('ascii')
-    preparation = '\n\n'.join(_portable_source(one) for one in (own_import_absent, setup_outcome, read_frame, finish))
+    preparation = '\n\n'.join(_portable_source(one) for one in (
+        CheckSetupError, ObservationUnavailable, raised_during_setup, execution_control,
+        exception_name, exception_matches, exception_detail, exception_message,
+        setup_call, call_absent, register_setup_error,
+        _unique, _encoded, _fingerprint, _valid_encoding, _matches_encoding,
+        _import_roots, located, request, own_import_absent, setup_outcome, read_frame, finish))
     packed = base64.b85encode(zlib.compress(preparation.encode('utf-8'), 9)).decode('ascii')
     return ("import base64, zlib, concurrent.futures, hashlib, json, struct, subprocess, tempfile, sys, os\nfrom pathlib import Path\n"
             "TEMPLATE = 'example.v1'\nBINDINGS = " + slot
             + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = "
             + 'str(zlib.decompress(base64.b85decode(' + ascii(bootstrap) + ")), 'utf-8')\n"
-            + 'exec(zlib.decompress(base64.b85decode(' + ascii(carriers) + ')))\n' + helpers
+            + 'exec(zlib.decompress(base64.b85decode(' + ascii(carriers) + ')))\n'
             + '\nexec(zlib.decompress(base64.b85decode(' + ascii(packed) + ')))\n' + '''
 register_setup_error(TEMPLATE)
 def _check_example():
@@ -1181,10 +1231,10 @@ def _check_example():
         boot = os.path.join(own, 'bootstrap.py')
         with open(boot, 'w', encoding='utf-8', newline='\\n') as handle:
             handle.write(BOOTSTRAP)
-        with open(channel, 'xb'):
-            pass
+        with open(channel, 'xb') as handle:
+            handle.write(bytes(_encoded(request(data)), 'utf-8'))
         ran = subprocess.run([sys.executable, '-I', '-S', '-B', '-X', 'utf8', boot,
-                              os.getcwd(), channel, _encoded(request(data))], capture_output=True, timeout=10)
+                              os.getcwd(), channel, '@channel'], capture_output=True, timeout=10)
         with open(channel, 'rb') as handle:
             raw = handle.read(MAX_FRAME + len(MAGIC) + 5)
     reading = finish(ran.returncode, raw, data)
@@ -1326,8 +1376,8 @@ def run(copy: Path, data: dict, node: str, *, timeout_s: int, deadline: float) -
             return {"verdict": "not_run", "said": "G6_E_OBSERVATION_UNAVAILABLE: timeout before startup"}
         program = data.get("_program", confine.CHILD_PRELUDE + BOOTSTRAP)
         boot.write_text(program, encoding="utf-8", newline="\n")
-        with channel.open("xb"):
-            pass
+        with channel.open("xb") as handle:
+            handle.write(_encoded(request(data)).encode('utf-8'))
         plan = confine.plan(confine.Confinement(read_write=(str(own),),
                             read_only=confine.interpreter_paths(python), network=False), python)
         # the observation record is G6's data, read back by its exact-type schema (repo_tests.read_observation): a
@@ -1337,8 +1387,8 @@ def run(copy: Path, data: dict, node: str, *, timeout_s: int, deadline: float) -
             plan.release()
             raise rt.RepoRefused(ISOLATION_UNAVAILABLE, confine_refusal(plan))
         try:
-            # A canonical program already holds its input. Repeating it on argv also hits Windows' command limit.
-            payload = '{}' if '_program' in data else _encoded(request(data))
+            # Both program forms read transient host ownership from the same request channel.
+            payload = '@channel'
             command = [python, "-I", "-S", "-B", "-X", "utf8", str(boot), str(tree), str(channel), payload]
             code = rt._bounded(command, cwd=tree, env=rt.child_env(own, network=False),
                                timeout_s=remaining, log=log, confined=plan)

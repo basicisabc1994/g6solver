@@ -66,6 +66,10 @@ version and the digest of its fixed text enter every digest that cites an instan
 compiled text names its template. A compiled check's provenance is ``proposed``: G6 generated it from the caller's
 bindings, so it never passes a requirement, and a failure gives at most insufficient evidence. It runs through
 verification search's executor exactly as a proposed check does.
+
+The isolated runner cannot distinguish an empty tree namespace folder from an installed package it shadows when
+no import fails. A find_spec call returning None is not a failed import either. Imports in exec text without a
+tree filename may leave no usable import record; fallback behaviour from these shapes remains a stated limit.
 """
 from __future__ import annotations
 
@@ -832,11 +836,16 @@ def _located(target: Target) -> list[str]:
     return [*target.spec(), target.file] if target.kind == "module" else target.spec()
 
 
-def _own_modules(tree: Tree) -> dict:
-    """Top-level import owners from the host's file lists, including files deleted by this change."""
+def _own_modules(tree: Tree, target: Target, side: str) -> dict:
+    """Host owners, including deletions; large inventories retain only reachable import names.
+
+    A computed import name in a large tree refuses admission rather than dropping its ownership evidence.
+    The same compiled-source ceiling is used for an inventory that cannot be made small enough.
+    """
     paths = (set(getattr(tree, 'known', ())) | set(getattr(tree, 'at_base', ()))
              | set(getattr(getattr(tree, 'change', None), 'files', ())))
     modules = set()
+    files = {}
     for prefix in tree.folders():
         for path in paths:
             if not path.startswith(prefix):
@@ -845,6 +854,55 @@ def _own_modules(tree: Tree) -> dict:
             name = rel[:-12] if rel.endswith('/__init__.py') else rel[:-3] if rel.endswith('.py') else ''
             if name.isidentifier():
                 modules.add(name)
+            if rel.endswith('.py'):
+                module = rel[:-12] if rel.endswith('/__init__.py') else rel[:-3]
+                files.setdefault(module.replace('/', '.'), []).append(path)
+    if len(json.dumps(sorted(modules))) > 8192:
+        wanted, visited, pending = set(), set(), [target.module]
+        while pending:
+            module = pending.pop()
+            if module in visited:
+                continue
+            visited.add(module)
+            tree.in_time()
+            if len(visited) > 1024:
+                raise Inapplicable('its compiled check would hold more than 64 kilobytes')
+            wanted.add(module.split('.')[0])
+            for rel in files.get(module, ()):
+                for on in dict.fromkeys((side, PATCH, BASE)):
+                    if not tree.has(rel, on):
+                        continue
+                    try:
+                        nodes = ast.walk(ast.parse(tree.text(rel, on)))
+                        for node in nodes:
+                            names = []
+                            if isinstance(node, ast.Import):
+                                names = [one.name for one in node.names]
+                            elif isinstance(node, ast.ImportFrom):
+                                package = module.split('.') if rel.endswith('/__init__.py') else module.split('.')[:-1]
+                                head = '.'.join(package[:len(package) - node.level + 1]) if node.level else ''
+                                parent = '.'.join(part for part in (head, node.module) if part)
+                                names = [parent, *(parent + '.' + one.name for one in node.names)]
+                            elif isinstance(node, ast.Constant) and type(node.value) is str:
+                                # Literal library-helper imports and plugin names, without guessing computed names.
+                                names = [node.value.split(':')[0]]
+                            elif isinstance(node, ast.Call):
+                                called = node.func.id if isinstance(node.func, ast.Name) else (
+                                    node.func.attr if isinstance(node.func, ast.Attribute) else '')
+                                if called in ('__import__', 'import_module', 'resolve_name') and (
+                                        not node.args or not isinstance(node.args[0], ast.Constant)
+                                        or type(node.args[0].value) is not str):
+                                    raise Inapplicable('its compiled check would hold more than 64 kilobytes')
+                            for name in names:
+                                wanted.add(name.split('.')[0])
+                                pending.extend('.'.join(name.split('.')[:end])
+                                               for end in range(1, len(name.split('.')) + 1)
+                                               if '.'.join(name.split('.')[:end]) in files)
+                    except (ValueError, SyntaxError):
+                        raise Inapplicable('its compiled check would hold more than 64 kilobytes') from None
+        modules.intersection_update(wanted)
+        if len(json.dumps(sorted(modules))) > 8192:
+            raise Inapplicable('its compiled check would hold more than 64 kilobytes')
     return {'own_modules': sorted(modules)} if modules else {}
 
 
@@ -901,7 +959,7 @@ def _example(tree: Tree, b: ExampleBindings, side: str) -> Applied:
             entry.update(expect="returns", value=case.returns)
         cases.append(entry)
     roots = {'import_roots': [*(root.rstrip('/') or '.' for root in tree.roots), '.', 'src']} if tree.roots else {}
-    return Applied({"function": _located(target), "cases": cases, **roots, **_own_modules(tree)}, notes)
+    return Applied({"function": _located(target), "cases": cases, **roots, **_own_modules(tree, target, side)}, notes)
 
 
 def _relation(tree: Tree, b: RelationBindings, side: str) -> Applied:
@@ -932,7 +990,7 @@ def _differential(tree: Tree, b: DifferentialBindings, side: str) -> Applied:
     notes = _checked(b.function, target, [(call.args, call.kwargs, f"call {index}")
                                           for index, call in enumerate(b.calls)])
     roots = {"import_roots": [*tree.roots, ".", "src"]} if target.kind == "method" and tree.roots else {}
-    return Applied({"function": target.spec(), "mode": b.mode, **roots, **_own_modules(tree),
+    return Applied({"function": target.spec(), "mode": b.mode, **roots, **_own_modules(tree, target, side),
                     "calls": [{"args": call.args, "kwargs": call.kwargs} for call in b.calls]}, notes)
 
 
@@ -1153,6 +1211,8 @@ def _plain(value, depth=0):
         return {"deeper": _name(type(value))}
     if value is None or type(value) in (bool, int, str):
         return value
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return {"type": _name(type(value)), "bytes": bytes(value).hex()}
     if type(value) is float:
         return value if value == value and abs(value) != float("inf") else {"float": repr(value)}
     if isinstance(value, type):
@@ -1167,7 +1227,7 @@ def _plain(value, depth=0):
         return _sorted([_plain(key, depth + 1), _plain(item, depth + 1)] for key, item in value.items())
     found = _attributes(value)
     if found is None:
-        return {"type": _name(type(value)), "repr": _shown(value)}
+        return {"type": _name(type(value)), "repr": _shown(value, sys.maxsize)}
     return {"type": _name(type(value)), "attributes": {key: _plain(item, depth + 1) for key, item in found.items()}}
 
 
@@ -1475,7 +1535,8 @@ def _shown(value, limit=200):
         if execution_control(exc):
             raise
         text = "<a value whose repr raised " + _name(type(exc)) + ">"
-    text = re.sub(r" at 0x[0-9A-Fa-f]+", "", text)
+    if not isinstance(value, (str, bytes, bytearray)):
+        text = re.sub(r" at 0x[0-9A-Fa-f]+", "", text)
     text = ''.join(ch if ch.isprintable() else json.dumps(ch, ensure_ascii=True)[1:-1] for ch in text)
     text = text.replace(';', r'\\u003b').replace('G6_E_', r'\\u00476_E_')
     return text if len(text) <= limit else text[:limit - 3] + "..."
@@ -1526,14 +1587,14 @@ def _text(ident: str, body: str) -> str:
     return text
 
 
-def compile_text(definition: TemplateDefinition, data: dict) -> str:
+def compile_text(definition: TemplateDefinition, data: dict, *, tree: Tree | None = None, side: str = PATCH) -> str:
     """The check ``definition``'s fixed text gives for ``data``: the text with the bindings written, once, as one
     literal (``ascii``). A literal that does not read back as ``data`` is refused (``ValueError``)."""
     if "scenario" in data:
         from g6.harness.executable_scenario import Scenario
 
         scenario = Scenario(data["scenario"].encode("ascii"))
-        return scenario.source(data["option"]) if "option" in data else scenario.program
+        return scenario.source(data["option"], tree=tree, side=side) if "option" in data else scenario.program
     literal = ascii(data)
     if ast.literal_eval(literal) != data:
         raise ValueError("the bindings do not read back as the same literal")
@@ -1612,8 +1673,12 @@ def failure_inventory(ident: str) -> tuple[tuple, tuple]:
                 # Dynamic summaries and forwarded exception text are accounted for by their actual producers.
                 if isinstance(node.args[0], ast.BinOp):
                     direct.extend(join(literal('Failed: '), pattern(node.args[0])))
-        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
-            values = {key.value: value for key, value in zip(node.value.keys, node.value.values, strict=True)
+        returned = node.value if isinstance(node, ast.Return) else None
+        if (isinstance(returned, ast.Call) and isinstance(returned.func, ast.Name)
+                and returned.func.id == 'marked' and returned.args):
+            returned = returned.args[0]
+        if isinstance(returned, ast.Dict):
+            values = {key.value: value for key, value in zip(returned.keys, returned.values, strict=True)
                       if isinstance(key, ast.Constant)}
             result = values.get('result')
             if (isinstance(result, ast.IfExp) and isinstance(result.body, ast.Constant)
@@ -2004,13 +2069,14 @@ def _listing(one: TemplateInstance) -> dict:
 
 def compiled_check(root: Path, one: TemplateInstance, data: dict, notes: list[str], *, ident: str = "",
                    definition: TemplateDefinition | None = None,
+                   tree: Tree | None = None,
                    **origin: Any) -> tuple[vs.ProposedCheck, str, vs.Origin]:
     """``one``'s template's fixed text (or ``definition``'s, the template it goes through) compiled for ``data``
     (``compile_text``), as a check placed in the copies, and the origin its activity, reasons and reproduction name.
     ``ident``: the check's id when it is not the instance's (a further check of one instance); ``origin``: further
     fields of its ``Origin``."""
     definition = definition or instance_definition(one)
-    source = compile_text(definition, data)
+    source = compile_text(definition, data, tree=tree, side=_side(one))
     if len(source.encode("utf-8")) > vs.MAX_SOURCE_BYTES:
         raise Inapplicable("its compiled check would hold more than 64 kilobytes")
     check = vs.ProposedCheck(id=ident or one.id, requirement_id=one.requirement_id, intent=one.intent,

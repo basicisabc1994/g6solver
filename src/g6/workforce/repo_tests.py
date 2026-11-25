@@ -414,7 +414,8 @@ REPORT_FIELDS['check_errors'] = ReportField({str: str}, {}, 'G6 preparation reas
 #: An observation's result, and the verdict its record gives it (``behaviour_runner.run``).
 OBSERVED_VERDICTS = {"passed": "passed", "failed": "failed", "error": "not_run"}
 REPORT_FIELDS["g6_observation"] = ReportField(
-    {"result": str, "detail": str, "observed": dict, "owned_probe": bool, "observations": list, 'reason_code': str},
+    {"result": str, "detail": str, "observed": dict, "owned_probe": bool, "observations": list, 'reason_code': str,
+     'import_evidence': dict, 'fallback_observation': dict},
     {"result": "passed", "detail": "G6 observed the calls in its isolated runner"},
     "G6's own observation of a confirmed check or probe", "a known result and its detail; observations are "
     "input/output pairs", required_members=("result", "detail"),

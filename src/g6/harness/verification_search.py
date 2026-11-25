@@ -518,6 +518,17 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
     deadline = time.monotonic() + timeout_s
     refused = {"verdict": "not_run", "said": NOT_THE_ARTEFACT, NOT_THE_ARTEFACT_KEY: True}
     try:
+        if owned and '_program' in generated and 'own_modules' not in generated:
+            from g6.harness import verification_templates as vt
+
+            tree = vt.Tree.read(change.repo, change, deadline, roots)
+            entry = generated['function']
+            try:
+                owners = vt._own_modules(tree, vt.Target(entry[1], entry[2], entry[3]),
+                                         vt.BASE if at_base else vt.PATCH)
+            except vt.Inapplicable as exc:
+                return {'verdict': 'not_run', 'said': str(exc)}
+            generated = {**generated, **owners}
         report: dict = {}
         expected = (_copy_manifest(change, deadline=deadline, artefact=artefact)
                     if artefact is not None and (owned or isinstance(artefact, ExecutionSnapshot)) else None)
@@ -638,6 +649,8 @@ def reading(ran: dict, node: str, *, template: str | None = None) -> dict:
                 **{key: ran[key] for key in RAN_WITH if key in ran},
                 'execution_artifact': ran.get('execution_artifact'),
                 'bootstrap_sha256': ran.get('bootstrap_sha256', ''),
+                **{key: reading[key] for key in ('import_evidence', 'fallback_observation', 'reason_code')
+                   if key in reading},
                 "observations": reading.get("observations"), "owned_probe": reading.get("owned_probe", False)}
     structured_setup = 'check_errors' in ran
     report = repo_tests.read_report(ran)
@@ -756,6 +769,8 @@ def _stable(verdict: dict, first: dict, again: dict | None) -> dict:
     """``verdict``'s differences, less each input the base commit observed differently on its second run (review I6):
     such an observation is unstable, listed as such and never a difference, so never a counterexample. With none left,
     ``not_refuted``; when the second run could not be made to a pass, a check error."""
+    if again is not None:
+        first, again = _import_pair(first, again)
     if again is None or again["result"] != "passed":
         why = OUT_OF_TIME if again is None else f"it gave {again['result']}: {again['detail']}"
         return {"result": CHECK_ERROR, "detail": NOT_REPEATED.format(why=why)}
@@ -763,6 +778,10 @@ def _stable(verdict: dict, first: dict, again: dict | None) -> dict:
     unstable = [{"input": key, "base": item["base"], "base_again": item["patch"]} for key, item in shaky.items()]
     kept = [item for item in verdict["differences"] if item["input"] not in shaky]
     if not kept:
+        if verdict.get('unavailable_probe_inputs'):
+            return {'result': CHECK_ERROR, 'detail': 'the comparable differences were unstable; other inputs '
+                    'remain unavailable because their missing imports differ',
+                    'unavailable_probe_inputs': verdict['unavailable_probe_inputs']}
         return {"result": NOT_REFUTED, "detail": UNSTABLE, "unstable": unstable}
     found = {**verdict, "differences": kept, **({"unstable": unstable} if unstable else {})}
     if found["result"] == BEHAVIOUR_CHANGED:
@@ -771,7 +790,63 @@ def _stable(verdict: dict, first: dict, again: dict | None) -> dict:
     return found
 
 
+def _import_pair(left: dict, right: dict | None) -> tuple[dict, dict | None]:
+    """Compare missing imports on the outcomes being judged, then admit matching provisional readings."""
+    if right is None:
+        return left, right
+    from g6.harness.behaviour_runner import ObservationUnavailable
+
+    evidence = [side.get('import_evidence', {}) for side in (left, right)]
+    marks = [one.get('outcomes', []) for one in evidence]
+    if not any(marks):
+        return left, right
+    failures = [one.get('failures', []) for one in evidence]
+    compared = sorted(set(failures[0] + failures[1])) or list(range(max(map(len, marks))))
+    same = all((marks[0][index] if index < len(marks[0]) else []) ==
+               (marks[1][index] if index < len(marks[1]) else []) for index in compared)
+    if same:
+        def admitted(side, held):
+            if (side['result'] == 'error' and side.get('reason_code') != 'G6_E_OBSERVATION_UNAVAILABLE'):
+                return side
+            provisional = held.get('reading', {})
+            return {**{key: value for key, value in side.items() if key != 'reason_code'}, **provisional,
+                    'verdict': provisional['result']} if provisional else side
+        return admitted(left, evidence[0]), admitted(right, evidence[1])
+    # The lead retains a confirmed matching patch fallback, with an explicit unobserved-path qualification.
+    if left['result'] == 'passed' and left.get('fallback_observation') and not left.get('owned_probe'):
+        return left, right
+    provisional = [one.get('reading', side) for side, one in zip((left, right), evidence, strict=True)]
+    if all(side.get('owned_probe') and side['result'] == 'passed' for side in provisional):
+        # A later unavailable path cannot erase an earlier input the host can still compare. Keep only inputs
+        # with the same import evidence on both trees; no output on a differing marked path supplies a finding.
+        kept = [index for index in compared if
+                (marks[0][index] if index < len(marks[0]) else []) ==
+                (marks[1][index] if index < len(marks[1]) else [])]
+        comparable = [[candidate['observations'][index] for index in kept] for candidate in provisional]
+        if kept and _differences(*comparable):
+            return tuple({**{key: value for key, value in side.items() if key != 'reason_code'}, **candidate,
+                          'verdict': 'passed', 'observations': observations,
+                          'unavailable_probe_inputs': [index for index in compared if index not in kept]}
+                         for side, candidate, observations in zip((left, right), provisional, comparable, strict=True))
+    unavailable = {'result': 'error', 'detail': ObservationUnavailable.DETAIL,
+                   'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE'}
+    return {**left, **unavailable}, right
+
+
 def classify(intent: str, on_patch: dict, at_base: dict | None) -> dict:
+    on_patch, at_base = _import_pair(on_patch, at_base)
+    found = _classify(intent, on_patch, at_base)
+    if on_patch.get('unavailable_probe_inputs'):
+        found = {**found, 'unavailable_probe_inputs': on_patch['unavailable_probe_inputs'],
+                 'detail': found['detail'] + '; other inputs remain unavailable because their missing imports differ'}
+    if on_patch['result'] == 'passed' and on_patch.get('fallback_observation'):
+        found = {**found, 'fallback_observation': on_patch['fallback_observation'],
+                 'detail': found['detail'] + '; the fallback was taken; the path with the missing imports '
+                           'satisfied was not observed'}
+    return found
+
+
+def _classify(intent: str, on_patch: dict, at_base: dict | None) -> dict:
     """One check's result from its two runs (``reading``) and its intent (plan rule 3): ``{result, detail}``, with a
     ``note`` or the probe's ``differences`` where they apply."""
     if on_patch["result"] == "error":
@@ -871,7 +946,8 @@ def not_run(checks: list[ProposedCheck], placed: dict[str, str], why: str,
 
 def _summary(found: dict) -> dict:
     """A run as its activity lists it: its result, and the interpreter, boundary and import path it ran with."""
-    return {key: found[key] for key in ("result", "verdict", "detail", "seconds", "tree_digest", *RAN_WITH)
+    return {key: found[key] for key in ("result", "verdict", "detail", "seconds", "tree_digest", *RAN_WITH,
+                                      'fallback_observation', 'import_evidence')
             if key in found}
 
 
@@ -946,8 +1022,12 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
             if origin.refuted_by_difference and verdict["result"] == BEHAVIOUR_CHANGED:
                 # the differential rule: the instance declares this behaviour must not change, so a difference refutes
                 verdict = {"result": COUNTEREXAMPLE, "differences": verdict["differences"],
+                           **({'unavailable_probe_inputs': verdict['unavailable_probe_inputs']}
+                              if verdict.get('unavailable_probe_inputs') else {}),
                            "detail": f"observes {len(verdict['differences'])} input(s) differently at the base commit "
-                                     "and on the patch, where the instance declares that behaviour must not change"}
+                                     "and on the patch, where the instance declares that behaviour must not change"
+                                     + ('; other inputs remain unavailable because their missing imports differ'
+                                        if verdict.get('unavailable_probe_inputs') else '')}
             activity.update(verdict)
             activity["seconds"] = round(sum(run.get("seconds", 0.0) for run in activity["runs"]), 3)
             _found(done, one, activity, on_patch, at_base, verdict, artifact, change.base_commit, origin)

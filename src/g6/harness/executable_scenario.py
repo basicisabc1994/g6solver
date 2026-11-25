@@ -42,7 +42,10 @@ def _program_parts() -> tuple[str, str]:
     request = """scenario = json.loads(SCENARIO)
 data = {'function': scenario['entrypoint'], 'calls': [scenario['input']],
         'errors': [one['error'] for one in scenario['outcomes'].values() if 'error' in one],
-        'probe': False, 'mode': 'outputs'}"""
+        'probe': False, 'mode': 'outputs'}
+host = json.loads(raw)
+if 'own_modules' in host:
+    data['own_modules'] = host['own_modules']"""
     return (confine.CHILD_PRELUDE + '\nSCENARIO = ',
             '\n' + runner.BOOTSTRAP.replace('data = json.loads(raw)', request, 1))
 
@@ -124,9 +127,15 @@ class Scenario:
         prefix, suffix = _program_parts()
         return prefix + ascii(self.record.decode('ascii')) + suffix
 
-    def comparison(self, option: str) -> dict:
-        """The host comparison, compiled once from the canonical record for both execution and reproduction."""
-        return _comparison(self.record.decode('ascii'), option)
+    def comparison(self, option: str, *, tree=None, side=None) -> dict:
+        """Canonical comparison plus transient import ownership when the host supplies its trees."""
+        data = _comparison(self.record.decode('ascii'), option)
+        if tree is not None:
+            from g6.harness import verification_templates as vt
+
+            entry = data['function']
+            data.update(vt._own_modules(tree, vt.Target(entry[1], entry[2], entry[3]), side or vt.PATCH))
+        return data
 
     def _wrapper(self, option: str) -> str:
         """A portable reproduction wrapper; G6 itself executes program, without loading this pytest wrapper."""
@@ -187,12 +196,12 @@ def test_example():
     def sha256(self) -> str:
         return hashlib.sha256(self.program.encode("utf-8")).hexdigest()
 
-    def source(self, option: str) -> str:
+    def source(self, option: str, *, tree=None, side=None) -> str:
         import base64
         import zlib
         from g6.harness import behaviour_runner as runner
 
-        data = {**self.comparison(option), '_program': self.program}
+        data = {**self.comparison(option, tree=tree, side=side), '_program': self.program}
         source = self._wrapper(option)
         # Keep a portable, self-contained check even for the largest historical bindings. The canonical input is
         # held once; compression only stores the resulting Python text more compactly, with no new execution path.
