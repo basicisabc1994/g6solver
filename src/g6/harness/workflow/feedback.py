@@ -163,7 +163,7 @@ def may_invite(project: str, task: str, *, questions: qs.State, report_reached: 
     A feedback store that cannot be read invites nothing."""
     from g6.harness.workflow import view
 
-    if view.LEVELS.index(view.level()) < view.LEVELS.index(ADMITTED_AT):
+    if view.LEVELS.index(view.admitted_level()) < view.LEVELS.index(ADMITTED_AT):
         return False, "the feedback question is not switched on: the measured steps before it have not passed"
     try:
         store = FeedbackStore(project)

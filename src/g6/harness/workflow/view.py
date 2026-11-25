@@ -48,7 +48,19 @@ MISSING_WORDS = {
 
 def level() -> str:
     """The level in force: off when the workflow record is off; else what the person set (``G6_WORKFLOW_VIEW``),
-    when that is a level at or below the admitted one; else the admitted level."""
+    when that is a level at or below the admitted one; an unset variable stays off.
+    A set value above the admitted level retains the existing cap."""
+    if os.environ.get(VIEW_ENV) is None:
+        return "off"
+    return admitted_level()
+
+
+def admitted_level() -> str:
+    """Internal analysis admission, independent of opting into the displayed block.
+
+    Building advice explicitly and admitting feedback do not display the optional
+    block. The record switch and every measured gate still apply to both.
+    """
     if not policy.enabled()[0]:
         return "off"
     asked = os.environ.get(VIEW_ENV)
@@ -82,8 +94,9 @@ def _confirmed(task: str) -> tuple[tuple, tuple[str, ...]]:
 def build(project: str, task: str, *, assessment: Mapping | None = None, loop: Mapping | None = None,
           intent: Mapping | None = None, provider: str | None = None, job_id: str = "", request: str = "") -> dict:
     """The ``workflow`` reply field for one task: ``{}`` when the view is off; a withholding notice when the source
-    is not shared with ``provider``; else the outcome, obstacles, next check, friction and what is missing."""
-    now = level()
+    is not shared with ``provider``; else the outcome, obstacles, next check, friction and what is missing.
+    An explicit build uses internal admission; only the surface adapters select optional display."""
+    now = admitted_level()
     if now == "off":
         return {}
     if not shared(project, provider):
@@ -228,6 +241,8 @@ def appended(repo: Any, task: str, report: str, *, loop: Mapping | None = None, 
     """`report` with this task's block after it, for a surface with no reply fields (the Stop hook); the report
     unchanged when anything goes wrong."""
     try:
+        if level() == "off":
+            return report
         project, task_id = adapters.identities(repo, task)
         return with_block(report, build(project, task_id, loop=loop, provider=provider, request=task))
     except Exception:  # noqa: BLE001 - optional advice never costs the person the mandatory report
@@ -245,4 +260,4 @@ def with_block(report: str, view: Mapping | None) -> str:
 
 
 __all__ = ["ADMITTED_LEVEL", "HEADING", "LEVELS", "MAX_LINES", "VALUE_RESULTS", "VIEW_ENV", "WITHHELD", "appended",
-           "block", "build", "level", "shared", "with_block"]
+           "admitted_level", "block", "build", "level", "shared", "with_block"]

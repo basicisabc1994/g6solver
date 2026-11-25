@@ -417,7 +417,7 @@ def _named(caller: Any) -> str:
 
 
 def critic_host() -> LLMCaller | None:
-    """Codex as the reviewer from another model family, when the key file's own ``CRITIC_LINE`` approves it; else None.
+    """Codex as a second model, when the key file's own ``CRITIC_LINE`` approves it; else None.
     It takes no tools (``host_models``), so it reads what ``_pack`` gives it and no file of the person's."""
     if (keys.get(CRITIC_LINE) or "").strip().lower() != "codex":
         return None
@@ -881,7 +881,7 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
                told: str = "", *, patch: repo_tests.DiffRead, whole: bool = False,
                system_sources: tuple[cloud.Source, ...] | None = None,
                told_sources: tuple[cloud.Source, ...] | None = None) -> dict:
-    """L9's critic: another model family reads the finished patch once, and K's, ``n`` the review it is. One that fails is
+    """L9's critic: a second model, Codex, reads the finished patch once, and K's, ``n`` the review it is. One that fails is
     recorded and L9 goes on. Its test, if it has one, waits in ``where`` to run with the probes. ``told``: what follows the
     pack, for a reviewer sent back. ``patch``: the caller's one read (``diff_read``). What it gives names the model called,
     here where the call is made: who is approved may change, and a later step calls no one. What looks like a secret is
@@ -1138,23 +1138,51 @@ def _scouts_chosen() -> bool:
     return (keys.get(MODE_LINE) or "").strip().lower() == "scouts"
 
 
+class _ReviewText(str):
+    """The report with its decided fields kept for the additive card; still a string to every existing caller."""
+
+    def __new__(cls, text: str, assessment: dict):
+        value = super().__new__(cls, text)
+        value.assessment = assessment
+        return value
+
+
 def _final_review(root: Path, task: str, base: str) -> str:
     """The patch review of what stopped the loop, on the task's text alone: what the loop ran is not given to it."""
     reply = review_patch(root, task=task, requirements=[{"id": REQUIREMENT, "text": task[:20_000], "checks": []}], base=base,
                          timeout_s=REVIEW_S)
-    return (reply.get("assessment") or {}).get("report") or ("The patch review gave no report: " + patch_report.code(
-        (reply.get("warning_card") or {}).get("message", ""), 300))
+    assessment = reply.get("assessment") or {}
+    return _ReviewText(assessment.get("report") or ("The patch review gave no report: " + patch_report.code(
+        (reply.get("warning_card") or {}).get("message", ""), 300)), assessment)
 
 
-def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
+def _record_report(root: Path, task: str, base: str, session: Path, state: dict, step: Step, review: str) -> None:
+    """Capture task observations before card rendering; no missing write can support a count."""
+    from g6.harness.workflow import adapters, evidence as workflow_evidence
+    from g6.harness.workflow.record import now as recorded_now, workflow_source
+
+    state["final_assessment"] = getattr(review, "assessment", {})
+    note = adapters.observe_loop(root, task, session, state, step, at=recorded_now(), base=base)
+    state["workflow_evidence"] = workflow_evidence.read(root, task, note=note)
+    if state["workflow_evidence"]["justification"]:
+        project, _ = adapters.identities(root, task)
+        cloud.record_sources((cloud.Source.text(workflow_source(project), "card-events", json.dumps(
+            state["workflow_evidence"], sort_keys=True)),))
+
+
+def _report(root: Path, task: str, base: str, state: dict, reason: str, session: Path | None = None) -> str:
     """What the probes did, above the patch review of what stopped the loop. They are not given to the review."""
     review = _final_review(root, task, base)
+    if session is not None:
+        _record_report(root, task, base, session, state, Step(STOP), review)
     rounds, ran = state.get("rounds") or [], state.get("ran") or {}
     return patch_report.completion_report({
         "reason": reason, "repairs": sum(one["tree"] is not None for one in rounds), "max_repairs": MAX_REPAIRS,
         "failing": rounds[-1]["failing"] if rounds else [], "critic": state.get("critic"),
         "late_because": state.get("late") or ("no hook ran them before the agent started" if _before_fix() else NOT_ASKED),
         "boundary": state.get("boundary"),
+        "agent": state.get("agent", ""), "workflow_evidence": state.get("workflow_evidence"),
+        "assessment": getattr(review, "assessment", {}),
         "sets": [{"label": label, "hidden": label != "scout", "ran": ran.get(label, 0), "left_out": one["left_out"],
                   "refused": one["refused"], "late": one.get("when") != BEFORE} for label, one in state["sets"].items()]},
         review)
@@ -1315,6 +1343,9 @@ def _review_end(root: Path, task: str, base: str, session: Path, state: dict, re
         _write_row(session, state)      # this wait protects no clean stop: there is none left to protect
     code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NOT_REPRODUCED if reason == UNREPRODUCED else NO_CLEAN_REVIEW
     ending = _ending(reason, reviews)
+    # Record the observed ending before rendering its justification. The later
+    # hook/MCP adapter replays these same native ids and adds nothing.
+    _record_report(root, task, base, session, state, Step(STOP, code=code, ending=ending), review)
     return _finish(session, state, _reviews_report(state, reason, code, ending, review), code, ending, patch=now)
 
 
@@ -1324,6 +1355,8 @@ def _reviews_report(state: dict, reason: str, code: str, ending: str, review: st
     return patch_report.completion_report({
         "reason": reason, "reviews": reviews, "repairs": sum(one["tree"] is not None for one in state["rounds"]),
         "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code), "ending": ending,
+        "agent": state.get("agent", ""), "workflow_evidence": state.get("workflow_evidence"),
+        "assessment": state.get("final_assessment") or getattr(review, "assessment", {}),
         "boundary": next((one["boundary"] for one in reversed(reviews) if one.get("boundary")), "")}, review)
 
 
@@ -1489,6 +1522,7 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         if not reviews or untested:
             return _finish(session, state, text, code, "untested", patch=now)
         ending = _ending(text, reviews)      # what earlier rounds found stands: the refusal is why the loop stopped
+        _record_report(root, task, base, session, state, Step(STOP, code=code, ending=ending), "")
         return _finish(session, state, _reviews_report(state, text, code, ending, ""), code, ending, patch=now)
 
     if not change.sources:
@@ -1548,7 +1582,7 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         if not reviewing:
             _scouts(change, task, session, state, shipped, scout, AT_STOP)
             if all(one["left_out"] for one in state["sets"].values()):
-                return _finish(session, state, _report(root, task, base, state, "no probe set could run"),
+                return _finish(session, state, _report(root, task, base, state, "no probe set could run", session),
                                patch=_patch_now(root, base))
         loop = Repairs(rounds, reviewed if reviewing else check, tree, answered, asks(said))
         got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
@@ -1575,7 +1609,7 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         return Step(CONTINUE, f"{first}\n\n{told}" if first else told)
     reason = loop.why or STOPPED.get(got.status, got.reason)
     if not reviewing:
-        return _finish(session, state, _report(root, task, base, state, reason), patch=_patch_now(root, base))
+        return _finish(session, state, _report(root, task, base, state, reason, session), patch=_patch_now(root, base))
     if got.status == "no_counterexample_in_domain":
         reason = (NO_REVIEW if reviews[-1]["verdict"] not in READ_VERDICTS else UNREPRODUCED if _unreproduced(reviews) else CLEAN)
     elif got.status == "counterexample_budget_exhausted":

@@ -1802,6 +1802,7 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                 standard, enforced, artifact=artifact, base_commit=change.base_commit, environment=confirmed_environment,
                 integrity=[r["code"] for r in reasons if r["stage"] == "integrity"])}
     from g6.harness import patch_report   # A1: the readable report, derived from the fields above; it decides nothing
+    assessment["card"] = patch_report.card(assessment, None)
     assessment["report"] = patch_report.safe_render(assessment)
     card = warning_card(CODE, summary, next_actions[0])
     return {**envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,

@@ -20,6 +20,8 @@ import re
 import time
 import uuid
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -37,6 +39,17 @@ CALLS = "tool_calls"
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _CODE = re.compile(r"\[(G6_E_[A-Z0-9_]+)\]")
 _started: dict[str, float] = {}      # run id -> this process's monotonic clock when it began the run
+_HOOK = ContextVar("workflow_hook_observation", default=False)
+
+
+@contextmanager
+def hook_observation():
+    """The hook alone observes an ended agent turn; an MCP call is only a call."""
+    token = _HOOK.set(True)
+    try:
+        yield
+    finally:
+        _HOOK.reset(token)
 
 
 def _never_fails(fn: Callable[..., str]) -> Callable[..., str]:
@@ -113,10 +126,10 @@ def observe_review(repo: str | os.PathLike, task: str, job_id: str, reply: Any, 
     """One finished review job: its run, what it ended with (codes and counts), and the moment its report returned.
     ``saved``: where the whole review was saved, when it was; a review whose file could not be saved is recorded
     with ``review_ref`` missing."""
-    run = _Run(repo, task, "review_job", job_id, at=started_at)
     reply = reply if isinstance(reply, dict) else {}
     assessment = reply.get("assessment") if isinstance(reply.get("assessment"), dict) else None
     scope = (assessment or {}).get("scope") if isinstance((assessment or {}).get("scope"), dict) else {}
+    run = _Run(repo, task, "review_job", job_id, at=started_at, base=scope.get("base_commit") or "")
     search = scope.get("search") if isinstance(scope.get("search"), dict) else {}
     refused = _CODE.match(str(reply.get("error") or ""))
     ref = _saved_ref(job_id, saved) if assessment else None
@@ -128,11 +141,17 @@ def observe_review(repo: str | os.PathLike, task: str, job_id: str, reply: Any, 
             "integrity_reasons": sum(r.get("stage") == "integrity" for r in reasons),
             "requirements_failed": sum(isinstance(r, dict) and r.get("status") == "failed"
                                        for r in (assessment or {}).get("requirements") or [])}
+    if assessment is not None:
+        from g6.harness.workflow.evidence import review_data
+
+        data.update(review_data(assessment))
     missing = [name for name, absent in (("review_ref", assessment is not None and ref is None),
                                          ("model_calls", assessment is not None and data["model_calls"] is None),
                                          ("review_seconds", assessment is not None and data["review_seconds"] is None))
                if absent]
-    run.write("review_finished", job_id, at=finished_at, data=data, refs=[ref] if ref else (), missing=missing,
+    receipt_refs = [Ref("receipt", r["receipt"], r["receipt"]) for r in scope.get("receipts") or []
+                    if r.get("receipt_status") == "matched" and _hex(r.get("receipt"))]
+    run.write("review_finished", job_id, at=finished_at, data=data, refs=[*([ref] if ref else []), *receipt_refs][:50], missing=missing,
               artifact=reply.get("artifact_digest") or scope.get("artifact_digest") or "")
     run.write("report_returned", job_id, at=finished_at,
               data={"run_seconds": _number(seconds) if seconds is not None and seconds >= 0 else None},
@@ -156,21 +175,60 @@ def observe_loop(repo: str | os.PathLike, task: str, session: Path, state: Mappi
         still_open = sorted(sha256(str(name)) for name, verdict in (results or {}).items() if verdict == "failed")[:50]
         run.write("loop_round", str(number), at=at, artifact=review.get("patch") or "",
                   data={"round": number, "verdict": str(review.get("verdict") or "")[:40] or None,
+                        "results_sha256": digest(results) if results is not None else None,
+                        "passed_sha256": sorted(sha256(str(name)) for name, verdict in (results or {}).items()
+                                                if verdict == "passed")[:50],
                         "open": len(still_open) if results is not None else None, "open_sha256": still_open or None,
                         "failing": len(failing) if failing is not None else None,
                         "failing_sha256": sorted(sha256(str(name)) for name in failing)[:50] if failing else None,
                         "repair_applied": bool(number <= len(rounds) and rounds[number - 1].get("tree") is not None)},
-                  missing=() if failing is not None else ("failing",))
+                  missing=("receipts",) if failing is not None else ("failing", "receipts"))
     if getattr(step, "action", "") == "stop":
         ending = str(getattr(step, "ending", "") or state.get("ending") or "")[:40]
         code = str(getattr(step, "code", "") or state.get("code") or "")[:80]
         last = reviews[-1].get("patch") if reviews else ""
         native = digest([len(reviews), ending, code])
+        from g6.harness.patch_report import findings
+
+        fixed, still = findings(reviews)
+        extra = {"reproduced": len(fixed) + len(still), "repaired": len(fixed), "open": len(still),
+                 "left_by_agent": len(still) if state.get("left") else 0,
+                 "reviewer": next((str(r["reviewer"])[:100] for r in reversed(reviews) if r.get("reviewer")), ""),
+                 "agent": str(state.get("agent") or "")[:100], "hook_present": int(_HOOK.get()),
+                 "isolation": next((str(r["boundary"])[:100] for r in reversed(reviews) if r.get("boundary")), "")}
+        if not reviews:
+            extra["probes"] = sum(int(value) for value in (state.get("ran") or {}).values())
+            extra["isolation"] = str(state.get("boundary") or "")[:100]
+            extra["reproduced"] = len({str(name) for row in rounds for name in row.get("failing") or []})
+            extra["open"] = len((rounds[-1].get("failing") or []) if rounds else [])
+            extra.pop("repaired")  # no per-case pass receipts for the scouts' aggregate counts
+        if isinstance(state.get("final_assessment"), Mapping):
+            from g6.harness.workflow.evidence import review_data
+
+            # The final patch review contributes its own missing checks and questions;
+            # its findings stay distinct from the reviewers' reproduced tests.
+            final = review_data(state["final_assessment"])
+            extra.update({k: final[k] for k in ("requirements", "not_established", "checks_skipped", "questions", "unknowns",
+                                               "integrity_reasons", "unconfirmed")})
         run.write("loop_ended", native, at=at, artifact=last or "",
-                  data={"ending": ending or None, "code": code or None, "reviews": len(reviews)})
+                  data={"ending": ending or None, "code": code or None, "reviews": len(reviews), **extra})
         seconds = run.seconds()
         run.write("report_returned", native, at=at, artifact=last or "", data={"run_seconds": seconds},
                   refs=_report_ref(session), missing=() if seconds is not None else ("run_seconds",))
+    return ""
+
+
+@_never_fails
+def observe_unchecked(repo, task: str, session: Path, step: Any, *, at: str, base: str = "") -> str:
+    """The hook's ended-turn marker, with a stable reason code and no task text."""
+    from g6.harness import completion_loop
+
+    if getattr(step, "note", "") == completion_loop.ALREADY_ENDED:
+        return ""  # a replay of an ended run observes no new turn
+    reason = str(getattr(step, "code", "") or (
+        "patch_already_read" if getattr(step, "note", "") == completion_loop.ALREADY_READ else "no_review"))[:80]
+    run = _Run(repo, task, "loop_session", Path(session).name, at=at, base=base)
+    run.write("turn_unchecked", reason, at=at, data={"reason": reason})
     return ""
 
 
@@ -280,4 +338,4 @@ def task_view(project: str, task: str) -> tuple[Event, ...]:
 
 
 __all__ = ["CALLS", "NO_OBSERVATION", "PROCESS", "identities", "observe_call", "observe_dialog", "observe_loop", "observe_project",
-           "observe_review", "observe_step", "observe_task", "question_events", "task_view"]
+           "observe_review", "observe_step", "observe_task", "observe_unchecked", "question_events", "task_view"]

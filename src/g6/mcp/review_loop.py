@@ -105,6 +105,14 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
             text, code, ending, why, note = f"{CHANGED}\n\n{text}", code or loop.NO_CLEAN_REVIEW, "untested", CHANGED, CHANGED
     said = {"action": done.action, "text": text} if done.action == loop.CONTINUE else {
         "action": done.action, "report": text, "ending": ending, **({"note": note} if note else {})}
+    if done.action == loop.STOP:
+        from g6.harness import patch_report
+
+        loop_fields = {**state, "workflow_evidence": state.get("workflow_evidence")}
+        assessment = state.get("final_assessment") or {}
+        if "- **Checked:**" not in text:
+            loop_fields["unchecked_reason"] = text or note or why
+        said["card"] = patch_report.card(assessment, loop_fields)
     if code:
         refused = blocked_reply(f"[{code}] {why}"[:600], request_id=request_id)
         result = {**refused, "run_id": folder.name, "evidence": evidence, **said}

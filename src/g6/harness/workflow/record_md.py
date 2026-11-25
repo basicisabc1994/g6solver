@@ -1,0 +1,131 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Pure readable projection of retained workflow events, at most sixty lines."""
+from __future__ import annotations
+
+from collections import Counter
+from collections.abc import Iterable, Mapping
+
+from g6.core.ledger import digest
+from g6.harness.workflow.record import Event
+
+
+def repairs(events: Iterable[Event]) -> set[tuple[str, str]]:
+    """A pass resolves a failed digest only on a later, different artifact of that task."""
+    failures: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    repaired = set()
+    for event in events:
+        if event.kind != "review_finished" or not event.artifact_sha256:
+            continue
+        for check in event.data.get("passed_sha256") or []:
+            key = event.task, check
+            if any(artifact != event.artifact_sha256 and at < event.at for artifact, at in failures.get(key, ())):
+                repaired.add(key)
+        for check in event.data.get("failed_sha256") or []:
+            failures.setdefault((event.task, check), set()).add((event.artifact_sha256, event.at))
+    return repaired
+
+
+def open_checks(events: Iterable[Event]) -> set[tuple[str, str]]:
+    failed: dict[tuple[str, str], tuple[str, str]] = {}
+    for e in events:
+        if e.kind != "review_finished" or not e.artifact_sha256:
+            continue
+        for check in e.data.get("passed_sha256") or []:
+            key = e.task, check
+            if key in failed and failed[key][0] != e.artifact_sha256 and failed[key][1] < e.at:
+                del failed[key]
+        for check in e.data.get("failed_sha256") or []:
+            failed[e.task, check] = e.artifact_sha256, e.at
+    return set(failed)
+
+
+def counts(events: Iterable[Event]) -> dict:
+    rows = list(events)
+    # Only the hook observes ended turns. MCP reviews are calls, never invented turns.
+    ended = list({e.run: e for e in rows if e.kind == "loop_ended"
+                  and (e.data.get("reviews", 0) > 0 or e.data.get("probes", 0) > 0)}.values())
+    unchecked = [e for e in rows if e.kind == "turn_unchecked"]
+    reviews = [e for e in rows if e.kind == "review_finished"]
+    # Repeated reports of one ended run count once, with its latest ending.
+    hook_checked = [e for e in ended if e.data.get("hook_present") == 1]
+    return {"events": len(rows), "turns": len(hook_checked) + len(unchecked), "checked": len(hook_checked),
+            "loops": len(ended),
+            "unchecked": len(unchecked), "review_calls": len(reviews),
+            "reproduced": sum(e.data.get("reproduced", 0) for e in [*ended, *reviews]),
+            "repaired": sum(e.data.get("repaired", 0) for e in ended) + len(repairs(reviews)),
+            "open": sum(e.data.get("open", 0) for e in ended) + len(open_checks(reviews)),
+            "left_by_agent": sum(e.data.get("left_by_agent", 0) for e in ended),
+            "not_established": sum(e.data.get("not_established", 0) for e in [*ended, *reviews]),
+            "skipped": sum(e.data.get("checks_skipped", 0) for e in [*ended, *reviews]),
+            "endings": dict(Counter(e.data.get("ending", "unrecorded") for e in ended)),
+            "unchecked_reasons": dict(Counter(e.data.get("reason", "unrecorded") for e in unchecked))}
+
+
+def self_changes(lineage: Mapping | None, stats: Mapping, *, source: str = "", library=()) -> list[str]:
+    """Four read-only statements; missing baselines and paired measurements stay explicit."""
+    from g6.harness.patch_report import code
+
+    recent = (lineage or {}).get("recent") or []
+    one = recent[-1] if recent else {}
+    measured = one.get("measured") or {}
+    required = ("before", "after", "cases", "split", "wins", "losses")
+    if lineage is None:
+        generation = "No self-improvement loop is enrolled here; unmeasured."
+    elif all(measured.get(k) is not None for k in required) and measured.get("cases", 0) >= 20:
+        generation = (f"now at {lineage.get('current')}; changed {code(one.get('change') or 'not recorded')}; "
+                      f"{measured['cases']} {code(measured['split'])} cases, {measured['before']} before, "
+                      f"{measured['after']} after ({measured['wins']} wins, {measured['losses']} losses); "
+                      f"evidence {code(source)}.")
+    else:
+        generation = f"now at {lineage.get('current')}; unmeasured; evidence {code(source or 'not recorded')}."
+    totals = {key: sum(v.get(key, 0) for v in stats.values() if isinstance(v, Mapping))
+              for key in ("refused", "resolved", "not", "person")}
+    repair = (f"{totals['refused']} refusals; next call went through in {totals['resolved']}, "
+              f"failed again in {totals['not']}, {totals['person']} went to you; "
+              "observed counts from the repair log; no baseline." if stats else "unmeasured; no baseline.")
+    learned = "unmeasured; no paired admission result." if library else "none in this version; unmeasured."
+    return ["- Harness generations: " + generation,
+            "- Repairs of G6's own refused calls: " + repair,
+            "- Learned checks in use: " + learned,
+            "- Routing: fixed rules, not adapted. Unmeasured: no routing session has been run."]
+
+
+def render(events: Iterable[Event], *, recording: bool = True, self_lines: list[str] | None = None) -> str:
+    """No filesystem, clock or model reads; identical events and options give identical bytes."""
+    from g6.harness.patch_report import code
+
+    rows = list(events)
+    if not recording:
+        return ("# G6 record\nNo record is kept. G6_WORKFLOW_RECORD=on where the server is registered turns it on.\n"
+                "Earlier retained events may still exist; turning collection off does not delete them.\n")
+    c = counts(rows)
+    lines = ["# G6 record", "Local to this computer. Counts of what G6 observed; work outside G6 is not here.",
+             "", "## Coverage", f"- {c['turns']} ended turns observed: {c['checked']} checked; {c['unchecked']} unchecked.",
+            f"- {c['review_calls']} finished MCP review calls; {c['loops']} ended loops. Calls are not turns.",
+             "- Over MCP without the hook, turns ending without a call are not counted.",
+             "", "## What the checks found",
+             f"- {c['reproduced']} reproduced findings (tests failed); {c['repaired']} repaired; "
+             f"{c['open']} open at loop stops; {c['left_by_agent']} left by the agent."]
+    if not rows:
+        lines.append("- No recorded events. Nothing here establishes that work was checked.")
+    lines += ["", "## Findings (newest first)"]
+    findings = [e for e in rows if e.kind in ("loop_ended", "review_finished") and e.data.get("reproduced")]
+    for e in reversed(findings[-10:]):
+        repaired = bool(e.data.get("repaired")) or bool(e.data.get("failed_sha256")) and all(
+            (e.task, check) in repairs(rows) for check in e.data.get("failed_sha256") or [])
+        state = "repaired in a recorded review" if repaired else "open at the stop. Not labelled by you"
+        lines.append(f"- {code(e.at)}, task {code(e.task[:12])}: {state}; details no longer kept. "
+                     f"Event {code(e.event_id)}.")
+    if len(findings) > 10:
+        lines.append(f"- {len(findings) - 10} more finding events in inspection.json.")
+    lines += ["", "## Not checked, most often",
+              f"- {c['not_established']} requirements not established across recorded reviews; {c['skipped']} runs skipped."]
+    lines += [f"- {code(reason)}: {count} unchecked turns." for reason, count in sorted(c["unchecked_reasons"].items())[:6]]
+    lines += ["", "## What G6 changed in itself", *(self_lines or self_changes(None, {}))[:4], "", "## Limits",
+              "- A reproduced finding is a test that failed. It is not a ruling that the patch was wrong.",
+              "- A clean turn means no reviewer showed a failure.", "- Value to your work: not measured."]
+    lines += ["", "## Event references (full entries in inspection.json)"]
+    lines += [f"- {code(e.event_id)} {code(e.kind)} SHA-256 {code(digest(e.to_body()))}." for e in rows[-12:]]
+    if len(rows) > 12:
+        lines.append(f"- {len(rows) - 12} earlier events in inspection.json.")
+    return "\n".join(lines) + "\n"
