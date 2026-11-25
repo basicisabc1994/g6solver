@@ -1816,6 +1816,7 @@ def test_describe_reuses_recording_until_required_modules_change(ownership, tmp_
     assert len(discoveries) == 2
 
     # A changed file value and a replaced object each invalidate the fingerprint.
+    (tmp_path / "changed-required.py").write_text("value = 74\n", encoding="utf-8")
     child.__file__ = str(tmp_path / "changed-required.py")
     for name in tools:
         assert families.describe(name)["available"] is True
@@ -1909,3 +1910,206 @@ def test_only_cached_describe_may_skip_disk_refresh(ownership, tmp_path, monkeyp
     specs.clear()
     retired.unlink()
     assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+
+
+@pytest.fixture
+def _rfu5_r2_describe_server(ownership, monkeypatch):
+    from types import SimpleNamespace
+
+    from g6.mcp import families, registrations
+
+    server = ModuleType("rfu5r2_server")
+    server.get_tools = lambda: {"load_state": SimpleNamespace(description="Load state.", parameters={})}
+    server.mcp = server
+    monkeypatch.setitem(sys.modules, server.__name__, server)
+    monkeypatch.setattr(registrations, "SERVERS", {"abstraction": server.__name__ + ":mcp"})
+    for attribute in ("_DETAILS", "_VALIDATED_DETAILS", "_RECORDED_SERVERS"):
+        monkeypatch.setattr(families, attribute, {})
+    return *ownership, families
+
+
+@pytest.mark.parametrize("identity", ("replacement", "retired", "absent", "unreadable", "unchanged-control"))
+def test_cached_describe_rechecks_recorded_required_files(
+        _rfu5_r2_describe_server, tmp_path, monkeypatch, identity):
+    dependencies, specs, families = _rfu5_r2_describe_server
+    source, retired, alias = (tmp_path / name for name in ("required.py", "retired.py", "alias.py"))
+    source.write_text("value = 'required'\n", encoding="utf-8")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(source)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    copy_locations, stat = dependencies._loaded_locations, dependencies._stat_identity
+    walks = []
+
+    def count_walk(module):
+        assert not dependencies._ownership_lock._is_owned()
+        if module is loaded:
+            walks.append(True)
+        return copy_locations(module)
+
+    def unreadable(path):
+        assert not dependencies._ownership_lock._is_owned()
+        if os.fspath(path) == str(source):
+            raise OSError("temporary required identity failure")
+        return stat(path)
+
+    monkeypatch.setattr(dependencies, "_loaded_locations", count_walk)
+    assert families.describe("load_state")["available"] is True
+    candidate = dependencies._loaded_required_recording_key()
+
+    if identity in {"replacement", "retired"}:
+        source.rename(retired)
+        source.write_text("value = 'replacement'\n", encoding="utf-8")
+        assert dependencies._stat_identity(source) != dependencies._stat_identity(retired)
+    elif identity == "absent":
+        source.rename(retired)
+    # The module-only key cannot see disk replacement; the reuse check must.
+    assert dependencies._loaded_required_recording_key() == candidate
+    with monkeypatch.context() as fault:
+        if identity == "unreadable":
+            fault.setattr(dependencies, "_stat_identity", unreadable)
+        assert families.describe("load_state")["available"] is True
+    assert len(walks) == (1 if identity == "unchanged-control" else 2)
+    if identity == "absent":
+        retired.rename(source)
+    if identity in {"absent", "unreadable"}:
+        assert families.describe("load_state")["available"] is True
+        assert len(walks) == 3  # The incomplete refresh must not validate a reuse.
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    if identity == "retired":
+        source.unlink()  # No subsequent probe can recover a missed retirement.
+        alias = retired
+    else:
+        source.rename(alias)  # Preserve the recorded file's identity at a new spelling.
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, alias)
+    expected = {OPTIONAL} if identity == "retired" else frozenset()
+    assert _roots(dependencies, SCOPES[2]) == expected
+    specs.clear()
+    alias.unlink()
+    assert _roots(dependencies, SCOPES[2]) == expected
+
+
+@pytest.mark.parametrize("probe", ("unreadable", "absent", "location-failure", "unchanged-control"))
+def test_cached_describe_retries_incomplete_required_child(
+        _rfu5_r2_describe_server, tmp_path, monkeypatch, probe):
+    dependencies, specs, families = _rfu5_r2_describe_server
+    parent_file, child_file, alias = (tmp_path / name for name in ("parent.py", "child.py", "alias.py"))
+    parent_file.write_text("value = 'parent'\n", encoding="utf-8")
+    if probe != "absent":
+        child_file.write_text("value = 'child'\n", encoding="utf-8")
+    walks, faults = [], []
+    location_failure = probe == "location-failure"
+
+    class LoadedChild(ModuleType):
+        @property
+        def __path__(self):
+            if location_failure:
+                faults.append("__path__")
+                raise OSError("temporary child location failure")
+            return None
+
+    parent, child = ModuleType(REQUIRED), LoadedChild(REQUIRED + ".child")
+    parent.__file__, child.__file__ = str(parent_file), str(child_file)
+    monkeypatch.setitem(sys.modules, REQUIRED, parent)
+    monkeypatch.setitem(sys.modules, child.__name__, child)
+    stat, copy_locations = dependencies._stat_identity, dependencies._loaded_locations
+
+    def unreadable(path):
+        assert not dependencies._ownership_lock._is_owned()
+        if os.fspath(path) == str(child_file):
+            faults.append(path)
+            raise OSError("temporary child identity failure")
+        return stat(path)
+
+    def count_walk(module):
+        assert not dependencies._ownership_lock._is_owned()
+        if module is child:
+            walks.append(True)
+        return copy_locations(module)
+
+    monkeypatch.setattr(dependencies, "_loaded_locations", count_walk)
+    with monkeypatch.context() as fault:
+        if probe == "unreadable":
+            fault.setattr(dependencies, "_stat_identity", unreadable)
+        assert families.describe("load_state")["available"] is True
+    assert len(walks) == 1
+    if probe in {"unreadable", "location-failure"}:
+        assert faults
+    location_failure = False
+    if probe == "absent":
+        child_file.write_text("value = 'child'\n", encoding="utf-8")
+    assert families.describe("load_state")["available"] is True
+    assert len(walks) == (1 if probe == "unchanged-control" else 2)
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    monkeypatch.delitem(sys.modules, child.__name__)
+    child_file.rename(alias)
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, alias)
+    assert _roots(dependencies, SCOPES[2]) == frozenset()
+    specs.clear()
+    alias.unlink()
+    assert _roots(dependencies, SCOPES[2]) == frozenset()
+
+
+@pytest.mark.parametrize("cache_state", ("never-owned", "previously-owned", "unreadable"))
+def test_different_tool_describes_reuse_only_owned_required_file_stats(
+        ownership, tmp_path, monkeypatch, cache_state):
+    from collections import Counter
+    from types import SimpleNamespace
+
+    from g6.mcp import families, registrations
+
+    dependencies, _ = ownership
+    source, cache_file = tmp_path / "required.py", tmp_path / "required.pyc"
+    source.write_text("value = 73\n", encoding="utf-8")
+    if cache_state == "previously-owned":
+        cache_file.write_bytes(b"previously recorded cache")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(source)
+    loaded.__cached__ = str(cache_file)
+    loaded.__spec__ = util.spec_from_file_location(REQUIRED, source)
+    loaded.__spec__.cached = str(cache_file)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    tools = {name: SimpleNamespace(description=name, parameters={})
+             for name in ("load_state", "save_state", "describe_domain")}
+    server = ModuleType("rfu5r2am2_server")
+    server.get_tools = lambda: tools
+    server.mcp = server
+    monkeypatch.setitem(sys.modules, server.__name__, server)
+    monkeypatch.setattr(registrations, "SERVERS", {"abstraction": server.__name__ + ":mcp"})
+    for attribute in ("_DETAILS", "_VALIDATED_DETAILS", "_RECORDED_SERVERS"):
+        monkeypatch.setattr(families, attribute, {})
+    record, stat = dependencies.record_loaded_required_imports, dependencies._stat_identity
+    recordings, stats = [], Counter()
+
+    def count_recording(*args, **kwargs):
+        recordings.append(True)
+        return record(*args, **kwargs)
+
+    def count_stat(path):
+        assert not dependencies._ownership_lock._is_owned()
+        stats[os.fspath(path)] += 1
+        if cache_state == "unreadable" and os.fspath(path) == str(cache_file):
+            raise OSError("cache identity unavailable")
+        return stat(path)
+
+    monkeypatch.setattr(dependencies, "record_loaded_required_imports", count_recording)
+    monkeypatch.setattr(dependencies, "_stat_identity", count_stat)
+    names = list(tools)
+    assert families.describe(names[0])["available"] is True
+    if cache_state == "never-owned":
+        # Absent bytecode hints contribute neither ownership nor live aliases.
+        assert all(str(cache_file) not in record[2:4] for record in dependencies._required_paths)
+        files = {record[2] for record in dependencies._required_paths}
+        assert files and str(source) in files and str(cache_file) not in files
+    elif cache_state == "previously-owned":
+        assert any(record[2] == str(cache_file) for record in dependencies._required_paths)
+        cache_file.unlink()
+    for name in names[1:]:
+        stats.clear()
+        assert families.describe(name)["available"] is True
+        if cache_state == "never-owned":
+            assert len(recordings) == 1
+            assert set(stats) <= files
+            assert all(count <= 1 for count in stats.values())
+    assert len(recordings) == (1 if cache_state == "never-owned" else len(names))
+    if cache_state == "never-owned":
+        assert set(dict(families._RECORDED_SERVERS["abstraction"][1][3])) == files

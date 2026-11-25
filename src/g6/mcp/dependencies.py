@@ -204,8 +204,6 @@ def _root_identities(root: str, paths: set | None = None,
         if kind == "namespace":
             source = (source, path)
         resolved = lookup(lambda: _plain_text(os.path.realpath(path)))
-        if resolved is not None:
-            identities.add((kind, resolved))
 
         def inode_identity():
             try:
@@ -216,6 +214,19 @@ def _root_identities(root: str, paths: set | None = None,
         order = next(_evidence_order)
         result = lookup(inode_identity)
         status, absent = result if result is not None else (None, False)
+        if absent and source in {"spec-cache", "loaded-cache"}:
+            # A cache attribute is a bytecode destination, not a loaded file.
+            # Record its absence without manufacturing a live spelling alias.
+            # Existing ownership is retained by the ordinary refresh/history
+            # merge; the completion capture checks that history before reuse.
+            record = (kind, source, path, None, None, None)
+            if absent_paths is not None:
+                absent_paths.add(record)
+                if ordered_paths is not None:
+                    ordered_paths.append((order, record))
+            return
+        if resolved is not None:
+            identities.add((kind, resolved))
         device = inode = None
         if status is not None:
             device, inode = status
@@ -769,6 +780,11 @@ def optional_import_roots(extras: str, required_extras: str = "mcp", *,
         observations = _root_observations(optional | required)
         _observe_current_sources(refresh, observations)
         attempts.append((observations, refresh))
+        files = None
+        if _recording_key is not None:
+            files = _recorded_required_files({root: observations[root] for root in required},
+                                             previous=_recording_key[3], owned=paths)
+            files = _recording_files_after_refresh(files, refresh)
         with _ownership_lock:
             if generation != _ownership_generation:
                 continue  # Retry once, including declarations invalidated by a clear.
@@ -778,15 +794,17 @@ def optional_import_roots(extras: str, required_extras: str = "mcp", *,
                 optional = _without_required_aliases(optional, required)
             result = _without_observed_aliases(optional, required, observations, refresh, previous=attempts[:-1])
             _advance_ownership_generation(before)
-            if (_recording_key is not None and len(attempts) == 1
+            if (_recording_key is not None and files is not None and len(attempts) == 1
                     and _recording_key[:2] == (epoch, generation)
                     and _loaded_required_recordings.get(required_extras) == _recording_key):
                 # This boundary's own optional merge may advance the generation.
                 # Bind completion to that committed generation, but never adopt
                 # a competing transaction's generation after a retry.
-                key = (epoch, _ownership_generation, _recording_key[2])
+                key = (epoch, _ownership_generation, _recording_key[2], files)
                 _loaded_required_recordings[required_extras] = key
                 _loaded_optional_recordings[extras, required_extras] = key
+            elif _loaded_required_recordings.get(required_extras) == _recording_key:
+                _loaded_required_recordings.pop(required_extras, None)
             return result
     # Sustained contention supplies no safe optional verdict. The observations
     # already taken still join current evidence unless an explicit clear won.
@@ -826,10 +844,51 @@ def _loaded_required_modules(required: set[str]) -> tuple[dict, frozenset | None
     return loaded, frozenset(fingerprint) if cacheable else None
 
 
-def _remember_loaded_recording(required_extras, epoch, fingerprint):
+def _recorded_required_files(observations, *, previous=(), owned=()):
+    """Capture required files; absent, never-owned bytecode hints are not files."""
+    files = dict(previous)
+    owned_spellings = {spelling for record in owned for spelling in record[2:4]}
+    for _, established, observed, absent, live, ordered in observations.values():
+        # Only the observer's explicitly unowned cache absence is exempt. A
+        # failed probe, a missing loaded/source file, or any retained ownership
+        # at that spelling still requires the next describe to record in full.
+        live_sources = {record[2] for record in observed | live}
+        unowned = {record for record in absent
+                   if record[1] in {"spec-cache", "loaded-cache"}
+                   and record[3:] == (None, None, None)
+                   and record[2] not in owned_spellings
+                   and record[2] not in files and record[2] not in live_sources}
+        if not established or absent - unowned:
+            return None
+        for _, record in ordered:
+            if record in unowned:
+                continue
+            source, status = record[2], record[4:]
+            if status[0] is None or status[1] is None:
+                return None
+            if source in files and files[source] != status:
+                return None  # Conflicting observations cannot validate a reuse.
+            files[source] = status
+    return tuple(sorted(files.items()))
+
+
+def _recording_files_after_refresh(files, refresh):
+    """A failed or conflicting recheck of a covered file also forbids reuse."""
+    if files is None:
+        return None
+    statuses = dict(files)
+    for record, events in refresh.items():
+        if record[2] in statuses:
+            for _, status, uncertain, _, _, absent in events:
+                if uncertain or absent or status != statuses[record[2]]:
+                    return None
+    return files
+
+
+def _remember_loaded_recording(required_extras, epoch, fingerprint, files):
     """Publish only after reconciliation, while holding the ownership lock."""
-    if fingerprint is not None:
-        key = epoch, _ownership_generation, fingerprint
+    if fingerprint is not None and files is not None:
+        key = epoch, _ownership_generation, fingerprint, files
         _loaded_required_recordings[required_extras] = key
         return key
     _loaded_required_recordings.pop(required_extras, None)
@@ -854,11 +913,28 @@ def _loaded_required_recording_key(required_extras: str = "mcp") -> tuple | None
     return None
 
 
+def _loaded_required_recording_current(key: tuple, required_extras: str = "mcp") -> bool:
+    """Check captured file identities outside the lock immediately before reuse."""
+    required_extras = _plain_text(required_extras)
+    if key[:3] != _loaded_required_recording_key(required_extras):
+        return False
+    try:
+        for source, status in key[3]:
+            if _stat_identity(source) != status:
+                return False
+    except Exception:
+        return False  # Missing and unreadable files require a full recording too.
+    with _ownership_lock:
+        return (key[:2] == (_declaration_epoch, _ownership_generation)
+                and _loaded_required_recordings.get(required_extras) == key)
+
+
 def record_loaded_required_imports(required_extras: str = "mcp") -> tuple | None:
     """Fully refresh a load's required modules and descendants on every direct call."""
     required_extras = _plain_text(required_extras)
     with _ownership_lock:
         epoch = _declaration_epoch
+        _loaded_required_recordings.pop(required_extras, None)
     _, required = _optional_root_declarations("", required_extras, epoch)
     try:
         required = {_plain_text(root) for root in required}
@@ -875,9 +951,11 @@ def record_loaded_required_imports(required_extras: str = "mcp") -> tuple | None
         identity, established = _root_identities(root, observed, absent, locations=copied,
                                                 live_paths=live, ordered_paths=ordered)
         observations[root] = identity, established, observed, absent, live, ordered
+    files = _recorded_required_files(observations, owned=paths)
     attempts = []
     for _ in range(2):
         refresh = _path_refresh_observations(paths)
+        files = _recording_files_after_refresh(files, refresh)
         with _ownership_lock:
             if epoch != _declaration_epoch:
                 return  # Only an explicit clear supersedes startup's copied evidence.
@@ -887,7 +965,7 @@ def record_loaded_required_imports(required_extras: str = "mcp") -> tuple | None
                 _refresh_path_ownership(refresh)
                 _without_required_aliases(set(), {root: values[2] for root, values in reconciled.items()})
                 _advance_ownership_generation(before)
-                return _remember_loaded_recording(required_extras, epoch, fingerprint)
+                return _remember_loaded_recording(required_extras, epoch, fingerprint, files)
         attempts.append(({}, refresh))
         generation, current_epoch, paths = _ownership_snapshot()
         if epoch != current_epoch:
@@ -908,21 +986,28 @@ def record_loaded_required_imports(required_extras: str = "mcp") -> tuple | None
 
 def _loaded_locations(module) -> tuple:
     """Copy a loaded object's own file and namespace locations before probing."""
+    complete = True
+
     def attribute(obj, name):
+        nonlocal complete
         try:
             return getattr(obj, name, None)
         except Exception:
+            complete = False
             return None
 
     locations = []
 
     def location(path, source, kind):
+        nonlocal complete
+        if path is None:
+            return
         try:
             spelling = _location_text(path)
             if spelling and not (source == "origin" and spelling in {"built-in", "frozen"}):
                 locations.append((spelling, source, kind))
         except Exception:
-            pass  # One rejected location must not suppress independent evidence.
+            complete = False  # Independent locations still contribute evidence.
 
     spec = attribute(module, "__spec__")
     for source, path in (("loaded-file", attribute(module, "__file__")),
@@ -935,7 +1020,11 @@ def _loaded_locations(module) -> tuple:
                 for path in paths:
                     location(path, source, "namespace")
         except Exception:
-            pass
+            complete = False
+    if not complete:
+        # The normal identity observer rejects this marker and sets established
+        # False. Do not turn a partial location copy into a reusable recording.
+        locations.append((object(), "unreadable-location", "file"))
     return tuple(locations)
 
 

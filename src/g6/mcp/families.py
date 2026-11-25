@@ -132,7 +132,7 @@ def _record_loaded_server(server_id: str, *, cached_describe: bool = False) -> N
     if extra := EXTRAS.get(server_id):
         extra = dependencies._plain_text(extra)
         if (cached_describe and previous is not None and previous[0] == extra
-                and previous[1] == dependencies._loaded_required_recording_key()):
+                and dependencies._loaded_required_recording_current(previous[1])):
             _RECORDED_SERVERS[server_id] = previous
             return
         recording_key = dependencies.record_loaded_required_imports()
