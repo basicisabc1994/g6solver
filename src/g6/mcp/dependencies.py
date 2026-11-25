@@ -308,6 +308,16 @@ def _refresh_path_ownership() -> set[str]:
     return blocked
 
 
+def _root_observations(roots: set[str]) -> dict:
+    """Probe live import objects before taking the ownership-store lock."""
+    observations = {}
+    for root in roots:
+        observed, absent, live = set(), set(), set()
+        identities, established = _root_identities(root, observed, absent, live_paths=live)
+        observations[root] = identities, established, observed, absent, live
+    return observations
+
+
 def _without_required_aliases(optional: set[str], required: set[str] | dict[str, tuple]) -> frozenset[str]:
     if isinstance(required, dict):
         # Loaded-module snapshots contain only their own copied locations.
@@ -319,15 +329,19 @@ def _without_required_aliases(optional: set[str], required: set[str] | dict[str,
             _required_paths.update(observed)
         return frozenset()
 
+    return frozenset(optional - required)
+
+
+def _without_observed_aliases(optional: set[str] | frozenset[str], required: set[str],
+                             observations: dict) -> frozenset[str]:
+    """Merge already-probed discovery evidence while the ownership lock is held."""
     identities = {}
     live_paths = {}
     aliases = {}
     blocked = required | _refresh_path_ownership()
-    for root in optional | required:
-        observed = set()
-        absent = set()
-        live_paths[root] = set()
-        identities[root], established = _root_identities(root, observed, absent, live_paths=live_paths[root])
+    for root, (identity, established, observed, absent, live) in observations.items():
+        identities[root] = identity
+        live_paths[root] = live
         history = _known_paths.setdefault(root, set())
         if observed:
             # Positive evidence of a different target retires the old alias's
@@ -519,18 +533,24 @@ def _optional_root_declarations(extras: str, required_extras: str):
 
 def optional_import_roots(extras: str, required_extras: str = "mcp") -> frozenset[str]:
     """Declared optional closure minus required ownership, refreshed for each discovery."""
+    # Metadata, finders and module/spec attributes can execute import code.
+    # None may run while another importer waits for our ownership store.
+    optional, required = _optional_root_declarations(extras, required_extras)
+    observations = _root_observations(optional | required)
     with _ownership_lock:
-        optional, required = _optional_root_declarations(extras, required_extras)
-        return _without_required_aliases(optional, required)
+        # Only startup recording enters the seam with an empty optional side.
+        if optional:
+            optional = _without_required_aliases(optional, required)
+        return _without_observed_aliases(optional, required, observations)
 
 
 def record_loaded_required_imports(required_extras: str = "mcp") -> None:
     """Record successful startup's loaded required files in the shared ownership store."""
+    _, required = _optional_root_declarations("", required_extras)
+    loaded = {root: module for root, module in sys.modules.copy().items()
+              if root in required and module is not None}
+    locations = {root: _loaded_locations(module) for root, module in loaded.items()}
     with _ownership_lock:
-        _, required = _optional_root_declarations("", required_extras)
-        loaded = {root: module for root, module in sys.modules.copy().items()
-                  if root in required and module is not None}
-        locations = {root: _loaded_locations(module) for root, module in loaded.items()}
         _without_required_aliases(set(), locations)
 
 
@@ -543,21 +563,27 @@ def _loaded_locations(module) -> tuple:
             return None
 
     locations = []
+
+    def location(path, source, kind):
+        try:
+            spelling = os.fspath(path)
+            if spelling and spelling not in {"built-in", "frozen"}:
+                if kind == "namespace":
+                    source = (source, spelling)
+                locations.append((spelling, source, kind))
+        except Exception:
+            pass  # One rejected location must not suppress independent evidence.
+
     spec = attribute(module, "__spec__")
     for source, path in (("loaded-file", attribute(module, "__file__")),
                          ("origin", attribute(spec, "origin"))):
-        try:
-            if path and path not in {"built-in", "frozen"}:
-                locations.append((os.fspath(path), source, "file"))
-        except Exception:
-            pass  # One failed location must not suppress independent evidence.
+        location(path, source, "file")
     for source, paths in (("loaded-locations", attribute(module, "__path__")),
                           ("spec-locations", attribute(spec, "submodule_search_locations"))):
         try:
             if paths is not None:
                 for path in paths:
-                    spelling = os.fspath(path)
-                    locations.append((spelling, (source, spelling), "namespace"))
+                    location(path, source, "namespace")
         except Exception:
             pass
     return tuple(locations)

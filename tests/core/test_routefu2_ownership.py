@@ -872,3 +872,171 @@ def test_loaded_snapshot_freezes_each_namespace_provider(ownership, tmp_path, mo
     assert _roots(dependencies, SCOPES[2]) == frozenset()
     dependencies.optional_import_roots.cache_clear()
     assert _roots(dependencies, SCOPES[2]) == {OPTIONAL, other_alias}
+
+
+@pytest.mark.parametrize("entry", ("startup", "discovery"))
+@pytest.mark.parametrize("declarations", ("cold", "cached"))
+def test_ownership_lock_excludes_foreign_code(ownership, tmp_path, monkeypatch, entry, declarations):
+    import builtins
+
+    dependencies, specs = ownership
+    shared = tmp_path / "shared.py"
+    shared.write_text("value = 73\n", encoding="utf-8")
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, shared)
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+    arguments = ("", "mcp") if entry == "startup" else ("abstraction", "mcp")
+    if declarations == "cached":
+        dependencies._optional_root_declarations(*arguments)
+    events = []
+    owned = dependencies._ownership_lock._is_owned
+
+    def observe(label):
+        events.append((label, owned()))
+
+    class WatchedModule(ModuleType):
+        def __getattribute__(self, name):
+            observe("module." + name)
+            return super().__getattribute__(name)
+
+    class WatchedSpec(machinery.ModuleSpec):
+        def __getattribute__(self, name):
+            observe("spec." + name)
+            return super().__getattribute__(name)
+
+    class Location(os.PathLike):
+        def __fspath__(self):
+            observe("fspath")
+            return str(shared)
+
+    class NamespaceLocations:
+        def __iter__(self):
+            observe("namespace")
+            return iter((str(tmp_path),))
+
+    loaded = WatchedModule(REQUIRED)
+    spec = WatchedSpec(REQUIRED, loader=None, origin=str(shared), is_package=True)
+    spec.has_location = True
+    spec.submodule_search_locations = NamespaceLocations()
+    loaded.__spec__ = spec
+    loaded.__file__ = Location()
+    loaded.__path__ = NamespaceLocations()
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    requires = dependencies.metadata.requires
+    find_spec = dependencies.util.find_spec
+    import_module = builtins.__import__
+
+    def read_metadata(name):
+        observe("metadata")
+        return requires(name)
+
+    def find_module(name):
+        observe("find-spec")
+        return find_spec(name)
+
+    def run_import(*args, **kwargs):
+        observe("import")
+        return import_module(*args, **kwargs)
+
+    events.clear()
+    with monkeypatch.context() as watched:
+        watched.setattr(dependencies.metadata, "requires", read_metadata)
+        watched.setattr(dependencies.util, "find_spec", find_module)
+        watched.setattr(builtins, "__import__", run_import)
+        if entry == "startup":
+            dependencies.record_loaded_required_imports()
+        else:
+            assert _roots(dependencies, SCOPES[1]) == frozenset()
+    assert not [label for label, locked in events if locked], events
+    assert any(label.startswith("module.") for label, _ in events)
+    assert any(label.startswith("spec.") for label, _ in events)
+    assert any(label == "namespace" for label, _ in events)
+    assert any(label == "fspath" for label, _ in events)
+    if declarations == "cold":
+        assert any(label == "metadata" for label, _ in events)
+        assert any(label == "import" for label, _ in events)
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    specs.clear()
+    shared.unlink()
+    assert _roots(dependencies, SCOPES[2]) == frozenset()
+    dependencies.optional_import_roots.cache_clear()
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+
+
+@pytest.mark.parametrize("location", ("file", "origin", "module-namespace", "spec-namespace"))
+def test_loaded_unhashable_pathlike_keeps_required_ownership(ownership, tmp_path, monkeypatch, location):
+    dependencies, specs = ownership
+    namespace = location.endswith("namespace")
+    shared = tmp_path / ("shared" if namespace else "shared.py")
+    if namespace:
+        shared.mkdir()
+        optional_spec = machinery.ModuleSpec(OPTIONAL, loader=None, is_package=True)
+        optional_spec.submodule_search_locations = [str(shared)]
+    else:
+        shared.write_text("value = 73\n", encoding="utf-8")
+        optional_spec = util.spec_from_file_location(OPTIONAL, shared)
+    specs[OPTIONAL] = optional_spec
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+
+    class Location(os.PathLike):
+        __hash__ = None
+
+        def __fspath__(self):
+            return str(shared)
+
+    loaded = ModuleType(REQUIRED)
+    loaded.__spec__ = machinery.ModuleSpec(REQUIRED, loader=None)
+    if location == "file":
+        loaded.__file__ = Location()
+    elif location == "origin":
+        loaded.__spec__.origin = Location()
+    elif location == "module-namespace":
+        loaded.__path__ = [object(), "built-in", "frozen", Location()]
+    else:
+        loaded.__spec__.submodule_search_locations = [object(), "built-in", "frozen", Location()]
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    dependencies.record_loaded_required_imports()
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    specs.clear()
+    if namespace:
+        shared.rmdir()
+    else:
+        shared.unlink()
+    failure = ModuleNotFoundError("loaded required location disappeared", name=OPTIONAL)
+    assert not dependencies.optional_dependency_missing("abstraction", failure)
+    dependencies.optional_import_roots.cache_clear()
+    assert dependencies.optional_dependency_missing("abstraction", failure)
+
+
+def test_ownership_seam_keeps_two_positional_arguments(ownership, tmp_path, monkeypatch):
+    dependencies, specs = ownership
+    shared = tmp_path / "shared.py"
+    shared.write_text("value = 73\n", encoding="utf-8")
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, shared)
+    original = dependencies._without_required_aliases
+    calls = []
+    entry = "discovery"
+
+    def two_arguments(optional, required, /):
+        assert dependencies._ownership_lock._is_owned()
+        assert bool(optional) == (entry != "startup")
+        assert REQUIRED in required
+        calls.append(bool(optional))
+        return original(optional, required)
+
+    monkeypatch.setattr(dependencies, "_without_required_aliases", two_arguments)
+    assert _roots(dependencies, SCOPES[0]) == {OPTIONAL}
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(shared)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    assert _roots(dependencies, SCOPES[1]) == frozenset()
+    entry = "startup"
+    dependencies.record_loaded_required_imports()
+    entry = "discovery"
+    assert dependencies.optional_import_roots("", required_extras="mcp") == frozenset()
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    specs.clear()
+    shared.unlink()
+    assert _roots(dependencies, SCOPES[2]) == frozenset()
+    dependencies.optional_import_roots.cache_clear()
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+    assert calls == [True, True, False, True, True]
