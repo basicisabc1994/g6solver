@@ -21,6 +21,7 @@ import hashlib
 import inspect
 import json
 import os
+import re
 import stat
 import struct
 import sys
@@ -393,7 +394,7 @@ def exception_detail(exc, fallback):
 
 
 def own_import_absent(exc, args):
-    """Missing modules/names belong only to held modules and unambiguous regular packages."""
+    """Read explicit host module ownership first, then unambiguous regular packages."""
     if not exception_matches(exc, ImportError):
         return False
     name = ImportError.__dict__['name'].__get__(exc)
@@ -405,8 +406,18 @@ def own_import_absent(exc, args):
         return True
     tree = os.path.normcase(os.path.realpath(globals().get('root', os.getcwd())))
     parts = name.split('.')
-    if missing_module and len(parts) == 1 and name in globals().get('data', {}).get('own_modules', ()):
+    owners = globals().get('data', {}).get('own_modules', ())
+    if missing_module and name in owners:
         return True
+    if not missing_module:
+        trace = BaseException.__dict__['__traceback__'].__get__(exc)
+        while trace is not None:
+            instruction = next((one for one in dis.get_instructions(trace.tb_frame.f_code)
+                                if one.offset == trace.tb_lasti), None)
+            if (instruction is not None and instruction.opname == 'IMPORT_FROM'
+                    and name + '.' + instruction.argval in owners):
+                return True
+            trace = trace.tb_next
 
     def guarded_export(file):
         # IMPORT_FROM supplies the requested name without parsing repository exception text.
@@ -494,7 +505,8 @@ def track_imports():
     def tracked(name, import_):
         frame = sys._getframe(1)
         tree = os.path.normcase(os.path.realpath(globals().get('root', os.getcwd())))
-        requested_here = False
+        # None means no caller could be attributed (for example a library callback on a worker thread).
+        requested_here = None
         # Attribute library helpers to their nearest repository caller. An import made while a library module
         # itself is loading is that module's request, not an optional dependency requested by the repository.
         while frame is not None:
@@ -505,6 +517,7 @@ def track_imports():
                 requested_here = True
                 break
             if frame.f_code.co_name == '<module>' and not filename.startswith('<frozen importlib.'):
+                requested_here = False
                 break
             frame = frame.f_back
         del frame
@@ -512,7 +525,8 @@ def track_imports():
             return load(name, import_)
         except ModuleNotFoundError as exc:
             missing = ImportError.__dict__['name'].__get__(exc)
-            if (requested_here and type(missing) is str and (missing == name or name.startswith(missing + '.'))
+            if (requested_here is not False and type(missing) is str
+                    and (missing == name or name.startswith(missing + '.'))
                     and not own_import_absent(exc, ())):
                 _missing_imports.append(exc)
                 _missing_import_requests.add(name)
@@ -640,6 +654,48 @@ def _import_roots(spec, roots=None):
 CODE_CARRIER_HELPERS = ('CODE_CARRIERS = ' + ascii(CODE_CARRIERS) + '\n'
                         + inspect.getsource(code_carriers) + '\n' + inspect.getsource(typed_code) + '\n')
 
+def shown_value(value, limit=200):
+    """Normalize object displays while retaining nested text and byte content."""
+    def display(item, active):
+        kind = type(item)
+        if isinstance(item, (str, bytes, bytearray)):
+            return repr(item)
+        if kind not in (list, tuple, dict, set, frozenset):
+            return re.sub(r" at 0x[0-9A-Fa-f]+", "", repr(item))
+        if id(item) in active:
+            return '{...}' if kind is dict else '[...]' if kind is list else '(...)'
+        active.add(id(item))
+        try:
+            if kind is dict:
+                return '{' + ', '.join(display(key, active) + ': ' + display(part, active)
+                                       for key, part in item.items()) + '}'
+            parts = ', '.join(display(part, active) for part in item)
+            if kind is list:
+                return '[' + parts + ']'
+            if kind is tuple:
+                return '(' + parts + (',' if len(item) == 1 else '') + ')'
+            if kind is set:
+                return '{' + parts + '}' if item else 'set()'
+            return 'frozenset({' + parts + '})' if item else 'frozenset()'
+        finally:
+            active.remove(id(item))
+
+    try:
+        text = display(value, set())
+    except BaseException as exc:
+        if raised_during_setup(exc) and execution_control(exc):
+            raise
+        if execution_control(exc):
+            raise
+        text = "<a value whose repr raised " + setup_call("exception_description", exception_name, type(exc)) + ">"
+    text = ''.join(ch if ch.isprintable() else json.dumps(ch, ensure_ascii=True)[1:-1] for ch in text)
+    text = text.replace(';', r'\u003b').replace('G6_E_', r'\u00476_E_')
+    return text if len(text) <= limit else text[:limit - 3] + "..."
+
+
+SHOWN_HELPER = inspect.getsource(shown_value).replace('def shown_value(', 'def _shown(', 1)
+
+
 BOOTSTRAP = (CODE_CARRIER_HELPERS + inspect.getsource(observable_exception) + '\n' + inspect.getsource(_fingerprint) + '\n'
              + inspect.getsource(raised_during_setup) + '\n' + inspect.getsource(execution_control) + '\n'
              + inspect.getsource(setup_outcome) + '\n'
@@ -679,20 +735,7 @@ def import_mark():
 def _name(kind):
     return setup_call("exception_description", exception_name, kind)
 
-def _shown(value, limit=200):
-    try:
-        text = repr(value)
-    except BaseException as exc:
-        if raised_during_setup(exc) and execution_control(exc):
-            raise
-        if execution_control(exc):
-            raise
-        text = "<a value whose repr raised " + _name(type(exc)) + ">"
-    if not isinstance(value, (str, bytes, bytearray)):
-        text = re.sub(r" at 0x[0-9A-Fa-f]+", "", text)
-    text = ''.join(ch if ch.isprintable() else json.dumps(ch, ensure_ascii=True)[1:-1] for ch in text)
-    text = text.replace(';', r'\u003b').replace('G6_E_', r'\u00476_E_')
-    return text if len(text) <= limit else text[:limit - 3] + "..."
+''' + SHOWN_HELPER + r'''
 
 def _attributes(value):
     # an object's own attributes, from its __dict__ and the __slots__ of its classes, or None when it has neither
@@ -882,7 +925,12 @@ except BaseException as exc:
         setup_failed(preparation, constructor=raised_during_setup(exc, 'constructor'))
     raise
 errors, outcomes, alive = {}, [], []
+# Preparation affects every case; imports attempted by one call belong to that case alone.
+preparation_imports = list(_missing_imports)
+preparation_requests = set(_missing_import_requests)
 for call in data["calls"]:
+    _missing_imports = list(preparation_imports)
+    _missing_import_requests = set(preparation_requests)
     args, kwargs = copy.deepcopy(call["args"]), copy.deepcopy(call.get("kwargs", {}))
     try:
         result = function(*args, **kwargs)
@@ -915,7 +963,7 @@ for call in data["calls"]:
             one["probe"] = ({"raised": None} if data["mode"] == "exceptions" else
                             {"returned": _bounded(_plain(result))})
         outcomes.append(one)
-    # Only this and later outcomes can have been affected. Never add a later mark to an earlier outcome.
+    # Retain shared preparation and this call's imports without marking independent cases.
     outcomes[-1].update(import_mark())
 payload = dumps({"version": "observation.v2", "outcomes": outcomes, "errors": errors},
                 sort_keys=True, allow_nan=False).encode("utf-8")

@@ -776,17 +776,30 @@ def _stable(verdict: dict, first: dict, again: dict | None) -> dict:
         return {"result": CHECK_ERROR, "detail": NOT_REPEATED.format(why=why)}
     shaky = {item["input"]: item for item in _differences(first.get("observations"), again.get("observations"))}
     unstable = [{"input": key, "base": item["base"], "base_again": item["patch"]} for key, item in shaky.items()]
-    kept = [item for item in verdict["differences"] if item["input"] not in shaky]
+    compared = ({_canonical(item['input']) for item in first.get('observations') or []}
+                & {_canonical(item['input']) for item in again.get('observations') or []})
+    missing = [item['input'] for item in verdict['differences'] if item['input'] not in compared]
+    kept = [item for item in verdict["differences"] if item["input"] in compared and item["input"] not in shaky]
     if not kept:
+        if missing:
+            return {'result': CHECK_ERROR, 'detail': NOT_REPEATED.format(
+                why='the repeat could not compare the changed inputs'), 'unavailable_repeat_inputs': missing}
         if verdict.get('unavailable_probe_inputs'):
             return {'result': CHECK_ERROR, 'detail': 'the comparable differences were unstable; other inputs '
                     'remain unavailable because their missing imports differ',
                     'unavailable_probe_inputs': verdict['unavailable_probe_inputs']}
         return {"result": NOT_REFUTED, "detail": UNSTABLE, "unstable": unstable}
     found = {**verdict, "differences": kept, **({"unstable": unstable} if unstable else {})}
+    if missing:
+        found['unavailable_repeat_inputs'] = missing
     if found["result"] == BEHAVIOUR_CHANGED:
         found["detail"] = (f"passes at the base commit and on the patch, and observes {len(kept)} input(s) differently"
                            + (f"; {len(unstable)} other(s) are unstable at the base commit" if unstable else ""))
+        if missing:
+            found['detail'] += '; other inputs could not be compared on the repeat'
+        if found.get('fallback_observation'):
+            found['detail'] += ('; the fallback was taken; the path with the missing imports '
+                                'satisfied was not observed')
     return found
 
 
@@ -802,32 +815,49 @@ def _import_pair(left: dict, right: dict | None) -> tuple[dict, dict | None]:
         return left, right
     failures = [one.get('failures', []) for one in evidence]
     compared = sorted(set(failures[0] + failures[1])) or list(range(max(map(len, marks))))
-    same = all((marks[0][index] if index < len(marks[0]) else []) ==
-               (marks[1][index] if index < len(marks[1]) else []) for index in compared)
-    if same:
-        def admitted(side, held):
-            if (side['result'] == 'error' and side.get('reason_code') != 'G6_E_OBSERVATION_UNAVAILABLE'):
-                return side
-            provisional = held.get('reading', {})
-            return {**{key: value for key, value in side.items() if key != 'reason_code'}, **provisional,
-                    'verdict': provisional['result']} if provisional else side
+    kept = [index for index in compared if
+            (marks[0][index] if index < len(marks[0]) else []) ==
+            (marks[1][index] if index < len(marks[1]) else [])]
+
+    def admitted(side, held):
+        if (side['result'] == 'error' and side.get('reason_code') != 'G6_E_OBSERVATION_UNAVAILABLE'):
+            return side
+        provisional = held.get('reading', {})
+        found = ({**{key: value for key, value in side.items() if key != 'reason_code'}, **provisional,
+                  'verdict': provisional['result']} if provisional else side)
+        names = sorted({name for group in held.get('outcomes', []) for name in group})
+        if found['result'] == 'passed' and names:
+            found = {**found, 'fallback_observation': {
+                'missing_imports': names, 'satisfied_import_path': 'not observed'}}
+        return found
+
+    if len(kept) == len(compared):
         return admitted(left, evidence[0]), admitted(right, evidence[1])
     # The lead retains a confirmed matching patch fallback, with an explicit unobserved-path qualification.
     if left['result'] == 'passed' and left.get('fallback_observation') and not left.get('owned_probe'):
         return left, right
-    provisional = [one.get('reading', side) for side, one in zip((left, right), evidence, strict=True)]
+    provisional = [admitted(side, one) for side, one in zip((left, right), evidence, strict=True)]
     if all(side.get('owned_probe') and side['result'] == 'passed' for side in provisional):
         # A later unavailable path cannot erase an earlier input the host can still compare. Keep only inputs
         # with the same import evidence on both trees; no output on a differing marked path supplies a finding.
-        kept = [index for index in compared if
-                (marks[0][index] if index < len(marks[0]) else []) ==
-                (marks[1][index] if index < len(marks[1]) else [])]
         comparable = [[candidate['observations'][index] for index in kept] for candidate in provisional]
-        if kept and _differences(*comparable):
+        if kept:
             return tuple({**{key: value for key, value in side.items() if key != 'reason_code'}, **candidate,
                           'verdict': 'passed', 'observations': observations,
                           'unavailable_probe_inputs': [index for index in compared if index not in kept]}
                          for side, candidate, observations in zip((left, right), provisional, comparable, strict=True))
+    elif (kept and any(index in kept for index in failures[0])
+          and all(not side.get('owned_probe') and side['result'] in ('passed', 'failed') for side in provisional)):
+        # Confirmed cases have independent expectations. Compare each failure only with the evidence on that case.
+        readings = []
+        for candidate, failed in zip(provisional, failures, strict=True):
+            remaining = [index for index in failed if index in kept]
+            result = 'failed' if remaining else 'passed'
+            readings.append({**candidate, 'result': result, 'verdict': result,
+                             'detail': ('the confirmed outcome did not match the observed call(s): ' + str(remaining)
+                                        if remaining else 'the comparable confirmed outcomes matched'),
+                             'unavailable_case_inputs': [index for index in compared if index not in kept]})
+        return tuple(readings)
     unavailable = {'result': 'error', 'detail': ObservationUnavailable.DETAIL,
                    'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE'}
     return {**left, **unavailable}, right
@@ -837,8 +867,12 @@ def classify(intent: str, on_patch: dict, at_base: dict | None) -> dict:
     on_patch, at_base = _import_pair(on_patch, at_base)
     found = _classify(intent, on_patch, at_base)
     if on_patch.get('unavailable_probe_inputs'):
-        found = {**found, 'unavailable_probe_inputs': on_patch['unavailable_probe_inputs'],
+        found = {**found, **({'result': CHECK_ERROR} if found['result'] == NOT_REFUTED else {}),
+                 'unavailable_probe_inputs': on_patch['unavailable_probe_inputs'],
                  'detail': found['detail'] + '; other inputs remain unavailable because their missing imports differ'}
+    if on_patch.get('unavailable_case_inputs'):
+        found = {**found, 'unavailable_case_inputs': on_patch['unavailable_case_inputs'],
+                 'detail': found['detail'] + '; other cases remain unavailable because their missing imports differ'}
     if on_patch['result'] == 'passed' and on_patch.get('fallback_observation'):
         found = {**found, 'fallback_observation': on_patch['fallback_observation'],
                  'detail': found['detail'] + '; the fallback was taken; the path with the missing imports '

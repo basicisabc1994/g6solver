@@ -102,7 +102,7 @@ from g6.harness.behaviour_runner import (
     CheckSetupError, bind_method, example_text, runtime_method, setup_call,
     raised_during_setup, exception_name, exception_matches, exception_detail, exception_message,
     target_attribute, call_absent, register_setup_error, CODE_CARRIER_HELPERS, ObservationUnavailable, own_import_absent,
-    execution_control, setup_outcome,
+    execution_control, setup_outcome, SHOWN_HELPER, _portable_source,
 )
 from g6.workforce import repo_tests
 
@@ -837,10 +837,10 @@ def _located(target: Target) -> list[str]:
 
 
 def _own_modules(tree: Tree, target: Target, side: str) -> dict:
-    """Host owners, including deletions; large inventories retain only reachable import names.
+    """Host owners at every depth, including deletions and namespace portions.
 
-    A computed import name in a large tree refuses admission rather than dropping its ownership evidence.
-    The same compiled-source ceiling is used for an inventory that cannot be made small enough.
+    Prune large inventories only when every reachable source has literal imports and no possible importing call.
+    Otherwise retain the inventory for the runner channel rather than guess what a call can import.
     """
     paths = (set(getattr(tree, 'known', ())) | set(getattr(tree, 'at_base', ()))
              | set(getattr(getattr(tree, 'change', None), 'files', ())))
@@ -851,12 +851,14 @@ def _own_modules(tree: Tree, target: Target, side: str) -> dict:
             if not path.startswith(prefix):
                 continue
             rel = path[len(prefix):]
-            name = rel[:-12] if rel.endswith('/__init__.py') else rel[:-3] if rel.endswith('.py') else ''
-            if name.isidentifier():
-                modules.add(name)
             if rel.endswith('.py'):
                 module = rel[:-12] if rel.endswith('/__init__.py') else rel[:-3]
-                files.setdefault(module.replace('/', '.'), []).append(path)
+                parts = module.split('/')
+                if not all(part.isidentifier() for part in parts):
+                    continue
+                modules.update('.'.join(parts[:end]) for end in range(1, len(parts) + 1))
+                files.setdefault('.'.join(parts), []).append(path)
+    full = {'own_modules': sorted(modules)} if modules else {}
     if len(json.dumps(sorted(modules))) > 8192:
         wanted, visited, pending = set(), set(), [target.module]
         while pending:
@@ -866,8 +868,8 @@ def _own_modules(tree: Tree, target: Target, side: str) -> dict:
             visited.add(module)
             tree.in_time()
             if len(visited) > 1024:
-                raise Inapplicable('its compiled check would hold more than 64 kilobytes')
-            wanted.add(module.split('.')[0])
+                return full
+            wanted.update('.'.join(module.split('.')[:end]) for end in range(1, len(module.split('.')) + 1))
             for rel in files.get(module, ()):
                 for on in dict.fromkeys((side, PATCH, BASE)):
                     if not tree.has(rel, on):
@@ -878,31 +880,31 @@ def _own_modules(tree: Tree, target: Target, side: str) -> dict:
                             names = []
                             if isinstance(node, ast.Import):
                                 names = [one.name for one in node.names]
+                                if any(name not in modules for name in names):
+                                    return full
                             elif isinstance(node, ast.ImportFrom):
+                                if any(one.name == '*' for one in node.names):
+                                    return full
                                 package = module.split('.') if rel.endswith('/__init__.py') else module.split('.')[:-1]
+                                if node.level > len(package):
+                                    return full
                                 head = '.'.join(package[:len(package) - node.level + 1]) if node.level else ''
                                 parent = '.'.join(part for part in (head, node.module) if part)
+                                if parent not in modules:
+                                    return full
                                 names = [parent, *(parent + '.' + one.name for one in node.names)]
-                            elif isinstance(node, ast.Constant) and type(node.value) is str:
-                                # Literal library-helper imports and plugin names, without guessing computed names.
-                                names = [node.value.split(':')[0]]
                             elif isinstance(node, ast.Call):
-                                called = node.func.id if isinstance(node.func, ast.Name) else (
-                                    node.func.attr if isinstance(node.func, ast.Attribute) else '')
-                                if called in ('__import__', 'import_module', 'resolve_name') and (
-                                        not node.args or not isinstance(node.args[0], ast.Constant)
-                                        or type(node.args[0].value) is not str):
-                                    raise Inapplicable('its compiled check would hold more than 64 kilobytes')
+                                # Aliases, attribute chains and callbacks defeat spelling-based inference.
+                                return full
                             for name in names:
-                                wanted.add(name.split('.')[0])
+                                wanted.update('.'.join(name.split('.')[:end])
+                                              for end in range(1, len(name.split('.')) + 1))
                                 pending.extend('.'.join(name.split('.')[:end])
                                                for end in range(1, len(name.split('.')) + 1)
                                                if '.'.join(name.split('.')[:end]) in files)
                     except (ValueError, SyntaxError):
-                        raise Inapplicable('its compiled check would hold more than 64 kilobytes') from None
+                        return full
         modules.intersection_update(wanted)
-        if len(json.dumps(sorted(modules))) > 8192:
-            raise Inapplicable('its compiled check would hold more than 64 kilobytes')
     return {'own_modules': sorted(modules)} if modules else {}
 
 
@@ -1478,7 +1480,7 @@ import pytest
 _LEGACY_COMMON = ("\n" + CODE_CARRIER_HELPERS + inspect.getsource(CheckSetupError) + "\n" + inspect.getsource(raised_during_setup)
                   + "\n" + inspect.getsource(execution_control)
                   + "\n" + inspect.getsource(setup_outcome)
-                  + "\n" + inspect.getsource(ObservationUnavailable) + "\n" + inspect.getsource(own_import_absent)
+                  + "\n" + inspect.getsource(ObservationUnavailable) + "\n" + _portable_source(own_import_absent)
                   + "\n" + inspect.getsource(exception_name) + "\n" + inspect.getsource(exception_matches)
                   + "\n" + inspect.getsource(exception_detail) + "\n" + inspect.getsource(setup_call)
                   + "\n" + inspect.getsource(exception_message)
@@ -1526,20 +1528,7 @@ def _name(kind):
     return exception_name(kind)
 
 
-def _shown(value, limit=200):
-    try:
-        text = repr(value)
-    except BaseException as exc:
-        if raised_during_setup(exc) and execution_control(exc):
-            raise
-        if execution_control(exc):
-            raise
-        text = "<a value whose repr raised " + _name(type(exc)) + ">"
-    if not isinstance(value, (str, bytes, bytearray)):
-        text = re.sub(r" at 0x[0-9A-Fa-f]+", "", text)
-    text = ''.join(ch if ch.isprintable() else json.dumps(ch, ensure_ascii=True)[1:-1] for ch in text)
-    text = text.replace(';', r'\\u003b').replace('G6_E_', r'\\u00476_E_')
-    return text if len(text) <= limit else text[:limit - 3] + "..."
+@G6_DISPLAY_HELPER@
 
 
 def _raised(exc):
@@ -1579,6 +1568,9 @@ def _fail(failures, raised):
         pytest.fail("\\n".join([summary] + raised[:5]))
 """
 
+_LEGACY_COMMON = _LEGACY_COMMON.replace('@G6_DISPLAY_HELPER@', SHOWN_HELPER)
+
+
 def _text(ident: str, body: str) -> str:
     """A template's fixed text: the header, its id, the shared helpers, the slot for the bindings, and its body."""
     header, common = _LEGACY_HEADER, _LEGACY_COMMON
@@ -1598,7 +1590,23 @@ def compile_text(definition: TemplateDefinition, data: dict, *, tree: Tree | Non
     literal = ascii(data)
     if ast.literal_eval(literal) != data:
         raise ValueError("the bindings do not read back as the same literal")
-    return definition.text.replace(SLOT, literal)
+    source = definition.text.replace(SLOT, literal)
+    if len(source.encode('utf-8')) > vs.MAX_SOURCE_BYTES and 'own_modules' in data:
+        import base64
+        import zlib
+        from g6.harness import behaviour_runner as runner
+
+        # Reuse the portable reproduction representation before falling back to host channel custody.
+        packed = base64.b85encode(zlib.compress(source.encode('utf-8'), 9)).decode('ascii')
+        compact = (runner.COMPACT + 'CODE_Z85 = ' + ascii(packed)
+                   + '\nimport base64, zlib\nexec(zlib.decompress(base64.b85decode(CODE_Z85)))\n')
+        if len(compact.encode('utf-8')) <= vs.MAX_SOURCE_BYTES:
+            return runner.ExecutableSource(compact, data)
+        # The product runner receives the full inventory through request(data), independent of this literal.
+        source = definition.text.replace(SLOT, ascii({key: value for key, value in data.items()
+                                                     if key != 'own_modules'}))
+        return runner.ExecutableSource(source, data)
+    return source
 
 
 # Retain the four fixed diagnostic producers of _LEGACY_EXAMPLE and _EXAMPLE before 7da85ef8.
