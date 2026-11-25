@@ -80,6 +80,36 @@ class _Declarations(ast.NodeVisitor):
         self.stars = []
         self.globals = set()
         self.nonlocals = set()
+        self.values = {}
+        self.loop_loads = set()
+
+    def value(self, target, value):
+        for node in ast.walk(target):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                self.values.setdefault(node.id, []).append(value)
+
+    def visit_Assign(self, node):
+        for target in node.targets:
+            self.value(target, node.value)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node):
+        if node.value is not None:
+            self.value(node.target, node.value)
+        self.generic_visit(node)
+
+    visit_AugAssign = visit_AnnAssign
+    visit_NamedExpr = visit_AnnAssign
+
+    def visit_For(self, node):
+        self.value(node.target, node.iter)
+        self.visit_While(node)
+
+    visit_AsyncFor = visit_For
+
+    def visit_While(self, node):
+        self.loop_loads.update(child for child in ast.walk(node) if isinstance(child, ast.Name))
+        self.generic_visit(node)
 
     def bind(self, name, origin=None):
         self.bindings.setdefault(name, set()).add(origin)
@@ -232,6 +262,8 @@ class _BindingScope:
                 if arg is not None:
                     declarations.bind(arg.arg)
         self.kind, self.parent = kind, parent
+        self.values = declarations.values
+        self.loop_loads = declarations.loop_loads
         self.import_lines = declarations.import_lines
         self.stars = declarations.stars
         self.gates = _GateFlow(nodes)
@@ -278,7 +310,8 @@ class _BindingScope:
             return outer.origin(name, node, deferred=True) if outer is not None else None
         if name in self.local:
             origin = self.origin(name, node, deferred=deferred and self.kind == 'module')
-            if self.kind != 'class' or origin is not None or self.stable.get(name) is None:
+            if (self.kind != 'class' or origin is not None or self.stable.get(name) is None
+                    or node in self.loop_loads):
                 return origin
             # Class loads without an established import fall through to the
             # globals, never to an enclosing class's namespace.
@@ -288,6 +321,19 @@ class _BindingScope:
                 outer = outer.parent
         return outer.lookup(name, node, deferred=deferred or self.kind in {'function', 'comprehension'}) if outer else None
 
+    def value_scope(self, name):
+        if name in self.globals:
+            root = self
+            while root.parent is not None:
+                root = root.parent
+            return root
+        if name in self.local:
+            return self
+        outer = self.parent
+        while outer is not None and outer.kind == 'class':
+            outer = outer.parent
+        return outer.value_scope(name) if outer is not None else None
+
 
 class _Bindings(ast.NodeVisitor):
     """Locate lexical scopes and their guaranteed imports, without call effects."""
@@ -295,11 +341,13 @@ class _Bindings(ast.NodeVisitor):
     def __init__(self, tree):
         self.scope = _BindingScope('module', None, tree.body)
         self.origins = {}
+        self.scopes = {}
         self.visit(tree)
 
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load):
             self.origins[node] = self.scope.lookup(node.id, node)
+            self.scopes[node] = self.scope
 
     def block(self, nodes):
         for node in nodes:
@@ -315,6 +363,7 @@ class _Bindings(ast.NodeVisitor):
             self.visit(node.returns)
         outer = self.scope
         self.scope = _BindingScope('function', outer, node.body, node.args)
+        self.defaults(node.args)
         self.block(node.body)
         self.scope = outer
 
@@ -324,6 +373,7 @@ class _Bindings(ast.NodeVisitor):
         self.block([value for value in (*node.args.defaults, *node.args.kw_defaults) if value is not None])
         outer = self.scope
         self.scope = _BindingScope('function', outer, [node.body], node.args)
+        self.defaults(node.args)
         self.visit(node.body)
         self.scope = outer
 
@@ -350,11 +400,52 @@ class _Bindings(ast.NodeVisitor):
     visit_DictComp = visit_ListComp
     visit_GeneratorExp = visit_ListComp
 
+    def defaults(self, args):
+        positional = [*args.posonlyargs, *args.args]
+        for arg, value in zip(positional[len(positional) - len(args.defaults):], args.defaults):
+            self.scope.values.setdefault(arg.arg, []).append(value)
+        for arg, value in zip(args.kwonlyargs, args.kw_defaults):
+            if value is not None:
+                self.scope.values.setdefault(arg.arg, []).append(value)
+
+    def module_value(self, node, seen=frozenset()):
+        """Conservatively retain module values through simple lexical bindings.
+
+        Containers carry their elements' possibilities; indexing cannot make a
+        module inside a literal container into text. Calls normally produce
+        data, rather than lending their receiver's module identity to the result.
+        """
+        if isinstance(node, ast.Name):
+            if self.origins.get(node) is not None:
+                return True
+            scope = self.scopes.get(node)
+            owner = scope.value_scope(node.id) if scope is not None else None
+            key = (owner, node.id)
+            if owner is None or key in seen:
+                return False
+            return any(self.module_value(value, seen | {key}) for value in owner.values.get(node.id, []))
+        if isinstance(node, ast.Subscript):
+            return self.module_value(node.value, seen)
+        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+            return any(self.module_value(value, seen) for value in node.elts)
+        if isinstance(node, ast.Dict):
+            return any(self.module_value(value, seen) for value in node.values)
+        if isinstance(node, ast.Attribute):
+            return self.module_value(node.value, seen)
+        if isinstance(node, ast.BinOp):
+            return self.module_value(node.left, seen) or self.module_value(node.right, seen)
+        if isinstance(node, ast.IfExp):
+            return self.module_value(node.body, seen) or self.module_value(node.orelse, seen)
+        if isinstance(node, ast.Call):
+            return ast.unparse(node.func) in {'__import__', 'importlib.import_module'}
+        return False
+
 
 def unguarded_calls(source):
     """Admit named collaborator operations; refuse unknown or indirect calls."""
     tree = ast.parse(source)
-    bindings = _Bindings(tree).origins
+    analysis = _Bindings(tree)
+    bindings = analysis.origins
     # Retain the earlier import-map refusals alongside lexical allowances.
     imports = {alias.asname or alias.name.split('.')[0]: alias.name
                for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
@@ -403,6 +494,8 @@ def unguarded_calls(source):
                 and isinstance(parent, ast.Call) and parent.func is node and len(parent.args) >= 2):
             return False
         root = node.value
+        if analysis.module_value(root):
+            return False
         if any(isinstance(child, ast.Name) and (child.id in imports or bindings.get(child) is not None)
                for child in ast.walk(root)):
             return False
@@ -447,6 +540,17 @@ def unguarded_calls(source):
         parent = parents.get(node)
         callee = isinstance(parent, ast.Call) and parent.func is node
         receiver = isinstance(parent, ast.Attribute) and parent.value is node
+        if not callee:
+            dynamic = ({'getattr', '__import__', 'exec', 'eval', 'compile', 'importlib.import_module'}
+                       | {'builtins.' + name for name in ('getattr', '__import__', 'exec', 'eval', 'compile')})
+            if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(getattr(node, 'ctx', None), ast.Load):
+                root = node
+                while isinstance(root, ast.Attribute):
+                    root = root.value
+                origin = bindings.get(root) if isinstance(root, ast.Name) else None
+                canonical = (origin + ast.unparse(node)[len(root.id):]) if origin else ast.unparse(node)
+                if canonical in dynamic or ast.unparse(node) in dynamic:
+                    found.add((node.lineno, ast.unparse(node)))
         if isinstance(node, ast.Attribute) and node.attr in {'__dict__', '__globals__', '__builtins__', '__self__'}:
             found.add((node.lineno, ast.unparse(node)))
         key = (node.slice if isinstance(node, ast.Subscript) else
