@@ -110,6 +110,7 @@ class _Opened:
     fd: int | None
     mode: int | None
     identity: tuple[int, int] | None = None
+    ancestors: tuple[_Opened, ...] = ()
 
 
 class _WindowsAPI:
@@ -134,9 +135,16 @@ class _WindowsAPI:
             function.argtypes, function.restype = args, result
 
     def open(self, path: Path, readable: bool) -> int:
+        return self._open(path, 0x80000000 if readable else 0x80)
+
+    def open_directory(self, path: Path) -> int:
+        # Listing plus attribute access makes pins participate in share checks;
+        # attributes alone do not reliably refuse a later DELETE-access open.
+        return self._open(path, 0x81)
+
+    def _open(self, path: Path, access: int) -> int:
         # Share reads/writes with Archive.append, but exclude delete sharing.
         # Attribute-only ancestors can move: final-name checks refuse a swap.
-        access = 0x80000000 if readable else 0x80  # GENERIC_READ / FILE_READ_ATTRIBUTES
         handle = self.kernel.CreateFileW(str(path), access, 3, None, 3, 0x02200000, None)
         if handle == self.ctypes.c_void_p(-1).value:
             code = self.ctypes.get_last_error()
@@ -176,10 +184,61 @@ class _WindowsAPI:
             raise self.ctypes.WinError(self.ctypes.get_last_error())
         return info.volume, (info.index_high << 32) | info.index_low
 
+    def directory_identity(self, handle: int) -> tuple[int, bytes]:
+        # Root bookkeeping is separate from the per-origin identity query.
+        # FILE_ID_INFO holds the volume serial followed by a 128-bit file ID.
+        class FileId(self.ctypes.Structure):
+            _fields_ = [("volume", self.ctypes.c_ulonglong), ("identifier", self.ctypes.c_ubyte * 16)]
+
+        info = FileId()
+        if not self.kernel.GetFileInformationByHandleEx(handle, 18, self.ctypes.byref(info), self.ctypes.sizeof(info)):
+            raise self.ctypes.WinError(self.ctypes.get_last_error())
+        return info.volume, bytes(info.identifier)
+
+
+def _directory_open_error(exc: OSError, path: Path, name: str | None, parent: int | None) -> None:
+    """O_DIRECTORY may report ENOTDIR for either a link or a regular file."""
+    if exc.errno == errno.ELOOP:
+        raise ValueError(f"archive links are refused: {path}") from exc
+    if exc.errno == errno.ENOTDIR:
+        info = os.stat(name if name is not None else path.anchor, dir_fd=parent, follow_symlinks=False)
+        if stat.S_ISLNK(info.st_mode):
+            raise ValueError(f"archive links are refused: {path}") from exc
+
+
+@contextmanager
+def _open_directory_at(path: Path, parent: _Opened, *, identify: bool):
+    """Open one child of a held directory, without rebuilding its ancestry."""
+    windows = _WindowsAPI() if os.name == "nt" else None
+    handle = None
+    try:
+        if windows:
+            handle = windows.open_directory(path)
+            actual, mode = windows.describe(handle, path)
+            if _path_key(actual.parent) != _path_key(parent.path):
+                raise ValueError(f"archive path escapes source: {path}")
+            identity = windows.file_identity(handle) if identify else None
+        else:
+            flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC | os.O_DIRECTORY
+            try:
+                handle = os.open(path.name, flags, dir_fd=parent.fd)
+            except OSError as exc:
+                _directory_open_error(exc, path, path.name, parent.fd)
+                raise
+            info = os.fstat(handle)
+            actual, mode = path, info.st_mode
+            identity = (info.st_dev, info.st_ino)
+        if not stat.S_ISDIR(mode):
+            raise NotADirectoryError(errno.ENOTDIR, "origin path is not a folder")
+        yield _Opened(actual, handle, mode, identity)
+    finally:
+        if handle is not None:
+            windows.kernel.CloseHandle(handle) if windows else os.close(handle)
+
 
 @contextmanager
 def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False, readable: bool = False,
-                 directory: bool = False, identify: bool = False):
+                 directory: bool = False, identify: bool = False, parent: _Opened | None = None):
     """Walk top down without following links; keep every handle through the read.
 
     Windows checks each handle's final name, refusing redirected traversal even
@@ -189,7 +248,14 @@ def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False,
     path = _absolute_path(path)
     if root is not None and not _within(path, root):
         raise ValueError(f"archive path escapes source: {path}")
+    if parent is not None:
+        if not directory or readable or missing or path.parent != parent.path:
+            raise ValueError("invalid relative directory open")
+        with _open_directory_at(path, parent, identify=identify) as opened:
+            yield opened
+        return
     handles = []
+    ancestors = []
     content_fd = None
     windows = _WindowsAPI() if os.name == "nt" else None
     current, actual = Path(path.anchor), Path(path.anchor)
@@ -199,9 +265,10 @@ def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False,
             if component is not None:
                 current = actual / component
             last = index == len(components) - 1
+            parent_fd = handles[-1] if handles else None
             try:
                 if windows:
-                    handle = windows.open(current, (readable or directory) and last)
+                    handle = windows.open_directory(current) if directory else windows.open(current, readable and last)
                     handles.append(handle)
                     previous = actual
                     actual, mode = windows.describe(handle, current)
@@ -214,9 +281,10 @@ def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False,
                     if not last or directory:
                         flags |= os.O_DIRECTORY
                     handle = os.open(component if component is not None else path.anchor,
-                                     flags, dir_fd=handles[-1] if handles else None)
+                                     flags, dir_fd=parent_fd)
                     handles.append(handle)
-                    mode = os.fstat(handle).st_mode
+                    info = os.fstat(handle)
+                    mode = info.st_mode
                     actual = current
             except FileNotFoundError:
                 if not missing:
@@ -225,11 +293,13 @@ def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False,
                 yield _Opened(current.joinpath(*path.parts[index + 1:]), None, None)
                 return
             except OSError as exc:
-                if not windows and exc.errno in (errno.ELOOP, errno.ENOTDIR):
-                    raise ValueError(f"archive links are refused: {path}") from exc
+                if not windows:
+                    _directory_open_error(exc, path, component, parent_fd)
                 raise
             if not last and not stat.S_ISDIR(mode):
                 raise ValueError(f"forbidden archive path: {path}")
+            if directory:
+                ancestors.append(_Opened(actual, handle, mode, None if windows else (info.st_dev, info.st_ino)))
         if directory and not stat.S_ISDIR(mode):
             raise ValueError("source root is missing or unreadable")
         if readable:
@@ -242,13 +312,13 @@ def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False,
             else:
                 content_fd = handles[-1]
         identity = None
-        if directory and identify:
+        if directory and (identify or not windows):
             if windows:
                 identity = windows.file_identity(handles[-1])
             else:
                 info = os.fstat(handles[-1])
                 identity = info.st_dev, info.st_ino
-        yield _Opened(actual, content_fd, mode, identity)
+        yield _Opened(actual, handles[-1] if directory else content_fd, mode, identity, tuple(ancestors[:-1]))
     finally:
         if windows and content_fd is not None:
             os.close(content_fd)
@@ -291,13 +361,16 @@ class Source:
     """Allowlisted relative reads, with no write API and no recursive discovery."""
 
     def __init__(self, root: Path, *, required: bool = False,
-                 evidence_files: dict | None = None, evidence_prefix: str = ""):
+                 evidence_files: dict | None = None, evidence_prefix: str = "", _pins: _OriginPins | None = None):
         self.evidence_files = evidence_files
         self.evidence_prefix = evidence_prefix
         self.index_present = False
         self.index_excluded: list[dict] = []
         self.row_locations: dict[int, dict] = {}
-        if required:
+        self._pins = _pins
+        if _pins is not None:
+            self.root = _pins.root.path
+        elif required:
             try:
                 with _open_handle(root, directory=True) as opened:
                     self.root = _absolute_path(opened.path)
@@ -323,6 +396,8 @@ class Source:
         raw = str(rel).replace("\\", "/")
         if raw.startswith("/") or re.match(r"^[A-Za-z]:", raw) or ".." in raw.split("/"):
             raise ValueError(f"archive path must stay relative: {rel}")
+        if self._pins is not None:
+            return self._pins.path(raw)
         path = canonical_path(self.root / raw)
         if not _within(path, canonical_path(self.root)):
             raise ValueError(f"archive path escapes source: {rel}")
@@ -1276,7 +1351,86 @@ class _OriginPins:
     source: Path | None
     handles: ExitStack = field(default_factory=ExitStack)
     identities: dict[str, tuple[int, int] | None] = field(default_factory=dict)
-    folders: list[tuple[Path, Path, _Opened]] = field(default_factory=list)
+    folders: dict[str, tuple[Path, _Opened | None, _Opened]] = field(default_factory=dict)
+    distinct: dict[Any, _Opened] = field(default_factory=dict)
+    named: dict[str, _Opened] = field(default_factory=dict)
+    root: _Opened | None = None
+    archive: Source | None = None
+    failure: str | None = None
+
+    def folder_key(self, opened: _Opened) -> Any:
+        if os.name == "nt":
+            return _WindowsAPI().directory_identity(opened.fd)
+        return opened.identity
+
+    def start(self) -> Source:
+        if self.archive is None:
+            self.root = self.handles.enter_context(_open_handle(self.source, directory=True))
+            parent = None
+            for opened in (*self.root.ancestors, self.root):
+                self.folders[str(opened.path)] = opened.path, parent, opened
+                self.distinct[self.folder_key(opened)] = opened
+                parent = opened
+            self.archive = Source(self.root.path, _pins=self)
+        return self.archive
+
+    def path(self, raw: str) -> Path:
+        path = _absolute_path(self.root.path / raw)
+        if not _within(path, self.root.path):
+            raise ValueError(f"archive path escapes source: {raw}")
+        # Windows opens use the root handle's canonical path, never the
+        # caller's drive alias again. Check that each walk still starts there.
+        with ExitStack() as checking:
+            if os.name == "nt":
+                root = checking.enter_context(_open_handle(self.root.path, directory=True))
+                if self.folder_key(root) != self.folder_key(self.root):
+                    raise ValueError("source folders could not be held: the source root changed")
+            parent = self.root
+            for component in path.relative_to(self.root.path).parts:
+                child = parent.path / component
+                key = str(child)
+                if key not in self.folders:
+                    with ExitStack() as candidate:
+                        opened = candidate.enter_context(_open_handle(child, directory=True, parent=parent))
+                        identity = self.folder_key(opened)
+                        held = self.distinct.get(identity)
+                        if held is None:
+                            held = opened
+                            self.distinct[identity] = held
+                            self.handles.enter_context(candidate.pop_all())
+                        self.folders[key] = child, parent, held
+                parent = self.folders[key][2]
+            self.named[raw] = parent
+            return parent.path
+
+    def recheck(self) -> bool:
+        # Check origin names first, retaining the per-name rechecks and their
+        # stated case-insensitive POSIX swap limit. Then check shared ancestors.
+        if self.root is None:
+            return True
+        origins = {str(self.root.path / name) for name in self.named}
+        folders = sorted(self.folders.items(), key=lambda item: item[0] not in origins)
+        for _, (path, parent, held) in folders:
+            with _open_handle(path, directory=True, identify=True, parent=parent) as current:
+                if current.identity != held.identity:
+                    self.failure = "source folders could not be held: a pinned folder name changed"
+                    return False
+        return True
+
+
+def _source_hold_reason(exc: Exception) -> str:
+    prefix = "source folders could not be held: "
+    if isinstance(exc, OSError):
+        if getattr(exc, "winerror", None) == 32:
+            return prefix + "the origin folder is in use by another program"
+        return prefix + {
+            errno.EMFILE: "too many open files", errno.ENFILE: "too many open files",
+            errno.EACCES: "access denied", errno.EPERM: "access denied",
+            errno.ENOENT: "a folder is missing", errno.ENOTDIR: "a path is not a folder",
+        }.get(exc.errno, "identity or directory read failed")
+    if str(exc).startswith(prefix):
+        return str(exc)
+    return prefix + "identity or directory read failed"
 
 
 # Lookup hooks keep their two-argument interface. Each comparison owns its
@@ -1296,17 +1450,26 @@ def _origin_run_identity(run: Any, source: Path | None = None) -> str | tuple[in
         pins = _ORIGIN_PINS.get()
         if pins is not None and pins.source == source and run in pins.identities:
             return pins.identities[run]
+        if pins is not None and pins.source == source:
+            archive = pins.start()
+            archive.path(run)  # Preserve the source-path preflight hook.
+            opened = pins.named[run]
+            if os.name == "nt":
+                identity = _WindowsAPI().file_identity(opened.fd)
+            else:
+                info = os.fstat(opened.fd)
+                identity = info.st_dev, info.st_ino
+            pins.identities[run] = identity
+            return identity
         archive = Source(source)
         path = archive.path(run)
         walk = _open_handle(path, root=archive.root, directory=True, identify=True)
-        if pins is not None and pins.source == source:
-            opened = pins.handles.enter_context(walk)
-            pins.folders.append((path, archive.root, opened))
-            pins.identities[run] = opened.identity
-            return opened.identity
         with walk as opened:
             return opened.identity
-    except (OSError, RuntimeError, ValueError):
+    except (OSError, RuntimeError, ValueError) as exc:
+        pins = _ORIGIN_PINS.get()
+        if pins is not None and pins.source == source:
+            pins.failure = _source_hold_reason(exc)
         return None
 
 
@@ -1327,7 +1490,8 @@ def _origin_names_may_alias(left: str, right: str) -> bool:
         for a, b in zip(first, second))
 
 
-def _unique_origin_digests(cases: list[Case], *, source: Path | None = None) -> bool:
+def _unique_origin_digests(cases: list[Case], *, source: Path | None = None,
+                           failure: list[str] | None = None) -> bool:
     """An archived run supplies one final.patch across all bugs and cases."""
     digests = {}
     names = {}
@@ -1339,6 +1503,7 @@ def _unique_origin_digests(cases: list[Case], *, source: Path | None = None) -> 
                 name = origin.get("run")
                 run = _origin_run_identity(name, source)
                 if run is None:
+                    pins.failure = pins.failure or "source folders could not be held: an origin could not be identified"
                     return False
                 # A pinned exact name and its identity each bind one digest.
                 if names.setdefault(name, case.digest) != case.digest:
@@ -1352,22 +1517,25 @@ def _unique_origin_digests(cases: list[Case], *, source: Path | None = None) -> 
             # POSIX permits renaming open directories. Keep the original fds
             # held while checking that every no-follow name still reaches them.
             try:
-                for path, root, held in pins.folders:
-                    with _open_handle(path, root=root, directory=True, identify=True) as current:
-                        if current.identity != held.identity:
-                            return False
-            except (OSError, RuntimeError, ValueError):
+                if not pins.recheck():
+                    return False
+            except (OSError, RuntimeError, ValueError) as exc:
+                pins.failure = _source_hold_reason(exc)
                 return False
         return True
     finally:
         try:
-            pins.handles.close()
+            try:
+                if failure is not None and pins.failure is not None:
+                    failure.append(pins.failure)
+            finally:
+                pins.handles.close()
         finally:
             _ORIGIN_PINS.reset(token)
 
 
 def _current_evaluation(saved: dict, registration: Registration, start: dict | Path | None,
-                        *, source: Path | None = None) -> dict | None:
+                        *, source: Path | None = None, failure: list[str] | None = None) -> dict | None:
     if isinstance(start, Path):
         start = _batch_start(start)
     plan = saved["plan"]
@@ -1391,7 +1559,7 @@ def _current_evaluation(saved: dict, registration: Registration, start: dict | P
             if key in cases:
                 return None
             cases[key] = Case(**{**row, "patch": Path(row["patch"]), "source": Path()})
-        if not _unique_origin_digests(list(cases.values()), source=source):
+        if not _unique_origin_digests(list(cases.values()), source=source, failure=failure):
             return None
         # Reconstruct exactly what the writer sent, including the image's repo
         # and base substitutions and each agent call's own archived arguments.
@@ -1445,8 +1613,9 @@ def score_saved(saved: dict, registration: Registration | None = None, *, source
     plan = saved["plan"]
     version = saved.get("evidence_rule_version")
     newer = type(version) is int and version > EVIDENCE_RULE_VERSION
+    origin_failure = []
     if type(version) is int and version == EVIDENCE_RULE_VERSION:
-        result = _current_evaluation(saved, registration, start, source=source)
+        result = _current_evaluation(saved, registration, start, source=source, failure=origin_failure)
         if result is not None:
             return _score_result(result, version, "batch"), 0
 
@@ -1456,6 +1625,8 @@ def score_saved(saved: dict, registration: Registration | None = None, *, source
         unavailable = "newer evidence rules cannot be reviewed by this code"
     elif source is None:
         unavailable = "--source is required to re-derive saved evidence"
+    elif origin_failure:
+        unavailable = origin_failure[0]
     elif snapshot is not None:
         try:
             tasks = we.load_tasks()
@@ -1463,8 +1634,8 @@ def score_saved(saved: dict, registration: Registration | None = None, *, source
             cases, excluded = enumerate_cases(source, tasks, require_index=True, source_snapshot=fresh_snapshot)
             if not _json_equal(fresh_snapshot, snapshot):
                 raise ValueError("source identity, selection or evidence bytes changed")
-            if not _unique_origin_digests(cases, source=source):
-                raise ValueError("one origin run names different final patch digests")
+            if not _unique_origin_digests(cases, source=source, failure=origin_failure):
+                raise ValueError(origin_failure[0] if origin_failure else "one origin run names different final patch digests")
             # Labels come exclusively from the current source. Reuse only a
             # response to the same patch and review arguments in a current case.
             if (any(mode not in ("agent", "hook") for mode in plan["modes"])
@@ -1492,11 +1663,16 @@ def score_saved(saved: dict, registration: Registration | None = None, *, source
                               registration=registration)
             return _score_result(result, version, "source"), 0
         except (OSError, RuntimeError, ValueError) as exc:
-            unavailable = str(exc)
+            unavailable = _source_hold_reason(exc) if isinstance(exc, OSError) else str(exc)
 
     # Saved labels, omission flags and review outcomes have no authority here.
     # A global gap covers every enabled prediction, including observed kills.
-    gap = {"reason": "saved under a newer evidence rule than this code" if newer else "saved under an older evidence rule",
+    reason = "saved under an older evidence rule"
+    if newer:
+        reason = "saved under a newer evidence rule than this code"
+    elif type(version) is int and version == EVIDENCE_RULE_VERSION:
+        reason = unavailable
+    gap = {"reason": reason,
            "affects_denominator": True,
            "saved_evidence_rule_version": version, "current_evidence_rule_version": EVIDENCE_RULE_VERSION,
            "source_unavailable": unavailable}
