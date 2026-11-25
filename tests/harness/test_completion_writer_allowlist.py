@@ -76,6 +76,7 @@ class _Declarations(ast.NodeVisitor):
 
     def __init__(self):
         self.bindings = {}
+        self.import_lines = {}
         self.globals = set()
         self.nonlocals = set()
 
@@ -88,11 +89,15 @@ class _Declarations(ast.NodeVisitor):
 
     def visit_Import(self, node):
         for alias in node.names:
-            self.bind(alias.asname or alias.name.split('.')[0], alias.name if alias.asname else alias.name.split('.')[0])
+            name = alias.asname or alias.name.split('.')[0]
+            self.bind(name, alias.name if alias.asname else alias.name.split('.')[0])
+            self.import_lines[name] = min(node.lineno, self.import_lines.get(name, node.lineno))
 
     def visit_ImportFrom(self, node):
         for alias in node.names:
-            self.bind(alias.asname or alias.name, f'{node.module}.{alias.name}' if not node.level else None)
+            name = alias.asname or alias.name
+            self.bind(name, f'{node.module}.{alias.name}' if not node.level else None)
+            self.import_lines[name] = min(node.lineno, self.import_lines.get(name, node.lineno))
 
     def visit_Global(self, node):
         self.globals.update(node.names)
@@ -139,6 +144,8 @@ class _Declarations(ast.NodeVisitor):
 
 
 class _BindingScope:
+    """Lexical import allowances; any other binding refuses every use in scope."""
+
     def __init__(self, kind, parent, nodes, args=None):
         declarations = _Declarations()
         for node in nodes:
@@ -148,16 +155,17 @@ class _BindingScope:
                 if arg is not None:
                     declarations.bind(arg.arg)
         self.kind, self.parent = kind, parent
+        self.import_lines = declarations.import_lines
         self.globals, self.nonlocals = declarations.globals, declarations.nonlocals
         self.local = declarations.bindings.keys() - self.globals - self.nonlocals
-        self.env = {}
         self.stable = {name: next(iter(origins)) if len(origins) == 1 else None
                        for name, origins in declarations.bindings.items() if name in self.local}
-        # A deferred child can change an enclosing binding. Do not lend that
-        # name an import allowance in another deferred body.
+        # Execution order, callbacks and loop back edges give no allowance.
+        # Any descendant's write to an enclosing name removes that allowance
+        # throughout this scope, even if the descendant is never called.
         for node in nodes:
             for child in ast.walk(node):
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                     writes = _Declarations()
                     for statement in child.body:
                         writes.visit(statement)
@@ -165,190 +173,42 @@ class _BindingScope:
                         if name in self.stable:
                             self.stable[name] = None
 
-    def lookup(self, name, *, deferred=False):
+    def lookup(self, name, lineno):
         if name in self.globals:
             root = self
             while root.parent is not None:
                 root = root.parent
-            return self.env.get(name, root.stable.get(name))
+            return root.stable.get(name) if root.import_lines.get(name, 0) <= lineno else None
         if name in self.nonlocals:
             outer = self.parent
             while outer is not None and (outer.kind == 'class' or name not in outer.local):
                 outer = outer.parent
-            return self.env.get(name, outer.stable.get(name) if outer is not None else None)
+            return (outer.stable.get(name) if outer is not None and outer.import_lines.get(name, 0) <= lineno
+                    else None)
         if name in self.local:
-            if deferred:
-                return self.stable.get(name)
-            if name in self.env or self.kind in {'function', 'comprehension', 'generator'}:
-                return self.env.get(name)
-        if self.parent is None:
-            return None
+            return self.stable.get(name) if self.import_lines.get(name, 0) <= lineno else None
         outer = self.parent
-        if self.kind in {'function', 'comprehension', 'generator'}:
+        if self.kind in {'function', 'comprehension'}:
             while outer is not None and outer.kind == 'class':
                 outer = outer.parent
-        return outer.lookup(name, deferred=deferred or self.kind in {'function', 'generator'}) if outer is not None else None
+        return outer.lookup(name, lineno) if outer is not None else None
 
 
 class _Bindings(ast.NodeVisitor):
-    """Resolve imports at use sites; merge uncertain paths by refusing more."""
+    """Locate lexical scopes without simulating control flow or call effects."""
 
     def __init__(self, tree):
         self.scope = _BindingScope('module', None, tree.body)
         self.origins = {}
-        self.effects = {}
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                writes = _Declarations()
-                for statement in node.body:
-                    writes.visit(statement)
-                changed = writes.bindings.keys()
-                self.effects.setdefault(node.name, set()).update((writes.globals | writes.nonlocals) & changed)
         self.visit(tree)
 
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load):
-            self.origins[node] = self.scope.lookup(node.id)
-
-    def visit_Call(self, node):
-        self.generic_visit(node)
-        if isinstance(node.func, ast.Name):
-            for name in self.effects.get(node.func.id, ()):
-                self.scope.env[name] = None
-
-    def bind(self, target, origin=None):
-        if isinstance(target, ast.Name):
-            self.scope.env[target.id] = origin
-        elif isinstance(target, (ast.Tuple, ast.List)):
-            for child in target.elts:
-                self.bind(child)
-        elif isinstance(target, ast.Starred):
-            self.bind(target.value)
-        else:
-            self.visit(target)
-
-    def visit_Import(self, node):
-        for alias in node.names:
-            self.scope.env[alias.asname or alias.name.split('.')[0]] = alias.name if alias.asname else alias.name.split('.')[0]
-
-    def visit_ImportFrom(self, node):
-        for alias in node.names:
-            self.scope.env[alias.asname or alias.name] = f'{node.module}.{alias.name}' if not node.level else None
-
-    def visit_Assign(self, node):
-        self.visit(node.value)
-        for target in node.targets:
-            self.bind(target)
-
-    def visit_AnnAssign(self, node):
-        self.visit(node.annotation)
-        if node.value is not None:
-            self.visit(node.value)
-            self.bind(node.target)
-
-    def visit_AugAssign(self, node):
-        self.visit(node.target)
-        self.visit(node.value)
-        self.bind(node.target)
-
-    def visit_NamedExpr(self, node):
-        self.visit(node.value)
-        scope = self.scope
-        while self.scope.kind in {'comprehension', 'generator'}:
-            self.scope = self.scope.parent
-        self.bind(node.target)
-        self.scope = scope
-
-    def visit_Delete(self, node):
-        for target in node.targets:
-            self.bind(target)
+            self.origins[node] = self.scope.lookup(node.id, node.lineno)
 
     def block(self, nodes):
         for node in nodes:
             self.visit(node)
-
-    def branches(self, paths):
-        before = dict(self.scope.env)
-        outcomes = []
-        for path in paths:
-            self.scope.env = dict(before)
-            self.block(path)
-            outcomes.append(self.scope.env)
-        names = set().union(*(outcome.keys() for outcome in outcomes))
-        self.scope.env = {name: outcomes[0].get(name) if all(outcome.get(name) == outcomes[0].get(name)
-                                                          for outcome in outcomes) else None for name in names}
-
-    def visit_If(self, node):
-        self.visit(node.test)
-        self.branches([node.body, node.orelse])
-
-    def visit_For(self, node):
-        self.visit(node.iter)
-        self.bind(node.target)
-        self.branches([node.body, []])
-        self.block(node.orelse)
-
-    visit_AsyncFor = visit_For
-
-    def visit_While(self, node):
-        self.visit(node.test)
-        self.branches([node.body, []])
-        self.block(node.orelse)
-
-    def visit_With(self, node):
-        for item in node.items:
-            self.visit(item.context_expr)
-            if item.optional_vars is not None:
-                self.bind(item.optional_vars)
-        self.block(node.body)
-
-    visit_AsyncWith = visit_With
-
-    def visit_Try(self, node):
-        before = dict(self.scope.env)
-        self.block(node.body + node.orelse)
-        outcomes = [dict(self.scope.env)]
-        declarations = _Declarations()
-        for statement in node.body:
-            declarations.visit(statement)
-        # An exception may leave any prefix of the try body in effect.
-        interrupted = dict(before)
-        for name, origins in declarations.bindings.items():
-            if origins != {before.get(name)}:
-                interrupted[name] = None
-        for handler in node.handlers:
-            self.scope.env = dict(interrupted)
-            self.visit(handler)
-            outcomes.append(dict(self.scope.env))
-        outcomes.append(interrupted)
-        names = set().union(*(outcome.keys() for outcome in outcomes))
-        self.scope.env = {name: outcomes[0].get(name) if all(outcome.get(name) == outcomes[0].get(name)
-                                                          for outcome in outcomes) else None for name in names}
-        self.block(node.finalbody)
-
-    visit_TryStar = visit_Try
-
-    def visit_ExceptHandler(self, node):
-        if node.type is not None:
-            self.visit(node.type)
-        if node.name:
-            self.scope.env[node.name] = None
-        self.block(node.body)
-        if node.name:
-            self.scope.env[node.name] = None
-
-    def visit_Match(self, node):
-        self.visit(node.subject)
-        self.branches([[case] for case in node.cases] + [[]])
-
-    def visit_match_case(self, node):
-        self.visit(node.pattern)
-        declarations = _Declarations()
-        declarations.visit(node.pattern)
-        self.scope.env.update(dict.fromkeys(declarations.bindings))
-        if node.guard is not None:
-            self.visit(node.guard)
-        self.block(node.body)
 
     def visit_FunctionDef(self, node):
         self.block(node.decorator_list)
@@ -358,7 +218,6 @@ class _Bindings(ast.NodeVisitor):
                 self.visit(arg.annotation)
         if node.returns is not None:
             self.visit(node.returns)
-        self.scope.env[node.name] = None
         outer = self.scope
         self.scope = _BindingScope('function', outer, node.body, node.args)
         self.block(node.body)
@@ -379,17 +238,15 @@ class _Bindings(ast.NodeVisitor):
         self.scope = _BindingScope('class', outer, node.body)
         self.block(node.body)
         self.scope = outer
-        self.scope.env[node.name] = None
 
     def visit_ListComp(self, node):
+        # Python evaluates the first iterable in the enclosing lexical scope.
         self.visit(node.generators[0].iter)
         outer = self.scope
-        kind = 'generator' if isinstance(node, ast.GeneratorExp) else 'comprehension'
-        self.scope = _BindingScope(kind, outer, [part.target for part in node.generators])
+        self.scope = _BindingScope('comprehension', outer, [part.target for part in node.generators])
         for index, generator in enumerate(node.generators):
             if index:
                 self.visit(generator.iter)
-            self.bind(generator.target)
             self.block(generator.ifs)
         self.block([node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt])
         self.scope = outer
@@ -403,12 +260,15 @@ def unguarded_calls(source):
     """Admit named collaborator operations; refuse unknown or indirect calls."""
     tree = ast.parse(source)
     bindings = _Bindings(tree).origins
-    # Keep every prior refusal as well as applying reaching-binding checks.
+    # Retain the earlier import-map refusals alongside lexical allowances.
     imports = {alias.asname or alias.name.split('.')[0]: alias.name
                for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
     imports.update({alias.asname or alias.name: f'{node.module}.{alias.name}'
                     for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) for alias in node.names})
     defined = {node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
+    declared = (defined | imports.keys()
+                | {node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)}
+                | {node.arg for node in ast.walk(tree) if isinstance(node, ast.arg)})
     # These callback parameters are reviewed by name, not any unknown plain name.
     callbacks = {'host', 'scout', 'report_reader', 'make', 'say', 'mask', 'full', 'literal', 'own', 'by_row', 'numbered'}
     special = {'consent.guard(caller).complete', '_seen(rest).masked', '_seen(task).masked', '_seen(text).masked',
@@ -426,9 +286,31 @@ def unguarded_calls(source):
         if isinstance(node, ast.Name):
             origin = bindings.get(node)
             previous = imports.get(node.id)
-            return node.id == 'open' or any(value is not None and value.rsplit('.', 1)[-1] in WRITERS
-                                           for value in (origin, previous))
+            # A local data value named 'copy' is not a reference to shutil.copy.
+            # Imported writer aliases and their capture sites are still refused.
+            return (node.id == 'open' or node.id in WRITERS and node.id not in declared
+                    or any(value is not None and value.rsplit('.', 1)[-1] in WRITERS
+                           for value in (origin, previous)))
         return False
+
+    def gate_writer(node):
+        receiver = node
+        while isinstance(receiver, ast.Attribute):
+            receiver = receiver.value
+        if not isinstance(receiver, ast.Name):
+            return False
+        origin = bindings.get(receiver)
+        canonical = (origin or '') + ast.unparse(node)[len(receiver.id):]
+        return canonical.startswith('g6.harness._completion_storage.') and allowed(node)
+
+    def text_replace(node, parent):
+        if not (isinstance(node, ast.Attribute) and node.attr == 'replace'
+                and isinstance(parent, ast.Call) and parent.func is node and len(parent.args) >= 2):
+            return False
+        root = node.value
+        return (isinstance(root, (ast.Constant, ast.JoinedStr, ast.Subscript))
+                or isinstance(root, ast.Name) and root.id in {'text', 'data'}
+                or isinstance(root, ast.Call) and isinstance(root.func, ast.Attribute) and root.func.attr == 'replace')
 
     def allowed(node, *, captured=False):
         return permitted(node, captured=captured, scoped=True) and permitted(node, captured=captured, scoped=False)
@@ -467,7 +349,9 @@ def unguarded_calls(source):
         parent = parents.get(node)
         callee = isinstance(parent, ast.Call) and parent.func is node
         receiver = isinstance(parent, ast.Attribute) and parent.value is node
-        if not callee and (writer_reference(node) or isinstance(node, ast.Attribute) and not receiver
+        if (writer_reference(node) and (not callee or not gate_writer(node) and not text_replace(node, parent))):
+            found.add((node.lineno, ast.unparse(node)))
+        if not callee and (isinstance(node, ast.Attribute) and not receiver
                            and node.attr not in DATA_ATTRIBUTES and ast.unparse(node) != 'run.reserve'
                            and not allowed(node, captured=True)):
             found.add((node.lineno, ast.unparse(node)))

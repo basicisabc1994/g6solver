@@ -88,11 +88,13 @@ class _Publication:
         self.previous = _snapshot(self.target)
         self.written = dict(self.previous)
         self.spares = {}
+        self.spare_paths = {item: item for item in retained_paths(self.target)[2:]}
         self.active = True
         self.thread = threading.get_ident()
 
     def includes(self, target: Path) -> bool:
-        return self.active and self.thread == threading.get_ident() and target in retained_paths(self.target)
+        return (self.active and self.thread == threading.get_ident()
+                and (target in retained_paths(self.target) or target in self.spare_paths.values()))
 
     def wrote(self, target: Path, body: bytes) -> None:
         if target in self.written:
@@ -109,7 +111,9 @@ class _TaskWrite:
         self.active = True
 
     def includes(self, target: Path) -> bool:
-        return self.active and self.thread == threading.get_ident() and target in retained_paths(self.target)
+        return (self.active and self.thread == threading.get_ident()
+                and (target in retained_paths(self.target)
+                     or self.attempt is not None and target in self.attempt.spare_paths.values()))
 
 
 @contextmanager
@@ -231,7 +235,7 @@ def _file_identity(target: Path) -> tuple[int, int]:
 
 def _reserve_spare(target: Path, attempt: _Publication | None) -> None:
     target = path(target)
-    if attempt is None or target not in retained_paths(attempt.target)[2:]:
+    if attempt is None or target not in attempt.spare_paths.values():
         return
     if target.is_file() and attempt.spares.get(target) == _file_identity(target):
         return
@@ -243,9 +247,67 @@ def _reserve_spare(target: Path, attempt: _Publication | None) -> None:
 class _RetainedPath(type(Path())):
     """Route the bound producer's spare writes through creation ownership."""
 
+    def with_name(self, name: str) -> Path:
+        locations = getattr(self, '_spare_paths', {})
+        requested = super().with_name(name)
+        selected = _RetainedPath(locations.get(Path(requested), requested))
+        selected._spare_paths = locations
+        return selected
+
+    def with_suffix(self, suffix: str) -> Path:
+        selected = _RetainedPath(super().with_suffix(suffix))
+        selected._spare_paths = getattr(self, '_spare_paths', {})
+        return selected
+
     def write_bytes(self, body: bytes) -> int:
         write_bytes(Path(self), body)
         return len(body)
+
+
+def _clear_spare_cleanup(spare: Path) -> None:
+    try:
+        unlink(spare.with_name(spare.name + '.cleanup'), missing_ok=True)
+    except OSError as exc:
+        _STAGING_ERRORS[spare] = str(exc)
+    else:
+        _STAGING_ERRORS.pop(spare, None)
+
+
+def _recover_spares(attempt: _Publication) -> None:
+    """Only a destination mutex holder may adopt a leftover as orphaned.
+
+    Inspect once before this attempt creates anything. A later replacement of
+    an owned spare must still fail the creation-identity check, never be adopted.
+    Cleanup records beside spares are retried here under their destination's
+    mutex, rather than by the home-mutex staging-directory sweep.
+    """
+    try:
+        names = {item.name.removesuffix('.cleanup') for item in attempt.target.parent.iterdir()}
+    except FileNotFoundError:
+        # An absent destination directory cannot hold an orphan. In particular,
+        # a replaced two-argument publisher need not create a directory on disk.
+        names = set()
+    for fixed in attempt.spare_paths:
+        prefix = fixed.name.removesuffix('.new') + '.'
+        candidates = {fixed}
+        for name in names:
+            unique = name.removeprefix(prefix).removesuffix('.new')
+            if (name.startswith(prefix) and name.endswith('.new') and len(unique) == 32
+                    and all(char in '0123456789abcdef' for char in unique)):
+                candidates.add(path(fixed.parent, name))
+        for spare in sorted(candidates):
+            if not spare.exists():
+                _clear_spare_cleanup(spare)
+                continue
+            _defer_staging(spare, RuntimeError('Orphan spare found under its destination mutex'))
+            try:
+                unlink(spare)
+            except OSError as exc:
+                _defer_staging(spare, exc)
+                if spare == fixed:
+                    attempt.spare_paths[fixed] = path(fixed.parent, prefix + uuid.uuid4().hex + '.new')
+            else:
+                _clear_spare_cleanup(spare)
 
 
 def _remove_spares(spares: dict) -> None:
@@ -257,7 +319,7 @@ def _remove_spares(spares: dict) -> None:
 
 def _restore_retained(target: Path, previous: dict[Path, bytes | None], *,
                       written: dict[Path, bytes | None] | None = None,
-                      spares: dict | None = None) -> None:
+                      spares: dict | None = None, spare_paths: dict | None = None) -> None:
     with _locked(target):
         target, receipt, content_spare, receipt_spare = retained_paths(target)
         # Check the pair, including the unchanged half of a partial write.
@@ -274,6 +336,7 @@ def _restore_retained(target: Path, previous: dict[Path, bytes | None], *,
                 unlink(item, missing_ok=True)
             else:
                 spare = content_spare if item == target else receipt_spare
+                spare = (spare_paths or {}).get(spare, spare)
                 write_bytes(spare, old)
                 owned_spares[spare] = _file_identity(spare)
                 replace(spare, item)
@@ -290,7 +353,8 @@ def task_publication(target: Path) -> Iterator[None]:
     except OSError:
         if task.attempt is not None:
             attempt = task.attempt
-            _restore_retained(target, attempt.previous, written=attempt.written, spares=attempt.spares)
+            _restore_retained(target, attempt.previous, written=attempt.written, spares=attempt.spares,
+                              spare_paths=attempt.spare_paths)
         raise
     finally:
         task.active = False
@@ -323,12 +387,15 @@ def write_retained(target: Path, body: bytes) -> None:
             if task is not None and task.includes(target):
                 task.attempt = attempt
             token = _ATTEMPT.set(attempt)
-            deadline = time.monotonic() + PUBLICATION_WAIT
             try:
+                _recover_spares(attempt)
+                producer = _RetainedPath(target)
+                producer._spare_paths = attempt.spare_paths
+                deadline = time.monotonic() + PUBLICATION_WAIT
                 while True:
                     try:
                         retained_paths(target)
-                        cloud.write_retained(_RetainedPath(target), body)
+                        cloud.write_retained(producer, body)
                         attempt.written = {target: body, receipt: cloud.sha256(body).encode('ascii')}
                         return
                     except OSError as exc:
@@ -347,7 +414,8 @@ def write_retained(target: Path, body: bytes) -> None:
                             time.sleep(0.01)
                             continue
                         if sharing or task is not None and task.includes(target):
-                            _restore_retained(target, attempt.previous, written=attempt.written, spares=attempt.spares)
+                            _restore_retained(target, attempt.previous, written=attempt.written, spares=attempt.spares,
+                                              spare_paths=attempt.spare_paths)
                         # Unclassified state tears retain their unknown count.
                         raise
             finally:
@@ -365,7 +433,8 @@ def write_retained(target: Path, body: bytes) -> None:
 
 def _defer_staging(staging: Path, error: Exception) -> None:
     # A cleanup error must never escape into the caller's publication rollback,
-    # including an error while persisting its sweep record.
+    # including an error while persisting its sweep record. Orphan-spare
+    # records use this path too, but are drained only under their own mutex.
     _STAGING_ERRORS[staging] = str(error)
     try:
         with _locked(home_path('completion_staging'), sweep=False):
