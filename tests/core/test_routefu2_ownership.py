@@ -2100,6 +2100,8 @@ def test_different_tool_describes_reuse_only_owned_required_file_stats(
         assert all(str(cache_file) not in record[2:4] for record in dependencies._required_paths)
         files = {record[2] for record in dependencies._required_paths}
         assert files and str(source) in files and str(cache_file) not in files
+        # The authorized cost bound includes a stat of the absent cache hint.
+        files |= {str(cache_file)}
     elif cache_state == "previously-owned":
         assert any(record[2] == str(cache_file) for record in dependencies._required_paths)
         cache_file.unlink()
@@ -2113,3 +2115,116 @@ def test_different_tool_describes_reuse_only_owned_required_file_stats(
     assert len(recordings) == (1 if cache_state == "never-owned" else len(names))
     if cache_state == "never-owned":
         assert set(dict(families._RECORDED_SERVERS["abstraction"][1][3])) == files
+
+
+def test_cached_describe_covers_absent_bytecode_destination(
+        _rfu5_r2_describe_server, tmp_path, monkeypatch):
+    import py_compile
+
+    dependencies, specs, families = _rfu5_r2_describe_server
+    source, cache_file = tmp_path / "required.py", tmp_path / "required.pyc"
+    source.write_text("value = 73\n", encoding="utf-8")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(source)
+    loaded.__spec__ = util.spec_from_file_location(REQUIRED, source)
+    loaded.__spec__.cached = loaded.__cached__ = str(cache_file)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    assert families.describe("load_state")["available"] is True
+    assert not cache_file.exists()
+    py_compile.compile(str(source), cfile=str(cache_file), doraise=True)
+    machinery.SourcelessFileLoader(REQUIRED, str(cache_file)).exec_module(loaded)
+    assert loaded.value == 73
+    assert loaded.__file__ == str(source)
+    assert families.describe("load_state")["available"] is True
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    alias = tmp_path / "alias.pyc"
+    cache_file.rename(alias)
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, alias)
+    assert _roots(dependencies, SCOPES[2]) == frozenset()
+    specs.clear()
+    alias.unlink()
+    assert _roots(dependencies, SCOPES[2]) == frozenset()
+
+
+def test_cached_describe_covers_changed_spec_origin(
+        _rfu5_r2_describe_server, tmp_path, monkeypatch):
+    dependencies, specs, families = _rfu5_r2_describe_server
+    source, origin = tmp_path / "required.py", tmp_path / "new-origin.py"
+    source.write_text("value = 73\n", encoding="utf-8")
+    origin.write_text("value = 74\n", encoding="utf-8")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(source)
+    loaded.__spec__ = util.spec_from_file_location(REQUIRED, source)
+    loaded.__spec__.cached = None
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    assert families.describe("load_state")["available"] is True
+    loaded.__spec__ = util.spec_from_file_location(REQUIRED, origin)
+    loaded.__spec__.cached = None
+    loaded.__spec__.loader.exec_module(loaded)
+    assert loaded.value == 74 and loaded.__file__ == str(source)
+    assert families.describe("load_state")["available"] is True
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    alias = tmp_path / "alias.py"
+    origin.rename(alias)
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, alias)
+    assert _roots(dependencies, SCOPES[2]) == frozenset()
+    specs.clear()
+    alias.unlink()
+    assert _roots(dependencies, SCOPES[2]) == frozenset()
+
+
+def test_cached_describe_covers_unloaded_required_child_spelling(
+        _rfu5_r2_describe_server, tmp_path, monkeypatch):
+    dependencies, specs, families = _rfu5_r2_describe_server
+    source, retired = tmp_path / "child.py", tmp_path / "retired.py"
+    source.write_text("value = 73\n", encoding="utf-8")
+    child = ModuleType(REQUIRED + ".child")
+    child.__file__ = str(source)
+    monkeypatch.setitem(sys.modules, child.__name__, child)
+    assert families.describe("load_state")["available"] is True
+    monkeypatch.delitem(sys.modules, child.__name__)
+    assert families.describe("load_state")["available"] is True
+    assert any(record[2] == str(source) for record in dependencies._required_paths)
+    source.rename(retired)
+    source.write_text("value = 74\n", encoding="utf-8")
+    old = retired.stat()
+    os.utime(source, ns=(old.st_atime_ns, old.st_mtime_ns))
+    assert source.stat().st_size == old.st_size
+    assert source.stat().st_mtime_ns == old.st_mtime_ns
+    assert dependencies._stat_identity(source) != dependencies._stat_identity(retired)
+    assert families.describe("load_state")["available"] is True
+    source.unlink()
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, retired)
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+    specs.clear()
+    retired.unlink()
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+
+
+def test_loaded_cache_only_hint_is_covered_without_owning_optional_file(
+        ownership, tmp_path, monkeypatch):
+    dependencies, specs = ownership
+    _repair3_extra_required_metadata(dependencies, monkeypatch)
+    optional = tmp_path / "optional-only.py"
+    optional.write_text("value = 'optional only'\n", encoding="utf-8")
+    specs[OPTIONAL] = util.spec_from_file_location(OPTIONAL, optional)
+    assert _roots(dependencies, SCOPES[2]) == {OPTIONAL}
+    loaded = ModuleType(REQUIRED)
+    loaded.__spec__ = machinery.ModuleSpec(REQUIRED, loader=None, origin="frozen")
+    loaded.__spec__.cached = loaded.__cached__ = str(optional)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+
+    key = dependencies.record_loaded_required_imports()
+    assert key is not None
+    assert dict(key[3])[str(optional)] == dependencies._stat_identity(optional)
+    assert not any(record[2] == str(optional) for record in dependencies._required_paths)
+    assert dependencies._loaded_required_recording_current(key)
+
+    optional.unlink()
+    assert not dependencies._loaded_required_recording_current(key)
+    key = dependencies.record_loaded_required_imports()
+    assert key is not None and dict(key[3])[str(optional)] is None
+    assert dependencies._loaded_required_recording_current(key)
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    specs.clear()
+    assert OPTIONAL in _roots(dependencies, SCOPES[2])
