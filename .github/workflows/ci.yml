@@ -10,7 +10,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # macOS runs only on a pull request into main (the release PR); every other push and PR runs Linux and
+        # Windows. macOS is outside 0.3.0's supported platforms (owner, 2026-11-23) and its jobs held a quarter of
+        # the account's concurrent runners.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && github.base_ref == 'main' && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
         python: ["3.12", "3.13"]
         # The suite in four jobs per OS and Python: as one job it ran 5 h on Linux and passed the hosted runner's 6 h
         # limit on Windows, which cancelled it. Each job runs every group but only its shard's test files (the split
