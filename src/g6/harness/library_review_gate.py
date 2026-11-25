@@ -73,7 +73,7 @@ def record_fire(found: dict, before: dict, after: dict, snapshot) -> None:
             # transaction cleanup. Entry recovery cannot supply this result.
             recorded = True
     except PartialAuthorityWrite as error:
-        if not error.committed or not recorded:
+        if not error.publication_committed or not recorded:
             raise
         found.update(field_recorded=True, publication_committed=True, code=error.code,
                      durable_state=error.durable_state,
@@ -82,22 +82,40 @@ def record_fire(found: dict, before: dict, after: dict, snapshot) -> None:
 
 def _unavailable(error: PartialAuthorityWrite) -> dict:
     return {'library_unavailable': True, 'code': error.code, 'durable_state': error.durable_state,
+            'publication_committed': error.publication_committed,
+            **({'earlier_publication_committed': True} if error.earlier_publication_committed else {}),
             'authority': 'A0', 'verdict': 'abstain', 'outcome': 'insufficient_evidence',
             'field_recorded': False,
             'reason': 'Library unavailable; pending undo or intent cleanup in authority_intent.json; ' +
+                      ('earlier publication committed; its cleanup is incomplete; this request made no change; '
+                       if error.earlier_publication_committed else '') +
                       '; '.join(error.durable_state)}
 
 
 def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", tests=()) -> list[dict]:
+    findings = []
     try:
-        return _check(before, after, entry_id=entry_id, tests=tests)
+        return _check(before, after, entry_id=entry_id, tests=tests, findings=findings)
     except PartialAuthorityWrite as error:
-        # Every read can attempt recovery. Discard all observations from this
-        # review if any read cannot establish a usable library.
+        # Unavailable reads grant no authority. They cannot disown a fire this
+        # review already committed, even when cleanup still fails on that read.
+        committed = [found for found in findings if found.get('field_recorded')
+                     and found.get('publication_committed')]
+        if committed:
+            for found in committed:
+                found.update(authority='A0', verdict='abstain', outcome='insufficient_evidence',
+                             library_unavailable_for_further_application=True, code=error.code,
+                             durable_state=error.durable_state,
+                             field_note='Field fire committed; intent cleanup pending; library unavailable '
+                                        'for further application.',
+                             reason='Library unavailable for further application; field fire committed; '
+                                    'intent cleanup pending in authority_intent.json; ' +
+                                    '; '.join(error.durable_state))
+            return committed
         return [_unavailable(error)]
 
 
-def _check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", tests=()) -> list[dict]:
+def _check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", tests=(), findings) -> list[dict]:
     from g6.distill.acceptance_gate import _InactiveMethod, _run
     from g6.distill.facts import source_mapping
     from g6.workforce.repo_tests import is_test_related
@@ -115,7 +133,7 @@ def _check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "",
     if entry_id:
         historical = Stores().for_model(LibraryEntry).get(entry_id)
         selected = [e for e in entries if e.candidate_id == historical.candidate_id]
-    findings, retention_failed = [], []
+    retention_failed = []
     for entry in selected:
         if entry.status not in {"probation", "admitted", "demoted"} or entry.authority not in {"A1", "A2"}:
             continue
@@ -166,11 +184,12 @@ def _check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "",
                 try:
                     record_fire(found, before, after, entries)
                     found["field_recorded"] = True
+                    found['publication_committed'] = True
                 except StatusChanged as error:
                     found.update(authority='A0', verdict='abstain', outcome='insufficient_evidence',
                                  code=error.code, reason=str(error), field_recorded=False)
                 except PartialAuthorityWrite as error:
-                    if error.committed or error.recovering:
+                    if error.publication_committed or error.recovering:
                         raise
                     found.update(field_recorded=False, code=error.code,
                                  durable_state=error.durable_state,
@@ -211,6 +230,11 @@ def apply_review(before: dict, after: dict, reasons: list, runs: list) -> None:
         reasons.append({'stage': 'evidence', 'code': 'library_unavailable', 'detail': unavailable['reason'],
                         'provenance': 'library'})
         return
+    unavailable_after_fire = next((found for found in findings
+                                   if found.get('library_unavailable_for_further_application')), None)
+    if unavailable_after_fire:
+        reasons.append({'stage': 'evidence', 'code': 'library_unavailable',
+                        'detail': unavailable_after_fire['reason'], 'provenance': 'library'})
     for found in findings:
         runs.append({"tier": 2, "check": "library method", "tests": [], "seconds": found.get("seconds", 0.0),
                      "passed": 0, "failed": 0, "skipped": 0, "said": found["reason"], "receipt": "",
