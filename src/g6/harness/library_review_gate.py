@@ -274,8 +274,9 @@ def check_learned(params: dict, *, venture: str | None = None) -> dict:
                 except FileNotFoundError:
                     before[name] = ""
             findings = check(before, after, entry_id=entry_id)
-            unavailable = next((found for found in findings if found.get('library_unavailable')), None)
-            if unavailable:
+            unavailable = next((found for found in findings if found.get('library_unavailable')
+                                or found.get('library_unavailable_for_further_application')), None)
+            if unavailable and unavailable.get('library_unavailable'):
                 findings = []
     except PartialAuthorityWrite as error:
         unavailable = _unavailable(error)
