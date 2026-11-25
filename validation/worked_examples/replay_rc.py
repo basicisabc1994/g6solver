@@ -204,6 +204,7 @@ def _directory_open_error(exc: OSError, path: Path, name: str | None, parent: in
         info = os.stat(name if name is not None else path.anchor, dir_fd=parent, follow_symlinks=False)
         if stat.S_ISLNK(info.st_mode):
             raise ValueError(f"archive links are refused: {path}") from exc
+        raise NotADirectoryError(errno.ENOTDIR, "archive path is not a folder", str(path)) from exc
 
 
 @contextmanager
@@ -229,7 +230,7 @@ def _open_directory_at(path: Path, parent: _Opened, *, identify: bool):
             actual, mode = path, info.st_mode
             identity = (info.st_dev, info.st_ino)
         if not stat.S_ISDIR(mode):
-            raise NotADirectoryError(errno.ENOTDIR, "origin path is not a folder")
+            raise NotADirectoryError(errno.ENOTDIR, "origin path is not a folder", str(path))
         yield _Opened(actual, handle, mode, identity)
     finally:
         if handle is not None:
@@ -303,7 +304,7 @@ def _open_handle(path: Path, *, root: Path | None = None, missing: bool = False,
             if directory:
                 ancestors.append(_Opened(actual, handle, mode, None if windows else (info.st_dev, info.st_ino)))
         if directory and not stat.S_ISDIR(mode):
-            raise ValueError("source root is missing or unreadable")
+            raise NotADirectoryError(errno.ENOTDIR, "source root is not a folder", str(path))
         if readable:
             if not stat.S_ISREG(mode):
                 raise ValueError(f"forbidden archive path: {path}")
@@ -1348,6 +1349,10 @@ def _well_formed_case(case: Any) -> bool:
             and all(isinstance(origin, dict) for origin in case["origins"]))
 
 
+class _OriginMetadataError(ValueError):
+    """A saved origin names no folder and has no recorded final-patch read."""
+
+
 @dataclass
 class _OriginPins:
     source: Path | None
@@ -1359,6 +1364,7 @@ class _OriginPins:
     root: _Opened | None = None
     archive: Source | None = None
     failure: str | None = None
+    recorded_files: dict | None = None
 
     def folder_key(self, opened: _Opened) -> Any:
         if os.name == "nt":
@@ -1393,7 +1399,12 @@ class _OriginPins:
                 key = str(child)
                 if key not in self.folders:
                     with ExitStack() as candidate:
-                        opened = candidate.enter_context(_open_handle(child, directory=True, parent=parent))
+                        try:
+                            opened = candidate.enter_context(_open_handle(child, directory=True, parent=parent))
+                        except FileNotFoundError as exc:
+                            if self.recorded_files is not None and f"{raw}/final.patch" not in self.recorded_files:
+                                raise _OriginMetadataError("saved origin has no recorded folder") from exc
+                            raise
                         identity = self.folder_key(opened)
                         held = self.distinct.get(identity)
                         if held is None:
@@ -1471,6 +1482,8 @@ def _origin_run_identity(run: Any, source: Path | None = None) -> str | tuple[in
     except (OSError, RuntimeError, ValueError) as exc:
         pins = _ORIGIN_PINS.get()
         if pins is not None and pins.source == source:
+            if isinstance(exc, _OriginMetadataError):
+                return None
             pins.failure = _source_hold_reason(exc)
         return None
 
@@ -1493,11 +1506,11 @@ def _origin_names_may_alias(left: str, right: str) -> bool:
 
 
 def _unique_origin_digests(cases: list[Case], *, source: Path | None = None,
-                           failure: list[str] | None = None) -> bool:
+                           failure: list[str] | None = None, recorded_files: dict | None = None) -> bool:
     """An archived run supplies one final.patch across all bugs and cases."""
     digests = {}
     names = {}
-    pins = _OriginPins(source)
+    pins = _OriginPins(source, recorded_files=recorded_files)
     token = _ORIGIN_PINS.set(pins)
     try:
         for case in cases:
@@ -1505,7 +1518,9 @@ def _unique_origin_digests(cases: list[Case], *, source: Path | None = None,
                 name = origin.get("run")
                 run = _origin_run_identity(name, source)
                 if run is None:
-                    pins.failure = pins.failure or "source folders could not be held: an origin could not be identified"
+                    if (_relative_evidence_name(name)
+                            and (recorded_files is None or f"{name}/final.patch" in recorded_files)):
+                        pins.failure = pins.failure or "source folders could not be held: an origin could not be identified"
                     return False
                 # A pinned exact name and its identity each bind one digest.
                 if names.setdefault(name, case.digest) != case.digest:
@@ -1561,7 +1576,8 @@ def _current_evaluation(saved: dict, registration: Registration, start: dict | P
             if key in cases:
                 return None
             cases[key] = Case(**{**row, "patch": Path(row["patch"]), "source": Path()})
-        if not _unique_origin_digests(list(cases.values()), source=source, failure=failure):
+        if not _unique_origin_digests(list(cases.values()), source=source, failure=failure,
+                                      recorded_files=plan["source_snapshot"]["files"] if source is not None else None):
             return None
         # Reconstruct exactly what the writer sent, including the image's repo
         # and base substitutions and each agent call's own archived arguments.

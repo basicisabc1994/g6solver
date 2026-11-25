@@ -385,3 +385,131 @@ def test_file_read_requests_readable_access_only_for_its_last_component(tmp_path
                for route, path, readable in windows_open_calls)
     for ancestor in target.parents:
         assert ("open", rc._path_key(ancestor), False) in windows_open_calls
+
+
+@pytest.mark.parametrize("edit,value", [
+    ("null", None), ("absent-field", None), ("integer", 7),
+    ("list", []), ("object", {}), ("empty", ""),
+    ("malformed", "../outside"), ("unrecorded", "run/black-5634/not-recorded"),
+])
+def test_invalid_saved_origin_recovers_from_source(batch, capsys, edit, value):
+    origin = batch.saved["plan"]["cases"][0]["origins"][0]
+    if edit == "absent-field":
+        origin.pop("run")
+    else:
+        origin["run"] = value
+    status, result = trust.score(batch, capsys, True)
+    assert (status, result["evidence_source"]) == (0, "source")
+    for field in ("predictions", "by_bug", "excluded", "index_excluded"):
+        assert result[field] == batch.live[field]
+
+
+def test_invalid_saved_origin_keeps_fresh_source_failure(batch, capsys):
+    planned = batch.saved["plan"]["cases"][0]
+    (batch.source / planned["origins"][0]["run"] / "final.patch").write_bytes(b"changed patch")
+    planned["origins"][0]["run"] = None
+    status, result = trust.score(batch, capsys, True)
+    assert (status, result["evidence_source"]) == (2, "unavailable")
+    assert result["index_excluded"][0]["source_unavailable"] == (
+        "source identity, selection or evidence bytes changed")
+
+
+@pytest.mark.parametrize("location", ["root", "origin"])
+def test_nonfolder_pin_reports_errno_and_path(tmp_path, location):
+    source = tmp_path / "source"
+    if location == "origin":
+        source.mkdir()
+        target = source / "origin"
+    else:
+        target = source
+    target.write_bytes(b"regular file")
+    if location == "origin":
+        with rc._open_handle(source, directory=True) as parent:
+            with pytest.raises(NotADirectoryError) as caught:
+                with rc._open_handle(target, directory=True, parent=parent):
+                    pytest.fail("regular file was pinned as a folder")
+    else:
+        with pytest.raises(NotADirectoryError) as caught:
+            with rc._open_handle(target, directory=True):
+                pytest.fail("regular file was pinned as a folder")
+    assert caught.value.errno == errno.ENOTDIR
+    assert caught.value.filename == str(target)
+
+
+@pytest.mark.parametrize("dry", [False, True], ids=["live", "dry"])
+def test_file_root_keeps_replay_refusal_and_score_reason(batch, tmp_path, monkeypatch, capsys, dry):
+    source = tmp_path / "file-source"
+    source.write_bytes(b"regular file")
+    output = tmp_path / "refused-output"
+    monkeypatch.setenv("G6_WE_ARCHIVE", str(output))
+    with pytest.raises(ValueError, match="^source root is missing or unreadable$"):
+        rc.Source(source, required=True)
+    calls = []
+    status = rc.main(["--source", str(source), "--registered-commit", trust.COMMIT,
+                      *(["--dry"] if dry else [])], docker=lambda *args, **kwargs: calls.append(args))
+    captured = capsys.readouterr()
+    assert status == 1
+    assert captured.err == "replay_rc: source root is missing or unreadable\n"
+    assert captured.out == "" and calls == [] and not output.exists()
+    batch.source = source
+    status, result = trust.score(batch, capsys, True)
+    assert (status, result["evidence_source"]) == (2, "unavailable")
+    assert result["index_excluded"][0]["source_unavailable"] == (
+        "source folders could not be held: a path is not a folder")
+    assert source.read_bytes() == b"regular file" and not output.exists()
+
+
+def test_regular_file_origin_scores_nonfolder_reason(batch, capsys):
+    origin = batch.source / batch.saved["plan"]["cases"][0]["origins"][0]["run"]
+    moved = origin.with_name(origin.name + "-held")
+    origin.rename(moved)
+    try:
+        origin.write_bytes(b"regular file")
+        status, result = trust.score(batch, capsys, True)
+    finally:
+        if origin.is_file():
+            origin.unlink()
+        moved.rename(origin)
+    assert (status, result["evidence_source"]) == (2, "unavailable")
+    assert result["index_excluded"][0]["source_unavailable"] == (
+        "source folders could not be held: a path is not a folder")
+
+
+@pytest.mark.parametrize("location", ["root", "origin"])
+def test_missing_recorded_folder_keeps_replay_and_score_reasons(batch, capsys, location):
+    folder = (batch.source if location == "root" else
+              batch.source / batch.saved["plan"]["cases"][0]["origins"][0]["run"])
+    moved = folder.with_name(folder.name + "-held")
+    folder.rename(moved)
+    try:
+        if location == "root":
+            assert rc.main(["--source", str(folder), "--registered-commit", trust.COMMIT, "--dry"]) == 1
+            captured = capsys.readouterr()
+            assert captured.err == "replay_rc: source root is missing or unreadable\n"
+            assert captured.out == ""
+        status, result = trust.score(batch, capsys, True)
+    finally:
+        moved.rename(folder)
+    assert (status, result["evidence_source"]) == (2, "unavailable")
+    assert result["index_excluded"][0]["source_unavailable"] == (
+        "source folders could not be held: a folder is missing")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows directory share modes")
+def test_in_use_recorded_origin_never_falls_through_to_refresh(batch, monkeypatch, capsys):
+    name = batch.saved["plan"]["cases"][0]["origins"][0]["run"]
+    api = rc._WindowsAPI()
+    handle = api.kernel.CreateFileW(str(batch.source / name), 0x10001, 7, None, 3, 0x02000000, None)
+    assert handle != ctypes.c_void_p(-1).value, ctypes.get_last_error()
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("in-use origin fell through to source refresh")
+
+    try:
+        monkeypatch.setattr(rc, "enumerate_cases", unexpected)
+        status, result = trust.score(batch, capsys, True)
+    finally:
+        assert api.kernel.CloseHandle(handle), ctypes.get_last_error()
+    assert (status, result["evidence_source"]) == (2, "unavailable")
+    assert result["index_excluded"][0]["source_unavailable"] == (
+        "source folders could not be held: the origin folder is in use by another program")

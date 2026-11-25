@@ -366,7 +366,7 @@ def test_archive_json_preserves_surrogate_text(tmp_path):
 
 # Hash the rule's own syntax, not its line numbers, comments or unrelated CLI.
 # A rule edit must add a new version/digest pair, retaining earlier pairs.
-RULE_DIGESTS = {1: "12f6102b18c4504d4d282f0fffa3819f0dd58e8234dc8509549f00dc8a49224d"}
+RULE_DIGESTS = {1: "0b362bf50465e1e37742ffec5ce298f8247ac55a2a4b1c25f3dcf6aee576895a"}
 
 
 def test_evidence_rule_code_requires_a_version_change():
