@@ -1675,7 +1675,7 @@ def _failure_row(task: str, base: str, session: Path, state: dict, now: str, cau
     cause = cause or _cause(state, fixed, still)
     return {"case_id": f"{digest(task)[:16]}:{base[:12]}", "cause": cause, "changeable": cause not in NOT_CHANGEABLE,
             "note": (still or fixed)[0]["rule"] if still or fixed else state["stop"],
-            "independently_observed": (any(one.get('failing') for one in state.get('rounds') or []) if scouts else
+            "independently_observed": (any(_failed_probe_ids(runs) for runs in state.get('probe_runs') or []) if scouts else
                                        bool(fixed or still)), "task": digest(task), "base": base, "label": "",
             "models": {"agent": state.get("agent", ""),
                        "reviewer": ((state.get('critic') or {}).get('reviewer', '') if scouts else
@@ -1686,6 +1686,13 @@ def _failure_row(task: str, base: str, session: Path, state: dict, now: str, cau
                         for one in reviews],
             "stop": state["stop"], "left": state.get("left", ""),
             "tree_changed": None if scouts else (now != reviews[0]["patch"] if now else None) if reviews else False}
+
+
+def _failed_probe_ids(runs: dict) -> set[str]:
+    """Test evidence requires a usable recorded run, never a runner marker."""
+    return {f'{label}:{case}' for label, run in runs.items()
+            if run.get('exit') in (0, 1) and any(value in ('passed', 'failed') for value in run.get('results', {}).values())
+            for case, result in run.get('results', {}).items() if result in ('failed', 'error')}
 
 
 def _row_of(line: str, session: Path) -> bool:
@@ -2119,6 +2126,8 @@ def _step(state: dict, run: _RunCount, repo: str | Path, task: str, base: str, s
                     if got.usable:     # a critic's test that will not run says nothing of the patch
                         state["ran"]["critic"] = got.ran
                         seen.append(("critic", got, None))
+                recorded = {label: {'exit': got.exit, 'results': dict(got.results)} for label, got, _ in seen}
+                state.setdefault('probe_runs', []).append(recorded)
                 return with_critic(failures_of(seen), state.get("critic") or {}, shipped.critic_note)
 
             def tree() -> str:

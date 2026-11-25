@@ -51,6 +51,24 @@ LOCAL_METHODS = {
     'run': {'into', 'total'}, 'watch': {'mark', 'refused', 'told_since'},
     'record': {'body'}, 'report': {'full', 'wire'},
 }
+WRITERS = set('write_bytes write_text write_retained mkdir unlink touch replace rename rmtree copytree open mkdtemp '
+              'makedirs remove rmdir write writelines symlink_to hardlink_to link symlink mkfifo chmod lchmod chown '
+              'truncate ftruncate utime removedirs move copy copy2 copyfile copyfileobj mkstemp NamedTemporaryFile '
+              'TemporaryDirectory TemporaryFile SpooledTemporaryFile dump fdopen flush fsync fdatasync fchmod fchown '
+              'lchown chflags lchflags mknod posix_fallocate pwrite writev pwritev sendfile copy_file_range renames '
+              'copymode copystat'.split())
+# Reviewed data fields and type/constant references are not captured operations.
+# Keep the older assignment check below as well: this cannot relax its rules.
+DATA_ATTRIBUTES = set('stem readable reason action note text code name ending declared kind fix_by words argv __name__ '
+    'stderr exit ran review_ask size model keep_env valid nodes withheld collection_errors id source repo base_commit '
+    'modes added files refusal rel unread old new limit alike cuts rows hidden masked masked_parents sources critic '
+    'answered asked rounds pending round waiting why call_ran version item_id content_sha256 settled_here active guard '
+    'session state parent parents hidden_scouts scout fixer results critic_note status review_unsent refused_provider '
+    'usable tail file boundary '
+    'ATTEMPTED WAIT CONTINUE STOP BUSY ALREADY_RUNNING ALREADY_ENDED NO_PYTHON NEW_SESSION TASK_UNREADABLE UNREADABLE_TASK '
+    'NOT_JUDGED NOT_PASSED COUNTEREXAMPLE S M NO_SERVERS MAX_CHECKS UNKNOWN RAN FAILED NO_AUTHORITY MIN_RUN_S NO_MODE '
+    'REQUIRED STATE_UNAVAILABLE KEY_MISSING _RetainedState TaskUnreadable Capture ConsentClaude ClaudeCodeCaller '
+    'ProposedCheck Change CopyNotRun FileRead DiffRead'.split())
 
 
 def unguarded_calls(source):
@@ -70,6 +88,14 @@ def unguarded_calls(source):
                and isinstance(node.value, ast.Attribute) and ast.unparse(node.value) == 'time.monotonic'
                for target in node.targets if isinstance(target, ast.Name)}
     found = set()
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+
+    def writer_reference(node):
+        if isinstance(node, ast.Attribute):
+            return node.attr in WRITERS
+        if isinstance(node, ast.Name):
+            return node.id == 'open' or node.id in imports and imports[node.id].rsplit('.', 1)[-1] in WRITERS
+        return False
 
     def allowed(node, *, captured=False):
         call = ast.unparse(node)
@@ -100,6 +126,13 @@ def unguarded_calls(source):
         return False
 
     for node in ast.walk(tree):
+        parent = parents.get(node)
+        callee = isinstance(parent, ast.Call) and parent.func is node
+        receiver = isinstance(parent, ast.Attribute) and parent.value is node
+        if not callee and (writer_reference(node) or isinstance(node, ast.Attribute) and not receiver
+                           and node.attr not in DATA_ATTRIBUTES and ast.unparse(node) != 'run.reserve'
+                           and not allowed(node, captured=True)):
+            found.add((node.lineno, ast.unparse(node)))
         if isinstance(node, ast.Call):
             name = ast.unparse(node.func)
             if name in {'exec', 'eval', '__import__', 'open'}:
