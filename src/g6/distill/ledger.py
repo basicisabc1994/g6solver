@@ -12,6 +12,7 @@ import base64
 import json
 import os
 from pathlib import Path, PureWindowsPath
+import tempfile
 import threading
 
 from pydantic import ValidationError
@@ -41,8 +42,14 @@ class PartialAuthorityWrite(OSError):
     def __init__(self, paths, *, committed=False, recovering=False):
         self.committed = committed
         self.recovering = recovering
+        self.publication_committed = committed and not recovering
+        self.earlier_publication_committed = committed and recovering
+        self.decision = None
+        self.reservation = ''
         self.durable_state = durable_state(tuple(dict.fromkeys((*paths, _intent_path()))))
-        state = 'publication committed; intent cleanup pending' if committed else 'recovery incomplete'
+        state = ('earlier publication committed; cleanup incomplete; this request made no change'
+                 if self.earlier_publication_committed else
+                 'publication committed; intent cleanup pending' if committed else 'recovery incomplete')
         super().__init__(self.code + ': ' + state + '; durable state: ' + '; '.join(self.durable_state))
 
 
@@ -57,7 +64,7 @@ def durable_state(paths):
         states.extend(f"library {ident} {body['status']}/{body['authority']}" for ident, body in latest.items())
         if not latest:
             states.append('library empty/A0')
-    except (OSError, ValueError, KeyError, LedgerError):
+    except (OSError, ValueError, KeyError, LedgerError, RecursionError):
         states.append('library unreadable/authority unknown')
     for path in paths:
         try:
@@ -69,7 +76,7 @@ def durable_state(paths):
                 state = f'{len(ChainLedger(path).entries())} durable rows'
             else:
                 state = 'present'
-        except (OSError, ValueError, LedgerError):
+        except (OSError, ValueError, LedgerError, RecursionError):
             state = 'unreadable/authority unknown'
         states.append(f'{path.name} {state}')
     return tuple(states)
@@ -158,7 +165,9 @@ def _read_intent():
         return body['committed'], writes
     except FileNotFoundError:
         return None
-    except (OSError, ValueError, KeyError, TypeError):
+    except Exception:
+        # Decoder depth/resource limits and malformed shapes are unreadable
+        # intents too. Interrupts and process exits still propagate.
         raise PartialAuthorityWrite((path,), recovering=True) from None
 
 
@@ -222,10 +231,18 @@ def _restore(path, content):
     if content is None:
         path.unlink(missing_ok=True)
     else:
-        with path.open('wb') as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
+        # Never truncate an existing inode: a backup or another home may have
+        # a hard link to it. Publish new undo bytes under this name only.
+        descriptor, name = tempfile.mkstemp(prefix='.authority-undo-', dir=path.parent)
+        staging = Path(name)
+        try:
+            with os.fdopen(descriptor, 'wb') as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(staging, path)
+        finally:
+            staging.unlink(missing_ok=True)
     _sync_parent(path)
 
 
