@@ -50,7 +50,38 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
     checks = list(checks)
     cache = {}
 
+    def bindings_in(body):
+        bindings = {}
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                pairs = [(node.name, ("definition", node))]
+            elif isinstance(node, ast.ImportFrom):
+                pairs = [(a.asname or a.name, ("from", (node, a.name))) for a in node.names]
+            elif isinstance(node, ast.Import):
+                pairs = [(a.asname or a.name.split(".")[0], ("import", a.name if a.asname
+                          else a.name.split(".")[0])) for a in node.names]
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                pairs = [(t.id, ("value", node.value)) for t in targets if isinstance(t, ast.Name)]
+            else:
+                # Conditional/runtime bindings are deliberately not evaluated.
+                pairs = [(n.id, ("unknown", None)) for n in ast.walk(node)
+                         if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)]
+                pairs += [(a.asname or a.name.split(".")[0], ("unknown", None))
+                          for n in ast.walk(node) if isinstance(n, (ast.Import, ast.ImportFrom))
+                          for a in n.names]
+                pairs += [(n.name, ("unknown", None)) for n in ast.walk(node)
+                          if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+            for name, binding in pairs:
+                bindings[name] = ("unknown", None) if name in bindings else binding
+        return bindings
+
     def read(path):
+        if isinstance(path, tuple):
+            # A class has its own registrations, with module globals for expressions.
+            source, node = path
+            raw_sha, _, globals_ = read(source)
+            return raw_sha, node, {**globals_, **bindings_in(node.body)}
         if path not in cache:
             if len(cache) >= 128:
                 raise ValueError("source limit")
@@ -59,34 +90,12 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 raise ValueError("source outside regular repository files")
             raw = path.read_bytes()
             tree = ast.parse(raw)
-            bindings = {}
-            for node in tree.body:
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    pairs = [(node.name, ("definition", node))]
-                elif isinstance(node, ast.ImportFrom):
-                    pairs = [(a.asname or a.name, ("from", (node, a.name))) for a in node.names]
-                elif isinstance(node, ast.Import):
-                    pairs = [(a.asname or a.name.split(".")[0], ("import", a.name if a.asname
-                              else a.name.split(".")[0])) for a in node.names]
-                elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                    pairs = [(t.id, ("value", node.value)) for t in targets if isinstance(t, ast.Name)]
-                else:
-                    # Conditional/runtime bindings are deliberately not evaluated.
-                    pairs = [(n.id, ("unknown", None)) for n in ast.walk(node)
-                             if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)]
-                    pairs += [(a.asname or a.name.split(".")[0], ("unknown", None))
-                              for n in ast.walk(node) if isinstance(n, (ast.Import, ast.ImportFrom))
-                              for a in n.names]
-                    pairs += [(n.name, ("unknown", None)) for n in ast.walk(node)
-                              if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
-                for name, binding in pairs:
-                    # Rebinding is runtime-dependent even when an earlier binding is static.
-                    bindings[name] = ("unknown", None) if name in bindings else binding
-            cache[path] = sha256(raw), tree, bindings
+            cache[path] = sha256(raw), tree, bindings_in(tree.body)
         return cache[path]
 
     def module(path, name, level=0):
+        if isinstance(path, tuple):
+            path = path[0]
         if level:
             base = path.parent
             # importlib level 1 is the containing package; each extra level goes up once.
@@ -113,22 +122,19 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
 
     def identity(file):
         files, scanned, active, done = {}, set(), set(), set()
+        classes = []
+        plugins, plugin_scanned = [], set()
         collector = top / file
         conftests = []
         for folder in reversed((collector.parent, *collector.parent.parents)):
             if folder.is_relative_to(top) and (folder / "conftest.py").is_file():
                 conftests.append(folder / "conftest.py")
 
-        def include(path):
-            parsed = read(path)
-            files[path] = parsed[0]
-            if path in scanned:
-                return
-            scanned.add(path)
-            if "*" in parsed[2] or "pytest_plugins" in parsed[2] or any(
-                    name.startswith("pytest_") and name != "pytestmark" for name in parsed[2]):
+        def collection_statements(path, tree, bindings):
+            if "*" in bindings or any(
+                    name.startswith("pytest_") and name not in {"pytestmark", "pytest_plugins"} for name in bindings):
                 raise ValueError("runtime collection machinery")
-            for statement in parsed[1].body:
+            for statement in tree.body:
                 if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                     continue  # body-only imports do not establish machinery dependencies
                 for node in ast.walk(statement):
@@ -138,6 +144,31 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                             or qualified(path, node.func) in {"importlib.import_module", "builtins.exec",
                                                               "builtins.eval", "builtins.__import__"}):
                         raise ValueError("dynamic collection machinery")
+
+        def load_plugins(path):
+            if path in plugin_scanned:
+                return
+            plugin_scanned.add(path)
+            binding = read(path)[2].get("pytest_plugins")
+            if binding:
+                if binding[0] != "value":
+                    raise ValueError("runtime plugin declaration")
+                for name in strings(binding[1]):
+                    imported = module(path, name)
+                    if imported is None:
+                        raise ValueError("unresolved plugin source")
+                    if imported not in plugins:
+                        plugins.append(imported)
+                    load_plugins(imported)
+
+        def include(path):
+            parsed = read(path)
+            files[path] = parsed[0]
+            if path in scanned:
+                return
+            scanned.add(path)
+            collection_statements(path, parsed[1], parsed[2])
+            load_plugins(path)
             # Package initializers execute on the import chain too.
             for folder in path.parents:
                 if folder == top or not folder.is_relative_to(top):
@@ -145,11 +176,14 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 initializer = folder / "__init__.py"
                 if initializer.is_file() and initializer != path:
                     include(initializer)
+            # Module marks apply before function/class arguments are resolved.
+            if "pytestmark" in parsed[2]:
+                resolve(path, ("pytestmark",), "mark")
             for name in parsed[2]:
                 if name.startswith("test_") or name.startswith("Test"):
                     resolve(path, (name,), "test")
                 elif name == "pytestmark":
-                    resolve(path, (name,), "value")
+                    continue  # fixture names resolve in each test's collecting scope
                 elif fixture_options(path, name).get("autouse"):
                     resolve(path, (name,), "fixture")
 
@@ -159,15 +193,87 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 return
             raise ValueError("unresolved machinery import")
 
+        def parts_of(node):
+            if isinstance(node, ast.Name):
+                return (node.id,)
+            if isinstance(node, ast.Attribute):
+                return (*parts_of(node.value), node.attr)
+            raise ValueError("runtime machinery attribute")
+
+        def definition_source(path, parts, seen=frozenset()):
+            """Locate a registered object's definition without executing imports."""
+            key = path, parts
+            if key in seen:
+                return None
+            seen = seen | {key}
+            binding = read(path)[2].get(parts[0])
+            if not binding:
+                return None
+            kind, value = binding
+            if kind == "definition" and len(parts) == 1:
+                return path, value
+            if kind in {"from", "import"}:
+                if kind == "from":
+                    source, symbol = value
+                    imported = module(path, source.module or "", source.level)
+                    tail = (symbol, *parts[1:])
+                else:
+                    imported, tail = module(path, value), parts[1:]
+                if imported and tail:
+                    if tail[0] not in read(imported)[2] and imported.name == "__init__.py":
+                        child = module(imported, tail[0], 1)
+                        return definition_source(child, tail[1:], seen) if child and len(tail) > 1 else None
+                    return definition_source(imported, tail, seen)
+            if kind == "value" and isinstance(value, (ast.Name, ast.Attribute)):
+                return definition_source(path, (*parts_of(value), *parts[1:]), seen)
+            return None
+
+        def class_order(scope, seen=frozenset()):
+            # Python's C3 order is static when every base names a definite class.
+            if scope in seen:
+                raise ValueError("cyclic class machinery")
+            source, node = scope
+            bases = []
+            for base in node.bases:
+                target = definition_source(source, parts_of(base))
+                if target is None or not isinstance(target[1], ast.ClassDef):
+                    raise ValueError("unresolved class base")
+                base_path = target[0][0] if isinstance(target[0], tuple) else target[0]
+                bases.append((base_path, target[1]))
+            pending = [class_order(base, seen | {scope}) for base in bases] + [bases[:]]
+            ordered = [scope]
+            while any(pending):
+                candidate = next((seq[0] for seq in pending if seq
+                                  and not any(seq[0] in other[1:] for other in pending)), None)
+                if candidate is None:
+                    raise ValueError("inconsistent class resolution order")
+                ordered.append(candidate)
+                pending = [seq[1:] if seq and seq[0] == candidate else seq for seq in pending]
+            return ordered
+
         def fixture(path, name):
-            for scope in dict.fromkeys((path, collector, *reversed(conftests))):
-                if name in read(scope)[2]:
-                    resolve(scope, (name,), "fixture")
-                    return
-                for binding in read(scope)[2]:
-                    if fixture_options(scope, binding).get("name") == name:
+            # Union the fixture pytest executes with A'' defining-module chains.
+            # Class registrations precede the collector, then nearest conftest first.
+            found = False
+            class_scopes = [scope for current in classes for scope in class_order(current)]
+            for scopes in ((*class_scopes, collector, *reversed(conftests), *reversed(plugins)), (path,)):
+                for scope in dict.fromkeys(scopes):
+                    bindings = bindings_in(scope[1].body) if isinstance(scope, tuple) else read(scope)[2]
+                    matches = [binding for binding in bindings
+                               if (options := fixture_options(scope, binding)).get("fixture")
+                               and options.get("name", binding) == name]
+                    resolved = False
+                    for binding in matches:
+                        key = scope, (binding,), "fixture", tuple(classes)
+                        if key in active:
+                            continue  # an overriding fixture can request the next outer fixture
                         resolve(scope, (binding,), "fixture")
-                        return
+                        resolved = True
+                    if resolved:
+                        found = True
+                        break
+            if found:
+                return
             if name not in {"request", "tmp_path", "tmp_path_factory", "tmpdir", "tmpdir_factory",
                             "monkeypatch", "capsys", "capsysbinary", "capfd", "capfdbinary", "caplog",
                             "cache", "pytestconfig", "record_property", "record_testsuite_property",
@@ -199,12 +305,19 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                     raise ValueError("dynamic machinery")
                 if isinstance(node.func, ast.Attribute) and node.func.attr in {"import_module", "exec_module"}:
                     raise ValueError("dynamic machinery import")
+                if role != "mark" and qualified(path, node.func) == "pytest.mark.usefixtures":
+                    for argument in node.args:
+                        for name in strings(argument):
+                            fixture(path, name)
             if isinstance(node, ast.Lambda):
+                for default in (*node.args.defaults, *node.args.kw_defaults):
+                    if default is not None:
+                        expression(path, default, locals_=locals_)
                 names = {a.arg for a in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)}
                 expression(path, node.body, locals_=locals_ | names)
                 return
             for child in ast.iter_child_nodes(node):
-                expression(path, child, locals_=locals_)
+                expression(path, child, role, locals_=locals_)
 
         def strings(node):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -228,26 +341,16 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                     return qualified(path, binding[1], seen | {node.id})
             return ""
 
-        def fixture_options(path, name, seen=frozenset()):
+        def fixture_options(path, name):
             """Discover explicit fixture registration through static re-exports."""
-            if (path, name) in seen:
-                return {}
-            seen = seen | {(path, name)}
-            binding = read(path)[2].get(name)
-            if not binding:
-                return {}
-            kind, value = binding
-            if kind == "from":
-                source, symbol = value
-                imported = module(path, source.module or "", source.level)
-                return fixture_options(imported, symbol, seen) if imported else {}
-            if kind == "value" and isinstance(value, ast.Name):
-                return fixture_options(path, value.id, seen)
-            if kind == "definition" and isinstance(value, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            target = definition_source(path, (name,))
+            if target and isinstance(target[1], (ast.FunctionDef, ast.AsyncFunctionDef)):
+                path, value = target
                 for decorator in value.decorator_list:
-                    if isinstance(decorator, ast.Call) and qualified(path, decorator.func) == "pytest.fixture":
-                        options = {}
-                        for keyword in decorator.keywords:
+                    target = decorator.func if isinstance(decorator, ast.Call) else decorator
+                    if qualified(path, target) == "pytest.fixture":
+                        options = {"fixture": True}
+                        for keyword in decorator.keywords if isinstance(decorator, ast.Call) else ():
                             if keyword.arg in {"name", "autouse"}:
                                 if not isinstance(keyword.value, ast.Constant):
                                     raise ValueError("runtime fixture registration")
@@ -255,18 +358,27 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                         return options
             return {}
 
-        def definition(path, node, role, inherited=frozenset()):
-            direct = set(inherited)
-            for decorator in node.decorator_list:
-                expression(path, decorator)
-                if not isinstance(decorator, ast.Call):
-                    continue
-                name = qualified(path, decorator.func)
-                if name == "pytest.mark.parametrize":
-                    if len(decorator.args) < 2:
+        def mark_names(path, node, seen=frozenset()):
+            if isinstance(node, ast.Name) and (path, node.id) not in seen:
+                binding = read(path)[2].get(node.id)
+                seen = seen | {(path, node.id)}
+                if binding and binding[0] == "value":
+                    return mark_names(path, binding[1], seen)
+                if binding and binding[0] == "from":
+                    source, symbol = binding[1]
+                    imported = module(path, source.module or "", source.level)
+                    if imported:
+                        return mark_names(imported, ast.Name(id=symbol), seen)
+            direct = set()
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call) and qualified(path, child.func) == "pytest.mark.parametrize":
+                    keywords = {k.arg: k.value for k in child.keywords}
+                    argnames = child.args[0] if child.args else keywords.get("argnames")
+                    argvalues = child.args[1] if len(child.args) > 1 else keywords.get("argvalues")
+                    if argnames is None or argvalues is None:
                         raise ValueError("unresolved parametrization")
-                    names = set(strings(decorator.args[0]))
-                    indirect = next((k.value for k in decorator.keywords if k.arg == "indirect"), ast.Constant(False))
+                    names = set(strings(argnames))
+                    indirect = next((k.value for k in child.keywords if k.arg == "indirect"), ast.Constant(False))
                     if isinstance(indirect, ast.Constant) and isinstance(indirect.value, bool):
                         requested = names if indirect.value else set()
                     else:
@@ -274,24 +386,83 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                     direct.update(names - requested)
                     for name in requested:
                         fixture(path, name)
-                elif name == "pytest.mark.usefixtures":
-                    for argument in decorator.args:
-                        for name in strings(argument):
-                            fixture(path, name)
+            return direct
+
+        def body_fixtures(path, node):
+            # Inspect fixture access only; ordinary body imports remain product code.
+            parents = {child: parent for parent in ast.walk(node) for child in ast.iter_child_nodes(parent)}
+            for child in ast.walk(node):
+                if isinstance(child, ast.Attribute) and isinstance(child.value, ast.Name) and child.value.id == "request":
+                    if child.attr == "param":
+                        continue
+                    parent = parents.get(child)
+                    if child.attr != "getfixturevalue" or not isinstance(parent, ast.Call) or parent.func is not child:
+                        raise ValueError("unresolved fixture access")
+                    if (len(parent.args) != 1 or parent.keywords or not isinstance(parent.args[0], ast.Constant)
+                            or not isinstance(parent.args[0].value, str)):
+                        raise ValueError("dynamic fixture access")
+                    fixture(path, parent.args[0].value)
+                elif (isinstance(child, ast.Name) and child.id == "request" and isinstance(child.ctx, ast.Load)
+                      and not isinstance(parents.get(child), ast.Attribute)):
+                    raise ValueError("escaped fixture request")
+                elif isinstance(child, ast.Attribute) and child.attr == "getfixturevalue":
+                    if not isinstance(child.value, ast.Name) or child.value.id != "request":
+                        raise ValueError("unresolved fixture request receiver")
+
+        def definition(path, node, role, inherited=frozenset()):
+            if isinstance(node, ast.ClassDef):
+                scope = (path[0] if isinstance(path, tuple) else path, node)
+                classes.append(scope)
+                try:
+                    inspect_definition(path, node, role, inherited)
+                finally:
+                    classes.pop()
+            else:
+                inspect_definition(path, node, role, inherited)
+
+        def inspect_definition(path, node, role, inherited):
+            direct = set(inherited)
+            mark = read(path)[2].get("pytestmark") if role == "test" else None
+            if mark:
+                expression(path, ast.Name(id="pytestmark"))
+                direct.update(mark_names(path, ast.Name(id="pytestmark")))
+            for decorator in node.decorator_list:
+                expression(path, decorator)
+                direct.update(mark_names(path, decorator))
             if isinstance(node, ast.ClassDef):
                 for base in node.bases:
                     expression(path, base, "test")
-                for member in node.body:
-                    if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)) and member.name.startswith("test_"):
-                        definition(path, member, "test", direct)
+                scope = classes[-1]
+                local = bindings_in(node.body)
+                collection_statements(scope, node, local)
+                if "pytest_plugins" in local:
+                    raise ValueError("runtime class machinery")
+                if "pytestmark" in local:
+                    resolve(scope, ("pytestmark",), "mark")
+                    mark = local["pytestmark"]
+                    if mark[0] == "value":
+                        direct.update(mark_names(scope, mark[1]))
+                for name in local:
+                    if fixture_options(scope, name).get("autouse"):
+                        resolve(scope, (name,), "fixture")
+                    elif name.startswith("test_") or name.startswith("Test"):
+                        binding = local[name]
+                        if binding[0] == "definition":
+                            definition(scope, binding[1], "test", direct)
+                        else:
+                            resolve(scope, (name,), "test")
                 return
+            for default in (*node.args.defaults, *node.args.kw_defaults):
+                if default is not None:
+                    expression(path, default)
             if role in {"test", "fixture"}:
                 for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs):
                     if arg.arg not in direct | {"self", "cls"}:
                         fixture(path, arg.arg)
+                body_fixtures(path, node)
 
         def resolve(path, parts, role):
-            key = path, parts, role
+            key = path, parts, role, tuple(classes)
             if key in active:
                 raise ValueError("cyclic machinery binding")
             if key in done:
@@ -330,7 +501,10 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
             elif kind == "definition" and len(parts) == 1:
                 definition(path, value, role)
             elif kind == "value" and len(parts) == 1:
-                if value is None or any(isinstance(n, (ast.Call, ast.Await, ast.NamedExpr)) for n in ast.walk(value)):
+                if value is None or any(
+                        isinstance(n, (ast.Await, ast.NamedExpr)) or isinstance(n, ast.Call)
+                        and not (parts[0] == "pytestmark" and qualified(path, n.func).startswith("pytest.mark."))
+                        for n in ast.walk(value)):
                     raise ValueError("runtime machinery value")
                 if role in {"test", "fixture"} and not isinstance(value, (ast.Name, ast.Attribute)):
                     raise ValueError("runtime test or fixture")
@@ -341,8 +515,12 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
             done.add(key)
 
         try:
+            for path in (*conftests, collector):
+                load_plugins(path)
             include(collector)
             for path in conftests:
+                include(path)
+            for path in plugins:
                 include(path)
             if len(files) == 1:
                 return next(iter(files.values()))
@@ -445,7 +623,9 @@ def review_data(assessment: Mapping, repo=None) -> dict:
     proposer = next((str(a["model"])[:100] for a in activities if a.get("model") and a.get("model_calls")), "")
     data = {"requirements": len(requirements),
             "not_established": _count(assessment.get("requirements_without_adequate_check")),
-            "reproduced": _count(defects.get("stated_and_repository_checks")),
+            # Legacy aggregate-only observations keep their documented lower bound.
+            # Once outcomes name the checks, selections are no longer a counter.
+            "reproduced": 0 if terminal else _count(defects.get("stated_and_repository_checks")),
             "unconfirmed": _count(defects.get("proposed_checks")),
             "integrity_reasons": sum(r.get("stage") == "integrity" for r in assessment.get("reasons") or []),
             "checks_run": sum(executed(r) > 0 for r in runs), "checks_skipped": _count(scope.get("checks_skipped")),
@@ -456,6 +636,7 @@ def review_data(assessment: Mapping, repo=None) -> dict:
             "person_checks": _count((assessment.get("confirmed_expectations") or {}).get("expectations")),
             "isolation": str(((scope.get("environment") or {}).get("isolation") or {}).get("backend") or "")[:100]}
     data.update(outcome_sources(terminal, sources))
+    data["reproduced"] = _reproduced_count(failed, [data])
     data["repair_blocked"] = repair_blocked(assessment)
     data["review_returned"] = any(a.get("model_calls") and a.get("result") == "replied" for a in activities)
     if not data["checks_run"] and not data["review_returned"]:
@@ -570,6 +751,17 @@ def check_state(events: Iterable[Event]) -> dict[str, set[tuple[str, str]]]:
     return {"reproduced": set(failures), "repaired": repaired, "open": still}
 
 
+def _reproduced_count(failures: Iterable, observations: Iterable[Mapping]) -> int:
+    """One reproduction lower bound for producers and retained-event projections."""
+    rows = list(observations)
+    anonymous = max((d.get("reproduced", 0) for d in rows
+                     if not (d.get("failed_sha256", d.get("open_sha256")) or [])
+                     and not d.get("passed_sha256")), default=0)
+    omitted = max((len(d.get("failed_sha256") or []) + d["failed_identities_omitted"] for d in rows
+                   if d.get("failed_identities_omitted", 0)), default=0)
+    return max(len(set(failures)), anonymous, omitted)
+
+
 def check_counts(events: Iterable[Event]) -> dict:
     """Retained identities plus unresolved omitted failures; never invent a pass.
 
@@ -587,8 +779,10 @@ def check_counts(events: Iterable[Event]) -> dict:
                          and not (e.data.get("failed_sha256", e.data.get("open_sha256")) or [])
                          and not e.data.get("passed_sha256")), default=0)
         known = {key: sum(t == task for t, _ in state[key]) for key in totals}
-        for key in ("reproduced", "open"):
-            totals[key] += max(0, anonymous - known[key])
+        observations = [e.data for e in rows if e.task == task and e.kind in ("review_finished", "loop_round")]
+        totals["reproduced"] += _reproduced_count(
+            (name for t, name in state["reproduced"] if t == task), observations) - known["reproduced"]
+        totals["open"] += max(0, anonymous - known["open"])
         missing = [e for e in rows if e.task == task and e.kind in ("review_finished", "loop_round")
                    and e.data.get("failed_identities_omitted", 0)]
         if not missing:
@@ -596,7 +790,6 @@ def check_counts(events: Iterable[Event]) -> dict:
         known = {key: max(known[key], anonymous) if key in ("reproduced", "open") else known[key]
                  for key in totals}
         observed = max(len(e.data.get("failed_sha256") or []) + e.data["failed_identities_omitted"] for e in missing)
-        totals["reproduced"] += max(0, observed - known["reproduced"])
         totals["open"] += max(known["open"], observed - known["repaired"], 1) - known["open"]
     return {**totals,
             "identities_incomplete": any(e.data.get("identities_incomplete") for e in rows)}

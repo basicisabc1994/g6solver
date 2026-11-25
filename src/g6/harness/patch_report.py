@@ -703,6 +703,7 @@ def card(assessment: dict, loop: dict | None = None) -> dict:
     if known and kind == "loop_ended" and data.get("reviews"):
         reproduced, open_count = check_counts["reproduced"], check_counts["open"]
     if known and kind == "review_finished":
+        reproduced = evidence.check_counts([Event.from_body(one)])["reproduced"]
         open_count = check_counts["open"]
     labels = evidence.finding_labels([evidence.Event.from_body(e) for e in events],
         [e["event_id"] for e in events if e["kind"] in ("review_finished", "loop_ended", "loop_round")

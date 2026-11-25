@@ -780,11 +780,14 @@ def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", 
              "verdict": ran.get("verdict"), "seconds": ran.get("seconds", 0.0), "passed": ran.get("passed", 0),
              "failed": ran.get("failed", 0), "skipped": ran.get("not_passed", 0), "said": ran.get("said", ""),
              "receipt": ran.get("receipt", ""), "provenance": provenance}
+    report = repo_tests.read_report(ran)
     if sources is not None:
-        report = repo_tests.read_report(ran)
         by_file = {n.partition("::")[0]: sha for n, sha in sources.items()}
         found["check_sources"] = {n: by_file[n.partition("::")[0]] for n in [*ids, *report.phases]
                                   if n.partition("::")[0] in by_file}
+    # Executed identities do not depend on whether source bytes were captured.
+    # Keep aggregate-only legacy fixtures when no phase report was supplied.
+    if sources is not None or report.phases:
         found["executed_outcomes"] = {node: report.body_result(node) for node in report.phases
                                       if report.body_result(node) in ("passed", "failed")}
         found["executed_tests"] = len(found["executed_outcomes"])

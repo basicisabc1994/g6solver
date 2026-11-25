@@ -926,3 +926,240 @@ def test_ambiguous_absolute_machinery_cannot_lend_a_shadow_digest(tmp_path):
         path.write_text("def case():\n    assert True\n", encoding="utf-8")
     node = "cases/test_case.py::test_case"
     assert evidence.capture_sources(repo, [node]) == {node: ""}
+
+
+# Repair 1 amendment 1: test-first regressions; execution belongs to the lead.
+def test_literal_fixture_access_tracks_sources_and_dynamic_access_withholds(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    node = "test_case.py::test_case"
+    collector = repo / "test_case.py"
+    collector.write_text("def test_case(request):\n    assert request.getfixturevalue('observed') == 2\n",
+                         encoding="utf-8")
+    (repo / "conftest.py").write_text("from oracle import observed\n", encoding="utf-8")
+    oracle = repo / "oracle.py"
+    original = "import pytest\nfrom module import VALUE\n@pytest.fixture\ndef observed():\n    return VALUE\n"
+    oracle.write_text(original, encoding="utf-8")
+    before = evidence.capture_sources(repo, [node])
+    assert before[node]
+    (repo / "module.py").write_text("VALUE = 2\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, [node]) == before
+    oracle.write_text(original + "# changed fixture\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, [node]) != before
+    for access in ("request.getfixturevalue(name)", "lookup('observed')",
+                   "getattr(request, 'getfixturevalue')('observed')"):
+        collector.write_text("def test_case(request):\n    name = 'observed'\n"
+                             "    lookup = request.getfixturevalue\n    assert " + access + " == 2\n",
+                             encoding="utf-8")
+        assert evidence.capture_sources(repo, [node]) == {node: ""}
+
+
+def test_class_fixture_imports_autouse_and_marks_bind_machinery(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    node = "test_case.py::TestCase::test_case"
+    oracle = repo / "oracle.py"
+    for mark in ("", "    pytestmark = pytest.mark.usefixtures('automatic')\n",
+                 "    @pytest.mark.usefixtures('automatic')\n"):
+        (repo / "test_case.py").write_text(
+            "import pytest\nclass TestCase:\n    from oracle import automatic\n" + mark +
+            "    def test_case(self):\n        pass\n", encoding="utf-8")
+        original = ("import pytest\nfrom module import VALUE\n@pytest.fixture(autouse=" +
+                    str(not mark) + ")\ndef automatic(self):\n    self.observed = VALUE\n")
+        oracle.write_text(original, encoding="utf-8")
+        before = evidence.capture_sources(repo, [node])
+        assert before[node]
+        (repo / "module.py").write_text("VALUE = 2\n", encoding="utf-8")
+        assert evidence.capture_sources(repo, [node]) == before
+        oracle.write_text(original + "# changed class machinery\n", encoding="utf-8")
+        assert evidence.capture_sources(repo, [node]) != before
+
+
+def test_executed_and_defining_fixture_chains_both_enter_identity(tmp_path):
+    repo = tmp_path / "repo"
+    cases = repo / "cases"
+    cases.mkdir(parents=True)
+    node = "cases/test_case.py::test_case"
+    (repo / "checks_impl.py").write_text(
+        "from static_fixtures import observed\ndef test_case(observed):\n    assert observed == 2\n",
+        encoding="utf-8")
+    fixture = "import pytest\n@pytest.fixture\ndef observed():\n    return 2\n"
+    for name in ("static_fixtures.py", "executed_fixtures.py", "outer_fixtures.py"):
+        (repo / name).write_text(fixture, encoding="utf-8")
+    (repo / "conftest.py").write_text("from outer_fixtures import observed\n", encoding="utf-8")
+    for scope in ("collector", "conftest"):
+        (cases / "test_case.py").write_text(
+            "from checks_impl import test_case\n" +
+            ("from executed_fixtures import observed\n" if scope == "collector" else ""), encoding="utf-8")
+        (cases / "conftest.py").write_text(
+            "from executed_fixtures import observed\n" if scope == "conftest" else "", encoding="utf-8")
+        before = evidence.capture_sources(repo, [node])
+        assert before[node]
+        for name in ("static_fixtures.py", "executed_fixtures.py"):
+            path = repo / name
+            path.write_text(fixture + "# changed fixture chain\n", encoding="utf-8")
+            assert evidence.capture_sources(repo, [node]) != before
+            path.write_text(fixture, encoding="utf-8")
+
+
+def test_parametrization_factory_and_decorator_defaults_are_sources(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    node = "test_case.py::test_case"
+    data = repo / "oracle.py"
+    for signature in ("values=EXPECTED", "*, values=EXPECTED"):
+        for role in ("factory", "decorator"):
+            (repo / "factory.py").write_text(
+                "import pytest\nfrom oracle import EXPECTED\n" +
+                (f"def cases({signature}):\n    return values\n" if role == "factory" else
+                 f"def cases({signature}):\n    return pytest.mark.parametrize('value', values)\n"),
+                encoding="utf-8")
+            (repo / "test_case.py").write_text(
+                "import pytest\nfrom factory import cases\nfrom module import VALUE\n" +
+                ("@pytest.mark.parametrize('value', cases())\n" if role == "factory" else "@cases()\n") +
+                "def test_case(value):\n    assert VALUE == value\n", encoding="utf-8")
+            data.write_text("EXPECTED = [2]\n", encoding="utf-8")
+            before = evidence.capture_sources(repo, [node])
+            # A custom decorator may supply names the static reader cannot establish.
+            # In that case it must withhold; it may never retain an unchanged identity.
+            if role == "factory":
+                assert before[node]
+            (repo / "module.py").write_text("VALUE = 2\n", encoding="utf-8")
+            assert evidence.capture_sources(repo, [node]) == before
+            data.write_text("EXPECTED = [3]\n", encoding="utf-8")
+            after = evidence.capture_sources(repo, [node])
+            assert not after[node] or after != before
+
+
+def test_review_totals_use_executed_identities_for_every_selection(home, tmp_path):
+    from types import SimpleNamespace
+
+    from g6.harness import patch_review
+    from g6.harness.workflow import record_md
+    from g6.workforce import coding_certificate
+    from tests.harness.test_patch_review import result
+
+    repo = make_repo(tmp_path / "repo")
+    nodes = ["test_case.py::TestCase::test_case[0]", "test_case.py::TestCase::test_case[1]"]
+    for selection in (["test_case.py"], ["test_case.py::TestCase"], nodes):
+        value = assessment()
+        value["requirements"] = [{"id": "R1", "checks": [{"id": n, "verdict": "failed"} for n in selection]}]
+        value["completion"]["defects_reproduced"]["stated_and_repository_checks"] = [{"check": n} for n in selection]
+        value["scope"]["checks_run"] = [patch_review._record(1, "checks", selection, result(failed=nodes))]
+        assert evidence.review_data(value)["reproduced"] == 2
+        task = str(selection)
+        assert adapters.observe_review(repo, task, "job", {"assessment": value},
+                                       started_at=at(), finished_at=at(1)) == ""
+        held = evidence.read(repo, task, origin_kind="review_job", origin_id="job")
+        rows = [evidence.Event.from_body(e) for e in held["events"]]
+        card = patch_report.card({"workflow_evidence": held})
+        assert card["caught"]["reproduced"] == card["open"] == record_md.counts(rows)["reproduced"] == 2
+        assert "2 reproduced" in record_md.render(rows)
+        # The certificate companion cites the same observations and shared counts.
+        from unittest.mock import patch
+        with patch.object(coding_certificate.bench, "_repo", return_value=repo):
+            missions = SimpleNamespace(get=lambda _: {"venture_id": "fixture", "objective": task})
+            companion = coding_certificate.workflow_justification(missions, "mission", {"repository": "repo"})
+        assert companion["events"] == held["justification"]
+        assert adapters.observe_review(repo, task, "later-job", {"assessment": value},
+                                       started_at=at(2), finished_at=at(3)) == ""
+        later = evidence.read(repo, task, origin_kind="review_job", origin_id="later-job")
+        later_rows = [evidence.Event.from_body(e) for e in later["events"]]
+        later_card = patch_report.card({"workflow_evidence": later})
+        assert later_card["caught"]["reproduced"] == later_card["open"] == record_md.counts(later_rows)["reproduced"] == 2
+
+
+def test_inherited_class_fixtures_and_overrides_bind_both_sources(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "base.py").write_text("class Base:\n    from inherited import observed\n"
+        "    def test_case(self, observed):\n        assert observed == 2\n", encoding="utf-8")
+    fixture = "import pytest\n@pytest.fixture\ndef observed(self):\n    return 2\n"
+    for name in ("inherited.py", "override.py"):
+        (repo / name).write_text(fixture, encoding="utf-8")
+    node = "test_case.py::TestCase::test_case"
+    for override in ("", "    from override import observed\n"):
+        (repo / "test_case.py").write_text("from base import Base\nclass TestCase(Base):\n" +
+            (override or "    def test_case(self, observed):\n        assert observed == 2\n"), encoding="utf-8")
+        before = evidence.capture_sources(repo, [node])
+        assert before[node]
+        for name in (("inherited.py", "override.py") if override else ("inherited.py",)):
+            path = repo / name
+            path.write_text(fixture + "# changed inherited machinery\n", encoding="utf-8")
+            assert evidence.capture_sources(repo, [node]) != before
+            path.write_text(fixture, encoding="utf-8")
+
+
+def test_module_and_class_marks_resolve_in_the_collecting_class(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    node = "test_case.py::TestCase::test_case"
+    original = "import pytest\n@pytest.fixture\ndef observed(self):\n    return 2\n"
+    oracle = repo / "oracle.py"
+    for level in ("module", "class", "decorator"):
+        source = "import pytest\n"
+        if level == "module":
+            source += "pytestmark = pytest.mark.usefixtures('observed')\n"
+        if level == "decorator":
+            source += "@pytest.mark.usefixtures('observed')\n"
+        source += "class TestCase:\n    from oracle import observed\n"
+        if level == "class":
+            source += "    pytestmark = pytest.mark.usefixtures('observed')\n"
+        source += "    def test_case(self):\n        pass\n"
+        (repo / "test_case.py").write_text(source, encoding="utf-8")
+        oracle.write_text(original, encoding="utf-8")
+        before = evidence.capture_sources(repo, [node])
+        assert before[node]
+        oracle.write_text(original + "# changed mark-requested fixture\n", encoding="utf-8")
+        assert evidence.capture_sources(repo, [node]) != before
+    (repo / "test_case.py").write_text(
+        "class TestCase:\n    exec('from oracle import observed')\n    def test_case(self):\n        pass\n",
+        encoding="utf-8")
+    assert evidence.capture_sources(repo, [node]) == {node: ""}
+
+
+def test_literal_repository_plugin_fixture_sources_are_bound(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    node = "test_case.py::test_case"
+    (repo / "test_case.py").write_text("def test_case(observed):\n    assert observed == 2\n", encoding="utf-8")
+    (repo / "conftest.py").write_text("pytest_plugins = ['local_plugin']\n", encoding="utf-8")
+    (repo / "local_plugin.py").write_text("from oracle import observed\n", encoding="utf-8")
+    oracle = repo / "oracle.py"
+    original = "import pytest\nfrom module import VALUE\n@pytest.fixture\ndef observed():\n    return VALUE\n"
+    oracle.write_text(original, encoding="utf-8")
+    before = evidence.capture_sources(repo, [node])
+    assert before[node]
+    (repo / "module.py").write_text("VALUE = 2\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, [node]) == before
+    oracle.write_text(original + "# changed plugin fixture\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, [node]) != before
+
+
+def test_executed_outcomes_without_capture_drive_shared_review_totals():
+    from g6.harness import patch_review
+    from g6.harness.workflow import record_md
+    from tests.harness.test_patch_review import result
+    from tests.workflow.kit import event
+
+    failed = ["test_case.py::TestCase::test_case[0]", "test_case.py::TestCase::test_case[1]"]
+    passed = "test_case.py::TestCase::test_passed"
+    skipped = "test_case.py::TestCase::test_skipped"
+    for selection in (["test_case.py"], ["test_case.py::TestCase"], failed):
+        run = patch_review._record(1, "checks", selection,
+                                   result(failed=failed, passed=[passed], skipped=[skipped]))
+        assert run["executed_outcomes"] == {**dict.fromkeys(failed, "failed"), passed: "passed"}
+        assert run["executed_tests"] == 3
+        assert "check_sources" not in run  # No post-run source capture.
+        value = assessment()
+        value["requirements"] = [{"id": "R1", "checks": [{"id": n, "verdict": "failed"} for n in selection]}]
+        value["scope"]["checks_run"] = [run, run]  # Repeated observations do not add identities.
+        data = evidence.review_data(value)
+        assert data["failed_sha256"] == sorted(sha(n) for n in failed)
+        assert data["passed_sha256"] == [sha(passed)]
+        assert data["check_sources_sha256"] == []
+        row = event("a" * 32, "review_finished", data=data)
+        shared = evidence.check_counts([row])
+        card = patch_report.card({"workflow_evidence": evidence.bundle([row])})
+        assert data["reproduced"] == shared["reproduced"] == shared["open"] == 2
+        assert card["caught"]["reproduced"] == card["open"] == record_md.counts([row])["reproduced"] == 2

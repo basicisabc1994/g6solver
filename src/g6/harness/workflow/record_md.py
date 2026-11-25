@@ -39,7 +39,9 @@ def counts(events: Iterable[Event]) -> dict:
     return {"events": len(rows), "turns": len(hook_checked) + len(unchecked), "checked": len(hook_checked),
             "loops": len(ended),
             "unchecked": len(unchecked), "review_calls": len(reviews),
-            "reproduced": sum(e.data.get("reproduced", 0) for e in [*ended, *reviews]),
+            "reproduced": sum(evidence.check_counts(by_run[e.run])["reproduced"] if e.data.get("reviews")
+                              else e.data.get("reproduced", 0) for e in ended)
+                          + evidence.check_counts(reviews)["reproduced"],
             "repaired": sum(evidence.check_counts(by_run[e.run])["repaired"] for e in ended)
                         + evidence.check_counts(reviews)["repaired"],
             "open": sum(evidence.check_counts(by_run[e.run])["open"] if e.data.get("reviews") else e.data.get("open", 0)
