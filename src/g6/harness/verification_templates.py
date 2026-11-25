@@ -81,6 +81,7 @@ import dataclasses
 import difflib
 import hashlib
 import inspect
+import io
 import itertools
 import json
 import keyword
@@ -88,6 +89,7 @@ import math
 import re
 import time
 import tomllib
+import zipfile
 from functools import lru_cache
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -102,7 +104,7 @@ from g6.harness.behaviour_runner import (
     CheckSetupError, bind_method, example_text, runtime_method, setup_call,
     raised_during_setup, exception_name, exception_matches, exception_detail, exception_message,
     target_attribute, call_absent, register_setup_error, CODE_CARRIER_HELPERS, ObservationUnavailable, own_import_absent,
-    execution_control, setup_outcome, SHOWN_HELPER, _portable_source,
+    execution_control, setup_outcome, SHOWN_HELPER, _portable_source, path_key, path_inside,
 )
 from g6.workforce import repo_tests
 
@@ -836,6 +838,47 @@ def _located(target: Target) -> list[str]:
     return [*target.spec(), target.file] if target.kind == "module" else target.spec()
 
 
+def _archive_members(tree: Tree, paths: set[str]) -> set[str]:
+    """Read member names from held ZIP bytes on both sides, without extracting or importing them."""
+    members = set()
+    candidates = sorted(path for path in paths if not path.endswith('.py'))
+    if not candidates:
+        return members
+    cached = getattr(tree, '_archive_inventory', None)
+    if cached is None:
+        cached = tree._archive_inventory = {}
+    base = [rel for rel in candidates if tree.has(rel, BASE) and (rel, BASE) not in tree._texts
+            and (rel, BASE) not in cached]
+    entries = repo_tests._listed_at(tree.root, tree.change.base_commit, base) if base else {}
+    for rel in candidates:
+        for side in (PATCH, BASE):
+            tree.in_time()
+            if not tree.has(rel, side):
+                continue
+            key = (rel, side)
+            if key not in cached:
+                content = tree._texts.get(key)
+                source = io.BytesIO(content) if isinstance(content, bytes) else None
+                if side == PATCH and source is None:
+                    source = repo_tests._disk(tree.root, rel)
+                    if source is None or not source.is_file() or repo_tests._linked(source):
+                        continue
+                if side == BASE and source is None:
+                    entry = entries.get(rel)
+                    if entry is not None and entry[1] == 'blob':
+                        source = io.BytesIO(repo_tests.blob_bytes(tree.root, entry[2]))
+                names = set()
+                try:
+                    if source is not None and zipfile.is_zipfile(source):
+                        with zipfile.ZipFile(source) as archive:
+                            names.update(archive.namelist())
+                except (OSError, zipfile.BadZipFile, ValueError) as exc:
+                    raise Inapplicable('archive ownership could not be read') from exc
+                cached[key] = names
+            members.update(cached[key])
+    return members
+
+
 def _own_modules(tree: Tree, target: Target, side: str) -> dict:
     """Host owners at every depth, including deletions and namespace portions.
 
@@ -846,6 +889,13 @@ def _own_modules(tree: Tree, target: Target, side: str) -> dict:
              | set(getattr(getattr(tree, 'change', None), 'files', ())))
     modules = set()
     files = {}
+    archive_members = _archive_members(tree, paths)
+    for member in archive_members:
+        if member.endswith('.py'):
+            module = member[:-12] if member.endswith('/__init__.py') else member[:-3]
+            parts = module.split('/')
+            if all(part.isidentifier() for part in parts):
+                modules.update('.'.join(parts[:end]) for end in range(1, len(parts) + 1))
     for prefix in tree.folders():
         for path in paths:
             if not path.startswith(prefix):
@@ -859,7 +909,7 @@ def _own_modules(tree: Tree, target: Target, side: str) -> dict:
                 modules.update('.'.join(parts[:end]) for end in range(1, len(parts) + 1))
                 files.setdefault('.'.join(parts), []).append(path)
     full = {'own_modules': sorted(modules)} if modules else {}
-    if len(json.dumps(sorted(modules))) > 8192:
+    if len(json.dumps(sorted(modules))) > 8192 and not archive_members:
         wanted, visited, pending = set(), set(), [target.module]
         while pending:
             module = pending.pop()
@@ -1469,6 +1519,7 @@ import concurrent.futures
 import copy
 import hashlib
 import importlib
+import importlib.machinery
 import json
 import os
 import re
@@ -1480,7 +1531,9 @@ import pytest
 _LEGACY_COMMON = ("\n" + CODE_CARRIER_HELPERS + inspect.getsource(CheckSetupError) + "\n" + inspect.getsource(raised_during_setup)
                   + "\n" + inspect.getsource(execution_control)
                   + "\n" + inspect.getsource(setup_outcome)
-                  + "\n" + inspect.getsource(ObservationUnavailable) + "\n" + _portable_source(own_import_absent)
+                  + "\n" + inspect.getsource(ObservationUnavailable)
+                  + "\n" + _portable_source(path_key) + "\n" + _portable_source(path_inside)
+                  + "\n" + _portable_source(own_import_absent)
                   + "\n" + inspect.getsource(exception_name) + "\n" + inspect.getsource(exception_matches)
                   + "\n" + inspect.getsource(exception_detail) + "\n" + inspect.getsource(setup_call)
                   + "\n" + inspect.getsource(exception_message)

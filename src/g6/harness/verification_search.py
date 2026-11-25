@@ -456,6 +456,8 @@ def bind_execution(change: repo_tests.Change, sparse: dict[str, str], *, deadlin
 
 def _copy_manifest(change: repo_tests.Change, *, deadline: float,
                    artefact: dict[str, str] | None = None) -> dict[str, str]:
+    from g6.harness import behaviour_runner
+
     if artefact is not None:
         if not isinstance(artefact, ExecutionSnapshot) or artefact.execution["artifact_digest"] != digest(artefact):
             raise OSError("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: no execution-artifact.v1 captured before execution")
@@ -478,7 +480,7 @@ def _copy_manifest(change: repo_tests.Change, *, deadline: float,
         path = repo_tests._disk(root, rel)
         if path is None or not path.is_file():
             continue
-        if not repo_tests._within(top, path.resolve()):
+        if not behaviour_runner.path_inside(top, path):
             raise repo_tests.RepoRefused("G6_E_INPUT_VALIDATION", repo_tests.SAID["outside"].format(
                 what="file", value=repo_tests.shown_name(rel)))
         size += path.stat().st_size
@@ -491,14 +493,21 @@ def _copy_manifest(change: repo_tests.Change, *, deadline: float,
 
 def _same_copy(copied: dict[str, str], expected: dict[str, str], placed: str) -> bool:
     """Every copied file, including unchanged dependencies; the fixed generated overlay is bound separately."""
+    from g6.harness import behaviour_runner
+
     return (all(re.fullmatch("[0-9a-f]{64}", value) for value in expected.values())
-            and {k: v for k, v in copied.items() if k != placed} == expected)
+            and {behaviour_runner.path_key(k): v for k, v in copied.items()
+                 if behaviour_runner.path_key(k) != behaviour_runner.path_key(placed)}
+            == {behaviour_runner.path_key(k): v for k, v in expected.items()})
 
 
 def _copy_differs(copy: Path, artefact: dict[str, str], placed: str) -> bool:
     """The historical sparse comparison, only for ordinary, unconfirmed proposed tests."""
+    from g6.harness import behaviour_runner
+
     return any(repo_tests._digest(copy / rel) != value for rel, value in artefact.items()
-               if not rel.startswith("\0") and rel != placed)
+               if not rel.startswith("\0")
+               and behaviour_runner.path_key(copy / rel) != behaviour_runner.path_key(copy / placed))
 
 
 def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *, at_base: bool,

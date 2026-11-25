@@ -19,6 +19,7 @@ import concurrent.futures
 import dis
 import hashlib
 import inspect
+import importlib.machinery
 import json
 import os
 import re
@@ -393,6 +394,25 @@ def exception_detail(exc, fallback):
     return fallback[:16] + ': ' + exception_name(type(exc), qualified=True)
 
 
+def path_key(path):
+    """One absolute filesystem identity for repository, archive and interpreter paths."""
+    value = os.path.normcase(os.path.realpath(os.path.abspath(path)))
+    if os.name == 'nt':
+        if value.startswith('\\\\?\\unc\\'):
+            value = '\\\\' + value[8:]
+        elif value.startswith('\\\\?\\'):
+            value = value[4:]
+    return value
+
+
+def path_inside(root, path):
+    root, path = path_key(root), path_key(path)
+    try:
+        return os.path.commonpath((root, path)) == root
+    except ValueError:
+        return False
+
+
 def own_import_absent(exc, args):
     """Read explicit host module ownership first, then unambiguous regular packages."""
     if not exception_matches(exc, ImportError):
@@ -404,7 +424,7 @@ def own_import_absent(exc, args):
     missing_module = exception_matches(exc, ModuleNotFoundError)
     if missing_module and args and type(args[0]) is str and name == args[0] and '.' not in name:
         return True
-    tree = os.path.normcase(os.path.realpath(globals().get('root', os.getcwd())))
+    tree = path_key(globals().get('root', os.getcwd()))
     parts = name.split('.')
     owners = globals().get('data', {}).get('own_modules', ())
     if missing_module and name in owners:
@@ -419,7 +439,7 @@ def own_import_absent(exc, args):
                 return True
             trace = trace.tb_next
 
-    def guarded_export(file):
+    def guarded_export(source):
         # IMPORT_FROM supplies the requested name without parsing repository exception text.
         # An unrelated optional dependency cannot supply a name this module never defines.
         exported = None
@@ -433,9 +453,7 @@ def own_import_absent(exc, args):
         if exported is None:
             return True
         try:
-            with open(file, 'rb') as handle:
-                source = handle.read(1048577)
-            if len(source) > 1048576:
+            if source is None or len(bytes(source, 'utf-8')) > 1048576:
                 return True
             pending = [ast.parse(source)]
             nodes = []
@@ -456,57 +474,81 @@ def own_import_absent(exc, args):
                    or (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                        and node.func.id in ('exec', 'globals', 'locals', 'setattr')) for node in nodes)
 
-    def regular(package):
+    def owned_spec(name, locations):
+        spec = importlib.machinery.PathFinder.find_spec(name, locations)
+        if spec is None:
+            return None
+        archive = getattr(spec.loader, 'archive', None)
+        origin = archive if type(archive) is str else spec.origin
+        return spec if type(origin) is str and path_inside(tree, origin) else None
+
+    def regular(spec):
+        if spec is None or spec.submodule_search_locations is None:
+            return False
         try:
-            with open(os.path.join(package, '__init__.py'), 'rb') as handle:
-                source = handle.read(1048577)
+            source = spec.loader.get_source(spec.name)
             # These packages may have portions G6's isolated interpreter cannot load.
-            return len(source) <= 1048576 and not any(marker in source for marker in (
-                b'__path__', b'extend_path', b'declare_namespace'))
-        except OSError:
+            return source is not None and len(bytes(source, 'utf-8')) <= 1048576 and not any(marker in source for marker in (
+                '__path__', 'extend_path', 'declare_namespace'))
+        except (OSError, ImportError, AttributeError):
             return False
 
     for prefix in sys.path:
         if type(prefix) is not str:
             continue
-        folder = os.path.normcase(os.path.realpath(prefix or os.getcwd()))
-        if os.path.splitdrive(folder)[0] != os.path.splitdrive(tree)[0] or os.path.commonpath((tree, folder)) != tree:
+        folder = path_key(prefix or os.getcwd())
+        if not path_inside(tree, folder):
             continue
-        package = folder
-        for part in parts[:-1]:
-            package = os.path.join(package, part)
-            if not regular(package):
+        locations = [folder]
+        for end in range(1, len(parts)):
+            spec = owned_spec('.'.join(parts[:end]), locations)
+            if not regular(spec):
                 break
+            locations = list(spec.submodule_search_locations)
         else:
-            target = os.path.join(package, parts[-1])
+            spec = owned_spec(name, locations)
             if missing_module:
-                if len(parts) > 1 and not os.path.exists(target) and not os.path.isfile(target + '.py'):
+                if len(parts) > 1 and spec is None:
                     return True
                 continue
-            if type(path) is not str:
+            if type(path) is not str or spec is None or type(spec.origin) is not str:
                 continue
-            held = (target + '.py', os.path.join(target, '__init__.py'))
-            actual = os.path.normcase(os.path.realpath(path))
-            if any(os.path.isfile(file) and os.path.normcase(os.path.realpath(file)) == actual
-                   and (file == held[0] or regular(target)) for file in held):
-                return not ((globals().get('_missing_preparation_imports') or globals().get('_missing_imports'))
-                            and guarded_export(path))
+            if path_key(spec.origin) == path_key(path) and (spec.submodule_search_locations is None or regular(spec)):
+                return not ((globals().get('_missing_preparation_imports') or globals().get('_missing_imports')
+                             or globals().get('_pending_imports', lambda: False)())
+                            and guarded_export(spec.loader.get_source(name)))
     return False
 
 
 def track_imports():
     """Install before repository loading; retain failed external imports even if a guard catches them."""
     import importlib._bootstrap
+    import threading
 
-    global _missing_preparation_imports, _missing_imports, _missing_import_requests
+    global _missing_preparation_imports, _missing_imports, _missing_import_requests, _pending_imports
     _missing_preparation_imports, _missing_imports, _missing_import_requests = set(), [], set()
     load = importlib._bootstrap._find_and_load
-    library_roots = tuple(os.path.normcase(os.path.realpath(prefix))
-                          for prefix in (sys.base_prefix, sys.prefix))
+    library_roots = tuple(path_key(prefix) for prefix in (sys.base_prefix, sys.prefix))
+    machinery = path_key(os.path.dirname(importlib.__file__))
+    active = threading.local()
+    def _pending_imports():
+        return any(getattr(active, 'stack', ()))
+
+    def requested_absent(name):
+        # Only absence of the requested owned module is a code failure here. Never let the missing name
+        # of a dependency erase an escaping failure of an existing requested module.
+        locations = sys.path
+        parts = name.split('.')
+        for end in range(1, len(parts) + 1):
+            spec = importlib.machinery.PathFinder.find_spec('.'.join(parts[:end]), locations)
+            if spec is None or end < len(parts) and spec.submodule_search_locations is None:
+                return own_import_absent(ModuleNotFoundError(name=name), ())
+            locations = spec.submodule_search_locations
+        return False
 
     def tracked(name, import_):
         frame = sys._getframe(1)
-        tree = os.path.normcase(os.path.realpath(globals().get('root', os.getcwd())))
+        tree = path_key(globals().get('root', os.getcwd()))
         # None means no caller could be attributed (for example a library callback on a worker thread).
         requested_here = None
         helper = False
@@ -514,38 +556,35 @@ def track_imports():
         # itself is loading is that module's request, not an optional dependency requested by the repository.
         while frame is not None:
             filename = frame.f_code.co_filename
-            module = frame.f_globals.get('__name__', '')
-            if module in ('importlib', 'importlib._bootstrap', 'importlib._bootstrap_external',
-                          '_frozen_importlib', '_frozen_importlib_external'):
-                frame = frame.f_back
-                continue
-            runner_frame = frame.f_globals is globals() or filename == __file__
-            if runner_frame:
-                # A direct bootstrap request has no case requester. Library callbacks remain unattributable.
+            # Frozen stdlib modules retain their installed file in the module namespace, not co_filename.
+            if filename.startswith('<frozen ') and filename not in (
+                    '<frozen importlib._bootstrap>', '<frozen importlib._bootstrap_external>'):
+                origin = frame.f_globals.get('__file__')
+                if type(origin) is str:
+                    filename = origin
+            file = path_key(filename) if os.path.isabs(filename) else ''
+            # The exact G6 bootstrap file is never a repository requester, even in portable fixtures
+            # that place it beneath root. This exclusion is by file identity, not its module name.
+            if file and file == path_key(__file__):
                 if not helper:
                     requested_here = False
                     break
                 frame = frame.f_back
                 continue
-            helper = True
-            # Frozen stdlib modules retain their installed file in the module namespace, not co_filename.
-            if filename.startswith('<frozen '):
-                origin = frame.f_globals.get('__file__')
-                if type(origin) is str:
-                    filename = origin
-            file = os.path.normcase(os.path.realpath(filename)) if os.path.isabs(filename) else ''
-            if (file and os.path.splitdrive(file)[0] == os.path.splitdrive(tree)[0]
-                    and os.path.commonpath((tree, file)) == tree):
+            if file and path_inside(tree, file):
                 requested_here = True
                 break
+            if filename in ('<frozen importlib._bootstrap>', '<frozen importlib._bootstrap_external>') or (
+                    file and path_inside(machinery, file)):
+                frame = frame.f_back
+                continue
+            helper = True
             # Our bootstrap/helper frames are never an outside requester. A known library's module
             # load can own its imports; a callback with only runner frames above it is unattributable.
-            library = (file and any(os.path.commonpath((prefix, file)) == prefix
-                                   for prefix in library_roots
-                                   if os.path.splitdrive(prefix)[0] == os.path.splitdrive(file)[0]))
+            library = file and any(path_inside(prefix, file) for prefix in library_roots)
             # A library's own import statement is its dependency, including an optional import inside
             # a function. Calls forwarding a repository-supplied name still follow the caller stack.
-            if library and (frame.f_code.co_name == '<module>'
+            if library and (not frame.f_code.co_flags & inspect.CO_NEWLOCALS
                             or frame.f_code.co_code[frame.f_lasti] == dis.opmap['IMPORT_NAME']):
                 requested_here = False
                 break
@@ -554,18 +593,29 @@ def track_imports():
                 break
             frame = frame.f_back
         del frame
+        stack = getattr(active, 'stack', None)
+        if stack is None:
+            stack = active.stack = []
+        pending = []
+        stack.append(pending)
         try:
             return load(name, import_)
-        except ModuleNotFoundError as exc:
-            missing = ImportError.__dict__['name'].__get__(exc)
-            if (requested_here is not False and type(missing) is str
-                    and (missing == name or name.startswith(missing + '.'))
-                    and not own_import_absent(exc, ())):
-                _missing_imports.append(exc)
-                _missing_import_requests.add(name)
-                if globals().get('_preparation_depth', 0):
-                    _missing_preparation_imports.add(ImportError.__dict__['name'].__get__(exc))
+        except ImportError as exc:
+            if requested_here is not False and not requested_absent(name):
+                # An escaping dependency failure belongs to the outer repository request. A caught inner
+                # failure still survives if that outer import completes successfully.
+                pending[:] = [(exc, name)]
             raise
+        finally:
+            stack.pop()
+            if stack:
+                stack[-1].extend(pending)
+            else:
+                for exc, requested in pending:
+                    _missing_imports.append(exc)
+                    _missing_import_requests.add(requested)
+                    if globals().get('_preparation_depth', 0):
+                        _missing_preparation_imports.add(ImportError.__dict__['name'].__get__(exc))
 
     importlib._bootstrap._find_and_load = tracked
 
@@ -580,6 +630,9 @@ def setup_call(phase, function, *args, **kwargs):
     except LETS_THROUGH:
         raise
     except Exception as exc:
+        # Preserve the marked outer import through preparation.
+        if any(exc is missing for missing in globals().get('_missing_imports', ())):
+            raise
         if call_absent(exc) or phase == 'missing_callable' and exception_matches(exc, AttributeError):
             kind = (ModuleNotFoundError if exception_matches(exc, ModuleNotFoundError) else
                     ImportError if exception_matches(exc, ImportError) else AttributeError)
@@ -599,6 +652,8 @@ def setup_call(phase, function, *args, **kwargs):
 def call_absent(exc):
     """Only G6's import or missing-name boundary can identify absence across nested preparation."""
     if not (exception_matches(exc, AttributeError) or exception_matches(exc, ImportError)):
+        return False
+    if any(exc is missing for missing in globals().get('_missing_imports', ())):
         return False
     trace = BaseException.__dict__['__traceback__'].__get__(exc)
     while trace is not None and trace.tb_frame.f_globals is setup_call.__globals__:
@@ -736,24 +791,28 @@ BOOTSTRAP = (CODE_CARRIER_HELPERS + inspect.getsource(observable_exception) + '\
              + inspect.getsource(exception_matches) + '\n' + inspect.getsource(exception_detail) + '\n'
              + inspect.getsource(exception_message) + '\n'
              + inspect.getsource(_exception_observation) + '\n' + inspect.getsource(CheckSetupError) + '\n'
-             + inspect.getsource(ObservationUnavailable) + '\n' + inspect.getsource(own_import_absent) + '\n'
+             + inspect.getsource(ObservationUnavailable) + '\n'
+             + inspect.getsource(path_key) + '\n' + inspect.getsource(path_inside) + '\n'
+             + inspect.getsource(own_import_absent) + '\n'
              + inspect.getsource(track_imports) + '\n'
              + inspect.getsource(setup_call) + '\n' + inspect.getsource(runtime_method) + '\n'
              + inspect.getsource(call_absent) + '\n'
              + inspect.getsource(target_attribute) + '\n'
              + inspect.getsource(bind_method) + '\n'
              + inspect.getsource(_import_roots)) + r'''
-import ast, builtins, collections.abc, concurrent.futures, copy, dis, hashlib, importlib, importlib.machinery, inspect, json, os, re, struct, sys, time
+import ast, builtins, collections.abc, concurrent.futures, copy, dis, hashlib, importlib, importlib.machinery, inspect, json, os, random, re, struct, subprocess, sys, time
 _SETUP_CODE_CARRIERS = ()
 _SETUP_CONTROLS = ()
 _IMPORT_OPS = (dis.opmap['IMPORT_NAME'], dis.opmap['IMPORT_FROM'])
 
 def unavailable_import(exc):
     # A fallback's exception is an outcome even inside its handler. Its caught import remains a comparison mark.
-    if not exception_matches(exc, ImportError) or own_import_absent(exc, ()):
+    if not exception_matches(exc, ImportError):
         return False
     if any(exc is missing for missing in _missing_imports):
         return True
+    if own_import_absent(exc, ()):
+        return False
     # IMPORT_FROM can fail after loading a module. Metadata on an explicit raise is not import evidence.
     trace = BaseException.__dict__['__traceback__'].__get__(exc)
     while trace is not None:
@@ -764,7 +823,23 @@ def unavailable_import(exc):
 
 def import_mark():
     names = sorted(_missing_import_requests)
-    return {'missing_import': ObservationUnavailable.DETAIL, 'missing_imports': names} if names else {}
+    if not names:
+        return {}
+    details, seen, pending = set(), set(), list(_missing_imports)
+    while pending and len(seen) < 1024:
+        exc = pending.pop()
+        if id(exc) in seen:
+            continue
+        seen.add(id(exc))
+        if exception_matches(exc, ImportError):
+            name = ImportError.__dict__['name'].__get__(exc)
+            if (type(name) is str and len(name) <= 200 and 'G6_E_' not in name
+                    and all(part.isidentifier() for part in name.split('.'))):
+                details.add(name)
+        pending.extend(one for one in (BaseException.__dict__['__cause__'].__get__(exc),
+                                       BaseException.__dict__['__context__'].__get__(exc)) if one is not None)
+    return {'missing_import': ObservationUnavailable.DETAIL, 'missing_imports': names,
+            'missing_import_details': sorted(details)}
 def _name(kind):
     return setup_call("exception_description", exception_name, kind)
 
@@ -829,6 +904,16 @@ if raw == '@channel':
         pass
 data = json.loads(raw)
 end = time.monotonic() + data.pop('budget_s', 10)
+# A new interpreter must replay the original PRNG startup, not redraw module-level choices. Capture before
+# repository loading; state after a marked call (including any reseeding) is never copied to a descendant.
+random_start = data.pop('_startup_random', None)
+if random_start is not None:
+    random.setstate((random_start[0], tuple(random_start[1]), random_start[2]))
+random_start = random.getstate()
+# Descendants inherit the current OS container/job and its existing resource/deadline limits. Capture launch
+# state before repository loading: module eviction cannot undo environment, cwd, path or library mutations.
+startup = (sys.executable, os.path.abspath(__file__), os.path.abspath(root), os.path.abspath(channel),
+           os.getcwd(), dict(os.environ))
 sink = open(channel, "ab", buffering=0)
 write, dumps, pack = sink.write, json.dumps, struct.pack
 is_instance, identity, kind_of = isinstance, id, type
@@ -860,11 +945,11 @@ def load_target(spec):
         choices = [os.path.join(root, prefix, stem + suffix)
                    for prefix in _import_roots(spec) for suffix in ("/__init__.py", ".py")]
         resolved = next((os.path.realpath(path) for path in choices if os.path.isfile(path)), None)
-        if resolved is None or os.path.normcase(resolved) != os.path.normcase(wanted):
+        if resolved is None or path_key(resolved) != path_key(wanted):
             raise CheckSetupError("import_or_binding")
     found = setup_call('module_import', importlib.import_module, module)
     where = os.path.realpath(getattr(found, "__file__", ""))
-    if os.path.normcase(where) != os.path.normcase(wanted):
+    if path_key(where) != path_key(wanted):
         raise CheckSetupError("import_or_binding")
     target = bind_method(found, spec, load) if kind in ("method", "state_method") else target_attribute(found, attribute)
     if not callable(target):
@@ -897,7 +982,7 @@ def named(spec):
         namespace = namespace_of(held(sys.modules, spec[1]))
         where = held(namespace, "__file__")
         wanted = os.path.realpath(os.path.join(root, *spec[3].split("/")))
-        if kind_of(where) is not str or os.path.normcase(os.path.realpath(where)) != os.path.normcase(wanted):
+        if kind_of(where) is not str or path_key(where) != path_key(wanted):
             return None
         found = held(namespace, spec[2])
         return found if observable_exception(found, resolved=True) else None
@@ -924,10 +1009,15 @@ def call_failed(exc):
         detail = exception_detail(exc, 'call failed')
     except CheckSetupError as unavailable:
         return setup_failed(unavailable)
-    # Import absence already passed own_import_absent: a genuinely absent held export stays the code's failure.
-    # A missing callable can instead be a definition guarded by the recorded optional import.
+    if exception_matches(exc, ImportError) and any(exc is missing for missing in _missing_imports):
+        # Keep the fixed protocol vocabulary even for a repository's ImportError subclass.
+        kind = ModuleNotFoundError if exception_matches(exc, ModuleNotFoundError) else ImportError
+        detail = 'call failed: ' + exception_name(kind, qualified=True)
+    # A genuinely absent held export stays the code's failure. A marked outer import must retain its
+    # escaping dependency failure, even when the inner name happens to be owned.
     return {'version': 'call_failure.v1', 'detail': detail,
-            **(import_mark() if exception_matches(exc, AttributeError) else {})}
+            **(import_mark() if exception_matches(exc, AttributeError)
+               or any(exc is missing for missing in _missing_imports) else {})}
 
 def observe(request):
     global data, _missing_preparation_imports, _missing_imports, _missing_import_requests
@@ -935,16 +1025,33 @@ def observe(request):
     data = request
     _missing_preparation_imports, _missing_imports, _missing_import_requests = set(), [], set()
     errors, outcomes, alive = {}, [], []
+    def repository_spec(name):
+        # A preloaded library can shadow a held entry point (including importlib.py). Resolve what the
+        # current import roots would load without consulting sys.modules, then decide by that spec's paths.
+        locations = sys.path
+        parts = name.split('.')
+        for end in range(1, len(parts) + 1):
+            spec = importlib.machinery.PathFinder.find_spec('.'.join(parts[:end]), locations)
+            if spec is None or not any(type(path) is str and os.path.isabs(path) and path_inside(root, path)
+                                       for path in (spec.origin, *(spec.submodule_search_locations or ()))):
+                return None
+            locations = spec.submodule_search_locations
+            if end < len(parts) and locations is None:
+                return None
+        return spec
+
     # Reload every repository module, including helpers whose mutable globals a previous call changed.
-    module = data['function'][1]
     for name, loaded in list(sys.modules.items()):
-        where = held(namespace_of(loaded), '__file__') if type(loaded) is type(sys) else None
-        owned = (type(where) is str and os.path.isabs(where)
-                 and os.path.splitdrive(where)[0] == os.path.splitdrive(root)[0]
-                 and os.path.commonpath((os.path.realpath(root), os.path.realpath(where))) == os.path.realpath(root))
-        if name != '__main__' and (owned or name in data.get('own_modules', ())
-                                   or name == module or name.startswith(module + '.')
-                                   or module.startswith(name + '.')):
+        space = namespace_of(loaded) if type(loaded) is type(sys) else {}
+        spec = held(space, '__spec__')
+        locations = getattr(spec, 'submodule_search_locations', None) or ()
+        paths = (held(space, '__file__'), getattr(spec, 'origin', None),
+                 getattr(getattr(spec, 'loader', None), 'archive', None), *locations)
+        if any(type(where) is str and os.path.isabs(where) and path_key(where) == path_key(__file__)
+               for where in paths):
+            continue
+        if (any(type(where) is str and os.path.isabs(where) and path_inside(root, where) for where in paths)
+                or repository_spec(name) is not None):
             del sys.modules[name]
     return observe_calls()
 
@@ -1013,6 +1120,34 @@ def publish(value):
     sink.truncate()
     write(b'G6R1\n' + pack('>I', len(payload)) + payload)
 
+def fresh_observation(request, index):
+    executable, boot, tree, original, cwd, environment = startup
+    channel = original + '.rerun-' + str(index)
+    remaining = end - time.monotonic()
+    if remaining <= 0:
+        return None
+    try:
+        with open(channel, 'xb') as handle:
+            handle.write(dumps({**request, 'calls': [request['calls'][index]],
+                                'budget_s': remaining, '_startup_random': random_start}, sort_keys=True).encode('utf-8'))
+        ran = subprocess.run([executable, '-I', '-S', '-B', '-X', 'utf8', boot, tree, channel, '@channel'],
+                             cwd=cwd, env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, timeout=max(0.001, end - time.monotonic()))
+        with open(channel, 'rb') as handle:
+            raw = handle.read(1048586)
+        if ran.returncode != 0 or raw[:5] != b'G6R1\n' or len(raw) < 9:
+            return None
+        if len(raw) != 9 + struct.unpack('>I', raw[5:9])[0] or len(raw) > 1048585:
+            return None
+        return json.loads(raw[9:])
+    except (OSError, ValueError):
+        return None
+    except Exception as exc:
+        # The handler inventory resolves built-in exception names. Keep the library type in this predicate.
+        if not isinstance(exc, subprocess.TimeoutExpired):
+            raise
+        return None
+
 request_data = data
 observed = observe(request_data)
 if observed['version'] == 'observation.v2':
@@ -1020,8 +1155,7 @@ if observed['version'] == 'observation.v2':
     reruns = []
     for index, outcome in enumerate(observed['outcomes']):
         if prior_unavailable:
-            # Expectations stay in the host. Collect a fresh candidate for each later call; only the
-            # host can decide whether its original mismatch was reproduced. No extra process or limit.
+            # Expectations stay in the host; only a new interpreter can supply an independent candidate.
             rerun = {'case': index, 'ran': False, 'observation': None}
             reruns.append(rerun)
             observed['reruns'] = reruns
@@ -1029,7 +1163,7 @@ if observed['version'] == 'observation.v2':
                 rerun['ran'] = True
                 # If the bounded child expires here, the channel still says this rerun is unavailable.
                 publish(observed)
-                rerun['observation'] = observe({**request_data, 'calls': [request_data['calls'][index]]})
+                rerun['observation'] = fresh_observation(request_data, index)
         prior_unavailable = prior_unavailable or 'missing_import' in outcome or 'unavailable_import' in outcome
 publish(observed)
 sink.close()
@@ -1055,7 +1189,12 @@ def read_frame(raw: bytes) -> dict | None:
     """Total reader: exactly one bounded, recognised frame, with no prefix or trailing bytes."""
     def valid_marks(one):
         names = one.get('missing_imports')
-        return (type(names) is list and bool(names) and len(names) <= 1024
+        details = one.get('missing_import_details', [])
+        return (type(details) is list and len(details) <= 1024
+                and all(type(name) is str and len(name) <= 200 and 'G6_E_' not in name
+                        and all(part.isidentifier() for part in name.split('.')) for name in details)
+                and details == sorted(set(details))
+                and type(names) is list and bool(names) and len(names) <= 1024
                 and all(type(name) is str and len(name) <= 200 and 'G6_E_' not in name
                         and all(part.isidentifier() for part in name.split('.')) for name in names)
                 and names == sorted(set(names)) and one.get('missing_import') == ObservationUnavailable.DETAIL)
@@ -1077,7 +1216,8 @@ def read_frame(raw: bytes) -> dict | None:
                              and ObservationUnavailable.valid_detail(value['detail'])) else None
         if isinstance(value, dict) and value.get('version') == 'call_failure.v1':
             marked = {'missing_import', 'missing_imports'}
-            return value if (set(value) in ({'version', 'detail'}, {'version', 'detail', *marked})
+            return value if (set(value) in ({'version', 'detail'}, {'version', 'detail', *marked},
+                                           {'version', 'detail', *marked, 'missing_import_details'})
                              and (not marked.intersection(value) or valid_marks(value))
                              and type(value['detail']) is str
                              and value['detail'] in CheckSetupError.CALL_FAILURES) else None
@@ -1122,6 +1262,10 @@ def read_frame(raw: bytes) -> dict | None:
                 if not valid_marks(one):
                     return None
                 fields.remove('missing_imports')
+            if 'missing_import_details' in fields:
+                if not valid_marks(one):
+                    return None
+                fields.remove('missing_import_details')
             if 'unavailable_import' in fields:
                 if (value['version'] != 'observation.v2' or 'raised' not in fields
                         or not ObservationUnavailable.valid_detail(one['unavailable_import'])
@@ -1203,6 +1347,7 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
         # Retain the provisional comparison without granting it authority in a single run. The host can use it
         # only with matching per-outcome evidence from the other tree. Legacy marks have no comparable names.
         evidence = {'outcomes': marks, 'failures': failures, 'unavailable': unavailable, 'dependent': dependent,
+                    'details': [one.get('missing_import_details', []) for one in outcomes],
                     'reading': {key: value for key, value in found.items() if key != 'observed'}}
         if affected:
             detail = (outcomes[unavailable[0]]['unavailable_import'] if unavailable else ObservationUnavailable.DETAIL)
@@ -1221,7 +1366,13 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
     if observed is not None and observed['version'] == 'observation_unavailable.v1':
         return {'result': 'error', 'detail': observed['detail'], 'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE'}
     if observed is not None and observed['version'] == 'call_failure.v1':
-        return marked({'result': 'failed', 'detail': observed['detail']}, [observed] * max(1, len(calls)),
+        outcome = observed
+        if 'missing_import' in observed and observed['detail'] in (
+                'call failed: builtins.ImportError', 'call failed: builtins.ModuleNotFoundError'):
+            # The fixed call-failure vocabulary retains the escaping type; matching marks cannot admit it.
+            outcome = {**observed, 'unavailable_import': ObservationUnavailable.DETAIL + ': '
+                       + observed['detail'].removeprefix('call failed: ')}
+        return marked({'result': 'failed', 'detail': observed['detail']}, [outcome] * max(1, len(calls)),
                       list(range(max(1, len(calls)))))
     if observed is None or len(observed["outcomes"]) != len(calls) or not calls:
         return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: no single completed observation"}
@@ -1348,7 +1499,7 @@ def located(copy: Path, data: dict) -> dict:
         choices = [('/'.join((prefix, stem)) if prefix != '.' else stem) + suffix
                    for prefix in roots for suffix in ("/__init__.py", ".py")]
         resolved = next((rel for rel in choices if (copy / rel).is_file()), None)
-        if resolved is None or len(spec) >= 4 and resolved != spec[3]:
+        if resolved is None or len(spec) >= 4 and path_key(copy / resolved) != path_key(copy / spec[3]):
             raise ValueError("G6_E_OBSERVATION_UNAVAILABLE: the copied entry point does not match")
         spec[:] = [*spec[:3], resolved, *spec[4:]]
     return data
@@ -1389,9 +1540,9 @@ def example_text(slot: str) -> str:
         exception_name, exception_matches, exception_detail, exception_message,
         setup_call, call_absent, register_setup_error,
         _unique, _encoded, _fingerprint, _valid_encoding, _matches_encoding,
-        _import_roots, located, request, own_import_absent, setup_outcome, read_frame, finish))
+        _import_roots, path_key, path_inside, located, request, own_import_absent, setup_outcome, read_frame, finish))
     packed = base64.b85encode(zlib.compress(preparation.encode('utf-8'), 9)).decode('ascii')
-    return ("import base64, zlib, concurrent.futures, hashlib, json, struct, subprocess, tempfile, sys, os\nfrom pathlib import Path\n"
+    return ("import base64, zlib, concurrent.futures, hashlib, importlib.machinery, json, struct, subprocess, tempfile, sys, os\nfrom pathlib import Path\n"
             "TEMPLATE = 'example.v1'\nBINDINGS = " + slot
             + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = "
             + 'str(zlib.decompress(base64.b85decode(' + ascii(bootstrap) + ")), 'utf-8')\n"
@@ -1441,7 +1592,7 @@ def _made(tree: Path, copy: Path, files: dict[str, str], deadline: float) -> Non
         parts = PurePosixPath(rel).parts
         target = tree.joinpath(*parts)
         if (not isinstance(wanted, str) or len(wanted) != 64 or any(ch not in "0123456789abcdef" for ch in wanted)
-                or not parts or ".." in parts or not target.is_relative_to(tree) or os.name == "nt" and ":" in rel):
+                or not parts or ".." in parts or not path_inside(tree, target) or os.name == "nt" and ":" in rel):
             raise rt.CopyNotRun("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: not a file G6 can write from its bytes: " + rel)
         written = hashlib.sha256()
         try:
@@ -1533,9 +1684,11 @@ def _streams(tree: Path) -> dict[str, str]:
 
 
 def run(copy: Path, data: dict, node: str, *, timeout_s: int, deadline: float) -> dict:
-    """One confined interpreter G6 starts, in a folder G6 writes from the copy's manifest (``_made``), and one
+    """One confined observation G6 starts, in a folder G6 writes from the copy's manifest (``_made``), and one
     channel G6 creates before starting it. The folder is read again after the child ends: its names and bytes by the
-    ordinary executor's comparison, and what a path in it carries beyond them (``_beyond``)."""
+    ordinary executor's comparison, and what a path in it carries beyond them (``_beyond``). Independent-case
+    interpreters are descendants inside this same confinement and bounded process tree, with the time left over.
+    """
     started = time.monotonic()
     before = rt._copy_snapshot(copy, deadline=deadline)
     data = located(copy, data)
