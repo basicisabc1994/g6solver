@@ -2560,3 +2560,58 @@ def test_pending_required_evidence_precedes_failed_load_classification(
     specs.clear()
     saved.rmdir() if namespace else saved.unlink()
     assert classify() is (hint == "child-cache"), "pending required evidence received optional recovery"
+
+
+@pytest.mark.parametrize("exotic", (False, True), ids=("plain-control", "string-subclass"))
+def test_exception_name_hooks_never_hold_ownership_lock(ownership, exotic):
+    dependencies, _ = ownership
+
+    class MissingName(str):
+        def __hash__(self):
+            assert not dependencies._ownership_lock._is_owned(), "exception-name hash executed under ownership lock"
+            return str.__hash__(self)
+
+        def __eq__(self, other):
+            assert not dependencies._ownership_lock._is_owned(), "exception-name equality executed under ownership lock"
+            return str.__eq__(self, other)
+
+        def split(self, sep=None, maxsplit=-1):
+            assert not dependencies._ownership_lock._is_owned(), "exception-name split executed under ownership lock"
+            return [self]
+
+        def __str__(self):
+            raise AssertionError("exception-name copying must bypass foreign __str__")
+
+    name = MissingName(OPTIONAL) if exotic else OPTIONAL
+    failure = ModuleNotFoundError("absent optional dependency", name=name)
+    assert dependencies.optional_dependency_missing("abstraction", failure)
+    assert all(type(root) is str for root in dependencies.absent_module_roots(failure))
+
+
+@pytest.mark.parametrize("exotic", (False, True), ids=("plain-control", "string-subclass"))
+def test_exception_names_copied_before_dependency_operations(ownership, exotic):
+    dependencies, _ = ownership
+
+    class MissingName(str):
+        def forbidden(self, *args, **kwargs):
+            raise AssertionError("exception-name operation must use an exact string copy")
+
+        __hash__ = __eq__ = __str__ = split = forbidden
+
+    name = MissingName(OPTIONAL) if exotic else OPTIONAL
+    failure = ModuleNotFoundError("absent optional dependency", name=name)
+    diagnostic = dependencies.missing_module(failure)
+    assert type(diagnostic) is str
+    assert diagnostic == OPTIONAL
+    assert dependencies.optional_dependency_missing("abstraction", failure)
+    assert dependencies.absent_module_roots(failure) == {OPTIONAL}
+
+
+@pytest.mark.parametrize("name", (None, 7, b"rfu2build_optional", [OPTIONAL]),
+                         ids=("unnamed", "integer", "bytes", "unhashable"))
+def test_invalid_exception_names_fail_closed(ownership, name):
+    dependencies, _ = ownership
+    failure = ModuleNotFoundError("invalid missing name", name=name)
+    assert dependencies.missing_module(failure) is None
+    assert not dependencies.optional_dependency_missing("abstraction", failure)
+    assert dependencies.absent_module_roots(failure) == frozenset()

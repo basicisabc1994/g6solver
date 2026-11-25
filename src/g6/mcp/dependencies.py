@@ -52,10 +52,17 @@ def missing_module(exc: BaseException) -> str | None:
         work.spend()
         current, visited = pending.pop()
         if visited:
-            if isinstance(current, ModuleNotFoundError) and current.name:
-                return current.name
-            if diagnostic is None and isinstance(current, ImportError) and current.name:
-                diagnostic = current.name
+            if isinstance(current, ImportError):
+                raw_name = current.name
+                try:
+                    name = _plain_text(raw_name) if raw_name is not None else None
+                except Exception:
+                    return None  # An invalid name cannot support dependency guidance.
+                if name:
+                    if isinstance(current, ModuleNotFoundError):
+                        return name
+                    if diagnostic is None:
+                        diagnostic = name
             continue
         if id(current) in seen:
             continue
@@ -107,12 +114,20 @@ def _missing_modules(exc: BaseException) -> tuple[str, ...] | None:
         for child in members:
             parents.setdefault(id(child), []).append((key, True))
         pending.extend(reversed((*links, *members)))
-        if isinstance(current, ModuleNotFoundError) and current.name:
-            # Keep every missing name, including installed/submodule defects
-            # with optional evidence further down their chain or cycle.
-            modules[current.name] = None
-            supported.add(key)
-            ready.append(key)
+        if isinstance(current, ModuleNotFoundError):
+            raw_name = current.name
+            try:
+                name = _plain_text(raw_name) if raw_name is not None else None
+            except Exception:
+                return None  # Fail closed before hashing, splitting or locking.
+            if name:
+                # Keep every missing name, including installed/submodule defects
+                # with optional evidence further down their chain or cycle.
+                # Copy before any string operation: subclasses may retain
+                # themselves through split and later execute under the lock.
+                modules[name] = None
+                supported.add(key)
+                ready.append(key)
 
     # Propagate evidence from seeds, never from an unestablished cycle. A chain
     # wrapper needs a supported child; a group needs every member independently
